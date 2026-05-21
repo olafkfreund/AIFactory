@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "aifactory": {
+      "type": "stdio",
+      "command": "bash",
+      "args": [
+        "${CLAUDE_PROJECT_DIR:-.}/scripts/start-aifactory-mcp.sh"
+      ],
+      "env": {
+        "AIFACTORY_PROJECT_DIR": "${CLAUDE_PROJECT_DIR:-.}"
+      }
+    }
+  }
+}
