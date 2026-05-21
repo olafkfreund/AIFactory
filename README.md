@@ -126,6 +126,37 @@ npm run dev
 # UI available at http://localhost:3100
 ```
 
+### Using AIFactory tools from Claude Code (auto-registered MCP server)
+
+This repo ships a project-scoped [`.mcp.json`](.mcp.json) that auto-registers AIFactory's MCP server (`update_subtask_status`, `get_build_progress`, `record_discovery`, `record_gotcha`, `get_session_context`, `update_qa_status`, `test_memory_integration`) whenever you open the repo with [Claude Code](https://claude.com/claude-code).
+
+**First-time setup**
+
+1. Run `npm run install:backend` from the repo root — this creates the Python venv at `apps/backend/.venv` that the MCP server runs in.
+2. Open the repo in Claude Code. On first launch Claude Code shows a **workspace-trust prompt** for the project-scoped MCP server. Approve it. (Reset later with `claude mcp reset-project-choices`.)
+3. Verify it's wired up: `claude mcp list` should include an `aifactory` entry with scope `project`.
+
+**Making the tools fully usable**
+
+Without context, the 7 tools return a clean "No active spec" guidance error per call (so Claude Code still lists them — they just refuse to write to the wrong place). To make them fully functional, point the server at the spec you're working on:
+
+```bash
+export AIFACTORY_SPEC_DIR=/absolute/path/to/.aifactory/specs/<spec-id>
+claude
+```
+
+This restriction will be lifted in a follow-up issue that adds a `.aifactory/current-spec` pointer file written automatically by AIFactory's backend.
+
+**Migration from the old hand-edit setup**
+
+If you previously added `aifactory` to `~/.claude/settings.json` for personal use, remove it — the project-scoped entry now takes precedence and would shadow yours silently:
+
+```bash
+claude mcp remove aifactory --scope user
+```
+
+Windows users: the `.mcp.json` invokes `bash scripts/start-aifactory-mcp.sh`. Use Git Bash, or override the `command` to `scripts\start-aifactory-mcp.cmd` in your personal `~/.claude/settings.json`.
+
 ### Docker Deployment
 
 MagesticAI includes a `Dockerfile` and `docker-compose.yml` for containerized deployment:

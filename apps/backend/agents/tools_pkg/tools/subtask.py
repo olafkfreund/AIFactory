@@ -6,6 +6,7 @@ Tools for managing subtask status in implementation_plan.json.
 """
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,19 +20,32 @@ except ImportError:
     tool = None
 
 
-def create_subtask_tools(spec_dir: Path, project_dir: Path) -> list:
+def create_subtask_tools(
+    spec_dir: Path | Callable[[], Path],
+    project_dir: Path | Callable[[], Path],
+) -> list:
     """
     Create subtask management tools.
 
+    Accepts either a fixed Path (in-process callers — agent sessions own a
+    specific spec for their lifetime) or a callable returning Path (standalone
+    MCP server callers — the active spec is resolved per tool call via env).
+    Issue #10.
+
     Args:
-        spec_dir: Path to the spec directory
-        project_dir: Path to the project root
+        spec_dir: Path or Callable[[], Path] to the spec directory
+        project_dir: Path or Callable[[], Path] to the project root
 
     Returns:
         List of subtask tool functions
     """
     if not SDK_TOOLS_AVAILABLE:
         return []
+
+    # Normalise Path -> lambda once at factory build time; tool handlers
+    # invoke get_spec_dir() per call so the standalone server picks up
+    # AIFACTORY_SPEC_DIR changes between calls.
+    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
 
     tools = []
 
@@ -60,7 +74,7 @@ def create_subtask_tools(spec_dir: Path, project_dir: Path) -> list:
                 ]
             }
 
-        plan_file = spec_dir / "implementation_plan.json"
+        plan_file = get_spec_dir() / "implementation_plan.json"
         if not plan_file.exists():
             return {
                 "content": [

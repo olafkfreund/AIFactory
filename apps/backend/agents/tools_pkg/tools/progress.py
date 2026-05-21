@@ -6,6 +6,7 @@ Tools for tracking and reporting build progress.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -18,19 +19,28 @@ except ImportError:
     tool = None
 
 
-def create_progress_tools(spec_dir: Path, project_dir: Path) -> list:
+def create_progress_tools(
+    spec_dir: Path | Callable[[], Path],
+    project_dir: Path | Callable[[], Path],
+) -> list:
     """
     Create build progress tracking tools.
 
+    Accepts either a fixed Path or a callable returning Path (Issue #10) so
+    the same factory serves both in-process agent sessions and the standalone
+    MCP server.
+
     Args:
-        spec_dir: Path to the spec directory
-        project_dir: Path to the project root
+        spec_dir: Path or Callable[[], Path] to the spec directory
+        project_dir: Path or Callable[[], Path] to the project root
 
     Returns:
         List of progress tool functions
     """
     if not SDK_TOOLS_AVAILABLE:
         return []
+
+    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
 
     tools = []
 
@@ -44,7 +54,7 @@ def create_progress_tools(spec_dir: Path, project_dir: Path) -> list:
     )
     async def get_build_progress(args: dict[str, Any]) -> dict[str, Any]:
         """Get current build progress."""
-        plan_file = spec_dir / "implementation_plan.json"
+        plan_file = get_spec_dir() / "implementation_plan.json"
 
         if not plan_file.exists():
             return {
