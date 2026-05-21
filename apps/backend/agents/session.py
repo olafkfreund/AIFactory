@@ -369,6 +369,11 @@ async def run_agent_session(
 
         # Collect response text and show tool use
         response_text = ""
+        # Running totals for prompt-cache usage — emitted as a single
+        # logger.info at session end (per-turn lines are debug-level below).
+        _cache_read_total = 0
+        _cache_write_total = 0
+        _last_session_id: str | None = None
         debug("session", "Starting to receive response stream...")
         async for msg in safe_receive_messages(client, caller="session"):
             msg_type = type(msg).__name__
@@ -526,6 +531,50 @@ async def run_agent_session(
                                 )
 
                         current_tool = None
+
+            # Log cache-hit statistics from ResultMessage.usage so operators can
+            # verify that the static CLAUDE.md prefix is being reused across calls.
+            # usage is dict[str, Any] | None per the SDK types.
+            # Fields set by the Anthropic API when caching is active:
+            #   cache_read_input_tokens    — tokens served from cache (0.10× price)
+            #   cache_creation_input_tokens — tokens written to cache (1.25× / 2× price)
+            #   input_tokens               — tokens after the last cache breakpoint
+            # Reference: https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching
+            elif msg_type == "ResultMessage":
+                _usage = getattr(msg, "usage", None) or {}
+                _cache_read = _usage.get("cache_read_input_tokens", 0)
+                _cache_write = _usage.get("cache_creation_input_tokens", 0)
+                _input_tokens = _usage.get("input_tokens", 0)
+                if _cache_read or _cache_write:
+                    # Per-turn line at DEBUG — high cardinality, only useful
+                    # when verifying caching. Aggregate at session end.
+                    logger.debug(
+                        "Prompt cache: read=%d tok write=%d tok input=%d tok session=%s",
+                        _cache_read,
+                        _cache_write,
+                        _input_tokens,
+                        getattr(msg, "session_id", "?"),
+                    )
+                    if task_logger:
+                        task_logger.log(
+                            f"[cache] read={_cache_read} write={_cache_write} input={_input_tokens}",
+                            LogEntryType.TEXT,
+                            phase,
+                            print_to_console=False,
+                        )
+                _cache_read_total += _cache_read
+                _cache_write_total += _cache_write
+                _last_session_id = getattr(msg, "session_id", _last_session_id)
+
+        # Aggregated cache totals — one line per agent session so operators
+        # can confirm the static prefix is being reused across turns.
+        if _cache_read_total or _cache_write_total:
+            logger.info(
+                "Prompt cache totals — read=%d tok write=%d tok session=%s",
+                _cache_read_total,
+                _cache_write_total,
+                _last_session_id or "?",
+            )
 
         print("\n" + "-" * 70 + "\n")
 
