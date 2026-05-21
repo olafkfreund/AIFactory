@@ -21,7 +21,7 @@ interface GitHubOAuthFlowProps {
 }
 
 // Debug logging helper - logs when DEBUG env var is set or in development
-const DEBUG = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
+const DEBUG = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true';
 
 function debugLog(message: string, data?: unknown) {
   if (DEBUG) {
