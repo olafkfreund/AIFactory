@@ -819,7 +819,16 @@ def create_client(
             mcp_servers[server_id] = server_config
 
     # Build system prompt
-    base_prompt = (
+    # Static content (CLAUDE.md) is placed before the dynamic base instructions so
+    # the Anthropic API's automatic prompt caching can reuse the prefix hash across
+    # sessions.  build_cached_system_str keeps the static portion byte-identical;
+    # any change there would invalidate the cached prefix.
+    # For direct Anthropic API callers (not SDK sessions) use
+    # core.cache.build_cached_system_blocks instead — it attaches an explicit
+    # cache_control marker so the 5-min (or 1-h) KV cache is guaranteed.
+    from core.cache import build_cached_system_str
+
+    _base_instructions = (
         f"You are an expert full-stack developer building production-quality software. "
         f"Your working directory is: {project_dir.resolve()}\n"
         f"Your filesystem access is RESTRICTED to this directory only. "
@@ -831,16 +840,26 @@ def create_client(
     )
 
     # Include CLAUDE.md if enabled and present
+    _claude_md_content: str | None = None
     if should_use_claude_md():
-        claude_md_content = load_claude_md(project_dir)
-        if claude_md_content:
-            base_prompt = f"{base_prompt}\n\n# Project Instructions (from CLAUDE.md)\n\n{claude_md_content}"
+        _claude_md_content = load_claude_md(project_dir)
+        if _claude_md_content:
             print("   - CLAUDE.md: included in system prompt")
         else:
             print("   - CLAUDE.md: not found in project root")
     else:
         print("   - CLAUDE.md: disabled by project settings")
     print()
+
+    # Collapse into a single string for ClaudeAgentOptions.system_prompt.
+    # Static prefix (CLAUDE.md) comes first so the server-side cache prefix hash
+    # covers the largest stable portion of the prompt.
+    base_prompt = build_cached_system_str(
+        base_instructions=_base_instructions,
+        claude_md_content=_claude_md_content,
+        model=model,
+        project_dir=str(project_dir.resolve()),
+    )
 
     # Build options dict, conditionally including output_format
     options_kwargs: dict[str, Any] = {
