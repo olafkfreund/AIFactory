@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,45 @@ from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Gemini CLI sunset notice (Issue #22)
+# ---------------------------------------------------------------------------
+#
+# Google announced on 2026-05-19 that Gemini CLI is sunsetting on
+# 2026-06-18 for free / Pro / Ultra personal-tier users. The migration
+# path is the new Antigravity CLI. Enterprise tier remains supported with
+# their existing API key.
+#
+# AIFactory will add an Antigravity provider once the SDK stabilizes past
+# v0.1.0 and Google's ToS clarifies third-party integration (the SDK
+# launched 2026-05-19 and a third-party report suggests the current ToS
+# may forbid third-party use — Issue #13 closed pending clarification).
+#
+# Until then, this module emits a DeprecationWarning the first time a
+# Gemini provider is instantiated so users see the timeline before
+# June 18.
+
+_DEPRECATION_MESSAGE = (
+    "Gemini CLI is sunsetting on 2026-06-18 for free / Pro / Ultra "
+    "personal-tier users (enterprise tier unaffected). Google recommends "
+    "migrating to the Antigravity CLI. AIFactory will add an Antigravity "
+    "provider once the SDK stabilizes and ToS for third-party integration "
+    "clarifies (see issue #13). Until then, plan your migration via "
+    "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/"
+)
+_warned_sunset = False
+
+
+def _emit_sunset_warning() -> None:
+    """Emit the Gemini CLI sunset DeprecationWarning at most once per process."""
+    global _warned_sunset
+    if _warned_sunset:
+        return
+    _warned_sunset = True
+    warnings.warn(_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=3)
+    logger.warning("Gemini CLI sunset: %s", _DEPRECATION_MESSAGE)
+
 
 # ---------------------------------------------------------------------------
 # Module-level defaults (overridable per-instance)
@@ -102,6 +142,7 @@ class GeminiCLIProvider(BaseLLMProvider):
         working_dir: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
+        _emit_sunset_warning()  # Issue #22 — flag the 2026-06-18 sunset.
         self._model = model
         self._gemini_path = gemini_path
         self._timeout = timeout

@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from providers import BaseLLMProvider
+from providers.gemini import _emit_sunset_warning  # Issue #22
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class GeminiAgenticProvider(BaseLLMProvider):
         working_dir: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
+        _emit_sunset_warning()  # Issue #22 — flag the 2026-06-18 sunset.
         if model and not _MODEL_NAME_RE.match(model):
             raise ValueError(
                 f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"

@@ -24,7 +24,7 @@ MagesticAI is a browser-based platform for managing AI-powered coding tasks thro
 - **Git Worktree Isolation** - Safe, isolated builds per task
 - **AI-Powered QA** - Automated code review and validation
 - **Local LLM Agentic Mode** - Ollama models with native tool calling (Read, Write, Edit, Bash, Glob, Grep) — no API fallback needed
-- **Multi-Provider Support** - Claude, Codex, Gemini, and Ollama with automatic agentic/text-only routing per phase
+- **Multi-Provider Support** - Claude, Codex, Gemini, and Ollama with automatic agentic/text-only routing per phase. ⚠ **Gemini CLI sunset 2026-06-18** for free / Pro / Ultra personal-tier users (enterprise tier unaffected) — see the Quick Start section for the migration timeline.
 - **Graphiti Memory** - Cross-session learning and knowledge retention
 - **Multi-Project Support** - Manage multiple repositories
 - **Internationalization** - English, French, Portuguese (Brazil)
@@ -167,6 +167,14 @@ The skill's `paths` glob auto-activates it only inside the AIFactory tree, its n
 ### Sample Claude Code `settings.json`
 
 For users running Claude Code alongside AIFactory, [`guides/settings.example.json`](guides/settings.example.json) is a starter `~/.claude/settings.json` that exercises the post-Jan-2026 fields (`effortLevel`, `skillOverrides`, `skillListingBudgetFraction`, `maxSkillDescriptionChars`, modern `hooks` block matching AIFactory's bash-security pattern). Field-by-field semantics, scope precedence, and common pitfalls live in [`guides/SETTINGS.md`](guides/SETTINGS.md).
+
+### Gemini CLI sunset (2026-06-18) — plan ahead
+
+Google [announced on 2026-05-19](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) that **Gemini CLI is sunsetting on 2026-06-18 for free / Pro / Ultra personal-tier users**. Enterprise-tier users keep working with their existing API key.
+
+AIFactory's Gemini providers (`providers/gemini.py`, `providers/gemini_agentic.py`) emit a `DeprecationWarning` at instantiation pointing at the same announcement. The recommended migration path is the new Antigravity CLI, but **AIFactory does not yet ship an Antigravity provider** — the SDK launched 2026-05-19 (v0.1.0) and Google's ToS for third-party integration is currently unclear. Issue [#13](https://github.com/olafkfreund/AIFactory/issues/13) is parked until the SDK stabilizes and the ToS clarifies.
+
+Affected users have ~4 weeks from launch to switch to enterprise tier, fall back to another provider (Claude / Codex / Ollama), or wait for AIFactory's Antigravity provider once #13 reopens.
 
 ### Docker Deployment
 
