@@ -65,6 +65,12 @@ class ClaudeProvider(BaseLLMProvider):
         betas: Optional list of SDK beta header strings.
         effort_level: Optional effort level for adaptive thinking models.
         fast_mode: Enable fast mode for Opus 4.6.
+        thinking_level: Optional thinking level ("none"/"low"/"medium"/"high"). When
+                       provided, opts in to the SDK-native `thinking` parameter via
+                       phase_config.thinking_config_for() — Opus 4.7 becomes
+                       {"type": "adaptive"}, other models map to
+                       {"type": "enabled", "budget_tokens": N}. None preserves
+                       legacy max_thinking_tokens behaviour.
     """
 
     def __init__(
@@ -79,6 +85,7 @@ class ClaudeProvider(BaseLLMProvider):
         betas: list[str] | None = None,
         effort_level: str | None = None,
         fast_mode: bool = False,
+        thinking_level: str | None = None,
         working_dir: Path | None = None,  # Alias for project_dir (compat with other providers)
         **_kwargs: Any,  # Ignore unknown kwargs from factory
     ) -> None:
@@ -101,6 +108,7 @@ class ClaudeProvider(BaseLLMProvider):
             betas=betas,
             effort_level=effort_level,
             fast_mode=fast_mode,
+            thinking_level=thinking_level,
         )
         logger.debug(
             "ClaudeProvider created",
