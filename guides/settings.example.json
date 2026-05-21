@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "model": "claude-sonnet-4-6",
+  "effortLevel": "high",
+  "alwaysThinkingEnabled": true,
+  "autoMemoryEnabled": true,
+
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm test)",
+      "Bash(python apps/backend/runners/spec_runner.py *)",
+      "Bash(python apps/backend/run.py --list)",
+      "Bash(pytest *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Read(src/**)",
+      "Read(apps/**)",
+      "Read(tests/**)",
+      "Read(package.json)",
+      "Read(*.md)",
+      "Glob"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(gh pr *)",
+      "Bash(docker *)"
+    ],
+    "deny": [
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/credentials/**)",
+      "Read(~/.aws/credentials)",
+      "Read(~/.ssh/id_*)",
+      "WebFetch(*.internal.*)",
+      "Write(.git/**)"
+    ]
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(rm -rf *)",
+            "command": "bash",
+            "args": [
+              "-c",
+              "echo 'rm -rf is blocked at the user-settings level. If you really need to clean up, do it manually outside of Claude Code.' >&2 && exit 2"
+            ],
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "if": "Bash(sudo *)",
+            "command": "bash",
+            "args": [
+              "-c",
+              "echo 'sudo is blocked from Claude Code sessions. Run privileged commands manually.' >&2 && exit 2"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+
+  "skillOverrides": {
+    "deploy": "off",
+    "second-brain": "name-only"
+  },
+  "skillListingBudgetFraction": 0.015,
+  "maxSkillDescriptionChars": 1024,
+
+  "sandbox": {
+    "enabled": false,
+    "filesystem": {
+      "denyRead": [
+        "~/.aws/credentials",
+        "~/.ssh/id_rsa",
+        "~/.ssh/id_ed25519",
+        ".env",
+        ".env.local",
+        ".env.production"
+      ]
+    }
+  },
+
+  "theme": "dark-ansi",
+  "spinnerTipsEnabled": true
+}

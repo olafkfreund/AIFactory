@@ -126,6 +126,7 @@ npm run dev
 # UI available at http://localhost:3100
 ```
 
+
 ### Using AIFactory tools from Claude Code (auto-registered MCP server)
 
 This repo ships a project-scoped [`.mcp.json`](.mcp.json) that auto-registers AIFactory's MCP server (`update_subtask_status`, `get_build_progress`, `record_discovery`, `record_gotcha`, `get_session_context`, `update_qa_status`, `test_memory_integration`) whenever you open the repo with [Claude Code](https://claude.com/claude-code).
@@ -162,6 +163,10 @@ Windows users: the `.mcp.json` invokes `bash scripts/start-aifactory-mcp.sh`. Us
 The repo ships a project-scope Claude Code skill at [`.claude/skills/aifactory-spec/SKILL.md`](.claude/skills/aifactory-spec/SKILL.md) that demonstrates the post-Jan-2026 frontmatter (`allowed-tools`, `context: fork`, `paths`, `hooks`). Once you open the repo in [Claude Code](https://claude.com/claude-code), invoke `/aifactory-spec` to kick off spec creation through `apps/backend/runners/spec_runner.py`.
 
 The skill's `paths` glob auto-activates it only inside the AIFactory tree, its narrow `allowed-tools` limits Bash to the spec runner itself, and a skill-scoped `PreToolUse` hook refuses any `rm` command during the skill's lifetime. Follow-up skills (`/aifactory-build`, `/aifactory-qa`) will land in future issues with the same modern shape.
+
+### Sample Claude Code `settings.json`
+
+For users running Claude Code alongside AIFactory, [`guides/settings.example.json`](guides/settings.example.json) is a starter `~/.claude/settings.json` that exercises the post-Jan-2026 fields (`effortLevel`, `skillOverrides`, `skillListingBudgetFraction`, `maxSkillDescriptionChars`, modern `hooks` block matching AIFactory's bash-security pattern). Field-by-field semantics, scope precedence, and common pitfalls live in [`guides/SETTINGS.md`](guides/SETTINGS.md).
 
 ### Docker Deployment
 
