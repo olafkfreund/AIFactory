@@ -494,6 +494,7 @@ def create_client(
     betas: list[str] | None = None,
     effort_level: str | None = None,
     fast_mode: bool = False,
+    thinking_level: str | None = None,
 ) -> ClaudeSDKClient:
     """
     Create a Claude Agent SDK client with multi-layered security.
@@ -530,6 +531,12 @@ def create_client(
         fast_mode: Enable Fast Mode for faster Opus 4.6 output. When True, enables
                   the "user" setting source so the CLI reads fastMode from
                   ~/.claude/settings.json.
+        thinking_level: Optional thinking level ("none", "low", "medium", "high").
+                       When provided, drives the SDK-native `thinking` parameter
+                       via phase_config.thinking_config_for(). On Opus 4.7 this
+                       enables {"type": "adaptive"}; on other models it maps
+                       to {"type": "enabled", "budget_tokens": N}.
+                       Falls back to max_thinking_tokens path when None.
 
     Returns:
         Configured ClaudeSDKClient
@@ -850,7 +857,6 @@ def create_client(
         "cwd": str(project_dir.resolve()),
         "settings": str(settings_file.resolve()),
         "env": sdk_env,  # Pass ANTHROPIC_BASE_URL etc. to subprocess
-        "max_thinking_tokens": max_thinking_tokens,  # Extended thinking budget
         "permission_mode": "bypassPermissions",  # Bypass all permission prompts for headless execution
         "max_buffer_size": 10
         * 1024
@@ -876,8 +882,37 @@ def create_client(
     if agents:
         options_kwargs["agents"] = agents
 
-    # Add beta headers if specified (e.g., for 1M context window)
-    if betas:
-        options_kwargs["betas"] = betas
+    # Issue #7 — Choose between SDK-native `thinking` config and legacy
+    # `max_thinking_tokens` path. The helper returns None when there's no
+    # reason to use the new shape, in which case we preserve the legacy
+    # behaviour exactly so the 11+ call sites that don't pass `thinking_level`
+    # see no change.
+    from phase_config import thinking_config_for, interleaved_thinking_betas_for
+
+    _level = thinking_level or (
+        "high" if (max_thinking_tokens or 0) >= 16384
+        else "medium" if max_thinking_tokens
+        else "none"
+    )
+    _thinking_param = thinking_config_for(
+        model_id=model,
+        thinking_level=_level,
+        explicit_budget=max_thinking_tokens,
+    )
+    if _thinking_param is not None:
+        options_kwargs["thinking"] = _thinking_param  # type: ignore[typeddict-item]
+    else:
+        options_kwargs["max_thinking_tokens"] = max_thinking_tokens
+
+    # Add beta headers — merge caller-provided (e.g. context-1m) with the
+    # interleaved-thinking beta when the (model, agent_type) pair qualifies.
+    # TODO: drop the `type: ignore` once the SDK's SdkBeta Literal includes
+    # interleaved-thinking-2025-05-14 (currently only context-1m-2025-08-07).
+    _all_betas: list[str] = list(betas or []) + interleaved_thinking_betas_for(
+        model_id=model,
+        agent_type=agent_type,
+    )
+    if _all_betas:
+        options_kwargs["betas"] = _all_betas  # type: ignore[arg-type]
 
     return ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))

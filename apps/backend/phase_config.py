@@ -210,6 +210,78 @@ def is_adaptive_model(model_id: str) -> bool:
     return model_id in ADAPTIVE_THINKING_MODELS
 
 
+# Issue #7 — SDK-native adaptive + interleaved thinking
+# The constants and helpers below are the entry point for callers that want
+# to use the Claude Agent SDK's `thinking` parameter (post-Jan-2026 SDK).
+# is_adaptive_model() above stays in use for the legacy CLAUDE_CODE_EFFORT_LEVEL
+# path; the gate here is narrower: only Opus 4.7 routes to the SDK-native
+# {"type": "adaptive"} shape — Opus 4.6 stays on the effort-level path.
+_OPUS_47_ID: str = "claude-opus-4-7"
+
+INTERLEAVED_THINKING_AGENT_TYPES: frozenset[str] = frozenset({"planner", "coder"})
+INTERLEAVED_THINKING_BETA: str = "interleaved-thinking-2025-05-14"
+
+
+def thinking_config_for(
+    model_id: str,
+    thinking_level: str,
+    explicit_budget: int | None = None,
+) -> dict | None:
+    """
+    Build the SDK `thinking` config dict for ClaudeAgentOptions.thinking,
+    or None when the caller should fall back to the legacy
+    `max_thinking_tokens` path.
+
+    Precedence:
+      1. explicit_budget > 0  → {"type": "enabled", "budget_tokens": N}
+         honoured even on Opus 4.7 so operator-tuned budgets are preserved.
+      2. Opus 4.7 with thinking_level != "none" → {"type": "adaptive"}
+         (Opus 4.7 deprecated manual budget in favour of model-controlled.)
+      3. anything else → None (caller uses the legacy max_thinking_tokens).
+
+    Args:
+        model_id: Full model ID (e.g. 'claude-opus-4-7').
+        thinking_level: Level string ("none", "low", "medium", "high").
+        explicit_budget: Optional caller-specified token budget. When > 0,
+            overrides adaptive even on Opus 4.7.
+
+    Returns:
+        Thinking config dict or None.
+    """
+    if explicit_budget is not None and explicit_budget > 0:
+        return {"type": "enabled", "budget_tokens": explicit_budget}
+    if model_id == _OPUS_47_ID and thinking_level != "none":
+        return {"type": "adaptive"}
+    return None
+
+
+def interleaved_thinking_betas_for(
+    model_id: str,
+    agent_type: str,
+) -> list[str]:
+    """
+    Return [INTERLEAVED_THINKING_BETA] when the (model, agent_type) pair
+    benefits from interleaved-thinking-2025-05-14, else an empty list.
+
+    Today only Opus 4.7 supports this beta, and only planner + coder agents
+    actually use the mid-tool-call reasoning. QA, fixer, and spec agents
+    receive an empty list.
+
+    Note: returned list is always a fresh allocation — safe for the caller
+    to mutate (e.g. extend with context-window betas).
+
+    Args:
+        model_id: Full model ID.
+        agent_type: Agent type ("planner", "coder", "qa_reviewer", …).
+
+    Returns:
+        List of beta header strings — either [INTERLEAVED_THINKING_BETA] or [].
+    """
+    if model_id == _OPUS_47_ID and agent_type in INTERLEAVED_THINKING_AGENT_TYPES:
+        return [INTERLEAVED_THINKING_BETA]
+    return []
+
+
 def get_thinking_kwargs_for_model(model_id: str, thinking_level: str) -> dict:
     """
     Get thinking-related kwargs for create_client() based on model type.
