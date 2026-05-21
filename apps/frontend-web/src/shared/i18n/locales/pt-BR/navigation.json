@@ -28,7 +28,7 @@
     "help": "Ajuda e Feedback"
   },
   "messages": {
-    "initializeToCreateTasks": "Inicialize o MagesticAI para criar tarefas"
+    "initializeToCreateTasks": "Inicialize o AIFactory para criar tarefas"
   },
   "claudeCode": {
     "checking": "Verificando Claude Code...",

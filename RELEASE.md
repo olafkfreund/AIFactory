@@ -1,10 +1,10 @@
 # Release Process
 
-This document describes how releases are created for MagesticAI.
+This document describes how releases are created for AIFactory.
 
 ## Overview
 
-MagesticAI uses a simplified release process with version bumping and changelog management.
+AIFactory uses a simplified release process with version bumping and changelog management.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -49,7 +49,7 @@ On your development branch:
 
 ```bash
 # Navigate to project root
-cd MagesticAI
+cd AIFactory
 
 # Bump version (choose one)
 node scripts/bump-version.js patch   # 1.0.0 -> 1.0.1 (bug fixes)
@@ -122,7 +122,7 @@ gh release create v1.1.0 \
 ```
 
 Or create the release manually via GitHub UI:
-1. Go to [Releases](https://github.com/dataseeek/MagesticAI/releases)
+1. Go to [Releases](https://github.com/dataseeek/AIFactory/releases)
 2. Click "Create a new release"
 3. Select the tag
 4. Add release notes from CHANGELOG.md
@@ -239,6 +239,6 @@ gh release edit v1.1.0 --notes "Updated release notes"
 
 ## Resources
 
-- [GitHub Releases](https://github.com/dataseeek/MagesticAI/releases)
+- [GitHub Releases](https://github.com/dataseeek/AIFactory/releases)
 - [Semantic Versioning](https://semver.org/)
 - [GitHub CLI Documentation](https://cli.github.com/manual/)

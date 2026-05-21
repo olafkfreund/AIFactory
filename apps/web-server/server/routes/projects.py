@@ -108,7 +108,7 @@ class Project(ProjectBase):
     name: str = Field(..., description="Display name")
     createdAt: str = Field(..., alias="created_at", description="ISO timestamp when project was added")
     updatedAt: str = Field(..., alias="updated_at", description="ISO timestamp when project was last updated")
-    autoBuildPath: str | None = Field(None, alias="auto_build_path", description="Path to .magestic-ai if initialized")
+    autoBuildPath: str | None = Field(None, alias="auto_build_path", description="Path to .aifactory if initialized")
     settings: ProjectSettings = Field(default_factory=ProjectSettings)
 
 
@@ -145,8 +145,8 @@ def analyze_project(path: str) -> dict:
     # Check if it's a git repository
     is_git_repo = (project_path / ".git").exists()
 
-    # Check for .magestic-ai directory
-    magestic_ai_dir = project_path / ".magestic-ai"
+    # Check for .aifactory directory
+    magestic_ai_dir = project_path / ".aifactory"
     has_magestic_ai = magestic_ai_dir.exists()
 
     # Count specs/tasks
@@ -167,7 +167,7 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
     analysis = analyze_project(project_data["path"])
 
     # Convert has_magestic_ai to autoBuildPath (string path or empty string)
-    auto_build_path = ".magestic-ai" if analysis["has_magestic_ai"] else ""
+    auto_build_path = ".aifactory" if analysis["has_magestic_ai"] else ""
 
     # Build settings: start with defaults, then overlay saved settings
     default_settings = {
@@ -250,7 +250,7 @@ async def scan_for_projects(request: ScanProjectsRequest):
     - .git directory (version control)
     - package.json (Node.js projects)
     - requirements.txt or pyproject.toml (Python projects)
-    - .magestic-ai directory (Magestic AI initialized projects)
+    - .aifactory directory (Magestic AI initialized projects)
     - CLAUDE.md file (Claude project documentation)
 
     Args:
@@ -306,7 +306,7 @@ async def scan_for_projects(request: ScanProjectsRequest):
                         (entry / 'requirements.txt').exists() or
                         (entry / 'pyproject.toml').exists()
                     )
-                    has_magestic_ai = (entry / '.magestic-ai').exists()
+                    has_magestic_ai = (entry / '.aifactory').exists()
                     has_claude_md = (entry / 'CLAUDE.md').exists()
 
                     # If it looks like a project, add it
@@ -464,7 +464,7 @@ async def remove_project(project_id: str):
 
 @router.post("/{project_id}/initialize")
 async def initialize_project(project_id: str):
-    """Initialize Magestic AI in a project (create .magestic-ai directory).
+    """Initialize Magestic AI in a project (create .aifactory directory).
 
     Returns InitializationResult format expected by frontend.
     """
@@ -479,13 +479,13 @@ async def initialize_project(project_id: str):
     project_path = Path(project_data["path"])
 
     try:
-        # Create .magestic-ai directory structure
-        magestic_ai_dir = project_path / ".magestic-ai"
+        # Create .aifactory directory structure
+        magestic_ai_dir = project_path / ".aifactory"
         (magestic_ai_dir / "specs").mkdir(parents=True, exist_ok=True)
 
         # Update timestamp and autoBuildPath
         project_data["updated_at"] = datetime.now().isoformat()
-        project_data["autoBuildPath"] = ".magestic-ai"
+        project_data["autoBuildPath"] = ".aifactory"
         projects[project_id] = project_data
         save_projects(projects)
 
@@ -507,7 +507,7 @@ async def check_project_version(project_id: str):
 
     project_data = projects[project_id]
     project_path = Path(project_data["path"])
-    magestic_ai_dir = project_path / ".magestic-ai"
+    magestic_ai_dir = project_path / ".aifactory"
 
     return {
         "success": True,
@@ -569,7 +569,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
     try:
         project_data = projects[project_id]
         project_path = Path(project_data["path"])
-        env_path = project_path / ".magestic-ai" / ".env"
+        env_path = project_path / ".aifactory" / ".env"
 
         # Read existing .env or start fresh
         existing = {}
@@ -585,7 +585,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
         settings_dict = settings.model_dump(exclude_none=True)
 
         env_mapping = {
-            "model": "MAGESTIC_AI_MODEL",
+            "model": "AI_FACTORY_MODEL",
             "memoryBackend": "MEMORY_BACKEND",
             "graphitiMcpUrl": "GRAPHITI_MCP_URL",
             "mainBranch": "MAIN_BRANCH",
@@ -607,7 +607,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
             if settings_key in settings_dict:
                 existing[env_key] = "true" if settings_dict[settings_key] else "false"
 
-        # Ensure .magestic-ai directory exists
+        # Ensure .aifactory directory exists
         env_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write back to .env file
@@ -711,7 +711,7 @@ async def list_project_worktrees(project_id: str):
         if current:
             raw_worktrees.append(current)
 
-        # Filter to only magestic-ai spec worktrees and enrich with stats
+        # Filter to only aifactory spec worktrees and enrich with stats
         enriched_worktrees = []
         for wt in raw_worktrees:
             wt_path = wt.get("path", "")
@@ -721,9 +721,9 @@ async def list_project_worktrees(project_id: str):
             if wt.get("bare") or wt_path == str(project_path):
                 continue
 
-            # Extract spec name from path (e.g., .magestic-ai/worktrees/tasks/001-feature)
-            # Pattern: magestic-ai worktrees are in .magestic-ai/worktrees/tasks/{spec-name}
-            spec_match = re.search(r'/\.magestic-ai/worktrees/tasks/([^/]+)$', wt_path)
+            # Extract spec name from path (e.g., .aifactory/worktrees/tasks/001-feature)
+            # Pattern: aifactory worktrees are in .aifactory/worktrees/tasks/{spec-name}
+            spec_match = re.search(r'/\.aifactory/worktrees/tasks/([^/]+)$', wt_path)
             if not spec_match:
                 continue
 
@@ -863,8 +863,8 @@ async def create_project_task(project_id: str, task_data: TaskCreateRequest):
     # Use the create_task logic
     project_path = Path(projects[project_id]["path"])
 
-    # Ensure .magestic-ai/specs exists
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    # Ensure .aifactory/specs exists
+    specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate spec ID and create directory
@@ -982,7 +982,7 @@ async def archive_tasks(project_id: str, request: ArchiveTasksRequest):
         )
 
     project_path = Path(projects[project_id]["path"])
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     archived_count = 0
     errors = []
@@ -1045,7 +1045,7 @@ async def unarchive_tasks(project_id: str, request: UnarchiveTasksRequest):
         )
 
     project_path = Path(projects[project_id]["path"])
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     unarchived_count = 0
     errors = []

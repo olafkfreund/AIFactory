@@ -2,7 +2,7 @@
  * Authentication utilities for web API
  */
 
-const TOKEN_KEY = 'magestic-ai-token';
+const TOKEN_KEY = 'aifactory-token';
 
 export function getAuthToken(): string | null {
   let token = localStorage.getItem(TOKEN_KEY);

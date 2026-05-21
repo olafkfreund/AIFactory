@@ -1,10 +1,10 @@
-# Magestic AI Web Server
+# AIFactory Web Server
 
-FastAPI-based backend server that provides REST API and WebSocket endpoints for the Magestic AI web interface.
+FastAPI-based backend server that provides REST API and WebSocket endpoints for the AIFactory web interface.
 
 ## Overview
 
-The web server enables running Magestic AI without the Electron desktop app, allowing:
+The web server enables running AIFactory without the Electron desktop app, allowing:
 - Remote access from any browser
 - Server-based deployments
 - Headless operation
@@ -31,7 +31,7 @@ python -m server.main
 ```
 
 The server will:
-1. Generate an API token on first run (saved to `~/.magestic-ai/.token`)
+1. Generate an API token on first run (saved to `~/.aifactory/.token`)
 2. Start on `http://0.0.0.0:3101`
 3. Print the token to console
 
@@ -83,7 +83,7 @@ APP_SSL_KEYFILE=/path/to/key.pem \
 python -m server.main
 ```
 
-When SSL is enabled without custom certificates, self-signed certificates are auto-generated at `~/.magestic-ai/ssl/`. Your browser will show a security warning for self-signed certs.
+When SSL is enabled without custom certificates, self-signed certificates are auto-generated at `~/.aifactory/ssl/`. Your browser will show a security warning for self-signed certs.
 
 ## API Documentation
 
@@ -221,7 +221,7 @@ The server listens on all interfaces (`0.0.0.0`) by default. For remote access:
 
 ## Data Storage
 
-Project data is stored in `~/.magestic-ai/`:
+Project data is stored in `~/.aifactory/`:
 - `projects.json` - Registered projects
 - `settings.json` - App settings
 - `tab-state.json` - UI tab state

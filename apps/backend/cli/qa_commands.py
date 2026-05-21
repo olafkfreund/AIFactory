@@ -124,4 +124,4 @@ def handle_qa_command(
             sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nQA validation paused.")
-        print(f"Resume with: python magestic-ai/run.py --spec {spec_dir.name} --qa")
+        print(f"Resume with: python aifactory/run.py --spec {spec_dir.name} --qa")

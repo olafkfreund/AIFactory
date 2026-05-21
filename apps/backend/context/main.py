@@ -8,14 +8,14 @@ This is the "RAG-like" component that finds what files matter for THIS task.
 
 Usage:
     # Find context for a task across specific services
-    python magestic-ai/context.py \
+    python aifactory/context.py \
         --services backend,scraper \
         --keywords "retry,error,proxy" \
         --task "Add retry logic when proxies fail" \
-        --output magestic-ai/specs/001-retry/context.json
+        --output aifactory/specs/001-retry/context.json
 
     # Use project index to auto-suggest services
-    python magestic-ai/context.py \
+    python aifactory/context.py \
         --task "Add retry logic when proxies fail" \
         --output context.json
 

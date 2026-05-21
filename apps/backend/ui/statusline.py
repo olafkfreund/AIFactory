@@ -24,7 +24,7 @@ ccstatusline Configuration:
         "widgets": [
             {
                 "type": "custom_command",
-                "command": "python /path/to/magestic-ai/statusline.py",
+                "command": "python /path/to/aifactory/statusline.py",
                 "refresh": 5000
             }
         ]
@@ -36,7 +36,7 @@ import json
 import sys
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from ui import (
@@ -50,20 +50,20 @@ from ui import (
 
 
 def find_project_root() -> Path:
-    """Find the project root by looking for .magestic-ai or .magestic-ai-status."""
+    """Find the project root by looking for .aifactory or .aifactory-status."""
     cwd = Path.cwd()
 
-    # Check current directory - prioritize .magestic-ai (installed instance)
-    if (cwd / ".magestic-ai").exists():
+    # Check current directory - prioritize .aifactory (installed instance)
+    if (cwd / ".aifactory").exists():
         return cwd
-    if (cwd / ".magestic-ai-status").exists():
+    if (cwd / ".aifactory-status").exists():
         return cwd
 
     # Walk up to find project root
     for parent in cwd.parents:
-        if (parent / ".magestic-ai").exists():
+        if (parent / ".aifactory").exists():
             return parent
-        if (parent / ".magestic-ai-status").exists():
+        if (parent / ".aifactory-status").exists():
             return parent
 
     return cwd

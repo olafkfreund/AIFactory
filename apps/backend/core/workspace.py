@@ -4,7 +4,7 @@ Workspace Management - Per-Spec Architecture
 =============================================
 
 Handles workspace isolation through Git worktrees, where each spec
-gets its own isolated worktree in .magestic-ai/worktrees/tasks/{spec-name}/.
+gets its own isolated worktree in .aifactory/worktrees/tasks/{spec-name}/.
 
 This module has been refactored for better maintainability:
 - Models and enums: workspace/models.py
@@ -148,7 +148,7 @@ def merge_existing_build(
     """
     Merge an existing build into the project using intent-aware merge.
 
-    Called when user runs: python magestic-ai/run.py --spec X --merge
+    Called when user runs: python aifactory/run.py --spec X --merge
 
     This uses the MergeOrchestrator to:
     1. Analyze semantic changes from the task
@@ -174,7 +174,7 @@ def merge_existing_build(
         print_status(f"No existing build found for '{spec_name}'.", "warning")
         print()
         print("To start a new build:")
-        print(highlight(f"  python magestic-ai/run.py --spec {spec_name}"))
+        print(highlight(f"  python aifactory/run.py --spec {spec_name}"))
         return False
 
     # Detect current branch - this is where user wants changes merged
@@ -192,7 +192,7 @@ def merge_existing_build(
         else None
     )
 
-    spec_branch = f"magestic-ai/{spec_name}"
+    spec_branch = f"aifactory/{spec_name}"
 
     # Don't merge a branch into itself
     if current_branch == spec_branch:
@@ -203,7 +203,7 @@ def merge_existing_build(
         print()
         print("Example:")
         print(highlight("  git checkout main  # or your feature branch"))
-        print(highlight(f"  python magestic-ai/run.py --spec {spec_name} --merge"))
+        print(highlight(f"  python aifactory/run.py --spec {spec_name} --merge"))
         return False
 
     if no_commit:
@@ -253,7 +253,7 @@ def merge_existing_build(
                     )
 
                     # Don't auto-delete worktree - let user test and manually cleanup
-                    # User can delete with: python magestic-ai/run.py --spec <name> --discard
+                    # User can delete with: python aifactory/run.py --spec <name> --discard
                     # Or via UI "Delete Worktree" button
 
                     return True
@@ -312,12 +312,12 @@ def merge_existing_build(
             print(highlight("  git commit -m 'your commit message'"))
             print()
             print("When satisfied, delete the worktree:")
-            print(muted(f"  python magestic-ai/run.py --spec {spec_name} --discard"))
+            print(muted(f"  python aifactory/run.py --spec {spec_name} --discard"))
         else:
             print_status("Your feature has been added to your project.", "success")
             print()
             print("When satisfied, delete the worktree:")
-            print(muted(f"  python magestic-ai/run.py --spec {spec_name} --discard"))
+            print(muted(f"  python aifactory/run.py --spec {spec_name} --discard"))
         return True
     else:
         print()
@@ -545,7 +545,7 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
     """
     import re
 
-    spec_branch = f"magestic-ai/{spec_name}"
+    spec_branch = f"aifactory/{spec_name}"
     result = {
         "has_conflicts": False,
         "conflicting_files": [],
@@ -628,7 +628,7 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
                     )
                     if match:
                         file_path = match.group(1).strip()
-                        # Skip .magestic-ai files - they should never be merged
+                        # Skip .aifactory files - they should never be merged
                         if (
                             file_path
                             and file_path not in result["conflicting_files"]
@@ -663,7 +663,7 @@ def _check_git_conflicts(project_dir: Path, spec_name: str) -> dict:
                 )
 
                 # Files modified in both = potential conflicts
-                # Filter out .magestic-ai files - they should never be merged
+                # Filter out .aifactory files - they should never be merged
                 conflicting = main_files & spec_files
                 result["conflicting_files"] = [
                     f for f in conflicting if not _is_magestic_ai_file(f)
@@ -707,7 +707,7 @@ def _resolve_git_conflicts_with_ai(
 
     conflicting_files = git_conflicts.get("conflicting_files", [])
     base_branch = git_conflicts.get("base_branch", "main")
-    spec_branch = git_conflicts.get("spec_branch", f"magestic-ai/{spec_name}")
+    spec_branch = git_conflicts.get("spec_branch", f"aifactory/{spec_name}")
 
     debug_detailed(
         MODULE,

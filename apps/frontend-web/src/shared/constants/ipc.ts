@@ -261,13 +261,13 @@ export const IPC_CHANNELS = {
   OLLAMA_PULL_MODEL: 'ollama:pullModel',
   OLLAMA_PULL_PROGRESS: 'ollama:pullProgress',
 
-  // Magestic AI source updates
+  // AI Factory source updates
   AUTOBUILD_SOURCE_CHECK: 'autobuild:source:check',
   AUTOBUILD_SOURCE_DOWNLOAD: 'autobuild:source:download',
   AUTOBUILD_SOURCE_VERSION: 'autobuild:source:version',
   AUTOBUILD_SOURCE_PROGRESS: 'autobuild:source:progress',
 
-  // Magestic AI source environment configuration
+  // AI Factory source environment configuration
   AUTOBUILD_SOURCE_ENV_GET: 'autobuild:source:env:get',
   AUTOBUILD_SOURCE_ENV_UPDATE: 'autobuild:source:env:update',
   AUTOBUILD_SOURCE_ENV_CHECK_TOKEN: 'autobuild:source:env:checkToken',

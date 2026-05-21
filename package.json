@@ -1,7 +1,7 @@
 {
-  "name": "magestic-ai",
+  "name": "aifactory",
   "version": "2.0.0",
-  "description": "MagesticAI - Web-based AI task management and agent orchestration platform powered by Claude AI",
+  "description": "AIFactory - Web-based AI task management and agent orchestration platform powered by Claude AI",
   "license": "AGPL-3.0",
   "author": "DataSeek Team",
   "workspaces": [
@@ -24,15 +24,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dataseeek/MagesticAI.git"
+    "url": "https://github.com/dataseeek/AIFactory.git"
   },
-  "homepage": "https://github.com/dataseeek/MagesticAI",
+  "homepage": "https://github.com/dataseeek/AIFactory",
   "bugs": {
-    "url": "https://github.com/dataseeek/MagesticAI/issues"
+    "url": "https://github.com/dataseeek/AIFactory/issues"
   },
   "keywords": [
     "ai",
-    "magestic-ai",
+    "aifactory",
     "task-management",
     "agent-orchestration",
     "web-ui",

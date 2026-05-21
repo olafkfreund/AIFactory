@@ -1,6 +1,6 @@
 # Task Logger Package
 
-A modular, well-organized logging system for Magestic AI tasks with persistent storage and real-time UI updates.
+A modular, well-organized logging system for AIFactory tasks with persistent storage and real-time UI updates.
 
 ## Package Structure
 

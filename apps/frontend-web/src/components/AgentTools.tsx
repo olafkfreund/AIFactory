@@ -159,7 +159,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     description: 'Creates implementation plan with subtasks',
     category: 'build',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
-    mcp_servers: ['context7', 'graphiti-memory', 'magestic-ai'],
+    mcp_servers: ['context7', 'graphiti-memory', 'aifactory'],
     settingsSource: { type: 'phase', phase: 'planning' },
   },
   coder: {
@@ -167,7 +167,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     description: 'Implements individual subtasks',
     category: 'build',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
-    mcp_servers: ['context7', 'graphiti-memory', 'magestic-ai'],
+    mcp_servers: ['context7', 'graphiti-memory', 'aifactory'],
     settingsSource: { type: 'phase', phase: 'coding' },
   },
 
@@ -177,7 +177,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     description: 'Validates acceptance criteria. Can use Playwright for web frontend testing.',
     category: 'qa',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch', 'WebSearch'],
-    mcp_servers: ['context7', 'graphiti-memory', 'magestic-ai'],
+    mcp_servers: ['context7', 'graphiti-memory', 'aifactory'],
     mcp_optional: ['playwright'],
     settingsSource: { type: 'phase', phase: 'qa' },
   },
@@ -186,7 +186,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     description: 'Fixes QA-reported issues. Can use Playwright for web frontend testing.',
     category: 'qa',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
-    mcp_servers: ['context7', 'graphiti-memory', 'magestic-ai'],
+    mcp_servers: ['context7', 'graphiti-memory', 'aifactory'],
     mcp_optional: ['playwright'],
     settingsSource: { type: 'phase', phase: 'qa_fixer' },
   },
@@ -265,17 +265,17 @@ const MCP_SERVERS: Record<string, { name: string; description: string; icon: Rea
       'mcp__graphiti-memory__get_entity_edge',
     ],
   },
-  'magestic-ai': {
-    name: 'Magestic AI Tools',
+  'aifactory': {
+    name: 'AI Factory Tools',
     description: 'Build progress tracking, session context, discoveries & gotchas recording',
     icon: ListChecks,
     tools: [
-      'mcp__magestic-ai__update_subtask_status',
-      'mcp__magestic-ai__get_build_progress',
-      'mcp__magestic-ai__record_discovery',
-      'mcp__magestic-ai__record_gotcha',
-      'mcp__magestic-ai__get_session_context',
-      'mcp__magestic-ai__update_qa_status',
+      'mcp__aifactory__update_subtask_status',
+      'mcp__aifactory__get_build_progress',
+      'mcp__aifactory__record_discovery',
+      'mcp__aifactory__record_gotcha',
+      'mcp__aifactory__get_session_context',
+      'mcp__aifactory__update_qa_status',
     ],
   },
   playwright: {
@@ -305,7 +305,7 @@ const ALL_MCP_SERVERS = [
   'context7',
   'graphiti-memory',
   'playwright',
-  'magestic-ai'
+  'aifactory'
 ] as const;
 
 // Category metadata - neutral styling per design.json
@@ -385,7 +385,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
   const customServerIds = customServers.map(s => s.id);
   const allAvailableMcpIds = [...ALL_MCP_SERVERS, ...customServerIds];
   const availableMcps = allAvailableMcpIds.filter(
-    mcp => !effectiveMcps.includes(mcp) && !removedMcps.includes(mcp) && mcp !== 'magestic-ai'
+    mcp => !effectiveMcps.includes(mcp) && !removedMcps.includes(mcp) && mcp !== 'aifactory'
   );
 
   return (
@@ -450,7 +450,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
                   const serverInfo = allMcpServers[server];
                   const ServerIcon = serverInfo?.icon || Server;
                   const isAdded = isCustomAdd(server);
-                  const canRemove = server !== 'magestic-ai';
+                  const canRemove = server !== 'aifactory';
 
                   return (
                     <div key={server} className="flex items-center justify-between group">
@@ -940,7 +940,7 @@ export function AgentTools() {
     mcpServers.context7Enabled !== false,
     mcpServers.graphitiEnabled && envConfig?.graphitiProviderConfig,
     mcpServers.playwrightEnabled,
-    true, // magestic-ai always enabled
+    true, // aifactory always enabled
   ].filter(Boolean).length;
 
   // Resolve model and thinking for an agent based on its settings source
@@ -1120,7 +1120,7 @@ export function AgentTools() {
                   </div>
                 </div>
 
-                {/* Magestic AI (always enabled) */}
+                {/* AI Factory (always enabled) */}
                 <div className="flex items-center justify-between py-2 border-t border-border opacity-60">
                   <div className="flex items-center gap-3">
                     <ListChecks className="h-4 w-4 text-muted-foreground" />

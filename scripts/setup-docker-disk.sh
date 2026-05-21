@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# MagesticAI — Create a size-limited loopback disk for container data
+# AIFactory — Create a size-limited loopback disk for container data
 # =============================================================================
 # Creates a 2 GB ext4 disk image and mounts it under ~/docker-disks/.
 # The container bind-mounts this directory, enforcing a hard disk quota.
@@ -14,10 +14,10 @@
 #   sudo bash scripts/setup-docker-disk.sh <name>            # Create & mount
 #   sudo bash scripts/setup-docker-disk.sh <name> teardown   # Unmount & remove
 #
-# The <name> matches the INSTANCE_NAME in docker-compose (default: magesticai).
+# The <name> matches the INSTANCE_NAME in docker-compose (default: aifactory).
 #
 # Examples:
-#   sudo bash scripts/setup-docker-disk.sh magesticai        # Default instance
+#   sudo bash scripts/setup-docker-disk.sh aifactory        # Default instance
 #   sudo bash scripts/setup-docker-disk.sh client-acme        # Second instance
 #   sudo bash scripts/setup-docker-disk.sh client-acme teardown
 #
@@ -36,7 +36,7 @@ if [[ -z "$NAME" ]]; then
     echo "Usage: $0 <instance-name> [teardown]" >&2
     echo "" >&2
     echo "Examples:" >&2
-    echo "  $0 magesticai           # Create disk for default instance" >&2
+    echo "  $0 aifactory           # Create disk for default instance" >&2
     echo "  $0 client-acme          # Create disk for a second instance" >&2
     echo "  $0 client-acme teardown # Remove disk for that instance" >&2
     exit 1
@@ -123,7 +123,7 @@ if ! grep -q "$DISK_IMG" /etc/fstab 2>/dev/null; then
 fi
 
 # --------------------------------------------------------------------------
-# Set ownership to match container user (UID 1001 = magesticai)
+# Set ownership to match container user (UID 1001 = aifactory)
 # --------------------------------------------------------------------------
 chown 1001:1001 "$MOUNT_DIR"
 

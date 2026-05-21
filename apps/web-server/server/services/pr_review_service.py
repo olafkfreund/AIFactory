@@ -254,11 +254,11 @@ class PRReviewService:
         # Load backend .env for tokens and API keys
         _load_env_file(backend_path / ".env", env)
 
-        # Load project-level .magestic-ai/.env for project settings
-        _load_env_file(project_path / ".magestic-ai" / ".env", env)
+        # Load project-level .aifactory/.env for project settings
+        _load_env_file(project_path / ".aifactory" / ".env", env)
 
         # Initialize execution log writer
-        logs_dir = project_path / ".magestic-ai" / "github" / "pr"
+        logs_dir = project_path / ".aifactory" / "github" / "pr"
         logs_file = logs_dir / f"review_{pr_number}_logs.json"
         log_writer = PRReviewLogWriter(logs_file, pr_number)
         self._log_writers[key] = log_writer
@@ -494,11 +494,11 @@ class PRReviewService:
         """
         logger.info(f"[{project_id}:PR#{pr_number}] Review complete")
 
-        # Try to read stored review result JSON from the project's .magestic-ai directory
-        # Runner saves to: .magestic-ai/github/pr/review_{pr_number}.json
+        # Try to read stored review result JSON from the project's .aifactory directory
+        # Runner saves to: .aifactory/github/pr/review_{pr_number}.json
         result_data = None
         review_file = (
-            project_path / ".magestic-ai" / "github" / "pr" / f"review_{pr_number}.json"
+            project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}.json"
         )
         if review_file.exists():
             try:

@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 # =============================================================================
-# MOCK SETUP - Must happen before ANY imports from magestic-ai
+# MOCK SETUP - Must happen before ANY imports from aifactory
 # =============================================================================
 
 # Store original modules for cleanup
@@ -33,7 +33,7 @@ _mocked_module_names: list[str] = [
 def setup_qa_report_mocks() -> None:
     """Set up all required mocks for qa/report.py testing.
 
-    This function must be called before importing any magestic-ai modules.
+    This function must be called before importing any aifactory modules.
     """
     global _original_modules
 
@@ -100,7 +100,7 @@ def setup_qa_report_mocks() -> None:
     mock_client.create_client = MagicMock()
     sys.modules['client'] = mock_client
 
-    # Add magestic-ai path for imports
+    # Add aifactory path for imports
     sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
 

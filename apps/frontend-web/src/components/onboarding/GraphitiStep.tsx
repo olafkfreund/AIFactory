@@ -112,7 +112,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
   const { settings, updateSettings } = useSettingsStore();
   const [config, setConfig] = useState<GraphitiConfig>({
     enabled: false,
-    database: 'magestic_ai_memory',
+    database: 'aifactory_memory',
     dbPath: '',
     llmProvider: 'openai',
     embeddingProvider: 'openai',
@@ -243,7 +243,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
 
       const result = await window.API.testGraphitiConnection({
         dbPath: config.dbPath || undefined,
-        database: config.database || 'magestic_ai_memory',
+        database: config.database || 'aifactory_memory',
         llmProvider: config.llmProvider,
         apiKey: apiKey.trim()
       });
@@ -769,7 +769,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                         Graphiti configured successfully
                       </h3>
                       <p className="mt-1 text-sm text-success/80">
-                        Memory features are enabled. Magestic AI will maintain context
+                        Memory features are enabled. AI Factory will maintain context
                         across sessions for improved code understanding.
                       </p>
                     </div>
@@ -835,7 +835,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                           What is Graphiti?
                         </p>
                         <p className="text-sm text-muted-foreground">
-                          Graphiti is an intelligent memory layer that helps Magestic AI remember
+                          Graphiti is an intelligent memory layer that helps AI Factory remember
                           context across sessions. It uses a knowledge graph to store discoveries,
                           patterns, and insights about your codebase.
                         </p>
@@ -914,12 +914,12 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                           setConfig(prev => ({ ...prev, database: e.target.value }));
                           setValidationStatus(prev => ({ ...prev, database: null }));
                         }}
-                        placeholder="magestic_ai_memory"
+                        placeholder="aifactory_memory"
                         className="font-mono text-sm"
                         disabled={isSaving || isValidating}
                       />
                       <p className="text-xs text-muted-foreground">
-                        Stored in ~/.magestic-ai/graphs/
+                        Stored in ~/.aifactory/graphs/
                       </p>
                     </div>
 

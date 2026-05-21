@@ -1,5 +1,5 @@
 """
-Logging configuration for MagesticAI Web Server.
+Logging configuration for AIFactory Web Server.
 
 Sets up file-based logging with rotation for persistent error tracking and debugging.
 """

@@ -41,7 +41,7 @@ class ProjectAnalyzer:
     5. Infrastructure files (Dockerfile, k8s manifests)
     """
 
-    PROFILE_FILENAME = ".magestic-ai-security.json"
+    PROFILE_FILENAME = ".aifactory-security.json"
 
     def __init__(self, project_dir: Path, spec_dir: Path | None = None):
         """
@@ -59,18 +59,18 @@ class ProjectAnalyzer:
     def get_profile_path(self) -> Path:
         """Get the path where profile should be stored.
 
-        Always writes into .magestic-ai/ (gitignored) to avoid merge conflicts
+        Always writes into .aifactory/ (gitignored) to avoid merge conflicts
         when worktree branches and the main branch both generate the file.
         """
         if self.spec_dir:
             return self.spec_dir / self.PROFILE_FILENAME
-        return self.project_dir / ".magestic-ai" / self.PROFILE_FILENAME
+        return self.project_dir / ".aifactory" / self.PROFILE_FILENAME
 
     def load_profile(self) -> SecurityProfile | None:
         """Load existing profile if it exists.
 
         Also checks the legacy location (project root) and migrates it
-        to the new .magestic-ai/ directory if found.
+        to the new .aifactory/ directory if found.
         """
         profile_path = self.get_profile_path()
 

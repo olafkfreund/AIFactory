@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '');
 
   // Resolve SSL certs from the shared data directory
-  const sslDir = path.join(os.homedir(), '.magestic-ai', 'ssl');
+  const sslDir = path.join(os.homedir(), '.aifactory', 'ssl');
   const certFile = path.join(sslDir, 'cert.pem');
   const keyFile = path.join(sslDir, 'key.pem');
   const hasSSL = fs.existsSync(certFile) && fs.existsSync(keyFile);

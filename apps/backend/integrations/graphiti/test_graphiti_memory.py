@@ -21,7 +21,7 @@ Usage:
     export OPENAI_API_KEY=sk-...
 
     # Run the test:
-    cd magestic-ai
+    cd aifactory
     python integrations/graphiti/test_graphiti_memory.py
 
     # Or run specific tests:
@@ -39,7 +39,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 magestic_ai_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(magestic_ai_dir))
 
@@ -623,7 +623,7 @@ async def main():
     )
     parser.add_argument(
         "--db-path",
-        default=os.path.expanduser("~/.magestic-ai/memories"),
+        default=os.path.expanduser("~/.aifactory/memories"),
         help="Database path",
     )
     parser.add_argument(

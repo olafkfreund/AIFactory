@@ -33,7 +33,7 @@ Usage:
         state = run_review_checkpoint(spec_dir)
 
     # CLI use (for manual review)
-    python magestic-ai/review.py --spec-dir magestic-ai/specs/001-feature
+    python aifactory/review.py --spec-dir aifactory/specs/001-feature
 """
 
 import sys
@@ -54,7 +54,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Human review checkpoint for magestic-ai specs"
+        description="Human review checkpoint for aifactory specs"
     )
     parser.add_argument(
         "--spec-dir",

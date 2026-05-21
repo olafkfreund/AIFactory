@@ -288,7 +288,7 @@ export interface AppSettings {
   emailGoogleClientSecret?: string;
 }
 
-// Magestic AI Source Environment Configuration (for magestic-ai repo .env)
+// AI Factory Source Environment Configuration (for aifactory repo .env)
 export interface SourceEnvConfig {
   // Claude Authentication (required for AI features)
   hasClaudeToken: boolean;
@@ -305,7 +305,7 @@ export interface SourceEnvCheckResult {
   error?: string;
 }
 
-// Magestic AI Source Update Types
+// AI Factory Source Update Types
 export interface AutoBuildSourceUpdateCheck {
   updateAvailable: boolean;
   currentVersion: string;

@@ -1,6 +1,6 @@
-# MagesticAI - Getting Started
+# AIFactory - Getting Started
 
-Welcome to **MagesticAI**! This guide will walk you through installation, first-run configuration, and creating your first AI-powered coding task.
+Welcome to **AIFactory**! This guide will walk you through installation, first-run configuration, and creating your first AI-powered coding task.
 
 ---
 
@@ -19,7 +19,7 @@ Welcome to **MagesticAI**! This guide will walk you through installation, first-
 
 ## Prerequisites
 
-Before installing MagesticAI, ensure you have the following:
+Before installing AIFactory, ensure you have the following:
 
 ### Required Software
 
@@ -113,10 +113,10 @@ Follow the prompts to authenticate with your Anthropic account. Your token will 
 
 ```bash
 # Clone the project
-git clone https://github.com/dataseeek/MagesticAI.git
+git clone https://github.com/dataseeek/AIFactory.git
 
 # Navigate to the project directory
-cd MagesticAI
+cd AIFactory
 ```
 
 ### Step 2: Install All Dependencies
@@ -215,7 +215,7 @@ INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:3101
 ```
 
-> **Important:** Note the API Token displayed in the console. You'll need this to access the web interface. The token is also saved to `~/.magestic-ai/.token`.
+> **Important:** Note the API Token displayed in the console. You'll need this to access the web interface. The token is also saved to `~/.aifactory/.token`.
 
 #### Terminal 2 - Frontend Development Server
 
@@ -252,9 +252,9 @@ http://localhost:3100
 On first access, you'll see a login screen asking for your API token.
 
 1. Copy the token from your Terminal 1 output (where you started the web server)
-2. Or read it from `~/.magestic-ai/.token`:
+2. Or read it from `~/.aifactory/.token`:
    ```bash
-   cat ~/.magestic-ai/.token
+   cat ~/.aifactory/.token
    ```
 3. Paste the token and click "Connect"
 
@@ -277,7 +277,7 @@ Click **"Add Project"** or use the **+** button in the project tab bar.
 
 A file browser dialog will appear. Navigate to and select the root directory of an existing Git repository you want to work with.
 
-> **Important:** MagesticAI works with existing Git repositories. Make sure your project:
+> **Important:** AIFactory works with existing Git repositories. Make sure your project:
 > - Is a Git repository (`git init` has been run)
 > - Has at least one commit
 > - Has a clean working directory (or you're okay with the current state)
@@ -290,7 +290,7 @@ Give your project a meaningful name (optional - defaults to the directory name).
 
 The system will:
 1. Index your project structure
-2. Create the `.magestic-ai/` directory for task data
+2. Create the `.aifactory/` directory for task data
 3. Load any existing tasks (if any)
 
 You'll now see your project tab in the tab bar and the Kanban board view.
@@ -367,7 +367,7 @@ When the task reaches **Human Review**:
 2. Review the changes in the **Code Review** tab
 3. Test the implementation in the task's worktree:
    ```bash
-   cd .magestic-ai/worktrees/tasks/YOUR-TASK-ID/
+   cd .aifactory/worktrees/tasks/YOUR-TASK-ID/
    # Run your project's test/build commands
    npm run dev  # or your project's command
    ```
@@ -419,7 +419,7 @@ When the task reaches **Human Review**:
 
 ## Next Steps
 
-Congratulations! You've completed your first task with MagesticAI. Here's what to explore next:
+Congratulations! You've completed your first task with AIFactory. Here's what to explore next:
 
 ### Explore More Features
 
@@ -440,8 +440,8 @@ Congratulations! You've completed your first task with MagesticAI. Here's what t
 
 ### Get Help
 
-- **GitHub Issues:** [Report bugs or request features](https://github.com/dataseeek/MagesticAI/issues)
-- **GitHub Discussions:** [Ask questions and share ideas](https://github.com/dataseeek/MagesticAI/discussions)
+- **GitHub Issues:** [Report bugs or request features](https://github.com/dataseeek/AIFactory/issues)
+- **GitHub Discussions:** [Ask questions and share ideas](https://github.com/dataseeek/AIFactory/discussions)
 
 ---
 
@@ -469,13 +469,13 @@ cd apps/frontend-web && npm run dev
 
 | File | Purpose |
 |------|---------|
-| `~/.magestic-ai/.token` | API authentication token |
-| `~/.magestic-ai/settings.json` | Application settings |
+| `~/.aifactory/.token` | API authentication token |
+| `~/.aifactory/settings.json` | Application settings |
 | `apps/backend/.env` | Backend configuration |
 | `apps/web-server/.env` | Web server configuration |
-| `.magestic-ai/specs/` | Task specifications |
-| `.magestic-ai/worktrees/` | Isolated task worktrees |
+| `.aifactory/specs/` | Task specifications |
+| `.aifactory/worktrees/` | Isolated task worktrees |
 
 ---
 
-**MagesticAI** - Get started building with AI agents!
+**AIFactory** - Get started building with AI agents!

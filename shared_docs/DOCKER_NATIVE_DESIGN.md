@@ -1,10 +1,10 @@
 # Docker-Native Web UI Architecture
 
-> Design document for converting Magestic AI from Electron to a containerized web application.
+> Design document for converting AIFactory from Electron to a containerized web application.
 
 ## Executive Summary
 
-This document outlines the architecture for a Docker-native version of Magestic AI that:
+This document outlines the architecture for a Docker-native version of AIFactory that:
 1. Runs entirely in containers for security isolation
 2. Provides a web-based UI accessible via browser
 3. Maintains feature parity with the Electron app
@@ -35,7 +35,7 @@ This document outlines the architecture for a Docker-native version of Magestic 
 └─────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         magestic-ai Container                            │
+│                         aifactory Container                            │
 │                                                                          │
 │  ┌─────────────────────────────────────────────────────────────────────┐│
 │  │                         Caddy / Nginx                                ││
@@ -60,7 +60,7 @@ This document outlines the architecture for a Docker-native version of Magestic 
 │  │                          │                                          ││
 │  │                          ▼                                          ││
 │  │  ┌──────────────────────────────────────────────────────────────┐  ││
-│  │  │              Magestic AI Python Core                          │  ││
+│  │  │              AIFactory Python Core                          │  ││
 │  │  │                                                                │  ││
 │  │  │  - runners/         Agent orchestration                       │  ││
 │  │  │  - core/client.py   Claude SDK integration                    │  ││
@@ -98,11 +98,11 @@ This document outlines the architecture for a Docker-native version of Magestic 
 
 ### 1. FastAPI Backend
 
-**Location:** `magestic-ai/api/`
+**Location:** `aifactory/api/`
 
 **Structure:**
 ```
-magestic-ai/api/
+aifactory/api/
 ├── __init__.py
 ├── main.py              # FastAPI app, CORS, lifespan
 ├── routes/
@@ -187,8 +187,8 @@ interface ProjectEvent {
 | POST | `/api/projects` | Add project by path |
 | DELETE | `/api/projects/{id}` | Remove project |
 | PATCH | `/api/projects/{id}/settings` | Update project settings |
-| POST | `/api/projects/{id}/initialize` | Initialize magestic-ai in project |
-| GET | `/api/projects/{id}/version` | Check magestic-ai version |
+| POST | `/api/projects/{id}/initialize` | Initialize aifactory in project |
+| GET | `/api/projects/{id}/version` | Check aifactory version |
 | GET | `/api/projects/{id}/context` | Get project context/index |
 | POST | `/api/projects/{id}/refresh-index` | Refresh project index |
 
@@ -336,24 +336,24 @@ RUN curl -fsSL https://claude.ai/install.sh | sh
 
 # Set up Python environment
 WORKDIR /app
-COPY magestic-ai/requirements.txt .
+COPY aifactory/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install API dependencies
-COPY magestic-ai/api/requirements.txt ./api-requirements.txt
+COPY aifactory/api/requirements.txt ./api-requirements.txt
 RUN pip install --no-cache-dir -r api-requirements.txt
 
 # Copy application code
-COPY magestic-ai/ ./magestic-ai/
+COPY aifactory/ ./aifactory/
 
 # --- Frontend Build Stage ---
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /app
-COPY magestic-ai-ui/package*.json ./
+COPY aifactory-ui/package*.json ./
 RUN npm ci
 
-COPY magestic-ai-ui/ ./
+COPY aifactory-ui/ ./
 # Modify for web build (remove Electron-specific code)
 ENV VITE_API_URL=/api
 ENV VITE_WS_URL=/ws
@@ -375,7 +375,7 @@ COPY docker/Caddyfile /etc/caddy/Caddyfile
 RUN mkdir -p /data /projects /home/claude
 
 # Environment
-ENV PYTHONPATH=/app/magestic-ai
+ENV PYTHONPATH=/app/aifactory
 ENV DATA_DIR=/data
 ENV PROJECTS_DIR=/projects
 ENV CLAUDE_CONFIG_DIR=/home/claude/.claude
@@ -400,7 +400,7 @@ CMD ["/start.sh"]
 # docker/start.sh
 
 # Start FastAPI in background
-cd /app/magestic-ai
+cd /app/aifactory
 uvicorn api.main:app --host 0.0.0.0 --port 3101 &
 
 # Start Caddy (foreground)
@@ -435,23 +435,23 @@ caddy run --config /etc/caddy/Caddyfile
 
 ```yaml
 # docker-compose.yml
-name: magestic-ai
+name: aifactory
 
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: magestic-ai
+    container_name: aifactory
     ports:
       - "3000:3000"
     volumes:
       # Mount user's projects (read-write for agent work)
       - ${PROJECTS_PATH:-./projects}:/projects
       # Persistent data
-      - magestic-ai-data:/data
+      - aifactory-data:/data
       # Claude CLI config (for OAuth tokens)
-      - magestic-ai-claude:/home/claude/.claude
+      - aifactory-claude:/home/claude/.claude
     environment:
       - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - SECURITY_STRICT_MODE=${SECURITY_STRICT_MODE:-true}
@@ -459,15 +459,15 @@ services:
     depends_on:
       - falkordb
     networks:
-      - magestic-ai-net
+      - aifactory-net
 
   falkordb:
     image: falkordb/falkordb:latest
-    container_name: magestic-ai-falkordb
+    container_name: aifactory-falkordb
     volumes:
       - falkordb-data:/data
     networks:
-      - magestic-ai-net
+      - aifactory-net
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -476,7 +476,7 @@ services:
 
   graphiti-mcp:
     image: falkordb/graphiti-knowledge-graph-mcp:latest
-    container_name: magestic-ai-graphiti
+    container_name: aifactory-graphiti
     platform: linux/amd64
     environment:
       DATABASE_TYPE: falkordb
@@ -487,15 +487,15 @@ services:
       falkordb:
         condition: service_healthy
     networks:
-      - magestic-ai-net
+      - aifactory-net
 
 volumes:
-  magestic-ai-data:
-  magestic-ai-claude:
+  aifactory-data:
+  aifactory-claude:
   falkordb-data:
 
 networks:
-  magestic-ai-net:
+  aifactory-net:
     driver: bridge
 ```
 
@@ -516,7 +516,7 @@ networks:
 ```yaml
 # Future: Per-agent containers
 agent-sandbox:
-  image: magestic-ai-agent
+  image: aifactory-agent
   read_only: true
   tmpfs:
     - /tmp
@@ -530,7 +530,7 @@ agent-sandbox:
 
 ### Secrets Management
 
-1. OAuth tokens stored in named volume (`magestic-ai-claude`)
+1. OAuth tokens stored in named volume (`aifactory-claude`)
 2. API keys passed via environment variables
 3. Never logged or exposed via API
 4. Consider Docker secrets for production

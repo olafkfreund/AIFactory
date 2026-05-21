@@ -505,7 +505,7 @@ class AgentService:
 
         Resolution order:
         1. Environment override (CLAUDE_CODE_OAUTH_TOKEN already set)
-        2. Active profile from ~/.magestic-ai/claude-profiles.json
+        2. Active profile from ~/.aifactory/claude-profiles.json
         3. Best available profile (excluding failed profile if provided)
         4. Fallback to ~/.claude/oauth_token
 
@@ -635,7 +635,7 @@ class AgentService:
         import logging
         logger = logging.getLogger(__name__)
 
-        # Primary path: ~/.magestic-ai/auto-switch.json
+        # Primary path: ~/.aifactory/auto-switch.json
         settings_file = Path(self.settings.PROJECTS_DATA_DIR) / "auto-switch.json"
 
         if not settings_file.exists():
@@ -1203,8 +1203,8 @@ class AgentService:
         logger = logging.getLogger(__name__)
 
         # Paths
-        worktree_spec = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id / ".magestic-ai" / "specs" / spec_id
-        main_spec = project_path / ".magestic-ai" / "specs" / spec_id
+        worktree_spec = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
+        main_spec = project_path / ".aifactory" / "specs" / spec_id
 
         # Ensure main spec dir exists
         main_spec.mkdir(parents=True, exist_ok=True)
@@ -1435,7 +1435,7 @@ class AgentService:
                             _, detected_spec_id = task_id.split(":", 1)
 
                         if detected_spec_id:
-                            detected_spec_dir = project_path / ".magestic-ai" / "specs" / detected_spec_id
+                            detected_spec_dir = project_path / ".aifactory" / "specs" / detected_spec_id
                             plan_review_file = detected_spec_dir / "plan_review.html"
 
                             # Check if plan_review.html exists (indicates review checkpoint reached)
@@ -1552,7 +1552,7 @@ class AgentService:
             if project_path and not spec_id:
                 logger.info("[AgentService] Spec creation completed, detecting created spec...")
                 try:
-                    specs_dir = project_path / ".magestic-ai" / "specs"
+                    specs_dir = project_path / ".aifactory" / "specs"
                     if specs_dir.exists():
                         # Find the newest spec directory (just created)
                         spec_dirs = sorted(
@@ -1637,7 +1637,7 @@ class AgentService:
             # Code 0: auto_continue mode (web UI) - exits cleanly after saving review state
             # Code 1: CLI mode - exits with error when blocked (legacy behavior)
             if project_path and spec_id:
-                spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+                spec_dir = project_path / ".aifactory" / "specs" / spec_id
                 review_state_file = spec_dir / "review_state.json"
 
                 # If review_state.json exists with approved=false, task is waiting for human review
@@ -1707,7 +1707,7 @@ class AgentService:
 
             # Check for early failure and attempt profile failover
             if return_code != 0 and project_path and spec_id and cmd and env:
-                spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+                spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
                 # Check if this is an early failure (no logs written)
                 is_early = self._is_early_failure(spec_dir, return_code)
@@ -1814,7 +1814,7 @@ class AgentService:
             # Auto-continuation: if process exited successfully but subtasks remain,
             # restart execution instead of marking as completed (max 10 continuation rounds)
             if return_code == 0 and spec_id and project_path and cmd and env:
-                plan_file = project_path / ".magestic-ai" / "specs" / spec_id / "implementation_plan.json"
+                plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
                 if plan_file.exists():
                     try:
                         plan_data = json.loads(plan_file.read_text())
@@ -2011,7 +2011,7 @@ class AgentService:
         """
         import logging
         logger = logging.getLogger(__name__)
-        plan_file = project_path / ".magestic-ai" / "specs" / spec_id / "implementation_plan.json"
+        plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
         logger.info(f"[AgentService._update_plan_status] CALLED for spec_id={spec_id}, status={status}, task_id={task_id}")
         logger.info(f"[AgentService._update_plan_status] plan_file path: {plan_file}")
         logger.info(f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}")
@@ -2233,7 +2233,7 @@ class AgentService:
         # Parse spec_id from task_id (format: "project_id:spec_id")
         if ":" in task_id:
             _, spec_id = task_id.split(":", 1)
-            spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+            spec_dir = project_path / ".aifactory" / "specs" / spec_id
         else:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None
@@ -2314,8 +2314,8 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .magestic-ai/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".magestic-ai" / ".env"
+        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
+        project_env_file = project_path / ".aifactory" / ".env"
         if project_env_file.exists():
             try:
                 with open(project_env_file) as f:
@@ -2432,7 +2432,7 @@ class AgentService:
 
             # Check if human review before coding is required
             # If so, don't pass --force to allow the approval gate
-            spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+            spec_dir = project_path / ".aifactory" / "specs" / spec_id
             requirements_file = spec_dir / "requirements.json"
             task_metadata_file = spec_dir / "task_metadata.json"
             require_review = False
@@ -2523,8 +2523,8 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
-        # Load project .magestic-ai/.env for project-level settings (USE_CLAUDE_MD, etc.)
-        project_env_file = project_path / ".magestic-ai" / ".env"
+        # Load project .aifactory/.env for project-level settings (USE_CLAUDE_MD, etc.)
+        project_env_file = project_path / ".aifactory" / ".env"
         if project_env_file.exists():
             try:
                 with open(project_env_file) as f:
@@ -2547,7 +2547,7 @@ class AgentService:
             logger.info(f"[AgentService] Using Claude profile: {profile_name} ({profile_id})")
             # Store for potential retry — read model from task_metadata.json
             exec_model = "sonnet"  # default
-            exec_spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+            exec_spec_dir = project_path / ".aifactory" / "specs" / spec_id
             exec_metadata_file = exec_spec_dir / "task_metadata.json"
             if exec_metadata_file.exists():
                 try:
@@ -2596,12 +2596,12 @@ class AgentService:
 
         # Create TaskLogWriter for detailed phase logs
         # Write to worktree spec dir (will be synced to main spec dir)
-        worktree_spec_dir = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id / ".magestic-ai" / "specs" / spec_id
+        worktree_spec_dir = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
         log_writer = TaskLogWriter(worktree_spec_dir)
 
         # Also write to main spec dir for immediate visibility
-        main_spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+        main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
         main_spec_dir.mkdir(parents=True, exist_ok=True)
         main_log_writer = TaskLogWriter(main_spec_dir)
 
@@ -2670,7 +2670,7 @@ class AgentService:
 
         # Persist failed status to implementation_plan.json
         if spec_dir:
-            # Derive project_path: spec_dir is .magestic-ai/specs/XXX, project root is 3 levels up
+            # Derive project_path: spec_dir is .aifactory/specs/XXX, project root is 3 levels up
             project_path = spec_dir.parent.parent.parent
             spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
             await self._update_plan_status(project_path, spec_id, "failed", task_id)

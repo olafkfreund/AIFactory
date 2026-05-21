@@ -35,15 +35,15 @@ def setup_environment() -> Path:
     Set up the environment and return the script directory.
 
     Returns:
-        Path to the magestic-ai directory
+        Path to the aifactory directory
     """
-    # Add magestic-ai directory to path for imports
+    # Add aifactory directory to path for imports
     script_dir = Path(__file__).parent.parent.resolve()
     sys.path.insert(0, str(script_dir))
 
-    # Load .env file - check both magestic-ai/ and dev/magestic-ai/ locations
+    # Load .env file - check both aifactory/ and dev/aifactory/ locations
     env_file = script_dir / ".env"
-    dev_env_file = script_dir.parent / "dev" / "magestic-ai" / ".env"
+    dev_env_file = script_dir.parent / "dev" / "aifactory" / ".env"
     if env_file.exists():
         load_dotenv(env_file)
     elif dev_env_file.exists():
@@ -80,11 +80,11 @@ def find_spec(project_dir: Path, spec_identifier: str) -> Path | None:
                     return spec_folder
 
     # Check worktree specs (for merge-preview, merge, review, discard operations)
-    worktree_base = project_dir / ".magestic-ai" / "worktrees" / "tasks"
+    worktree_base = project_dir / ".aifactory" / "worktrees" / "tasks"
     if worktree_base.exists():
         # Try exact match in worktree
         worktree_spec = (
-            worktree_base / spec_identifier / ".magestic-ai" / "specs" / spec_identifier
+            worktree_base / spec_identifier / ".aifactory" / "specs" / spec_identifier
         )
         if worktree_spec.exists() and (worktree_spec / "spec.md").exists():
             return worktree_spec
@@ -95,7 +95,7 @@ def find_spec(project_dir: Path, spec_identifier: str) -> Path | None:
                 spec_identifier + "-"
             ):
                 spec_in_worktree = (
-                    worktree_dir / ".magestic-ai" / "specs" / worktree_dir.name
+                    worktree_dir / ".aifactory" / "specs" / worktree_dir.name
                 )
                 if (
                     spec_in_worktree.exists()

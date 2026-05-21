@@ -23,10 +23,10 @@
 - **Sidebar Layout**: Restored proper layout and spacing in sidebar components.
 
 ### 🔧 Changed
-- **Project Renaming**: Renamed from "Claude Code Manager Web" to **MagesticAI** across UI, navigation, and documentation.
+- **Project Renaming**: Renamed from "Claude Code Manager Web" to **AIFactory** across UI, navigation, and documentation.
 - **MCP Template Filtering**: Removed redundant and duplicate quick templates (filesystem, fetch, github, gitlab) that conflict with native tools.
 - **Hardcoded Model Values**: Replaced inline model/thinking defaults with shared constants to ensure user-configured settings take effect.
-- **Git Ignore Safety**: Added `.magestic-ai-security.json` and `.magestic-ai-status` to `.gitignore` during project init and unstage during merges.
+- **Git Ignore Safety**: Added `.aifactory-security.json` and `.aifactory-status` to `.gitignore` during project init and unstage during merges.
 - **CLI Detection Optimization**: Improved speed using `shutil.which` and `npm package.json` parsing instead of slow Node.js startup (~4s → <50ms).
 
 ### 📦 Updated

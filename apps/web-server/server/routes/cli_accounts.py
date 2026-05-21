@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_CLIS = {"codex", "gemini"}
 
-CREDENTIALS_DIR = Path.home() / ".magestic-ai"
+CREDENTIALS_DIR = Path.home() / ".aifactory"
 
 CLI_CONFIG = {
     "codex": {
@@ -354,7 +354,7 @@ def _get_cli_status(cli: str) -> CLIAccountStatus:
 
 
 def _save_credentials(cli: str, data: dict) -> None:
-    """Save credentials to ~/.magestic-ai/{cli}-credentials.json with 0o600."""
+    """Save credentials to ~/.aifactory/{cli}-credentials.json with 0o600."""
     CREDENTIALS_DIR.mkdir(parents=True, exist_ok=True)
     path = CLI_CONFIG[cli]["stored_credentials"]
     path.write_text(json.dumps(data, indent=2))

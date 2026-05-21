@@ -1,6 +1,6 @@
-# MagesticAI - Architecture Guide
+# AIFactory - Architecture Guide
 
-This guide provides a comprehensive overview of the MagesticAI architecture, including system design, data flow, component interactions, and key design decisions.
+This guide provides a comprehensive overview of the AIFactory architecture, including system design, data flow, component interactions, and key design decisions.
 
 ---
 
@@ -23,7 +23,7 @@ This guide provides a comprehensive overview of the MagesticAI architecture, inc
 
 ## Overview
 
-MagesticAI is a **three-tier web application** that orchestrates AI-powered coding tasks through a coordination of autonomous agents. The system is designed for:
+AIFactory is a **three-tier web application** that orchestrates AI-powered coding tasks through a coordination of autonomous agents. The system is designed for:
 
 - **Browser-based access** - Full functionality from any modern web browser
 - **Real-time interaction** - Live updates via WebSocket connections
@@ -113,13 +113,13 @@ MagesticAI is a **three-tier web application** that orchestrates AI-powered codi
                                  ┌─────────────────────────────────────┐
                                  │         File System Storage          │
                                  │  ┌─────────────────────────────────┐ │
-                                 │  │  ~/.magestic-ai/            │ │
+                                 │  │  ~/.aifactory/            │ │
                                  │  │  ├── projects.json              │ │
                                  │  │  ├── settings.json              │ │
                                  │  │  └── .token                     │ │
                                  │  └─────────────────────────────────┘ │
                                  │  ┌─────────────────────────────────┐ │
-                                 │  │  project/.magestic-ai/          │ │
+                                 │  │  project/.aifactory/          │ │
                                  │  │  ├── specs/{task-id}/           │ │
                                  │  │  └── worktrees/tasks/           │ │
                                  │  └─────────────────────────────────┘ │
@@ -130,7 +130,7 @@ MagesticAI is a **three-tier web application** that orchestrates AI-powered codi
 
 ## System Layers
 
-MagesticAI consists of four distinct layers:
+AIFactory consists of four distinct layers:
 
 ### Layer 1: Presentation Layer (Frontend)
 
@@ -623,7 +623,7 @@ The agent system includes an optional knowledge graph memory:
 │                                                                          │
 │  For each subtask in implementation_plan.json:                          │
 │       │                                                                  │
-│       │ Git worktree: .magestic-ai/worktrees/tasks/{id}/                │
+│       │ Git worktree: .aifactory/worktrees/tasks/{id}/                │
 │       ▼                                                                  │
 │  Coder Agent ────────────────────────────────────────────────────────►  │
 │       │  - Reads subtask from plan                                      │
@@ -779,18 +779,18 @@ const ws = new WebSocket(`ws://localhost:3101/ws/events?token=${token}`);
 
 ### File-Based Storage Design
 
-MagesticAI intentionally uses **file-based storage** instead of a traditional database:
+AIFactory intentionally uses **file-based storage** instead of a traditional database:
 
 | Storage Type | Location | Purpose |
 |--------------|----------|---------|
-| **App Data** | `~/.magestic-ai/` | Global application data |
-| **Project Data** | `{project}/.magestic-ai/` | Per-project task data |
-| **Git Worktrees** | `{project}/.magestic-ai/worktrees/` | Isolated task branches |
+| **App Data** | `~/.aifactory/` | Global application data |
+| **Project Data** | `{project}/.aifactory/` | Per-project task data |
+| **Git Worktrees** | `{project}/.aifactory/worktrees/` | Isolated task branches |
 
-### Global App Data (`~/.magestic-ai/`)
+### Global App Data (`~/.aifactory/`)
 
 ```
-~/.magestic-ai/
+~/.aifactory/
 ├── projects.json        # List of registered projects
 │                        # [{ id, path, name, createdAt }]
 │
@@ -809,11 +809,11 @@ MagesticAI intentionally uses **file-based storage** instead of a traditional da
     └── agent.log        # Agent execution logs
 ```
 
-### Per-Project Data (`{project}/.magestic-ai/`)
+### Per-Project Data (`{project}/.aifactory/`)
 
 ```
 {project}/
-└── .magestic-ai/
+└── .aifactory/
     ├── specs/
     │   └── {task-id}/                 # e.g., 001-add-login
     │       ├── spec.md                # Feature specification
@@ -898,7 +898,7 @@ MagesticAI intentionally uses **file-based storage** instead of a traditional da
 │       │                                                          │
 │       │ Generate or load token                                   │
 │       ▼                                                          │
-│  ~/.magestic-ai/.token                                      │
+│  ~/.aifactory/.token                                      │
 │       │                                                          │
 │       │ Token printed to console                                 │
 │       ▼                                                          │
@@ -954,7 +954,7 @@ MagesticAI intentionally uses **file-based storage** instead of a traditional da
 │    Go: go                                                      │
 │    Docker: docker, docker-compose                              │
 │                                                                  │
-│  Security Profile (.magestic-ai-security.json):                 │
+│  Security Profile (.aifactory-security.json):                 │
 │  {                                                              │
 │    "allowed_commands": ["npm", "git", "python", ...],          │
 │    "capabilities": {                                            │
@@ -1053,7 +1053,7 @@ The architecture supports horizontal scaling through:
 
 1. **Multiple Web Servers** - Behind load balancer (requires sticky sessions for WebSocket)
 2. **Distributed Agents** - Agent workers on multiple machines
-3. **Shared Storage** - NFS or cloud storage for `~/.magestic-ai/`
+3. **Shared Storage** - NFS or cloud storage for `~/.aifactory/`
 
 ### Performance Optimizations
 
@@ -1075,4 +1075,4 @@ The architecture supports horizontal scaling through:
 
 ---
 
-**MagesticAI** - Understanding the architecture enables better contributions.
+**AIFactory** - Understanding the architecture enables better contributions.

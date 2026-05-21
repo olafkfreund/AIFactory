@@ -101,7 +101,7 @@ class InsightsService:
 
     def _get_sessions_dir(self, project_path: Path) -> Path:
         """Get the directory for storing insight sessions."""
-        sessions_dir = project_path / ".magestic-ai" / "insights"
+        sessions_dir = project_path / ".aifactory" / "insights"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         return sessions_dir
 

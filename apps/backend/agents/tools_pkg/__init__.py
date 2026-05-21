@@ -3,7 +3,7 @@ Custom MCP Tools for Magestic AI Agents
 ========================================
 
 This module provides custom MCP tools that agents can use for reliable
-operations on magestic-ai data structures. These tools replace prompt-based
+operations on aifactory data structures. These tools replace prompt-based
 JSON manipulation with guaranteed-correct operations.
 
 Benefits:
@@ -13,7 +13,7 @@ Benefits:
 - Each agent only sees tools relevant to their role via allowed_tools
 
 Usage:
-    from magestic_ai_tools import create_magestic_ai_mcp_server, get_allowed_tools
+    from aifactory_tools import create_magestic_ai_mcp_server, get_allowed_tools
 
     # Create the MCP server
     mcp_server = create_magestic_ai_mcp_server(spec_dir, project_dir)
@@ -23,7 +23,7 @@ Usage:
 
     # Use in ClaudeAgentOptions
     options = ClaudeAgentOptions(
-        mcp_servers={"magestic-ai": mcp_server},
+        mcp_servers={"aifactory": mcp_server},
         allowed_tools=allowed_tools,
         ...
     )
@@ -38,7 +38,7 @@ from .models import (
     CONTEXT7_TOOLS,
     GRAPHITI_MCP_TOOLS,
     # MCP tool lists
-    MAGESTIC_AI_TOOLS,
+    AI_FACTORY_TOOLS,
     PLAYWRIGHT_TOOLS,
     # Magestic AI tool names
     TOOL_GET_BUILD_PROGRESS,
@@ -72,7 +72,7 @@ __all__ = [
     "BASE_WRITE_TOOLS",
     "WEB_TOOLS",
     # MCP tool lists
-    "MAGESTIC_AI_TOOLS",
+    "AI_FACTORY_TOOLS",
     "CONTEXT7_TOOLS",
     "GRAPHITI_MCP_TOOLS",
     "PLAYWRIGHT_TOOLS",

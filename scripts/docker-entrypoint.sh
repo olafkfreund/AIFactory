@@ -2,10 +2,10 @@
 set -euo pipefail
 
 # =============================================================================
-# MagesticAI Docker Entrypoint
+# AIFactory Docker Entrypoint
 # =============================================================================
 # Runs as root to set up iptables firewall blocking LAN access,
-# then drops to the magesticai user via gosu.
+# then drops to the aifactory user via gosu.
 # =============================================================================
 
 GATEWAY_IP="${CONTAINER_GATEWAY:?CONTAINER_GATEWAY is required (set via docker-compose .env LAN_GATEWAY)}"
@@ -37,4 +37,4 @@ if [ "$ENABLE_LAN_FIREWALL" = "true" ]; then
 fi
 
 # Drop to non-root user (gosu handles signals properly for PID 1)
-exec gosu magesticai "$@"
+exec gosu aifactory "$@"

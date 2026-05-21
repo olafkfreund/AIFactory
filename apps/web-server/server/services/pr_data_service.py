@@ -126,17 +126,17 @@ def _map_gh_pr(pr: dict) -> dict:
 
 def _review_file_path(project_path: Path, pr_number: int) -> Path:
     """Canonical path for a stored PR review result."""
-    return project_path / ".magestic-ai" / "github" / "pr" / f"review_{pr_number}.json"
+    return project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}.json"
 
 
 def _review_index_path(project_path: Path) -> Path:
     """Canonical path for the PR review index."""
-    return project_path / ".magestic-ai" / "github" / "pr" / "index.json"
+    return project_path / ".aifactory" / "github" / "pr" / "index.json"
 
 
 def _review_logs_path(project_path: Path, pr_number: int) -> Path:
     """Canonical path for PR review execution logs."""
-    return project_path / ".magestic-ai" / "github" / "pr" / f"review_{pr_number}_logs.json"
+    return project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}_logs.json"
 
 
 # ============================================================================

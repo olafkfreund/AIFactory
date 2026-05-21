@@ -2,7 +2,7 @@
 Tool Registry
 =============
 
-Central registry for creating and managing magestic-ai MCP tools.
+Central registry for creating and managing aifactory MCP tools.
 """
 
 from collections.abc import Callable
@@ -62,7 +62,7 @@ def create_magestic_ai_mcp_server(
     project_dir: PathOrFactory,
 ):
     """
-    Create an MCP server with magestic-ai custom tools.
+    Create an MCP server with aifactory custom tools.
 
     Args:
         spec_dir: Path or Callable[[], Path] to the spec directory
@@ -76,14 +76,12 @@ def create_magestic_ai_mcp_server(
 
     tools = create_all_tools(spec_dir, project_dir)
 
-    # In-process server name is "magestic-ai" to match AI_FACTORY_TOOLS
-    # constants in models.py (mcp__magestic-ai__update_subtask_status etc.)
-    # that the Claude Agent SDK uses to permission these tools. The standalone
-    # MCP server in apps/backend/mcp/aifactory_server.py uses a different
-    # registration path (.mcp.json key "aifactory") and produces the
-    # mcp__aifactory__ prefix for external Claude Code consumers. Both prefix
-    # variants route to the same handler implementations.
-    return create_sdk_mcp_server(name="magestic-ai", version="1.0.0", tools=tools)
+    # In-process server name "aifactory" matches AI_FACTORY_TOOLS constants
+    # in models.py (mcp__aifactory__update_subtask_status etc.) that the
+    # Claude Agent SDK uses to permission these tools. The standalone MCP
+    # server in apps/backend/mcp_server/aifactory_server.py registers under
+    # the same name via .mcp.json — single source of truth post-rebrand.
+    return create_sdk_mcp_server(name="aifactory", version="1.0.0", tools=tools)
 
 
 def is_tools_available() -> bool:

@@ -1,23 +1,23 @@
 {
   "initialize": {
-    "title": "Initialize MagesticAI",
-    "description": "This project doesn't have MagesticAI initialized. Would you like to set it up now?",
+    "title": "Initialize AIFactory",
+    "description": "This project doesn't have AIFactory initialized. Would you like to set it up now?",
     "willDo": "This will:",
-    "createFolder": "Create a .magestic-ai folder in your project",
-    "copyFramework": "Copy the MagesticAI framework files",
+    "createFolder": "Create a .aifactory folder in your project",
+    "copyFramework": "Copy the AIFactory framework files",
     "setupSpecs": "Set up the specs directory for your tasks",
     "sourcePathNotConfigured": "Source path not configured",
-    "sourcePathNotConfiguredDescription": "Please set the MagesticAI source path in App Settings before initializing.",
+    "sourcePathNotConfiguredDescription": "Please set the AIFactory source path in App Settings before initializing.",
     "initFailed": "Initialization Failed",
-    "initFailedDescription": "Failed to initialize MagesticAI. Please try again."
+    "initFailedDescription": "Failed to initialize AIFactory. Please try again."
   },
   "gitSetup": {
     "title": "Git Repository Required",
-    "description": "MagesticAI uses git to safely build features in isolated workspaces",
+    "description": "AIFactory uses git to safely build features in isolated workspaces",
     "notGitRepo": "This folder is not a git repository",
     "noCommits": "Git repository has no commits",
-    "needsInit": "Git needs to be initialized before MagesticAI can manage your code.",
-    "needsCommit": "At least one commit is required for MagesticAI to create worktrees.",
+    "needsInit": "Git needs to be initialized before AIFactory can manage your code.",
+    "needsCommit": "At least one commit is required for AIFactory to create worktrees.",
     "willSetup": "We'll set up git for you:",
     "initRepo": "Initialize a new git repository",
     "createCommit": "Create an initial commit with your current files",
@@ -25,33 +25,33 @@
     "settingUp": "Setting up Git",
     "initializingRepo": "Initializing git repository and creating initial commit...",
     "success": "Git Initialized",
-    "readyToUse": "Your project is now ready to use with MagesticAI!"
+    "readyToUse": "Your project is now ready to use with AIFactory!"
   },
   "githubSetup": {
     "connectTitle": "Connect to GitHub",
-    "connectDescription": "MagesticAI requires GitHub to manage your code branches and keep tasks up to date.",
+    "connectDescription": "AIFactory requires GitHub to manage your code branches and keep tasks up to date.",
     "claudeTitle": "Connect to Claude AI",
-    "claudeDescription": "MagesticAI uses Claude AI for intelligent features like Task automation and code analysis.",
+    "claudeDescription": "AIFactory uses Claude AI for intelligent features like Task automation and code analysis.",
     "selectRepo": "Select Repository",
-    "repoDescription": "MagesticAI will use this repository for managing task branches and keeping your code up to date.",
+    "repoDescription": "AIFactory will use this repository for managing task branches and keeping your code up to date.",
     "selectBranch": "Select Base Branch",
-    "branchDescription": "Choose which branch MagesticAI should use as the base for creating task branches.",
+    "branchDescription": "Choose which branch AIFactory should use as the base for creating task branches.",
     "whyBranch": "Why select a branch?",
-    "branchExplanation": "MagesticAI creates isolated workspaces for each task. Selecting the right base branch ensures your tasks start with the latest code from your main development line.",
-    "ready": "MagesticAI is ready to use! You can now create tasks that will be automatically based on the {{branchName}} branch."
+    "branchExplanation": "AIFactory creates isolated workspaces for each task. Selecting the right base branch ensures your tasks start with the latest code from your main development line.",
+    "ready": "AIFactory is ready to use! You can now create tasks that will be automatically based on the {{branchName}} branch."
   },
   "worktrees": {
     "title": "Worktrees",
-    "description": "Manage isolated workspaces for your MagesticAI tasks",
+    "description": "Manage isolated workspaces for your AIFactory tasks",
     "empty": "No Worktrees",
-    "emptyDescription": "Worktrees are created automatically when MagesticAI builds features. They provide isolated workspaces for each task.",
+    "emptyDescription": "Worktrees are created automatically when AIFactory builds features. They provide isolated workspaces for each task.",
     "merge": "Merge Worktree",
     "mergeDescription": "Merge changes from this worktree into the base branch.",
     "delete": "Delete Worktree?",
     "deleteDescription": "This will permanently delete the worktree and all uncommitted changes. This action cannot be undone."
   },
   "update": {
-    "title": "MagesticAI",
+    "title": "AIFactory",
     "projectInitialized": "Project is initialized."
   },
   "addProject": {

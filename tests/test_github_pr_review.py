@@ -39,7 +39,7 @@ from models import (
 @pytest.fixture
 def temp_github_dir(tmp_path):
     """Create temporary GitHub directory structure."""
-    github_dir = tmp_path / ".magestic-ai" / "github"
+    github_dir = tmp_path / ".aifactory" / "github"
     pr_dir = github_dir / "pr"
     pr_dir.mkdir(parents=True)
     return github_dir

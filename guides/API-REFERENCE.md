@@ -1,6 +1,6 @@
 # API Reference Guide
 
-This document provides a comprehensive reference for the MagesticAI REST API and WebSocket events. Use this guide for integration development, extension building, and understanding the backend architecture.
+This document provides a comprehensive reference for the AIFactory REST API and WebSocket events. Use this guide for integration development, extension building, and understanding the backend architecture.
 
 ---
 
@@ -76,7 +76,7 @@ Error Response:
 
 ## Authentication
 
-MagesticAI uses token-based authentication via the `TokenAuthMiddleware`.
+AIFactory uses token-based authentication via the `TokenAuthMiddleware`.
 
 ### Headers
 
@@ -481,7 +481,7 @@ List all git worktrees.
   "success": true,
   "data": [
     {
-      "path": "/project/.magestic-ai/worktrees/task-123",
+      "path": "/project/.aifactory/worktrees/task-123",
       "branch": "task/feature-x",
       "head": "abc123def",
       "prunable": false
@@ -499,7 +499,7 @@ Create a new worktree.
 {
   "basePath": "/project",
   "branch": "task/feature-x",
-  "worktreePath": "/project/.magestic-ai/worktrees/task-123"
+  "worktreePath": "/project/.aifactory/worktrees/task-123"
 }
 ```
 
@@ -901,7 +901,7 @@ Get memory infrastructure status.
   "success": true,
   "data": {
     "kuzuInstalled": false,
-    "databasePath": "/home/user/.magestic-ai/memories",
+    "databasePath": "/home/user/.aifactory/memories",
     "databaseExists": true,
     "databases": [],
     "ready": true
@@ -1512,7 +1512,7 @@ Project updated:
 
 ## Rate Limiting
 
-Currently, MagesticAI does not implement rate limiting. For production deployments, consider adding rate limiting middleware.
+Currently, AIFactory does not implement rate limiting. For production deployments, consider adding rate limiting middleware.
 
 Recommended limits for high-usage scenarios:
 - API requests: 100 requests per minute per client
@@ -1590,4 +1590,4 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-**MagesticAI** - Comprehensive API for AI-powered coding task management.
+**AIFactory** - Comprehensive API for AI-powered coding task management.

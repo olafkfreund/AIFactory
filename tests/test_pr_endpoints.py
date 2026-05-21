@@ -52,11 +52,11 @@ def _reset_singletons():
 
 @pytest.fixture()
 def project_dir(tmp_path: Path) -> Path:
-    """Create a temporary project directory with .magestic-ai structure."""
+    """Create a temporary project directory with .aifactory structure."""
     proj = tmp_path / "my-project"
     proj.mkdir()
     (proj / ".git").mkdir()
-    (proj / ".magestic-ai" / "github" / "pr").mkdir(parents=True)
+    (proj / ".aifactory" / "github" / "pr").mkdir(parents=True)
     return proj
 
 
@@ -337,7 +337,7 @@ class TestGetPRReview:
 
     def test_get_review_returns_data(self, client, project_dir):
         """Returns review data from disk."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         resp = client.get("/api/projects/test-proj/github/prs/42/review")
@@ -359,7 +359,7 @@ class TestGetPRReview:
 
     def test_get_review_corrupt_json(self, client, project_dir):
         """Returns error for corrupt JSON file."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text("{corrupt-json")
 
         resp = client.get("/api/projects/test-proj/github/prs/42/review")
@@ -384,7 +384,7 @@ class TestDeletePRReview:
 
     def test_delete_review_success(self, client, project_dir):
         """Deletes review file and returns success."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         resp = client.delete("/api/projects/test-proj/github/prs/42/review")
@@ -406,7 +406,7 @@ class TestDeletePRReview:
 
     def test_delete_review_updates_index(self, client, project_dir):
         """Removes entry from index.json when present."""
-        pr_dir = project_dir / ".magestic-ai" / "github" / "pr"
+        pr_dir = project_dir / ".aifactory" / "github" / "pr"
         review_file = pr_dir / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
@@ -441,7 +441,7 @@ class TestPostPRReviewToGitHub:
 
     def test_post_review_all_findings(self, client, project_dir):
         """Posts all findings when no selection specified."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         with patch(
@@ -464,7 +464,7 @@ class TestPostPRReviewToGitHub:
 
     def test_post_review_selected_findings(self, client, project_dir):
         """Posts only selected findings."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         with patch(
@@ -490,7 +490,7 @@ class TestPostPRReviewToGitHub:
 
     def test_post_review_empty_findings_400(self, client, project_dir):
         """Returns 400 when selected findings list matches nothing."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         resp = client.post(
@@ -504,7 +504,7 @@ class TestPostPRReviewToGitHub:
 
     def test_post_review_gh_failure(self, client, project_dir):
         """Returns 500 when gh pr comment fails."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         with patch(
@@ -816,7 +816,7 @@ class TestCheckNewCommits:
 
     def test_has_new_commits(self, client, project_dir):
         """Returns hasNewCommits=True with commit count."""
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(_SAMPLE_REVIEW))
 
         def mock_gh(args, **kwargs):
@@ -839,7 +839,7 @@ class TestCheckNewCommits:
     def test_no_new_commits(self, client, project_dir):
         """Returns hasNewCommits=False when SHAs match."""
         review_data = {**_SAMPLE_REVIEW, "reviewed_commit_sha": "abc123"}
-        review_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42.json"
+        review_file = project_dir / ".aifactory" / "github" / "pr" / "review_42.json"
         review_file.write_text(json.dumps(review_data))
 
         with patch(
@@ -881,7 +881,7 @@ class TestGetPRReviewLogs:
                 },
             },
         }
-        logs_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42_logs.json"
+        logs_file = project_dir / ".aifactory" / "github" / "pr" / "review_42_logs.json"
         logs_file.write_text(json.dumps(logs_data))
 
         resp = client.get("/api/projects/test-proj/github/prs/42/logs")
@@ -903,7 +903,7 @@ class TestGetPRReviewLogs:
 
     def test_get_logs_corrupt_json(self, client, project_dir):
         """Returns error for corrupt logs file."""
-        logs_file = project_dir / ".magestic-ai" / "github" / "pr" / "review_42_logs.json"
+        logs_file = project_dir / ".aifactory" / "github" / "pr" / "review_42_logs.json"
         logs_file.write_text("{bad-json")
 
         resp = client.get("/api/projects/test-proj/github/prs/42/logs")
@@ -969,9 +969,9 @@ class TestPRDataServiceUnit:
         )
 
         p = Path("/project")
-        assert _review_file_path(p, 42) == p / ".magestic-ai" / "github" / "pr" / "review_42.json"
-        assert _review_index_path(p) == p / ".magestic-ai" / "github" / "pr" / "index.json"
-        assert _review_logs_path(p, 42) == p / ".magestic-ai" / "github" / "pr" / "review_42_logs.json"
+        assert _review_file_path(p, 42) == p / ".aifactory" / "github" / "pr" / "review_42.json"
+        assert _review_index_path(p) == p / ".aifactory" / "github" / "pr" / "index.json"
+        assert _review_logs_path(p, 42) == p / ".aifactory" / "github" / "pr" / "review_42_logs.json"
 
 
 # ===================================================================

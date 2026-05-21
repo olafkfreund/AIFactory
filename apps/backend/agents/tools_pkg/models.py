@@ -2,7 +2,7 @@
 Tool Models and Constants
 ==========================
 
-Defines tool name constants and configuration for magestic-ai MCP tools.
+Defines tool name constants and configuration for aifactory MCP tools.
 
 This module is the single source of truth for all tool definitions used by
 the Claude Agent SDK client. Tool lists are organized by category:
@@ -31,17 +31,17 @@ WEB_TOOLS = ["WebFetch", "WebSearch"]
 # Magestic AI MCP Tools (Custom build management)
 # =============================================================================
 
-# Magestic AI MCP tool names (prefixed with mcp__magestic-ai__)
-TOOL_UPDATE_SUBTASK_STATUS = "mcp__magestic-ai__update_subtask_status"
-TOOL_GET_BUILD_PROGRESS = "mcp__magestic-ai__get_build_progress"
-TOOL_RECORD_DISCOVERY = "mcp__magestic-ai__record_discovery"
-TOOL_RECORD_GOTCHA = "mcp__magestic-ai__record_gotcha"
-TOOL_GET_SESSION_CONTEXT = "mcp__magestic-ai__get_session_context"
-TOOL_UPDATE_QA_STATUS = "mcp__magestic-ai__update_qa_status"
-TOOL_TEST_MEMORY_INTEGRATION = "mcp__magestic-ai__test_memory_integration"
+# Magestic AI MCP tool names (prefixed with mcp__aifactory__)
+TOOL_UPDATE_SUBTASK_STATUS = "mcp__aifactory__update_subtask_status"
+TOOL_GET_BUILD_PROGRESS = "mcp__aifactory__get_build_progress"
+TOOL_RECORD_DISCOVERY = "mcp__aifactory__record_discovery"
+TOOL_RECORD_GOTCHA = "mcp__aifactory__record_gotcha"
+TOOL_GET_SESSION_CONTEXT = "mcp__aifactory__get_session_context"
+TOOL_UPDATE_QA_STATUS = "mcp__aifactory__update_qa_status"
+TOOL_TEST_MEMORY_INTEGRATION = "mcp__aifactory__test_memory_integration"
 
-# All magestic-ai MCP tools (for permissions)
-MAGESTIC_AI_TOOLS = [
+# All aifactory MCP tools (for permissions)
+AI_FACTORY_TOOLS = [
     TOOL_UPDATE_SUBTASK_STATUS,
     TOOL_GET_BUILD_PROGRESS,
     TOOL_RECORD_DISCOVERY,
@@ -109,49 +109,49 @@ AGENT_CONFIGS = {
     "spec_gatherer": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": [],  # No MCP needed - just reads project
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "spec_researcher": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": ["context7"],  # Needs docs lookup
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "spec_writer": {
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS,
         "mcp_servers": [],  # Just writes spec.md
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "spec_critic": {
         "tools": BASE_READ_TOOLS,
         "mcp_servers": [],  # Self-critique, no external tools
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "spec_discovery": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "spec_context": {
         "tools": BASE_READ_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "spec_validation": {
         "tools": BASE_READ_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "spec_compaction": {
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     # ═══════════════════════════════════════════════════════════════════════
@@ -159,8 +159,8 @@ AGENT_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
     "planner": {
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7", "graphiti", "magestic-ai"],
-        "magestic_ai_tools": [
+        "mcp_servers": ["context7", "graphiti", "aifactory"],
+        "aifactory_tools": [
             TOOL_GET_BUILD_PROGRESS,
             TOOL_GET_SESSION_CONTEXT,
             TOOL_RECORD_DISCOVERY,
@@ -169,8 +169,8 @@ AGENT_CONFIGS = {
     },
     "coder": {
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7", "graphiti", "magestic-ai"],
-        "magestic_ai_tools": [
+        "mcp_servers": ["context7", "graphiti", "aifactory"],
+        "aifactory_tools": [
             TOOL_UPDATE_SUBTASK_STATUS,
             TOOL_GET_BUILD_PROGRESS,
             TOOL_RECORD_DISCOVERY,
@@ -187,8 +187,8 @@ AGENT_CONFIGS = {
         # Read + Write/Edit (for QA reports and plan updates) + Bash (for tests)
         # Note: Reviewer writes to spec directory only (qa_report.md, implementation_plan.json)
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7", "graphiti", "magestic-ai", "browser"],
-        "magestic_ai_tools": [
+        "mcp_servers": ["context7", "graphiti", "aifactory", "browser"],
+        "aifactory_tools": [
             TOOL_GET_BUILD_PROGRESS,
             TOOL_UPDATE_QA_STATUS,
             TOOL_GET_SESSION_CONTEXT,
@@ -198,8 +198,8 @@ AGENT_CONFIGS = {
     },
     "qa_fixer": {
         "tools": BASE_READ_TOOLS + BASE_WRITE_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7", "graphiti", "magestic-ai", "browser"],
-        "magestic_ai_tools": [
+        "mcp_servers": ["context7", "graphiti", "aifactory", "browser"],
+        "aifactory_tools": [
             TOOL_UPDATE_SUBTASK_STATUS,
             TOOL_GET_BUILD_PROGRESS,
             TOOL_UPDATE_QA_STATUS,
@@ -214,38 +214,38 @@ AGENT_CONFIGS = {
     "insights": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "merge_resolver": {
         "tools": [],  # Text-only analysis
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "low",
     },
     "commit_message": {
         "tools": [],
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "low",
     },
     "pr_reviewer": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,  # Read-only
         "mcp_servers": ["context7"],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "pr_orchestrator_parallel": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,  # Read-only for parallel PR orchestrator
         "mcp_servers": ["context7"],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "pr_followup_parallel": {
         "tools": BASE_READ_TOOLS
         + WEB_TOOLS,  # Read-only for parallel followup reviewer
         "mcp_servers": ["context7"],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     # ═══════════════════════════════════════════════════════════════════════
@@ -254,19 +254,19 @@ AGENT_CONFIGS = {
     "analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": ["context7"],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "batch_analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "low",
     },
     "batch_validation": {
         "tools": BASE_READ_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "low",
     },
     # ═══════════════════════════════════════════════════════════════════════
@@ -275,19 +275,19 @@ AGENT_CONFIGS = {
     "roadmap_discovery": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": ["context7"],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "competitor_analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": ["context7"],  # WebSearch for competitor research
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
     "ideation": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
         "mcp_servers": [],
-        "magestic_ai_tools": [],
+        "aifactory_tools": [],
         "thinking_default": "high",
     },
 }
@@ -306,7 +306,7 @@ def get_agent_config(agent_type: str) -> dict:
         agent_type: The agent type identifier (e.g., 'coder', 'planner', 'qa_reviewer')
 
     Returns:
-        Configuration dict containing tools, mcp_servers, magestic_ai_tools, thinking_default
+        Configuration dict containing tools, mcp_servers, aifactory_tools, thinking_default
 
     Raises:
         ValueError: If agent_type is not found in AGENT_CONFIGS (strict mode)
@@ -341,7 +341,7 @@ def _map_mcp_server_name(
         "graphiti": "graphiti",
         "playwright": "playwright",
         "puppeteer": "playwright",  # backward compat: puppeteer maps to playwright
-        "magestic-ai": "magestic-ai",
+        "aifactory": "aifactory",
     }
     # Check if it's a known mapping
     mapped = mappings.get(name.lower().strip())
@@ -364,13 +364,13 @@ def get_required_mcp_servers(
     Handles dynamic server selection:
     - "browser" → playwright (if is_web_frontend)
     - "graphiti" → only if GRAPHITI_MCP_URL is set
-    - Respects per-project MCP config overrides from .magestic-ai/.env
+    - Respects per-project MCP config overrides from .aifactory/.env
     - Applies per-agent ADD/REMOVE overrides from AGENT_MCP_<agent>_ADD/REMOVE
 
     Args:
         agent_type: The agent type identifier
         project_capabilities: Dict from detect_project_capabilities() or None
-        mcp_config: Per-project MCP server toggles from .magestic-ai/.env
+        mcp_config: Per-project MCP server toggles from .aifactory/.env
                    Keys: CONTEXT7_ENABLED,
                          PLAYWRIGHT_MCP_ENABLED, AGENT_MCP_<agent>_ADD/REMOVE
 
@@ -432,14 +432,14 @@ def get_required_mcp_servers(
             if mapped and mapped not in servers:
                 servers.append(mapped)
 
-    # Process removals (but never remove magestic-ai)
+    # Process removals (but never remove aifactory)
     if remove_key in mcp_config:
         removals = [
             s.strip() for s in str(mcp_config[remove_key]).split(",") if s.strip()
         ]
         for server in removals:
             mapped = _map_mcp_server_name(server, custom_server_ids)
-            if mapped and mapped != "magestic-ai":  # magestic-ai cannot be removed
+            if mapped and mapped != "aifactory":  # aifactory cannot be removed
                 servers = [s for s in servers if s != mapped]
 
     return servers

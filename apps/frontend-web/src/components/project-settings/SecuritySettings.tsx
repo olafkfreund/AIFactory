@@ -437,10 +437,10 @@ export function SecuritySettings({
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-foreground">Database Name</Label>
                 <p className="text-xs text-muted-foreground">
-                  Stored in ~/.magestic-ai/memories/
+                  Stored in ~/.aifactory/memories/
                 </p>
                 <Input
-                  placeholder="magestic_ai_memory"
+                  placeholder="aifactory_memory"
                   value={envConfig.graphitiDatabase || ''}
                   onChange={(e) => updateEnvConfig({ graphitiDatabase: e.target.value })}
                 />
@@ -449,10 +449,10 @@ export function SecuritySettings({
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-foreground">Database Path (Optional)</Label>
                 <p className="text-xs text-muted-foreground">
-                  Custom storage location. Default: ~/.magestic-ai/memories/
+                  Custom storage location. Default: ~/.aifactory/memories/
                 </p>
                 <Input
-                  placeholder="~/.magestic-ai/memories"
+                  placeholder="~/.aifactory/memories"
                   value={envConfig.graphitiDbPath || ''}
                   onChange={(e) => updateEnvConfig({ graphitiDbPath: e.target.value || undefined })}
                 />

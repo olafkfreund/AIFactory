@@ -10,7 +10,7 @@ the *class name* must match exactly.
 These classes are shared by all provider adapters so that any adapter can
 yield compliant messages without depending on the real Claude SDK types.
 
-See: .magestic-ai/specs/004-add-alternative-llm-for-qa-rev/abstraction_boundary.md
+See: .aifactory/specs/004-add-alternative-llm-for-qa-rev/abstraction_boundary.md
 """
 
 from __future__ import annotations

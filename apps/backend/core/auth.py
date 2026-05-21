@@ -1,8 +1,8 @@
 """
-Authentication helpers for MagesticAI.
+Authentication helpers for AIFactory.
 
 Provides centralized authentication token resolution with fallback support
-for multiple environment variables, MagesticAI profiles, Claude Code CLI
+for multiple environment variables, AIFactory profiles, Claude Code CLI
 credentials, and SDK environment variable passthrough for custom API endpoints.
 """
 
@@ -130,9 +130,9 @@ def _get_token_from_windows_credential_files() -> str | None:
         return None
 
 
-def _get_token_from_magesticai_profiles() -> str | None:
-    """Read token from MagesticAI profiles storage (~/.magestic-ai/claude-profiles.json)."""
-    path = Path.home() / ".magestic-ai" / "claude-profiles.json"
+def _get_token_from_aifactory_profiles() -> str | None:
+    """Read token from AIFactory profiles storage (~/.aifactory/claude-profiles.json)."""
+    path = Path.home() / ".aifactory" / "claude-profiles.json"
     if not path.exists():
         return None
     try:
@@ -172,7 +172,7 @@ def get_auth_token() -> str | None:
     Checks multiple sources in priority order:
     1. CLAUDE_CODE_OAUTH_TOKEN (env var)
     2. ANTHROPIC_AUTH_TOKEN (CCR/proxy env var for enterprise setups)
-    3. MagesticAI profiles (~/.magestic-ai/claude-profiles.json)
+    3. AIFactory profiles (~/.aifactory/claude-profiles.json)
     4. Claude Code CLI credentials (~/.claude/.credentials.json)
     5. System credential store (macOS Keychain, Windows Credential Manager)
 
@@ -188,8 +188,8 @@ def get_auth_token() -> str | None:
         if token:
             return token
 
-    # Check MagesticAI profiles
-    token = _get_token_from_magesticai_profiles()
+    # Check AIFactory profiles
+    token = _get_token_from_aifactory_profiles()
     if token:
         return token
 
@@ -209,9 +209,9 @@ def get_auth_token_source() -> str | None:
         if os.environ.get(var):
             return var
 
-    # Check MagesticAI profiles
-    if _get_token_from_magesticai_profiles():
-        return "MagesticAI Profiles"
+    # Check AIFactory profiles
+    if _get_token_from_aifactory_profiles():
+        return "AIFactory Profiles"
 
     # Check Claude Code CLI credentials
     if _get_token_from_claude_credentials():
@@ -241,7 +241,7 @@ def require_auth_token() -> str:
     if not token:
         error_msg = (
             "No OAuth token found.\n\n"
-            "MagesticAI requires Claude Code OAuth authentication.\n"
+            "AIFactory requires Claude Code OAuth authentication.\n"
             "Direct API keys (ANTHROPIC_API_KEY) are not supported.\n\n"
         )
         # Provide platform-specific guidance

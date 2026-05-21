@@ -260,9 +260,9 @@ def _generate_and_save_commit_message(project_dir: Path, spec_name: str) -> None
 
         if commit_message:
             # Save to spec directory for UI to read
-            spec_dir = project_dir / ".magestic-ai" / "specs" / spec_name
+            spec_dir = project_dir / ".aifactory" / "specs" / spec_name
             if not spec_dir.exists():
-                spec_dir = project_dir / "magestic-ai" / "specs" / spec_name
+                spec_dir = project_dir / "aifactory" / "specs" / spec_name
 
             if spec_dir.exists():
                 commit_msg_file = spec_dir / "suggested_commit_message.txt"
@@ -331,12 +331,12 @@ def handle_list_worktrees_command(project_dir: Path) -> None:
 
         print("-" * 70)
         print()
-        print("  To merge:   python magestic-ai/run.py --spec <name> --merge")
-        print("  To review:  python magestic-ai/run.py --spec <name> --review")
-        print("  To discard: python magestic-ai/run.py --spec <name> --discard")
+        print("  To merge:   python aifactory/run.py --spec <name> --merge")
+        print("  To review:  python aifactory/run.py --spec <name> --review")
+        print("  To discard: python aifactory/run.py --spec <name> --discard")
         print()
         print(
-            "  To cleanup all worktrees: python magestic-ai/run.py --cleanup-worktrees"
+            "  To cleanup all worktrees: python aifactory/run.py --cleanup-worktrees"
         )
     print()
 
@@ -375,7 +375,7 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
 
     debug(MODULE, "Checking for git-level merge conflicts (non-destructive)...")
 
-    spec_branch = f"magestic-ai/{spec_name}"
+    spec_branch = f"aifactory/{spec_name}"
     result = {
         "has_conflicts": False,
         "conflicting_files": [],
@@ -462,7 +462,7 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
                     )
                     if match:
                         file_path = match.group(1).strip()
-                        # Skip .magestic-ai files - they should never be merged
+                        # Skip .aifactory files - they should never be merged
                         if (
                             file_path
                             and file_path not in result["conflicting_files"]
@@ -499,7 +499,7 @@ def _check_git_merge_conflicts(project_dir: Path, spec_name: str) -> dict:
                 )
 
                 # Files modified in both = potential conflicts
-                # Filter out .magestic-ai files - they should never be merged
+                # Filter out .aifactory files - they should never be merged
                 conflicting = main_files & spec_files
                 result["conflicting_files"] = [
                     f for f in conflicting if not _is_magestic_ai_file(f)

@@ -1,11 +1,11 @@
 {
   "wizard": {
     "title": "Assistente de Configuração",
-    "description": "Configure seu ambiente MagesticAI em poucos passos simples",
+    "description": "Configure seu ambiente AIFactory em poucos passos simples",
     "helpText": "Este assistente ajudará você a configurar seu ambiente em apenas alguns passos. Você pode configurar seu token OAuth do Claude, ativar recursos de memória e criar sua primeira tarefa."
   },
   "welcome": {
-    "title": "Bem-vindo ao MagesticAI",
+    "title": "Bem-vindo ao AIFactory",
     "subtitle": "Construa software de forma autônoma com agentes de IA",
     "getStarted": "Começar",
     "skip": "Pular Configuração",
@@ -16,7 +16,7 @@
       },
       "specDriven": {
         "title": "Fluxo Orientado a Specs",
-        "description": "Defina tarefas com especificações claras e deixe o MagesticAI cuidar da implementação"
+        "description": "Defina tarefas com especificações claras e deixe o AIFactory cuidar da implementação"
       },
       "memory": {
         "title": "Memória e Contexto",
@@ -36,17 +36,17 @@
   },
   "memory": {
     "title": "Memória",
-    "description": "A Memória do MagesticAI ajuda a lembrar o contexto entre suas sessões de codificação"
+    "description": "A Memória do AIFactory ajuda a lembrar o contexto entre suas sessões de codificação"
   },
   "completion": {
     "title": "Tudo Pronto!",
-    "subtitle": "MagesticAI está pronto para ajudá-lo a construir software incrível",
+    "subtitle": "AIFactory está pronto para ajudá-lo a construir software incrível",
     "setupComplete": "Configuração Completa",
     "setupCompleteDescription": "Seu ambiente está configurado e pronto. Você pode começar a criar tarefas imediatamente ou explorar o aplicativo no seu ritmo.",
     "whatsNext": "O Que Vem a Seguir?",
     "createTask": {
       "title": "Criar uma Tarefa",
-      "description": "Comece criando sua primeira tarefa para ver o MagesticAI em ação.",
+      "description": "Comece criando sua primeira tarefa para ver o AIFactory em ação.",
       "action": "Abrir Criador de Tarefas"
     },
     "customizeSettings": {
@@ -66,7 +66,7 @@
     "title": "Credenciais Existentes Detectadas",
     "description": "Encontramos credenciais do Claude Code existentes no seu sistema.",
     "found": "Credenciais do Claude Code CLI encontradas",
-    "foundDescription": "Um token OAuth válido foi encontrado em ~/.claude/.credentials.json. Deseja importá-lo para o MagesticAI?",
+    "foundDescription": "Um token OAuth válido foi encontrado em ~/.claude/.credentials.json. Deseja importá-lo para o AIFactory?",
     "importButton": "Sim, Importar Credenciais",
     "manualSetup": "Não, Configurar Manualmente",
     "success": "Credenciais importadas com sucesso! Continuando...",
@@ -74,7 +74,7 @@
   },
   "providerChoice": {
     "title": "Escolha seu Provedor de IA",
-    "subtitle": "Selecione como você deseja alimentar o MagesticAI. Você pode alterar isso depois nas Configurações.",
+    "subtitle": "Selecione como você deseja alimentar o AIFactory. Você pode alterar isso depois nas Configurações.",
     "claude": {
       "title": "Claude",
       "description": "Faça login com sua conta Anthropic ou token OAuth"
@@ -106,7 +106,7 @@
     "detecting": "Verificando instalação do Claude Code...",
     "info": {
       "title": "O que é Claude Code?",
-      "description": "Claude Code é a CLI oficial da Anthropic que alimenta os recursos de IA do MagesticAI. Ela fornece autenticação segura e acesso direto aos modelos Claude."
+      "description": "Claude Code é a CLI oficial da Anthropic que alimenta os recursos de IA do AIFactory. Ela fornece autenticação segura e acesso direto aos modelos Claude."
     },
     "status": {
       "installed": "Instalado",
@@ -128,19 +128,19 @@
   },
   "devtools": {
     "title": "Ferramentas de Desenvolvimento",
-    "description": "Escolha sua IDE e terminal preferidos para trabalhar com worktrees do MagesticAI",
+    "description": "Escolha sua IDE e terminal preferidos para trabalhar com worktrees do AIFactory",
     "detecting": "Detectando ferramentas instaladas...",
     "detectAgain": "Detectar Novamente",
     "whyConfigure": "Por que configurar isso?",
-    "whyConfigureDescription": "Quando o MagesticAI constrói funcionalidades em worktrees isoladas, você pode abri-las diretamente na sua IDE ou terminal preferido para testar e revisar as alterações.",
+    "whyConfigureDescription": "Quando o AIFactory constrói funcionalidades em worktrees isoladas, você pode abri-las diretamente na sua IDE ou terminal preferido para testar e revisar as alterações.",
     "ide": {
       "label": "IDE Preferida",
-      "description": "MagesticAI abrirá worktrees neste editor",
+      "description": "AIFactory abrirá worktrees neste editor",
       "customPath": "Caminho da IDE Personalizada"
     },
     "terminal": {
       "label": "Terminal Preferido",
-      "description": "MagesticAI abrirá sessões de terminal aqui",
+      "description": "AIFactory abrirá sessões de terminal aqui",
       "customPath": "Caminho do Terminal Personalizado"
     },
     "detectedSummary": "Detectado no seu sistema:",

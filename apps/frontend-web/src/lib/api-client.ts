@@ -18,6 +18,46 @@ interface RequestOptions {
 }
 
 /**
+ * Coerce an error payload into a user-facing string.
+ *
+ * Handles the shapes a FastAPI backend may return:
+ *   • `{ detail: "message" }`              (HTTPException with string detail)
+ *   • `{ detail: [{ loc, msg, type }] }`   (422 RequestValidationError)
+ *   • `{ detail: { ... } }`                (HTTPException with object detail)
+ *   • `{ error: "message" }`               (custom routes that return their own shape)
+ *   • `{}` / `null`                        (no body, e.g. on network error)
+ *
+ * The old `errorData.detail || errorData.error || ...` formulation silently
+ * passed arrays and objects through, which downstream `new Error(obj)` would
+ * stringify as `"[object Object]"`. Always return a string here.
+ */
+function extractErrorMessage(data: unknown): string {
+  if (data == null || typeof data !== 'object') return '';
+  const obj = data as Record<string, unknown>;
+  const detail = obj.detail;
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors: each entry is { loc, msg, type }
+    return detail
+      .map((d) => {
+        if (typeof d === 'string') return d;
+        if (d && typeof d === 'object' && 'msg' in d && typeof (d as { msg: unknown }).msg === 'string') {
+          return (d as { msg: string }).msg;
+        }
+        return JSON.stringify(d);
+      })
+      .join('; ');
+  }
+  if (typeof detail === 'string') return detail;
+  if (typeof obj.error === 'string') return obj.error;
+  if (typeof obj.message === 'string') return obj.message;
+  // Last resort: a non-string detail/error object — JSON it so the user at
+  // least sees something meaningful instead of "[object Object]".
+  if (detail !== undefined) return JSON.stringify(detail);
+  if (obj.error !== undefined) return JSON.stringify(obj.error);
+  return '';
+}
+
+/**
  * Make an authenticated API request
  */
 export async function apiRequest<T>(
@@ -44,7 +84,8 @@ export async function apiRequest<T>(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const errorMsg = errorData.detail || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
+      const errorMsg = extractErrorMessage(errorData)
+        || `HTTP ${response.status}: ${response.statusText}`;
       const logFn = response.status >= 500 ? log.error : log.warn;
       logFn(`API error: ${method} ${endpoint}`, { status: response.status, error: errorMsg });
       return {

@@ -1,6 +1,6 @@
 # Security Policy
 
-Thanks for helping keep MagesticAI and its users safe.
+Thanks for helping keep AIFactory and its users safe.
 
 ## Reporting a vulnerability
 
@@ -8,7 +8,7 @@ Thanks for helping keep MagesticAI and its users safe.
 
 Use GitHub's private reporting:
 
-> https://github.com/dataseeek/MagesticAI/security/advisories/new
+> https://github.com/dataseeek/AIFactory/security/advisories/new
 
 This routes the report directly to the maintainers via a private
 GitHub Security Advisory.
@@ -41,7 +41,7 @@ and [CHANGELOG.md](CHANGELOG.md) for current versions.
 
 In scope:
 
-- The MagesticAI backend, web-server, and frontend in this repository
+- The AIFactory backend, web-server, and frontend in this repository
 - The default Docker image built from this repository's `Dockerfile`
 - Default agent prompts and tool integrations shipped here
 

@@ -77,8 +77,8 @@ def mock_project_dir(tmp_path):
     git_dir = project_dir / ".git"
     git_dir.mkdir(exist_ok=True)
 
-    # Create .magestic-ai directory
-    magestic_ai_dir = project_dir / ".magestic-ai"
+    # Create .aifactory directory
+    magestic_ai_dir = project_dir / ".aifactory"
     magestic_ai_dir.mkdir(exist_ok=True)
 
     return project_dir

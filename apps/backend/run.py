@@ -13,14 +13,14 @@ Key Features:
 - GitHub integration
 
 Usage:
-    python magestic-ai/run.py --spec 001-initial-app
-    python magestic-ai/run.py --spec 001
-    python magestic-ai/run.py --list
+    python aifactory/run.py --spec 001-initial-app
+    python aifactory/run.py --spec 001
+    python aifactory/run.py --list
 
     # Workspace management
-    python magestic-ai/run.py --spec 001 --merge     # Add completed build to project
-    python magestic-ai/run.py --spec 001 --review    # See what was built
-    python magestic-ai/run.py --spec 001 --discard   # Delete build (requires confirmation)
+    python aifactory/run.py --spec 001 --merge     # Add completed build to project
+    python aifactory/run.py --spec 001 --review    # See what was built
+    python aifactory/run.py --spec 001 --discard   # Delete build (requires confirmation)
 
 Prerequisites:
     - CLAUDE_CODE_OAUTH_TOKEN environment variable set (run: claude setup-token)

@@ -141,18 +141,18 @@ LANGUAGE_MAP = {
 
 
 def _is_app_internal_path(resolved_path: Path) -> bool:
-    """Block access to the MagesticAI application directory itself.
+    """Block access to the AIFactory application directory itself.
 
-    Exception: .magestic-ai/ subtrees (specs, worktrees) are user data and
-    must stay reachable when the target project IS MagesticAI (dogfooding).
+    Exception: .aifactory/ subtrees (specs, worktrees) are user data and
+    must stay reachable when the target project IS AIFactory (dogfooding).
     """
     settings = get_settings()
-    app_root = Path(settings.BACKEND_PATH).resolve().parent.parent  # MagesticAI root
+    app_root = Path(settings.BACKEND_PATH).resolve().parent.parent  # AIFactory root
     try:
         rel = resolved_path.resolve().relative_to(app_root)
     except ValueError:
         return False
-    if rel.parts and rel.parts[0] == ".magestic-ai":
+    if rel.parts and rel.parts[0] == ".aifactory":
         return False
     return True
 
@@ -270,12 +270,12 @@ async def discover_projects(
                 has_git = (entry / '.git').exists()
                 has_package = (entry / 'package.json').exists()
                 has_requirements = (entry / 'requirements.txt').exists() or (entry / 'pyproject.toml').exists()
-                has_magestic_ai = (entry / '.magestic-ai').exists()
+                has_magestic_ai = (entry / '.aifactory').exists()
                 has_claude_md = (entry / 'CLAUDE.md').exists()
 
                 # If it looks like a project, add it
                 if has_git or has_package or has_requirements:
-                    # Skip the MagesticAI app itself
+                    # Skip the AIFactory app itself
                     if _is_app_internal_path(entry):
                         continue
                     projects.append(DiscoveredProject(

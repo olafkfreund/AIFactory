@@ -85,7 +85,7 @@ from validate_spec import SpecValidator, auto_fix_plan
 from pathlib import Path
 
 # Create validator
-spec_dir = Path("magestic-ai/specs/001-feature")
+spec_dir = Path("aifactory/specs/001-feature")
 validator = SpecValidator(spec_dir)
 
 # Validate specific checkpoint
@@ -107,16 +107,16 @@ if auto_fix_plan(spec_dir):
 
 ```bash
 # Validate all checkpoints
-python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint all
+python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint all
 
 # Validate specific checkpoint
-python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint context
+python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint context
 
 # Auto-fix and validate
-python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --auto-fix --checkpoint plan
+python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --auto-fix --checkpoint plan
 
 # JSON output
-python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint all --json
+python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint all --json
 ```
 
 ## Imports

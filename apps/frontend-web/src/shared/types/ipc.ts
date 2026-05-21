@@ -123,7 +123,7 @@ export interface DiscoveredProject {
   has_git: boolean;
   has_package_json: boolean;
   has_requirements: boolean;
-  has_magestic_ai: boolean;
+  has_aifactory: boolean;
   has_claude_md: boolean;
 }
 
@@ -416,12 +416,12 @@ export interface API {
     callback: (projectId: string, error: string) => void
   ) => () => void;
 
-  // Magestic AI source update operations
+  // AI Factory source update operations
   checkAutoBuildSourceUpdate: () => Promise<IPCResult<AutoBuildSourceUpdateCheck>>;
   downloadAutoBuildSourceUpdate: () => void;
   getAutoBuildSourceVersion: () => Promise<IPCResult<string>>;
 
-  // Magestic AI source update event listeners
+  // AI Factory source update event listeners
   onAutoBuildSourceUpdateProgress: (
     callback: (progress: AutoBuildSourceUpdateProgress) => void
   ) => () => void;
@@ -446,7 +446,7 @@ export interface API {
   openExternal: (url: string) => Promise<void>;
   openTerminal: (dirPath: string) => Promise<IPCResult<void>>;
 
-  // Magestic AI source environment operations
+  // AI Factory source environment operations
   getSourceEnv: () => Promise<IPCResult<SourceEnvConfig>>;
   updateSourceEnv: (config: { claudeOAuthToken?: string }) => Promise<IPCResult>;
   checkSourceToken: () => Promise<IPCResult<SourceEnvCheckResult>>;

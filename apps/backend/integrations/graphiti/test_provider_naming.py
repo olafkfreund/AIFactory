@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from integrations.graphiti.config import GraphitiConfig
@@ -52,7 +52,7 @@ def test_provider_naming():
         print(f"  Embedding Dimension: {dimension}")
         print(f"  Provider Signature: {signature}")
         print(f"  Database Name: {db_name}")
-        print(f"  Full Path: ~/.magestic-ai/memories/{db_name}/")
+        print(f"  Full Path: ~/.aifactory/memories/{db_name}/")
         print()
 
     print("=" * 70)

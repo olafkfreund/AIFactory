@@ -1,5 +1,5 @@
 """
-Configuration settings for MagesticAI Web Server.
+Configuration settings for AIFactory Web Server.
 
 Settings are loaded from environment variables with sensible defaults.
 """
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
         token_file.chmod(0o600)  # Owner read/write only
 
         print(f"\n{'='*60}")
-        print("MagesticAI - First Run Setup")
+        print("AIFactory - First Run Setup")
         print(f"{'='*60}")
         print(f"Generated API token: {token}")
         print(f"Token saved to: {token_file}")
@@ -135,7 +135,7 @@ class Settings(BaseSettings):
     def _get_or_generate_jwt_secret(self) -> str:
         """Get existing JWT secret or generate a new one.
 
-        The secret is persisted to ~/.magestic-ai/.jwt_secret so it
+        The secret is persisted to ~/.aifactory/.jwt_secret so it
         survives server restarts, keeping existing tokens valid.
         """
         secret_file = get_data_file(".jwt_secret")
@@ -175,7 +175,7 @@ class Settings(BaseSettings):
         # Generate self-signed certificate if not exists
         if not cert_file.exists() or not key_file.exists():
             print(f"\n{'='*60}")
-            print("MagesticAI - SSL Setup")
+            print("AIFactory - SSL Setup")
             print(f"{'='*60}")
             print("Generating self-signed SSL certificate...")
 
@@ -187,7 +187,7 @@ class Settings(BaseSettings):
                         "-out", str(cert_file),
                         "-days", "365",
                         "-nodes",
-                        "-subj", "/CN=localhost/O=MagesticAI/C=US"
+                        "-subj", "/CN=localhost/O=AIFactory/C=US"
                     ],
                     check=True,
                     capture_output=True

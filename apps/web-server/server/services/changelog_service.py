@@ -333,7 +333,7 @@ class ChangelogService:
         """Load generated file and emit completion event."""
         try:
             # Read the generated changelog
-            changelog_path = project_path / ".magestic-ai" / "changelog" / "generated.md"
+            changelog_path = project_path / ".aifactory" / "changelog" / "generated.md"
             if changelog_path.exists():
                 content = changelog_path.read_text(encoding="utf-8")
             else:

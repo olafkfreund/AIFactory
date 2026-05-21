@@ -15,7 +15,7 @@ import pytest
 # Add tests directory to path for helper imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-# Setup mocks before importing magestic-ai modules
+# Setup mocks before importing aifactory modules
 from qa_report_helpers import cleanup_qa_report_mocks, setup_qa_report_mocks
 
 # Setup mocks

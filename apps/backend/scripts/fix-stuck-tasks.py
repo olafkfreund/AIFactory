@@ -21,7 +21,7 @@ from pathlib import Path
 
 def find_spec_directories(project_path: Path) -> list[Path]:
     """Find all spec directories in a project."""
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
     if not specs_dir.exists():
         return []
 

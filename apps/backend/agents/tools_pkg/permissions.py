@@ -43,7 +43,7 @@ def get_allowed_tools(
         agent_type: Agent type identifier (e.g., 'coder', 'planner', 'qa_reviewer')
         project_capabilities: Optional dict from detect_project_capabilities()
                             containing flags like is_web_frontend, is_nextjs, etc.
-        mcp_config: Per-project MCP server toggles from .magestic-ai/.env
+        mcp_config: Per-project MCP server toggles from .aifactory/.env
 
     Returns:
         List of allowed tool names
@@ -64,10 +64,10 @@ def get_allowed_tools(
         mcp_config,
     )
 
-    # Add magestic-ai tools ONLY if the MCP server is available
+    # Add aifactory tools ONLY if the MCP server is available
     # This prevents allowing tools that won't work because the server isn't running
-    if "magestic-ai" in required_servers and is_tools_available():
-        tools.extend(config.get("magestic_ai_tools", []))
+    if "aifactory" in required_servers and is_tools_available():
+        tools.extend(config.get("aifactory_tools", []))
 
     # Add MCP tool names based on required servers
     tools.extend(_get_mcp_tools_for_servers(required_servers))
@@ -96,7 +96,7 @@ def _get_mcp_tools_for_servers(servers: list[str]) -> list[str]:
             tools.extend(GRAPHITI_MCP_TOOLS)
         elif server == "playwright":
             tools.extend(PLAYWRIGHT_TOOLS)
-        # magestic-ai tools are already added via config["magestic_ai_tools"]
+        # aifactory tools are already added via config["aifactory_tools"]
 
     return tools
 

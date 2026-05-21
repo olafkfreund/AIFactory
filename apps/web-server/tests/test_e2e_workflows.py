@@ -38,17 +38,17 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_settings_dir(temp_dir: Path) -> Path:
     """Create mock settings directory structure."""
-    settings_dir = temp_dir / ".magestic-ai"
+    settings_dir = temp_dir / ".aifactory"
     settings_dir.mkdir(parents=True)
     return settings_dir
 
 
 @pytest.fixture
 def mock_project_dir(temp_dir: Path) -> Path:
-    """Create mock project directory with .magestic-ai."""
+    """Create mock project directory with .aifactory."""
     project_dir = temp_dir / "test-project"
     project_dir.mkdir(parents=True)
-    magestic_ai_dir = project_dir / ".magestic-ai"
+    magestic_ai_dir = project_dir / ".aifactory"
     magestic_ai_dir.mkdir(parents=True)
     return project_dir
 
@@ -224,7 +224,7 @@ class TestRoadmapIdeationWorkflow:
         This simulates a real user managing their product roadmap.
         """
         # Setup: Create ideation.json
-        ideation_file = mock_project_dir / ".magestic-ai" / "ideation.json"
+        ideation_file = mock_project_dir / ".aifactory" / "ideation.json"
         ideation_data = {
             "ideas": [
                 {
@@ -257,7 +257,7 @@ class TestRoadmapIdeationWorkflow:
         ideation_file.write_text(json.dumps(ideation_data, indent=2))
 
         # Setup: Create roadmap.json
-        roadmap_file = mock_project_dir / ".magestic-ai" / "roadmap.json"
+        roadmap_file = mock_project_dir / ".aifactory" / "roadmap.json"
         roadmap_data = {
             "features": [
                 {
@@ -476,7 +476,7 @@ class TestProjectSetupWorkflow:
         Test complete project setup workflow:
         1. Scan filesystem for projects
         2. Add discovered project
-        3. Update project settings (.magestic-ai/.env)
+        3. Update project settings (.aifactory/.env)
         4. Update project environment variables
         5. Initialize git repository (if needed)
 
@@ -510,7 +510,7 @@ class TestProjectSetupWorkflow:
 
             # Subsequent steps would test:
             # - Adding project to projects.json
-            # - Creating .magestic-ai directory
+            # - Creating .aifactory directory
             # - Setting up .env file
             # - Configuring project settings
             pass

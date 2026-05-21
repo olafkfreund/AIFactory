@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 DEBUG_MODE = os.environ.get("DEBUG", "").lower() in ("true", "1", "yes")
 
 # Directory for PR review worktrees (inside github/pr for consistency)
-PR_WORKTREE_DIR = ".magestic-ai/github/pr/worktrees"
+PR_WORKTREE_DIR = ".aifactory/github/pr/worktrees"
 
 
 class ParallelOrchestratorReviewer:

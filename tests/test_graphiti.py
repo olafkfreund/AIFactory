@@ -1,7 +1,7 @@
 """Tests for Graphiti memory integration."""
 import os
 
-# Add magestic-ai to path
+# Add aifactory to path
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -79,7 +79,7 @@ class TestGraphitiConfig:
             config = GraphitiConfig.from_env()
             assert config.enabled is False
             assert config.database == "magestic_ai_memory"
-            assert "magestic-ai" in config.db_path.lower()  # Default path in ~/.magestic-ai/
+            assert "aifactory" in config.db_path.lower()  # Default path in ~/.aifactory/
 
     def test_from_env_custom_values(self):
         """Config reads custom environment values."""

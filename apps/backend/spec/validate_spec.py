@@ -7,11 +7,11 @@ Validates spec outputs at each checkpoint to ensure reliability.
 This is the enforcement layer that catches errors before they propagate.
 
 Usage:
-    python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint prereqs
-    python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint context
-    python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint spec
-    python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint plan
-    python magestic-ai/validate_spec.py --spec-dir magestic-ai/specs/001-feature/ --checkpoint all
+    python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint prereqs
+    python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint context
+    python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint spec
+    python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint plan
+    python aifactory/validate_spec.py --spec-dir aifactory/specs/001-feature/ --checkpoint all
 """
 
 import argparse

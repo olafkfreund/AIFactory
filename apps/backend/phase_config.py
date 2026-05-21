@@ -627,7 +627,7 @@ def strip_provider_prefix(model: str) -> str:
     return model
 
 
-_LLM_ENDPOINTS_DB_PATH = Path.home() / ".magestic-ai" / "data.db"
+_LLM_ENDPOINTS_DB_PATH = Path.home() / ".aifactory" / "data.db"
 
 
 def _load_openai_endpoint_by_label(label: str) -> dict | None:

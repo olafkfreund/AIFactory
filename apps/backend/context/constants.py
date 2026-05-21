@@ -20,7 +20,7 @@ SKIP_DIRS = {
     "vendor",
     ".idea",
     ".vscode",
-    "magestic-ai",
+    "aifactory",
     ".pytest_cache",
     ".mypy_cache",
     "coverage",

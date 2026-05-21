@@ -171,10 +171,10 @@ async def send_test_email(account_id: str, request: Request):
     from ..services.email_service import email_service
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    subject = "MagesticAI - Test Email"
+    subject = "AIFactory - Test Email"
     body_html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
-        <h2 style="color: #0ea5e9;">MagesticAI Email Notifications</h2>
+        <h2 style="color: #0ea5e9;">AIFactory Email Notifications</h2>
         <p>This is a test email to confirm your email notifications are working correctly.</p>
         <p style="color: #6b7280; font-size: 14px;">Sent at {now}</p>
     </div>
@@ -184,7 +184,7 @@ async def send_test_email(account_id: str, request: Request):
         user_id=user_id,
         subject=subject,
         body_html=body_html,
-        body_text=f"MagesticAI Test Email - Sent at {now}",
+        body_text=f"AIFactory Test Email - Sent at {now}",
     )
 
     if sent:
@@ -638,7 +638,7 @@ def _oauth_result_html(
     status_text = "success" if success else "error"
     html = f"""<!DOCTYPE html>
 <html>
-<head><title>MagesticAI - Email Connection</title></head>
+<head><title>AIFactory - Email Connection</title></head>
 <body>
 <p>{message}</p>
 <script>

@@ -1,4 +1,4 @@
-# MagesticAI - CLI Usage
+# AIFactory - CLI Usage
 
 This guide covers command-line usage for power users, headless server operations, and script automation. While the **Web UI** provides a comprehensive visual experience, the CLI offers direct control over all backend operations.
 
@@ -167,13 +167,13 @@ python run.py --spec 001 --qa-status
 
 ## Workspace Management
 
-MagesticAI uses Git worktrees for isolated builds. Each task gets its own worktree in the `.magestic-ai/worktrees/` directory.
+AIFactory uses Git worktrees for isolated builds. Each task gets its own worktree in the `.aifactory/worktrees/` directory.
 
 ### Testing in a Worktree
 
 ```bash
 # Navigate to the task's worktree
-cd .magestic-ai/worktrees/tasks/001-feature-name/
+cd .aifactory/worktrees/tasks/001-feature-name/
 
 # Test the feature using your project's commands
 npm run dev  # or your project's run command
@@ -212,10 +212,10 @@ For non-interactive control:
 
 ```bash
 # Create PAUSE file to pause after current session
-touch .magestic-ai/specs/001-name/PAUSE
+touch .aifactory/specs/001-name/PAUSE
 
 # Add instructions for the agent
-echo "Focus on fixing the login bug first" > .magestic-ai/specs/001-name/HUMAN_INPUT.md
+echo "Focus on fixing the login bug first" > .aifactory/specs/001-name/HUMAN_INPUT.md
 ```
 
 ---
@@ -225,7 +225,7 @@ echo "Focus on fixing the login bug first" > .magestic-ai/specs/001-name/HUMAN_I
 Validate a spec before running:
 
 ```bash
-python validate_spec.py --spec-dir .magestic-ai/specs/001-feature --checkpoint all
+python validate_spec.py --spec-dir .aifactory/specs/001-feature --checkpoint all
 ```
 
 ---
@@ -252,7 +252,7 @@ project-root/
 │       ├── spec_runner.py # Spec creation
 │       └── validate_spec.py # Spec validation
 │
-├── .magestic-ai/
+├── .aifactory/
 │   ├── specs/             # Generated specifications
 │   │   └── 001-feature/
 │   │       ├── spec.md
@@ -310,8 +310,8 @@ python spec_runner.py --continue 003-interrupted-task
 |-------|----------|
 | "Module not found" | Ensure virtual environment is activated: `source .venv/bin/activate` |
 | "Token invalid" | Re-run `claude setup-token` and update `.env` |
-| "Worktree exists" | Delete orphaned worktree: `git worktree remove .magestic-ai/worktrees/tasks/001-name` |
-| "Spec not found" | Check spec exists in `.magestic-ai/specs/` directory |
+| "Worktree exists" | Delete orphaned worktree: `git worktree remove .aifactory/worktrees/tasks/001-name` |
+| "Spec not found" | Check spec exists in `.aifactory/specs/` directory |
 | Python version error | Ensure Python 3.12+ is installed and in PATH |
 
 ---
@@ -325,4 +325,4 @@ python spec_runner.py --continue 003-interrupted-task
 
 ---
 
-**MagesticAI** - CLI tools for power users
+**AIFactory** - CLI tools for power users

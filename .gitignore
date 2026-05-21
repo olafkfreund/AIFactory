@@ -57,12 +57,12 @@ lerna-debug.log*
 .worktrees/
 
 # ===========================
-# MagesticAI Generated
+# AIFactory Generated
 # ===========================
-.magestic-ai/
+.aifactory/
 .auto-claude/
-.magestic-ai-security.json
-.magestic-ai-status
+.aifactory-security.json
+.aifactory-status
 .claude_settings.json
 .update-metadata.json
 

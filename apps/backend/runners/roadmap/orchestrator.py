@@ -41,14 +41,14 @@ class RoadmapOrchestrator:
         self.enable_competitor_analysis = enable_competitor_analysis
         self.refresh_competitor_analysis = refresh_competitor_analysis
 
-        # Default output to project's .magestic-ai directory (installed instance)
-        # Note: magestic-ai/ is source code, .magestic-ai/ is the installed instance
+        # Default output to project's .aifactory directory (installed instance)
+        # Note: aifactory/ is source code, .aifactory/ is the installed instance
         if output_dir:
             self.output_dir = Path(output_dir)
         else:
-            # Initialize .magestic-ai directory and ensure it's in .gitignore
+            # Initialize .aifactory directory and ensure it's in .gitignore
             init_magestic_ai_dir(self.project_dir)
-            self.output_dir = self.project_dir / ".magestic-ai" / "roadmap"
+            self.output_dir = self.project_dir / ".aifactory" / "roadmap"
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 

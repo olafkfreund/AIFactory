@@ -7,7 +7,7 @@
   "sections": {
     "appearance": {
       "title": "Appearance",
-      "description": "Customize how MagesticAI looks"
+      "description": "Customize how AIFactory looks"
     },
     "display": {
       "title": "Display",
@@ -72,7 +72,7 @@
     },
     "updates": {
       "title": "Updates",
-      "description": "MagesticAI updates"
+      "description": "AIFactory updates"
     },
     "notifications": {
       "title": "Notifications",
@@ -101,7 +101,7 @@
     "otherAgentSettingsDescription": "Additional agent configuration options",
     "agentFramework": "Agent Framework",
     "agentFrameworkDescription": "The coding framework used for autonomous tasks",
-    "agentFrameworkAutoClaude": "MagesticAI",
+    "agentFrameworkAutoClaude": "AIFactory",
     "aiTerminalNaming": "AI Terminal Naming",
     "aiTerminalNamingDescription": "Automatically name terminals based on commands (uses Haiku)",
     "featureModelSettings": "Feature Model Settings",
@@ -115,7 +115,7 @@
   },
   "theme": {
     "title": "Appearance",
-    "description": "Customize how MagesticAI looks",
+    "description": "Customize how AIFactory looks",
     "mode": "Mode",
     "modeDescription": "Choose between light and dark themes",
     "light": "Light",
@@ -129,14 +129,14 @@
     "detectAgain": "Detect Again",
     "ide": {
       "label": "Preferred IDE",
-      "description": "MagesticAI will open worktrees in this editor",
+      "description": "AIFactory will open worktrees in this editor",
       "placeholder": "Select IDE...",
       "customPath": "Custom IDE Path",
       "customPathPlaceholder": "/path/to/your/ide"
     },
     "terminal": {
       "label": "Preferred Terminal",
-      "description": "MagesticAI will open terminal sessions here",
+      "description": "AIFactory will open terminal sessions here",
       "placeholder": "Select terminal...",
       "customPath": "Custom Terminal Path",
       "customPathPlaceholder": "/path/to/your/terminal"
@@ -148,7 +148,7 @@
   },
   "updates": {
     "title": "Updates",
-    "description": "Manage MagesticAI updates",
+    "description": "Manage AIFactory updates",
     "appUpdateReady": "App Update Ready",
     "newVersion": "New Version",
     "released": "Released",
@@ -165,7 +165,7 @@
     "unableToCheck": "Unable to check for updates",
     "checkForUpdates": "Check for Updates",
     "autoUpdateProjects": "Auto-Update Projects",
-    "autoUpdateProjectsDescription": "Automatically update MagesticAI in projects when a new version is available",
+    "autoUpdateProjectsDescription": "Automatically update AIFactory in projects when a new version is available",
     "betaUpdates": "Beta Updates",
     "betaUpdatesDescription": "Receive pre-release beta versions with new features (may be less stable)"
   },
@@ -202,7 +202,7 @@
     "setup": {
       "title": "How to register a Microsoft Azure AD app",
       "step1": "Go to the <azureLink>Azure App Registrations portal</azureLink>",
-      "step2": "Click \"New registration\", name it (e.g. \"MagesticAI Notifications\"), select \"Accounts in any organizational directory and personal Microsoft accounts\", then click Register",
+      "step2": "Click \"New registration\", name it (e.g. \"AIFactory Notifications\"), select \"Accounts in any organizational directory and personal Microsoft accounts\", then click Register",
       "step3": "From the app overview page, copy the \"Application (client) ID\" and paste it in the Client ID field below",
       "step4": "Go to \"Certificates & secrets\" → \"New client secret\" → copy the Value (not the Secret ID) and paste it in the Client Secret field below",
       "step5": "Go to \"Authentication\" → \"Add a platform\" → \"Web\" → set the redirect URI to:",
@@ -431,7 +431,7 @@
     "noProjectSelected": "No Project Selected",
     "noProjectSelectedDescription": "Select a project from the dropdown to view and configure MCP servers.",
     "projectNotInitialized": "Project Not Initialized",
-    "projectNotInitializedDescription": "Initialize MagesticAI for this project to configure MCP servers.",
+    "projectNotInitializedDescription": "Initialize AIFactory for this project to configure MCP servers.",
     "browserAutomation": "Browser Automation (QA agents only)",
     "alwaysEnabled": "always enabled",
     "addServer": "Add Server",
@@ -463,7 +463,7 @@
         "description": "Web browser automation for testing (headless Chromium)"
       },
       "autoClaude": {
-        "name": "Magestic AI Tools",
+        "name": "AIFactory Tools",
         "description": "Build progress tracking"
       }
     },

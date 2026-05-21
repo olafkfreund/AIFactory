@@ -81,7 +81,7 @@ function getWizardSteps(provider: ChosenProvider): { id: WizardStepId; labelKey:
  * Provides a full-screen, multi-step wizard experience for new users.
  *
  * Flow:
- * 1. Welcome — Brief intro to MagesticAI
+ * 1. Welcome — Brief intro to AIFactory
  * 2. Provider Choice — Claude / OpenAI Compatible / Skip
  *    a. Claude path:  Import Credentials → Claude Code CLI → OAuth → Done
  *    b. OpenAI path:  OpenAI Compat Setup → Done

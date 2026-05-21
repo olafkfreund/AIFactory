@@ -237,7 +237,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
             Developer Tools
           </h1>
           <p className="mt-2 text-muted-foreground">
-            Choose your preferred IDE and terminal for working with Magestic AI worktrees
+            Choose your preferred IDE and terminal for working with AI Factory worktrees
           </p>
         </div>
 
@@ -271,7 +271,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                       Why configure these?
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      When Magestic AI builds features in isolated worktrees, you can open them
+                      When AI Factory builds features in isolated worktrees, you can open them
                       directly in your preferred IDE or terminal to test and review changes.
                     </p>
                   </div>
@@ -320,7 +320,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Magestic AI will open worktrees in this editor
+                AI Factory will open worktrees in this editor
               </p>
 
               {/* Custom IDE Path */}
@@ -369,7 +369,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Magestic AI will open terminal sessions here
+                AI Factory will open terminal sessions here
               </p>
 
               {/* Custom Terminal Path */}

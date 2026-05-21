@@ -61,14 +61,14 @@ class FileTimelineTracker:
 
         Args:
             project_path: Root directory of the project
-            storage_path: Directory for timeline storage (default: .magestic-ai/)
+            storage_path: Directory for timeline storage (default: .aifactory/)
         """
         debug(
             MODULE, "Initializing FileTimelineTracker", project_path=str(project_path)
         )
 
         self.project_path = Path(project_path).resolve()
-        self.storage_path = storage_path or (self.project_path / ".magestic-ai")
+        self.storage_path = storage_path or (self.project_path / ".aifactory")
 
         # Initialize sub-components
         self.git = TimelineGitHelper(self.project_path)

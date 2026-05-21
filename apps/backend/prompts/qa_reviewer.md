@@ -468,7 +468,7 @@ cat > qa_report.md << 'EOF'
 [QA Report content]
 EOF
 
-# Note: qa_report.md and implementation_plan.json are in .magestic-ai/specs/ (gitignored)
+# Note: qa_report.md and implementation_plan.json are in .aifactory/specs/ (gitignored)
 # Do NOT commit them - the framework tracks QA status automatically
 # Only commit actual code changes to the project
 ```
@@ -505,7 +505,7 @@ Once fixes are complete:
 
 EOF
 
-# Note: QA_FIX_REQUEST.md and implementation_plan.json are in .magestic-ai/specs/ (gitignored)
+# Note: QA_FIX_REQUEST.md and implementation_plan.json are in .aifactory/specs/ (gitignored)
 # Do NOT commit them - the framework tracks QA status automatically
 # Only commit actual code fixes to the project
 ```

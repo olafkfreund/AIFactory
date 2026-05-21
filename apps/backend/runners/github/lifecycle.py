@@ -374,7 +374,7 @@ class LifecycleManager:
     Manages issue lifecycles and resolves conflicts.
 
     Usage:
-        lifecycle = LifecycleManager(state_dir=Path(".magestic-ai/github"))
+        lifecycle = LifecycleManager(state_dir=Path(".aifactory/github"))
 
         # Get or create lifecycle for issue
         state = lifecycle.get_or_create(repo="owner/repo", issue_number=123)
