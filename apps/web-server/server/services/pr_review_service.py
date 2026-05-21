@@ -237,8 +237,9 @@ class PRReviewService:
 
         logger.info(f"Starting PR review for {key}: {' '.join(cmd)}")
 
-        # Set up environment (following agent_service.py pattern)
-        env = os.environ.copy()
+        # Set up environment — scrub ANTHROPIC_API_KEY (OAuth-only policy).
+        from ..utils.subprocess_env import make_subprocess_env
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
 

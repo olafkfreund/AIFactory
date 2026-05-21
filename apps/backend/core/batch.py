@@ -167,14 +167,30 @@ def _parse_individual_response(item: Any) -> BatchResult:
 
 
 def _resolve_api_key(api_key: str | None) -> str:
-    """Return the Anthropic API key from arg or env; raise if missing."""
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
+    """Return the Anthropic API key from an explicit caller arg only.
+
+    AIFactory is OAuth-only by default (see apps/backend/core/auth.py).
+    The Batch API is the one exception where an OAuth token cannot work
+    (Anthropic's batch endpoint accepts only direct API keys), so this
+    helper requires the caller to ``pass api_key=…`` explicitly — usually
+    sourced from a per-project Settings field the user filled in
+    consciously, not from a bare env var.
+
+    Falling back to ``os.environ.get("ANTHROPIC_API_KEY")`` was removed
+    because it caused silent billing surprises: if a user happened to
+    have ANTHROPIC_API_KEY in their shell env for unrelated reasons,
+    batch insight extraction would silently bill against that account.
+    """
+    if not api_key:
         raise RuntimeError(
-            "Anthropic API key required for batch API. "
-            "Pass api_key=... or set ANTHROPIC_API_KEY in the environment."
+            "core.batch requires an explicit api_key= argument. "
+            "AIFactory is OAuth-only by default — bare env vars are not "
+            "used as a fallback to prevent silent direct-API billing. "
+            "Read the user's API key from Settings → Integrations "
+            "(globalAnthropicApiKey field) and pass it explicitly. See "
+            "guides/BATCH_API.md for the full policy rationale."
         )
-    return key
+    return api_key
 
 
 # ---------------------------------------------------------------------------

@@ -78,7 +78,9 @@ class CodexProvider(ProviderStrategy):
 
         cmd.append(codex_cmd)
 
-        env = os.environ.copy()
+        # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
+        from ...utils.subprocess_env import make_subprocess_env
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
 
         logger.info(f"[CodexProvider] Starting: codex exec --model {effective_model}")

@@ -466,7 +466,9 @@ class InsightsService:
         # Lightweight call: --print (non-interactive, single response)
         cmd = [claude_bin, "--print", "--model", model_value, summarization_prompt]
 
-        env = os.environ.copy()
+        # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
+        from ..utils.subprocess_env import make_subprocess_env
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env.pop("CLAUDECODE", None)
 

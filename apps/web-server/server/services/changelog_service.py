@@ -168,8 +168,10 @@ class ChangelogService:
 
         logger.info(f"Starting changelog generation for {project_id}: {' '.join(cmd)}")
 
-        # Set up environment with PYTHONPATH pointing to backend
-        env = os.environ.copy()
+        # Set up environment with PYTHONPATH pointing to backend.
+        # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
+        from ..utils.subprocess_env import make_subprocess_env
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Add backend path to PYTHONPATH so imports work

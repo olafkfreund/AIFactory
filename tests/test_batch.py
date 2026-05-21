@@ -169,14 +169,17 @@ class TestSubmitBatch:
             await submit_batch([], api_key="test")
 
     async def test_missing_api_key_raises(self, monkeypatch):
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        # Even when ANTHROPIC_API_KEY IS set in env, core/batch refuses to
+        # fall back to it — OAuth-only policy. The caller must pass api_key=
+        # explicitly from a Settings-derived source.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-leaked-from-env")
         req = BatchRequest(
             custom_id="r1",
             model="claude-sonnet-4-5-20250929",
             max_tokens=128,
             messages=[{"role": "user", "content": "hi"}],
         )
-        with pytest.raises(RuntimeError, match="Anthropic API key"):
+        with pytest.raises(RuntimeError, match="explicit api_key"):
             await submit_batch([req], api_key=None)
 
 

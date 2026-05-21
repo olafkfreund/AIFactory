@@ -149,8 +149,12 @@ class BotDetector:
 
         try:
             # Use gh api to get authenticated user
-            # Pass token via environment variable to avoid exposing it in process listings
+            # Pass token via environment variable to avoid exposing it in process listings.
+            # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py) so the
+            # gh subprocess can never silently inherit a direct-API key.
             env = os.environ.copy()
+            for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_FILE"):
+                env.pop(var, None)
             env["GH_TOKEN"] = self.bot_token
             result = subprocess.run(
                 [

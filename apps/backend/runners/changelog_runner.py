@@ -512,9 +512,26 @@ def generate_changelog(
         elif llm_provider == "anthropic":
             from anthropic import Anthropic
 
-            api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+            # AIFactory is OAuth-only by default (see core/auth.py). Changelog
+            # generation with the Anthropic provider is the one exception:
+            # the Anthropic SDK's messages.create() does NOT accept an OAuth
+            # token — only a direct API key works here. Require ANTHROPIC_API_KEY
+            # to be set EXPLICITLY by a user who has accepted the direct-billing
+            # trade-off. The previous code tried `os.environ.get("ANTHROPIC_API_KEY")
+            # or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")` — the OAuth fallback
+            # would silently fail at the API layer because OAuth tokens aren't
+            # valid API keys, so it was effectively dead code that only obscured
+            # the real failure mode.
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
             if not api_key:
-                raise RuntimeError("Anthropic API key not found. Please set it in Settings → Integrations.")
+                raise RuntimeError(
+                    "Changelog generation with the Anthropic provider requires "
+                    "ANTHROPIC_API_KEY (direct-billing path). AIFactory's default "
+                    "is OAuth via Claude Code which does NOT use this key. Set "
+                    "ANTHROPIC_API_KEY explicitly only if you accept direct API "
+                    "billing, or switch the changelog LLM provider to 'openai' / "
+                    "'ollama' / 'openrouter' in Settings → Integrations."
+                )
 
             client = Anthropic(api_key=api_key)
 

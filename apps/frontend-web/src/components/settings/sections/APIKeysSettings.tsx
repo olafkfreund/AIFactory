@@ -69,6 +69,15 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
       </div>
 
       <div className="space-y-6">
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200/90">
+          <strong className="text-amber-100">⚠ Direct-billing notice:</strong>{' '}
+          Setting an Anthropic API key below enables direct API-key billing for
+          a small set of advanced features (changelog generation with the
+          Anthropic provider, batch insight extraction). AIFactory&apos;s default
+          path is <strong className="text-amber-100">OAuth via Claude Code</strong>
+          {' '}which uses your Claude subscription, <strong>NOT</strong> this key.
+          Leave the field empty unless you specifically want direct billing.
+        </div>
         <APIKeyField
           id="globalAnthropicKey"
           label={t('sections.llmProvider.apiKeys.anthropic.label')}

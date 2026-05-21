@@ -18,6 +18,7 @@ from enum import Enum
 from pathlib import Path
 
 from ..config import get_settings
+from ..utils.subprocess_env import make_subprocess_env
 from ..websockets.events import emit_task_status, emit_task_update, emit_task_logs_stream, emit_subtask_update
 
 
@@ -2283,8 +2284,10 @@ class AgentService:
         if complexity:
             cmd.extend(["--complexity", complexity])
 
-        # Set environment
-        env = os.environ.copy()
+        # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
+        # can never silently bill the direct-API account (OAuth-only policy;
+        # see apps/backend/core/auth.py).
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts
@@ -2492,8 +2495,10 @@ class AgentService:
             cmd.append("--skip-qa")
             logger.info(f"[AgentService] Skipping QA for quick mode task {task_id}")
 
-        # Set environment
-        env = os.environ.copy()
+        # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
+        # can never silently bill the direct-API account (OAuth-only policy;
+        # see apps/backend/core/auth.py).
+        env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         # Run Claude in non-interactive mode - bypass permission prompts
