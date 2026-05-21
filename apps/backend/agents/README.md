@@ -7,7 +7,7 @@ Modular agent system for autonomous coding. This module refactors the original m
 The agent system is now organized by concern:
 
 ```
-magestic-ai/agents/
+aifactory/agents/
 ├── __init__.py          # Public API exports
 ├── base.py              # Shared constants and imports
 ├── utils.py             # Git operations and plan management
@@ -124,7 +124,7 @@ memory.py
 Run the verification script to test the refactoring:
 
 ```bash
-python3 magestic-ai/agents/test_refactoring.py
+python3 aifactory/agents/test_refactoring.py
 ```
 
 This verifies:

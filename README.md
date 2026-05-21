@@ -1,8 +1,8 @@
-# MagesticAI
+# AIFactory
 
 **SDD (Spec-Driven Development) — a cloud and web-based AI task management and agent orchestration platform powered by LLMs**
 
-[![CI](https://github.com/dataseeek/MagesticAI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dataseeek/MagesticAI/actions/workflows/ci.yml)
+[![CI](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node.js](https://img.shields.io/badge/Node.js-24%2B-green.svg)](https://nodejs.org/)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
@@ -13,7 +13,7 @@
 
 ## Overview
 
-MagesticAI is a browser-based platform for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for task creation, execution monitoring, terminal access, and code review - all accessible from any browser.
+AIFactory is a browser-based platform for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for task creation, execution monitoring, terminal access, and code review - all accessible from any browser.
 
 ### Key Features
 
@@ -33,7 +33,7 @@ MagesticAI is a browser-based platform for managing AI-powered coding tasks thro
 
 ## Demo Video
 
-[![Watch the MagesticAI demo](https://img.youtube.com/vi/L0DEeaLuxYA/maxresdefault.jpg)](https://youtu.be/L0DEeaLuxYA)
+[![Watch the AIFactory demo](https://img.youtube.com/vi/L0DEeaLuxYA/maxresdefault.jpg)](https://youtu.be/L0DEeaLuxYA)
 
 _A quick walkthrough of the Kanban board, task creation flow, and agent execution._
 
@@ -61,15 +61,15 @@ _A quick walkthrough of the Kanban board, task creation flow, and agent executio
 | **Windows (WSL2)** | ⚠️ Should work, untested | Run inside an Ubuntu WSL2 distro and treat it as Linux. Native Windows is not supported. |
 | **Windows (native)** | ❌ Not supported | Some scripts assume bash, Linux tools, and a POSIX filesystem. |
 
-> If you successfully run MagesticAI on a platform marked untested, open a PR adding your config to this table — happy to mark it ✅.
+> If you successfully run AIFactory on a platform marked untested, open a PR adding your config to this table — happy to mark it ✅.
 
 ---
 
 ## How does it compare?
 
-MagesticAI sits next to two open-source projects with overlapping goals but very different shapes:
+AIFactory sits next to two open-source projects with overlapping goals but very different shapes:
 
-|  | [Spec Kit](https://github.com/github/spec-kit) | [Compozy](https://github.com/compozy/compozy) | **MagesticAI** |
+|  | [Spec Kit](https://github.com/github/spec-kit) | [Compozy](https://github.com/compozy/compozy) | **AIFactory** |
 |---|---|---|---|
 | **Primary interface** | CLI (`specify`) | CLI / single Go binary | Browser UI |
 | **Generates specs** | Yes — its core purpose | Partial — workflow artifacts | Yes — multi-agent spec authoring (3–8 stages, auto-scaled by complexity) |
@@ -78,7 +78,7 @@ MagesticAI sits next to two open-source projects with overlapping goals but very
 | **LLM provider model** | Inherited from whatever agent you hand off to | Inherited from the agent it orchestrates | Direct multi-provider: Claude, Codex CLI, Gemini, Ollama, any OpenAI-compatible endpoint |
 | **License** | MIT | MIT | AGPL-3.0 |
 
-**The short version:** Spec Kit is great for authoring specs you'll execute with an existing agent. Compozy is great if you want a terminal-first multi-agent runner driving external agents. MagesticAI is the one to pick if you want the full spec → plan → code → QA loop in one self-hosted browser app, with first-class support for local and OpenAI-compatible LLMs.
+**The short version:** Spec Kit is great for authoring specs you'll execute with an existing agent. Compozy is great if you want a terminal-first multi-agent runner driving external agents. AIFactory is the one to pick if you want the full spec → plan → code → QA loop in one self-hosted browser app, with first-class support for local and OpenAI-compatible LLMs.
 
 ---
 
@@ -96,8 +96,8 @@ MagesticAI sits next to two open-source projects with overlapping goals but very
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/dataseeek/MagesticAI.git
-cd MagesticAI
+git clone https://github.com/dataseeek/AIFactory.git
+cd AIFactory
 
 # 2. Install all dependencies
 npm run install:all
@@ -116,7 +116,7 @@ cd apps/web-server
 source .venv/bin/activate
 python -m server.main
 # Server runs on http://localhost:3101
-# API token printed to console and saved to ~/.magestic-ai/.token
+# API token printed to console and saved to ~/.aifactory/.token
 ```
 
 **Terminal 2 - Frontend Dev Server:**
@@ -128,7 +128,7 @@ npm run dev
 
 ### Docker Deployment
 
-MagesticAI includes a `Dockerfile` and `docker-compose.yml` for containerized deployment:
+AIFactory includes a `Dockerfile` and `docker-compose.yml` for containerized deployment:
 
 ```bash
 # Build and start (clean)
@@ -138,7 +138,7 @@ docker compose down -v && docker compose build && docker compose up -d
 docker compose up -d
 
 # Retrieve the auto-generated API token
-docker exec magesticai cat /home/magesticai/.magestic-ai/.token
+docker exec aifactory cat /home/aifactory/.aifactory/.token
 ```
 
 Access the web UI at `http://YOUR_HOST:3101` after the container starts.
@@ -151,7 +151,7 @@ See [ContainerAPP.md](ContainerAPP.md) for detailed Docker deployment instructio
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                   MagesticAI                        │
+│                   AIFactory                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │   Browser (React 19 + Vite)           Port 3100                 │
@@ -230,7 +230,7 @@ See [ContainerAPP.md](ContainerAPP.md) for detailed Docker deployment instructio
 ## Project Structure
 
 ```
-MagesticAI/
+AIFactory/
 ├── apps/
 │   ├── frontend-web/        # React web frontend (Vite)
 │   │   ├── src/
@@ -333,7 +333,7 @@ VITE_WS_BASE_URL=ws://localhost:3101
 
 ### OpenAI-Compatible Endpoints
 
-MagesticAI can talk to any service that implements the OpenAI
+AIFactory can talk to any service that implements the OpenAI
 `POST /v1/chat/completions` protocol: **LM Studio, vLLM, OpenRouter,
 Together AI, Groq, LocalAI**, and OpenAI itself.
 
@@ -357,7 +357,7 @@ Prefix the model name with `openai:` or `openai-compatible:`:
 | `openai-compatible:LM studio .11:qwen3-14b`   | Use the endpoint labelled "LM studio .11"        |
 
 The backend reads ``base_url`` and ``api_key`` directly from the
-``llm_endpoints`` table in ``~/.magestic-ai/data.db`` — same row the
+``llm_endpoints`` table in ``~/.aifactory/data.db`` — same row the
 Settings UI writes when you click Create.
 
 For power users without the UI, the env vars
@@ -366,7 +366,7 @@ For power users without the UI, the env vars
 
 **Model size matters.** Smaller local models (under ~30B parameters)
 can call tools and write files, but they sometimes drift from the
-exact JSON schemas MagesticAI expects (`spec.md`,
+exact JSON schemas AIFactory expects (`spec.md`,
 `implementation_plan.json`, `qa_report.md`, etc.). When that happens
 the build pipeline has a built-in retry loop that feeds the
 validation error back to the model and asks it to fix the file —
@@ -449,7 +449,7 @@ npm run build            # Build frontend for production
 | Issue | Solution |
 |-------|----------|
 | Cannot connect to backend | Ensure web-server running on port 3101 |
-| Invalid token | Get token from `~/.magestic-ai/.token` |
+| Invalid token | Get token from `~/.aifactory/.token` |
 | WebSocket failed | Check token in URL, verify ports accessible |
 | Task stuck | Check agent logs in Settings → Logs |
 | Memory errors | Verify `GRAPHITI_ENABLED=true` in backend .env |
@@ -475,7 +475,7 @@ See [RELEASE.md](RELEASE.md) for the full release and versioning process.
 This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 
 See [LICENSE](LICENSE) for the full license text and [NOTICE](NOTICE) for
-copyright and upstream attribution (MagesticAI is a derivative work of
+copyright and upstream attribution (AIFactory is a derivative work of
 [Aperant](https://github.com/AndyMik90/Aperant) by [@AndyMik90](https://github.com/AndyMik90)
 and inherits its AGPL-3.0 license).
 
@@ -483,14 +483,14 @@ and inherits its AGPL-3.0 license).
 
 ## Credits
 
-MagesticAI is a fork of [Aperant](https://github.com/AndyMik90/Aperant) (formerly *Auto Claude Desktop*) by [@AndyMik90](https://github.com/AndyMik90). We thank the original authors for the foundational work.
+AIFactory is a fork of [Aperant](https://github.com/AndyMik90/Aperant) (formerly *Auto Claude Desktop*) by [@AndyMik90](https://github.com/AndyMik90). We thank the original authors for the foundational work.
 
 ---
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/dataseeek/MagesticAI/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/dataseeek/MagesticAI/discussions)
+- **Issues:** [GitHub Issues](https://github.com/dataseeek/AIFactory/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/dataseeek/AIFactory/discussions)
 
 ---
 
@@ -498,10 +498,10 @@ MagesticAI is a fork of [Aperant](https://github.com/AndyMik90/Aperant) (formerl
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=dataseeek%2FMagesticAI&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=dataseeek%2FAIFactory&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dataseeek/MagesticAI&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dataseeek/MagesticAI&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dataseeek/MagesticAI&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&legend=top-left" />
  </picture>
 </a>

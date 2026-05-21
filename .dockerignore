@@ -12,7 +12,7 @@ apps/web-server/static/
 .gitignore
 
 # Runtime/sensitive data
-.magestic-ai/
+.aifactory/
 .worktrees/
 .claude/
 

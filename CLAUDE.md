@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MagesticAI is a web-based AI task management and agent orchestration platform that builds software through coordinated AI agent sessions. It uses the Claude Agent SDK to run agents in isolated workspaces with security controls.
+AIFactory is a web-based AI task management and agent orchestration platform that builds software through coordinated AI agent sessions. It uses the Claude Agent SDK to run agents in isolated workspaces with security controls.
 
-**Project:** MagesticAI
-**Repository:** https://github.com/dataseeek/MagesticAI
+**Project:** AIFactory
+**Repository:** https://github.com/dataseeek/AIFactory
 **Author:** DataSeek Team
 **License:** AGPL-3.0
 
-**LLM provider abstraction:** MagesticAI uses the Claude Agent SDK
+**LLM provider abstraction:** AIFactory uses the Claude Agent SDK
 (`claude-agent-sdk`) as its primary provider, but also supports Codex CLI,
 Gemini CLI, Ollama, and any OpenAI-compatible endpoint (LM Studio, vLLM,
 OpenRouter, Together, Groq, LocalAI) via the provider factory in
@@ -239,7 +239,7 @@ See [RELEASE.md](RELEASE.md) for detailed release process documentation.
 
 ### Spec Directory Structure
 
-Each spec in `.magestic-ai/specs/XXX-name/` contains:
+Each spec in `.aifactory/specs/XXX-name/` contains:
 - `spec.md` - Feature specification
 - `requirements.json` - Structured user requirements
 - `context.json` - Discovered codebase context
@@ -249,7 +249,7 @@ Each spec in `.magestic-ai/specs/XXX-name/` contains:
 
 ### Branching & Worktree Strategy
 
-MagesticAI uses git worktrees for isolated builds. All branches stay LOCAL until user explicitly pushes:
+AIFactory uses git worktrees for isolated builds. All branches stay LOCAL until user explicitly pushes:
 
 ```
 main (user's branch)
@@ -297,11 +297,11 @@ Three-layer defense:
 2. **Filesystem Permissions** - Operations restricted to project directory
 3. **Command Allowlist** - Dynamic allowlist from project analysis (security.py + project_analyzer.py)
 
-Security profile cached in `.magestic-ai-security.json`.
+Security profile cached in `.aifactory-security.json`.
 
 ### Claude Agent SDK Integration
 
-**CRITICAL: MagesticAI uses the Claude Agent SDK for ALL AI interactions. Never use the Anthropic API directly.**
+**CRITICAL: AIFactory uses the Claude Agent SDK for ALL AI interactions. Never use the Anthropic API directly.**
 
 **Client Location:** `apps/backend/core/client.py`
 
@@ -349,7 +349,7 @@ response = client.create_agent_session(
 
 **Graphiti Memory (Mandatory)** - `integrations/graphiti/`
 
-MagesticAI uses Graphiti as its primary memory system with embedded LadybugDB (no Docker required):
+AIFactory uses Graphiti as its primary memory system with embedded LadybugDB (no Docker required):
 
 - **Graph database with semantic search** - Knowledge graph for cross-session context
 - **Session insights** - Patterns, gotchas, discoveries automatically extracted
@@ -366,7 +366,7 @@ MagesticAI uses Graphiti as its primary memory system with embedded LadybugDB (n
 **Configuration:**
 - Set provider credentials in `apps/backend/.env` (see `.env.example`)
 - Required env vars: `GRAPHITI_ENABLED=true`, `ANTHROPIC_API_KEY` or other provider keys
-- Memory data stored in `.magestic-ai/specs/XXX/graphiti/`
+- Memory data stored in `.aifactory/specs/XXX/graphiti/`
 
 **Usage in agents:**
 ```python
@@ -381,7 +381,7 @@ memory.add_session_insight("Pattern: use React hooks for state")
 
 **Status:** ✅ Complete (Branch: `bmad-method`, awaiting PR to `develop`)
 
-MagesticAI integrates BMad Method's scale-adaptive intelligence, specialized agents, and architecture-first workflows. All 6 milestones implemented.
+AIFactory integrates BMad Method's scale-adaptive intelligence, specialized agents, and architecture-first workflows. All 6 milestones implemented.
 
 #### Key Features
 
@@ -540,7 +540,7 @@ guides/troubleshooting/specific-issue.md
 
 ## Web Interface
 
-MagesticAI is a browser-based web interface. This enables:
+AIFactory is a browser-based web interface. This enables:
 - Remote access from any device with a browser
 - Server-based deployments
 - Headless operation with web UI control
@@ -562,7 +562,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m server.main
-# Note: Token is printed to console and saved to ~/.magestic-ai/.token
+# Note: Token is printed to console and saved to ~/.aifactory/.token
 
 # Terminal 2: Start the frontend dev server
 cd apps/frontend-web
@@ -613,7 +613,7 @@ See `apps/web-server/README.md` and `apps/frontend-web/README.md` for detailed d
 | "Claude Code not installed" | Hard refresh browser (`Ctrl+Shift+R`) |
 | UI blocked/frozen | Check browser console for errors, restart servers |
 | Can't add projects | Use project discovery dropdown or enter custom path |
-| API errors | Verify token in `~/.magestic-ai/.token` |
+| API errors | Verify token in `~/.aifactory/.token` |
 | Git Repository Required keeps appearing | Click "Skip for now" or initialize git; state persists in localStorage |
 | Usage shows NaN | Backend reads stats from `~/.claude/stats-cache.json` |
 | New Task button not working | Ensure TaskCreationWizard is imported in App.tsx |
@@ -668,8 +668,8 @@ See `apps/web-server/README.md` and `apps/frontend-web/README.md` for detailed d
 - Cache loaded children in component state to avoid refetching
 
 **Worktree File Synchronization:**
-- Agent writes files to worktree: `.magestic-ai/worktrees/tasks/{spec-id}/.magestic-ai/specs/{spec-id}/`
-- Frontend reads from main spec: `.magestic-ai/specs/{spec-id}/`
+- Agent writes files to worktree: `.aifactory/worktrees/tasks/{spec-id}/.aifactory/specs/{spec-id}/`
+- Frontend reads from main spec: `.aifactory/specs/{spec-id}/`
 - `agent_service.py` syncs files every 3 seconds during task execution (`_sync_worktree_files()` method)
 - Synced files: `implementation_plan.json`, `build-progress.txt`, `context.json`, `qa_report.md`, `spec.md`, `requirements.json`
 - Final sync occurs when task completes
@@ -719,5 +719,5 @@ cd apps/frontend-web && npm run dev
 ```
 
 **Project data storage:**
-- `.magestic-ai/specs/` - Per-project data (specs, plans, QA reports, memory) - gitignored
-- `~/.magestic-ai/` - Web interface data (projects, settings, token) - for web UI only
+- `.aifactory/specs/` - Per-project data (specs, plans, QA reports, memory) - gitignored
+- `~/.aifactory/` - Web interface data (projects, settings, token) - for web UI only

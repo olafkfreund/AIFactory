@@ -1,4 +1,4 @@
-# Contributing to MagesticAI
+# Contributing to AIFactory
 
 Thanks for your interest! This guide covers everything you need to send a PR.
 
@@ -14,8 +14,8 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 
 ## How to ask for help
 
-- **Questions / discussion** → [GitHub Discussions](https://github.com/dataseeek/MagesticAI/discussions) (or open a `question` issue)
-- **Bugs** → [Bug report issue template](https://github.com/dataseeek/MagesticAI/issues/new?template=bug_report.yml)
+- **Questions / discussion** → [GitHub Discussions](https://github.com/dataseeek/AIFactory/discussions) (or open a `question` issue)
+- **Bugs** → [Bug report issue template](https://github.com/dataseeek/AIFactory/issues/new?template=bug_report.yml)
 - **Security issues** → see [SECURITY.md](SECURITY.md) (do **not** open a public issue)
 
 ## Development setup
@@ -23,8 +23,8 @@ This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By particip
 Prereqs: **Python 3.12+**, **Node.js 24+**, **git**, **uv** (`pip install uv`).
 
 ```bash
-git clone https://github.com/dataseeek/MagesticAI.git
-cd MagesticAI
+git clone https://github.com/dataseeek/AIFactory.git
+cd AIFactory
 npm run install:all                  # backend + web-server + frontend deps
 cp apps/backend/.env.example apps/backend/.env       # add provider keys
 cp apps/web-server/.env.example apps/web-server/.env # optional overrides

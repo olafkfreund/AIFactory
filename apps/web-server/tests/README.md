@@ -1,6 +1,6 @@
-# Magestic AI Web Server Tests
+# AIFactory Web Server Tests
 
-This directory contains test suites and verification tools for the Magestic AI web server backend.
+This directory contains test suites and verification tools for the AIFactory web server backend.
 
 ## Test Files
 
@@ -108,7 +108,7 @@ File-based endpoints are API routes that primarily perform read/write operations
 All tests use the following fixtures for consistency:
 
 - **temp_dir**: Temporary directory for test files
-- **mock_settings_dir**: Mock .magestic-ai directory structure
+- **mock_settings_dir**: Mock .aifactory directory structure
 - **mock_claude_profiles**: Mock claude-profiles.json with sample data
 - **mock_api_profiles**: Mock api-profiles.json with sample data
 - **mock_projects**: Mock projects.json with test project
@@ -289,8 +289,8 @@ python3 verify_cli_integration_endpoints.py
 ## Documentation
 
 For more information:
-- **Implementation Plan**: `.magestic-ai/specs/012-search-this-project-files-for-/implementation_plan.json`
-- **Build Progress**: `.magestic-ai/specs/012-search-this-project-files-for-/build-progress.txt`
+- **Implementation Plan**: `.aifactory/specs/012-search-this-project-files-for-/implementation_plan.json`
+- **Build Progress**: `.aifactory/specs/012-search-this-project-files-for-/build-progress.txt`
 - **File-Based Test Report**: `FILE_BASED_ENDPOINTS_TEST_REPORT.md`
 - **CLI Integration Test Report**: `CLI_INTEGRATION_ENDPOINTS_TEST_REPORT.md`
 

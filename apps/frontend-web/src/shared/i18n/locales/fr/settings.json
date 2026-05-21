@@ -7,7 +7,7 @@
   "sections": {
     "appearance": {
       "title": "Apparence",
-      "description": "Personnalisez l'apparence de MagesticAI"
+      "description": "Personnalisez l'apparence de AIFactory"
     },
     "display": {
       "title": "Affichage",
@@ -72,7 +72,7 @@
     },
     "updates": {
       "title": "Mises à jour",
-      "description": "Mises à jour MagesticAI"
+      "description": "Mises à jour AIFactory"
     },
     "notifications": {
       "title": "Notifications",
@@ -101,7 +101,7 @@
     "otherAgentSettingsDescription": "Options de configuration supplémentaires de l'agent",
     "agentFramework": "Framework de l'agent",
     "agentFrameworkDescription": "Le framework de codage utilisé pour les tâches autonomes",
-    "agentFrameworkAutoClaude": "MagesticAI",
+    "agentFrameworkAutoClaude": "AIFactory",
     "aiTerminalNaming": "Nommage IA des terminaux",
     "aiTerminalNamingDescription": "Nommer automatiquement les terminaux en fonction des commandes (utilise Haiku)",
     "featureModelSettings": "Paramètres du modèle de fonctionnalité",
@@ -115,7 +115,7 @@
   },
   "theme": {
     "title": "Apparence",
-    "description": "Personnalisez l'apparence de MagesticAI",
+    "description": "Personnalisez l'apparence de AIFactory",
     "mode": "Mode",
     "modeDescription": "Choisir entre les thèmes clair et sombre",
     "light": "Clair",
@@ -129,14 +129,14 @@
     "detectAgain": "Détecter à nouveau",
     "ide": {
       "label": "IDE préféré",
-      "description": "MagesticAI ouvrira les worktrees dans cet éditeur",
+      "description": "AIFactory ouvrira les worktrees dans cet éditeur",
       "placeholder": "Sélectionner un IDE...",
       "customPath": "Chemin IDE personnalisé",
       "customPathPlaceholder": "/chemin/vers/votre/ide"
     },
     "terminal": {
       "label": "Terminal préféré",
-      "description": "MagesticAI ouvrira les sessions terminal ici",
+      "description": "AIFactory ouvrira les sessions terminal ici",
       "placeholder": "Sélectionner un terminal...",
       "customPath": "Chemin terminal personnalisé",
       "customPathPlaceholder": "/chemin/vers/votre/terminal"
@@ -148,7 +148,7 @@
   },
   "updates": {
     "title": "Mises à jour",
-    "description": "Gérer les mises à jour de MagesticAI",
+    "description": "Gérer les mises à jour de AIFactory",
     "appUpdateReady": "Mise à jour de l'app prête",
     "newVersion": "Nouvelle version",
     "released": "Publiée le",
@@ -165,7 +165,7 @@
     "unableToCheck": "Impossible de vérifier les mises à jour",
     "checkForUpdates": "Vérifier les mises à jour",
     "autoUpdateProjects": "Mise à jour automatique des projets",
-    "autoUpdateProjectsDescription": "Mettre à jour automatiquement MagesticAI dans les projets quand une nouvelle version est disponible",
+    "autoUpdateProjectsDescription": "Mettre à jour automatiquement AIFactory dans les projets quand une nouvelle version est disponible",
     "betaUpdates": "Mises à jour bêta",
     "betaUpdatesDescription": "Recevoir les versions bêta pré-release avec de nouvelles fonctionnalités (peut être moins stable)"
   },
@@ -202,7 +202,7 @@
     "setup": {
       "title": "Comment enregistrer une application Microsoft Azure AD",
       "step1": "Accédez au <azureLink>portail d'enregistrement d'applications Azure</azureLink>",
-      "step2": "Cliquez sur « Nouvelle inscription », nommez-la (ex : « MagesticAI Notifications »), sélectionnez « Comptes dans n'importe quel annuaire organisationnel et comptes Microsoft personnels », puis cliquez sur Inscrire",
+      "step2": "Cliquez sur « Nouvelle inscription », nommez-la (ex : « AIFactory Notifications »), sélectionnez « Comptes dans n'importe quel annuaire organisationnel et comptes Microsoft personnels », puis cliquez sur Inscrire",
       "step3": "Depuis la page de présentation de l'application, copiez l'« ID d'application (client) » et collez-le dans le champ Client ID ci-dessous",
       "step4": "Allez dans « Certificats et secrets » → « Nouveau secret client » → copiez la Valeur (pas l'ID du secret) et collez-la dans le champ Client Secret ci-dessous",
       "step5": "Allez dans « Authentification » → « Ajouter une plateforme » → « Web » → définissez l'URI de redirection sur :",
@@ -431,7 +431,7 @@
     "noProjectSelected": "Aucun projet sélectionné",
     "noProjectSelectedDescription": "Sélectionnez un projet dans le menu déroulant pour voir et configurer les serveurs MCP.",
     "projectNotInitialized": "Projet non initialisé",
-    "projectNotInitializedDescription": "Initialisez MagesticAI pour ce projet pour configurer les serveurs MCP.",
+    "projectNotInitializedDescription": "Initialisez AIFactory pour ce projet pour configurer les serveurs MCP.",
     "browserAutomation": "Automatisation du navigateur (agents QA uniquement)",
     "alwaysEnabled": "toujours activé",
     "addServer": "Ajouter un serveur",
@@ -463,7 +463,7 @@
         "description": "Automatisation du navigateur web pour les tests (Chromium headless)"
       },
       "autoClaude": {
-        "name": "Outils Magestic AI",
+        "name": "Outils AIFactory",
         "description": "Suivi de la progression du build"
       }
     },

@@ -1,9 +1,9 @@
-# MagesticAI Docker Container - Test & Deploy Steps
+# AIFactory Docker Container - Test & Deploy Steps
 
 ## Build & Run
 
 ```bash
-cd <your-clone-dir>          # the directory you cloned MagesticAI into
+cd <your-clone-dir>          # the directory you cloned AIFactory into
 
 # Build and start (clean)
 sudo docker compose down -v && sudo docker compose build && sudo docker compose up -d
@@ -18,7 +18,7 @@ sudo docker compose up -d
 - **Token:** Auto-generated on first run, retrieve with:
 
 ```bash
-sudo docker exec magesticai cat /home/magesticai/.magestic-ai/.token
+sudo docker exec aifactory cat /home/aifactory/.aifactory/.token
 ```
 
 ## Useful Commands
@@ -28,19 +28,19 @@ sudo docker exec magesticai cat /home/magesticai/.magestic-ai/.token
 sudo docker compose ps
 
 # View logs (last 30 lines)
-sudo docker logs magesticai --tail 30
+sudo docker logs aifactory --tail 30
 
 # Follow logs in real time
-sudo docker logs magesticai -f
+sudo docker logs aifactory -f
 
-# Shell into container (as magesticai user)
-sudo docker exec -it magesticai bash
+# Shell into container (as aifactory user)
+sudo docker exec -it aifactory bash
 
 # Shell as root
-sudo docker exec -it -u root magesticai bash
+sudo docker exec -it -u root aifactory bash
 
 # Check Claude Code CLI inside container
-sudo docker exec magesticai bash -l -c "claude --version"
+sudo docker exec aifactory bash -l -c "claude --version"
 ```
 
 ## Stop & Clean Up
@@ -72,11 +72,11 @@ Set in `docker-compose.yml` or `.env` file. Key vars:
 ## Architecture
 
 - **Base image:** Ubuntu 24.04
-- **Runtime user:** `magesticai` (non-root)
-- **Python venv:** `/home/projects/MagesticAI/.venv`
+- **Runtime user:** `aifactory` (non-root)
+- **Python venv:** `/home/projects/AIFactory/.venv`
 - **Node.js:** Copied from build stage (for frontend build + npm available at runtime)
 - **Frontend:** Pre-built static files served from `apps/web-server/static/`
-- **Data directory:** `/home/magesticai/.magestic-ai/` (persisted via Docker volume)
+- **Data directory:** `/home/aifactory/.aifactory/` (persisted via Docker volume)
 
 ## Onboarding Flow
 

@@ -1,4 +1,4 @@
-# Contributing to MagesticAI
+# Contributing to AIFactory
 
 Thank you for your interest in contributing! This document provides guidelines and instructions for contributing to the project.
 
@@ -74,8 +74,8 @@ winget install Python.Python.3.12
 
 ```bash
 # Clone the repository
-git clone https://github.com/dataseeek/MagesticAI.git
-cd MagesticAI
+git clone https://github.com/dataseeek/AIFactory.git
+cd AIFactory
 
 # Install all dependencies
 npm run install:all
@@ -407,7 +407,7 @@ Include:
 ### Overview
 
 ```
-MagesticAI/
+AIFactory/
 ├── apps/
 │   ├── frontend-web/     # React web frontend
 │   ├── web-server/       # FastAPI backend
@@ -423,7 +423,7 @@ For detailed architecture, see [DOCS.md](DOCS.md).
 
 ## Questions?
 
-- **Issues:** https://github.com/dataseeek/MagesticAI/issues
-- **Discussions:** https://github.com/dataseeek/MagesticAI/discussions
+- **Issues:** https://github.com/dataseeek/AIFactory/issues
+- **Discussions:** https://github.com/dataseeek/AIFactory/discussions
 
-Thank you for contributing to MagesticAI!
+Thank you for contributing to AIFactory!

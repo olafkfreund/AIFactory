@@ -1,4 +1,4 @@
-# MagesticAI - Technical Documentation
+# AIFactory - Technical Documentation
 
 Comprehensive technical documentation for contributors and developers.
 
@@ -30,7 +30,7 @@ Comprehensive technical documentation for contributors and developers.
 
 ### Purpose
 
-MagesticAI is a web-based platform for managing AI-powered coding tasks through coordinated autonomous agents. It enables:
+AIFactory is a web-based platform for managing AI-powered coding tasks through coordinated autonomous agents. It enables:
 
 - **Task Automation** - Create specs, plan implementations, and execute code automatically
 - **Multi-Agent Orchestration** - Planner, Coder, and QA agents work together
@@ -323,10 +323,10 @@ npm run dev
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `settings.json` | `~/.magestic-ai/` | App settings |
-| `projects.json` | `~/.magestic-ai/` | Project list |
-| `.token` | `~/.magestic-ai/` | API auth token |
-| `claude-profiles.json` | `~/.magestic-ai/` | Claude profiles |
+| `settings.json` | `~/.aifactory/` | App settings |
+| `projects.json` | `~/.aifactory/` | Project list |
+| `.token` | `~/.aifactory/` | API auth token |
+| `claude-profiles.json` | `~/.aifactory/` | Claude profiles |
 
 ---
 
@@ -404,7 +404,7 @@ class PTYManager:
 ### Authentication Flow
 
 ```
-1. Server starts → generates token → saves to ~/.magestic-ai/.token
+1. Server starts → generates token → saves to ~/.aifactory/.token
 2. Client reads token from localStorage
 3. All /api/* requests include: Authorization: Bearer {token}
 4. WebSocket connects with: ?token={token} or Bearer header
@@ -662,23 +662,23 @@ def create_client(
 
 ### File-Based Storage
 
-MagesticAI uses file-based storage (no SQL database):
+AIFactory uses file-based storage (no SQL database):
 
 | Location | Content |
 |----------|---------|
-| `~/.magestic-ai/` | Web interface data |
-| `~/.magestic-ai/projects.json` | Project list |
-| `~/.magestic-ai/settings.json` | App settings |
-| `~/.magestic-ai/.token` | API auth token |
-| `~/.magestic-ai/logs/` | Server logs |
-| `.magestic-ai/specs/` | Per-project spec data |
-| `.magestic-ai/worktrees/` | Git worktrees |
+| `~/.aifactory/` | Web interface data |
+| `~/.aifactory/projects.json` | Project list |
+| `~/.aifactory/settings.json` | App settings |
+| `~/.aifactory/.token` | API auth token |
+| `~/.aifactory/logs/` | Server logs |
+| `.aifactory/specs/` | Per-project spec data |
+| `.aifactory/worktrees/` | Git worktrees |
 
 ### Project Data Structure
 
 ```
 project-root/
-└── .magestic-ai/
+└── .aifactory/
     ├── specs/
     │   └── 001-feature-name/
     │       ├── spec.md               # Feature specification
@@ -989,7 +989,7 @@ function MyComponent() {
 
 ### Authentication
 
-- **Token-based auth** stored in `~/.magestic-ai/.token`
+- **Token-based auth** stored in `~/.aifactory/.token`
 - Auto-generated on first server start
 - Required for all `/api/*` routes
 - WebSocket auth via query param or header
@@ -1016,7 +1016,7 @@ STACK_COMMANDS = {
 
 ### Security Profile
 
-Cached in `.magestic-ai-security.json`:
+Cached in `.aifactory-security.json`:
 
 ```json
 {
@@ -1117,7 +1117,7 @@ APP_DEBUG=false python -m server.main
 ```bash
 # Enable SSL
 APP_SSL_ENABLED=true
-# Certificates auto-generated in ~/.magestic-ai/ssl/
+# Certificates auto-generated in ~/.aifactory/ssl/
 ```
 
 ---
@@ -1129,7 +1129,7 @@ APP_SSL_ENABLED=true
 | Issue | Solution |
 |-------|----------|
 | Cannot connect to backend | Verify web-server on port 3101 |
-| Invalid token | Get from `~/.magestic-ai/.token` |
+| Invalid token | Get from `~/.aifactory/.token` |
 | WebSocket fails | Check token, verify ports |
 | Task stuck | Check logs: Settings → Logs |
 | Memory errors | Set `GRAPHITI_ENABLED=true` |
@@ -1140,10 +1140,10 @@ APP_SSL_ENABLED=true
 
 | Log | Location |
 |-----|----------|
-| Server logs | `~/.magestic-ai/logs/server.log` |
-| Error logs | `~/.magestic-ai/logs/errors.log` |
-| Agent logs | `~/.magestic-ai/logs/agent.log` |
-| Task logs | `.magestic-ai/specs/{id}/task_logs.json` |
+| Server logs | `~/.aifactory/logs/server.log` |
+| Error logs | `~/.aifactory/logs/errors.log` |
+| Agent logs | `~/.aifactory/logs/agent.log` |
+| Task logs | `.aifactory/specs/{id}/task_logs.json` |
 
 ### Debug Mode
 

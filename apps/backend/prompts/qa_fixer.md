@@ -199,7 +199,7 @@ If any issue is not fixed, go back to Phase 3.
 ## PHASE 6: COMMIT FIXES
 
 ```bash
-git add . ':!.magestic-ai'
+git add . ':!.aifactory'
 git commit -m "fix: Address QA issues (qa-requested)
 
 Fixes:
@@ -214,9 +214,9 @@ Verified:
 QA Fix Session: [N]"
 ```
 
-**IMPORTANT — NEVER commit `.magestic-ai/` files:**
-The `.magestic-ai/` directory is gitignored and managed by the framework.
-Do NOT run `git add` on any path under `.magestic-ai/` — this includes
+**IMPORTANT — NEVER commit `.aifactory/` files:**
+The `.aifactory/` directory is gitignored and managed by the framework.
+Do NOT run `git add` on any path under `.aifactory/` — this includes
 `build-progress.txt`, `implementation_plan.json`, `context.json`, `qa_report.md`,
 and `memory/`. The framework syncs these automatically. Only commit your source code changes.
 

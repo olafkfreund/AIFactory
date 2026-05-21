@@ -1,4 +1,4 @@
-# Magestic AI Backend
+# AIFactory Backend
 
 Autonomous coding framework powered by Claude AI. Builds software features through coordinated multi-agent sessions.
 

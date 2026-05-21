@@ -1,6 +1,6 @@
-# MagesticAI - Troubleshooting Guide
+# AIFactory - Troubleshooting Guide
 
-This guide helps you diagnose and resolve common issues with MagesticAI. It covers installation problems, authentication errors, connection issues, and performance troubleshooting.
+This guide helps you diagnose and resolve common issues with AIFactory. It covers installation problems, authentication errors, connection issues, and performance troubleshooting.
 
 ---
 
@@ -41,7 +41,7 @@ curl http://localhost:3101/health
 cd apps/backend && source .venv/bin/activate && python -c "import os; print('Token set:', bool(os.getenv('CLAUDE_CODE_OAUTH_TOKEN')))"
 
 # Check web server token
-cat ~/.magestic-ai/.token 2>/dev/null || echo "No token file found"
+cat ~/.aifactory/.token 2>/dev/null || echo "No token file found"
 
 # Check if ports are in use
 lsof -i :3101  # Web server
@@ -153,7 +153,7 @@ sudo chown -R $(whoami) /usr/local/lib/node_modules
 sudo chown -R $(whoami) .
 
 # For token file
-chmod 600 ~/.magestic-ai/.token
+chmod 600 ~/.aifactory/.token
 ```
 
 ---
@@ -169,7 +169,7 @@ chmod 600 ~/.magestic-ai/.token
 1. **Missing API token:**
    ```bash
    # Check if token exists
-   cat ~/.magestic-ai/.token
+   cat ~/.aifactory/.token
 
    # If missing, start the web server - it auto-generates a token
    cd apps/web-server && python -m server.main
@@ -178,7 +178,7 @@ chmod 600 ~/.magestic-ai/.token
 2. **Token mismatch:**
    ```bash
    # Get the current token
-   cat ~/.magestic-ai/.token
+   cat ~/.aifactory/.token
 
    # Ensure browser is using the correct token
    # Check browser DevTools → Network → Request Headers → Authorization
@@ -187,7 +187,7 @@ chmod 600 ~/.magestic-ai/.token
 3. **Corrupted token file:**
    ```bash
    # Regenerate token
-   rm ~/.magestic-ai/.token
+   rm ~/.aifactory/.token
    cd apps/web-server && python -m server.main
    ```
 
@@ -438,7 +438,7 @@ grep APP_MAX_CONCURRENT_TASKS apps/web-server/.env
 2. **Missing worktree:**
    ```bash
    # Check if worktree exists
-   ls -la .magestic-ai/worktrees/tasks/YOUR-TASK-ID/
+   ls -la .aifactory/worktrees/tasks/YOUR-TASK-ID/
 
    # If missing, the task may need to be recreated
    ```
@@ -446,10 +446,10 @@ grep APP_MAX_CONCURRENT_TASKS apps/web-server/.env
 3. **Invalid spec file:**
    ```bash
    # Check spec syntax
-   cat .magestic-ai/specs/YOUR-TASK-ID/spec.md
+   cat .aifactory/specs/YOUR-TASK-ID/spec.md
 
    # Ensure implementation_plan.json is valid JSON
-   python -m json.tool .magestic-ai/specs/YOUR-TASK-ID/implementation_plan.json
+   python -m json.tool .aifactory/specs/YOUR-TASK-ID/implementation_plan.json
    ```
 
 ### QA Validation Loop
@@ -470,7 +470,7 @@ grep APP_MAX_CONCURRENT_TASKS apps/web-server/.env
    ```
 
 3. **Adjust acceptance criteria:**
-   - Edit `.magestic-ai/specs/YOUR-TASK-ID/spec.md`
+   - Edit `.aifactory/specs/YOUR-TASK-ID/spec.md`
    - Clarify or relax acceptance criteria
 
 ### Agent Process Crashed
@@ -505,7 +505,7 @@ grep GRAPHITI_ENABLED apps/backend/.env
 # Should be: GRAPHITI_ENABLED=true
 
 # Check database path
-ls -la ~/.magestic-ai/memories/
+ls -la ~/.aifactory/memories/
 
 # Verify LLM provider credentials
 grep OPENAI_API_KEY apps/backend/.env  # or your configured provider
@@ -523,7 +523,7 @@ OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_EMBEDDING_DIM=768
 
 # Clear and rebuild memory database
-rm -rf ~/.magestic-ai/memories/
+rm -rf ~/.aifactory/memories/
 # Restart the application
 ```
 
@@ -537,10 +537,10 @@ rm -rf ~/.magestic-ai/memories/
 # Look in web server logs for Graphiti initialization
 
 # Verify write permissions
-touch ~/.magestic-ai/memories/test.txt && rm ~/.magestic-ai/memories/test.txt
+touch ~/.aifactory/memories/test.txt && rm ~/.aifactory/memories/test.txt
 
 # Check for errors in debug log
-grep -i graphiti ~/.magestic-ai/debug.log 2>/dev/null
+grep -i graphiti ~/.aifactory/debug.log 2>/dev/null
 ```
 
 ### Offline Mode Not Working
@@ -580,7 +580,7 @@ OLLAMA_BASE_URL=http://localhost:11434
 git worktree list
 
 # Remove orphaned worktree
-git worktree remove .magestic-ai/worktrees/tasks/TASK-ID --force
+git worktree remove .aifactory/worktrees/tasks/TASK-ID --force
 
 # Prune worktree references
 git worktree prune
@@ -596,7 +596,7 @@ git worktree prune
 git branch -D task/TASK-ID
 
 # Remove the worktree if it exists
-git worktree remove .magestic-ai/worktrees/tasks/TASK-ID --force
+git worktree remove .aifactory/worktrees/tasks/TASK-ID --force
 
 # Retry task creation
 ```
@@ -614,7 +614,7 @@ git worktree remove .magestic-ai/worktrees/tasks/TASK-ID --force
 
 2. **From CLI:**
    ```bash
-   cd .magestic-ai/worktrees/tasks/TASK-ID/
+   cd .aifactory/worktrees/tasks/TASK-ID/
    git status  # See conflicted files
    # Edit files to resolve conflicts
    git add .
@@ -627,7 +627,7 @@ git worktree remove .magestic-ai/worktrees/tasks/TASK-ID --force
 
 **Solution:**
 ```bash
-cd .magestic-ai/worktrees/tasks/TASK-ID/
+cd .aifactory/worktrees/tasks/TASK-ID/
 
 # Check current state
 git status
@@ -646,7 +646,7 @@ git checkout -b task/TASK-ID
 git worktree prune
 
 # Recreate the worktree
-git worktree add .magestic-ai/worktrees/tasks/TASK-ID -b task/TASK-ID main
+git worktree add .aifactory/worktrees/tasks/TASK-ID -b task/TASK-ID main
 ```
 
 ---
@@ -711,7 +711,7 @@ npm run typecheck
 
 2. **Clear cached settings:**
    ```bash
-   rm ~/.magestic-ai/settings.json
+   rm ~/.aifactory/settings.json
    # Restart the application
    ```
 
@@ -803,7 +803,7 @@ rm -rf apps/frontend-web/dist
 rm -rf apps/web-server/static
 
 # Check for large log files
-du -sh ~/.magestic-ai/
+du -sh ~/.aifactory/
 ```
 
 ---
@@ -874,23 +874,23 @@ When `APP_DEBUG=true`:
 |----------|----------|---------|
 | **Backend Debug** | `apps/backend/debug.log` (if configured) | Agent execution logs |
 | **Web Server** | Terminal stdout | API requests, WebSocket events |
-| **Task Logs** | `.magestic-ai/specs/TASK-ID/logs/` | Per-task execution logs |
-| **Graphiti** | `~/.magestic-ai/memories/graphiti.log` | Memory system logs |
+| **Task Logs** | `.aifactory/specs/TASK-ID/logs/` | Per-task execution logs |
+| **Graphiti** | `~/.aifactory/memories/graphiti.log` | Memory system logs |
 
 ### Task-Specific Logs
 
 ```bash
 # Find task logs
-ls .magestic-ai/specs/YOUR-TASK-ID/
+ls .aifactory/specs/YOUR-TASK-ID/
 
 # View implementation plan
-cat .magestic-ai/specs/YOUR-TASK-ID/implementation_plan.json
+cat .aifactory/specs/YOUR-TASK-ID/implementation_plan.json
 
 # Check build progress
-cat .magestic-ai/specs/YOUR-TASK-ID/build-progress.txt
+cat .aifactory/specs/YOUR-TASK-ID/build-progress.txt
 
 # View context
-cat .magestic-ai/specs/YOUR-TASK-ID/context.json
+cat .aifactory/specs/YOUR-TASK-ID/context.json
 ```
 
 ### System Logs
@@ -910,13 +910,13 @@ ls /var/log/ | grep -i crash
 
 ```bash
 # Clear old task logs (keeps last 10)
-find .magestic-ai/specs -name "*.log" -mtime +7 -delete
+find .aifactory/specs -name "*.log" -mtime +7 -delete
 
 # Clear backend debug log
 > apps/backend/debug.log
 
 # Clear memory logs
-> ~/.magestic-ai/memories/graphiti.log
+> ~/.aifactory/memories/graphiti.log
 ```
 
 ---
@@ -929,9 +929,9 @@ find .magestic-ai/specs -name "*.log" -mtime +7 -delete
 
 A: Remove configuration and data directories:
 ```bash
-rm -rf ~/.magestic-ai
-rm -rf .magestic-ai/worktrees
-rm -rf .magestic-ai/specs
+rm -rf ~/.aifactory
+rm -rf .aifactory/worktrees
+rm -rf .aifactory/specs
 # Then restart the application
 ```
 
@@ -973,7 +973,7 @@ A: Use the `CLAUDE_CODE_OAUTH_TOKEN` environment variable in your CI/CD secrets.
 
 **Q: Why did my task fail silently?**
 
-A: Check the task logs in `.magestic-ai/specs/TASK-ID/`. Enable debug mode for more details.
+A: Check the task logs in `.aifactory/specs/TASK-ID/`. Enable debug mode for more details.
 
 **Q: Can I retry a failed task?**
 
@@ -989,7 +989,7 @@ A: The worktree remains intact. You can review changes, fix issues manually, and
 
 ### Performance
 
-**Q: How much disk space does MagesticAI use?**
+**Q: How much disk space does AIFactory use?**
 
 A: Typically 500MB-1GB per project, including worktrees and node_modules.
 

@@ -1,5 +1,5 @@
 # =============================================================================
-# MagesticAI - Docker Compose
+# AIFactory - Docker Compose
 # =============================================================================
 # Deploys with a static LAN IP via macvlan.
 # No port mapping needed — the container is directly reachable on the LAN.
@@ -11,12 +11,12 @@
 #   LAN_GATEWAY    — Your LAN gateway IP  (e.g. 192.168.1.1)
 #
 # Optional environment variables (have defaults):
-#   INSTANCE_NAME      — Container name and disk label   (default: magesticai)
-#   MAGESTIC_DATA_DIR  — Host directory for persistent data (default: ./data)
+#   INSTANCE_NAME      — Container name and disk label   (default: aifactory)
+#   AIFACTORY_DATA_DIR  — Host directory for persistent data (default: ./data)
 #
 # Usage:
 #   cp .env.example .env && $EDITOR .env       # set the required vars above
-#   sudo bash scripts/setup-docker-disk.sh ${INSTANCE_NAME:-magesticai}
+#   sudo bash scripts/setup-docker-disk.sh ${INSTANCE_NAME:-aifactory}
 #   docker compose up -d
 #
 # Multiple instances (each needs a unique INSTANCE_NAME + INSTANCE_IP):
@@ -25,7 +25,7 @@
 #
 # DISK QUOTA:
 #   Each instance gets its own 2 GB loopback ext4 disk at
-#   ${MAGESTIC_DATA_DIR}/<INSTANCE_NAME>-data.
+#   ${AIFACTORY_DATA_DIR}/<INSTANCE_NAME>-data.
 #   Run scripts/setup-docker-disk.sh <name> to create it (idempotent).
 #   To teardown: sudo bash scripts/setup-docker-disk.sh <name> teardown
 #
@@ -34,10 +34,10 @@
 #   To enable host-to-container communication, create a macvlan shim
 #   interface on the host (once per instance IP):
 #
-#     sudo ip link add magesticai-shim link "${HOST_NIC}" type macvlan mode bridge
-#     sudo ip addr add <HOST_LAN_IP>/32 dev magesticai-shim
-#     sudo ip link set magesticai-shim up
-#     sudo ip route add "${INSTANCE_IP}/32" dev magesticai-shim
+#     sudo ip link add aifactory-shim link "${HOST_NIC}" type macvlan mode bridge
+#     sudo ip addr add <HOST_LAN_IP>/32 dev aifactory-shim
+#     sudo ip link set aifactory-shim up
+#     sudo ip route add "${INSTANCE_IP}/32" dev aifactory-shim
 #
 #   To make it persistent, add to /etc/networkd-dispatcher or rc.local.
 # =============================================================================
@@ -45,18 +45,18 @@
 services:
   app:
     build: .
-    container_name: ${INSTANCE_NAME:-magesticai}
+    container_name: ${INSTANCE_NAME:-aifactory}
     restart: unless-stopped
     networks:
-      magesticai-lan:
+      aifactory-lan:
         ipv4_address: ${INSTANCE_IP:?INSTANCE_IP is required — see .env.example}
     volumes:
       # Persistent data — 2 GB loopback disk (run scripts/setup-docker-disk.sh <name> first)
-      # MAGESTIC_DATA_DIR must be an absolute path if you use snap Docker
+      # AIFACTORY_DATA_DIR must be an absolute path if you use snap Docker
       # (snap resolves $HOME to its own snap dir).
-      - ${MAGESTIC_DATA_DIR:-./data}/${INSTANCE_NAME:-magesticai}-data:/home/magesticai/.magestic-ai
+      - ${AIFACTORY_DATA_DIR:-./data}/${INSTANCE_NAME:-aifactory}-data:/home/aifactory/.aifactory
       # Optional: bind-mount a host directory for agent project work
-      # - /path/to/host/projects:/home/magesticai/projects
+      # - /path/to/host/projects:/home/aifactory/projects
     cap_add:
       - NET_ADMIN                       # Required for iptables firewall rules in entrypoint
     environment:
@@ -90,7 +90,7 @@ services:
     # tty: true
 
 networks:
-  magesticai-lan:
+  aifactory-lan:
     driver: macvlan
     driver_opts:
       parent: ${HOST_NIC:?HOST_NIC is required — see .env.example}

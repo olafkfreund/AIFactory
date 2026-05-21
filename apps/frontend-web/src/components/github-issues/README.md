@@ -1,6 +1,6 @@
 # GitHub Issues Module
 
-A well-structured, modular implementation of the GitHub Issues feature for the Magestic AI UI.
+A well-structured, modular implementation of the GitHub Issues feature for the AIFactory UI.
 
 ## Quick Stats
 
@@ -279,4 +279,4 @@ When contributing to this module:
 
 ## License
 
-Part of the Magestic AI project.
+Part of the AIFactory project.

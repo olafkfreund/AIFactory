@@ -1,5 +1,5 @@
 # =============================================================================
-# MagesticAI - Multi-Stage Docker Build
+# AIFactory - Multi-Stage Docker Build
 # =============================================================================
 # Stage 1: Build React frontend
 # Stage 2: Ubuntu runtime with Python backend + built frontend

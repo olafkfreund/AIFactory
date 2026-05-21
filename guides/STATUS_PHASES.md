@@ -1,6 +1,6 @@
 # Status and Phases Reference
 
-This document describes all status and phase values used in MagesticAI.
+This document describes all status and phase values used in AIFactory.
 
 ## Task Status (`TaskStatus`)
 

@@ -1,6 +1,6 @@
 # Memory, LLM & Embeddings Architecture
 
-This document explains how Magestic AI uses memory systems, LLMs, and embeddings for cross-session learning and intelligent code generation.
+This document explains how AIFactory uses memory systems, LLMs, and embeddings for cross-session learning and intelligent code generation.
 
 ---
 
@@ -21,7 +21,7 @@ This document explains how Magestic AI uses memory systems, LLMs, and embeddings
 
 ## 1. Architecture Overview
 
-Magestic AI uses a **dual-layer architecture**:
+AIFactory uses a **dual-layer architecture**:
 
 1. **Primary LLM**: Claude Agent SDK for all agent sessions (Planner, Coder, QA)
 2. **Memory System**: Graphiti + LadybugDB for cross-session learning, with file-based fallback
@@ -423,7 +423,7 @@ OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 ### Per-Spec Memory Directory
 
 ```
-.magestic-ai/specs/001-feature-name/
+.aifactory/specs/001-feature-name/
 ├── spec.md                         # Feature specification
 ├── implementation_plan.json        # Subtask plan
 ├── memory/                         # File-based memory (fallback)
@@ -440,7 +440,7 @@ OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 ### Global Memory Location
 
 ```
-~/.magestic-ai/memories/           # Shared across projects (if configured)
+~/.aifactory/memories/           # Shared across projects (if configured)
 ```
 
 ---

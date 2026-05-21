@@ -1,10 +1,10 @@
-# MagesticAI - Documentation
+# AIFactory - Documentation
 
-Welcome to the **MagesticAI** documentation! This guides section provides comprehensive documentation for users, developers, and contributors working with our web-based AI task management platform.
+Welcome to the **AIFactory** documentation! This guides section provides comprehensive documentation for users, developers, and contributors working with our web-based AI task management platform.
 
-## What is MagesticAI?
+## What is AIFactory?
 
-MagesticAI is a **browser-based platform** for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for:
+AIFactory is a **browser-based platform** for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for:
 
 - **Task Creation & Management** - Create and track coding tasks through an intuitive Kanban board
 - **AI Agent Orchestration** - Coordinate Planner, Coder, and QA agents to implement features
@@ -58,7 +58,7 @@ Access the application from any modern browser - no desktop installation require
 
 ## Application Views at a Glance
 
-MagesticAI provides multiple specialized views accessible from the sidebar:
+AIFactory provides multiple specialized views accessible from the sidebar:
 
 | View | Purpose |
 |------|---------|
@@ -86,7 +86,7 @@ MagesticAI provides multiple specialized views accessible from the sidebar:
 
 ## Prerequisites Summary
 
-Before using MagesticAI, ensure you have:
+Before using AIFactory, ensure you have:
 
 - **Node.js 24+** with npm 10+
 - **Python 3.12+**
@@ -98,4 +98,4 @@ For detailed installation instructions, see [Getting Started](GETTING-STARTED.md
 
 ---
 
-**MagesticAI** - Orchestrate AI coding agents from your browser.
+**AIFactory** - Orchestrate AI coding agents from your browser.
