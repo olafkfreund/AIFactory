@@ -231,7 +231,8 @@
     "reviewLogs": "Logs da Revisão",
     "followup": "Acompanhamento",
     "initial": "Inicial",
-    "connectingToGitHub": "Conectando ao GitHub..."
+    "connectingToGitHub": "Conectando ao GitHub...",
+    "connectingTo": "Conectando ao {{provider}}..."
   },
   "insights": {
     "modelSelector": {

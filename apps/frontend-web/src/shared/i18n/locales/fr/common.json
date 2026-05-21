@@ -235,7 +235,8 @@
     "reviewLogs": "Journaux de révision",
     "followup": "Suivi",
     "initial": "Initial",
-    "connectingToGitHub": "Connexion à GitHub..."
+    "connectingToGitHub": "Connexion à GitHub...",
+    "connectingTo": "Connexion à {{provider}}..."
   },
   "insights": {
     "modelSelector": {

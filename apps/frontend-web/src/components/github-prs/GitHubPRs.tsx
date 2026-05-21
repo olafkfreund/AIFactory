@@ -178,11 +178,12 @@ export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) 
 
   // Initial loading state - show while first connection check is in progress
   if (isInitialLoading) {
+    const providerLabel = PROVIDER_LABEL[selectedProject?.settings?.gitProvider ?? 'github'] ?? 'GitHub';
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center">
           <GitPullRequest className="h-8 w-8 mx-auto mb-3 text-muted-foreground animate-pulse" />
-          <p className="text-sm text-muted-foreground">{t('prReview.connectingToGitHub')}</p>
+          <p className="text-sm text-muted-foreground">{t('prReview.connectingTo', { provider: providerLabel })}</p>
         </div>
       </div>
     );

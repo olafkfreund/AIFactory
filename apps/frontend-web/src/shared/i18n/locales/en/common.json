@@ -235,7 +235,8 @@
     "reviewLogs": "Review Logs",
     "followup": "Follow-up",
     "initial": "Initial",
-    "connectingToGitHub": "Connecting to GitHub..."
+    "connectingToGitHub": "Connecting to GitHub...",
+    "connectingTo": "Connecting to {{provider}}..."
   },
   "insights": {
     "modelSelector": {
