@@ -17,6 +17,7 @@ import {
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Card, CardContent } from '../../ui/card';
+import { MarkdownBody } from '../../ui/MarkdownBody';
 import { ScrollArea } from '../../ui/scroll-area';
 import { Progress } from '../../ui/progress';
 import { formatDate } from '../utils/formatDate';
@@ -745,9 +746,7 @@ ${reviewResult.isFollowupReview ? `- Follow-up review: All previous blocking iss
             <h3 className="text-sm font-medium text-muted-foreground mb-2">{t('prReview.description')}</h3>
              <ScrollArea className="h-[400px] w-full rounded-md border p-4 bg-muted/10">
               {pr.body ? (
-                <pre className="whitespace-pre-wrap text-sm text-muted-foreground font-sans break-words">
-                  {pr.body}
-                </pre>
+                <MarkdownBody source={pr.body} />
               ) : (
                 <p className="text-sm text-muted-foreground italic">{t('prReview.noDescription')}</p>
               )}

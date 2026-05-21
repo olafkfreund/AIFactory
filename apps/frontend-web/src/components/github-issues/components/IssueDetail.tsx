@@ -4,6 +4,7 @@ import { ExternalLink, User, Clock, MessageCircle, Sparkles, CheckCircle2, Eye, 
 import { Badge } from '../../ui/badge';
 import { Button } from '../../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../ui/card';
+import { MarkdownBody } from '../../ui/MarkdownBody';
 import { ScrollArea } from '../../ui/scroll-area';
 import {
   GITHUB_ISSUE_STATE_COLORS,
@@ -187,11 +188,7 @@ export function IssueDetail({
           </CardHeader>
           <CardContent>
             {issue.body ? (
-              <div className="prose prose-sm prose-invert max-w-none">
-                <pre className="whitespace-pre-wrap text-sm text-muted-foreground font-sans">
-                  {issue.body}
-                </pre>
-              </div>
+              <MarkdownBody source={issue.body} />
             ) : (
               <p className="text-sm text-muted-foreground italic">
                 No description provided.
