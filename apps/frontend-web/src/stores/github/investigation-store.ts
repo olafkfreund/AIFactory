@@ -70,7 +70,13 @@ export async function investigateGitHubIssue(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = response as any;
     if (!result?.success) {
-      throw new Error(result?.error || 'Investigation request failed');
+      // Defensive: even though api-client.ts now stringifies errors at the
+      // boundary, guard against `result.error` ever being a non-string here.
+      // Passing an object to new Error() would yield "[object Object]".
+      const errMsg = typeof result?.error === 'string'
+        ? result.error
+        : 'Investigation request failed';
+      throw new Error(errMsg);
     }
 
     const data = result.data;
@@ -137,7 +143,11 @@ export async function investigateGitHubIssue(
       phase: 'error',
       issueNumber,
       progress: 0,
-      message
+      message,
+      // Populate `error` so InvestigationDialog's red error band has visible
+      // text (it renders `{investigationStatus.error}`, which was previously
+      // left undefined and rendered as an empty red box).
+      error: message,
     });
     store.setInvestigationResult({
       success: false,

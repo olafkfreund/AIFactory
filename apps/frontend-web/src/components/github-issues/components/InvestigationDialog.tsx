@@ -23,6 +23,12 @@ interface GitHubComment {
   updated_at: string;
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  azure_devops: 'Azure DevOps',
+};
+
 export function InvestigationDialog({
   open,
   onOpenChange,
@@ -30,8 +36,10 @@ export function InvestigationDialog({
   investigationStatus,
   onStartInvestigation,
   onClose,
-  projectId
+  projectId,
+  provider
 }: InvestigationDialogProps) {
+  const providerLabel = PROVIDER_LABELS[provider ?? 'github'] ?? 'GitHub';
   const [comments, setComments] = useState<GitHubComment[]>([]);
   const [selectedCommentIds, setSelectedCommentIds] = useState<number[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
@@ -101,7 +109,7 @@ export function InvestigationDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-info" />
-            Create Task from Issue
+            Create Task from {providerLabel} Issue
           </DialogTitle>
           <DialogDescription>
             {selectedIssue && (
@@ -115,7 +123,7 @@ export function InvestigationDialog({
         {investigationStatus.phase === 'idle' ? (
           <div className="space-y-4 flex-1 min-h-0 flex flex-col">
             <p className="text-sm text-muted-foreground">
-              Create a task from this GitHub issue. The task will be added to your Kanban board in the Backlog column.
+              Create a task from this {providerLabel} issue. The task will be added to your Kanban board in the Backlog column.
             </p>
 
             {/* Comments section */}
@@ -177,7 +185,7 @@ export function InvestigationDialog({
                 <h4 className="text-sm font-medium mb-2">The task will include:</h4>
                 <ul className="text-sm text-muted-foreground space-y-1">
                   <li>• Issue title and description</li>
-                  <li>• Link back to the GitHub issue</li>
+                  <li>• Link back to the {providerLabel} issue</li>
                   <li>• Labels and metadata from the issue</li>
                   <li>• No comments (this issue has no comments)</li>
                 </ul>
@@ -221,10 +229,17 @@ export function InvestigationDialog({
               </Button>
             </>
           )}
-          {investigationStatus.phase !== 'idle' && investigationStatus.phase !== 'complete' && (
+          {investigationStatus.phase !== 'idle'
+            && investigationStatus.phase !== 'complete'
+            && investigationStatus.phase !== 'error' && (
             <Button variant="outline" disabled>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               Creating...
+            </Button>
+          )}
+          {investigationStatus.phase === 'error' && (
+            <Button variant="outline" onClick={onClose}>
+              Close
             </Button>
           )}
           {investigationStatus.phase === 'complete' && (
