@@ -7,7 +7,7 @@ Uses lazy imports to avoid circular dependencies.
 
 
 def __getattr__(name):
-    """Lazy import to avoid circular imports with magestic_ai_tools."""
+    """Lazy import to avoid circular imports with aifactory_tools."""
     from core import client as _client
 
     return getattr(_client, name)

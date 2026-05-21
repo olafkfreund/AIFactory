@@ -48,7 +48,7 @@ _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 
 # MCP protocol constants
 _MCP_PROTOCOL_VERSION = "2024-11-05"
-_CLIENT_INFO = {"name": "magestic-ai", "version": "1.0"}
+_CLIENT_INFO = {"name": "aifactory", "version": "1.0"}
 
 
 class CodexAgenticProvider(BaseLLMProvider):

@@ -23,10 +23,10 @@ class TestAgentConfigs:
     """Tests for AGENT_CONFIGS registry."""
 
     def test_all_agent_types_have_required_fields(self):
-        """Every agent config should have tools, mcp_servers, magestic_ai_tools, thinking_default."""
+        """Every agent config should have tools, mcp_servers, aifactory_tools, thinking_default."""
         from agents.tools_pkg.models import AGENT_CONFIGS
 
-        required_fields = ["tools", "mcp_servers", "magestic_ai_tools", "thinking_default"]
+        required_fields = ["tools", "mcp_servers", "aifactory_tools", "thinking_default"]
 
         for agent_type, config in AGENT_CONFIGS.items():
             for field in required_fields:
@@ -76,8 +76,8 @@ class TestAgentConfigs:
         for agent_type, config in AGENT_CONFIGS.items():
             assert isinstance(config["tools"], list), f"Agent '{agent_type}' tools should be list"
             assert isinstance(
-                config["magestic_ai_tools"], list
-            ), f"Agent '{agent_type}' magestic_ai_tools should be list"
+                config["aifactory_tools"], list
+            ), f"Agent '{agent_type}' aifactory_tools should be list"
             assert isinstance(
                 config["mcp_servers"], list
             ), f"Agent '{agent_type}' mcp_servers should be list"
@@ -124,12 +124,12 @@ class TestGetRequiredMcpServers:
         assert "context7" in servers
 
     def test_coder_has_context7_and_magestic_ai(self):
-        """coder should require context7 and magestic-ai."""
+        """coder should require context7 and aifactory."""
         from agents.tools_pkg.models import get_required_mcp_servers
 
         servers = get_required_mcp_servers("coder")
         assert "context7" in servers
-        assert "magestic-ai" in servers
+        assert "aifactory" in servers
 
     def test_linear_optional_not_included_by_default(self):
         """Linear should not be included unless explicitly added via mcp_config."""

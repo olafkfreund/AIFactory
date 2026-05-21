@@ -2148,7 +2148,7 @@ async def update_source_env(config: SourceEnvUpdate):
     """
     try:
         settings = get_settings()
-        backend_path = Path(settings.MAGESTIC_AI_BACKEND_PATH)
+        backend_path = Path(settings.BACKEND_PATH)
         env_path = backend_path / ".env"
 
         # Read existing .env or start fresh
@@ -2336,7 +2336,7 @@ async def check_claude_credentials_exist():
 
 @router.post("/import-claude-credentials")
 async def import_claude_credentials():
-    """Import token from ~/.claude/.credentials.json into MagesticAI profiles."""
+    """Import token from ~/.claude/.credentials.json into AIFactory profiles."""
     from ..paths import get_data_file
 
     cred_path = Path.home() / ".claude" / ".credentials.json"

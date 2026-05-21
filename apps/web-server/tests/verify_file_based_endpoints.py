@@ -201,7 +201,7 @@ class EndpointVerifier:
         self.verify_endpoint("settings.py", "set_active_api_profile", "2.4",
                            "Set active API profile")
         self.verify_endpoint("projects.py", "update_project_settings", "2.5",
-                           "Save project settings to .magestic-ai/.env")
+                           "Save project settings to .aifactory/.env")
         self.verify_endpoint("roadmap.py", "update_feature_status", "2.6",
                            "Update feature status in roadmap.json")
         self.verify_endpoint("roadmap.py", "update_idea_status", "2.7",

@@ -24,23 +24,23 @@ if TYPE_CHECKING:
 def get_specs_dir(project_dir: Path) -> Path:
     """Get the specs directory path.
 
-    IMPORTANT: Only .magestic-ai/ is considered an "installed" magestic-ai.
-    The magestic-ai/ folder (if it exists) is SOURCE CODE being developed,
+    IMPORTANT: Only .aifactory/ is considered an "installed" aifactory.
+    The aifactory/ folder (if it exists) is SOURCE CODE being developed,
     not an installation. This allows Magestic AI to be used to develop itself.
 
-    This function also ensures .magestic-ai is added to .gitignore on first use.
+    This function also ensures .aifactory is added to .gitignore on first use.
 
     Args:
         project_dir: The project root directory
 
     Returns:
-        Path to the specs directory within .magestic-ai/
+        Path to the specs directory within .aifactory/
     """
-    # Initialize .magestic-ai directory and ensure it's in .gitignore
+    # Initialize .aifactory directory and ensure it's in .gitignore
     init_magestic_ai_dir(project_dir)
 
     # Return the specs directory path
-    return project_dir / ".magestic-ai" / "specs"
+    return project_dir / ".aifactory" / "specs"
 
 
 def cleanup_orphaned_pending_folders(specs_dir: Path) -> None:

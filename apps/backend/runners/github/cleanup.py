@@ -12,7 +12,7 @@ Features:
 - Storage usage metrics
 
 Usage:
-    cleaner = DataCleaner(state_dir=Path(".magestic-ai/github"))
+    cleaner = DataCleaner(state_dir=Path(".aifactory/github"))
 
     # Run automatic cleanup
     result = await cleaner.run_cleanup()
@@ -151,7 +151,7 @@ class DataCleaner:
     Manages data retention and cleanup.
 
     Usage:
-        cleaner = DataCleaner(state_dir=Path(".magestic-ai/github"))
+        cleaner = DataCleaner(state_dir=Path(".aifactory/github"))
 
         # Check what would be cleaned
         result = await cleaner.run_cleanup(dry_run=True)

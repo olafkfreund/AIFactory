@@ -207,7 +207,7 @@ class MultiRepoConfig:
             base_dir: Base directory for all repo state
         """
         self.repos: dict[str, RepoConfig] = {}
-        self.base_dir = base_dir or Path(".magestic-ai/github/repos")
+        self.base_dir = base_dir or Path(".aifactory/github/repos")
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
         if repos:

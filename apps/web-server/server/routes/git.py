@@ -145,7 +145,7 @@ async def initialize_git(request: InitGitRequest):
                 "*.pyc\n"
                 ".venv/\n"
                 "venv/\n"
-                ".magestic-ai/\n"
+                ".aifactory/\n"
                 "dist/\n"
                 "build/\n"
             )
@@ -857,7 +857,7 @@ async def download_source_update():
         # Get Magestic AI source directory (project root)
         # From git.py: __file__.parent = routes/, .parent.parent = server/,
         # .parent.parent.parent = web-server/, .parent.parent.parent.parent = apps/,
-        # .parent.parent.parent.parent.parent = MagesticAI/ (project root)
+        # .parent.parent.parent.parent.parent = AIFactory/ (project root)
         source_dir = Path(__file__).parent.parent.parent.parent.parent
         source_path = str(source_dir.resolve())
 
@@ -1191,8 +1191,8 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     switching branches in your main repository.
 
     The worktree will be created in:
-    - Path: .magestic-ai/worktrees/tasks/{name}
-    - Branch: magestic-ai/tasks/{name} (if createBranch is true)
+    - Path: .aifactory/worktrees/tasks/{name}
+    - Branch: aifactory/tasks/{name} (if createBranch is true)
 
     Args:
         projectId: Project ID
@@ -1282,8 +1282,8 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
             return {"success": False, "error": "Failed to get current branch"}
         base_branch = current_branch_result["output"]
 
-    # Create worktree path: .magestic-ai/worktrees/tasks/{name}
-    worktrees_base = Path(project_path) / ".magestic-ai" / "worktrees" / "tasks"
+    # Create worktree path: .aifactory/worktrees/tasks/{name}
+    worktrees_base = Path(project_path) / ".aifactory" / "worktrees" / "tasks"
     worktree_path = worktrees_base / name
 
     # Check if worktree path already exists
@@ -1303,7 +1303,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         }
 
     # Build git worktree add command
-    worktree_branch = f"magestic-ai/tasks/{name}" if request.createBranch else None
+    worktree_branch = f"aifactory/tasks/{name}" if request.createBranch else None
 
     if request.createBranch:
         # Check if branch already exists

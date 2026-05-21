@@ -53,24 +53,24 @@ def parse_args() -> argparse.Namespace:
         epilog="""
 Examples:
   # List all specs
-  python magestic-ai/run.py --list
+  python aifactory/run.py --list
 
   # Run a specific spec (by number or full name)
-  python magestic-ai/run.py --spec 001
-  python magestic-ai/run.py --spec 001-initial-app
+  python aifactory/run.py --spec 001
+  python aifactory/run.py --spec 001-initial-app
 
   # Workspace management (after build completes)
-  python magestic-ai/run.py --spec 001 --merge     # Add build to your project
-  python magestic-ai/run.py --spec 001 --review    # See what was built
-  python magestic-ai/run.py --spec 001 --discard   # Delete build (with confirmation)
+  python aifactory/run.py --spec 001 --merge     # Add build to your project
+  python aifactory/run.py --spec 001 --review    # See what was built
+  python aifactory/run.py --spec 001 --discard   # Delete build (with confirmation)
 
   # Advanced options
-  python magestic-ai/run.py --spec 001 --direct       # Skip workspace isolation
-  python magestic-ai/run.py --spec 001 --isolated     # Force workspace isolation
+  python aifactory/run.py --spec 001 --direct       # Skip workspace isolation
+  python aifactory/run.py --spec 001 --isolated     # Force workspace isolation
 
   # Status checks
-  python magestic-ai/run.py --spec 001 --review-status  # Check human review status
-  python magestic-ai/run.py --spec 001 --qa-status      # Check QA validation status
+  python aifactory/run.py --spec 001 --review-status  # Check human review status
+  python aifactory/run.py --spec 001 --qa-status      # Check QA validation status
 
 Prerequisites:
   1. Create a spec first: claude /spec
@@ -314,8 +314,8 @@ def main() -> None:
         print_banner()
         print("\nError: --spec is required")
         print("\nUsage:")
-        print("  python magestic-ai/run.py --list           # See all specs")
-        print("  python magestic-ai/run.py --spec 001       # Run a spec")
+        print("  python aifactory/run.py --list           # See all specs")
+        print("  python aifactory/run.py --spec 001       # Run a spec")
         print("\nCreate a new spec with:")
         print("  claude /spec")
         sys.exit(1)

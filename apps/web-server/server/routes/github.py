@@ -100,7 +100,7 @@ def run_gh_command(args: list[str], cwd: str | None = None) -> dict:
 
 
 def _persist_cli_token_to_project(project_id: str) -> bool:
-    """Persist the gh CLI token to a project's .magestic-ai/.env file.
+    """Persist the gh CLI token to a project's .aifactory/.env file.
 
     Reads the current token from `gh auth token`, then inserts/updates
     GITHUB_TOKEN in the project env file with secure 0o600 permissions.
@@ -119,7 +119,7 @@ def _persist_cli_token_to_project(project_id: str) -> bool:
         return False
 
     project_path = FilePath(projects[project_id]["path"])
-    env_path = project_path / ".magestic-ai" / ".env"
+    env_path = project_path / ".aifactory" / ".env"
 
     try:
         existing = {}
@@ -473,7 +473,7 @@ async def auto_detect_github(projectId: str | None = Query(None)):
     """Auto-detect GitHub CLI authentication and username in one call.
 
     If projectId is provided, the CLI token is persisted directly to the
-    project's .magestic-ai/.env file (server-side). The raw token is never
+    project's .aifactory/.env file (server-side). The raw token is never
     included in the response.
     """
     # Check gh CLI is installed
@@ -692,7 +692,7 @@ async def get_github_token():
 
 @router.post("/persist-token")
 async def persist_github_token(request: PersistTokenRequest):
-    """Persist the gh CLI token to a project's .magestic-ai/.env file.
+    """Persist the gh CLI token to a project's .aifactory/.env file.
 
     The raw token never appears in the response.
     """
@@ -1180,7 +1180,7 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
             continue
 
         # Create a spec directory for the imported issue
-        specs_dir = project_path / ".magestic-ai" / "specs"
+        specs_dir = project_path / ".aifactory" / "specs"
         specs_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine next spec number
@@ -1346,7 +1346,7 @@ async def get_pr_review(projectId: str, prNumber: int):
     """Get stored PR review result.
 
     Reads the review result JSON from the project's
-    .magestic-ai/github/pr/review_{prNumber}.json file.
+    .aifactory/github/pr/review_{prNumber}.json file.
 
     Returns PRReviewResult data or null if no review exists.
     """
@@ -1603,7 +1603,7 @@ async def get_pr_review_logs(projectId: str, prNumber: int):
     """Get PR review execution logs.
 
     Reads phase-level review logs from the project's
-    .magestic-ai/github/pr/review_{prNumber}_logs.json file.
+    .aifactory/github/pr/review_{prNumber}_logs.json file.
 
     Returns PRLogs data with per-phase timing and entries, or null
     if no logs are available.

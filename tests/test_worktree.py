@@ -26,7 +26,7 @@ class TestWorktreeManagerInitialization:
         manager = WorktreeManager(temp_git_repo)
 
         assert manager.project_dir == temp_git_repo
-        assert manager.worktrees_dir == temp_git_repo / ".magestic-ai" / "worktrees" / "tasks"
+        assert manager.worktrees_dir == temp_git_repo / ".aifactory" / "worktrees" / "tasks"
         assert manager.base_branch is not None
 
     def test_init_prefers_main_over_current_branch(self, temp_git_repo: Path):
@@ -81,7 +81,7 @@ class TestWorktreeCreation:
         info = manager.create_worktree("test-spec")
 
         assert info.path.exists()
-        assert info.branch == "magestic-ai/test-spec"
+        assert info.branch == "aifactory/test-spec"
         assert info.is_active is True
         assert (info.path / "README.md").exists()
 
@@ -92,7 +92,7 @@ class TestWorktreeCreation:
 
         info = manager.create_worktree("my-feature-spec")
 
-        assert info.branch == "magestic-ai/my-feature-spec"
+        assert info.branch == "aifactory/my-feature-spec"
 
     def test_get_or_create_replaces_existing_worktree(self, temp_git_repo: Path):
         """get_or_create_worktree returns existing worktree."""
@@ -252,7 +252,7 @@ class TestWorktreeUtilities:
         info = manager.get_worktree_info("test-spec")
 
         assert info is not None
-        assert info.branch == "magestic-ai/test-spec"
+        assert info.branch == "aifactory/test-spec"
 
     def test_get_worktree_path(self, temp_git_repo: Path):
         """get_worktree_path returns correct path."""

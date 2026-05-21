@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Apply branch protection rules to MagesticAI's main and dev branches.
+# Apply branch protection rules to AIFactory's main and dev branches.
 # Idempotent — safe to re-run.
 #
 # Requires the GitHub CLI authenticated as a repo admin:
 #   gh auth status
 #
 # Usage:
-#   bash scripts/setup-branch-protection.sh                # uses dataseeek/MagesticAI
+#   bash scripts/setup-branch-protection.sh                # uses dataseeek/AIFactory
 #   REPO=other/repo bash scripts/setup-branch-protection.sh
 # =============================================================================
 set -euo pipefail
 
-REPO="${REPO:-dataseeek/MagesticAI}"
+REPO="${REPO:-dataseeek/AIFactory}"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "error: gh CLI is required (https://cli.github.com/)" >&2

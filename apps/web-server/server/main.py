@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     # Startup
-    logger.info("Starting Magestic AI Web Server...")
+    logger.info("Starting AIFactory Web Server...")
     logger.info(f"Backend path: {settings.BACKEND_PATH}")
     logger.info(f"Projects data dir: {settings.PROJECTS_DATA_DIR}")
 

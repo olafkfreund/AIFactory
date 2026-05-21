@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Memory Query CLI for magestic-ai-ui.
+Memory Query CLI for aifactory-ui.
 
 Provides a subprocess interface for querying the LadybugDB/Graphiti memory database.
 Called from Node.js (Electron main process) via child_process.spawn().
@@ -324,7 +324,7 @@ async def _async_semantic_search(args):
         return {"success": False, "error": "LadybugDB not installed"}
 
     try:
-        # Add magestic-ai to path for imports
+        # Add aifactory to path for imports
         magestic_ai_dir = Path(__file__).parent
         if str(magestic_ai_dir) not in sys.path:
             sys.path.insert(0, str(magestic_ai_dir))
@@ -534,7 +534,7 @@ def extract_session_number(name: str) -> int | None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Query LadybugDB memory database for magestic-ai-ui"
+        description="Query LadybugDB memory database for aifactory-ui"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

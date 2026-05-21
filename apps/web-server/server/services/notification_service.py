@@ -363,13 +363,13 @@ class NotificationService:
                 Project: {_html_escape(project_id)}<br/>
                 Time: {now_str}
             </p>
-            <p style="color: #9ca3af; font-size: 12px;">Sent by MagesticAI</p>
+            <p style="color: #9ca3af; font-size: 12px;">Sent by AIFactory</p>
         </div>
         """
 
         await email_service.send_notification_email(
             user_id=user_id,
-            subject=f"MagesticAI - {title}",
+            subject=f"AIFactory - {title}",
             body_html=body_html,
             body_text=f"{title}\n\n{message}\n\nTask: {task_id}\nProject: {project_id}\nTime: {now_str}",
         )

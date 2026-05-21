@@ -8,13 +8,13 @@ Supports monorepos with multiple services.
 
 Usage:
     # Index entire project (creates project_index.json)
-    python magestic-ai/analyzer.py --index
+    python aifactory/analyzer.py --index
 
     # Analyze specific service
-    python magestic-ai/analyzer.py --service backend
+    python aifactory/analyzer.py --service backend
 
     # Output to specific file
-    python magestic-ai/analyzer.py --index --output path/to/output.json
+    python aifactory/analyzer.py --index --output path/to/output.json
 
 The analyzer will:
 1. Detect if this is a monorepo or single project

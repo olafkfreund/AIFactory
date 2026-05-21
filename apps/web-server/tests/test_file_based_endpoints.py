@@ -35,7 +35,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_settings_dir(temp_dir: Path) -> Path:
     """Create mock settings directory structure."""
-    settings_dir = temp_dir / ".magestic-ai"
+    settings_dir = temp_dir / ".aifactory"
     settings_dir.mkdir(parents=True)
     return settings_dir
 
@@ -108,7 +108,7 @@ def mock_projects(mock_settings_dir: Path, temp_dir: Path) -> Path:
     projects_file = mock_settings_dir.parent / "projects.json"
     project_path = temp_dir / "test-project"
     project_path.mkdir(parents=True)
-    (project_path / ".magestic-ai").mkdir(parents=True)
+    (project_path / ".aifactory").mkdir(parents=True)
 
     projects_data = {
         "projects": [
@@ -131,7 +131,7 @@ def mock_ideation(mock_settings_dir: Path, temp_dir: Path) -> Path:
     """Create mock ideation.json for a project."""
     project_path = temp_dir / "test-project"
     project_path.mkdir(parents=True, exist_ok=True)
-    magestic_ai_dir = project_path / ".magestic-ai"
+    magestic_ai_dir = project_path / ".aifactory"
     magestic_ai_dir.mkdir(parents=True, exist_ok=True)
 
     ideation_file = magestic_ai_dir / "ideation.json"
@@ -176,7 +176,7 @@ def mock_roadmap(mock_settings_dir: Path, temp_dir: Path) -> Path:
     """Create mock roadmap.json for a project."""
     project_path = temp_dir / "test-project"
     project_path.mkdir(parents=True, exist_ok=True)
-    magestic_ai_dir = project_path / ".magestic-ai"
+    magestic_ai_dir = project_path / ".aifactory"
     magestic_ai_dir.mkdir(parents=True, exist_ok=True)
 
     roadmap_file = magestic_ai_dir / "roadmap.json"
@@ -239,9 +239,9 @@ class TestPhase2CriticalPrioritySettings:
     def test_update_project_settings_env_mapping(self, mock_projects, temp_dir):
         """Test 2.5: update_project_settings maps fields to env vars correctly."""
         # Test environment variable mapping
-        # model -> MAGESTIC_AI_MODEL, etc.
+        # model -> AI_FACTORY_MODEL, etc.
         project_path = temp_dir / "test-project"
-        env_file = project_path / ".magestic-ai" / ".env"
+        env_file = project_path / ".aifactory" / ".env"
         assert not env_file.exists()  # Initially doesn't exist
         # Would test actual endpoint creating/updating .env
 
@@ -420,7 +420,7 @@ class TestPhase13ProjectAndEnvironment:
 
     def test_scan_for_projects_finds_indicators(self, temp_dir):
         """Test 13.1: scan_for_projects finds project indicators."""
-        # Create test project with .git, package.json, .magestic-ai
+        # Create test project with .git, package.json, .aifactory
         test_project = temp_dir / "scan-test"
         test_project.mkdir()
         (test_project / ".git").mkdir()

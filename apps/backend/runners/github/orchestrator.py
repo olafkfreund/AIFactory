@@ -120,7 +120,7 @@ class GitHubOrchestrator:
         self.progress_callback = progress_callback
 
         # GitHub directory for storing state
-        self.github_dir = self.project_dir / ".magestic-ai" / "github"
+        self.github_dir = self.project_dir / ".aifactory" / "github"
         self.github_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize GH client with timeout protection

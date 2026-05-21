@@ -37,7 +37,7 @@ SKIP_DIRS = {
     ".turbo",
     ".cache",
     ".worktrees",  # Skip git worktrees directory
-    ".magestic-ai",  # Skip magestic-ai metadata directory
+    ".aifactory",  # Skip aifactory metadata directory
 }
 
 # Common service directory names

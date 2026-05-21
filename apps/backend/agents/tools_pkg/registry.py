@@ -2,7 +2,7 @@
 Tool Registry
 =============
 
-Central registry for creating and managing magestic-ai MCP tools.
+Central registry for creating and managing aifactory MCP tools.
 """
 
 from pathlib import Path
@@ -50,7 +50,7 @@ def create_all_tools(spec_dir: Path, project_dir: Path) -> list:
 
 def create_magestic_ai_mcp_server(spec_dir: Path, project_dir: Path):
     """
-    Create an MCP server with magestic-ai custom tools.
+    Create an MCP server with aifactory custom tools.
 
     Args:
         spec_dir: Path to the spec directory
@@ -64,7 +64,7 @@ def create_magestic_ai_mcp_server(spec_dir: Path, project_dir: Path):
 
     tools = create_all_tools(spec_dir, project_dir)
 
-    return create_sdk_mcp_server(name="magestic-ai", version="1.0.0", tools=tools)
+    return create_sdk_mcp_server(name="aifactory", version="1.0.0", tools=tools)
 
 
 def is_tools_available() -> bool:

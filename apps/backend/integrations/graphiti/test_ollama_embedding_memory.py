@@ -54,7 +54,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 magestic_ai_dir = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(magestic_ai_dir))
 

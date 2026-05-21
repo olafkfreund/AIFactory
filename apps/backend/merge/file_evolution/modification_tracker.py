@@ -36,11 +36,11 @@ MODULE = "merge.file_evolution.modification_tracker"
 
 # Files/patterns to ignore during conflict detection (internal auto-generated files)
 IGNORED_FILES = {
-    ".magestic-ai-security.json",
-    ".magestic-ai-status",
+    ".aifactory-security.json",
+    ".aifactory-status",
 }
 IGNORED_PREFIXES = (
-    ".magestic-ai/",
+    ".aifactory/",
     "VERIFICATION_REPORT",
     "LANGUAGE_CHOICE",
 )

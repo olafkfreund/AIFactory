@@ -194,7 +194,7 @@ def invalidate_project_cache(project_dir: Path | None = None) -> None:
 from agents.tools_pkg import (
     CONTEXT7_TOOLS,
     GRAPHITI_MCP_TOOLS,
-    MAGESTIC_AI_TOOLS,
+    AI_FACTORY_TOOLS,
     PLAYWRIGHT_TOOLS,
     create_magestic_ai_mcp_server,
     get_allowed_tools,
@@ -371,7 +371,7 @@ def _validate_custom_mcp_server(server: dict) -> bool:
 
 def load_project_mcp_config(project_dir: Path) -> dict:
     """
-    Load MCP configuration from project's .magestic-ai/.env file.
+    Load MCP configuration from project's .aifactory/.env file.
 
     Returns a dict of MCP-related env vars:
     - CONTEXT7_ENABLED (default: true)
@@ -386,7 +386,7 @@ def load_project_mcp_config(project_dir: Path) -> dict:
     Returns:
         Dict of MCP configuration values (string values, except CUSTOM_MCP_SERVERS which is parsed JSON)
     """
-    env_path = project_dir / ".magestic-ai" / ".env"
+    env_path = project_dir / ".aifactory" / ".env"
     if not env_path.exists():
         return {}
 
@@ -579,15 +579,15 @@ def create_client(
     else:
         logger.info("[Fast Mode] inactive — not requested for this client")
 
-    # Check if custom magestic-ai tools are available
-    magestic_ai_tools_enabled = is_tools_available()
+    # Check if custom aifactory tools are available
+    aifactory_tools_enabled = is_tools_available()
 
     # Load project capabilities for dynamic MCP tool selection
     # This enables context-aware tool injection based on project type
     # Uses caching to avoid reloading on every create_client() call
     project_index, project_capabilities = _get_cached_project_data(project_dir)
 
-    # Load per-project MCP configuration from .magestic-ai/.env
+    # Load per-project MCP configuration from .aifactory/.env
     mcp_config = load_project_mcp_config(project_dir)
 
     # Get allowed tools using phase-aware configuration
@@ -624,16 +624,16 @@ def create_client(
 
     # Detect if we're running in a worktree and get the original project directory
     # Worktrees are located in either:
-    # - .magestic-ai/worktrees/tasks/{spec-name}/ (new location)
+    # - .aifactory/worktrees/tasks/{spec-name}/ (new location)
     # - .worktrees/{spec-name}/ (legacy location)
     # When running in a worktree, we need to allow access to both the worktree
-    # and the original project's .magestic-ai/ directory for spec files
+    # and the original project's .aifactory/ directory for spec files
     original_project_permissions = []
     resolved_project_path = project_dir.resolve()
 
     worktree_markers = [
-        "/.magestic-ai/worktrees/tasks/",  # Spec/task worktrees
-        "/.magestic-ai/github/pr/worktrees/",  # PR review worktrees
+        "/.aifactory/worktrees/tasks/",  # Spec/task worktrees
+        "/.aifactory/github/pr/worktrees/",  # PR review worktrees
         "/.worktrees/",  # Legacy worktree location
     ]
     project_path_posix = str(resolved_project_path).replace("\\", "/")
@@ -645,7 +645,7 @@ def create_client(
 
             permission_ops = ["Read", "Write", "Edit", "Glob", "Grep"]
             dirs_to_permit = [
-                original_project_dir / ".magestic-ai",
+                original_project_dir / ".aifactory",
                 original_project_dir / ".worktrees",  # Legacy support
             ]
 
@@ -680,7 +680,7 @@ def create_client(
                 f"Read({spec_path_str}/**)",
                 f"Write({spec_path_str}/**)",
                 f"Edit({spec_path_str}/**)",
-                # Allow original project's .magestic-ai/ and .worktrees/ directories
+                # Allow original project's .aifactory/ and .worktrees/ directories
                 # when running in a worktree (fixes permission errors)
                 *original_project_permissions,
                 # Bash permission granted here, but actual commands are validated
@@ -704,8 +704,8 @@ def create_client(
                 *[f"{tool}(*)" for tool in browser_tools_permissions],
                 # Magestic AI MCP tools for build management
                 *(
-                    [f"{tool}(*)" for tool in MAGESTIC_AI_TOOLS]
-                    if "magestic-ai" in required_servers
+                    [f"{tool}(*)" for tool in AI_FACTORY_TOOLS]
+                    if "aifactory" in required_servers
                     else []
                 ),
             ],
@@ -742,8 +742,8 @@ def create_client(
         mcp_servers_list.append("playwright (browser automation)")
     if graphiti_mcp_enabled:
         mcp_servers_list.append("graphiti-memory (knowledge graph)")
-    if "magestic-ai" in required_servers and magestic_ai_tools_enabled:
-        mcp_servers_list.append(f"magestic-ai ({agent_type} tools)")
+    if "aifactory" in required_servers and aifactory_tools_enabled:
+        mcp_servers_list.append(f"aifactory ({agent_type} tools)")
     if mcp_servers_list:
         print(f"   - MCP servers: {', '.join(mcp_servers_list)}")
     else:
@@ -788,11 +788,11 @@ def create_client(
             "url": get_graphiti_mcp_url(),
         }
 
-    # Add custom magestic-ai MCP server if required and available
-    if "magestic-ai" in required_servers and magestic_ai_tools_enabled:
+    # Add custom aifactory MCP server if required and available
+    if "aifactory" in required_servers and aifactory_tools_enabled:
         magestic_ai_mcp_server = create_magestic_ai_mcp_server(spec_dir, project_dir)
         if magestic_ai_mcp_server:
-            mcp_servers["magestic-ai"] = magestic_ai_mcp_server
+            mcp_servers["aifactory"] = magestic_ai_mcp_server
 
     # Add custom MCP servers from project config
     custom_servers = mcp_config.get("CUSTOM_MCP_SERVERS", [])

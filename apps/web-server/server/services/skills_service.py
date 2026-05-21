@@ -8,7 +8,7 @@ Skills path resolution (first match wins):
 1. APP_SKILLS_PATH env var (explicit override)
 2. <project-root>/skills/  (local copy, works on host and in Docker)
 
-Uses a pickle cache (~/.magestic-ai/skills-cache.pkl) to avoid re-scanning
+Uses a pickle cache (~/.aifactory/skills-cache.pkl) to avoid re-scanning
 6,000+ files on every startup.  The cache is invalidated when the skills
 directory's modification time changes.
 """
@@ -50,7 +50,7 @@ def _resolve_skills_path() -> Path:
 DEFAULT_SKILLS_PATH = _resolve_skills_path()
 
 # Cache location
-DEFAULT_CACHE_PATH = Path.home() / ".magestic-ai" / "skills-cache.pkl"
+DEFAULT_CACHE_PATH = Path.home() / ".aifactory" / "skills-cache.pkl"
 
 # Cache format version — bump when _IndexEntry or SkillSummary fields change
 _CACHE_VERSION = 1

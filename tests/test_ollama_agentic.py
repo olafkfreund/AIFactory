@@ -398,7 +398,7 @@ class TestOllamaAgenticLive:
         """Model should call Read tool to read a file and describe its contents."""
         # Create a temp file with known content
         test_file = tmp_path / "greeting.txt"
-        test_file.write_text("Hello from MagesticAI integration test!\nLine two here.\n")
+        test_file.write_text("Hello from AIFactory integration test!\nLine two here.\n")
 
         prompt = (
             f"Read the file at {test_file} and tell me what's in it. "
@@ -423,13 +423,13 @@ class TestOllamaAgenticLive:
             if type(msg).__name__ == "UserMessage":
                 for block in msg.content:
                     if type(block).__name__ == "ToolResultBlock":
-                        if "Hello from MagesticAI" in str(block.content):
+                        if "Hello from AIFactory" in str(block.content):
                             tool_result_found = True
 
         assert tool_use_found, f"Expected Read tool call in messages: {self._summarize(messages)}"
         assert tool_result_found, f"Expected tool result with file content: {self._summarize(messages)}"
         # The final text should reference the file content in some way
-        assert ("hello" in final_text.lower() or "magesticai" in final_text.lower()
+        assert ("hello" in final_text.lower() or "aifactory" in final_text.lower()
                 or "greeting" in final_text.lower() or "integration" in final_text.lower()), \
             f"Expected final text to reference file content. Got: {final_text[:500]}"
 

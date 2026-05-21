@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-# Add magestic-ai directory to path for imports
+# Add aifactory directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
 from merge import (

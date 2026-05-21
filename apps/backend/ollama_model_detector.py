@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ollama Model Detector for magestic-ai-ui.
+Ollama Model Detector for aifactory-ui.
 
 Queries the Ollama API to detect available models, specifically focusing on
 embedding models for semantic search functionality.
@@ -414,7 +414,7 @@ def cmd_pull_model(args) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Detect and list Ollama models for magestic-ai-ui"
+        description="Detect and list Ollama models for aifactory-ui"
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 

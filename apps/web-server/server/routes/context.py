@@ -68,8 +68,8 @@ async def get_project_context(projectId: str = Path(...)):
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    index_path = project_path / ".magestic-ai" / "project_index.json"
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    index_path = project_path / ".aifactory" / "project_index.json"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     project_index = None
     if index_path.exists():
@@ -79,7 +79,7 @@ async def get_project_context(projectId: str = Path(...)):
             pass
 
     # Check if Graphiti/memory is configured
-    env_path = project_path / ".magestic-ai" / ".env"
+    env_path = project_path / ".aifactory" / ".env"
     memory_enabled = False
     if env_path.exists():
         env_content = env_path.read_text()
@@ -118,7 +118,7 @@ async def get_project_context(projectId: str = Path(...)):
     recent_memories = memories[:10]
 
     # Check Graphiti database
-    graphiti_db = FilePath.home() / ".magestic-ai" / "memories" / "magestic_ai_memory"
+    graphiti_db = FilePath.home() / ".aifactory" / "memories" / "magestic_ai_memory"
     graphiti_available = graphiti_db.exists()
 
     return {
@@ -176,7 +176,7 @@ async def refresh_project_index(projectId: str = Path(...)):
                 index["languages"][ext] = index["languages"].get(ext, 0) + 1
 
         # Save index
-        index_path = project_path / ".magestic-ai" / "project_index.json"
+        index_path = project_path / ".aifactory" / "project_index.json"
         index_path.parent.mkdir(parents=True, exist_ok=True)
         import json
         index_path.write_text(json.dumps(index, indent=2))
@@ -197,7 +197,7 @@ async def get_memory_status(projectId: str = Path(...)):
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     # Count memory files across all specs
     memory_count = 0
@@ -209,7 +209,7 @@ async def get_memory_status(projectId: str = Path(...)):
                     memory_count += len(list(insights_dir.glob("session_*.json")))
 
     # Check Graphiti database
-    graphiti_db = FilePath.home() / ".magestic-ai" / "memories" / "magestic_ai_memory"
+    graphiti_db = FilePath.home() / ".aifactory" / "memories" / "magestic_ai_memory"
     graphiti_available = graphiti_db.exists()
 
     return {
@@ -236,7 +236,7 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     results = []
     query_lower = q.lower()
@@ -287,7 +287,7 @@ async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
 
     memories = []
 
@@ -358,7 +358,7 @@ async def get_project_env(projectId: str = Path(...)):
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    env_path = project_path / ".magestic-ai" / ".env"
+    env_path = project_path / ".aifactory" / ".env"
 
     config = {
         "claudeAuthStatus": "not_configured",
@@ -454,7 +454,7 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
     """
     Update project environment configuration.
 
-    Updates the .magestic-ai/.env file with environment variables for:
+    Updates the .aifactory/.env file with environment variables for:
     - GitHub integration (GITHUB_TOKEN)
     - Graphiti memory system (GRAPHITI_ENABLED)
     - UI preferences (ENABLE_FANCY_UI)
@@ -471,7 +471,7 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
         return {"success": False, "error": f"Project {projectId} not found"}
 
     project_path = FilePath(projects[projectId]["path"])
-    env_path = project_path / ".magestic-ai" / ".env"
+    env_path = project_path / ".aifactory" / ".env"
 
     try:
         # Read existing .env or start fresh
@@ -568,7 +568,7 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
                         elif env_key in existing:
                             del existing[env_key]
 
-        # Ensure .magestic-ai directory exists
+        # Ensure .aifactory directory exists
         env_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Write back to .env file
@@ -711,7 +711,7 @@ async def get_memory_infrastructure_status(dbPath: str | None = Query(None)):
         "success": True,
         "data": {
             "kuzuInstalled": False,
-            "databasePath": dbPath or str(FilePath.home() / ".magestic-ai" / "memories"),
+            "databasePath": dbPath or str(FilePath.home() / ".aifactory" / "memories"),
             "databaseExists": False,
             "databases": [],
             "ready": False

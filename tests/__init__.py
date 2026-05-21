@@ -20,5 +20,5 @@ Run tests with:
     pytest tests/
     pytest tests/ -v  # verbose
     pytest tests/ -k "test_worktree"  # specific module
-    pytest tests/ --cov=magestic-ai  # with coverage
+    pytest tests/ --cov=aifactory  # with coverage
 """

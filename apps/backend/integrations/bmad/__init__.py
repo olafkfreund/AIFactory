@@ -1,5 +1,5 @@
 """
-BMad Method Integration for MagesticAI.
+BMad Method Integration for AIFactory.
 
 This module provides:
 - Complexity detection (5 levels: 0-4)

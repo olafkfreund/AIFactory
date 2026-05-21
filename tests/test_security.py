@@ -98,7 +98,7 @@ class TestCommandExtraction:
 
     def test_heredoc_in_git_commit(self):
         """Extracts 'git' from heredoc-style commit command."""
-        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\nmagestic-ai: Complete subtask-1\nEOF\n)"'''
+        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
         commands = extract_commands(heredoc_cmd)
         assert "git" in commands
 
@@ -411,7 +411,7 @@ class TestGitCommitValidator:
 
     def test_heredoc_commit_allowed(self):
         """Heredoc-style commit passes (no secrets in staged files)."""
-        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\nmagestic-ai: Complete subtask-1\nEOF\n)"'''
+        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
         allowed, reason = validate_git_commit(heredoc_cmd)
         assert allowed is True
         assert reason == ""

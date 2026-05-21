@@ -1,0 +1,24 @@
+{
+  "files": 1200,
+  "languages": {
+    ".yaml": 2,
+    ".example": 4,
+    ".yml": 9,
+    ".md": 127,
+    ".py": 630,
+    ".txt": 3,
+    ".html": 2,
+    ".json": 35,
+    ".sh": 5,
+    ".js": 6,
+    ".png": 9,
+    ".ico": 1,
+    ".tsx": 229,
+    ".ts": 121,
+    ".css": 3,
+    ".toml": 1,
+    ".ini": 1
+  },
+  "frameworks": [],
+  "lastRefreshed": "2026-05-20T23:40:41.604734"
+}

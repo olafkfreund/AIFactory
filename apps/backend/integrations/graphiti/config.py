@@ -19,7 +19,7 @@ Environment Variables:
 
     # Database
     GRAPHITI_DATABASE: Graph database name (default: magestic_ai_memory)
-    GRAPHITI_DB_PATH: Database storage path (default: ~/.magestic-ai/memories)
+    GRAPHITI_DB_PATH: Database storage path (default: ~/.aifactory/memories)
 
     # OpenAI
     OPENAI_API_KEY: Required for OpenAI provider
@@ -65,7 +65,7 @@ from typing import Optional
 
 # Default configuration values
 DEFAULT_DATABASE = "magestic_ai_memory"
-DEFAULT_DB_PATH = "~/.magestic-ai/memories"
+DEFAULT_DB_PATH = "~/.aifactory/memories"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 # Graphiti state marker file (stores connection info and status)
@@ -464,7 +464,7 @@ class GraphitiConfig:
 
 @dataclass
 class GraphitiState:
-    """State of Graphiti integration for an magestic-ai spec."""
+    """State of Graphiti integration for an aifactory spec."""
 
     initialized: bool = False
     database: str | None = None

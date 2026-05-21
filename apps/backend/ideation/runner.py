@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from debug import debug, debug_section
@@ -50,7 +50,7 @@ class IdeationOrchestrator:
 
         Args:
             project_dir: Project directory to analyze
-            output_dir: Output directory for ideation files (defaults to .magestic-ai/ideation)
+            output_dir: Output directory for ideation files (defaults to .aifactory/ideation)
             enabled_types: List of ideation types to generate (defaults to all)
             include_roadmap_context: Include roadmap files in analysis
             include_kanban_context: Include kanban board in analysis

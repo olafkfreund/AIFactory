@@ -27,7 +27,7 @@ COMMIT_HASH=$(git rev-parse HEAD)
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 # Only track commits to main/master branch
-# Skip if we're in a worktree (magestic-ai branches)
+# Skip if we're in a worktree (aifactory branches)
 if [[ "$BRANCH" == "main" ]] || [[ "$BRANCH" == "master" ]]; then
     # Check if this is the main working directory (not a worktree)
     # Worktrees have a .git file pointing to the main repo, not a .git directory

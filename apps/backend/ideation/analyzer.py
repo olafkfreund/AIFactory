@@ -13,7 +13,7 @@ import json
 import sys
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from debug import (
@@ -47,8 +47,8 @@ class ProjectAnalyzer:
             "planned_features": [],
         }
 
-        # Get project index (from .magestic-ai - the installed instance)
-        project_index_path = self.project_dir / ".magestic-ai" / "project_index.json"
+        # Get project index (from .aifactory - the installed instance)
+        project_index_path = self.project_dir / ".aifactory" / "project_index.json"
         if project_index_path.exists():
             try:
                 with open(project_index_path) as f:
@@ -66,7 +66,7 @@ class ProjectAnalyzer:
         # Get roadmap context if enabled
         if self.include_roadmap:
             roadmap_path = (
-                self.project_dir / ".magestic-ai" / "roadmap" / "roadmap.json"
+                self.project_dir / ".aifactory" / "roadmap" / "roadmap.json"
             )
             if roadmap_path.exists():
                 try:
@@ -83,7 +83,7 @@ class ProjectAnalyzer:
 
             # Also check discovery for audience
             discovery_path = (
-                self.project_dir / ".magestic-ai" / "roadmap" / "roadmap_discovery.json"
+                self.project_dir / ".aifactory" / "roadmap" / "roadmap_discovery.json"
             )
             if discovery_path.exists() and not context["target_audience"]:
                 try:
@@ -102,7 +102,7 @@ class ProjectAnalyzer:
 
         # Get kanban context if enabled
         if self.include_kanban:
-            specs_dir = self.project_dir / ".magestic-ai" / "specs"
+            specs_dir = self.project_dir / ".aifactory" / "specs"
             if specs_dir.exists():
                 for spec_dir in specs_dir.iterdir():
                     if spec_dir.is_dir():

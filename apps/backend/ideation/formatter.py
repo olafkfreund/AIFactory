@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add magestic-ai to path
+# Add aifactory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ui import print_status

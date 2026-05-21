@@ -26,7 +26,7 @@ def is_session_segmentation_enabled() -> bool:
         return False
 
     # Check global config file
-    config_file = Path.home() / ".magestic-ai" / "config.json"
+    config_file = Path.home() / ".aifactory" / "config.json"
     if config_file.exists():
         try:
             with open(config_file) as f:
@@ -88,7 +88,7 @@ def enable_session_segmentation(spec_dir: Path | None = None) -> None:
             json.dump(config, f, indent=2)
     else:
         # Global enable
-        config_dir = Path.home() / ".magestic-ai"
+        config_dir = Path.home() / ".aifactory"
         config_dir.mkdir(exist_ok=True)
         config_file = config_dir / "config.json"
 
@@ -128,7 +128,7 @@ def disable_session_segmentation(spec_dir: Path | None = None) -> None:
                 pass
     else:
         # Global disable
-        config_file = Path.home() / ".magestic-ai" / "config.json"
+        config_file = Path.home() / ".aifactory" / "config.json"
         if config_file.exists():
             try:
                 with open(config_file) as f:

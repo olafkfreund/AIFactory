@@ -12,7 +12,7 @@ Tests cover:
 
 import json
 
-# Add magestic-ai to path for imports
+# Add aifactory to path for imports
 import sys
 import tempfile
 from pathlib import Path

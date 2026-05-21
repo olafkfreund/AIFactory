@@ -69,7 +69,7 @@ def _format_secret_error(matches: list) -> ValidationResult:
 
 def _unstage_spec_artifacts() -> list[str]:
     """
-    Check for and unstage any .magestic-ai/ files from the git staging area.
+    Check for and unstage any .aifactory/ files from the git staging area.
 
     Returns:
         List of file paths that were unstaged.
@@ -85,7 +85,7 @@ def _unstage_spec_artifacts() -> list[str]:
             return []
 
         staged_files = [f for f in result.stdout.strip().split("\n") if f]
-        spec_files = [f for f in staged_files if f.startswith(".magestic-ai/")]
+        spec_files = [f for f in staged_files if f.startswith(".aifactory/")]
 
         if not spec_files:
             return []
@@ -98,7 +98,7 @@ def _unstage_spec_artifacts() -> list[str]:
             timeout=10,
         )
         logger.warning(
-            "Auto-unstaged .magestic-ai/ spec artifacts from commit: %s",
+            "Auto-unstaged .aifactory/ spec artifacts from commit: %s",
             spec_files,
         )
         return spec_files
@@ -114,7 +114,7 @@ def validate_git_commit(command_string: str) -> ValidationResult:
     This provides autonomous feedback to the AI agent if secrets are detected,
     with actionable instructions on how to fix the issue.
 
-    Also auto-unstages any .magestic-ai/ spec artifacts that the agent may
+    Also auto-unstages any .aifactory/ spec artifacts that the agent may
     have staged (defense-in-depth against spec files leaking into commits).
 
     Args:
@@ -152,7 +152,7 @@ def validate_git_commit(command_string: str) -> ValidationResult:
     if len(tokens) < 2 or tokens[1] != "commit":
         return True, ""
 
-    # Defense-in-depth: auto-unstage any .magestic-ai/ spec artifacts
+    # Defense-in-depth: auto-unstage any .aifactory/ spec artifacts
     unstaged = _unstage_spec_artifacts()
     if unstaged:
         logger.info(

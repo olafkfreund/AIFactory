@@ -98,7 +98,7 @@ def mock_file_system(temp_dir: Path):
     class MockFileSystem:
         def __init__(self, base_path: Path):
             self.base_path = base_path
-            self.magestic_ai_dir = base_path / ".magestic-ai"
+            self.magestic_ai_dir = base_path / ".aifactory"
             self.magestic_ai_dir.mkdir(parents=True, exist_ok=True)
 
         def write_json(self, filename: str, data: dict) -> Path:
@@ -125,7 +125,7 @@ def mock_file_system(temp_dir: Path):
                 filepath.unlink()
 
         def list_files(self) -> list[str]:
-            """List all files in .magestic-ai directory."""
+            """List all files in .aifactory directory."""
             return [f.name for f in self.magestic_ai_dir.iterdir() if f.is_file()]
 
     return MockFileSystem(temp_dir)

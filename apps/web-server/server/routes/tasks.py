@@ -223,7 +223,7 @@ class ClarificationAnswersRequest(BaseModel):
 
 def get_spec_dirs(project_path: Path) -> list[Path]:
     """Get all spec directories in a project."""
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
     if not specs_dir.exists():
         return []
     return sorted([d for d in specs_dir.iterdir() if d.is_dir()])
@@ -232,10 +232,10 @@ def get_spec_dirs(project_path: Path) -> list[Path]:
 def get_next_spec_id(project_path: Path, title: str) -> str:
     """Generate the next spec ID (e.g., '003-feature-name').
 
-    Uses a counter file (.magestic-ai/specs/.counter) to ensure IDs
+    Uses a counter file (.aifactory/specs/.counter) to ensure IDs
     never get reused after deletion.
     """
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    specs_dir = project_path / ".aifactory" / "specs"
     counter_file = specs_dir / ".counter"
 
     # Read persisted counter (highest ID ever assigned)
@@ -275,15 +275,15 @@ def get_next_spec_id(project_path: Path, title: str) -> str:
 def get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
     """Get the worktree spec directory if it exists.
 
-    Worktree layout: .magestic-ai/worktrees/tasks/{spec_id}/.magestic-ai/specs/{spec_id}/
+    Worktree layout: .aifactory/worktrees/tasks/{spec_id}/.aifactory/specs/{spec_id}/
     """
     worktree_spec_dir = (
         project_path
-        / ".magestic-ai"
+        / ".aifactory"
         / "worktrees"
         / "tasks"
         / spec_id
-        / ".magestic-ai"
+        / ".aifactory"
         / "specs"
         / spec_id
     )
@@ -297,7 +297,7 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
     Returns True if sync was performed, False otherwise.
     """
-    main_spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
 
     if not worktree_spec_dir:
@@ -386,7 +386,7 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
     sync_worktree_to_main_spec(project_path, spec_id)
 
     # Read from main spec (now potentially updated)
-    main_spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     plan_file = main_spec_dir / "implementation_plan.json"
 
     plan = {}
@@ -594,7 +594,7 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     worktree_marker = spec_dir / ".worktree_path"
     if worktree_marker.exists():
         metadata["worktree_path"] = worktree_marker.read_text().strip()
-        metadata["branch_name"] = f"magestic-ai/{spec_dir.name}"
+        metadata["branch_name"] = f"aifactory/{spec_dir.name}"
 
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"
@@ -717,8 +717,8 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
     Returns ExecutionProgress dict or None if not available.
     """
     # Also check worktree for task_logs.json
-    project_path = spec_dir.parent.parent  # .magestic-ai/specs -> project root
-    worktree_spec_dir = project_path / "worktrees" / "tasks" / spec_dir.name / ".magestic-ai" / "specs" / spec_dir.name
+    project_path = spec_dir.parent.parent  # .aifactory/specs -> project root
+    worktree_spec_dir = project_path / "worktrees" / "tasks" / spec_dir.name / ".aifactory" / "specs" / spec_dir.name
 
     task_logs_file = None
     for check_dir in [worktree_spec_dir, spec_dir]:
@@ -850,7 +850,7 @@ def task_to_dict(task: Task) -> dict:
         projects = load_projects()
         if task.project_id in projects:
             project_path = Path(projects[task.project_id]["path"])
-            spec_dir = project_path / ".magestic-ai" / "specs" / task.spec_id
+            spec_dir = project_path / ".aifactory" / "specs" / task.spec_id
             if spec_dir.exists():
                 specs_path = str(spec_dir)  # Store path for frontend Files tab
                 execution_progress = get_execution_progress(spec_dir, task.subtasks)
@@ -975,7 +975,7 @@ async def get_task(task_id: str):
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1000,8 +1000,8 @@ async def create_task(task: TaskCreate):
 
     project_path = Path(projects[task.project_id]["path"])
 
-    # Ensure .magestic-ai/specs exists
-    specs_dir = project_path / ".magestic-ai" / "specs"
+    # Ensure .aifactory/specs exists
+    specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate spec ID and create directory
@@ -1071,7 +1071,7 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(status_code=404, detail="Task spec not found")
@@ -1201,7 +1201,7 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1252,7 +1252,7 @@ async def update_task(task_id: str, update: TaskUpdate):
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1384,7 +1384,7 @@ async def delete_task(task_id: str):
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1427,7 +1427,7 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1554,7 +1554,7 @@ async def get_plan_html(task_id: str):
         )
 
     project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
     if not spec_dir.exists():
         raise HTTPException(
@@ -1623,8 +1623,8 @@ async def get_task_logs(task_id: str):
     project_path = Path(projects[project_id]["path"])
     logger.info(f"[GetTaskLogs] project_path: {project_path}")
 
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
-    worktree_spec_dir = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    worktree_spec_dir = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
 
     logger.info(f"[GetTaskLogs] Checking spec_dir: {spec_dir}")
     logger.info(f"[GetTaskLogs] Checking worktree_spec_dir: {worktree_spec_dir}")
@@ -1776,7 +1776,7 @@ async def get_worktree_merge_preview(task_id: str):
         else:
             project_path = Path(project.get("path", ""))
 
-        spec_dir = project_path / ".magestic-ai" / "specs" / task_id
+        spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
             # Found the task
@@ -1788,7 +1788,7 @@ async def get_worktree_merge_preview(task_id: str):
         return {"success": False, "error": f"Task {task_id} not found"}
 
     # Find the worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / task_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
 
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
@@ -2120,8 +2120,8 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
     else:
         return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
 
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -2398,10 +2398,10 @@ async def resolve_uncommitted_conflicts(task_id: str):
         else:
             project_path = Path(project.get("path", ""))
 
-        spec_dir = project_path / ".magestic-ai" / "specs" / task_id
+        spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / task_id
+            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -2469,7 +2469,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
         return {"success": True, "data": {"message": "No conflicting files found", "resolved": []}}
 
     # Stash uncommitted changes (include untracked files)
-    stash_message = f"magestic-ai-temp-{task_id}"
+    stash_message = f"aifactory-temp-{task_id}"
     stash_created = False
     try:
         # First try with --include-untracked to catch new files
@@ -2661,10 +2661,10 @@ async def resolve_git_merge_conflicts(task_id: str):
         else:
             project_path = Path(project.get("path", ""))
 
-        spec_dir = project_path / ".magestic-ai" / "specs" / task_id
+        spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / task_id
+            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -2935,11 +2935,11 @@ async def abort_worktree_merge(task_id: str):
     else:
         return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
 
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     aborted_locations = []
     errors = []
@@ -3059,12 +3059,12 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     else:
         return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
 
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
     # Find the worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
@@ -3111,7 +3111,7 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     stashed = False
     try:
         stash_result = subprocess.run(
-            ["git", "stash", "push", "-m", "magestic-ai-pre-rebase"],
+            ["git", "stash", "push", "-m", "aifactory-pre-rebase"],
             cwd=worktree_path,
             capture_output=True, text=True, timeout=10
         )
@@ -3300,12 +3300,12 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
     else:
         return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
 
-    spec_dir = project_path / ".magestic-ai" / "specs" / spec_id
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
         return {"success": False, "error": f"Task {task_id} not found"}
 
     # Find the worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
@@ -3340,8 +3340,8 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
     # These are untracked files created by agents in worktrees that would
     # collide with the same untracked files in the main working directory.
     _INTERNAL_MERGE_BLOCKERS = [
-        ".magestic-ai-security.json",
-        ".magestic-ai-status",
+        ".aifactory-security.json",
+        ".aifactory-status",
     ]
     for fname in _INTERNAL_MERGE_BLOCKERS:
         blocker = project_path / fname
@@ -3458,7 +3458,7 @@ async def get_worktree_status(task_id: str):
             # Search all projects for this spec
             for proj in projects_data.values():
                 path = Path(proj["path"])
-                if (path / ".magestic-ai" / "specs" / spec_id).exists():
+                if (path / ".aifactory" / "specs" / spec_id).exists():
                     project_path = path
                     break
     else:
@@ -3467,7 +3467,7 @@ async def get_worktree_status(task_id: str):
             if project_id and project.get("id") == project_id:
                 project_path = path
                 break
-            elif (path / ".magestic-ai" / "specs" / spec_id).exists():
+            elif (path / ".aifactory" / "specs" / spec_id).exists():
                 project_path = path
                 break
 
@@ -3480,7 +3480,7 @@ async def get_worktree_status(task_id: str):
         }
 
     # Check for worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
         return {
@@ -3501,7 +3501,7 @@ async def get_worktree_status(task_id: str):
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
-        worktree_branch = f"magestic-ai/{spec_id}"
+        worktree_branch = f"aifactory/{spec_id}"
 
     # Get base branch from main project
     try:
@@ -3609,7 +3609,7 @@ async def get_worktree_diff(task_id: str):
         else:
             for proj in projects_data.values():
                 path = Path(proj["path"])
-                if (path / ".magestic-ai" / "specs" / spec_id).exists():
+                if (path / ".aifactory" / "specs" / spec_id).exists():
                     project_path = path
                     break
     else:
@@ -3618,7 +3618,7 @@ async def get_worktree_diff(task_id: str):
             if project_id and project.get("id") == project_id:
                 project_path = path
                 break
-            elif (path / ".magestic-ai" / "specs" / spec_id).exists():
+            elif (path / ".aifactory" / "specs" / spec_id).exists():
                 project_path = path
                 break
 
@@ -3629,7 +3629,7 @@ async def get_worktree_diff(task_id: str):
         }
 
     # Check for worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
         return {
@@ -3648,7 +3648,7 @@ async def get_worktree_diff(task_id: str):
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
-        worktree_branch = f"magestic-ai/{spec_id}"
+        worktree_branch = f"aifactory/{spec_id}"
 
     # Get base branch from main project
     try:
@@ -3726,9 +3726,9 @@ async def get_worktree_diff(task_id: str):
     except subprocess.CalledProcessError:
         pass
 
-    # Filter out internal magestic-ai files and agent artifacts (not relevant for user review)
-    INTERNAL_FILES = {".magestic-ai-security.json", ".magestic-ai-status"}
-    INTERNAL_PREFIXES = (".magestic-ai/", "VERIFICATION_REPORT", "LANGUAGE_CHOICE")
+    # Filter out internal aifactory files and agent artifacts (not relevant for user review)
+    INTERNAL_FILES = {".aifactory-security.json", ".aifactory-status"}
+    INTERNAL_PREFIXES = (".aifactory/", "VERIFICATION_REPORT", "LANGUAGE_CHOICE")
     files = [
         f for f in files
         if f["path"] not in INTERNAL_FILES
@@ -3836,14 +3836,14 @@ async def discard_worktree(task_id: str):
         return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
 
     # Find the worktree
-    worktree_path = project_path / ".magestic-ai" / "worktrees" / "tasks" / spec_id
+    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
 
     try:
         # Get the branch name before removing worktree
-        branch_name = f"magestic-ai/{spec_id}"
+        branch_name = f"aifactory/{spec_id}"
 
         # Remove worktree using git command
         result = subprocess.run(
