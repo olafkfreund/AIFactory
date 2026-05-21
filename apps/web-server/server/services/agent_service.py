@@ -390,6 +390,35 @@ class TaskLogWriter:
             self._pending_tool_output = []
 
 
+def _dedup_signature(payload: dict) -> tuple:
+    """Compute a structural signature of a task:update payload for deduplication.
+
+    Excluded (volatile per-tick, not material to state):
+      - message            — streams free-text per tick during QA, etc.
+      - sequenceNumber     — monotonically increases on every emit by design
+      - startedAt          — fixed for a task's lifetime
+      - timestamp          — wall-clock per emit
+
+    Included (material state):
+      - phase / executionProgress.{phase, phaseProgress, overallProgress, currentSubtask}
+      - subtasksCompleted / subtasksTotal
+      - subtasks (as a tuple of (id, status) pairs — checkbox transitions are
+        meaningful even when phase/progress haven't moved)
+    """
+    exec_ = payload.get("executionProgress") or {}
+    subtasks = payload.get("subtasks") or []
+    return (
+        payload.get("phase"),
+        exec_.get("phase"),
+        exec_.get("phaseProgress"),
+        exec_.get("overallProgress"),
+        exec_.get("currentSubtask"),
+        payload.get("subtasksCompleted"),
+        payload.get("subtasksTotal"),
+        tuple((s.get("id"), s.get("status")) for s in subtasks),
+    )
+
+
 class AgentService:
     """Service for executing AI agents on tasks."""
 
@@ -401,6 +430,10 @@ class AgentService:
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
         # Track sequence numbers per task for frontend out-of-order detection
         self._task_sequence_numbers: dict[str, int] = {}
+        # Issue #14 — last emitted task:update signature per task. Used by
+        # _safe_emit_task_update to suppress identical re-emissions (e.g. the
+        # 3-second periodic _sync_worktree_files tick during long phases).
+        self._last_emitted_task_update: dict[str, tuple] = {}
         # Track task start times for UI display
         self._task_start_times: dict[str, str] = {}
         # Track user IDs per task for email notifications
@@ -876,6 +909,40 @@ class AgentService:
 
         return proc
 
+    async def _safe_emit_task_update(self, task_id: str, payload: dict) -> None:
+        """Funnel for all in-service task:update emissions with structural dedup.
+
+        Compares the payload's structural signature (phase, progress, subtasks,
+        etc. — see ``_dedup_signature``) against the last emission for this
+        task. If identical, the emit is suppressed and we log at DEBUG.
+
+        asyncio single-thread invariant: the comparison and the dict write are
+        not separated by any ``await`` — no other coroutine can interleave on
+        this event loop. If anyone ever moves these emissions to a thread
+        pool, ``_last_emitted_task_update`` becomes a race and would need an
+        ``asyncio.Lock``.
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+        sig = _dedup_signature(payload)
+        if self._last_emitted_task_update.get(task_id) == sig:
+            _logger.debug("[AgentService] dedup-suppressed task:update for %s", task_id)
+            return
+        self._last_emitted_task_update[task_id] = sig
+        await emit_task_update(task_id, payload)
+
+    async def _safe_emit_task_status(
+        self, task_id: str, status: str, review_reason: str | None = None
+    ) -> None:
+        """Funnel for all in-service task:status emissions.
+
+        No dedup — status transitions are rare and meaningful, and a duplicate
+        is harmless (the frontend just reapplies the same column move). Kept
+        as a helper for symmetry with _safe_emit_task_update and for future
+        evolution (e.g. inserting metrics, alerting).
+        """
+        await emit_task_status(task_id, status, review_reason)
+
     async def _emit_progress(self, progress: TaskProgress, previous_phase: TaskPhase | None = None) -> None:
         """Emit progress to all registered callbacks and broadcast via WebSocket.
 
@@ -924,7 +991,7 @@ class AgentService:
                 import logging
                 logging.getLogger(__name__).debug(f"[AgentService] Could not read subtasks for {progress.task_id}: {e}")
 
-            await emit_task_update(progress.task_id, {
+            await self._safe_emit_task_update(progress.task_id, {
                 "executionProgress": {
                     "phase": phase_value,
                     "phaseProgress": phase_progress,
@@ -944,7 +1011,7 @@ class AgentService:
             if previous_phase is not None and progress.phase != previous_phase:
                 new_status = phase_to_status(progress.phase)
                 review_reason = phase_to_review_reason(progress.phase)
-                await emit_task_status(progress.task_id, new_status, review_reason)
+                await self._safe_emit_task_status(progress.task_id, new_status, review_reason)
 
         except Exception as e:
             import logging
@@ -1306,7 +1373,9 @@ class AgentService:
                     # Use the actual current execution phase from phase event tracking
                     actual_phase = self._task_current_phases.get(task_id, TaskPhase.PLANNING).value if task_id else "coding"
                     # Emit task update — use task_id (projectId:specId) so frontend can match
-                    await emit_task_update(task_id or spec_id, {
+                    # Routed through _safe_emit_task_update so the periodic sync tick
+                    # cannot re-broadcast identical state during a long phase (Issue #14).
+                    await self._safe_emit_task_update(task_id or spec_id, {
                         "executionProgress": {
                             "phase": actual_phase,
                             "phaseProgress": progress,
@@ -1511,6 +1580,7 @@ class AgentService:
                                     if task_id in self.running_tasks:
                                         del self.running_tasks[task_id]
                                     self._task_sequence_numbers.pop(task_id, None)
+                                    self._last_emitted_task_update.pop(task_id, None)
                                     self._task_start_times.pop(task_id, None)
                                     self._task_current_phases.pop(task_id, None)
                                     self._task_profiles.pop(task_id, None)
@@ -1538,6 +1608,7 @@ class AgentService:
                             if task_id in self.running_tasks:
                                 del self.running_tasks[task_id]
                             self._task_sequence_numbers.pop(task_id, None)
+                            self._last_emitted_task_update.pop(task_id, None)
                             self._task_start_times.pop(task_id, None)
                             self._task_current_phases.pop(task_id, None)
                             self._task_profiles.pop(task_id, None)
@@ -1597,6 +1668,7 @@ class AgentService:
                             if task_id in self.running_tasks:
                                 del self.running_tasks[task_id]
                             self._task_sequence_numbers.pop(task_id, None)
+                            self._last_emitted_task_update.pop(task_id, None)
                             self._task_start_times.pop(task_id, None)
                             self._task_current_phases.pop(task_id, None)
                             self._task_profiles.pop(task_id, None)
@@ -1774,6 +1846,7 @@ class AgentService:
                             if task_id in self.running_tasks:
                                 del self.running_tasks[task_id]
                             self._task_sequence_numbers.pop(task_id, None)
+                            self._last_emitted_task_update.pop(task_id, None)
                             self._task_start_times.pop(task_id, None)
                             self._task_current_phases.pop(task_id, None)
                             self._task_profiles.pop(task_id, None)
@@ -1813,11 +1886,18 @@ class AgentService:
                     except (json.JSONDecodeError, OSError) as e:
                         logger.warning(f"[AgentService] Could not check subtask status for auto-continuation: {e}")
 
-            # Update implementation_plan.json status for frontend display
+            # Update implementation_plan.json status for frontend display.
+            # emit_events=False (Issue #14): the subsequent _emit_progress
+            # call at lines ~1830/1856 is the SINGLE canonical terminal
+            # emission. Letting _update_plan_status also emit produced the
+            # 5-event flurry + phase:N/A blip — kept the file write here,
+            # moved the WebSocket events to the explicit _emit_progress.
             if spec_id and project_path:
                 status = "completed" if return_code == 0 else "failed"
                 logger.info(f"[AgentService._monitor_process] About to call _update_plan_status: spec_id={spec_id}, status={status}, task_id={task_id}, project_path={project_path}")
-                await self._update_plan_status(project_path, spec_id, status, task_id)
+                await self._update_plan_status(
+                    project_path, spec_id, status, task_id, emit_events=False
+                )
                 logger.info(f"[AgentService._monitor_process] _update_plan_status call completed")
 
             # Send email/in-app notifications on task completion or failure
@@ -1882,6 +1962,7 @@ class AgentService:
             if task_id in self.running_tasks:
                 del self.running_tasks[task_id]
             self._task_sequence_numbers.pop(task_id, None)
+            self._last_emitted_task_update.pop(task_id, None)
             self._task_start_times.pop(task_id, None)
             self._task_current_phases.pop(task_id, None)
             self._task_profiles.pop(task_id, None)
@@ -1896,6 +1977,7 @@ class AgentService:
             if task_id in self.running_tasks:
                 del self.running_tasks[task_id]
             self._task_sequence_numbers.pop(task_id, None)
+            self._last_emitted_task_update.pop(task_id, None)
             self._task_start_times.pop(task_id, None)
             self._task_current_phases.pop(task_id, None)
             self._task_user_ids.pop(task_id, None)
@@ -1909,11 +1991,23 @@ class AgentService:
                 message=f"Task monitoring error: {e}",
             ))
 
-    async def _update_plan_status(self, project_path: Path, spec_id: str, status: str, task_id: str) -> None:
+    async def _update_plan_status(
+        self,
+        project_path: Path,
+        spec_id: str,
+        status: str,
+        task_id: str,
+        *,
+        emit_events: bool = True,
+    ) -> None:
         """Update the status field in implementation_plan.json after task completion.
 
-        This ensures the frontend displays the correct task status in the kanban board.
-        Also emits a WebSocket event so the frontend updates in real-time.
+        Also emits WebSocket events so the frontend updates in real-time UNLESS
+        ``emit_events=False`` is passed — used by ``_monitor_process`` at the
+        terminal exit branch (Issue #14) where the subsequent ``_emit_progress``
+        is the single canonical terminal emission. Mid-run callers
+        (plan_review / human_review checkpoints) keep the default ``True`` so
+        kanban gets subtask data immediately.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -1946,7 +2040,8 @@ class AgentService:
             # A valid plan should have phases and subtasks from spec creation
             if "phases" not in plan or not plan.get("phases"):
                 logger.error(f"[AgentService] Invalid or minimal implementation plan detected for {spec_id}")
-                await emit_task_status(task_id, "failed", "invalid_plan")
+                if emit_events:
+                    await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
                 return
             if phase_enum:
                 plan["status"] = phase_to_status(phase_enum)
@@ -1973,25 +2068,49 @@ class AgentService:
                         "title": subtask.get("description", ""),
                     })
 
-            # Emit WebSocket events so frontend updates in real-time
-            review_reason = plan.get("reviewReason")
-            # First emit status change
-            await emit_task_status(task_id, plan["status"], review_reason)
-            # Then emit task update with subtasks so they appear immediately in UI
-            await emit_task_update(task_id, {
-                "subtasks": subtasks_data,
-                "subtasksCompleted": sum(1 for s in subtasks_data if s["status"] == "completed"),
-                "subtasksTotal": len(subtasks_data),
-            })
+            # Emit WebSocket events so frontend updates in real-time. Skipped
+            # at the terminal exit branch (Issue #14) — the _monitor_process
+            # caller will emit a single canonical _emit_progress(COMPLETED|FAILED)
+            # that fires both task:update and task:status itself.
+            if emit_events:
+                review_reason = plan.get("reviewReason")
+                # First emit status change
+                await self._safe_emit_task_status(task_id, plan["status"], review_reason)
+                # Then emit task update with subtasks so they appear immediately
+                # in UI. Payload is ENRICHED with an executionProgress block (Issue #14)
+                # so the frontend's log doesn't render `phase: N/A` and the store
+                # receives a coherent terminal phase value.
+                completed_count = sum(1 for s in subtasks_data if s["status"] == "completed")
+                # Use the caller-supplied `status` argument (the raw terminal
+                # signal — "completed" / "failed") rather than the already-mapped
+                # `plan["status"]` (which for completed tasks becomes
+                # "human_review" via phase_to_status). The dedup-signature
+                # consumers downstream want the raw phase value.
+                terminal_phases = {"completed": "completed", "failed": "failed"}
+                terminal_phase_value = terminal_phases.get(status)
+                update_payload: dict = {
+                    "subtasks": subtasks_data,
+                    "subtasksCompleted": completed_count,
+                    "subtasksTotal": len(subtasks_data),
+                }
+                if terminal_phase_value:
+                    update_payload["phase"] = terminal_phase_value
+                    update_payload["executionProgress"] = {
+                        "phase": terminal_phase_value,
+                        "phaseProgress": 100,
+                        "overallProgress": 100,
+                    }
+                await self._safe_emit_task_update(task_id, update_payload)
         except Exception as e:
             logger.error(f"[AgentService] Failed to update plan status: {e}")
             # Still emit status event so frontend updates even if plan file write failed
-            try:
-                fallback_status = phase_to_status(phase_enum) if phase_enum else status
-                fallback_reason = phase_to_review_reason(phase_enum) if phase_enum else None
-                await emit_task_status(task_id, fallback_status, fallback_reason)
-            except Exception:
-                logger.error(f"[AgentService] Failed to emit fallback task:status for {task_id}")
+            if emit_events:
+                try:
+                    fallback_status = phase_to_status(phase_enum) if phase_enum else status
+                    fallback_reason = phase_to_review_reason(phase_enum) if phase_enum else None
+                    await self._safe_emit_task_status(task_id, fallback_status, fallback_reason)
+                except Exception:
+                    logger.error(f"[AgentService] Failed to emit fallback task:status for {task_id}")
 
     def _write_skill_context(self, spec_dir: Path) -> None:
         """Write skill_context.md to spec_dir based on selectedSkills in task_metadata.json.
@@ -2560,6 +2679,7 @@ class AgentService:
         # might have already removed the task
         self.running_tasks.pop(task_id, None)
         self._task_sequence_numbers.pop(task_id, None)
+        self._last_emitted_task_update.pop(task_id, None)
         self._task_start_times.pop(task_id, None)
         self._task_subtask_states.pop(task_id, None)
         self._spec_dirs.pop(task_id, None)
@@ -2569,7 +2689,7 @@ class AgentService:
         self._task_user_ids.pop(task_id, None)
 
         # Emit human_review with errors reason (not just FAILED phase)
-        await emit_task_status(task_id, "human_review", "errors")
+        await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._emit_progress(TaskProgress(
             task_id=task_id,
             phase=TaskPhase.FAILED,
@@ -2588,6 +2708,7 @@ class AgentService:
 
         del self.running_tasks[task_id]
         self._task_sequence_numbers.pop(task_id, None)
+        self._last_emitted_task_update.pop(task_id, None)
         self._task_start_times.pop(task_id, None)
         self._task_subtask_states.pop(task_id, None)
         self._spec_dirs.pop(task_id, None)
