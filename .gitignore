@@ -168,7 +168,12 @@ playwright/.cache/
 dev/
 _bmad/
 _bmad-output/
-.claude/
+# Ignore everything directly under .claude/ EXCEPT the project-scope skills
+# directory (Issue #9). `.claude/*` (no trailing slash) is required for the
+# `!exception` pattern to take effect — git stops descending into a fully-
+# excluded `.claude/` directory and never sees inner negations.
+.claude/*
+!.claude/skills/
 /docs
 OPUS_ANALYSIS_AND_IDEAS.md
 /.github/agents

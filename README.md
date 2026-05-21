@@ -157,6 +157,12 @@ claude mcp remove aifactory --scope user
 
 Windows users: the `.mcp.json` invokes `bash scripts/start-aifactory-mcp.sh`. Use Git Bash, or override the `command` to `scripts\start-aifactory-mcp.cmd` in your personal `~/.claude/settings.json`.
 
+### Claude Code skill (auto-loaded when you open this repo)
+
+The repo ships a project-scope Claude Code skill at [`.claude/skills/aifactory-spec/SKILL.md`](.claude/skills/aifactory-spec/SKILL.md) that demonstrates the post-Jan-2026 frontmatter (`allowed-tools`, `context: fork`, `paths`, `hooks`). Once you open the repo in [Claude Code](https://claude.com/claude-code), invoke `/aifactory-spec` to kick off spec creation through `apps/backend/runners/spec_runner.py`.
+
+The skill's `paths` glob auto-activates it only inside the AIFactory tree, its narrow `allowed-tools` limits Bash to the spec runner itself, and a skill-scoped `PreToolUse` hook refuses any `rm` command during the skill's lifetime. Follow-up skills (`/aifactory-build`, `/aifactory-qa`) will land in future issues with the same modern shape.
+
 ### Docker Deployment
 
 MagesticAI includes a `Dockerfile` and `docker-compose.yml` for containerized deployment:
