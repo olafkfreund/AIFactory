@@ -11,7 +11,7 @@ import { updateProjectSettings } from '../../../stores/project-store';
 import type { ProjectEnvConfig, GitHubSyncStatus, ProjectSettings } from '../../../shared/types';
 
 // Debug logging
-const DEBUG = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
+const DEBUG = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true';
 function debugLog(message: string, data?: unknown) {
   if (DEBUG) {
     if (data !== undefined) {
