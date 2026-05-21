@@ -51,6 +51,22 @@ _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 
 
+def get_gemini_binary(custom_path: str | None = None) -> str:
+    """Dynamically resolve the gemini / antigravity binary path."""
+    if custom_path and custom_path != "gemini":
+        return custom_path
+    if shutil.which("antigravity"):
+        return "antigravity"
+    from pathlib import Path
+    custom_path_default = Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+    if custom_path_default.exists():
+        return str(custom_path_default)
+    if shutil.which("gemini"):
+        return "gemini"
+    # Fallback to antigravity since we preinstall it by default
+    return "antigravity"
+
+
 class GeminiAgenticProvider(BaseLLMProvider):
     """
     Agentic Gemini provider for coding/planning/spec/qa_fixer phases.
@@ -111,8 +127,9 @@ class GeminiAgenticProvider(BaseLLMProvider):
             logger.warning("GeminiAgenticProvider.receive_response() called before query()")
             return
 
-        resolved_path = shutil.which(self._gemini_path)
-        if resolved_path is None:
+        resolved_binary = get_gemini_binary(self._gemini_path)
+        resolved_path = shutil.which(resolved_binary) if not resolved_binary.startswith("/") else resolved_binary
+        if resolved_path is None or (resolved_binary.startswith("/") and not Path(resolved_binary).exists()):
             raise RuntimeError(
                 f"Gemini CLI executable not found: '{self._gemini_path}'. "
                 "Install the Gemini CLI or pass the correct path."
@@ -172,7 +189,8 @@ class GeminiAgenticProvider(BaseLLMProvider):
 
     def _build_command(self) -> list[str]:
         """Build the argv list for ``gemini --yolo -p <prompt>``."""
-        cmd: list[str] = [self._gemini_path, "--yolo"]
+        resolved_binary = get_gemini_binary(self._gemini_path)
+        cmd: list[str] = [resolved_binary, "--yolo"]
 
         if self._model:
             cmd += ["--model", self._model]

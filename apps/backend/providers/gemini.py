@@ -103,6 +103,22 @@ _DEFAULT_MODEL: str = "gemini-2.0-flash"
 _DEFAULT_TIMEOUT: int = 300  # seconds
 
 
+def get_gemini_binary(custom_path: str | None = None) -> str:
+    """Dynamically resolve the gemini / antigravity binary path."""
+    if custom_path and custom_path != "gemini":
+        return custom_path
+    if shutil.which("antigravity"):
+        return "antigravity"
+    from pathlib import Path
+    custom_path_default = Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+    if custom_path_default.exists():
+        return str(custom_path_default)
+    if shutil.which("gemini"):
+        return "gemini"
+    # Fallback to antigravity since we preinstall it by default
+    return "antigravity"
+
+
 class GeminiCLIProvider(BaseLLMProvider):
     """
     QA LLM provider backed by the Gemini CLI (``gemini`` subprocess).
@@ -210,8 +226,9 @@ class GeminiCLIProvider(BaseLLMProvider):
 
         # Resolve the executable path early so callers get a clear error
         # message rather than a confusing FileNotFoundError from asyncio.
-        resolved_path = shutil.which(self._gemini_path)
-        if resolved_path is None:
+        resolved_binary = get_gemini_binary(self._gemini_path)
+        resolved_path = shutil.which(resolved_binary) if not resolved_binary.startswith("/") else resolved_binary
+        if resolved_path is None or (resolved_binary.startswith("/") and not Path(resolved_binary).exists()):
             raise RuntimeError(
                 f"Gemini CLI executable not found: '{self._gemini_path}'. "
                 "Install the Gemini CLI or pass the correct path via "
@@ -296,7 +313,8 @@ class GeminiCLIProvider(BaseLLMProvider):
         Returns:
             A list of strings suitable for ``asyncio.create_subprocess_exec``.
         """
-        cmd: list[str] = [self._gemini_path]
+        resolved_binary = get_gemini_binary(self._gemini_path)
+        cmd: list[str] = [resolved_binary]
 
         if self._model:
             cmd += ["--model", self._model]

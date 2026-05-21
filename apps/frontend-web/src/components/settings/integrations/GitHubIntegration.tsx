@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Github, RefreshCw, KeyRound, Loader2, CheckCircle2, AlertCircle, User, Lock, Globe, ChevronDown, GitBranch } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Github, Gitlab, RefreshCw, KeyRound, Loader2, CheckCircle2, AlertCircle, User, Lock, Globe, ChevronDown, GitBranch } from 'lucide-react';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { Switch } from '../../ui/switch';
 import { Separator } from '../../ui/separator';
 import { Button } from '../../ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../ui/select';
 import { GitHubOAuthFlow } from '../../project-settings/GitHubOAuthFlow';
 import { PasswordInput } from '../../project-settings/PasswordInput';
 import { updateProjectSettings } from '../../../stores/project-store';
@@ -58,6 +60,49 @@ export function GitHubIntegration({
   settings,
   setSettings
 }: GitHubIntegrationProps) {
+  const { t } = useTranslation('settings');
+  const gitProvider = settings?.gitProvider || 'github';
+
+  const handleSettingsChange = (updates: Partial<ProjectSettings>) => {
+    if (setSettings) {
+      setSettings(prev => {
+        const next = { ...prev, ...updates };
+        debugLog('handleSettingsChange - updated settings:', next);
+        return next;
+      });
+    }
+
+    // Auto-persist git provider fields to projects.json + .env so they survive
+    // dialog close without an explicit Save click. Backend PATCH /settings maps
+    // all six fields to both .env (GIT_PROVIDER, GIT_TOKEN, …) and projects.json.
+    const gitFields: (keyof ProjectSettings)[] = [
+      'gitProvider', 'gitToken', 'gitBaseUrl', 'gitOrg', 'gitProject', 'gitRepo',
+    ];
+    const gitUpdates: Partial<ProjectSettings> = {};
+    for (const f of gitFields) {
+      if (f in updates) {
+        (gitUpdates as Record<string, unknown>)[f] = updates[f];
+      }
+    }
+    if (projectId && Object.keys(gitUpdates).length > 0) {
+      void updateProjectSettings(projectId, gitUpdates).then(ok => {
+        if (!ok) debugLog('updateProjectSettings failed for git fields:', gitUpdates);
+      });
+    }
+
+    // Mirror to envConfig for backward compatibility
+    const envUpdates: Partial<ProjectEnvConfig> = {};
+    if ('gitToken' in updates) {
+      envUpdates.githubToken = updates.gitToken;
+    }
+    if ('gitRepo' in updates) {
+      envUpdates.githubRepo = updates.gitRepo;
+    }
+    if (Object.keys(envUpdates).length > 0) {
+      updateEnvConfig(envUpdates);
+    }
+  };
+
   const [authMode, setAuthMode] = useState<'manual' | 'oauth' | 'oauth-success'>('manual');
   const [oauthUsername, setOauthUsername] = useState<string | null>(null);
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
@@ -252,9 +297,11 @@ export function GitHubIntegration({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
-          <Label className="font-normal text-foreground">Enable GitHub</Label>
+          <Label className="font-normal text-foreground">
+            {t('gitProviders.enableGitIntegration') || 'Enable Git Integration'}
+          </Label>
           <p className="text-xs text-muted-foreground">
-            Sync issues from GitHub and create tasks automatically
+            {t('gitProviders.enableGitIntegrationDescription') || 'Sync issues and tasks from GitHub, GitLab, or Azure DevOps (ADO) and create tasks automatically'}
           </p>
         </div>
         <Switch
@@ -265,133 +312,289 @@ export function GitHubIntegration({
 
       {envConfig.githubEnabled && (
         <>
-          {/* Auto-detecting state */}
-          {isAutoDetecting && (
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <div className="flex items-center gap-3">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium text-foreground">Detecting GitHub CLI...</p>
-                  <p className="text-xs text-muted-foreground">Checking if gh is already authenticated</p>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Provider Selection */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-foreground">
+              {t('gitProviders.gitProvider')}
+            </Label>
+            <Select
+              value={gitProvider}
+              onValueChange={(val) => handleSettingsChange({ gitProvider: val })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select Git Provider" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="github">{t('gitProviders.githubProvider')}</SelectItem>
+                <SelectItem value="gitlab">{t('gitProviders.gitlabProvider')}</SelectItem>
+                <SelectItem value="azure_devops">{t('gitProviders.adoProvider')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {t('gitProviders.gitProviderDescription')}
+            </p>
+          </div>
 
-          {/* OAuth Success State */}
-          {!isAutoDetecting && authMode === 'oauth-success' && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-success/30 bg-success/10 p-4">
-                <div className="flex items-center justify-between">
+          <Separator />
+
+          {/* Conditional provider forms */}
+          {gitProvider === 'github' ? (
+            <>
+              {/* Auto-detecting state */}
+              {isAutoDetecting && (
+                <div className="rounded-lg border border-border bg-muted/30 p-4">
                   <div className="flex items-center gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-success" />
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium text-success">Connected via GitHub CLI</p>
-                      {oauthUsername && (
-                        <p className="text-xs text-success/80 flex items-center gap-1 mt-0.5">
-                          <User className="h-3 w-3" />
-                          Authenticated as {oauthUsername}
-                        </p>
-                      )}
+                      <p className="text-sm font-medium text-foreground">Detecting GitHub CLI...</p>
+                      <p className="text-xs text-muted-foreground">Checking if gh is already authenticated</p>
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleSwitchToManual}
-                    className="text-xs"
-                  >
-                    Use Different Token
-                  </Button>
-                </div>
-              </div>
-
-              {/* Detected Repository (read-only from git remote) */}
-              {envConfig.githubRepo && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium text-foreground">Repository</Label>
-                  <div className="flex items-center gap-2 px-3 py-2 text-sm border border-input rounded-md bg-muted/50">
-                    <Github className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <code className="text-sm">{envConfig.githubRepo}</code>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Detected from project git remote
-                  </p>
                 </div>
               )}
-            </div>
-          )}
 
-          {/* OAuth Flow */}
-          {!isAutoDetecting && authMode === 'oauth' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium text-foreground">GitHub Authentication</Label>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleSwitchToManual}
-                >
-                  Use Manual Token
-                </Button>
-              </div>
-              <GitHubOAuthFlow
-                projectId={projectId}
-                onSuccess={handleOAuthSuccess}
-                onCancel={handleSwitchToManual}
-              />
-            </div>
-          )}
+              {/* OAuth Success State */}
+              {!isAutoDetecting && authMode === 'oauth-success' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-success/30 bg-success/10 p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="h-5 w-5 text-success" />
+                        <div>
+                          <p className="text-sm font-medium text-success">Connected via GitHub CLI</p>
+                          {oauthUsername && (
+                            <p className="text-xs text-success/80 flex items-center gap-1 mt-0.5">
+                              <User className="h-3 w-3" />
+                              Authenticated as {oauthUsername}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleSwitchToManual}
+                        className="text-xs"
+                      >
+                        Use Different Token
+                      </Button>
+                    </div>
+                  </div>
 
-          {/* Manual Token Entry */}
-          {!isAutoDetecting && authMode === 'manual' && (
-            <>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium text-foreground">Personal Access Token</Label>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSwitchToOAuth}
-                    className="gap-2"
-                  >
-                    <KeyRound className="h-3 w-3" />
-                    Use OAuth Instead
-                  </Button>
+                  {/* Detected Repository (read-only from git remote) */}
+                  {envConfig.githubRepo && (
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium text-foreground">Repository</Label>
+                      <div className="flex items-center gap-2 px-3 py-2 text-sm border border-input rounded-md bg-muted/50">
+                        <Github className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <code className="text-sm">{envConfig.githubRepo}</code>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Detected from project git remote
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Create a token with <code className="px-1 bg-muted rounded">repo</code> scope from{' '}
-                  <a
-                    href="https://github.com/settings/tokens/new?scopes=repo&description=Auto-Build-UI"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-info hover:underline"
-                  >
-                    GitHub Settings
-                  </a>
-                </p>
+              )}
+
+              {/* OAuth Flow */}
+              {!isAutoDetecting && authMode === 'oauth' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium text-foreground">GitHub Authentication</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleSwitchToManual}
+                    >
+                      Use Manual Token
+                    </Button>
+                  </div>
+                  <GitHubOAuthFlow
+                    projectId={projectId}
+                    onSuccess={handleOAuthSuccess}
+                    onCancel={handleSwitchToManual}
+                  />
+                </div>
+              )}
+
+              {/* Manual Token Entry */}
+              {!isAutoDetecting && authMode === 'manual' && (
+                <>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium text-foreground">Personal Access Token</Label>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSwitchToOAuth}
+                        className="gap-2"
+                      >
+                        <KeyRound className="h-3 w-3" />
+                        Use OAuth Instead
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Create a token with <code className="px-1 bg-muted rounded">repo</code> scope from{' '}
+                      <a
+                        href="https://github.com/settings/tokens/new?scopes=repo&description=Auto-Build-UI"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-info hover:underline"
+                      >
+                        GitHub Settings
+                      </a>
+                    </p>
+                    <PasswordInput
+                      value={envConfig.githubToken || ''}
+                      onChange={(value) => {
+                        updateEnvConfig({ githubToken: value });
+                        handleSettingsChange({ gitToken: value });
+                      }}
+                      placeholder="ghp_xxxxxxxx or github_pat_xxxxxxxx"
+                    />
+                  </div>
+
+                  <RepositoryInput
+                    value={envConfig.githubRepo || ''}
+                    onChange={(value) => {
+                      updateEnvConfig({ githubRepo: value });
+                      handleSettingsChange({ gitRepo: value });
+                    }}
+                  />
+                </>
+              )}
+            </>
+          ) : gitProvider === 'gitlab' ? (
+            <div className="space-y-4">
+              {/* GitLab configuration */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitToken')}
+                </Label>
                 <PasswordInput
-                  value={envConfig.githubToken || ''}
-                  onChange={(value) => updateEnvConfig({ githubToken: value })}
-                  placeholder="ghp_xxxxxxxx or github_pat_xxxxxxxx"
+                  value={settings?.gitToken || ''}
+                  onChange={(val) => handleSettingsChange({ gitToken: val })}
+                  placeholder={t('gitProviders.gitTokenPlaceholder') || "Enter your GitLab PAT"}
                 />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitTokenDescription')}
+                </p>
               </div>
 
-              <RepositoryInput
-                value={envConfig.githubRepo || ''}
-                onChange={(value) => updateEnvConfig({ githubRepo: value })}
-              />
-            </>
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitBaseUrl')}
+                </Label>
+                <Input
+                  value={settings?.gitBaseUrl || ''}
+                  onChange={(e) => handleSettingsChange({ gitBaseUrl: e.target.value })}
+                  placeholder={t('gitProviders.gitBaseUrlPlaceholder') || "https://gitlab.com"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitBaseUrlDescription')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitRepo')}
+                </Label>
+                <Input
+                  value={settings?.gitRepo || ''}
+                  onChange={(e) => handleSettingsChange({ gitRepo: e.target.value })}
+                  placeholder={t('gitProviders.gitRepoPlaceholder') || "group/subgroup/repo"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitRepoDescription')}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Azure DevOps configuration */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitToken')}
+                </Label>
+                <PasswordInput
+                  value={settings?.gitToken || ''}
+                  onChange={(val) => handleSettingsChange({ gitToken: val })}
+                  placeholder={t('gitProviders.gitTokenPlaceholder') || "Enter Azure DevOps PAT"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitTokenDescription')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitBaseUrl')}
+                </Label>
+                <Input
+                  value={settings?.gitBaseUrl || ''}
+                  onChange={(e) => handleSettingsChange({ gitBaseUrl: e.target.value })}
+                  placeholder={t('gitProviders.gitBaseUrlPlaceholder') || "https://dev.azure.com"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitBaseUrlDescription')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitOrg')}
+                </Label>
+                <Input
+                  value={settings?.gitOrg || ''}
+                  onChange={(e) => handleSettingsChange({ gitOrg: e.target.value })}
+                  placeholder={t('gitProviders.gitOrgPlaceholder') || "e.g. MyOrg"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitOrgDescription')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitProject')}
+                </Label>
+                <Input
+                  value={settings?.gitProject || ''}
+                  onChange={(e) => handleSettingsChange({ gitProject: e.target.value })}
+                  placeholder={t('gitProviders.gitProjectPlaceholder') || "e.g. MyProject"}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('gitProviders.gitProjectDescription')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('gitProviders.gitRepo')}
+                </Label>
+                <Input
+                  value={settings?.gitRepo || ''}
+                  onChange={(e) => handleSettingsChange({ gitRepo: e.target.value })}
+                  placeholder="e.g. MyRepo"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Format: Repository Name in Azure DevOps
+                </p>
+              </div>
+            </div>
           )}
 
-          {(envConfig.githubTokenSet || envConfig.githubToken) && envConfig.githubRepo && (
+          {/* Connection Status & Details */}
+          {((gitProvider === 'github' && (envConfig.githubTokenSet || envConfig.githubToken) && envConfig.githubRepo) ||
+            (gitProvider !== 'github' && settings?.gitToken && settings?.gitRepo)) && (
             <ConnectionStatus
               isChecking={isCheckingGitHub}
               connectionStatus={gitHubConnectionStatus}
             />
           )}
 
-          {gitHubConnectionStatus?.connected && <IssuesAvailableInfo />}
+          {gitHubConnectionStatus?.connected && <IssuesAvailableInfo gitProvider={gitProvider} />}
 
           <Separator />
 
@@ -625,15 +828,22 @@ function ConnectionStatus({ isChecking, connectionStatus }: ConnectionStatusProp
   );
 }
 
-function IssuesAvailableInfo() {
+function IssuesAvailableInfo({ gitProvider }: { gitProvider: string }) {
+  const isGitLab = gitProvider === 'gitlab';
+  const isADO = gitProvider === 'azure_devops';
+  
+  const Icon = isGitLab ? Gitlab : isADO ? GitBranch : Github;
+  const providerName = isGitLab ? 'GitLab' : isADO ? 'Azure DevOps' : 'GitHub';
+  const itemsName = isGitLab ? 'Issues & Merge Requests' : isADO ? 'Work Items & Pull Requests' : 'Issues';
+
   return (
     <div className="rounded-lg border border-info/30 bg-info/5 p-3">
       <div className="flex items-start gap-3">
-        <Github className="h-5 w-5 text-info mt-0.5" />
+        <Icon className="h-5 w-5 text-info mt-0.5" />
         <div className="flex-1">
-          <p className="text-sm font-medium text-foreground">Issues Available</p>
+          <p className="text-sm font-medium text-foreground">{providerName} Integration Connected</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Access GitHub Issues from the sidebar to view, investigate, and create tasks from issues.
+            Access {providerName} {itemsName} from the sidebar to view, investigate, and create tasks.
           </p>
         </div>
       </div>

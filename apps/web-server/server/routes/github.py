@@ -36,7 +36,10 @@ class AddRemoteRequest(BaseModel):
 
 
 class InvestigateRequest(BaseModel):
-    selectedCommentIds: list[int] | None = None
+    # Comment IDs round-trip as opaque values — they're only used for `in`
+    # filtering at the backend. Accept either int (GitLab numeric IDs, GitHub
+    # REST API legacy) or str (GitHub GraphQL node IDs like 'IC_kwDOLB...').
+    selectedCommentIds: list[int | str] | None = None
 
 
 class ImportIssuesRequest(BaseModel):
@@ -871,12 +874,264 @@ def _get_repo_full_name(project_path: str) -> str:
     return result.get("output", "") if result["success"] else ""
 
 
+def _use_provider_api(projectId: str) -> bool:
+    """Check if the project is configured to use a custom GitProvider REST API."""
+    from .projects import load_projects
+    projects = load_projects()
+    if projectId not in projects:
+        return False
+    project = projects[projectId]
+    settings = project.get("settings", {})
+    provider = settings.get("gitProvider", "github").lower()
+    token = settings.get("gitToken")
+    # If using gitlab or azure_devops, or github with a custom token configured, use the provider API
+    return provider in ("gitlab", "azure_devops") or (provider == "github" and bool(token))
+
+
+def _get_project_provider(projectId: str):
+    """Get the appropriate GitProvider instance for the project based on settings."""
+    # Ensure backend is in Python path
+    backend_path = FilePath(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+
+    from .projects import load_projects
+    projects = load_projects()
+    if projectId not in projects:
+        raise ValueError(f"Project {projectId} not found")
+
+    project = projects[projectId]
+    settings = project.get("settings", {})
+    provider_type = settings.get("gitProvider", "github").lower()
+    project_path = project.get("path", "")
+
+    # Import factory and protocol
+    from runners.github.providers.factory import get_provider
+    from runners.github.providers.protocol import ProviderType
+
+    # Map settings fields
+    token = settings.get("gitToken")
+    base_url = settings.get("gitBaseUrl")
+    org = settings.get("gitOrg")
+    proj_name = settings.get("gitProject")
+    repo_name = settings.get("gitRepo")
+
+    # If repo name is not configured, try to auto-detect from the folder or settings
+    if not repo_name:
+        # Detect repo from path
+        repo_name = _get_repo_full_name(project_path) or ""
+
+    if provider_type == "gitlab":
+        kwargs = {}
+        if token:
+            kwargs["_token"] = token
+        if base_url:
+            kwargs["_base_url"] = base_url
+        if project_path:
+            kwargs["_project_dir"] = project_path
+        return get_provider(ProviderType.GITLAB, repo=repo_name, **kwargs)
+
+    elif provider_type == "azure_devops":
+        kwargs = {}
+        if token:
+            kwargs["_pat"] = token
+        if org:
+            kwargs["_organization"] = org
+        if proj_name:
+            kwargs["_project"] = proj_name
+        if base_url:
+            kwargs["_base_url"] = base_url
+        if project_path:
+            kwargs["_project_dir"] = project_path
+        return get_provider(ProviderType.AZURE_DEVOPS, repo=repo_name, **kwargs)
+
+    else:
+        # Default to github
+        kwargs = {}
+        if project_path:
+            kwargs["_project_dir"] = project_path
+        # Pass token if present
+        if token:
+            kwargs["_token"] = token
+        return get_provider(ProviderType.GITHUB, repo=repo_name, **kwargs)
+
+
+def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
+    """Map IssueData from GitProvider to frontend shape."""
+    from datetime import datetime
+    return {
+        "id": issue.number,
+        "number": issue.number,
+        "title": issue.title,
+        "body": issue.body,
+        "state": issue.state.lower(),
+        "labels": [
+            {"id": i, "name": name, "color": ""}
+            for i, name in enumerate(issue.labels)
+        ],
+        "assignees": [
+            {"login": a, "avatar_url": ""}
+            for a in issue.assignees
+        ],
+        "author": {
+            "login": issue.author,
+            "avatar_url": "",
+        },
+        "milestone": {"title": issue.milestone, "number": 0} if issue.milestone else None,
+        "commentsCount": 0,
+        "htmlUrl": issue.url,
+        "repoFullName": repo_full_name,
+        "createdAt": issue.created_at.isoformat() if isinstance(issue.created_at, datetime) else str(issue.created_at),
+        "updatedAt": issue.updated_at.isoformat() if isinstance(issue.updated_at, datetime) else str(issue.updated_at),
+        "closedAt": None,
+    }
+
+
+def _map_provider_pr(pr) -> dict:
+    """Map PRData from GitProvider to frontend shape."""
+    from datetime import datetime
+    files = pr.files or []
+    return {
+        "number": pr.number,
+        "title": pr.title,
+        "body": pr.body,
+        "state": pr.state.lower(),
+        "author": {
+            "login": pr.author,
+        },
+        "headRefName": pr.source_branch,
+        "baseRefName": pr.target_branch,
+        "additions": pr.additions,
+        "deletions": pr.deletions,
+        "changedFiles": pr.changed_files,
+        "assignees": [],
+        "files": [
+            {
+                "path": f.get("path", ""),
+                "additions": f.get("additions", 0),
+                "deletions": f.get("deletions", 0),
+                "status": f.get("status", ""),
+            }
+            for f in files
+        ],
+        "createdAt": pr.created_at.isoformat() if isinstance(pr.created_at, datetime) else str(pr.created_at),
+        "updatedAt": pr.updated_at.isoformat() if isinstance(pr.updated_at, datetime) else str(pr.updated_at),
+        "htmlUrl": pr.url,
+    }
+
+
+async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]:
+    """Fetch and map issue/PR comments using GitProvider API endpoints."""
+    from runners.github.providers.protocol import ProviderType
+    comments = []
+    
+    if provider.provider_type == ProviderType.GITLAB:
+        try:
+            notes = await provider.api_get(f"/api/v4/projects/{provider._project_id}/issues/{issueNumber}/notes")
+        except Exception:
+            try:
+                notes = await provider.api_get(f"/api/v4/projects/{provider._project_id}/merge_requests/{issueNumber}/notes")
+            except Exception:
+                notes = []
+        
+        for note in notes:
+            if note.get("system"):
+                continue
+            author = note.get("author", {})
+            comments.append({
+                "id": note.get("id", 0),
+                "body": note.get("body", ""),
+                "user": {
+                    "login": author.get("username", "") or author.get("name", ""),
+                    "avatar_url": author.get("avatar_url", ""),
+                },
+                "created_at": note.get("created_at", ""),
+                "updated_at": note.get("updated_at", ""),
+            })
+
+    elif provider.provider_type == ProviderType.AZURE_DEVOPS:
+        try:
+            url = f"{provider._base_url}/{provider._org}/{provider._proj}/_apis/wit/workItems/{issueNumber}/comments?api-version=7.1-preview.3"
+            resp = await provider.api_get(url)
+            comments_raw = resp.get("comments", [])
+            for c in comments_raw:
+                author = c.get("createdBy", {})
+                comments.append({
+                    "id": c.get("id", 0),
+                    "body": c.get("text", ""),
+                    "user": {
+                        "login": author.get("uniqueName", "") or author.get("displayName", ""),
+                        "avatar_url": author.get("_links", {}).get("avatar", {}).get("href", ""),
+                    },
+                    "created_at": c.get("createdDate", ""),
+                    "updated_at": c.get("modifiedDate", ""),
+                })
+        except Exception:
+            try:
+                url = f"{provider._base_url}/{provider._org}/{provider._proj}/_apis/git/repositories/{provider._repo_id}/pullRequests/{issueNumber}/threads?api-version=7.1"
+                resp = await provider.api_get(url)
+                for thread in resp.get("value", []):
+                    if thread.get("isDeleted"):
+                        continue
+                    for c in thread.get("comments", []):
+                        if c.get("isDeleted"):
+                            continue
+                        author = c.get("author", {})
+                        comments.append({
+                            "id": c.get("id", 0),
+                            "body": c.get("content", ""),
+                            "user": {
+                                "login": author.get("uniqueName", "") or author.get("displayName", ""),
+                                "avatar_url": author.get("_links", {}).get("avatar", {}).get("href", ""),
+                            },
+                            "created_at": c.get("publishedDate", ""),
+                            "updated_at": c.get("lastContentUpdatedDate", ""),
+                        })
+            except Exception:
+                pass
+    else:
+        # GitHub api-based fallback
+        try:
+            url = f"repos/{provider.repo}/issues/{issueNumber}/comments"
+            comments_raw = await provider.api_get(url)
+            for c in comments_raw:
+                user = c.get("user", {})
+                comments.append({
+                    "id": c.get("id", 0),
+                    "body": c.get("body", ""),
+                    "user": {
+                        "login": user.get("login", ""),
+                        "avatar_url": user.get("avatar_url", ""),
+                    },
+                    "created_at": c.get("created_at", ""),
+                    "updated_at": c.get("updated_at", ""),
+                })
+        except Exception:
+            pass
+
+    return comments
+
+
 @project_router.get("/repositories")
 async def get_project_github_repositories(projectId: str):
     """Get GitHub repositories for a project."""
     project_path = _resolve_project_path(projectId)
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
+
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            repo_info = await provider.get_repository_info()
+            mapped_repo = {
+                "nameWithOwner": repo_info.get("nameWithOwner") or repo_info.get("name") or provider.repo,
+                "description": repo_info.get("description", ""),
+                "url": repo_info.get("url", ""),
+                "isPrivate": repo_info.get("isPrivate", False)
+            }
+            return {"success": True, "data": [mapped_repo]}
+        except Exception as e:
+            return {"success": True, "data": []}
 
     result = run_gh_command(
         ["repo", "view", "--json", "nameWithOwner,description,url,isPrivate"],
@@ -898,6 +1153,40 @@ async def check_project_github_connection(projectId: str):
     project_path = _resolve_project_path(projectId)
     if not project_path:
         return {"success": True, "data": {"connected": False, "repoFullName": None, "error": f"Project {projectId} not found"}}
+
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            repo_info = await provider.get_repository_info()
+            
+            # Fetch issues count
+            try:
+                issues = await provider.fetch_issues()
+                issue_count = len(issues)
+            except Exception:
+                issue_count = 0
+                
+            return {
+                "success": True,
+                "data": {
+                    "connected": True,
+                    "repoFullName": repo_info.get("nameWithOwner") or repo_info.get("name") or provider.repo,
+                    "repoDescription": repo_info.get("description", ""),
+                    "issueCount": issue_count,
+                    "error": None,
+                }
+            }
+        except Exception as e:
+            return {
+                "success": True,
+                "data": {
+                    "connected": False,
+                    "repoFullName": None,
+                    "repoDescription": None,
+                    "issueCount": 0,
+                    "error": f"Connection failed: {str(e)}",
+                }
+            }
 
     # Check gh auth
     auth_result = run_gh_command(["auth", "status"])
@@ -954,6 +1243,23 @@ async def get_project_github_issues(
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
 
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            from runners.github.providers.protocol import IssueFilters
+            
+            # Map state
+            query_state = "open"
+            if state and state in ("open", "closed", "all"):
+                query_state = state
+                
+            filters = IssueFilters(state=query_state)
+            issues_raw = await provider.fetch_issues(filters)
+            issues = [_map_provider_issue(issue, provider.repo) for issue in issues_raw]
+            return {"success": True, "data": issues}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     args = [
         "issue", "list",
         "--json", "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url",
@@ -983,6 +1289,14 @@ async def get_project_github_issue(projectId: str, issueNumber: int):
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
 
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            issue = await provider.fetch_issue(issueNumber)
+            return {"success": True, "data": _map_provider_issue(issue, provider.repo)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     result = run_gh_command(
         ["issue", "view", str(issueNumber), "--json", "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url"],
         cwd=str(project_path),
@@ -1005,6 +1319,14 @@ async def get_project_github_issue_comments(projectId: str, issueNumber: int):
     project_path = _resolve_project_path(projectId)
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
+
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            comments = await _get_provider_issue_comments(provider, issueNumber)
+            return {"success": True, "data": comments}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     result = run_gh_command(
         ["issue", "view", str(issueNumber), "--json", "comments"],
@@ -1042,7 +1364,7 @@ async def investigate_github_issue(
     issueNumber: int,
     request: InvestigateRequest
 ):
-    """Investigate a GitHub issue using AI."""
+    """Investigate an issue using AI (supports GitHub, GitLab, Azure DevOps)."""
     try:
         # Load projects and validate project exists
         from .projects import load_projects
@@ -1053,37 +1375,64 @@ async def investigate_github_issue(
 
         project_path = FilePath(projects[projectId]["path"])
 
-        # Fetch issue details using gh CLI
-        # Use 'gh issue view' with JSON output
-        issue_result = run_gh_command(
-            ["issue", "view", str(issueNumber), "--json", "number,title,body,state,labels,author,createdAt,updatedAt,url"],
-            cwd=str(project_path)
-        )
-
-        if not issue_result["success"]:
-            return {
-                "success": False,
-                "error": f"Failed to fetch issue: {issue_result.get('error', 'Unknown error')}"
-            }
-
-        try:
-            issue_data = json.loads(issue_result["output"])
-        except json.JSONDecodeError:
-            return {"success": False, "error": "Failed to parse issue data"}
-
-        # Fetch all comments for the issue
-        comments_result = run_gh_command(
-            ["issue", "view", str(issueNumber), "--json", "comments"],
-            cwd=str(project_path)
-        )
-
-        all_comments = []
-        if comments_result["success"]:
+        # Provider-aware fetch: GitLab / Azure DevOps / GitHub-with-PAT
+        # use the GitProvider abstraction; only gh-CLI-authed GitHub falls
+        # through to the legacy `run_gh_command` path below.
+        if _use_provider_api(projectId):
             try:
-                comments_data = json.loads(comments_result["output"])
-                all_comments = comments_data.get("comments", [])
+                provider = _get_project_provider(projectId)
+                issue_obj = await provider.fetch_issue(issueNumber)
+                issue_data = {
+                    "number": issue_obj.number,
+                    "title": issue_obj.title,
+                    "body": issue_obj.body,
+                    "state": issue_obj.state,
+                    "labels": [{"name": lbl} for lbl in issue_obj.labels],
+                    "author": {"login": issue_obj.author},
+                    "createdAt": issue_obj.created_at.isoformat() if issue_obj.created_at else None,
+                    "updatedAt": issue_obj.updated_at.isoformat() if issue_obj.updated_at else None,
+                    "url": issue_obj.url,
+                }
+                try:
+                    all_comments = await _get_provider_issue_comments(provider, issueNumber)
+                except Exception:
+                    all_comments = []
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "error": f"Failed to fetch issue: {exc}",
+                }
+        else:
+            # Fetch issue details using gh CLI
+            issue_result = run_gh_command(
+                ["issue", "view", str(issueNumber), "--json", "number,title,body,state,labels,author,createdAt,updatedAt,url"],
+                cwd=str(project_path)
+            )
+
+            if not issue_result["success"]:
+                return {
+                    "success": False,
+                    "error": f"Failed to fetch issue: {issue_result.get('error', 'Unknown error')}"
+                }
+
+            try:
+                issue_data = json.loads(issue_result["output"])
             except json.JSONDecodeError:
-                pass
+                return {"success": False, "error": "Failed to parse issue data"}
+
+            # Fetch all comments for the issue
+            comments_result = run_gh_command(
+                ["issue", "view", str(issueNumber), "--json", "comments"],
+                cwd=str(project_path)
+            )
+
+            all_comments = []
+            if comments_result["success"]:
+                try:
+                    comments_data = json.loads(comments_result["output"])
+                    all_comments = comments_data.get("comments", [])
+                except json.JSONDecodeError:
+                    pass
 
         # Filter comments if specific IDs were selected
         selected_comments = []
@@ -1251,6 +1600,14 @@ async def close_github_issue(projectId: str, issueNumber: int):
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
 
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            success = await provider.close_issue(issueNumber)
+            return {"success": success}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     result = run_gh_command(
         ["issue", "close", str(issueNumber)],
         cwd=str(project_path),
@@ -1270,6 +1627,23 @@ async def get_project_github_prs(
     project_path = _resolve_project_path(projectId)
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
+
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            from runners.github.providers.protocol import PRFilters
+            
+            # Map state
+            query_state = "open"
+            if state and state in ("open", "closed", "merged", "all"):
+                query_state = state
+                
+            filters = PRFilters(state=query_state)
+            prs_raw = await provider.fetch_prs(filters)
+            prs = [_map_provider_pr(pr) for pr in prs_raw]
+            return {"success": True, "data": prs}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     from ..services.pr_data_service import get_pr_data_service
 
@@ -1450,6 +1824,14 @@ async def post_pr_comment(
             content={"success": False, "error": f"Project {projectId} not found"},
         )
 
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            comment_id = await provider.add_comment(prNumber, request.body)
+            return {"success": True, "data": {"commentId": comment_id}}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
     from ..services.pr_data_service import get_pr_data_service
 
     service = get_pr_data_service()
@@ -1477,6 +1859,16 @@ async def approve_pr(
             content={"success": False, "error": f"Project {projectId} not found"},
         )
 
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            from runners.github.providers.protocol import ReviewData
+            review = ReviewData(pr_number=prNumber, event="approve", body=request.body if request else "Approved")
+            await provider.post_review(prNumber, review)
+            return {"success": True}
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
     from ..services.pr_data_service import get_pr_data_service
 
     service = get_pr_data_service()
@@ -1502,6 +1894,18 @@ async def merge_pr(
             status_code=404,
             content={"success": False, "error": f"Project {projectId} not found"},
         )
+
+    if _use_provider_api(projectId):
+        try:
+            provider = _get_project_provider(projectId)
+            merge_method = request.mergeMethod if request else "squash"
+            success = await provider.merge_pr(prNumber, merge_method=merge_method)
+            if success:
+                return {"success": True}
+            else:
+                return JSONResponse(status_code=500, content={"success": False, "error": "Failed to merge PR"})
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
     from ..services.pr_data_service import get_pr_data_service
 

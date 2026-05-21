@@ -14,6 +14,8 @@
     "githubPRs": "GitHub PRs",
     "gitlabIssues": "GitLab Issues",
     "gitlabMRs": "GitLab MRs",
+    "adoIssues": "ADO Work Items",
+    "adoPRs": "ADO Pull Requests",
     "worktrees": "Worktrees",
     "agentTools": "MCP",
     "skills": "Skills"
@@ -90,6 +92,6 @@
     "waitingForAuth": "Waiting...",
     "importCredentials": "Import Credentials",
     "loginHintCodex": "Complete login in your browser window. Codex CLI will authenticate via OpenAI.",
-    "loginHintGemini": "Complete login in your browser window. Gemini CLI will authenticate via Google."
+    "loginHintGemini": "Complete login in your browser window. Antigravity CLI will authenticate via Google."
   }
 }

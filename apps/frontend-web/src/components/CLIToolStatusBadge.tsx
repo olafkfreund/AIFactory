@@ -270,10 +270,11 @@ function CLIToolPopover({ cli, status, Icon, label, lastChecked, onRefresh, icon
 
 /**
  * CLI tool status badges for the sidebar.
- * Shows Codex CLI and Gemini CLI status with brand icons, colored indicators,
+ * Shows Codex CLI and Antigravity CLI status with brand icons, colored indicators,
  * and rich popover modals with version info, auth status, and action buttons.
  */
 export function CLIToolStatusBadge({ className, iconOnly = false }: CLIToolStatusBadgeProps) {
+  const { t } = useTranslation(['settings']);
   const [accounts, setAccounts] = useState<CLIAccountsDetectionResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -314,8 +315,8 @@ export function CLIToolStatusBadge({ className, iconOnly = false }: CLIToolStatu
   if (isLoading) return null;
 
   const clis: Array<{ key: 'codex' | 'gemini'; Icon: typeof OpenAIIcon; label: string }> = [
-    { key: 'codex', Icon: OpenAIIcon, label: 'Codex CLI' },
-    { key: 'gemini', Icon: GeminiIcon, label: 'Gemini CLI' },
+    { key: 'codex', Icon: OpenAIIcon, label: t('settings:codex.name', 'Codex CLI') },
+    { key: 'gemini', Icon: GeminiIcon, label: t('settings:gemini.name', 'Antigravity CLI') },
   ];
 
   return (

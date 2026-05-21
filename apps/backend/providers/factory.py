@@ -88,6 +88,7 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "openai": "openai-compatible",
     "openai-api": "openai-compatible",
     "openai-compatible": "openai-compatible",
+    "studio": "openai-compatible",
     "oai": "openai-compatible",
     "lm-studio": "openai-compatible",
     "lmstudio": "openai-compatible",

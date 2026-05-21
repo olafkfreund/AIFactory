@@ -31,6 +31,12 @@ class ProjectEnvUpdate(BaseModel):
     """Model for updating project environment configuration."""
     githubToken: str | None = None
     githubRepo: str | None = None
+    gitProvider: str | None = None
+    gitToken: str | None = None
+    gitRepo: str | None = None
+    gitBaseUrl: str | None = None
+    gitOrg: str | None = None
+    gitProject: str | None = None
     graphitiEnabled: bool | None = None
     enableFancyUi: bool | None = None
     claudeToken: str | None = None
@@ -366,7 +372,13 @@ async def get_project_env(projectId: str = Path(...)):
         "githubTokenSet": False,
         "githubRepo": "",
         "graphitiEnabled": False,
-        "enableFancyUi": True
+        "enableFancyUi": True,
+        "gitProvider": "github",
+        "gitToken": "",
+        "gitRepo": "",
+        "gitBaseUrl": "",
+        "gitOrg": "",
+        "gitProject": ""
     }
 
     # Initialize graphiti provider config
@@ -387,8 +399,28 @@ async def get_project_env(projectId: str = Path(...)):
                     if key == "GITHUB_TOKEN" and value:
                         config["githubEnabled"] = True
                         config["githubTokenSet"] = True
+                        if not config.get("gitToken"):
+                            config["gitToken"] = value
                     elif key == "GITHUB_REPO" and value:
                         config["githubRepo"] = value
+                        if not config.get("gitRepo"):
+                            config["gitRepo"] = value
+                    elif key == "GIT_PROVIDER" and value:
+                        config["gitProvider"] = value
+                    elif key == "GIT_TOKEN" and value:
+                        config["gitToken"] = value
+                        config["githubEnabled"] = True
+                        config["githubTokenSet"] = True
+                    elif key == "GIT_REPO" and value:
+                        config["gitRepo"] = value
+                        if not config.get("githubRepo"):
+                            config["githubRepo"] = value
+                    elif key == "GIT_BASE_URL" and value:
+                        config["gitBaseUrl"] = value
+                    elif key == "GIT_ORG" and value:
+                        config["gitOrg"] = value
+                    elif key == "GIT_PROJECT" and value:
+                        config["gitProject"] = value
                     elif key == "GRAPHITI_ENABLED":
                         config["graphitiEnabled"] = value.lower() == "true"
                     elif key == "ENABLE_FANCY_UI":
@@ -490,6 +522,7 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
         # These are sensitive credentials that should be validated
         token_mapping = {
             "githubToken": "GITHUB_TOKEN",
+            "gitToken": "GIT_TOKEN",
             "claudeToken": "CLAUDE_CODE_OAUTH_TOKEN",
         }
 
@@ -511,25 +544,50 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
                             "error": f"{config_key} must be at least 10 characters"
                         }
                     existing[env_key] = value
+
+                    # Mirror for backwards compatibility
+                    if env_key == "GIT_TOKEN":
+                        existing["GITHUB_TOKEN"] = value
+                    elif env_key == "GITHUB_TOKEN":
+                        existing["GIT_TOKEN"] = value
                 else:
                     # Allow removing tokens by setting to empty string
                     if env_key in existing:
                         del existing[env_key]
+                    if env_key == "GIT_TOKEN" and "GITHUB_TOKEN" in existing:
+                        del existing["GITHUB_TOKEN"]
+                    elif env_key == "GITHUB_TOKEN" and "GIT_TOKEN" in existing:
+                        del existing["GIT_TOKEN"]
 
         # Map plain string settings (no token validation needed)
         string_mapping = {
             "githubRepo": "GITHUB_REPO",
+            "gitRepo": "GIT_REPO",
+            "gitProvider": "GIT_PROVIDER",
+            "gitBaseUrl": "GIT_BASE_URL",
+            "gitOrg": "GIT_ORG",
+            "gitProject": "GIT_PROJECT",
         }
 
         for config_key, env_key in string_mapping.items():
             if config_key in config_dict:
                 value = config_dict[config_key]
                 if value:
-                    existing[env_key] = value.strip()
+                    val_strip = value.strip()
+                    existing[env_key] = val_strip
+                    # Mirror for backwards compatibility
+                    if env_key == "GIT_REPO":
+                        existing["GITHUB_REPO"] = val_strip
+                    elif env_key == "GITHUB_REPO":
+                        existing["GIT_REPO"] = val_strip
                 else:
                     # Allow removing by setting to empty
                     if env_key in existing:
                         del existing[env_key]
+                    if env_key == "GIT_REPO" and "GITHUB_REPO" in existing:
+                        del existing["GITHUB_REPO"]
+                    elif env_key == "GITHUB_REPO" and "GIT_REPO" in existing:
+                        del existing["GIT_REPO"]
 
         # Map boolean settings (convert to "true"/"false" strings)
         bool_mapping = {
@@ -578,6 +636,38 @@ async def update_project_env(projectId: str = Path(...), config: ProjectEnvUpdat
         # Set secure file permissions (owner read/write only)
         # This is critical for protecting API keys and tokens
         env_path.chmod(0o600)
+
+        # Also update settings in projects.json
+        try:
+            from .projects import save_projects
+            if "settings" not in projects[projectId]:
+                projects[projectId]["settings"] = {}
+
+            # Save settings fields to project dictionary
+            for field in ["gitProvider", "gitToken", "gitRepo", "gitBaseUrl", "gitOrg", "gitProject"]:
+                if field in config_dict:
+                    projects[projectId]["settings"][field] = config_dict[field]
+
+            # Handle backward compatibility: mirror githubRepo and githubToken in projects.json
+            if "githubRepo" in config_dict:
+                projects[projectId]["settings"]["githubRepo"] = config_dict["githubRepo"]
+                if "gitRepo" not in projects[projectId]["settings"]:
+                    projects[projectId]["settings"]["gitRepo"] = config_dict["githubRepo"]
+            elif "gitRepo" in config_dict:
+                projects[projectId]["settings"]["githubRepo"] = config_dict["gitRepo"]
+
+            if "githubToken" in config_dict:
+                projects[projectId]["settings"]["githubToken"] = config_dict["githubToken"]
+                if "gitToken" not in projects[projectId]["settings"]:
+                    projects[projectId]["settings"]["gitToken"] = config_dict["githubToken"]
+            elif "gitToken" in config_dict:
+                projects[projectId]["settings"]["githubToken"] = config_dict["gitToken"]
+
+            from datetime import datetime
+            projects[projectId]["updated_at"] = datetime.now().isoformat()
+            save_projects(projects)
+        except Exception:
+            pass
 
         return {
             "success": True,

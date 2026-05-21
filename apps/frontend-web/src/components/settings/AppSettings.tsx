@@ -10,6 +10,7 @@ import {
   Bell,
   Settings2,
   Github,
+  GitBranch,
   Database,
   Sparkles,
   Globe,
@@ -67,7 +68,7 @@ const appNavItemsConfig: NavItemConfig<AppSection>[] = [
 
 const projectNavItemsConfig: NavItemConfig<ProjectSettingsSection>[] = [
   { id: 'general', icon: Settings2 },
-  { id: 'github', icon: Github },
+  { id: 'github', icon: GitBranch },
   { id: 'memory', icon: Database }
 ];
 

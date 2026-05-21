@@ -18,6 +18,7 @@ class ProviderType(str, Enum):
     """Supported git hosting providers."""
 
     GITHUB = "github"
+    GITLAB = "gitlab"
     BITBUCKET = "bitbucket"
     GITEA = "gitea"
     AZURE_DEVOPS = "azure_devops"

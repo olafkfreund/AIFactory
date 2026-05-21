@@ -30,7 +30,7 @@
       "description": "Agents cloud et endpoints compatibles OpenAI",
       "cloudAgents": {
         "title": "Agents Cloud",
-        "description": "Connexions CLI Claude / Codex / Gemini"
+        "description": "Connexions CLI Claude / Codex / Antigravity"
       },
       "openaiCompatible": {
         "title": "Endpoints compatibles OpenAI",
@@ -241,11 +241,11 @@
       "description": "Authentification Claude"
     },
     "github": {
-      "title": "GitHub",
-      "description": "Synchronisation issues GitHub",
-      "integrationTitle": "Intégration GitHub",
-      "integrationDescription": "Se connecter à GitHub pour le suivi des issues",
-      "syncDescription": "Synchroniser avec GitHub Issues"
+      "title": "Fournisseurs Git",
+      "description": "Synchronisation GitHub, GitLab & ADO",
+      "integrationTitle": "Intégration Fournisseur Git",
+      "integrationDescription": "Se connecter à GitHub, GitLab ou Azure DevOps (ADO) pour le suivi des tâches",
+      "syncDescription": "Synchroniser avec les fournisseurs Git (GitHub, GitLab, ADO)"
     },
     "gitlab": {
       "title": "GitLab",
@@ -356,7 +356,7 @@
     "openaiKeyDescription": "Utilisée pour les modèles OpenAI (ChatGPT)",
     "comingSoon": "Les intégrations tierces (Linear, Jira, Slack, etc.) arrivent bientôt. Les comptes Claude et les clés API ont été déplacés vers la page Fournisseurs LLM.",
     "cliAccounts": "Autres comptes CLI",
-    "cliAccountsDescription": "Connectez Codex CLI (OpenAI) et Gemini CLI (Google) pour des capacités de codage IA supplémentaires.",
+    "cliAccountsDescription": "Connectez Codex CLI (OpenAI) et Antigravity CLI (Google) pour des capacités de codage IA supplémentaires.",
     "refreshStatus": "Actualiser le statut",
     "notInstalled": "Non installé",
     "installed": "Installé",
@@ -387,10 +387,10 @@
       "tokenExpires": "Le token expire"
     },
     "gemini": {
-      "name": "Gemini CLI",
-      "description": "Assistant de codage IA de Google",
+      "name": "Antigravity CLI",
+      "description": "Assistant de codage Antigravity de Google",
       "installHint": "npm install -g @google/gemini-cli",
-      "loginHint": "Exécutez 'gemini' et sélectionnez Connexion avec Google",
+      "loginHint": "Exécutez 'antigravity' et sélectionnez Connexion avec Google",
       "importHint": "Importer depuis ~/.gemini/settings.json",
       "viaGoogleLogin": "via Google Login",
       "viaApiKey": "via clé API"
@@ -555,5 +555,29 @@
     "modelsFound": "{{count}} modèles",
     "modelsHint": "{{count}} modèles détectés — cliquez sur le champ ou commencez à taper pour en choisir un.",
     "unprobed": "Pas encore testé"
+  },
+  "gitProviders": {
+    "enableGitIntegration": "Activer l'intégration Git",
+    "enableGitIntegrationDescription": "Synchroniser les tickets de GitHub, GitLab ou Azure DevOps (ADO) et créer des tâches automatiquement",
+    "gitProvider": "Fournisseur Git",
+    "gitProviderDescription": "Sélectionnez votre fournisseur d'hébergement git et de suivi des tickets",
+    "gitToken": "Jeton d'accès personnel (PAT)",
+    "gitTokenDescription": "Créez un jeton d'accès personnel avec les autorisations de lecture/écriture de l'API",
+    "gitBaseUrl": "URL de base de l'API",
+    "gitBaseUrlDescription": "URL de base pour les instances auto-hébergées (laisser vide pour le cloud par défaut)",
+    "gitOrg": "Organisation",
+    "gitOrgDescription": "Nom de l'organisation Azure DevOps",
+    "gitProject": "Nom du projet",
+    "gitProjectDescription": "Nom du projet Azure DevOps",
+    "gitRepo": "Chemin du dépôt",
+    "gitRepoDescription": "Format : groupe/sous-groupe/depot (GitLab) ou nom-du-depot (Azure DevOps)",
+    "gitRepoPlaceholder": "groupe/nom-du-projet",
+    "gitTokenPlaceholder": "Entrez votre jeton PAT",
+    "gitBaseUrlPlaceholder": "https://gitlab.example.com",
+    "gitOrgPlaceholder": "ex. MonOrg",
+    "gitProjectPlaceholder": "ex. MonProjet",
+    "githubProvider": "GitHub",
+    "gitlabProvider": "GitLab",
+    "adoProvider": "Azure DevOps"
   }
 }

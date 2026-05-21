@@ -4,6 +4,9 @@
  */
 
 const isDebugEnabled = (): boolean => {
+  if (import.meta.env.DEV || (window as Window & { DEBUG?: boolean }).DEBUG) {
+    return true;
+  }
   if (typeof process !== 'undefined' && process.env) {
     return process.env.DEBUG === 'true';
   }

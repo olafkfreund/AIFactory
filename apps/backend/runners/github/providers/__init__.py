@@ -19,6 +19,8 @@ Usage:
 
 from .factory import get_provider, register_provider
 from .github_provider import GitHubProvider
+from .gitlab_provider import GitLabProvider
+from .azure_devops_provider import AzureDevOpsProvider
 from .protocol import (
     GitProvider,
     IssueData,
@@ -42,6 +44,8 @@ __all__ = [
     "ProviderType",
     # Implementations
     "GitHubProvider",
+    "GitLabProvider",
+    "AzureDevOpsProvider",
     # Factory
     "get_provider",
     "register_provider",

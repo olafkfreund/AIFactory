@@ -921,4 +921,48 @@ function setupEventBroadcast(): void {
       emitEvent(event.type, event.payload);
     }
   });
+
+  // Self-heal on reconnect: if the socket drops (browser sleep, network blip,
+  // server restart) we miss the events broadcast during the gap. Re-fetch the
+  // task list whenever the socket *re*-connects so the kanban board converges
+  // to actual server state. Stores are loaded lazily to avoid an import cycle
+  // between api-adapter ↔ task-store.
+  let initialConnect = true;
+  wsManager.onConnect('/ws/events', () => {
+    if (initialConnect) { initialConnect = false; return; }
+    log.debug('[WS] /ws/events reconnected — refetching tasks');
+    void Promise.all([
+      import('../stores/project-store'),
+      import('../stores/task-store'),
+    ]).then(([projectMod, taskMod]) => {
+      const projectId = projectMod.useProjectStore.getState().selectedProjectId;
+      if (projectId) {
+        void taskMod.loadTasks(projectId);
+      }
+    }).catch((err) => {
+      log.error('[WS reconnect] Failed to refetch tasks:', err);
+    });
+  });
+
+  // Belt-and-braces: when the tab becomes visible again, also refetch. Some
+  // browsers (Chrome on mobile, Safari) heavily throttle background WS without
+  // firing onclose, so a reconnect may never happen even though events were
+  // dropped. visibilitychange catches that path.
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      void Promise.all([
+        import('../stores/project-store'),
+        import('../stores/task-store'),
+      ]).then(([projectMod, taskMod]) => {
+        const projectId = projectMod.useProjectStore.getState().selectedProjectId;
+        if (projectId) {
+          log.debug('[WS] tab visible — refetching tasks');
+          void taskMod.loadTasks(projectId);
+        }
+      }).catch((err) => {
+        log.error('[visibilitychange] Failed to refetch tasks:', err);
+      });
+    });
+  }
 }

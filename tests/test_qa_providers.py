@@ -827,7 +827,7 @@ class TestGeminiCLIProviderBuildCommand:
         """Command starts with the gemini executable."""
         provider = GeminiCLIProvider()
         cmd = provider._build_command()
-        assert cmd[0] == "gemini"
+        assert cmd[0] in ("gemini", "antigravity") or cmd[0].endswith("antigravity")
 
     def test_model_flag_present_when_set(self):
         """--model flag is included when model is set."""
@@ -916,8 +916,9 @@ class TestGeminiCLIProviderReceiveResponse:
             provider = GeminiCLIProvider()
             await provider.query("prompt")
             with patch("shutil.which", return_value=None):
-                with pytest.raises(RuntimeError, match="Gemini CLI executable not found"):
-                    await _collect(provider.receive_response())
+                with patch("providers.gemini.get_gemini_binary", return_value="gemini"):
+                    with pytest.raises(RuntimeError, match="Gemini CLI executable not found"):
+                        await _collect(provider.receive_response())
 
         _run(_test())
 

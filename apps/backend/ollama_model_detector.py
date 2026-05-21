@@ -128,7 +128,7 @@ def output_error(message: str) -> None:
     output_json(False, error=message)
 
 
-def fetch_ollama_api(base_url: str, endpoint: str, timeout: int = 5) -> dict | None:
+def fetch_ollama_api(base_url: str, endpoint: str, timeout: int = 1) -> dict | None:
     """Fetch data from Ollama API."""
     url = f"{base_url.rstrip('/')}/{endpoint}"
     try:

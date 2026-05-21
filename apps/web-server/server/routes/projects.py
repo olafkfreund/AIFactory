@@ -76,6 +76,12 @@ class ProjectSettings(BaseModel):
     graphitiMcpUrl: str | None = Field(default=None, alias="graphiti_mcp_url")
     mainBranch: str | None = Field(default=None, alias="main_branch")
     useClaudeMd: bool = Field(default=True, alias="use_claude_md")
+    gitProvider: str = Field(default="github", alias="git_provider")
+    gitToken: str | None = Field(default=None, alias="git_token")
+    gitBaseUrl: str | None = Field(default=None, alias="git_base_url")
+    gitOrg: str | None = Field(default=None, alias="git_org")
+    gitProject: str | None = Field(default=None, alias="git_project")
+    gitRepo: str | None = Field(default=None, alias="git_repo")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -533,6 +539,8 @@ class ProjectSettingsUpdate(BaseModel):
     BUG-1.2-005: Added notifications field to allow updating notification preferences.
     BUG-1.2-003: Added memoryBackend validation.
     """
+    model_config = ConfigDict(populate_by_name=True)
+
     model: str | None = None
     # BUG-1.2-003: Validate memoryBackend against allowed values
     memoryBackend: MemoryBackendType | None = None
@@ -542,6 +550,12 @@ class ProjectSettingsUpdate(BaseModel):
     graphitiMcpUrl: str | None = None
     mainBranch: str | None = None
     useClaudeMd: bool | None = None
+    gitProvider: str | None = Field(default=None, alias="git_provider")
+    gitToken: str | None = Field(default=None, alias="git_token")
+    gitBaseUrl: str | None = Field(default=None, alias="git_base_url")
+    gitOrg: str | None = Field(default=None, alias="git_org")
+    gitProject: str | None = Field(default=None, alias="git_project")
+    gitRepo: str | None = Field(default=None, alias="git_repo")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -589,6 +603,12 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
             "memoryBackend": "MEMORY_BACKEND",
             "graphitiMcpUrl": "GRAPHITI_MCP_URL",
             "mainBranch": "MAIN_BRANCH",
+            "gitProvider": "GIT_PROVIDER",
+            "gitToken": "GIT_TOKEN",
+            "gitBaseUrl": "GIT_BASE_URL",
+            "gitOrg": "GIT_ORG",
+            "gitProject": "GIT_PROJECT",
+            "gitRepo": "GIT_REPO",
         }
 
         # Handle boolean settings with "true"/"false" string values
@@ -601,6 +621,12 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
         for settings_key, env_key in env_mapping.items():
             if settings_key in settings_dict:
                 existing[env_key] = str(settings_dict[settings_key])
+
+        # Mirror for backwards compatibility
+        if "gitToken" in settings_dict and settings_dict["gitToken"]:
+            existing["GITHUB_TOKEN"] = str(settings_dict["gitToken"])
+        if "gitRepo" in settings_dict and settings_dict["gitRepo"]:
+            existing["GITHUB_REPO"] = str(settings_dict["gitRepo"])
 
         # Update boolean settings
         for settings_key, env_key in bool_mapping.items():

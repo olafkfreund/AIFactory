@@ -3200,9 +3200,51 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
             except Exception:
                 pr_body = ""
 
-    # Create the PR using gh CLI
-    from .github import run_gh_command
+    # Route PR creation through the configured git provider. When the project
+    # is on GitLab or Azure DevOps the gh CLI path can't open the PR (we
+    # pushed to the GitLab `origin`, not to a GitHub remote). Only fall back
+    # to `gh pr create` when the project is actually a GitHub project.
+    from .github import run_gh_command, _use_provider_api, _get_project_provider
 
+    if _use_provider_api(project_id):
+        try:
+            provider = _get_project_provider(project_id)
+            provider_type_value = getattr(provider.provider_type, "value", str(provider.provider_type))
+            if provider_type_value == "github":
+                # The provider abstraction picks GitHub when a custom token is
+                # configured; the gh CLI path below already handles GitHub, so
+                # let it run.
+                pass
+            else:
+                created = await provider.create_pr(
+                    source_branch=worktree_branch,
+                    target_branch=base_branch,
+                    title=pr_title,
+                    body=pr_body or "",
+                    draft=bool(options.draft),
+                )
+                return {
+                    "success": True,
+                    "data": {
+                        "prUrl": created.get("web_url") or "",
+                        "prNumber": created.get("number"),
+                        "branch": worktree_branch,
+                        "baseBranch": base_branch,
+                        "provider": provider_type_value,
+                    },
+                }
+        except AttributeError:
+            # Provider hasn't implemented create_pr yet — surface a clear error
+            # instead of silently falling through to gh CLI (which would hit
+            # the wrong remote and produce GraphQL noise).
+            return {
+                "success": False,
+                "error": f"Provider {provider_type_value!r} does not support PR creation yet",
+            }
+        except Exception as exc:
+            return {"success": False, "error": f"Failed to create PR: {exc}"}
+
+    # Create the PR using gh CLI (GitHub-only path)
     head_ref = worktree_branch
     gh_args = [
         "pr", "create",

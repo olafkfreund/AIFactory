@@ -12,22 +12,31 @@ interface GitHubPRsProps {
   isActive?: boolean;
 }
 
+const PROVIDER_LABEL: Record<string, string> = {
+  github: 'GitHub',
+  gitlab: 'GitLab',
+  azure_devops: 'Azure DevOps',
+};
+
 function NotConnectedState({
   error,
   onOpenSettings,
+  provider,
   t
 }: {
   error: string | null;
   onOpenSettings?: () => void;
-  t: (key: string) => string;
+  provider?: string;
+  t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
+  const providerLabel = PROVIDER_LABEL[provider ?? 'github'] ?? 'GitHub';
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       <div className="text-center max-w-md">
         <GitPullRequest className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-        <h3 className="text-lg font-medium mb-2">{t('prReview.notConnected')}</h3>
+        <h3 className="text-lg font-medium mb-2">{t('prReview.notConnected', { provider: providerLabel })}</h3>
         <p className="text-sm text-muted-foreground mb-4">
-          {error || t('prReview.connectPrompt')}
+          {error || t('prReview.connectPrompt', { provider: providerLabel })}
         </p>
         {onOpenSettings && (
           <Button onClick={onOpenSettings} variant="outline">
@@ -181,7 +190,7 @@ export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) 
 
   // Not connected state
   if (!isConnected) {
-    return <NotConnectedState error={error} onOpenSettings={onOpenSettings} t={t} />;
+    return <NotConnectedState error={error} onOpenSettings={onOpenSettings} provider={selectedProject?.settings?.gitProvider} t={t} />;
   }
 
   return (

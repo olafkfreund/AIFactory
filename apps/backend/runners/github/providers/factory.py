@@ -79,6 +79,14 @@ def get_provider(
     if provider_type == ProviderType.GITHUB:
         return GitHubProvider(_repo=repo, **kwargs)
 
+    if provider_type == ProviderType.GITLAB:
+        from .gitlab_provider import GitLabProvider
+        return GitLabProvider(_repo=repo, **kwargs)
+
+    if provider_type == ProviderType.AZURE_DEVOPS:
+        from .azure_devops_provider import AzureDevOpsProvider
+        return AzureDevOpsProvider(_repo=repo, **kwargs)
+
     # Future providers (not yet implemented)
     if provider_type == ProviderType.BITBUCKET:
         raise NotImplementedError(
@@ -92,12 +100,6 @@ def get_provider(
             "See providers/gitea_provider.py.stub for interface."
         )
 
-    if provider_type == ProviderType.AZURE_DEVOPS:
-        raise NotImplementedError(
-            "Azure DevOps provider not yet implemented. "
-            "See providers/azure_devops_provider.py.stub for interface."
-        )
-
     raise ValueError(f"Unsupported provider type: {provider_type}")
 
 
@@ -108,7 +110,7 @@ def list_available_providers() -> list[ProviderType]:
     Returns:
         List of available ProviderType values
     """
-    available = [ProviderType.GITHUB]  # Built-in
+    available = [ProviderType.GITHUB, ProviderType.GITLAB, ProviderType.AZURE_DEVOPS]  # Built-in
 
     # Add registered providers
     for provider_type in _PROVIDER_REGISTRY:

@@ -163,11 +163,15 @@ export function useProjectSettings(
     checkAuth();
   }, [open, project.id, project.autoBuildPath]);
 
-  // Check GitHub connection when token/repo changes
-  // Also updates the global GitHub store so other components (like GitHub Issues) see the change
+  // Check Git connection when token/repo changes
+  // Also updates the global Git store so other components see the change
   useEffect(() => {
     const checkGitHubConnection = async () => {
-      if (!envConfig?.githubEnabled || (!envConfig.githubTokenSet && !envConfig.githubToken) || !envConfig.githubRepo) {
+      const isProviderEnabled = envConfig?.githubEnabled || envConfig?.gitProvider;
+      const hasToken = envConfig?.githubTokenSet || envConfig?.githubToken || envConfig?.gitToken;
+      const hasRepo = envConfig?.githubRepo || envConfig?.gitRepo;
+
+      if (!isProviderEnabled || !hasToken || !hasRepo) {
         setGitHubConnectionStatus(null);
         return;
       }
@@ -175,7 +179,7 @@ export function useProjectSettings(
       setIsCheckingGitHub(true);
       try {
         // Use the global store action - it makes the API call AND updates the global store
-        // This ensures the GitHub Issues page sees the updated status
+        // This ensures the GitHub/Git Issues page sees the updated status
         const status = await checkGitHubConnectionGlobal(project.id);
         if (status) {
           setGitHubConnectionStatus(status);
@@ -187,10 +191,25 @@ export function useProjectSettings(
       }
     };
 
-    if (envConfig?.githubEnabled && (envConfig.githubTokenSet || envConfig.githubToken) && envConfig.githubRepo) {
+    const isProviderEnabled = envConfig?.githubEnabled || envConfig?.gitProvider;
+    const hasToken = envConfig?.githubTokenSet || envConfig?.githubToken || envConfig?.gitToken;
+    const hasRepo = envConfig?.githubRepo || envConfig?.gitRepo;
+
+    if (isProviderEnabled && hasToken && hasRepo) {
       checkGitHubConnection();
+    } else {
+      setGitHubConnectionStatus(null);
     }
-  }, [envConfig?.githubEnabled, envConfig?.githubTokenSet, envConfig?.githubToken, envConfig?.githubRepo, project.id]);
+  }, [
+    envConfig?.githubEnabled,
+    envConfig?.githubTokenSet,
+    envConfig?.githubToken,
+    envConfig?.githubRepo,
+    envConfig?.gitProvider,
+    envConfig?.gitToken,
+    envConfig?.gitRepo,
+    project.id
+  ]);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));

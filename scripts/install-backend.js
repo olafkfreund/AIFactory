@@ -103,6 +103,37 @@ async function main() {
     process.exit(1);
   }
 
+  // Preinstall @google/gemini-cli (Antigravity CLI) per default
+  console.log('\nPreinstalling @google/gemini-cli (Antigravity CLI) per default...');
+  try {
+    const installDir = path.join(os.homedir(), '.gemini', 'antigravity-cli');
+    fs.mkdirSync(path.join(os.homedir(), '.gemini'), { recursive: true });
+    
+    // Check if npm is installed
+    try {
+      execSync('npm --version', { stdio: 'ignore' });
+      console.log(`Installing @google/gemini-cli to ${installDir}...`);
+      execSync(`npm install -g --prefix "${installDir}" @google/gemini-cli`, { stdio: 'inherit' });
+      
+      // Create symlink from antigravity -> gemini
+      const binDir = path.join(installDir, 'bin');
+      const symlinkPath = path.join(binDir, 'antigravity');
+      const targetPath = path.join(binDir, 'gemini');
+      
+      if (fs.existsSync(targetPath)) {
+        if (fs.existsSync(symlinkPath) || fs.lstatSync(symlinkPath).isSymbolicLink()) {
+          fs.unlinkSync(symlinkPath);
+        }
+        fs.symlinkSync('gemini', symlinkPath);
+        console.log('Successfully created antigravity -> gemini symlink.');
+      }
+    } catch (npmErr) {
+      console.log('npm is not installed or failed to execute. Skipping @google/gemini-cli preinstallation.');
+    }
+  } catch (err) {
+    console.log(`Warning: Failed to preinstall @google/gemini-cli: ${err.message}. You can still install it later via settings.`);
+  }
+
   console.log('\nBackend installation complete!');
   console.log(`Virtual environment: ${venvDir}`);
 }

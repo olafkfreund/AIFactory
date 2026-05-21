@@ -131,6 +131,7 @@ export function GitHubIssues({ onOpenSettings, onNavigateToTask }: GitHubIssuesP
       <NotConnectedState
         error={syncStatus?.error || null}
         onOpenSettings={onOpenSettings}
+        provider={selectedProject?.settings?.gitProvider}
       />
     );
   }
@@ -202,6 +203,7 @@ export function GitHubIssues({ onOpenSettings, onNavigateToTask }: GitHubIssuesP
         onStartInvestigation={handleStartInvestigation}
         onClose={handleCloseDialog}
         projectId={selectedProject?.id}
+        provider={selectedProject?.settings?.gitProvider}
       />
 
       {/* Batch Review Wizard (Proactive workflow) */}

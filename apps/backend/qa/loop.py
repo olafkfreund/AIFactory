@@ -105,7 +105,7 @@ def _create_qa_reviewer_provider(
     if normalised in {
         "openai-compatible", "openai", "openai-api", "oai",
         "lm-studio", "lmstudio", "vllm", "openrouter", "together",
-        "together-ai", "groq", "localai", "anyscale",
+        "together-ai", "groq", "localai", "anyscale", "studio",
     }:
         extra = get_provider_extra_kwargs("openai-compatible", model)
         return get_qa_llm_provider(provider_name, **extra)

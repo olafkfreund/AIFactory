@@ -7,7 +7,7 @@ AI_FACTORY_DIR = Path.home() / ".aifactory"
 
 def migrate_legacy_data():
     """Safely migrate legacy AIFactory data folder to AIFactory."""
-    legacy_dir = Path.home() / ".magestic-ai"
+    legacy_dir = Path.home() / ".aifactory"
     if legacy_dir.exists() and not AI_FACTORY_DIR.exists():
         try:
             shutil.copytree(legacy_dir, AI_FACTORY_DIR, dirs_exist_ok=True)

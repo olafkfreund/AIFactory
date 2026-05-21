@@ -31,11 +31,12 @@ class GeminiProvider(ProviderStrategy):
     """Provider that shells out to the Gemini CLI."""
 
     async def detect(self) -> ProviderInfo:
-        from ...routes.cli_accounts import _detect_gemini_credentials
+        from ...routes.cli_accounts import _detect_gemini_credentials, get_gemini_binary
 
-        # Fast path: just check if gemini binary exists on PATH
+        # Fast path: just check if gemini/antigravity binary exists on PATH
         # (running `gemini --version` takes ~3s due to Node.js startup)
-        installed = shutil.which("gemini") is not None
+        binary = get_gemini_binary()
+        installed = (shutil.which(binary) is not None) if not binary.startswith("/") else Path(binary).exists()
 
         authenticated, auth_method, _ = (False, None, None)
         if installed:
@@ -59,6 +60,7 @@ class GeminiProvider(ProviderStrategy):
         model_config: dict | None,
         conversation_history: list[dict] | None,
     ) -> str:
+        from ...routes.cli_accounts import get_gemini_binary
         cmd = ["bash", "-l", "-c"]
 
         effective_model = model or (model_config or {}).get("model", "gemini-2.5-flash")
@@ -74,7 +76,8 @@ class GeminiProvider(ProviderStrategy):
             if context_parts:
                 full_prompt = "\n".join(context_parts) + f"\n[user]: {message}"
 
-        gemini_cmd = f"gemini --model {shlex.quote(effective_model)} --prompt {shlex.quote(full_prompt)}"
+        binary = get_gemini_binary()
+        gemini_cmd = f"{shlex.quote(binary)} --model {shlex.quote(effective_model)} --prompt {shlex.quote(full_prompt)}"
 
         cmd.append(gemini_cmd)
 

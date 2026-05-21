@@ -1,6 +1,12 @@
-import { Github, Settings2 } from 'lucide-react';
+import { Github, Gitlab, GitBranch, Settings2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import type { EmptyStateProps, NotConnectedStateProps } from '../types';
+
+const PROVIDER_META: Record<string, { label: string; icon: React.ComponentType<{ className?: string }> }> = {
+  github: { label: 'GitHub', icon: Github },
+  gitlab: { label: 'GitLab', icon: Gitlab },
+  azure_devops: { label: 'Azure DevOps', icon: GitBranch },
+};
 
 export function EmptyState({ searchQuery, icon: Icon = Github, message }: EmptyStateProps) {
   return (
@@ -15,17 +21,19 @@ export function EmptyState({ searchQuery, icon: Icon = Github, message }: EmptyS
   );
 }
 
-export function NotConnectedState({ error, onOpenSettings }: NotConnectedStateProps) {
+export function NotConnectedState({ error, onOpenSettings, provider }: NotConnectedStateProps) {
+  const meta = PROVIDER_META[provider ?? 'github'] ?? PROVIDER_META.github;
+  const Icon = meta.icon;
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
       <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-        <Github className="h-8 w-8 text-muted-foreground" />
+        <Icon className="h-8 w-8 text-muted-foreground" />
       </div>
       <h3 className="text-lg font-semibold text-foreground mb-2">
-        GitHub Not Connected
+        {meta.label} Not Connected
       </h3>
       <p className="text-sm text-muted-foreground mb-4 max-w-md">
-        {error || 'Configure your GitHub token and repository in project settings to sync issues.'}
+        {error || `Configure your ${meta.label} token and repository in project settings to sync issues.`}
       </p>
       {onOpenSettings && (
         <Button onClick={onOpenSettings} variant="outline">

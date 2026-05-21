@@ -76,6 +76,19 @@ class APIKeyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def get_gemini_binary() -> str:
+    """Dynamically resolve the gemini / antigravity binary path."""
+    if shutil.which("antigravity"):
+        return "antigravity"
+    custom_path = Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+    if custom_path.exists():
+        return str(custom_path)
+    if shutil.which("gemini"):
+        return "gemini"
+    # Fallback to antigravity since we preinstall it by default
+    return "antigravity"
+
+
 def _validate_cli(cli: str) -> None:
     if cli not in SUPPORTED_CLIS:
         raise HTTPException(status_code=400, detail=f"Unsupported CLI: {cli}. Must be one of: {', '.join(SUPPORTED_CLIS)}")
@@ -89,21 +102,27 @@ def _detect_cli_version(cli: str) -> str | None:
     Falls back to bash -l -c only when the binary isn't on the non-login PATH.
     """
     cfg = CLI_CONFIG[cli]
-    binary = cfg["binary"]
+    if cli == "gemini":
+        binary = get_gemini_binary()
+    else:
+        binary = cfg["binary"]
 
     # Fast path: check if binary is on PATH without spawning a shell
-    bin_path = shutil.which(binary)
-    if not bin_path:
+    bin_path = shutil.which(binary) if not binary.startswith("/") else binary
+    if not bin_path or (binary.startswith("/") and not Path(bin_path).exists()):
+        bin_path = None
         # Fallback: try login shell in case PATH is set in .bashrc/.profile
-        try:
-            result = subprocess.run(
-                ["bash", "-l", "-c", f"which {shlex.quote(binary)}"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                bin_path = result.stdout.strip()
-        except Exception:
-            pass
+        # (only useful for bare binary names, not absolute paths).
+        if not binary.startswith("/"):
+            try:
+                result = subprocess.run(
+                    ["bash", "-l", "-c", f"which {shlex.quote(binary)}"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    bin_path = result.stdout.strip()
+            except Exception:
+                pass
 
     if not bin_path:
         # Final fallback: probe well-known install locations the user's PATH
@@ -112,7 +131,7 @@ def _detect_cli_version(cli: str) -> str | None:
         # ~/.gemini/antigravity-cli/bin/ by default; that directory is rarely
         # on PATH but the binary IS installed.
         candidates = []
-        if binary == "gemini":
+        if binary == "gemini" or (binary.startswith("/") and binary.endswith("gemini")):
             candidates += [
                 Path.home() / ".gemini" / "antigravity-cli" / "bin" / "gemini",
                 Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity",
@@ -133,8 +152,9 @@ def _detect_cli_version(cli: str) -> str | None:
 
     # Run version command directly (no login shell overhead)
     try:
+        cmd = f"{binary} --version" if cli == "gemini" else cfg["version_cmd"]
         result = subprocess.run(
-            cfg["version_cmd"].split(),
+            cmd.split(),
             capture_output=True,
             text=True,
             timeout=5,
@@ -698,6 +718,7 @@ def install_or_update_cli(cli: str):
             timeout=timeout,
         )
 
+
     # Check existing version (to determine install vs update)
     old_version = _detect_cli_version(cli)
     was_update = old_version is not None
@@ -723,13 +744,32 @@ def install_or_update_cli(cli: str):
     # Step 2: Install/update via npm
     try:
         logger.info(f"[{cli}] Running npm install -g {package}...")
-        install_result = _run(["npm", "install", "-g", package], timeout=120)
+        if cli == "gemini":
+            install_result = _run(["npm", "install", "-g", "--prefix", os.path.expanduser("~/.gemini/antigravity-cli"), package], timeout=120)
+        else:
+            install_result = _run(["npm", "install", "-g", package], timeout=120)
+
         if install_result.returncode != 0:
             error_msg = install_result.stderr.strip() or install_result.stdout.strip()
             return {
                 "success": False,
                 "error": f"npm install failed: {error_msg}",
             }
+
+        # Create antigravity -> gemini symlink if we just installed gemini CLI
+        if cli == "gemini":
+            try:
+                bin_dir = Path.home() / ".gemini" / "antigravity-cli" / "bin"
+                bin_dir.mkdir(parents=True, exist_ok=True)
+                symlink_path = bin_dir / "antigravity"
+                target_path = bin_dir / "gemini"
+                if target_path.exists():
+                    if symlink_path.exists() or symlink_path.is_symlink():
+                        symlink_path.unlink()
+                    symlink_path.symlink_to("gemini")
+                    logger.info("Successfully created antigravity -> gemini symlink.")
+            except Exception as se:
+                logger.error(f"Failed to create symlink: {se}")
     except subprocess.TimeoutExpired:
         return {
             "success": False,

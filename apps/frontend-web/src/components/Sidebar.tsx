@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Github,
   GitPullRequest,
+  Gitlab,
   FileText,
   Sparkles,
   GitBranch,
@@ -157,16 +158,35 @@ export function Sidebar({
     loadEnvConfig();
   }, [selectedProject?.id, selectedProject?.autoBuildPath]);
 
-  // Compute visible nav items based on GitHub enabled state
+  // Compute visible nav items based on git provider state
   const visibleNavItems = useMemo(() => {
     const items = [...baseNavItems];
 
-    if (envConfig?.githubEnabled) {
-      items.push(...githubNavItems);
+    // Determine the active provider
+    const provider = envConfig?.gitProvider || selectedProject?.settings?.gitProvider || (envConfig?.githubEnabled ? 'github' : null);
+
+    if (provider) {
+      if (provider === 'gitlab') {
+        items.push(
+          { id: 'github-issues', labelKey: 'navigation:items.gitlabIssues', icon: Gitlab },
+          { id: 'github-prs', labelKey: 'navigation:items.gitlabMRs', icon: GitPullRequest }
+        );
+      } else if (provider === 'azure_devops' || provider === 'ado') {
+        items.push(
+          { id: 'github-issues', labelKey: 'navigation:items.adoIssues', icon: AlertCircle },
+          { id: 'github-prs', labelKey: 'navigation:items.adoPRs', icon: GitPullRequest }
+        );
+      } else {
+        // Default / GitHub
+        items.push(
+          { id: 'github-issues', labelKey: 'navigation:items.githubIssues', icon: Github },
+          { id: 'github-prs', labelKey: 'navigation:items.githubPRs', icon: GitPullRequest }
+        );
+      }
     }
 
     return items;
-  }, [envConfig?.githubEnabled]);
+  }, [envConfig?.githubEnabled, envConfig?.gitProvider, selectedProject?.settings?.gitProvider]);
 
   // Check git status when project changes
   // Use selectedProjectId instead of selectedProject to avoid re-running on every render

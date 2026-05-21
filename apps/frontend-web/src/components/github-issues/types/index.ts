@@ -47,6 +47,8 @@ export interface InvestigationDialogProps {
   onStartInvestigation: (selectedCommentIds: number[]) => void;
   onClose: () => void;
   projectId?: string;
+  /** Active git provider for this project — drives dialog labels. */
+  provider?: string;
 }
 
 export interface IssueListHeaderProps {
@@ -86,4 +88,6 @@ export interface EmptyStateProps {
 export interface NotConnectedStateProps {
   error: string | null;
   onOpenSettings?: () => void;
+  /** Provider id from project.settings.gitProvider — 'github' | 'gitlab' | 'azure_devops' */
+  provider?: string;
 }

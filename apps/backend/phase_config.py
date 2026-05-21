@@ -567,11 +567,12 @@ def infer_provider_from_model(model: str) -> str:
     The provider is determined by the model string itself, so a separate
     provider setting is no longer needed.
 
+    studio:* prefix -> 'openai-compatible' (Google AI Studio OpenAI-compatible endpoint)
+    ollama:* prefix -> 'ollama'
+    openai:* or openai-compatible:* prefix -> 'openai-compatible'
     Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
     gpt-* or *codex* IDs -> 'codex'
     gemini-* IDs -> 'gemini'
-    ollama:* prefix -> 'ollama'
-    openai:* or openai-compatible:* prefix -> 'openai-compatible'
     Otherwise -> check QA_LLM_PROVIDER env var, then default 'claude'
 
     Args:
@@ -582,6 +583,10 @@ def infer_provider_from_model(model: str) -> str:
         "openai-compatible")
     """
     m = model.strip().lower()
+
+    # Explicit prefix: "studio:model-name"
+    if m.startswith("studio:"):
+        return "openai-compatible"
 
     # Explicit prefix: "ollama:model-name"
     if m.startswith("ollama:"):
@@ -616,12 +621,12 @@ infer_qa_provider_from_model = infer_provider_from_model
 
 
 def strip_provider_prefix(model: str) -> str:
-    """Strip a leading ``ollama:``, ``openai:``, or ``openai-compatible:`` prefix.
+    """Strip a leading ``ollama:``, ``openai:``, ``openai-compatible:``, or ``studio:`` prefix.
 
     The factory and providers expect a bare model name.  When a user picks
     ``openai-compatible:gpt-4o-mini``, the provider only needs ``gpt-4o-mini``.
     """
-    for prefix in ("openai-compatible:", "openai:", "ollama:"):
+    for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:"):
         if model.lower().startswith(prefix):
             return model[len(prefix):]
     return model
@@ -675,11 +680,12 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
     For ``openai-compatible`` the provider needs ``base_url`` and ``api_key``
     on top of the model name.  Resolution order:
 
-    1. ``openai:<label>:<model>`` — look up endpoint by label, use that model
+    1. ``studio:<model>`` — Google AI Studio native OpenAI-compatible endpoint.
+    2. ``openai:<label>:<model>`` — look up endpoint by label, use that model
        (or the endpoint's default_model if no model specified).
-    2. ``openai:<model>`` (single colon) — use the first/only configured
+    3. ``openai:<model>`` (single colon) — use the first/only configured
        endpoint with the given model name.
-    3. No DB row at all — fall back to env vars
+    4. No DB row at all — fall back to env vars
        (``OPENAI_COMPATIBLE_BASE_URL`` / ``OPENAI_COMPATIBLE_API_KEY`` /
        ``OPENAI_API_KEY``) for power users without the UI.
 
@@ -694,6 +700,20 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
         return {}
 
     stripped = strip_provider_prefix(model).strip()
+
+    # Special handling for Google AI Studio
+    if model.lower().startswith("studio:"):
+        base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+        api_key = (
+            os.environ.get("GOOGLE_API_KEY", "").strip()
+            or os.environ.get("GEMINI_API_KEY", "").strip()
+            or None
+        )
+        return {
+            "model": stripped or "gemini-2.5-flash",
+            "base_url": base_url,
+            "api_key": api_key,
+        }
 
     # 1) "<label>:<model>" — disambiguate among multiple endpoints
     if ":" in stripped:
