@@ -102,10 +102,28 @@ def _detect_cli_version(cli: str) -> str | None:
             )
             if result.returncode == 0 and result.stdout.strip():
                 bin_path = result.stdout.strip()
-            else:
-                return None
         except Exception:
-            return None
+            pass
+
+    if not bin_path:
+        # Final fallback: probe well-known install locations the user's PATH
+        # may not include. Antigravity CLI (the post-Gemini-sunset successor)
+        # ships `gemini` (and an `antigravity` alias) under
+        # ~/.gemini/antigravity-cli/bin/ by default; that directory is rarely
+        # on PATH but the binary IS installed.
+        candidates = []
+        if binary == "gemini":
+            candidates += [
+                Path.home() / ".gemini" / "antigravity-cli" / "bin" / "gemini",
+                Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity",
+            ]
+        for candidate in candidates:
+            if candidate.is_file() or candidate.is_symlink():
+                bin_path = str(candidate)
+                break
+
+    if not bin_path:
+        return None
 
     # For npm-installed CLIs, try reading version from package.json
     # (avoids slow Node.js startup, e.g. gemini --version takes ~4s)
