@@ -226,8 +226,8 @@ export interface GraphitiProviderConfig {
   ollamaEmbeddingDim?: number;
 
   // LadybugDB settings (embedded database - no Docker required)
-  database?: string;  // Database name (default: magestic_ai_memory)
-  dbPath?: string;    // Database storage path (default: ~/.magestic-ai/memories)
+  database?: string;  // Database name (default: aifactory_memory)
+  dbPath?: string;    // Database storage path (default: ~/.aifactory/memories)
 }
 
 export interface GraphitiProviderInfo {
@@ -330,7 +330,7 @@ export interface ProjectEnvConfig {
 
 /**
  * Per-agent MCP override configuration.
- * Stored in .magestic-ai/.env as AGENT_MCP_<agent>_ADD and AGENT_MCP_<agent>_REMOVE
+ * Stored in .aifactory/.env as AGENT_MCP_<agent>_ADD and AGENT_MCP_<agent>_REMOVE
  */
 export interface AgentMcpOverride {
   /** MCP servers to add beyond the agent's defaults */
@@ -431,10 +431,10 @@ export interface McpTestConnectionResult {
   responseTime?: number;
 }
 
-// Magestic AI Initialization Types
+// AI Factory Initialization Types
 export interface AutoBuildVersionInfo {
   isInitialized: boolean;
-  updateAvailable: boolean; // Always false - .magestic-ai only contains data, no code to update
+  updateAvailable: boolean; // Always false - .aifactory only contains data, no code to update
 }
 
 export interface InitializationResult {

@@ -199,7 +199,7 @@ function AuthenticatedApp() {
     // Persist to localStorage so the inline script in index.html can apply
     // the theme synchronously on next load, preventing a flash of wrong colors
     try {
-      localStorage.setItem('magestic-theme', settings.theme ?? 'system');
+      localStorage.setItem('aifactory-theme', settings.theme ?? 'system');
     } catch {
       // localStorage may be unavailable
     }

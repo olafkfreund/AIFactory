@@ -620,7 +620,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                       task={task}
                       worktreeSpecsPath={
                         state.worktreeStatus?.exists && state.worktreeStatus.worktreePath && task.specId
-                          ? `${state.worktreeStatus.worktreePath}/.magestic-ai/specs/${task.specId}`
+                          ? `${state.worktreeStatus.worktreePath}/.aifactory/specs/${task.specId}`
                           : undefined
                       }
                     />

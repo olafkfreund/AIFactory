@@ -67,7 +67,7 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="magestic-ai">{t('general.agentFrameworkAutoClaude')}</SelectItem>
+                <SelectItem value="aifactory">{t('general.agentFrameworkAutoClaude')}</SelectItem>
               </SelectContent>
             </Select>
           </div>

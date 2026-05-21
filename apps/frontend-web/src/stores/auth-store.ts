@@ -97,7 +97,7 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'magestic-ai-auth',
+      name: 'aifactory-auth',
       partialize: (state) => ({
         // Don't persist isAuthenticated - always re-check on load
       }),

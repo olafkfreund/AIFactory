@@ -74,7 +74,7 @@ interface MemoryConfig {
 export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
   const { settings, updateSettings } = useSettingsStore();
   const [config, setConfig] = useState<MemoryConfig>({
-    database: 'magestic_ai_memory',
+    database: 'aifactory_memory',
     embeddingProvider: 'ollama',
     openaiApiKey: settings.globalOpenAIApiKey || '',
     azureOpenaiApiKey: '',
@@ -394,7 +394,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
             Memory
           </h1>
           <p className="mt-2 text-muted-foreground">
-            Magestic AI Memory helps remember context across your coding sessions
+            AI Factory Memory helps remember context across your coding sessions
           </p>
         </div>
 
@@ -471,7 +471,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                   Memory Database
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  Stored in ~/.magestic-ai/memories/
+                  Stored in ~/.aifactory/memories/
                 </p>
               </div>
               {kuzuAvailable && (

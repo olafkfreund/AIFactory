@@ -689,7 +689,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   onReleaseComplete: (callback) => registerCallback('release:complete', callback),
   onReleaseError: (callback) => registerCallback('release:error', callback),
 
-  // ========== Magestic AI Source Updates ==========
+  // ========== AI Factory Source Updates ==========
   checkAutoBuildSourceUpdate: () => get('/updates/source/check'),
   downloadAutoBuildSourceUpdate: () => { post('/updates/source/download'); },
   getAutoBuildSourceVersion: () => get('/updates/source/version'),

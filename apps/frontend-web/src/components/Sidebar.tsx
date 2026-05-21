@@ -307,8 +307,8 @@ export function Sidebar({
       <div className="flex h-full w-64 flex-col bg-sidebar border-r border-border">
         {/* Header with drag area - extra top padding for macOS traffic lights */}
         <div className="electron-drag flex h-14 items-center gap-2.5 px-4 pt-6">
-          <img src="/logo.png" alt="MagesticAI" className="electron-no-drag h-7 w-7 rounded" />
-          <span className="electron-no-drag text-lg font-bold" style={{ color: '#61CE70' }}>Magestic<span style={{ color: '#FFFFFF' }}>AI</span></span>
+          <img src="/logo.png" alt="AIFactory" className="electron-no-drag h-7 w-7 rounded" />
+          <span className="electron-no-drag text-lg font-bold" style={{ color: '#61CE70' }}>AI<span style={{ color: '#FFFFFF' }}>Factory</span></span>
         </div>
 
         <Separator className="mt-2" />
@@ -382,7 +382,7 @@ export function Sidebar({
         </div>
       </div>
 
-      {/* Initialize Magestic AI Dialog */}
+      {/* Initialize AI Factory Dialog */}
       <Dialog open={showInitDialog} onOpenChange={(open) => {
         // Only allow closing if user manually closes (not during initialization)
         if (!open && !isInitializing) {

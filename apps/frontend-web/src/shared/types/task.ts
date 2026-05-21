@@ -267,7 +267,7 @@ export interface Task {
   updatedAt: Date;
 }
 
-// Implementation Plan (from magestic-ai)
+// Implementation Plan (from aifactory)
 export interface ImplementationPlan {
   feature?: string;  // Some plans use 'feature', some use 'title'
   title?: string;    // Alternative to 'feature' for task name

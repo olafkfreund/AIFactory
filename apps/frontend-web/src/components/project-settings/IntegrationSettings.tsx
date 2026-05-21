@@ -274,7 +274,7 @@ export function IntegrationSettings({
                   </Select>
                   {settings.mainBranch && (
                     <p className="text-xs text-muted-foreground">
-                      Tasks will be created on branches like <code className="px-1 bg-muted rounded">magestic-ai/task-name</code> from <code className="px-1 bg-muted rounded">{settings.mainBranch}</code>
+                      Tasks will be created on branches like <code className="px-1 bg-muted rounded">aifactory/task-name</code> from <code className="px-1 bg-muted rounded">{settings.mainBranch}</code>
                     </p>
                   )}
                 </div>

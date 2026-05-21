@@ -12,8 +12,8 @@ function createTestMemoryStatus(overrides: Partial<GraphitiMemoryStatus> = {}): 
   return {
     enabled: true,
     available: true,
-    database: 'magestic_ai_memory',
-    dbPath: '~/.magestic-ai/graphs',
+    database: 'aifactory_memory',
+    dbPath: '~/.aifactory/graphs',
     ...overrides
   };
 }

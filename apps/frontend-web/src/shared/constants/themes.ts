@@ -1,6 +1,6 @@
 /**
  * Theme constants
- * Ocean is the sole color theme for MagesticAI.
+ * Ocean is the sole color theme for AIFactory.
  */
 
 import type { ColorThemeDefinition } from '../types/settings';
