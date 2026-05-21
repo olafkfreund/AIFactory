@@ -7,6 +7,7 @@ gotchas, and patterns.
 """
 
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,19 +21,26 @@ except ImportError:
     tool = None
 
 
-def create_memory_tools(spec_dir: Path, project_dir: Path) -> list:
+def create_memory_tools(
+    spec_dir: Path | Callable[[], Path],
+    project_dir: Path | Callable[[], Path],
+) -> list:
     """
     Create session memory tools.
 
+    Accepts either a fixed Path or a callable returning Path (Issue #10).
+
     Args:
-        spec_dir: Path to the spec directory
-        project_dir: Path to the project root
+        spec_dir: Path or Callable[[], Path] to the spec directory
+        project_dir: Path or Callable[[], Path] to the project root
 
     Returns:
         List of memory tool functions
     """
     if not SDK_TOOLS_AVAILABLE:
         return []
+
+    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
 
     tools = []
 
@@ -50,7 +58,7 @@ def create_memory_tools(spec_dir: Path, project_dir: Path) -> list:
         description = args["description"]
         category = args.get("category", "general")
 
-        memory_dir = spec_dir / "memory"
+        memory_dir = get_spec_dir() / "memory"
         memory_dir.mkdir(exist_ok=True)
 
         codebase_map_file = memory_dir / "codebase_map.json"
@@ -106,7 +114,7 @@ def create_memory_tools(spec_dir: Path, project_dir: Path) -> list:
         gotcha = args["gotcha"]
         context = args.get("context", "")
 
-        memory_dir = spec_dir / "memory"
+        memory_dir = get_spec_dir() / "memory"
         memory_dir.mkdir(exist_ok=True)
 
         gotchas_file = memory_dir / "gotchas.md"
@@ -145,7 +153,7 @@ def create_memory_tools(spec_dir: Path, project_dir: Path) -> list:
     )
     async def get_session_context(args: dict[str, Any]) -> dict[str, Any]:
         """Get accumulated session context."""
-        memory_dir = spec_dir / "memory"
+        memory_dir = get_spec_dir() / "memory"
 
         if not memory_dir.exists():
             return {
