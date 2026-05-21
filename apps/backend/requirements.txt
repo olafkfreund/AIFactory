@@ -1,5 +1,10 @@
 # Auto-Build Framework Dependencies
 claude-agent-sdk>=0.1.16
+# anthropic — pinned explicitly for Message Batches API access (Issue #11).
+# claude-agent-sdk does not expose batch primitives, so apps/backend/core/batch.py
+# drops to the raw client. Without this pin we'd silently resolve to whatever
+# transitive version another dep happens to pull in.
+anthropic>=0.84.0
 python-dotenv>=1.0.0
 
 # TOML parsing fallback for Python < 3.11

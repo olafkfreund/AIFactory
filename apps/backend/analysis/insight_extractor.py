@@ -587,6 +587,265 @@ def _get_generic_insights(subtask_id: str, success: bool) -> dict:
 
 
 # =============================================================================
+# Bulk extraction via Anthropic Message Batches API (Issue #11)
+# =============================================================================
+#
+# This entry point is **opt-in** and currently has NO production callers.
+# It ships as a primitive for a future end-of-build "insight sweep" worker
+# that defers insight extraction off the per-session critical path and
+# batches N completed-subtask extractions into one Message Batches call
+# for the 50% batch-tier discount.
+#
+# Today's per-subtask call site (agents/session.py) continues to use the
+# sequential `extract_session_insights()` path unchanged.
+
+
+def _bulk_min_jobs() -> int:
+    """Minimum number of completions before we engage the batch path."""
+    try:
+        return int(os.environ.get("AIFACTORY_BATCH_MIN_JOBS", "2"))
+    except ValueError:
+        return 2
+
+
+def _bulk_timeout() -> float:
+    """Hard timeout for the batch poll loop, seconds."""
+    try:
+        return float(os.environ.get("AIFACTORY_BATCH_TIMEOUT", "120"))
+    except ValueError:
+        return 120.0
+
+
+def _bulk_disabled() -> bool:
+    """Kill-switch — force the legacy sequential path even for ≥N jobs."""
+    return os.environ.get("AIFACTORY_BATCH_DISABLE", "").lower() in ("1", "true", "yes")
+
+
+async def extract_session_insights_bulk(
+    completions: list[dict[str, Any]],
+    *,
+    project_dir: Path,
+    spec_dir: Path,
+    api_key: str | None = None,
+) -> dict[str, dict]:
+    """Extract insights for multiple completed subtasks in one Anthropic batch.
+
+    Each entry in ``completions`` is a dict matching the signature of
+    ``extract_session_insights``:
+
+        {
+          "subtask_id": str,
+          "session_num": int,
+          "commit_before": str | None,
+          "commit_after": str | None,
+          "success": bool,
+          "recovery_manager": Any,
+        }
+
+    Returns ``{subtask_id: insights_dict}`` covering every entry. Failures
+    (batch errored / timeout / no API key) fall back per-entry to the
+    existing ``_get_generic_insights`` so the caller's contract matches the
+    per-session ``extract_session_insights`` function.
+
+    Caller must set ``ANTHROPIC_API_KEY`` (or pass ``api_key``) — the Claude
+    Agent SDK uses ``CLAUDE_CODE_OAUTH_TOKEN``; the raw client batch API
+    needs a separate key. If neither is available, every entry falls back
+    to generic insights.
+
+    Engages the batch path only when ``len(completions) >= AIFACTORY_BATCH_MIN_JOBS``
+    (default 2) and ``AIFACTORY_BATCH_DISABLE`` is unset.
+
+    NOTE: This is a primitive shipped as part of Issue #11 — it has no
+    production caller yet. The first real consumer will likely be an
+    end-of-build insight sweep worker.
+    """
+    if not completions:
+        return {}
+
+    # Below threshold or kill-switched → fall back to per-entry sequential path.
+    if len(completions) < _bulk_min_jobs() or _bulk_disabled():
+        logger.debug(
+            "bulk extraction skipping batch path (n=%d, threshold=%d, disabled=%s)",
+            len(completions),
+            _bulk_min_jobs(),
+            _bulk_disabled(),
+        )
+        results: dict[str, dict] = {}
+        for c in completions:
+            results[c["subtask_id"]] = await extract_session_insights(
+                spec_dir=spec_dir,
+                project_dir=project_dir,
+                subtask_id=c["subtask_id"],
+                session_num=c["session_num"],
+                commit_before=c.get("commit_before"),
+                commit_after=c.get("commit_after"),
+                success=c["success"],
+                recovery_manager=c.get("recovery_manager"),
+            )
+        return results
+
+    # Lazy import — keeps the module loadable when anthropic isn't installed.
+    try:
+        from core.batch import (
+            BatchRequest,
+            await_batch,
+            extract_savings,
+            submit_batch,
+        )
+    except ImportError as exc:
+        logger.warning(
+            "core.batch unavailable (%s); falling back to per-entry sequential extraction",
+            exc,
+        )
+        return await _bulk_sequential_fallback(
+            completions, project_dir=project_dir, spec_dir=spec_dir
+        )
+
+    # Build N BatchRequest entries. Each one gathers the same per-subtask
+    # inputs the sequential path does and embeds them inline in the prompt
+    # (the extraction prompt is fully self-contained text — no tool loop).
+    model = get_extraction_model()
+    system_prompt = (
+        "You are an expert code analyst. You extract structured insights from "
+        "coding sessions. Always respond with valid JSON only, no markdown "
+        "formatting or explanations."
+    )
+    requests: list[BatchRequest] = []
+    entries_by_id: dict[str, dict[str, Any]] = {}
+
+    for c in completions:
+        subtask_id = c["subtask_id"]
+        # If a per-entry pre-flight check fails, skip batching this one;
+        # we'll resolve it from the generic fallback in the result merge.
+        if c.get("commit_before") == c.get("commit_after"):
+            entries_by_id[subtask_id] = {"skip_reason": "no_changes"}
+            continue
+        try:
+            inputs = gather_extraction_inputs(
+                spec_dir=spec_dir,
+                project_dir=project_dir,
+                subtask_id=subtask_id,
+                session_num=c["session_num"],
+                commit_before=c.get("commit_before"),
+                commit_after=c.get("commit_after"),
+                success=c["success"],
+                recovery_manager=c.get("recovery_manager"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gather_extraction_inputs failed for %s: %s", subtask_id, exc)
+            entries_by_id[subtask_id] = {"skip_reason": "gather_failed"}
+            continue
+
+        prompt = _build_extraction_prompt(inputs)
+        requests.append(
+            BatchRequest(
+                custom_id=subtask_id,
+                model=model,
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+                system=system_prompt,
+            )
+        )
+        entries_by_id[subtask_id] = {"inputs": inputs, "success": c["success"]}
+
+    # If nothing was batchable, return generic insights for every entry.
+    if not requests:
+        return {
+            c["subtask_id"]: _get_generic_insights(c["subtask_id"], c["success"])
+            for c in completions
+        }
+
+    # Submit + poll.
+    try:
+        batch_id = await submit_batch(requests, api_key=api_key)
+        logger.info("Bulk extraction batch submitted: %s (%d requests)", batch_id, len(requests))
+        batch_results = await await_batch(
+            batch_id, api_key=api_key, timeout=_bulk_timeout()
+        )
+    except RuntimeError as exc:  # missing API key
+        logger.warning("Batch path unavailable: %s — falling back to sequential", exc)
+        return await _bulk_sequential_fallback(
+            completions, project_dir=project_dir, spec_dir=spec_dir
+        )
+    except TimeoutError:
+        logger.warning(
+            "Batch %s did not complete within %.0fs — falling back to sequential",
+            batch_id,
+            _bulk_timeout(),
+        )
+        return await _bulk_sequential_fallback(
+            completions, project_dir=project_dir, spec_dir=spec_dir
+        )
+
+    savings = extract_savings(batch_results)
+    logger.info(
+        "Batch %s ended: succeeded=%d errored=%d service_tiers=%s saving=%.0f%%",
+        batch_id,
+        savings["succeeded"],
+        savings["errored"],
+        savings["service_tiers"],
+        savings["estimated_saving_pct"] * 100,
+    )
+
+    # Merge: parse each batch result; per-entry failures → generic fallback.
+    out: dict[str, dict] = {}
+    for r in batch_results:
+        entry = entries_by_id.get(r.custom_id)
+        success = bool(entry and entry.get("success", True))
+
+        if r.status == "succeeded" and r.content:
+            parsed = parse_insights(r.content)
+            if parsed:
+                if entry and "inputs" in entry:
+                    parsed["subtask_id"] = r.custom_id
+                    parsed["session_num"] = entry["inputs"].get("session_num", 0)
+                    parsed["success"] = success
+                    parsed["changed_files"] = entry["inputs"].get("changed_files", [])
+                out[r.custom_id] = parsed
+                continue
+            logger.warning(
+                "Batch entry %s: succeeded but parse_insights returned None",
+                r.custom_id,
+            )
+
+        # Errored, expired, canceled, or unparseable → generic fallback.
+        out[r.custom_id] = _get_generic_insights(r.custom_id, success)
+        if r.status == "errored":
+            logger.warning("Batch entry %s errored: %s", r.custom_id, r.error)
+
+    # Handle entries that were pre-skipped (no changes / gather failure).
+    for c in completions:
+        if c["subtask_id"] not in out:
+            out[c["subtask_id"]] = _get_generic_insights(
+                c["subtask_id"], c["success"]
+            )
+
+    return out
+
+
+async def _bulk_sequential_fallback(
+    completions: list[dict[str, Any]],
+    *,
+    project_dir: Path,
+    spec_dir: Path,
+) -> dict[str, dict]:
+    """Fallback path that runs the legacy sequential extractor for each entry."""
+    results: dict[str, dict] = {}
+    for c in completions:
+        results[c["subtask_id"]] = await extract_session_insights(
+            spec_dir=spec_dir,
+            project_dir=project_dir,
+            subtask_id=c["subtask_id"],
+            session_num=c["session_num"],
+            commit_before=c.get("commit_before"),
+            commit_after=c.get("commit_after"),
+            success=c["success"],
+            recovery_manager=c.get("recovery_manager"),
+        )
+    return results
+
+
+# =============================================================================
 # CLI for Testing
 # =============================================================================
 
