@@ -5,7 +5,20 @@
 const TOKEN_KEY = 'aifactory-token';
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  let token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    try {
+      const legacyToken = localStorage.getItem('magestic-ai-token');
+      if (legacyToken) {
+        localStorage.setItem(TOKEN_KEY, legacyToken);
+        localStorage.removeItem('magestic-ai-token');
+        token = legacyToken;
+      }
+    } catch {
+      // localStorage may be unavailable
+    }
+  }
+  return token;
 }
 
 export function setAuthToken(token: string): void {

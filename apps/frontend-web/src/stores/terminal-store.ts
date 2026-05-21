@@ -76,7 +76,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       id: uuid(),
       title: `Terminal ${state.terminals.length + 1}`,
       status: 'idle',
-      cwd: cwd || process.env.HOME || '~',
+      cwd: cwd || '~',
       createdAt: new Date(),
       isClaudeMode: false,
       // outputBuffer removed - managed by terminalBufferManager
