@@ -182,6 +182,40 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/secrets/ -m secrets -v
 
+  oidc-acceptance:
+    name: oidc (P3 acceptance)
+    runs-on: ubuntu-latest
+    # P3 OIDC SSO tests. The harness lands first (P3.0a) with all six
+    # acceptance tests skip-pending; the Keycloak service container and
+    # real test bodies arrive in P3.1+. The job is green from day one
+    # so it gates the workflow contract before any code lands — same
+    # pattern as P2.0a.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest oidc acceptance
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/oidc/ -m oidc -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
