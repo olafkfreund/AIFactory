@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from tests.docker.helpers import DOCKERFILE_PATH
+from tests.docker.helpers import DOCKERFILE_PATH, REPO_ROOT
 
 IN_CI = os.environ.get("CI", "").lower() == "true"
 
@@ -85,18 +85,38 @@ def test_sbom_generates_valid_spdx(built_image: str) -> None:
 
 
 @pytest.mark.docker
-@pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="cosign keyless verify requires Sigstore + GitHub OIDC")
-@pytest.mark.skip(reason="P0.10 implementation pending: cosign keyless signing via Sigstore")
-def test_cosign_verifies(built_image: str) -> None:
-    """P0.10 — image signature verifies against the expected GitHub OIDC identity."""
-    result = subprocess.run(
-        [
-            "cosign", "verify",
-            "--certificate-identity-regexp", r"^https://github\.com/olafkfreund/AIFactory/",
-            "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
-            built_image,
-        ],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode == 0, f"cosign verify failed: {result.stderr}"
+def test_release_workflow_signs_with_cosign() -> None:
+    """P0.10 — release.yml is configured to sign + attest + self-verify.
+
+    The original test invoked `cosign verify` on `built_image`, which can
+    only work post-publish (cosign queries the registry's tlog). PR-time
+    CI doesn't push, so the only meaningful PR-side gate is a static check
+    of release.yml. The actual signature verification is enforced inside
+    release.yml itself (the 'Verify signature (release self-test)' step
+    fails the release if the signature doesn't verify).
+    """
+    release_yml = REPO_ROOT / ".github" / "workflows" / "release.yml"
+    content = release_yml.read_text()
+
+    assert "sigstore/cosign-installer" in content, \
+        "release.yml does not install cosign"
+
+    assert "cosign sign" in content, \
+        "release.yml does not invoke `cosign sign`"
+
+    # Keyless = no --key argument anywhere on the sign line(s).
+    sign_command_lines = [
+        line for line in content.splitlines()
+        if "cosign sign" in line and "--key" in line
+    ]
+    assert not sign_command_lines, \
+        f"cosign sign appears to use a key (not keyless): {sign_command_lines}"
+
+    assert "cosign verify" in content, \
+        "release.yml does not verify the signature post-sign (self-test)"
+
+    assert "id-token: write" in content, \
+        "release.yml lacks `id-token: write` permission required for cosign keyless"
+
+    assert "cosign attest" in content, \
+        "release.yml does not attach an SBOM attestation"
