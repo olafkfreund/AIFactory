@@ -100,13 +100,77 @@ if engine.dialect.name == "sqlite":
     event.listen(engine.sync_engine, "connect", _enable_wal_mode)
 
 
-async def init_db() -> None:
-    """Initialize the database by creating all tables.
+_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
 
-    Creates all tables defined in the ORM models. Safe to call multiple
-    times -- existing tables are not recreated.
+
+def _alembic_config():
+    """Build an Alembic Config pointing at our alembic.ini + current DATABASE_URL.
+
+    Imported lazily so alembic isn't a hard dependency for any code path
+    that doesn't touch init_db(). We also rewrite ``script_location`` to an
+    absolute path because Alembic resolves it relative to cwd, and init_db()
+    can be invoked from any cwd (FastAPI app uses different working dirs
+    than CLI / tests).
     """
-    # SQLite default needs its parent directory; Postgres URLs don't.
+    from alembic.config import Config
+
+    cfg = Config(str(_ALEMBIC_INI_PATH))
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    cfg.set_main_option(
+        "script_location",
+        str(_ALEMBIC_INI_PATH.parent / "server" / "database" / "alembic"),
+    )
+    return cfg
+
+
+def _alembic_upgrade_head_sync() -> None:
+    """Run `alembic upgrade head` programmatically. Synchronous (DDL transaction)."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(), "head")
+
+
+def _verify_schema_at_head_sync(sync_conn) -> None:
+    """Raise RuntimeError if the DB schema isn't at the current head revision.
+
+    Called when MIGRATIONS_AUTO_APPLY=false (out-of-band Helm Job mode).
+    """
+    from alembic.runtime.migration import MigrationContext
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(_alembic_config())
+    head_rev = script.get_current_head()
+
+    ctx = MigrationContext.configure(sync_conn)
+    current_rev = ctx.get_current_revision()
+
+    if current_rev != head_rev:
+        raise RuntimeError(
+            f"Database schema is at {current_rev!r}, expected head {head_rev!r}. "
+            "Run `alembic upgrade head` out-of-band (Helm Job), or set "
+            "MIGRATIONS_AUTO_APPLY=true to apply on boot."
+        )
+
+
+async def init_db() -> None:
+    """Initialize the database.
+
+    Schema lifecycle depends on the ``MIGRATIONS_AUTO_APPLY`` setting:
+      - true  → run `alembic upgrade head` (default; suits local dev)
+      - false → verify schema is at head and fail fast otherwise
+                (suits K8s deployments where a Helm Job runs Alembic
+                before the app pods start, so the app role can lack
+                DDL privileges)
+
+    Then seeds the default user when ``DISABLE_AUTH`` is on.
+    Safe to call multiple times — Alembic upgrades are idempotent.
+    """
+    # Lazy import to avoid a circular dependency between engine.py and config.py
+    # at module load (config imports settings which imports paths which...).
+    from ..config import get_settings
+    settings = get_settings()
+
+    # SQLite default needs its parent directory created; Postgres URLs don't.
     if engine.dialect.name == "sqlite":
         DATABASE_DIR.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initializing SQLite database at {DATABASE_PATH}")
@@ -116,19 +180,29 @@ async def init_db() -> None:
             engine.dialect.name, engine.dialect.driver,
         )
 
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    if settings.MIGRATIONS_AUTO_APPLY:
+        logger.info("MIGRATIONS_AUTO_APPLY=true — running `alembic upgrade head`")
+        # Alembic uses a sync engine internally; run via to_thread so we
+        # don't block the asyncio loop on the DDL transactions.
+        import asyncio
+        await asyncio.to_thread(_alembic_upgrade_head_sync)
+    else:
+        logger.info(
+            "MIGRATIONS_AUTO_APPLY=false — verifying schema is at head "
+            "(expecting an out-of-band Helm Job to have run migrations)"
+        )
+        async with engine.connect() as conn:
+            await conn.run_sync(_verify_schema_at_head_sync)
 
-    # SQLite-specific journal-mode check (Postgres has no PRAGMA equivalent).
+    # SQLite-specific journal-mode log (Postgres has no PRAGMA equivalent).
     if engine.dialect.name == "sqlite":
         async with engine.connect() as conn:
             result = await conn.execute(text("PRAGMA journal_mode"))
             mode = result.scalar()
             logger.info(f"SQLite journal mode: {mode}")
 
-    # Ensure a default user exists when auth is disabled
-    from ..config import get_settings
-    settings = get_settings()
+    # Ensure a default user exists when auth is disabled (settings already
+    # resolved above for the autoApply gate).
     if settings.DISABLE_AUTH:
         from .models import User
         async with async_session_factory() as session:
