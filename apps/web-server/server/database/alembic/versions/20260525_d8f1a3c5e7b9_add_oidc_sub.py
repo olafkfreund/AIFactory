@@ -26,15 +26,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column("oidc_sub", sa.String(length=255), nullable=True),
-    )
-    op.create_unique_constraint(
-        "uq_users_oidc_sub", "users", ["oidc_sub"]
-    )
+    # batch_alter_table for SQLite compatibility — SQLite can't add a
+    # UNIQUE constraint via plain ALTER TABLE, but batch mode re-creates
+    # the table with the new column + constraint atomically. On
+    # Postgres the batch reduces to a regular ALTER TABLE.
+    with op.batch_alter_table("users") as batch:
+        batch.add_column(
+            sa.Column("oidc_sub", sa.String(length=255), nullable=True)
+        )
+        batch.create_unique_constraint("uq_users_oidc_sub", ["oidc_sub"])
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_users_oidc_sub", "users", type_="unique")
-    op.drop_column("users", "oidc_sub")
+    with op.batch_alter_table("users") as batch:
+        batch.drop_constraint("uq_users_oidc_sub", type_="unique")
+        batch.drop_column("oidc_sub")
