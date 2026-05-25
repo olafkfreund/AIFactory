@@ -68,6 +68,58 @@ jobs:
       - name: Type-check frontend
         run: npm -w apps/frontend-web run typecheck
 
+  docker-acceptance:
+    name: docker (P0 acceptance)
+    runs-on: ubuntu-latest
+    # Docker is preinstalled on ubuntu-latest runners. Tests opt-in via
+    # `-m docker`; all are skipped until P0.1+ implementations land,
+    # so this job is green from day 1 and turns red the moment an
+    # implementation chunk lands but its acceptance test doesn't pass.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        # buildx is needed for `docker buildx imagetools inspect`, used by
+        # tests/docker/test_p0_multi_arch.py to verify our base images
+        # support both amd64 + arm64 manifests. QEMU is NOT needed here —
+        # the test inspects manifests, it doesn't cross-build. Cross-arch
+        # building happens in release.yml at tag push time only.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install Trivy (for P0.8 CVE scan)
+        uses: aquasecurity/setup-trivy@v0.2.6
+        with:
+          version: latest
+
+      - name: Install Syft (for P0.9 SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0.17.8
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install test deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Docker version
+        run: docker version
+
+      - name: Pytest docker acceptance
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/docker/ -m docker -v
+
       # NOTE: `npm -w apps/frontend-web run lint` invokes eslint which is
       # not declared as a devDependency. To enable the lint step, add
       # eslint + plugins to apps/frontend-web/package.json devDependencies

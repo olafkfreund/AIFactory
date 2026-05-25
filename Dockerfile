@@ -1,123 +1,99 @@
 # =============================================================================
-# AIFactory - Multi-Stage Docker Build
+# AIFactory — Chainguard distroless build
 # =============================================================================
-# Stage 1: Build React frontend
-# Stage 2: Ubuntu runtime with Python backend + built frontend
+# Epic #26 (issue #27): port from the legacy Ubuntu Dockerfile to a
+# Chainguard base. Each P0 chunk turns one or more tests in tests/docker/
+# from skipped → passing.
 # =============================================================================
-
-# Global ARG — must be declared before any FROM that uses it
-# Ubuntu 24.04 LTS ships Python 3.12 natively.
-# For 22.04, you'd need: add-apt-repository ppa:deadsnakes/ppa && apt install python3.12
-ARG UBUNTU_VERSION=24.04
 
 # ---------------------------------------------------------------------------
-# Stage 1: Build frontend (React 19 + Vite)
+# Stage 1: Build the React frontend
 # ---------------------------------------------------------------------------
-FROM node:24-bookworm AS frontend-build
+# Digest is the OCI image-index (manifest-list) sha256 so multi-arch buildx
+# (P0.6) can still resolve the right platform manifest. The `:latest-dev`
+# tag is kept alongside the digest as a human hint and is ignored by docker
+# when a digest is present. Updates land via Renovate PRs (renovate.json).
+FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
+USER root
 WORKDIR /build
 
-# Copy root package files first for layer caching (npm workspaces)
+# Workspace-aware install via root package + the frontend's package.json
 COPY package.json package-lock.json ./
-
-# Copy only the frontend workspace package.json for dependency resolution
 COPY apps/frontend-web/package.json apps/frontend-web/
 
-# Install dependencies (workspace-aware)
 RUN npm ci --workspace=apps/frontend-web
 
-# Copy frontend source
 COPY apps/frontend-web/ apps/frontend-web/
 
-# Build → outputs to apps/web-server/static/
-# (vite.config.ts: build.outDir = '../web-server/static')
-RUN mkdir -p apps/web-server/static && \
-    cd apps/frontend-web && npm run build
+# vite.config.ts: build.outDir = '../web-server/static'
+RUN mkdir -p apps/web-server/static \
+ && cd apps/frontend-web \
+ && npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2: Runtime (Ubuntu + Python)
+# Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
+# happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM ubuntu:${UBUNTU_VERSION} AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:c1d503ebc5088bd0143673af0d02f2db31e53acc506ba5a8f4756c337a989d3f AS runtime
 
-ENV DEBIAN_FRONTEND=noninteractive
+USER root
 
-# System packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-venv \
-    python3-pip \
-    python3-dev \
-    git \
-    curl \
-    wget \
-    unzip \
-    ca-certificates \
-    build-essential \
-    libffi-dev \
-    libssl-dev \
-    iptables \
-    gosu \
-    gpg \
-    && rm -rf /var/lib/apt/lists/*
+# System packages from Wolfi APK index. Build tools come bundled in :latest-dev.
+#   git           — worktree operations
+#   curl, wget    — downloads (HEALTHCHECK uses curl)
+#   gh            — GitHub CLI (Wolfi apk package name)
+#   nodejs, npm   — runtime Node for `npm install -g @anthropic-ai/claude-code`
+#                   spawned by the agent. Installed via apk instead of
+#                   binary-copying from the frontend stage so dynamic linker
+#                   deps (libuv etc.) resolve correctly.
+#   ca-certificates — TLS roots
+#   bash          — entrypoint script (will be removed in P0.3)
+RUN apk add --no-cache \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gh \
+        gnupg \
+        nodejs \
+        npm \
+        wget
 
-# GitHub CLI (gh) — from official apt repository
-RUN wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-        | tee /usr/share/keyrings/githubcli-archive-keyring.gpg > /dev/null \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update -qq \
-    && apt-get install -y -qq --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
+# Project layout (keeping the legacy path under /home/projects for minimum
+# diff with the existing Dockerfile; P0.4 may relocate to /app under nonroot)
+RUN mkdir -p /home/projects/MagesticAI \
+ && chown -R nonroot:nonroot /home/projects
 
-# Create non-root user with tty group (needed for PTY terminal access)
-RUN useradd -m -s /bin/bash -G tty magesticai
+# Copy project sources (respects .dockerignore)
+COPY --chown=nonroot:nonroot . /home/projects/MagesticAI/
 
-# Project directory (matches the plan: /home/projects/MagesticAI)
-RUN mkdir -p /home/projects/MagesticAI && \
-    chown -R magesticai:magesticai /home/projects
-
-# Copy project files
-COPY --chown=magesticai:magesticai . /home/projects/MagesticAI/
-
-# Copy built frontend from Stage 1
-COPY --from=frontend-build --chown=magesticai:magesticai \
+# Copy built frontend assets from Stage 1
+COPY --from=frontend-build --chown=nonroot:nonroot \
     /build/apps/web-server/static/ \
     /home/projects/MagesticAI/apps/web-server/static/
 
-# Copy Node.js from the frontend build stage so it's available at runtime
-# (needed for npm install -g @anthropic-ai/claude-code)
-COPY --from=frontend-build /usr/local/bin/node /usr/local/bin/node
-COPY --from=frontend-build /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
-    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+# Drop to nonroot for venv + npm config (writeable paths only)
+USER nonroot
 
-# Copy entrypoint script (runs as root to set up iptables, then drops to magesticai)
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Configure npm global install dir under the nonroot home
+RUN mkdir -p /home/nonroot/.npm-global \
+ && npm config set prefix /home/nonroot/.npm-global
 
-# Switch to non-root user for remaining setup
-USER magesticai
-
-# Configure npm global installs to go to user-writable directory
-# (non-root user can't write to /usr/local/lib/node_modules)
-RUN mkdir -p /home/magesticai/.npm-global && \
-    npm config set prefix /home/magesticai/.npm-global
-
-# Create single Python venv (both web-server and backend share it,
-# because agent_service.py spawns backend scripts via sys.executable)
+# Single Python venv shared by web-server and backend scripts (matches
+# agent_service.py's sys.executable expectations)
 RUN python3 -m venv /home/projects/MagesticAI/.venv
 
-# Install both requirements into the same venv
 RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
-    -r /home/projects/MagesticAI/apps/web-server/requirements.txt \
-    -r /home/projects/MagesticAI/apps/backend/requirements.txt
+        -r /home/projects/MagesticAI/apps/web-server/requirements.txt \
+        -r /home/projects/MagesticAI/apps/backend/requirements.txt
 
-# Git config (required for worktree operations inside the container)
-RUN git config --global user.name "MagesticAI" && \
-    git config --global user.email "magesticai@container"
+# Git identity for in-container worktree operations
+RUN git config --global user.name "AIFactory" \
+ && git config --global user.email "aifactory@container"
 
-# Create data directory for persistent state
-RUN mkdir -p /home/magesticai/.magestic-ai
+# Persistent data directory
+RUN mkdir -p /home/nonroot/.aifactory
 
 # ---------------------------------------------------------------------------
 # Environment
@@ -125,11 +101,10 @@ RUN mkdir -p /home/magesticai/.magestic-ai
 ENV APP_HOST=0.0.0.0 \
     APP_PORT=3101 \
     APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend \
-    APP_PROJECTS_DATA_DIR=/home/magesticai/.magestic-ai \
+    APP_PROJECTS_DATA_DIR=/home/nonroot/.aifactory \
     APP_DEFAULT_SHELL=/bin/bash \
     PYTHONUNBUFFERED=1 \
-    # npm global bin + venv Python on PATH
-    PATH="/home/magesticai/.npm-global/bin:/home/projects/MagesticAI/.venv/bin:$PATH"
+    PATH="/home/nonroot/.npm-global/bin:/home/projects/MagesticAI/.venv/bin:$PATH"
 
 EXPOSE 3101
 
@@ -138,8 +113,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 WORKDIR /home/projects/MagesticAI/apps/web-server
 
-# Switch back to root for firewall setup; entrypoint drops to magesticai via gosu
-USER root
-
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python", "-m", "server.main"]
+# Direct CMD — no shell wrapper. Egress control belongs in K8s NetworkPolicy
+# (P4 of Epic #26), not in an entrypoint script. Runs as `nonroot` (uid 65532)
+# from this point onwards.
+#
+# Explicitly clear the entrypoint inherited from cgr.dev/chainguard/python
+# (which is `/usr/bin/python`) so `docker run image <cmd>` works portably.
+# Absolute path to the venv python so we never depend on PATH ordering.
+ENTRYPOINT []
+CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
