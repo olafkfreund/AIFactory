@@ -196,7 +196,6 @@ def test_install_kind_with_bundled_postgres_succeeds(
     Cleans up cluster + image on success AND on failure (best-effort).
     """
     import os
-    import os
     import subprocess
     import time
     import uuid
