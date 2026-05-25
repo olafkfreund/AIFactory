@@ -61,11 +61,16 @@ def _build_test_app():
     from server.database.models import Base
     from server.routes import oidc_routes
 
-    # Fresh in-memory SQLite per app. The "?cache=shared" + uri=True
-    # makes aiosqlite serve the same in-memory DB across the multiple
-    # connections async_sessionmaker creates.
+    # Fresh in-memory SQLite per app. The "?cache=shared&uri=true"
+    # combo lets aiosqlite share the in-memory DB across the multiple
+    # connections async_sessionmaker creates — but we MUST give each
+    # test its own DB name (otherwise all tests share one DB and
+    # session rows leak between tests). A token_urlsafe nonce in the
+    # path provides per-test isolation.
+    import secrets as _test_secrets
+    db_nonce = _test_secrets.token_hex(8)
     engine = create_async_engine(
-        "sqlite+aiosqlite:///file::memory:?cache=shared&uri=true"
+        f"sqlite+aiosqlite:///file:p3test-{db_nonce}?mode=memory&cache=shared&uri=true"
     )
 
     import asyncio
@@ -344,22 +349,133 @@ def test_jit_provisions_user_and_org_member(oidc_issuer_url, oidc_client_id) -> 
     asyncio.new_event_loop().run_until_complete(_check_second_login())
 
 
-@pytest.mark.oidc
-@pytest.mark.slow
-@pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
-@pytest.mark.skip(reason="P3.4 implementation pending: userinfo cache + JWT TTL")
-def test_userinfo_cache_avoids_per_request_rtt(oidc_issuer_url, oidc_client_id) -> None:
-    """N API calls within one refresh window hit the userinfo cache."""
-    pytest.fail("P3.4 not landed")
+def _complete_login_get_refresh_token(app, oidc_issuer_url) -> str:
+    """Helper: drive the full login flow and return the refresh JWT."""
+    from fastapi.testclient import TestClient
+    with TestClient(app, follow_redirects=False) as client:
+        resp = client.get("/api/auth/oidc/login")
+        assert resp.status_code in (302, 307)
+        kc_url = resp.headers["location"]
+        state = parse_qs(urlparse(kc_url).query)["state"][0]
+        code = keycloak_drive_login_url(
+            auth_url=kc_url,
+            username=TEST_USER_USERNAME,
+            password=TEST_USER_PASSWORD,
+        )
+        resp = client.get(f"/api/auth/oidc/callback?code={code}&state={state}")
+        assert resp.status_code in (302, 307)
+        return client.cookies.get("refresh_token")
 
 
 @pytest.mark.oidc
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
-@pytest.mark.skip(reason="P3.4 implementation pending: revocation within TTL")
-def test_user_disabled_in_idp_revoked_within_ttl(oidc_issuer_url, oidc_client_id) -> None:
-    """Disabling a user in the IdP revokes access on the next refresh."""
-    pytest.fail("P3.4 not landed")
+def test_userinfo_cache_avoids_per_request_rtt(
+    oidc_issuer_url, oidc_client_id, monkeypatch,
+) -> None:
+    """N refreshes within one cache window hit the userinfo cache.
+
+    Counts outbound httpx calls from ``_validate_against_idp``. The
+    first refresh after a fresh login is served from the cache (seeded
+    by callback's ``cache_put``), so even the first refresh should
+    NOT trigger an IdP RTT. We confirm by patching the helper.
+    """
+    from fastapi.testclient import TestClient
+    from server.routes import oidc_routes
+
+    app = _build_test_app()
+    refresh_token = _complete_login_get_refresh_token(app, oidc_issuer_url)
+    assert refresh_token
+
+    # Patch the IdP validation to count calls.
+    call_count = {"n": 0}
+    original = oidc_routes._validate_against_idp
+
+    async def counting_validate(rt: str) -> bool:
+        call_count["n"] += 1
+        return await original(rt)
+
+    monkeypatch.setattr(oidc_routes, "_validate_against_idp", counting_validate)
+
+    # 5 refreshes — the cache (seeded at login) covers all of them.
+    with TestClient(app) as client:
+        for i in range(5):
+            resp = client.post(
+                "/api/auth/oidc/refresh",
+                json={"refresh_token": refresh_token},
+            )
+            assert resp.status_code == 200, (
+                f"refresh #{i} failed: {resp.status_code} {resp.text[:200]!r}"
+            )
+            assert "access_token" in resp.json()
+
+    assert call_count["n"] == 0, (
+        f"userinfo cache should have served all 5 refreshes; "
+        f"got {call_count['n']} IdP RTTs"
+    )
+
+
+@pytest.mark.oidc
+@pytest.mark.slow
+@pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
+def test_user_disabled_in_idp_revoked_within_ttl(
+    oidc_issuer_url, oidc_client_id, monkeypatch,
+) -> None:
+    """When the IdP rejects a refresh, the session row is deleted + 401 returned.
+
+    Simulates the IdP-side "user disabled" event by:
+      1. Logging in normally (creates an OidcRefreshSession row).
+      2. Invalidating the userinfo cache for this sub (forces the next
+         refresh to call the IdP).
+      3. Patching the IdP validation to return False (the IdP would
+         do this for a disabled user).
+      4. Calling /refresh — expecting 401 + session row deleted.
+
+    Bounds the revocation latency to the userinfo-cache TTL, which is
+    ≤ the access-token TTL (15 min) — satisfying the P3 acceptance
+    requirement.
+    """
+    import asyncio
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from server.database.models import OidcRefreshSession
+    from server.oidc import userinfo_cache
+    from server.routes import oidc_routes
+
+    app = _build_test_app()
+    SessionLocal = app.state.test_session_local
+    refresh_token = _complete_login_get_refresh_token(app, oidc_issuer_url)
+    assert refresh_token
+
+    # Verify a session row was created at login.
+    async def _count_sessions():
+        async with SessionLocal() as s:
+            rows = (await s.execute(select(OidcRefreshSession))).scalars().all()
+            return len(rows)
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
+
+    # Force cache miss + simulate IdP rejection (disabled user).
+    userinfo_cache.clear_all()
+
+    async def _reject(rt: str) -> bool:
+        return False
+    monkeypatch.setattr(oidc_routes, "_validate_against_idp", _reject)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/auth/oidc/refresh",
+            json={"refresh_token": refresh_token},
+        )
+    assert resp.status_code == 401, (
+        f"disabled-user refresh should 401; got {resp.status_code} "
+        f"body={resp.text[:300]!r}"
+    )
+
+    # Session row was deleted as part of the rejection.
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 0, (
+        "rejected refresh must delete the OidcRefreshSession row"
+    )
 
 
 @pytest.mark.oidc

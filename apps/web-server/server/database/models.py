@@ -196,6 +196,51 @@ class OrgMember(Base):
 
 
 # ---------------------------------------------------------------------------
+# OIDC Refresh Sessions (Epic #26 P3.4)
+# ---------------------------------------------------------------------------
+
+
+class OidcRefreshSession(Base):
+    """Per-refresh-token session for OIDC-authenticated users.
+
+    Created when a user completes OIDC login (P3.1) and tracks the
+    refresh path's IdP revalidation cadence (P3.4). The row is deleted
+    when the user logs out (P3.5) or when the IdP rejects a refresh
+    (revocation propagation).
+
+    The refresh token itself is NOT stored — only its ``jti`` claim,
+    which lets refresh lookups find the session without exposing the
+    bearer secret to anyone with DB read access.
+    """
+
+    __tablename__ = "oidc_refresh_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+    jti: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False
+    )
+    oidc_sub: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    last_validated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<OidcRefreshSession user_id={self.user_id!r} "
+            f"jti={self.jti[:8]!r}... sub={self.oidc_sub!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Projects
 # ---------------------------------------------------------------------------
 
