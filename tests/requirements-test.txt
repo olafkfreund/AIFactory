@@ -22,3 +22,9 @@ coverage>=7.0.0
 # Type checking (for running mypy on tests)
 mypy>=1.0.0
 types-toml>=0.10.0
+
+# Epic #26 P2.3 column-migration tests use sync `create_engine` to
+# seed pre-migration rows. asyncpg is the production driver; psycopg2
+# is needed only for these test paths (kept out of the web-server
+# runtime requirements deliberately).
+psycopg2-binary>=2.9.0
