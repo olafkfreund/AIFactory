@@ -182,6 +182,65 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/secrets/ -m secrets -v
 
+  oidc-acceptance:
+    name: oidc (P3 acceptance)
+    runs-on: ubuntu-latest
+    # P3 OIDC SSO tests. Boots a Keycloak dev-mode container with the
+    # `aifactory` realm imported from tests/oidc/fixtures/keycloak-realm.json.
+    # Tests that need the IdP read OIDC_ISSUER_URL/CLIENT_ID/SECRET from
+    # the job env. Until P3.1 lands real test bodies, the suite collects
+    # cleanly with all 6 acceptance tests in skip-pending state.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Keycloak (with realm import)
+        # Keycloak's official image's `start-dev` mode auto-unseals
+        # itself and can import a realm at boot from a mounted file.
+        # Run it as a normal `docker run` (not a service container) so
+        # we can mount the realm JSON from the checked-out tree without
+        # the service-container's no-mount restriction.
+        run: |
+          docker run -d --name keycloak \
+            -p 8080:8080 \
+            -v "$PWD/tests/oidc/fixtures/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro" \
+            -e KEYCLOAK_ADMIN=admin \
+            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            quay.io/keycloak/keycloak:25.0 \
+            start-dev --import-realm
+          # Wait until the realm endpoint responds with 200.
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/realms/aifactory/.well-known/openid-configuration >/dev/null; then
+              echo "keycloak ready"; break
+            fi
+            sleep 2
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest oidc acceptance
+        env:
+          CI: "true"
+          OIDC_ISSUER_URL: "http://localhost:8080/realms/aifactory"
+          OIDC_CLIENT_ID: "aifactory-web"
+          OIDC_CLIENT_SECRET: "aifactory-test-secret"
+        run: apps/backend/.venv/bin/pytest tests/oidc/ -m oidc -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest

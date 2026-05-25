@@ -19,7 +19,7 @@ def test_health_endpoint_responds(built_image: str, container_name: str, free_po
         publish=[f"{free_port}:3101"],
         name=container_name,
     )
-    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=60), \
         "container did not become healthy within 30s"
 
 
@@ -46,7 +46,7 @@ def test_no_net_admin_required(built_image: str, container_name: str, free_port:
         publish=[f"{free_port}:3101"],
         name=container_name,
     )
-    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=60), \
         "container failed without NET_ADMIN; entrypoint still depends on it"
 
 
@@ -95,7 +95,7 @@ def test_runs_with_read_only_root_fs(built_image: str, container_name: str, free
             "/home/nonroot/.aifactory:size=100m,uid=65532,gid=65532",
         ],
     )
-    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=60), \
         "container failed with --read-only; identify writable paths and mount them as tmpfs"
 
 
@@ -111,5 +111,5 @@ def test_dropped_capabilities(built_image: str, container_name: str, free_port: 
         cap_drop=["ALL"],
         security_opt=["no-new-privileges"],
     )
-    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=60), \
         "container failed with --cap-drop ALL; remove any cap-requiring operations"

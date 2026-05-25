@@ -115,8 +115,28 @@ def create_app() -> FastAPI:
     # Add token auth middleware
     app.add_middleware(TokenAuthMiddleware)
 
+    # Epic #26 P3 — SessionMiddleware powers authlib's PKCE-verifier +
+    # state round-trip between /api/auth/oidc/login and /callback. The
+    # secret is the JWT secret (already a strong process secret).
+    # Cookie is scoped to the OIDC routes via SameSite=Lax + HTTP-only.
+    from starlette.middleware.sessions import SessionMiddleware
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.JWT_SECRET,
+        session_cookie="aif_oidc_session",
+        max_age=600,  # 10 min — enough to complete the OIDC redirect dance
+        same_site="lax",
+        https_only=False,  # operator's reverse-proxy adds Secure
+    )
+
     # Auth routes (prefix defined in router: /api/auth)
     app.include_router(auth_routes.router)
+
+    # Epic #26 P3 — OIDC SSO routes (prefix defined in router: /api/auth/oidc).
+    # Endpoints return 404 when APP_OIDC_ENABLED isn't set, so this is a
+    # no-op for installations that haven't configured an IdP.
+    from .routes import oidc_routes
+    app.include_router(oidc_routes.router)
 
     # Organization routes (prefix defined in router: /api/orgs)
     app.include_router(organizations.router)
