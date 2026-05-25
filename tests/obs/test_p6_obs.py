@@ -45,14 +45,13 @@ def test_correlation_id_in_logs(fresh_obs_app) -> None:
     """An incoming X-Request-ID header appears as request_id in logs +
     is echoed back in the response."""
     from fastapi.testclient import TestClient
-
     from server.observability import (
         CORRELATION_ID_HEADER,
         CorrelationIdMiddleware,
         configure_structlog,
         get_correlation_id,
-        set_correlation_id,
         reset_correlation_id,
+        set_correlation_id,
     )
 
     configure_structlog(level="INFO")
@@ -82,12 +81,11 @@ def test_correlation_id_in_logs(fresh_obs_app) -> None:
 def test_correlation_id_propagates_to_httpx() -> None:
     """An httpx.Client request inside a correlation-ID scope sets X-Request-ID."""
     import httpx
-
     from server.observability.correlation_id import (
         CORRELATION_ID_HEADER,
         install_httpx_propagation,
-        set_correlation_id,
         reset_correlation_id,
+        set_correlation_id,
     )
 
     install_httpx_propagation()
