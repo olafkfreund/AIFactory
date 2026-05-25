@@ -50,3 +50,18 @@ def container_name(request: pytest.FixtureRequest):
     name = f"aifactory-p0-test-{request.node.name}"
     yield name
     docker_kill(name)
+
+
+@pytest.fixture
+def free_port() -> int:
+    """Pick an unused TCP port on the host.
+
+    Avoids collisions with a developer's locally-running AIFactory backend
+    (port 3101). Tests that publish the container's 3101 to a host port
+    MUST use this fixture and poll that host port — never hardcode 3101.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]

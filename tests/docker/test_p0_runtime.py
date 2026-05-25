@@ -11,15 +11,15 @@ from tests.docker.helpers import (
 
 @pytest.mark.docker
 @pytest.mark.slow
-def test_health_endpoint_responds(built_image: str, container_name: str) -> None:
+def test_health_endpoint_responds(built_image: str, container_name: str, free_port: int) -> None:
     """P0.2 — container starts and `GET /api/health` returns 200 within 30s."""
     docker_run(
         built_image,
         detach=True,
-        publish=["3101:3101"],
+        publish=[f"{free_port}:3101"],
         name=container_name,
     )
-    assert wait_for_health("http://localhost:3101/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
         "container did not become healthy within 30s"
 
 
@@ -38,15 +38,15 @@ def test_no_iptables_in_dockerfile() -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-def test_no_net_admin_required(built_image: str, container_name: str) -> None:
+def test_no_net_admin_required(built_image: str, container_name: str, free_port: int) -> None:
     """P0.3 — image runs and serves traffic without --cap-add NET_ADMIN."""
     docker_run(
         built_image,
         detach=True,
-        publish=["3101:3101"],
+        publish=[f"{free_port}:3101"],
         name=container_name,
     )
-    assert wait_for_health("http://localhost:3101/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
         "container failed without NET_ADMIN; entrypoint still depends on it"
 
 
@@ -71,33 +71,45 @@ def test_runs_as_uid_65532(built_image: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.5 implementation pending: image must work with --read-only root fs")
-def test_runs_with_read_only_root_fs(built_image: str, container_name: str) -> None:
-    """P0.5 — image starts and serves traffic with readOnlyRootFilesystem=true."""
+def test_runs_with_read_only_root_fs(built_image: str, container_name: str, free_port: int) -> None:
+    """P0.5 — image starts and serves traffic with readOnlyRootFilesystem=true.
+
+    Models the K8s pod spec the Helm chart (P4) will produce:
+    - root filesystem is read-only
+    - /tmp + /var/cache are emptyDir tmpfs (ephemeral)
+    - /home/nonroot/.aifactory is a PersistentVolumeClaim in prod
+      (modeled here as a tmpfs)
+    """
     docker_run(
         built_image,
         detach=True,
-        publish=["3101:3101"],
+        publish=[f"{free_port}:3101"],
         name=container_name,
         read_only=True,
-        tmpfs=["/tmp:size=500m", "/var/cache:size=200m"],
+        # uid/gid=65532 so the nonroot app user can actually write to these
+        # mounts. Without these, docker creates the tmpfs root-owned and the
+        # app gets a PermissionError on first write.
+        tmpfs=[
+            "/tmp:size=500m,uid=65532,gid=65532",
+            "/var/cache:size=200m,uid=65532,gid=65532",
+            "/home/nonroot/.aifactory:size=100m,uid=65532,gid=65532",
+        ],
     )
-    assert wait_for_health("http://localhost:3101/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
         "container failed with --read-only; identify writable paths and mount them as tmpfs"
 
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.5 implementation pending: image must work with --cap-drop ALL")
-def test_dropped_capabilities(built_image: str, container_name: str) -> None:
+def test_dropped_capabilities(built_image: str, container_name: str, free_port: int) -> None:
     """P0.5 — image starts with all capabilities dropped + no-new-privileges."""
     docker_run(
         built_image,
         detach=True,
-        publish=["3101:3101"],
+        publish=[f"{free_port}:3101"],
         name=container_name,
         cap_drop=["ALL"],
         security_opt=["no-new-privileges"],
     )
-    assert wait_for_health("http://localhost:3101/api/health", timeout=30), \
+    assert wait_for_health(f"http://localhost:{free_port}/api/health", timeout=30), \
         "container failed with --cap-drop ALL; remove any cap-requiring operations"
