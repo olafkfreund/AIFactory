@@ -50,17 +50,35 @@ def postgres_reachable(url: str, timeout: float = 5.0) -> bool:
 
 
 def alembic_available() -> bool:
-    """True if alembic CLI is on PATH (installed via requirements.txt)."""
-    return shutil.which("alembic") is not None
+    """True if the alembic Python package is importable in this interpreter.
+
+    We deliberately don't probe `shutil.which("alembic")` because the binary
+    only appears on PATH when the venv is activated; pytest is usually
+    invoked via `apps/backend/.venv/bin/pytest` which doesn't activate the
+    venv shell environment. Importing the module is the right portability
+    check.
+    """
+    try:
+        import alembic  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 def run_alembic(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
-    """Run `alembic <args>` from the web-server dir; return CompletedProcess."""
+    """Run alembic via the active Python interpreter (no PATH dependency).
+
+    Uses `sys.executable -m alembic` rather than the `alembic` binary so
+    the test runs with whichever venv is active — production CI, local
+    backend venv, doesn't matter.
+    """
+    import sys
+
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
     return subprocess.run(
-        ["alembic", *args],
+        [sys.executable, "-m", "alembic", *args],
         cwd=WEB_SERVER_ROOT,
         capture_output=True,
         text=True,

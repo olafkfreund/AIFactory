@@ -13,7 +13,6 @@ from tests.postgres.helpers import (
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.3 implementation pending: Alembic init + baseline migration")
 def test_alembic_config_present() -> None:
     """P1.3 — alembic.ini and versions/ directory exist under apps/web-server/."""
     assert (WEB_SERVER_ROOT / "alembic.ini").exists(), \
@@ -24,7 +23,6 @@ def test_alembic_config_present() -> None:
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.3 implementation pending: baseline migration runs on empty Postgres")
 def test_alembic_upgrade_head_on_empty_postgres(test_postgres_url: str) -> None:
     """P1.3 — `alembic upgrade head` creates all tables on a fresh Postgres."""
     if not alembic_available():
@@ -40,7 +38,6 @@ def test_alembic_upgrade_head_on_empty_postgres(test_postgres_url: str) -> None:
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.3 implementation pending: idempotent upgrade")
 def test_alembic_upgrade_idempotent(test_postgres_url: str) -> None:
     """P1.3 — running upgrade head twice is a no-op the second time."""
     if not alembic_available():
