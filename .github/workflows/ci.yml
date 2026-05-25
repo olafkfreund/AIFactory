@@ -78,12 +78,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU (for multi-arch buildx tests)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: linux/amd64,linux/arm64
-
       - name: Set up Docker Buildx
+        # buildx is needed for `docker buildx imagetools inspect`, used by
+        # tests/docker/test_p0_multi_arch.py to verify our base images
+        # support both amd64 + arm64 manifests. QEMU is NOT needed here —
+        # the test inspects manifests, it doesn't cross-build. Cross-arch
+        # building happens in release.yml at tag push time only.
         uses: docker/setup-buildx-action@v3
 
       - name: Install Trivy (for P0.8 CVE scan)
