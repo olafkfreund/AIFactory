@@ -37,9 +37,17 @@ def get_oauth_client():
     # don't pay the authlib + requests + cryptography import cost.
     from authlib.integrations.starlette_client import OAuth
 
+    from .presets import current_preset
+
+    preset = current_preset()
     issuer = os.environ["APP_OIDC_ISSUER_URL"].rstrip("/")
     client_id = os.environ["APP_OIDC_CLIENT_ID"]
     client_secret = os.environ["APP_OIDC_CLIENT_SECRET"]
+
+    # Operator can override the IdP-specific default with an explicit
+    # APP_OIDC_SCOPE (e.g. add custom claims like 'phone' or
+    # 'offline_access' for back-channel logout).
+    scope = os.environ.get("APP_OIDC_SCOPE") or preset.default_scope
 
     oauth = OAuth()
     oauth.register(
@@ -51,7 +59,7 @@ def get_oauth_client():
             # PKCE is mandatory per the P3 acceptance criteria. authlib
             # auto-generates code_verifier + code_challenge when this is
             # set.
-            "scope": "openid profile email",
+            "scope": scope,
             "code_challenge_method": "S256",
         },
     )
