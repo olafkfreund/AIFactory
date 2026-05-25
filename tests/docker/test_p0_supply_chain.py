@@ -28,8 +28,7 @@ def test_base_images_pinned_by_digest() -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="Trivy scan enforced only in CI")
-@pytest.mark.skip(reason="P0.8 implementation pending: Trivy scan with fail-on HIGH/CRITICAL")
+@pytest.mark.skipif(not IN_CI, reason="Trivy scan enforced only in CI (needs trivy CLI on PATH)")
 def test_trivy_no_high_critical(built_image: str) -> None:
     """P0.8 — Trivy scan reports zero HIGH/CRITICAL vulnerabilities."""
     result = subprocess.run(
