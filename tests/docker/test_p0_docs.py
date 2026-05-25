@@ -8,14 +8,12 @@ DOC = Path(__file__).resolve().parents[2] / "guides" / "operations" / "image-mir
 
 
 @pytest.mark.docker
-@pytest.mark.skip(reason="P0.11 implementation pending: write guides/operations/image-mirroring.md")
 def test_mirroring_doc_exists() -> None:
     """The image-mirroring guide is present at the expected path."""
     assert DOC.exists(), f"{DOC} not found"
 
 
 @pytest.mark.docker
-@pytest.mark.skip(reason="P0.11 implementation pending: write guides/operations/image-mirroring.md")
 def test_mirroring_doc_covers_cosign_copy() -> None:
     """The guide explains `cosign copy` and digest verification post-mirror."""
     if not DOC.exists():
