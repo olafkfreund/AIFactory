@@ -344,7 +344,54 @@ def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.6 pending: retention job")
 def test_retention_deletes_expired(fresh_db) -> None:
-    """Rows past retention_until are deleted by the retention job."""
-    pytest.fail("P5.6 not landed")
+    """Rows past retention_until are deleted by run_retention; in-window
+    rows are preserved. Returns a summary {deleted, remaining}."""
+    import asyncio
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+    from server.database.models import AuditLog
+    from server.jobs.audit_retention import run_retention
+    from server.services.audit_service import log_audit_event
+
+    engine, SessionLocal = fresh_db
+
+    async def _setup_and_prune():
+        async with SessionLocal() as s:
+            # Write 4 audit events — log_audit_event sets retention_until
+            # to now + 395 days. We then manually backdate 2 of them to
+            # the past so the retention job deletes them.
+            for i in range(4):
+                await log_audit_event(
+                    db=s, action=f"test.{i}", resource_type="test",
+                    user_id=None, org_id=None,
+                )
+            await s.commit()
+
+            # Backdate the first 2 rows.
+            result = await s.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc()).limit(2)
+            )
+            for row in result.scalars():
+                row.retention_until = datetime.utcnow() - timedelta(days=1)
+            await s.commit()
+
+            summary = await run_retention(s)
+
+            # Count remaining.
+            count_result = await s.execute(select(AuditLog))
+            remaining_rows = list(count_result.scalars())
+            return summary, remaining_rows
+
+    summary, remaining = asyncio.new_event_loop().run_until_complete(
+        _setup_and_prune()
+    )
+
+    assert summary["deleted"] == 2, (
+        f"expected 2 expired rows deleted; got {summary['deleted']}"
+    )
+    assert summary["remaining"] == 2
+    assert len(remaining) == 2, (
+        f"expected 2 surviving rows; got {len(remaining)}"
+    )
