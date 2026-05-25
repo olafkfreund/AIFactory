@@ -30,8 +30,12 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from ..database.models import KmsDataKey
 from .kms import Backend
+
+# KmsDataKey imported lazily inside get_or_create_data_key() to avoid a
+# circular import: models.py imports EncryptedString from this package
+# (for column types in P2.3 onwards), and KmsDataKey itself lives in
+# models.py. Lazy import breaks the cycle.
 
 
 @dataclass
@@ -89,6 +93,9 @@ class DataKeyManager:
 
     def get_or_create_data_key(self, org_id: str) -> bytes:
         """Return the unwrapped 32-byte data key for ``org_id``."""
+        # Lazy import to break the circular dep with database.models.
+        from ..database.models import KmsDataKey
+
         now = time.monotonic()
         entry = self._cache.get(org_id)
         if entry is not None and (now - entry.cached_at) < self._poll_interval_s:

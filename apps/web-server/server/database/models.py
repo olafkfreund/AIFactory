@@ -22,6 +22,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+# Re-export under a private alias so the model definitions read cleanly
+# while making it obvious this is the encrypted-at-rest column type
+# (Epic #26 P2). See apps/web-server/server/crypto/.
+from ..crypto.encrypted_string import EncryptedString as _EncryptedString
+
 
 def _generate_uuid() -> str:
     """Generate a new UUID4 string for use as a primary key."""
@@ -335,8 +340,14 @@ class EmailAccount(Base):
         String(50), nullable=False
     )  # "outlook" | "gmail"
     email_address: Mapped[str] = mapped_column(String(255), nullable=False)
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P2.3: OAuth credentials encrypted at rest via EncryptedString.
+    # See apps/web-server/server/crypto/ for the at-rest encryption layer.
+    access_token: Mapped[str] = mapped_column(
+        _EncryptedString(), nullable=False
+    )
+    refresh_token: Mapped[str | None] = mapped_column(
+        _EncryptedString(), nullable=True
+    )
     token_expiry: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -378,7 +389,8 @@ class LLMEndpoint(Base):
     )
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
-    api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P2.3: provider API key encrypted at rest via EncryptedString.
+    api_key: Mapped[str | None] = mapped_column(_EncryptedString(), nullable=True)
     default_model: Mapped[str] = mapped_column(String(255), nullable=False)
     headers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
