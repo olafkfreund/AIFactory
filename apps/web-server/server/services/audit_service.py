@@ -32,6 +32,7 @@ Usage::
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,6 +113,30 @@ async def log_audit_event(
         The IP address of the client, if available.
     """
     try:
+        # Epic #26 P5.2 — hash chain on write. Look up the most-recent
+        # row's hash; this row's prev_hash = compute_hash(that, this).
+        # Concurrency note: SQLAlchemy serializes within a session, but
+        # parallel writers across sessions can race. Worst case: two
+        # rows share the same prev_hash, breaking the chain at that
+        # point. v1.0 mitigates via the FastAPI single-replica
+        # constraint; v1.1 multi-replica adds a SELECT FOR UPDATE on
+        # the chain head.
+        from sqlalchemy import select as _select
+        from .audit_chain import GENESIS, compute_hash, row_as_mapping
+
+        last = await db.execute(
+            _select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1)
+        )
+        last_row = last.scalar_one_or_none()
+        prev_hash_value = (
+            compute_hash(last_row.prev_hash, row_as_mapping(last_row))
+            if last_row is not None
+            else GENESIS
+        )
+
+        # Default retention: 13 months (SOC2 12mo + buffer).
+        retention_until = datetime.utcnow() + timedelta(days=395)
+
         entry = AuditLog(
             user_id=user_id,
             org_id=org_id,
@@ -120,6 +145,8 @@ async def log_audit_event(
             resource_id=resource_id,
             details_json=json.dumps(details) if details is not None else None,
             ip=ip,
+            retention_until=retention_until,
+            prev_hash=prev_hash_value,
         )
         db.add(entry)
         await db.flush()

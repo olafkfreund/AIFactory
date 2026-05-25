@@ -16,18 +16,115 @@ from __future__ import annotations
 import pytest
 
 
+def _write_three_events(SessionLocal):
+    """Helper: write 3 audit events via log_audit_event; return their ids."""
+    import asyncio
+    from server.services.audit_service import log_audit_event
+
+    ids: list[str] = []
+    async def _go():
+        async with SessionLocal() as session:
+            for i in range(3):
+                await log_audit_event(
+                    db=session,
+                    action=f"test.action.{i}",
+                    resource_type="test",
+                    resource_id=f"r{i}",
+                    user_id=None,
+                    org_id=None,
+                    details={"i": i},
+                )
+            await session.commit()
+            # Fetch the inserted rows ordered.
+            from sqlalchemy import select
+            from server.database.models import AuditLog
+            result = await session.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc())
+            )
+            for row in result.scalars():
+                ids.append(row.id)
+    asyncio.new_event_loop().run_until_complete(_go())
+    return ids
+
+
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.2 pending: hash chain on write")
 def test_hash_chain_links_rows(fresh_db) -> None:
-    """Each row's prev_hash equals the previous row's hash; first row's prev_hash is the genesis sentinel."""
-    pytest.fail("P5.2 not landed")
+    """First row's prev_hash = GENESIS; each subsequent row's prev_hash =
+    compute_hash(previous row). The full chain verifies via verify_chain."""
+    import asyncio
+    from sqlalchemy import select
+
+    from server.database.models import AuditLog
+    from server.services.audit_chain import (
+        GENESIS, compute_hash, row_as_mapping, verify_chain,
+    )
+
+    engine, SessionLocal = fresh_db
+    _write_three_events(SessionLocal)
+
+    async def _fetch():
+        async with SessionLocal() as s:
+            result = await s.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc())
+            )
+            return [row_as_mapping(r) for r in result.scalars()]
+    rows = asyncio.new_event_loop().run_until_complete(_fetch())
+
+    # First row's prev_hash is genesis.
+    assert rows[0]["prev_hash"] == GENESIS, (
+        f"first row's prev_hash must be GENESIS; got {rows[0]['prev_hash']!r}"
+    )
+    # Each subsequent row's prev_hash chains to the previous row.
+    for i in range(1, len(rows)):
+        expected = compute_hash(rows[i - 1]["prev_hash"], rows[i - 1])
+        assert rows[i]["prev_hash"] == expected, (
+            f"row {i} prev_hash mismatch: stored={rows[i]['prev_hash']!r} "
+            f"expected={expected!r}"
+        )
+
+    # End-to-end verification.
+    ok, bad_idx, reason = verify_chain(rows)
+    assert ok, f"chain verification failed at row {bad_idx}: {reason}"
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.4 pending: chain verifier")
 def test_tampered_row_breaks_chain(fresh_db) -> None:
-    """Mutating any row's content makes verify_chain return False at that row."""
-    pytest.fail("P5.4 not landed")
+    """Mutating any row's protected content (action, details_json, etc.)
+    makes verify_chain return False at the row AFTER the mutation."""
+    import asyncio
+    from sqlalchemy import select
+
+    from server.database.models import AuditLog
+    from server.services.audit_chain import row_as_mapping, verify_chain
+
+    engine, SessionLocal = fresh_db
+    _write_three_events(SessionLocal)
+
+    async def _fetch_and_tamper():
+        async with SessionLocal() as s:
+            result = await s.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc())
+            )
+            audit_rows = list(result.scalars())
+            # Tamper the middle row's action.
+            audit_rows[1].action = "tampered.action"
+            await s.commit()
+            # Re-fetch.
+            result2 = await s.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc())
+            )
+            return [row_as_mapping(r) for r in result2.scalars()]
+
+    rows = asyncio.new_event_loop().run_until_complete(_fetch_and_tamper())
+
+    ok, bad_idx, reason = verify_chain(rows)
+    assert not ok, "tampered row should fail verification"
+    # The chain breaks at row 2 — the row AFTER the tampered row,
+    # because row 2's stored prev_hash was computed against the
+    # untampered content of row 1.
+    assert bad_idx == 2, (
+        f"expected mismatch at row 2 (after tampered row 1); got {bad_idx} — {reason}"
+    )
 
 
 @pytest.mark.audit
