@@ -1,0 +1,15 @@
+"""P0.1 — Chainguard Dockerfile builds cleanly."""
+
+import pytest
+
+
+@pytest.mark.docker
+@pytest.mark.slow
+@pytest.mark.skip(reason="P0.1 implementation pending: Dockerfile.chainguard not yet written")
+def test_image_builds_clean(built_image: str) -> None:
+    """`docker build -f Dockerfile.chainguard` exits 0.
+
+    The `built_image` session fixture performs the build; if it returned
+    a tag, the build succeeded.
+    """
+    assert built_image, "built_image fixture returned no tag"
