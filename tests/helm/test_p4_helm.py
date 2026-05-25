@@ -20,10 +20,26 @@ import pytest
 
 
 @pytest.mark.helm
-@pytest.mark.skip(reason="P4.1 implementation pending: chart skeleton")
 def test_helm_lint_strict_passes(helm_available, chart_dir) -> None:
-    """``helm lint --strict charts/aifactory`` passes with zero errors."""
-    pytest.fail("P4.1 not landed")
+    """``helm lint --strict charts/aifactory`` passes with zero errors.
+
+    Strict mode treats warnings as errors. We expect zero of either —
+    this is the basic well-formedness gate for the chart.
+    """
+    import subprocess
+    result = subprocess.run(
+        ["helm", "lint", "--strict", str(chart_dir)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"helm lint --strict failed (exit {result.returncode}):\n"
+        f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
+    )
+    # Belt-and-suspenders: also verify no [WARNING] / [ERROR] lines.
+    assert "[ERROR]" not in result.stdout
+    assert "[WARNING]" not in result.stdout
 
 
 @pytest.mark.helm
