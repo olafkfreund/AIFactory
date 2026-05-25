@@ -142,17 +142,95 @@ def test_app_boot_with_autoapply_false_fails_fast(test_postgres_url: str) -> Non
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.5 implementation pending: app-side UUIDs + no CREATE EXTENSION")
 def test_alembic_succeeds_without_create_extension_privilege(test_postgres_url: str) -> None:
-    """P1.5 — Alembic upgrade succeeds against a role with NO CREATE EXTENSION grant.
+    """P1.5 — Alembic upgrade succeeds when run as a role that LACKS the
+    CREATE EXTENSION privilege and is NOT a superuser.
 
-    Mirrors the bank scenario: app role gets DML + schema ownership but cannot
-    install pgcrypto/uuid-ossp. UUIDs must therefore be generated app-side.
+    This proves AIFactory doesn't need `pgcrypto` / `uuid-ossp` — UUIDs are
+    generated in Python (`uuid.uuid4()`) and stored as String(36), per the
+    bank-grade privilege model in guides/deployment/postgres-privileges.md.
+
+    Setup:
+      1. Connect as the admin role (test_postgres_url's user) and drop the
+         public schema so we start clean.
+      2. Create a fresh `aifactory_app` role with only the documented
+         privileges (CONNECT + USAGE + CREATE on schema; NO SUPERUSER,
+         NO CREATE EXTENSION).
+      3. Switch DATABASE_URL to the restricted role and run Alembic
+         upgrade head — must succeed.
     """
     if not alembic_available():
-        pytest.skip("alembic CLI not on PATH")
+        pytest.skip("alembic Python package not importable")
 
-    # Implementation note (P1.5): this test runs the migration as a role that
-    # lacks CREATE EXTENSION. The test setup creates such a role + grants only
-    # the minimum privileges from guides/deployment/postgres-privileges.md.
-    pytest.fail("P1.5 setup not landed yet")
+    import asyncio
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from urllib.parse import urlparse, urlunparse
+
+    APP_ROLE = "aifactory_app_p1_5"
+    APP_PASSWORD = "p1_5_test_pw"
+
+    # Idempotent purge: revoke everything from the role, drop any objects it
+    # owns, then drop the role. Wrapped in a DO block so REVOKE doesn't fail
+    # when the role doesn't exist yet.
+    PURGE_ROLE_SQL = f"""
+    DO $purge$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{APP_ROLE}') THEN
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM {APP_ROLE}';
+        EXECUTE 'REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM {APP_ROLE}';
+        EXECUTE 'REVOKE ALL ON SCHEMA public FROM {APP_ROLE}';
+        EXECUTE 'REVOKE ALL ON DATABASE aifactory_test FROM {APP_ROLE}';
+        EXECUTE 'DROP OWNED BY {APP_ROLE} CASCADE';
+        EXECUTE 'DROP ROLE {APP_ROLE}';
+      END IF;
+    END $purge$;
+    """
+
+    async def _setup_restricted_role() -> str:
+        """Drop public schema + purge any prior role, create a restricted role,
+        return its DATABASE_URL."""
+        admin = create_async_engine(test_postgres_url)
+        try:
+            async with admin.connect() as conn:
+                await conn.execute(text("COMMIT"))
+                await conn.execute(text(PURGE_ROLE_SQL))
+                await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+                await conn.execute(
+                    text(f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
+                )
+                await conn.execute(text(f"GRANT CONNECT ON DATABASE aifactory_test TO {APP_ROLE}"))
+                await conn.execute(text(f"GRANT USAGE, CREATE ON SCHEMA public TO {APP_ROLE}"))
+                await conn.commit()
+        finally:
+            await admin.dispose()
+
+        parsed = urlparse(test_postgres_url)
+        host = parsed.hostname
+        port = parsed.port or 5432
+        db = parsed.path.lstrip("/")
+        scheme = parsed.scheme
+        return f"{scheme}://{APP_ROLE}:{APP_PASSWORD}@{host}:{port}/{db}"
+
+    async def _teardown_restricted_role() -> None:
+        admin = create_async_engine(test_postgres_url)
+        try:
+            async with admin.connect() as conn:
+                await conn.execute(text("COMMIT"))
+                await conn.execute(text(PURGE_ROLE_SQL))
+                await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+                await conn.commit()
+        finally:
+            await admin.dispose()
+
+    restricted_url = asyncio.run(_setup_restricted_role())
+    try:
+        result = run_alembic(["upgrade", "head"], env={"DATABASE_URL": restricted_url})
+        assert result.returncode == 0, (
+            f"alembic upgrade head failed as restricted role:\n"
+            f"--- stderr ---\n{result.stderr[-2000:]}"
+        )
+    finally:
+        asyncio.run(_teardown_restricted_role())
