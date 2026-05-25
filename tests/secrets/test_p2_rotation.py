@@ -46,7 +46,7 @@ def _setup_db_with_old_wrapped_keys(
     where ``plaintexts[org_id]`` is the original 32-byte data key for
     later round-trip verification.
     """
-    from server.database.models import Base, Organization, User, KmsDataKey
+    from server.database.models import Base, KmsDataKey, Organization, User
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)

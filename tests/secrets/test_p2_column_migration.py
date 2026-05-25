@@ -30,7 +30,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from tests.secrets.helpers import WEB_SERVER_ROOT, reimport_crypto
 
-
 # Required for these tests — set in CI's postgres-acceptance job.
 TEST_POSTGRES_URL_ENV = "TEST_POSTGRES_URL"
 
