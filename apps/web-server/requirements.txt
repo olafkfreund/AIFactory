@@ -58,3 +58,11 @@ hvac>=2.3.0
 # in the backend itself.
 azure-identity>=1.20.0
 azure-keyvault-keys>=4.10.0
+
+# Epic #26 P2.4 — Google Cloud KMS backend. Required when
+# APP_KMS_BACKEND=gcp_kms. google-crc32c is used to compute the
+# wire-format integrity checksums Cloud KMS verifies on every
+# encrypt/decrypt — it's a small (~30 KB) explicit dep, NOT pulled
+# in transitively by google-cloud-kms.
+google-cloud-kms>=3.0.0
+google-crc32c>=1.5.0

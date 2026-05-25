@@ -153,14 +153,61 @@ def test_azure_kv_roundtrip() -> None:
         backend.decrypt(bytes(tampered))
 
 
+GCP_KMS_KEY_NAME = os.environ.get("GCP_KMS_KEY_NAME")
+
+
 @pytest.mark.secrets
 @pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="GCP KMS requires emulator; CI-only")
+@pytest.mark.skipif(
+    not GCP_KMS_KEY_NAME,
+    reason=(
+        "GCP_KMS_KEY_NAME not set; Google does not ship an official Cloud "
+        "KMS emulator, so this test runs only when a real key resource "
+        "name and ADC credentials are wired"
+    ),
+)
 @pytest.mark.skipif(not kms_backend_available("gcp_kms"), reason="google-cloud-kms not installed")
-@pytest.mark.skip(reason="P2.4 implementation pending: GCP KMS backend")
 def test_gcp_kms_roundtrip() -> None:
-    """envelope-encrypt + decrypt via GCP KMS (emulator-backed in CI)."""
-    pytest.fail("P2.4 not landed")
+    """envelope-encrypt + decrypt via Cloud KMS (real project only).
+
+    Runs only when an operator wires GCP_KMS_KEY_NAME against a real
+    project + ADC. The named key MUST exist and the identity MUST hold
+    ``roles/cloudkms.cryptoKeyEncrypterDecrypter`` on it.
+
+    Steps:
+      1. Re-import server.crypto with APP_KMS_BACKEND=gcp_kms.
+      2. Round-trip a 32-byte data key through encrypt/decrypt.
+      3. Assert plaintext is recovered and never appears in the wire blob.
+      4. Tamper-reject: flip a byte and assert Cloud KMS raises a
+         GoogleAPIError-family exception (InvalidArgument in practice).
+    """
+    from google.api_core.exceptions import GoogleAPIError
+
+    reimport_crypto({
+        "APP_KMS_BACKEND": "gcp_kms",
+        "GCP_KMS_KEY_NAME": GCP_KMS_KEY_NAME,
+    })
+    from server.crypto import get_backend  # noqa: E402
+
+    backend = get_backend()
+
+    plaintext = b"\xef" * 32
+    ciphertext = backend.encrypt(plaintext)
+
+    assert isinstance(ciphertext, bytes), "encrypt must return bytes"
+    assert len(ciphertext) > len(plaintext), \
+        "Cloud KMS wrap should add metadata + auth tag"
+    assert plaintext not in ciphertext, \
+        "plaintext bytes must not appear inside the wrapped blob"
+
+    decrypted = backend.decrypt(ciphertext)
+    assert decrypted == plaintext, "round-trip must recover the data key exactly"
+
+    # Tamper: flip a byte in the middle of the wrapped blob.
+    tampered = bytearray(ciphertext)
+    tampered[len(tampered) // 2] ^= 0xFF
+    with pytest.raises(GoogleAPIError):
+        backend.decrypt(bytes(tampered))
 
 
 VAULT_ADDR = os.environ.get("VAULT_ADDR")
