@@ -128,24 +128,118 @@ def test_tampered_row_breaks_chain(fresh_db) -> None:
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.3 pending: export endpoint")
 def test_export_roundtrip_json(fresh_db) -> None:
-    """JSON export contains every row + prev_hash; verifier round-trips."""
-    pytest.fail("P5.3 not landed")
+    """JSON (NDJSON) export contains every row + prev_hash; verifier round-trips."""
+    import asyncio
+    import json
+
+    from server.services.audit_export import stream_json
+    from server.services.audit_chain import verify_chain
+
+    engine, SessionLocal = fresh_db
+    _write_three_events(SessionLocal)
+
+    async def _collect():
+        async with SessionLocal() as s:
+            chunks = []
+            async for chunk in stream_json(s):
+                chunks.append(chunk)
+            return b"".join(chunks)
+    payload = asyncio.new_event_loop().run_until_complete(_collect())
+
+    # Parse NDJSON.
+    lines = [line for line in payload.decode("utf-8").splitlines() if line.strip()]
+    rows = [json.loads(line) for line in lines]
+    assert len(rows) == 3, f"expected 3 rows, got {len(rows)}"
+    for r in rows:
+        assert "prev_hash" in r, "exported row missing prev_hash"
+        assert "id" in r and "action" in r and "created_at" in r
+
+    # Re-run the chain verifier on the exported (deserialized) rows.
+    ok, bad_idx, reason = verify_chain(rows)
+    assert ok, f"exported chain failed verification at {bad_idx}: {reason}"
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.3 pending: export endpoint")
 def test_export_csv(fresh_db) -> None:
     """CSV export contains the right columns including prev_hash."""
-    pytest.fail("P5.3 not landed")
+    import asyncio
+    import csv
+    import io
+
+    from server.services.audit_export import CSV_COLUMNS, stream_csv
+
+    engine, SessionLocal = fresh_db
+    _write_three_events(SessionLocal)
+
+    async def _collect():
+        async with SessionLocal() as s:
+            chunks = []
+            async for chunk in stream_csv(s):
+                chunks.append(chunk)
+            return b"".join(chunks)
+    payload = asyncio.new_event_loop().run_until_complete(_collect())
+
+    reader = csv.reader(io.StringIO(payload.decode("utf-8")))
+    header = next(reader)
+    assert header == CSV_COLUMNS, (
+        f"CSV header mismatch:\nexpected {CSV_COLUMNS}\ngot {header}"
+    )
+    body = list(reader)
+    assert len(body) == 3, f"expected 3 data rows, got {len(body)}"
+    # Every row should have a prev_hash filled.
+    prev_hash_idx = CSV_COLUMNS.index("prev_hash")
+    for row in body:
+        assert row[prev_hash_idx], "prev_hash empty in CSV row"
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.4 pending: external verify CLI")
 def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
-    """python -m server.audit verify-chain <exported.json> exits 0."""
-    pytest.fail("P5.4 not landed")
+    """`python -m server.audit verify-chain <exported.ndjson>` exits 0 on
+    a valid export and non-zero on a tampered one."""
+    import asyncio
+    import subprocess
+    import sys
+
+    from server.services.audit_export import stream_json
+    from tests.audit.conftest import WEB_SERVER_ROOT
+
+    engine, SessionLocal = fresh_db
+    _write_three_events(SessionLocal)
+
+    # Write the export to disk.
+    out = tmp_path / "audit.ndjson"
+    async def _dump():
+        async with SessionLocal() as s:
+            with open(out, "wb") as f:
+                async for chunk in stream_json(s):
+                    f.write(chunk)
+    asyncio.new_event_loop().run_until_complete(_dump())
+
+    # Verify (should pass).
+    env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(WEB_SERVER_ROOT)}
+    result = subprocess.run(
+        [sys.executable, "-m", "server.audit", "verify-chain", str(out)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.returncode == 0, (
+        f"verify exited {result.returncode}; stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    assert "OK" in result.stdout or "ok" in result.stdout.lower()
+
+    # Tamper a row and verify again — should now fail.
+    lines = out.read_text().splitlines()
+    import json as _json
+    row = _json.loads(lines[1])
+    row["action"] = "tampered.from.disk"
+    lines[1] = _json.dumps(row)
+    out.write_text("\n".join(lines) + "\n")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "server.audit", "verify-chain", str(out)],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.returncode != 0, "tampered export should fail verification"
 
 
 @pytest.mark.audit

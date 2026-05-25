@@ -21,6 +21,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_SERVER_ROOT = REPO_ROOT / "apps" / "web-server"
 
+# Re-exported for tests that need to set PYTHONPATH on subprocess.run().
+__all__ = ["fresh_db", "WEB_SERVER_ROOT"]
+
 if str(WEB_SERVER_ROOT) not in sys.path:
     sys.path.insert(0, str(WEB_SERVER_ROOT))
 
