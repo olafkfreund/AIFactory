@@ -91,6 +91,9 @@ jobs:
         with:
           version: latest
 
+      - name: Install Syft (for P0.9 SBOM generation)
+        uses: anchore/sbom-action/download-syft@v0.17.8
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
