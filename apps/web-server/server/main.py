@@ -147,6 +147,11 @@ def create_app() -> FastAPI:
     # Audit log routes (prefix defined in router: /api/orgs)
     app.include_router(audit.router)
 
+    # Epic #26 P5.3 — /api/audit/export streaming + P5.5 GDPR erasure.
+    app.include_router(audit.export_router)
+    from .routes import gdpr as gdpr_routes
+    app.include_router(gdpr_routes.router)
+
     # Notification routes (prefix defined in router: /api/notifications)
     app.include_router(notifications.router)
 

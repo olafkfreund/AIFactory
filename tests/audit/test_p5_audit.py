@@ -243,11 +243,104 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
 
 
 @pytest.mark.audit
-@pytest.mark.skip(reason="P5.5 pending: GDPR erasure")
 def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
-    """After GDPR erasure: users.email/name are NULL, audit chain still verifies,
-    audit user_id is sha256(original_user_id) — non-reversible."""
-    pytest.fail("P5.5 not landed")
+    """After GDPR erasure:
+      - users.email / users.name / users.avatar_url are NULL.
+      - users.gdpr_erased_at is set.
+      - audit_logs rows for the user have user_id = sha256(original)[:36].
+      - audit_logs details_json has no plaintext PII.
+      - The full audit chain still verifies via verify_chain.
+    """
+    import asyncio
+    import uuid
+
+    from sqlalchemy import select
+
+    from server.database.models import AuditLog, User
+    from server.services.audit_chain import row_as_mapping, verify_chain
+    from server.services.audit_service import log_audit_event
+    from server.services.gdpr import erase_user, _hash_user_id
+
+    engine, SessionLocal = fresh_db
+
+    async def _setup_and_erase():
+        async with SessionLocal() as s:
+            # Create the user we'll erase + a second user (control).
+            erasee = User(
+                id=str(uuid.uuid4()),
+                email="erasee@example.com",
+                name="To Be Erased",
+                password_hash="x",
+                role="member",
+                is_active=True,
+            )
+            other = User(
+                id=str(uuid.uuid4()),
+                email="other@example.com",
+                name="Other",
+                password_hash="x",
+                role="member",
+                is_active=True,
+            )
+            s.add_all([erasee, other])
+            await s.commit()
+
+            # 5 audit events: 3 from erasee, 2 from other (interleaved).
+            for actor in [erasee, other, erasee, other, erasee]:
+                await log_audit_event(
+                    db=s,
+                    user_id=actor.id,
+                    action="test.event",
+                    resource_type="test",
+                    details={"actor_email": actor.email, "note": "before erasure"},
+                )
+            await s.commit()
+
+            # Erase.
+            await erase_user(s, erasee.id)
+
+            # Re-fetch state for assertions.
+            fresh = await s.execute(select(User).where(User.id == erasee.id))
+            fresh_user = fresh.scalar_one()
+            audit_result = await s.execute(
+                select(AuditLog).order_by(AuditLog.created_at.asc())
+            )
+            audit_rows = list(audit_result.scalars())
+            return fresh_user, audit_rows, erasee.id
+
+    fresh_user, audit_rows, original_uid = (
+        asyncio.new_event_loop().run_until_complete(_setup_and_erase())
+    )
+
+    # 1. PII on user row is NULL.
+    assert fresh_user.email is None, "email must be NULL after erasure"
+    assert fresh_user.name is None, "name must be NULL after erasure"
+    assert fresh_user.avatar_url is None
+    assert fresh_user.gdpr_erased_at is not None, "gdpr_erased_at must be set"
+
+    # 2. audit_logs user_id for erasee rows is the SHA-256 hash.
+    hashed = _hash_user_id(original_uid)
+    erasee_audit = [r for r in audit_rows if r.user_id == hashed]
+    assert len(erasee_audit) == 3, (
+        f"expected 3 audit rows for erasee with hashed user_id; got {len(erasee_audit)}"
+    )
+    # Make sure no row still references the original UUID.
+    assert not any(r.user_id == original_uid for r in audit_rows), (
+        "no audit row may retain the original user_id"
+    )
+
+    # 3. details_json has been redacted — no plaintext email.
+    for row in erasee_audit:
+        assert "erasee@example.com" not in (row.details_json or ""), (
+            f"plaintext email leaked into details_json: {row.details_json}"
+        )
+
+    # 4. The chain still verifies end-to-end.
+    rows_for_verify = [row_as_mapping(r) for r in audit_rows]
+    ok, bad_idx, reason = verify_chain(rows_for_verify)
+    assert ok, (
+        f"post-erasure chain failed verification at row {bad_idx}: {reason}"
+    )
 
 
 @pytest.mark.audit
