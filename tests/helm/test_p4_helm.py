@@ -16,6 +16,8 @@ Coverage:
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 
@@ -168,12 +170,118 @@ def test_pss_restricted_security_contexts(helm_template) -> None:
 
 @pytest.mark.helm
 @pytest.mark.slow
-@pytest.mark.skip(reason="P4.4 implementation pending: kind install")
+@pytest.mark.skipif(
+    not os.environ.get("RUN_KIND_INSTALL_TEST"),
+    reason=(
+        "RUN_KIND_INSTALL_TEST not set — this test builds an image, "
+        "creates a kind cluster, helm-installs, and exercises a live "
+        "/api/health round-trip (~5-10 min). Opt-in via the env var "
+        "or run it ad-hoc against your own kind cluster. Static "
+        "manifest validation (lint, kubeconform, NetworkPolicy, PSS) "
+        "is covered by the other tests and gates the chart on every PR."
+    ),
+)
 def test_install_kind_with_bundled_postgres_succeeds(
     helm_available, kind_available, kubectl_available, chart_dir,
 ) -> None:
-    """End-to-end: `helm install` on a kind cluster with postgres.bundled=true."""
-    pytest.fail("P4.4 not landed")
+    """End-to-end: helm install on kind with postgres.bundled=true.
+
+    Slowest test in the suite (~5min cold). Creates a kind cluster,
+    builds + side-loads the aifactory image, helm-installs the chart
+    with postgres.bundled=true, waits for both StatefulSet (Postgres)
+    and Deployment (app) to be Ready, then curls /api/health via
+    kubectl port-forward.
+
+    Uses a unique cluster name so multiple test runs can coexist.
+    Cleans up cluster + image on success AND on failure (best-effort).
+    """
+    import os
+    import os
+    import subprocess
+    import time
+    import uuid
+    from pathlib import Path
+
+    cluster_name = f"aif-p4-{uuid.uuid4().hex[:8]}"
+    image_tag = f"aifactory:p4-test-{uuid.uuid4().hex[:8]}"
+    repo_root = Path(__file__).resolve().parents[2]
+
+    def _run(cmd: list[str], timeout: int = 300, check: bool = True, **kw):
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=check, **kw
+        )
+
+    try:
+        # 1. Build the app image.
+        _run(["docker", "build", "-t", image_tag, str(repo_root)], timeout=600)
+
+        # 2. Create kind cluster.
+        _run(["kind", "create", "cluster", "--name", cluster_name], timeout=300)
+        kubectl_env = os.environ.copy()
+
+        # 3. Load the image into kind so the cluster can pull it
+        # without a registry.
+        _run(["kind", "load", "docker-image", image_tag, "--name", cluster_name], timeout=180)
+
+        # 4. helm install. We set postgres.bundled=true and override
+        # the image. Migrations.autoApply=true is the POC default —
+        # production uses a separate Job, but the test exercises the
+        # autoApply path because it's the bundled-mode happy path.
+        _run([
+            "helm", "install", "aifactory", str(chart_dir),
+            "--namespace", "default",
+            "--set", "postgres.bundled=true",
+            "--set", f"image.repository={image_tag.split(':')[0]}",
+            "--set", f"image.tag={image_tag.split(':')[1]}",
+            "--set", "image.pullPolicy=Never",
+            "--set", "migrations.autoApply=true",
+            "--wait", "--timeout=5m",
+        ], timeout=360, env=kubectl_env)
+
+        # 5. Verify Postgres + app are ready.
+        ss = _run(
+            ["kubectl", "get", "statefulset",
+             "-l", "app.kubernetes.io/component=postgres",
+             "-o", "jsonpath={.items[0].status.readyReplicas}"],
+            env=kubectl_env,
+        )
+        assert ss.stdout.strip() == "1", f"Postgres not ready: {ss.stdout!r}"
+
+        dep = _run(
+            ["kubectl", "get", "deployment", "aifactory",
+             "-o", "jsonpath={.status.readyReplicas}"],
+            env=kubectl_env,
+        )
+        assert dep.stdout.strip() == "1", f"app deployment not ready: {dep.stdout!r}"
+
+        # 6. Hit /api/health via kubectl exec (no port-forward
+        # flakiness; the app container has curl).
+        # Use kubectl exec into a debug pod since the app container
+        # is the minimal runtime image. Easier: port-forward + curl.
+        pf = subprocess.Popen(
+            ["kubectl", "port-forward", "svc/aifactory", "18181:80"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=kubectl_env,
+        )
+        try:
+            time.sleep(3)  # give port-forward time to bind
+            health = _run(
+                ["curl", "-sf", "-m", "10", "http://localhost:18181/api/health"],
+                timeout=15,
+            )
+            assert "healthy" in health.stdout, (
+                f"unexpected /api/health response: {health.stdout!r}"
+            )
+        finally:
+            pf.terminate()
+            pf.wait(timeout=5)
+    finally:
+        # Best-effort cleanup.
+        _run(
+            ["kind", "delete", "cluster", "--name", cluster_name],
+            timeout=120, check=False,
+        )
+        _run(["docker", "rmi", image_tag], timeout=30, check=False)
 
 
 @pytest.mark.helm
