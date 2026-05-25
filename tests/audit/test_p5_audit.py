@@ -19,6 +19,7 @@ import pytest
 def _write_three_events(SessionLocal):
     """Helper: write 3 audit events via log_audit_event; return their ids."""
     import asyncio
+
     from server.services.audit_service import log_audit_event
 
     ids: list[str] = []
@@ -36,8 +37,8 @@ def _write_three_events(SessionLocal):
                 )
             await session.commit()
             # Fetch the inserted rows ordered.
-            from sqlalchemy import select
             from server.database.models import AuditLog
+            from sqlalchemy import select
             result = await session.execute(
                 select(AuditLog).order_by(AuditLog.created_at.asc())
             )
@@ -52,12 +53,15 @@ def test_hash_chain_links_rows(fresh_db) -> None:
     """First row's prev_hash = GENESIS; each subsequent row's prev_hash =
     compute_hash(previous row). The full chain verifies via verify_chain."""
     import asyncio
-    from sqlalchemy import select
 
     from server.database.models import AuditLog
     from server.services.audit_chain import (
-        GENESIS, compute_hash, row_as_mapping, verify_chain,
+        GENESIS,
+        compute_hash,
+        row_as_mapping,
+        verify_chain,
     )
+    from sqlalchemy import select
 
     engine, SessionLocal = fresh_db
     _write_three_events(SessionLocal)
@@ -92,10 +96,10 @@ def test_tampered_row_breaks_chain(fresh_db) -> None:
     """Mutating any row's protected content (action, details_json, etc.)
     makes verify_chain return False at the row AFTER the mutation."""
     import asyncio
-    from sqlalchemy import select
 
     from server.database.models import AuditLog
     from server.services.audit_chain import row_as_mapping, verify_chain
+    from sqlalchemy import select
 
     engine, SessionLocal = fresh_db
     _write_three_events(SessionLocal)
@@ -133,8 +137,8 @@ def test_export_roundtrip_json(fresh_db) -> None:
     import asyncio
     import json
 
-    from server.services.audit_export import stream_json
     from server.services.audit_chain import verify_chain
+    from server.services.audit_export import stream_json
 
     engine, SessionLocal = fresh_db
     _write_three_events(SessionLocal)
@@ -202,6 +206,7 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
     import sys
 
     from server.services.audit_export import stream_json
+
     from tests.audit.conftest import WEB_SERVER_ROOT
 
     engine, SessionLocal = fresh_db
@@ -254,12 +259,11 @@ def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
     import asyncio
     import uuid
 
-    from sqlalchemy import select
-
     from server.database.models import AuditLog, User
     from server.services.audit_chain import row_as_mapping, verify_chain
     from server.services.audit_service import log_audit_event
-    from server.services.gdpr import erase_user, _hash_user_id
+    from server.services.gdpr import _hash_user_id, erase_user
+    from sqlalchemy import select
 
     engine, SessionLocal = fresh_db
 
@@ -350,10 +354,10 @@ def test_retention_deletes_expired(fresh_db) -> None:
     import asyncio
     from datetime import datetime, timedelta
 
-    from sqlalchemy import select
     from server.database.models import AuditLog
     from server.jobs.audit_retention import run_retention
     from server.services.audit_service import log_audit_event
+    from sqlalchemy import select
 
     engine, SessionLocal = fresh_db
 

@@ -36,9 +36,8 @@ def fresh_db():
     unique in-memory DB name nonce (see tests/oidc for the bug we're
     avoiding).
     """
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
     from server.database.models import Base
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     nonce = _test_secrets.token_hex(8)
     engine = create_async_engine(
