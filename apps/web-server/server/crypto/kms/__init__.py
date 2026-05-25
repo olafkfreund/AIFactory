@@ -57,9 +57,14 @@ def get_backend() -> Backend:
         _INSTANCE = FernetBackend.from_env()
         return _INSTANCE
 
+    if name == "aws_kms":
+        from .aws import AwsKmsBackend
+        _INSTANCE = AwsKmsBackend.from_env()
+        return _INSTANCE
+
     raise ValueError(
-        f"unknown KMS backend {name!r} — supported: fernet "
-        "(aws_kms, azure_kv, gcp_kms, vault_transit land in P2.4)"
+        f"unknown KMS backend {name!r} — supported: fernet, aws_kms "
+        "(azure_kv, gcp_kms, vault_transit land in subsequent P2.4 chunks)"
     )
 
 
