@@ -11,7 +11,6 @@ from tests.docker.helpers import (
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.2 implementation pending: image must start and serve /api/health")
 def test_health_endpoint_responds(built_image: str, container_name: str) -> None:
     """P0.2 — container starts and `GET /api/health` returns 200 within 30s."""
     docker_run(
@@ -25,7 +24,6 @@ def test_health_endpoint_responds(built_image: str, container_name: str) -> None
 
 
 @pytest.mark.docker
-@pytest.mark.skip(reason="P0.3 implementation pending: Dockerfile must not reference iptables")
 def test_no_iptables_in_dockerfile() -> None:
     """P0.3 — the Chainguard Dockerfile contains no iptables / NET_ADMIN logic.
 
@@ -40,7 +38,6 @@ def test_no_iptables_in_dockerfile() -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.3 implementation pending: container must run without --cap-add NET_ADMIN")
 def test_no_net_admin_required(built_image: str, container_name: str) -> None:
     """P0.3 — image runs and serves traffic without --cap-add NET_ADMIN."""
     docker_run(
@@ -55,7 +52,6 @@ def test_no_net_admin_required(built_image: str, container_name: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.3 implementation pending: docker-entrypoint.sh must be removed")
 def test_no_entrypoint_shell_script(built_image: str) -> None:
     """P0.3 — the legacy shell entrypoint is absent from the image filesystem."""
     result = docker_run(built_image, "ls", "/usr/local/bin/docker-entrypoint.sh", timeout=10)

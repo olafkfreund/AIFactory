@@ -1,18 +1,9 @@
 # =============================================================================
 # AIFactory — Chainguard distroless build
 # =============================================================================
-# P0.1 in Epic #26 (issue #27): minimal port from the legacy Ubuntu Dockerfile
-# to a Chainguard base. This phase ONLY needs to BUILD cleanly; the legacy
-# entrypoint script + privilege drops remain temporarily and are removed in:
-#
-#   P0.3 — drop iptables / NET_ADMIN / shell entrypoint
-#   P0.4 — run as uid 65532 from FROM onwards (remove root switches)
-#   P0.5 — PSS-restricted compatibility (RO root fs + dropped caps)
-#   P0.6 — multi-arch (amd64 + arm64) buildx
-#   P0.7 — pin base images by SHA-256 digest
-#
-# Each subsequent chunk turns one (or more) tests in tests/docker/ from
-# skipped → passing.
+# Epic #26 (issue #27): port from the legacy Ubuntu Dockerfile to a
+# Chainguard base. Each P0 chunk turns one or more tests in tests/docker/
+# from skipped → passing.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -78,10 +69,6 @@ COPY --from=frontend-build --chown=nonroot:nonroot \
     /build/apps/web-server/static/ \
     /home/projects/MagesticAI/apps/web-server/static/
 
-# Legacy entrypoint script — removed in P0.3
-COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 # Drop to nonroot for venv + npm config (writeable paths only)
 USER nonroot
 
@@ -122,9 +109,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 WORKDIR /home/projects/MagesticAI/apps/web-server
 
-# NOTE: legacy entrypoint still expects root (iptables + gosu drop). The
-# `USER root` + `docker-entrypoint.sh` lines below get removed in P0.3, and
-# the runtime user becomes nonroot end-to-end in P0.4.
-USER root
-ENTRYPOINT ["docker-entrypoint.sh"]
+# Direct CMD — no shell wrapper. Egress control belongs in K8s NetworkPolicy
+# (P4 of Epic #26), not in an entrypoint script. Runs as `nonroot` (uid 65532)
+# from this point onwards.
 CMD ["python", "-m", "server.main"]
