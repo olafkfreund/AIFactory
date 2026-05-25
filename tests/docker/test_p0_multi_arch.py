@@ -1,22 +1,50 @@
-"""P0.6 — multi-arch manifest contains both amd64 and arm64."""
+"""P0.6 — Dockerfile builds for both linux/amd64 and linux/arm64."""
 
-import json
+import os
+import shutil
 import subprocess
 
 import pytest
 
+from tests.docker.helpers import DOCKERFILE_PATH, REPO_ROOT
+
+IN_CI = os.environ.get("CI", "").lower() == "true"
+
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.6 implementation pending: multi-arch build via docker buildx")
-def test_multi_arch_manifest_exists(built_image: str) -> None:
-    """`docker manifest inspect` reports both linux/amd64 and linux/arm64."""
-    result = subprocess.run(
-        ["docker", "manifest", "inspect", built_image],
-        capture_output=True, text=True, timeout=30,
+@pytest.mark.skipif(
+    not IN_CI,
+    reason="Multi-arch build needs QEMU/binfmt; only enforced in CI (uses docker/setup-qemu-action)",
+)
+def test_multi_arch_buildable() -> None:
+    """P0.6 — Dockerfile cross-builds successfully for amd64 + arm64.
+
+    Uses `docker buildx build --output type=cacheonly` to verify both
+    architectures compile end-to-end without producing manifest artifacts
+    (saves CI time and bandwidth). The actual multi-arch image emission
+    happens in release.yml at tag push time.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("docker not available")
+    bx = subprocess.run(
+        ["docker", "buildx", "version"],
+        capture_output=True, text=True, timeout=10,
     )
-    assert result.returncode == 0, f"manifest inspect failed: {result.stderr}"
-    manifest = json.loads(result.stdout)
-    arches = {m["platform"]["architecture"] for m in manifest.get("manifests", [])}
-    assert "amd64" in arches, f"amd64 not in manifest: {arches}"
-    assert "arm64" in arches, f"arm64 not in manifest: {arches}"
+    if bx.returncode != 0:
+        pytest.skip("docker buildx not installed")
+
+    result = subprocess.run(
+        [
+            "docker", "buildx", "build",
+            "--platform", "linux/amd64,linux/arm64",
+            "-f", str(DOCKERFILE_PATH),
+            "--output", "type=cacheonly",
+            str(REPO_ROOT),
+        ],
+        capture_output=True, text=True, timeout=1800,
+    )
+    assert result.returncode == 0, (
+        f"multi-arch build failed (exit {result.returncode}):\n"
+        f"--- stderr (last 2000 chars) ---\n{result.stderr[-2000:]}"
+    )
