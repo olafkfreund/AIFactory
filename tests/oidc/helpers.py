@@ -66,6 +66,7 @@ def keycloak_drive_login_url(
       5. Extract and return the ``code``.
     """
     import re
+
     import httpx
 
     with httpx.Client(follow_redirects=False, timeout=10.0) as client:

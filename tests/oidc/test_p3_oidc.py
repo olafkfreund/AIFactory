@@ -23,7 +23,6 @@ from tests.oidc.helpers import (
     reimport_oidc,
 )
 
-
 # Keycloak realm config (mirrors tests/oidc/fixtures/keycloak-realm.json).
 TEST_USER_EMAIL = "alice@example.com"
 TEST_USER_NAME = "Alice Example"
@@ -53,14 +52,6 @@ def _build_test_app():
         "APP_OIDC_CLIENT_SECRET": os.environ["OIDC_CLIENT_SECRET"],
     })
 
-    from fastapi import FastAPI
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from starlette.middleware.sessions import SessionMiddleware
-
-    from server.database.engine import get_db
-    from server.database.models import Base
-    from server.routes import oidc_routes
-
     # Fresh in-memory SQLite per app. The "?cache=shared&uri=true"
     # combo lets aiosqlite share the in-memory DB across the multiple
     # connections async_sessionmaker creates — but we MUST give each
@@ -68,6 +59,13 @@ def _build_test_app():
     # session rows leak between tests). A token_urlsafe nonce in the
     # path provides per-test isolation.
     import secrets as _test_secrets
+
+    from fastapi import FastAPI
+    from server.database.engine import get_db
+    from server.database.models import Base
+    from server.routes import oidc_routes
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from starlette.middleware.sessions import SessionMiddleware
     db_nonce = _test_secrets.token_hex(8)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///file:p3test-{db_nonce}?mode=memory&cache=shared&uri=true"
@@ -129,7 +127,6 @@ def test_login_callback_pkce_roundtrip(oidc_issuer_url, oidc_client_id) -> None:
     # Build a sync TestClient so cookie persistence works trivially.
     from fastapi.testclient import TestClient
     from jose import jwt
-
     from server.config import get_settings
 
     # Each test gets a fresh app — get_settings() is itself a singleton
@@ -271,10 +268,10 @@ def test_jit_provisions_user_and_org_member(oidc_issuer_url, oidc_client_id) -> 
         reuses the same User row (id stable).
     """
     import asyncio
-    from fastapi.testclient import TestClient
-    from sqlalchemy import select
 
-    from server.database.models import OrgMember, Organization, User
+    from fastapi.testclient import TestClient
+    from server.database.models import Organization, OrgMember, User
+    from sqlalchemy import select
 
     app = _build_test_app()
     SessionLocal = app.state.test_session_local
@@ -436,12 +433,12 @@ def test_user_disabled_in_idp_revoked_within_ttl(
     requirement.
     """
     import asyncio
-    from fastapi.testclient import TestClient
-    from sqlalchemy import select
 
+    from fastapi.testclient import TestClient
     from server.database.models import OidcRefreshSession
     from server.oidc import userinfo_cache
     from server.routes import oidc_routes
+    from sqlalchemy import select
 
     app = _build_test_app()
     SessionLocal = app.state.test_session_local
@@ -494,10 +491,10 @@ def test_logout_redirects_to_end_session_endpoint(
       - access_token + refresh_token cookies are cleared.
     """
     import asyncio
-    from fastapi.testclient import TestClient
-    from sqlalchemy import select
 
+    from fastapi.testclient import TestClient
     from server.database.models import OidcRefreshSession
+    from sqlalchemy import select
 
     app = _build_test_app()
     SessionLocal = app.state.test_session_local
