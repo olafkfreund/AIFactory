@@ -86,7 +86,13 @@ def upgrade() -> None:
     Alembic entirely (``create_all`` from models).
     """
     conn = op.get_bind()
-    backend = _backend()
+    # The KMS backend is resolved lazily — only when there's actually
+    # plaintext to encrypt. A fresh-install upgrade against an empty
+    # database doesn't touch credentials, so it shouldn't require
+    # KMS_FERNET_KEY (or the equivalent cloud env vars) to be wired.
+    # The P2.6 runbook documents the env-var requirement for backfill
+    # runs against real plaintext.
+    backend = None
 
     for table, col, nullable in _CRED_COLUMNS:
         temp_col = f"{col}_ct"
@@ -94,10 +100,12 @@ def upgrade() -> None:
         # Step 1: add temp column (always nullable so the add itself can't fail).
         op.add_column(table, sa.Column(temp_col, sa.LargeBinary(), nullable=True))
 
-        # Step 2: backfill plaintext → ciphertext.
+        # Step 2: backfill plaintext → ciphertext (only if rows exist).
         rows = conn.execute(
             sa.text(f"SELECT id, {col} FROM {table} WHERE {col} IS NOT NULL")
         ).fetchall()
+        if rows and backend is None:
+            backend = _backend()
         for row in rows:
             ciphertext = backend.encrypt(row[1].encode("utf-8"))
             conn.execute(
