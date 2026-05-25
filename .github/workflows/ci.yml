@@ -87,7 +87,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Install Trivy (for P0.8 CVE scan)
-        uses: aquasecurity/setup-trivy@v0.2.0
+        uses: aquasecurity/setup-trivy@v0.2.6
         with:
           version: latest
 
