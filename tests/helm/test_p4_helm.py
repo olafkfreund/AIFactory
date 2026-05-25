@@ -177,8 +177,55 @@ def test_install_kind_with_bundled_postgres_succeeds(
 
 
 @pytest.mark.helm
-@pytest.mark.skip(reason="P4.6 implementation pending: customCABundle")
 def test_custom_ca_bundle_is_trusted_by_pod(helm_available, chart_dir) -> None:
     """When global.customCABundle.secretName is set, the bundle is mounted
-    + SSL_CERT_FILE points at it inside the container."""
-    pytest.fail("P4.6 not landed")
+    + SSL_CERT_FILE points at it inside the container.
+
+    Re-renders the chart with --set global.customCABundle.secretName
+    and verifies:
+      - A volume of type Secret with the configured name exists.
+      - A volumeMount at /etc/ssl/custom-ca exists on the container.
+      - The ConfigMap exposes SSL_CERT_FILE pointing at the mount path.
+      - REQUESTS_CA_BUNDLE is also set (boto3 / azure SDKs honour it).
+    """
+    import subprocess
+
+    import yaml
+
+    result = subprocess.run(
+        [
+            "helm", "template", "aifactory", str(chart_dir),
+            "--set", "global.customCABundle.secretName=corp-root-ca",
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, f"helm template failed: {result.stderr[-500:]}"
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d]
+
+    # Deployment: secret volume + mount.
+    deploys = [d for d in docs if d.get("kind") == "Deployment"]
+    assert len(deploys) == 1
+    pod_spec = deploys[0]["spec"]["template"]["spec"]
+
+    ca_vol = next(
+        (v for v in pod_spec.get("volumes", []) if v.get("name") == "custom-ca"),
+        None,
+    )
+    assert ca_vol is not None, "custom-ca volume not in pod"
+    assert ca_vol["secret"]["secretName"] == "corp-root-ca", (
+        f"volume should reference the configured secret name; got {ca_vol}"
+    )
+
+    mounts = pod_spec["containers"][0].get("volumeMounts", [])
+    ca_mount = next((m for m in mounts if m.get("name") == "custom-ca"), None)
+    assert ca_mount is not None, "custom-ca volumeMount not on container"
+    assert ca_mount["mountPath"] == "/etc/ssl/custom-ca"
+    assert ca_mount.get("readOnly") is True
+
+    # ConfigMap: SSL_CERT_FILE + REQUESTS_CA_BUNDLE present.
+    cms = [d for d in docs if d.get("kind") == "ConfigMap"]
+    assert len(cms) == 1
+    cm_data = cms[0]["data"]
+    assert "SSL_CERT_FILE" in cm_data
+    assert cm_data["SSL_CERT_FILE"].startswith("/etc/ssl/custom-ca/")
+    assert "REQUESTS_CA_BUNDLE" in cm_data
