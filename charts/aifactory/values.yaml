@@ -184,6 +184,25 @@ kms:
   azureKeyvaultKey: ""
   gcpKmsKeyName: ""
 
+# Epic #26 P6 — Prometheus /metrics + Grafana dashboard.
+metrics:
+  # When set, the application requires this bearer for /metrics
+  # scrapes. The ServiceMonitor below references the same secret so
+  # Prometheus Operator passes it automatically. Leave empty for
+  # open-scrape mode (default v1.0 — NetworkPolicy restricts source).
+  scrapeTokenSecret:
+    name: ""  # e.g., "aifactory-metrics" — provisioned by ExternalSecret
+    key: token
+  serviceMonitor:
+    # Opt-in: requires the Prometheus Operator CRDs to be installed
+    # cluster-wide. When false, operators scrape via pod annotations
+    # (standard Prometheus configmap-based discovery).
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}      # extra labels for the ServiceMonitor selector
+    relabelings: []
+
 # Probes default to /api/health (P0); the cold-start window (database
 # migrations, model loading) is generous so PSS-restricted runtimes
 # without privileged init don't get killed.

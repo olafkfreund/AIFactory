@@ -52,6 +52,7 @@ Access the application from any modern browser - no desktop installation require
 | [OIDC SSO setup](operations/oidc-setup.md) | Wire AIFactory to Keycloak / Okta / Azure AD for federated identity | Platform / SRE |
 | [Helm install runbook](deployment/helm-install.md) | Deploy AIFactory to Kubernetes (POC + production paths) | Platform / SRE |
 | [Audit trail](operations/audit-trail.md) | Hash chain, retention, GDPR erasure, export + verification | Compliance / SRE |
+| [Observability](operations/observability.md) | structlog JSON, /metrics, Grafana dashboard, correlation IDs | SRE |
 
 ---
 
