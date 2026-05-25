@@ -60,6 +60,13 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Epic #26 P3.3 — Stable OIDC subject identifier. Set on first
+    # successful OIDC login (JIT-provisioned). Nullable so that
+    # locally-registered users (no SSO) don't need it; unique so that
+    # the same IdP user can't accidentally collide across logins.
+    oidc_sub: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

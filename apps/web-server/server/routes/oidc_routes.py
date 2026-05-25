@@ -31,6 +31,7 @@ from ..config import get_settings
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
 from ..oidc import get_oauth_client, is_oidc_enabled
+from ..oidc.provisioning import jit_provision_user
 
 logger = logging.getLogger(__name__)
 
@@ -161,24 +162,9 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
             detail="ID token missing required claims (sub, email)",
         )
 
-    # P3.1 minimal JIT: find-or-create User by email.
-    # P3.3 will replace this with a proper sub-based lookup + role
-    # claim mapping + OrganizationMember provisioning.
-    name = userinfo.get("name") or email.split("@")[0]
-    result = await db.execute(select(User).where(User.email == email))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(
-            email=email,
-            name=name,
-            password_hash="",  # OIDC users have no local password
-            role="member",
-            is_active=True,
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        logger.info("OIDC JIT-provisioned new user: %s (sub=%s)", email, sub)
+    # JIT provisioning: stable sub-based User lookup + claim-mapped role
+    # + OrganizationMember row in the configured default org.
+    user = await jit_provision_user(db, userinfo)
 
     access_token = _create_access_token(user)
     refresh_token = _create_refresh_token(user)

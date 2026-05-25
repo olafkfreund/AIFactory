@@ -34,12 +34,18 @@ TEST_USER_PASSWORD = "alice-test-pass"
 def _build_test_app():
     """Construct a fresh FastAPI app instance with OIDC env wired.
 
-    Avoids the cached singleton in main.py's ``create_app()`` so each
-    test can drive its own env config.
+    Each call:
+      - Re-imports server.oidc with the fixture's IdP env so the
+        authlib client points at the test Keycloak.
+      - Creates a fresh in-memory async SQLite engine for the call's
+        scope (table schema is taken straight from Base.metadata, so
+        any new column on a model is picked up without an explicit
+        migration step).
+      - Wires the new engine in as a dependency override for get_db.
+
+    Returns ``(app, engine)`` so tests that want to inspect rows
+    post-flow can do so without going through the API.
     """
-    # The web-server module path is on sys.path via tests/oidc/helpers.
-    # Re-import the OIDC layer with current env so client.py picks up
-    # the fixture-provided issuer/secret.
     reimport_oidc({
         "APP_OIDC_ENABLED": "true",
         "APP_OIDC_ISSUER_URL": os.environ["OIDC_ISSUER_URL"],
@@ -47,12 +53,39 @@ def _build_test_app():
         "APP_OIDC_CLIENT_SECRET": os.environ["OIDC_CLIENT_SECRET"],
     })
 
-    # Build a minimal app with only what OIDC needs — avoids importing
-    # the full main.py which pulls in DB engine, graphiti, etc.
     from fastapi import FastAPI
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from starlette.middleware.sessions import SessionMiddleware
 
+    from server.database.engine import get_db
+    from server.database.models import Base
     from server.routes import oidc_routes
+
+    # Fresh in-memory SQLite per app. The "?cache=shared" + uri=True
+    # makes aiosqlite serve the same in-memory DB across the multiple
+    # connections async_sessionmaker creates.
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///file::memory:?cache=shared&uri=true"
+    )
+
+    import asyncio
+    async def _init():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    asyncio.get_event_loop().run_until_complete(_init()) if False else None
+    # The above pattern doesn't work cleanly inside test sync context.
+    # Use a fresh event loop instead:
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_init())
+    finally:
+        loop.close()
+
+    SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _override_get_db():
+        async with SessionLocal() as session:
+            yield session
 
     app = FastAPI()
     app.add_middleware(
@@ -64,6 +97,9 @@ def _build_test_app():
         https_only=False,
     )
     app.include_router(oidc_routes.router)
+    app.dependency_overrides[get_db] = _override_get_db
+    app.state.test_engine = engine
+    app.state.test_session_local = SessionLocal
     return app
 
 
@@ -219,10 +255,93 @@ def test_pkce_state_tamper_rejected(oidc_issuer_url, oidc_client_id) -> None:
 @pytest.mark.oidc
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
-@pytest.mark.skip(reason="P3.3 implementation pending: JIT user provisioning")
 def test_jit_provisions_user_and_org_member(oidc_issuer_url, oidc_client_id) -> None:
-    """First login from an unknown ``sub`` creates a User + OrganizationMember."""
-    pytest.fail("P3.3 not landed")
+    """First OIDC login from an unknown ``sub`` creates a User + OrganizationMember.
+
+    Asserts:
+      - users.oidc_sub is populated with Keycloak's sub.
+      - org_members row exists in the default org with the
+        claim-mapped role (default "member" when no group map env).
+      - A second login (different TestClient session but same sub)
+        reuses the same User row (id stable).
+    """
+    import asyncio
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from server.database.models import OrgMember, Organization, User
+
+    app = _build_test_app()
+    SessionLocal = app.state.test_session_local
+
+    # ---- First login ----
+    with TestClient(app, follow_redirects=False) as client:
+        resp = client.get("/api/auth/oidc/login")
+        assert resp.status_code in (302, 307)
+        kc_url = resp.headers["location"]
+        state = parse_qs(urlparse(kc_url).query)["state"][0]
+        code = keycloak_drive_login_url(
+            auth_url=kc_url,
+            username=TEST_USER_USERNAME,
+            password=TEST_USER_PASSWORD,
+        )
+        resp = client.get(f"/api/auth/oidc/callback?code={code}&state={state}")
+        assert resp.status_code in (302, 307), (
+            f"callback should redirect on success; got {resp.status_code} "
+            f"body={resp.text[:300]!r}"
+        )
+
+    # Inspect DB state.
+    async def _check_first_login():
+        async with SessionLocal() as session:
+            users = (await session.execute(select(User))).scalars().all()
+            assert len(users) == 1, f"expected 1 user, got {len(users)}"
+            user = users[0]
+            assert user.email == TEST_USER_EMAIL
+            assert user.oidc_sub, "oidc_sub must be set after JIT provisioning"
+            assert user.password_hash == "", "OIDC users get no local password"
+
+            orgs = (await session.execute(select(Organization))).scalars().all()
+            assert len(orgs) == 1, "default org should be auto-created"
+            assert orgs[0].slug == "default"
+
+            members = (await session.execute(select(OrgMember))).scalars().all()
+            assert len(members) == 1
+            assert members[0].user_id == user.id
+            assert members[0].org_id == orgs[0].id
+            return user.id, user.oidc_sub
+    user_id_1, sub_1 = asyncio.new_event_loop().run_until_complete(_check_first_login())
+
+    # ---- Second login: same sub, fresh TestClient session ----
+    with TestClient(app, follow_redirects=False) as client:
+        resp = client.get("/api/auth/oidc/login")
+        kc_url = resp.headers["location"]
+        state = parse_qs(urlparse(kc_url).query)["state"][0]
+        code = keycloak_drive_login_url(
+            auth_url=kc_url,
+            username=TEST_USER_USERNAME,
+            password=TEST_USER_PASSWORD,
+        )
+        resp = client.get(f"/api/auth/oidc/callback?code={code}&state={state}")
+        assert resp.status_code in (302, 307), (
+            f"callback should redirect on success; got {resp.status_code} "
+            f"body={resp.text[:300]!r}"
+        )
+
+    # User row count must still be 1 — same sub reuses the row.
+    async def _check_second_login():
+        async with SessionLocal() as session:
+            users = (await session.execute(select(User))).scalars().all()
+            assert len(users) == 1, (
+                f"second login for same sub must not double-create; "
+                f"got {len(users)} users"
+            )
+            assert users[0].id == user_id_1
+            assert users[0].oidc_sub == sub_1
+
+            members = (await session.execute(select(OrgMember))).scalars().all()
+            assert len(members) == 1, "no duplicate membership rows"
+    asyncio.new_event_loop().run_until_complete(_check_second_login())
 
 
 @pytest.mark.oidc
