@@ -57,8 +57,8 @@ class User(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=_generate_uuid
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     # Epic #26 P3.3 — Stable OIDC subject identifier. Set on first
     # successful OIDC login (JIT-provisioned). Nullable so that
@@ -66,6 +66,14 @@ class User(Base):
     # the same IdP user can't accidentally collide across logins.
     oidc_sub: Mapped[str | None] = mapped_column(
         String(255), unique=True, nullable=True
+    )
+    # Epic #26 P5.5 — GDPR right-to-erasure timestamp. When set, PII
+    # columns (email, name, OAuth tokens) MUST be NULL. Used by the
+    # admin UI to render "Erased on YYYY-MM-DD" placeholders instead
+    # of treating the user row as deleted. The audit chain preserves
+    # historical user_id references via SHA-256 hashing.
+    gdpr_erased_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
     )
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
@@ -493,6 +501,20 @@ class AuditLog(Base):
     ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
+    )
+    # Epic #26 P5.1 — daily retention job deletes rows where
+    # retention_until <= now(). Default policy: 13 months (SOC2 12mo +
+    # buffer); set per-row at write time so the policy can vary by
+    # action class (login events: short, security events: long).
+    retention_until: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    # Epic #26 P5.2 — Per-row hash chain. SHA-256 of the previous
+    # row's content (or the genesis sentinel for the first row).
+    # Threat model: tamper-detection within the audit log only.
+    # Signed external anchor = v1.1.
+    prev_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
     )
 
     # Relationships (read-only lookups, no back_populates needed)

@@ -291,6 +291,39 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/helm/ -m helm -v
 
+  audit-acceptance:
+    name: audit (P5 acceptance)
+    runs-on: ubuntu-latest
+    # P5 audit-hardening tests run entirely in-process against
+    # in-memory SQLite — hash chain, retention job, GDPR erasure,
+    # and export streaming are all pure-Python. No service container
+    # needed. Same TDD-first scaffold as P2.0a/P3.0a/P4.0a.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest audit acceptance
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/audit/ -m audit -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
