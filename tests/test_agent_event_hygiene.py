@@ -286,7 +286,7 @@ class TestUpdatePlanStatusEmitEvents:
         emission. Without this gate we got the 5-event flurry.
         """
         # Set up a minimal valid implementation_plan.json
-        spec_dir = tmp_path / ".magestic-ai" / "specs" / "spec-001"
+        spec_dir = tmp_path / ".aifactory" / "specs" / "spec-001"
         spec_dir.mkdir(parents=True)
         plan_file = spec_dir / "implementation_plan.json"
         plan_file.write_text(
@@ -321,7 +321,7 @@ class TestUpdatePlanStatusEmitEvents:
         And the terminal payload is enriched with executionProgress so the
         log line shows phase=completed (not phase=N/A).
         """
-        spec_dir = tmp_path / ".magestic-ai" / "specs" / "spec-001"
+        spec_dir = tmp_path / ".aifactory" / "specs" / "spec-001"
         spec_dir.mkdir(parents=True)
         plan_file = spec_dir / "implementation_plan.json"
         plan_file.write_text(
