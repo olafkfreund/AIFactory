@@ -9,7 +9,11 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build the React frontend
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/node:latest-dev AS frontend-build
+# Digest is the OCI image-index (manifest-list) sha256 so multi-arch buildx
+# (P0.6) can still resolve the right platform manifest. The `:latest-dev`
+# tag is kept alongside the digest as a human hint and is ignored by docker
+# when a digest is present. Updates land via Renovate PRs (renovate.json).
+FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -31,7 +35,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:c1d503ebc5088bd0143673af0d02f2db31e53acc506ba5a8f4756c337a989d3f AS runtime
 
 USER root
 

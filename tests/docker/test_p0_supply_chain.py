@@ -13,7 +13,6 @@ IN_CI = os.environ.get("CI", "").lower() == "true"
 
 
 @pytest.mark.docker
-@pytest.mark.skip(reason="P0.7 implementation pending: pin base images by SHA-256 digest")
 def test_base_images_pinned_by_digest() -> None:
     """P0.7 — every `FROM` line uses `@sha256:...`, not a floating tag."""
     content = DOCKERFILE_PATH.read_text()
