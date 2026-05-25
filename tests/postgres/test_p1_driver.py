@@ -15,7 +15,6 @@ if str(_WEB_SERVER) not in sys.path:
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.1 implementation pending: DATABASE_URL-driven driver selection")
 def test_engine_uses_asyncpg_for_postgres_url(test_postgres_url: str) -> None:
     """P1.1 — when DATABASE_URL is postgresql+asyncpg://..., the engine binds asyncpg."""
     with patch.dict(os.environ, {"DATABASE_URL": test_postgres_url}, clear=False):
@@ -31,7 +30,6 @@ def test_engine_uses_asyncpg_for_postgres_url(test_postgres_url: str) -> None:
 
 
 @pytest.mark.postgres
-@pytest.mark.skip(reason="P1.1 implementation pending: SQLite path must continue to work")
 def test_engine_keeps_aiosqlite_for_sqlite_url(tmp_path: Path) -> None:
     """P1.1 — when DATABASE_URL is unset (default), engine uses aiosqlite."""
     sqlite_path = tmp_path / "test.db"
@@ -45,7 +43,6 @@ def test_engine_keeps_aiosqlite_for_sqlite_url(tmp_path: Path) -> None:
 
 
 @pytest.mark.postgres
-@pytest.mark.skip(reason="P1.1 implementation pending: WAL listener must be conditional on sqlite")
 def test_wal_listener_skipped_for_postgres(test_postgres_url: str) -> None:
     """P1.1 — the WAL-mode `connect` event hook must NOT fire on a Postgres engine."""
     with patch.dict(os.environ, {"DATABASE_URL": test_postgres_url}, clear=False):
