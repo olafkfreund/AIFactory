@@ -1,0 +1,77 @@
+"""P4 — Helm chart acceptance tests.
+
+Seven tests map directly to the seven acceptance bullets in Epic #26
+issue #31. As implementation chunks land, the ``@pytest.mark.skip``
+decorator is removed and a real body replaces the placeholder.
+
+Coverage:
+  1. test_helm_lint_strict_passes           (→ P4.1)
+  2. test_helm_template_renders             (→ P4.2)
+  3. test_kubeconform_passes                (→ P4.2)
+  4. test_network_policy_present_and_strict (→ P4.3)
+  5. test_pss_restricted_security_contexts  (→ P4.3)
+  6. test_install_kind_with_bundled_postgres_succeeds (→ P4.4)
+  7. test_custom_ca_bundle_is_trusted_by_pod (→ P4.6)
+"""
+
+from __future__ import annotations
+
+import pytest
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.1 implementation pending: chart skeleton")
+def test_helm_lint_strict_passes(helm_available, chart_dir) -> None:
+    """``helm lint --strict charts/aifactory`` passes with zero errors."""
+    pytest.fail("P4.1 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.2 implementation pending: core templates")
+def test_helm_template_renders(helm_template) -> None:
+    """``helm template`` produces valid YAML with the expected K8s kinds."""
+    pytest.fail("P4.2 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.2 implementation pending: kubeconform")
+def test_kubeconform_passes(kubeconform_available, helm_template) -> None:
+    """Every rendered manifest conforms to the current K8s OpenAPI schema."""
+    pytest.fail("P4.2 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.3 implementation pending: NetworkPolicy")
+def test_network_policy_present_and_strict(helm_template) -> None:
+    """The chart emits a NetworkPolicy with default-deny + explicit allowlist."""
+    pytest.fail("P4.3 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.3 implementation pending: PSS=restricted")
+def test_pss_restricted_security_contexts(helm_template) -> None:
+    """Pod + container security contexts satisfy PSS-restricted policy.
+
+    Verifies: runAsNonRoot, runAsUser >= 1000, fsGroup >= 1000,
+    allowPrivilegeEscalation=false, dropped ALL capabilities,
+    readOnlyRootFilesystem=true, seccompProfile=RuntimeDefault.
+    """
+    pytest.fail("P4.3 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.slow
+@pytest.mark.skip(reason="P4.4 implementation pending: kind install")
+def test_install_kind_with_bundled_postgres_succeeds(
+    helm_available, kind_available, kubectl_available, chart_dir,
+) -> None:
+    """End-to-end: `helm install` on a kind cluster with postgres.bundled=true."""
+    pytest.fail("P4.4 not landed")
+
+
+@pytest.mark.helm
+@pytest.mark.skip(reason="P4.6 implementation pending: customCABundle")
+def test_custom_ca_bundle_is_trusted_by_pod(helm_available, chart_dir) -> None:
+    """When global.customCABundle.secretName is set, the bundle is mounted
+    + SSL_CERT_FILE points at it inside the container."""
+    pytest.fail("P4.6 not landed")
