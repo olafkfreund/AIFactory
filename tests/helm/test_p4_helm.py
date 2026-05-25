@@ -43,17 +43,48 @@ def test_helm_lint_strict_passes(helm_available, chart_dir) -> None:
 
 
 @pytest.mark.helm
-@pytest.mark.skip(reason="P4.2 implementation pending: core templates")
 def test_helm_template_renders(helm_template) -> None:
-    """``helm template`` produces valid YAML with the expected K8s kinds."""
-    pytest.fail("P4.2 not landed")
+    """``helm template`` produces valid YAML with the expected K8s kinds.
+
+    The ``helm_template`` fixture already asserts exit code 0; here we
+    assert the output contains the core kinds we ship. NetworkPolicy
+    is verified separately in test_network_policy_present_and_strict.
+    """
+    expected_kinds = {
+        "Deployment",
+        "Service",
+        "ConfigMap",
+        "ServiceAccount",
+        "PodDisruptionBudget",
+    }
+    rendered_kinds = set()
+    for line in helm_template.splitlines():
+        if line.startswith("kind:"):
+            rendered_kinds.add(line.split(":", 1)[1].strip())
+    missing = expected_kinds - rendered_kinds
+    assert not missing, (
+        f"chart didn't render expected kinds: {missing}. "
+        f"Rendered: {sorted(rendered_kinds)}"
+    )
 
 
 @pytest.mark.helm
-@pytest.mark.skip(reason="P4.2 implementation pending: kubeconform")
 def test_kubeconform_passes(kubeconform_available, helm_template) -> None:
     """Every rendered manifest conforms to the current K8s OpenAPI schema."""
-    pytest.fail("P4.2 not landed")
+    import subprocess
+    result = subprocess.run(
+        ["kubeconform", "-summary", "-strict"],
+        input=helm_template,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"kubeconform failed (exit {result.returncode}):\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+    assert "Invalid: 0" in result.stdout
+    assert "Errors: 0" in result.stdout
 
 
 @pytest.mark.helm
