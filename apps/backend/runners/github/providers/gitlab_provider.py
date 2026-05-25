@@ -7,15 +7,14 @@ Implements the GitProvider protocol for GitLab using standard HTTP/REST APIs.
 
 from __future__ import annotations
 
-import base64
-import httpx
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from .protocol import (
-    GitProvider,
     IssueData,
     IssueFilters,
     LabelData,
@@ -428,11 +427,11 @@ class GitLabProvider:
             labels_list = resp.json()
             return [
                 LabelData(
-                    name=l["name"],
-                    color=l.get("color") or "#909090",
-                    description=l.get("description") or ""
+                    name=lbl["name"],
+                    color=lbl.get("color") or "#909090",
+                    description=lbl.get("description") or ""
                 )
-                for l in labels_list
+                for lbl in labels_list
             ]
 
     # -------------------------------------------------------------------------

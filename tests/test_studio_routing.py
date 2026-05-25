@@ -7,6 +7,7 @@ OpenAI-compatible integration.
 import os
 import sys
 from pathlib import Path
+
 import pytest
 
 # Make apps/backend importable

@@ -27,7 +27,6 @@ sys.path.insert(0, str(_WEB_SERVER))
 
 from server.services.agent_service import AgentService, _dedup_signature
 
-
 # ---------------------------------------------------------------------------
 # Pure-function tests on the signature
 # ---------------------------------------------------------------------------
