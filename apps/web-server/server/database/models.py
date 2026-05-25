@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -442,4 +443,56 @@ class AuditLog(Base):
         return (
             f"<AuditLog id={self.id!r} action={self.action!r} "
             f"resource_type={self.resource_type!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P2.2 — KMS data keys (per-organization, wrapped by KMS root key)
+# ---------------------------------------------------------------------------
+
+
+class KmsDataKey(Base):
+    """Per-organization data key, wrapped by the active KMS root.
+
+    Each organization gets one (and only one) active row. Workflow:
+      1. App generates a random 32-byte data key.
+      2. The active KMS backend (`crypto.kms.get_backend()`) encrypts the
+         data key under the root key, producing `wrapped_key`.
+      3. EncryptedString columns scoped to that org are encrypted under
+         the data key (P2.3 wires the binding).
+      4. KMS root rotation re-wraps `wrapped_key` and bumps `rotated_at`
+         so the in-process LRU cache (DataKeyManager) re-fetches (P2.5).
+    """
+
+    __tablename__ = "kms_data_keys"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    wrapped_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    kms_key_id: Mapped[str] = mapped_column(
+        String(255), nullable=False,
+        comment="Identifier of the KMS root key that wrapped this data key. "
+                "For fernet backend: literal `fernet:default`. For aws_kms: "
+                "the KMS ARN. Lets rotation runbooks know which backend "
+                "wrapped each row.",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    rotated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+        comment="Updated on every re-wrap (root key rotation). The "
+                "DataKeyManager polls this column to invalidate its "
+                "in-process LRU cache.",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<KmsDataKey id={self.id!r} org_id={self.org_id!r} "
+            f"kms_key_id={self.kms_key_id!r}>"
         )
