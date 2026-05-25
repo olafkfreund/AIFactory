@@ -11,7 +11,6 @@ from tests.postgres.helpers import REPO_ROOT
 
 @pytest.mark.postgres
 @pytest.mark.slow
-@pytest.mark.skip(reason="P1.2 implementation pending: existing tests must pass against Postgres")
 def test_full_pytest_suite_passes_against_postgres(test_postgres_url: str) -> None:
     """P1.2 — the existing `pytest tests/ -m 'not slow'` suite runs green
     against a real Postgres (no SQLite-isms in queries/migrations).
