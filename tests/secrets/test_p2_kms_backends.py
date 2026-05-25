@@ -93,14 +93,64 @@ def test_aws_kms_roundtrip() -> None:
     }, f"unexpected error code: {excinfo.value.response['Error']['Code']}"
 
 
+AZURE_KEYVAULT_URL = os.environ.get("AZURE_KEYVAULT_URL")
+AZURE_KEYVAULT_KEY = os.environ.get("AZURE_KEYVAULT_KEY")
+
+
 @pytest.mark.secrets
 @pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="Azure Key Vault requires Azurite KV emulator; CI-only")
+@pytest.mark.skipif(
+    not (AZURE_KEYVAULT_URL and AZURE_KEYVAULT_KEY),
+    reason=(
+        "AZURE_KEYVAULT_URL + AZURE_KEYVAULT_KEY not set; Azure Key Vault "
+        "has no faithful local emulator (Azurite is Storage-only), so this "
+        "test runs only when a real Key Vault is wired"
+    ),
+)
 @pytest.mark.skipif(not kms_backend_available("azure_kv"), reason="azure-keyvault-keys not installed")
-@pytest.mark.skip(reason="P2.4 implementation pending: Azure Key Vault backend")
 def test_azure_kv_roundtrip() -> None:
-    """envelope-encrypt + decrypt via Azure Key Vault (Azurite-backed in CI)."""
-    pytest.fail("P2.4 not landed")
+    """envelope-encrypt + decrypt via Azure Key Vault (real tenant only).
+
+    Runs only when an operator wires AZURE_KEYVAULT_URL + AZURE_KEYVAULT_KEY
+    against a real tenant. The named key MUST exist and the caller MUST
+    have ``wrapKey`` + ``unwrapKey`` permissions (Key Vault Crypto User
+    role or equivalent access-policy entries).
+
+    Steps:
+      1. Re-import server.crypto with APP_KMS_BACKEND=azure_kv.
+      2. Round-trip a 32-byte data key through wrap/unwrap.
+      3. Assert plaintext is recovered and never appears in the wire blob.
+      4. Tamper-reject: flip a byte and assert Azure raises one of the
+         HttpResponseError / ServiceRequestError family.
+    """
+    from azure.core.exceptions import AzureError
+
+    reimport_crypto({
+        "APP_KMS_BACKEND": "azure_kv",
+        "AZURE_KEYVAULT_URL": AZURE_KEYVAULT_URL,
+        "AZURE_KEYVAULT_KEY": AZURE_KEYVAULT_KEY,
+    })
+    from server.crypto import get_backend  # noqa: E402
+
+    backend = get_backend()
+
+    plaintext = b"\xcd" * 32
+    ciphertext = backend.encrypt(plaintext)
+
+    assert isinstance(ciphertext, bytes), "encrypt must return bytes"
+    assert len(ciphertext) >= 256, \
+        f"RSA-OAEP wrap of a 2048-bit key should be 256+ bytes; got {len(ciphertext)}"
+    assert plaintext not in ciphertext, \
+        "plaintext bytes must not appear inside the wrapped blob"
+
+    decrypted = backend.decrypt(ciphertext)
+    assert decrypted == plaintext, "round-trip must recover the data key exactly"
+
+    # Tamper: flip a byte in the middle of the wrapped blob.
+    tampered = bytearray(ciphertext)
+    tampered[len(tampered) // 2] ^= 0xFF
+    with pytest.raises(AzureError):
+        backend.decrypt(bytes(tampered))
 
 
 @pytest.mark.secrets

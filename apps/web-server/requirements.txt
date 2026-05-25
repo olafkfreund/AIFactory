@@ -50,3 +50,11 @@ boto3>=1.35.0
 # Epic #26 P2.4 — HashiCorp Vault Transit KMS backend. Required when
 # APP_KMS_BACKEND=vault_transit. Lazy-imported by server.crypto.kms.vault.
 hvac>=2.3.0
+
+# Epic #26 P2.4 — Azure Key Vault KMS backend. Required when
+# APP_KMS_BACKEND=azure_kv. Both packages lazy-imported by
+# server.crypto.kms.azure. DefaultAzureCredential covers managed
+# identity, service principal env vars, az-CLI, etc. — no auth code
+# in the backend itself.
+azure-identity>=1.20.0
+azure-keyvault-keys>=4.10.0
