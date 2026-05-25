@@ -61,7 +61,6 @@ def test_no_entrypoint_shell_script(built_image: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.4 implementation pending: image must run as uid 65532 by default")
 def test_runs_as_uid_65532(built_image: str) -> None:
     """P0.4 — `id -u` inside the container returns 65532 (Chainguard's nonroot)."""
     result = docker_run(built_image, "id", "-u", timeout=10)

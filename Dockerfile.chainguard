@@ -112,4 +112,9 @@ WORKDIR /home/projects/MagesticAI/apps/web-server
 # Direct CMD — no shell wrapper. Egress control belongs in K8s NetworkPolicy
 # (P4 of Epic #26), not in an entrypoint script. Runs as `nonroot` (uid 65532)
 # from this point onwards.
-CMD ["python", "-m", "server.main"]
+#
+# Explicitly clear the entrypoint inherited from cgr.dev/chainguard/python
+# (which is `/usr/bin/python`) so `docker run image <cmd>` works portably.
+# Absolute path to the venv python so we never depend on PATH ordering.
+ENTRYPOINT []
+CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
