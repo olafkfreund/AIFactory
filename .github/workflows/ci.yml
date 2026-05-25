@@ -241,6 +241,56 @@ jobs:
           OIDC_CLIENT_SECRET: "aifactory-test-secret"
         run: apps/backend/.venv/bin/pytest tests/oidc/ -m oidc -v
 
+  helm-acceptance:
+    name: helm (P4 acceptance)
+    runs-on: ubuntu-latest
+    # P4 Helm chart tests. The harness lands first (P4.0a) with all
+    # seven acceptance tests skip-pending; chart templates + lint +
+    # kubeconform + kind install arrive in P4.1+. Job is green from
+    # day one — same pattern as P2.0a and P3.0a.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.16.0"
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL -o /tmp/kc.tgz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kc.tgz -C /tmp/
+          sudo install /tmp/kubeconform /usr/local/bin/
+
+      - name: Install kind + kubectl
+        uses: helm/kind-action@v1.10.0
+        with:
+          install_only: true
+          version: "v0.24.0"
+          kubectl_version: "v1.30.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install test deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest helm acceptance
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/helm/ -m helm -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest

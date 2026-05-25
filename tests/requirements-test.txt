@@ -28,3 +28,9 @@ types-toml>=0.10.0
 # is needed only for these test paths (kept out of the web-server
 # runtime requirements deliberately).
 psycopg2-binary>=2.9.0
+
+# Epic #26 P4 helm tests parse rendered Helm manifests via
+# `yaml.safe_load_all`. PyYAML isn't a transitive dep of the helm-
+# acceptance job's venv (which only installs requirements-test.txt),
+# so declare it explicitly.
+PyYAML>=6.0

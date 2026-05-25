@@ -1,0 +1,216 @@
+# Default values for the AIFactory chart.
+# This file is the primary configuration surface for operators.
+#
+# Sections:
+#   image           — container image + pull config
+#   replicaCount    — pinned to 1 for v1.0 (WebSocket fan-out limitation)
+#   resources       — CPU/memory requests + limits
+#   securityContext — PSS-restricted defaults; do not relax without review
+#   service         — ClusterIP by default; Ingress controls public exposure
+#   ingress         — disabled by default; operators wire their controller
+#   serviceAccount  — dedicated SA, no automount of API token
+#   podDisruptionBudget — minAvailable: 1
+#   hpa             — disabled by default (single replica)
+#   networkPolicy   — default-deny + explicit 443 egress
+#   migrations      — Alembic Job mode (autoApply=false in prod)
+#   postgres        — bundled (CNPG) OR external (via ExternalSecret)
+#   externalSecrets — store config for the 4 supported backends
+#   oidc            — OIDC SSO settings (gated by enabled flag)
+#   kms             — at-rest encryption backend selection
+#   global          — cross-cutting: customCABundle, priorityClass, etc.
+
+image:
+  # Override with your private mirror; image-mirroring.md covers cosign
+  # signature-preserving copy.
+  repository: ghcr.io/dataseeek/aifactory
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+replicaCount: 1  # v1.1 will support >1 via Redis pub/sub for WS fan-out
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+
+# PSS-restricted compatible. NEVER set runAsUser=0 or
+# allowPrivilegeEscalation=true — admission controllers reject.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3101
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""  # e.g. "nginx" or "alb"
+  annotations: {}
+  hosts:
+    - host: aifactory.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # API token automount is OFF: pods that don't talk to the K8s API
+  # don't need it, and dropping it shrinks the blast radius of a
+  # container compromise.
+  automountServiceAccountToken: false
+
+rbac:
+  create: false  # the app doesn't read the K8s API in v1.0
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 50
+
+networkPolicy:
+  # Default-deny + explicit allowlist. ALWAYS enabled in production.
+  enabled: true
+  # Egress: 443/tcp to anywhere (Anthropic API, IdP, KMS, external
+  # Postgres if hosted off-cluster). Operators can tighten further
+  # by overriding egress rules.
+  egress:
+    allowExternalHttps: true
+    # If your Postgres is in-cluster on a non-443 port, add a rule:
+    # - to: [{namespaceSelector: {matchLabels: {name: postgres}}}]
+    #   ports: [{protocol: TCP, port: 5432}]
+    extraRules: []
+  ingress:
+    # Default: only the ingress controller may reach us.
+    fromIngressNamespace: "ingress-nginx"
+    extraRules: []
+
+migrations:
+  # Production: false. Operators run the alembic Job out-of-band so
+  # rollouts can be ordered/audited. Set true for POC/dev mode where
+  # the app autoApplies on boot.
+  autoApply: false
+  # When false, an alembic-upgrade Job is created and the deployment
+  # waits for it to complete via init container.
+  jobImage: ""  # defaults to the same image as the app
+  jobBackoffLimit: 3
+
+postgres:
+  # When true: install cloudnative-pg sub-chart for POC mode.
+  # When false: point at external Postgres via DATABASE_URL secret.
+  bundled: false
+  # External-Postgres mode: name of the K8s Secret carrying
+  # DATABASE_URL (key="database-url"). For ExternalSecret backends,
+  # see .externalSecrets below — those create this Secret for you.
+  externalSecretName: aifactory-db
+  # CNPG sub-chart values (used when bundled=true). Defaults are
+  # POC-grade — operators should override for production.
+  cloudnative-pg:
+    cluster:
+      instances: 1
+      storage:
+        size: 10Gi
+
+# Pick ONE backend. The chart renders only the matching ExternalSecret
+# template; the others stay dormant.
+externalSecrets:
+  enabled: false
+  # One of: vault, aws-sm, azure-kv, gcp-sm
+  backend: vault
+  # Secret references inside the chosen backend. Override per env.
+  refs:
+    databaseUrl: "secret/data/aifactory/db#url"
+    jwtSecret: "secret/data/aifactory/jwt#secret"
+    oidcClientSecret: "secret/data/aifactory/oidc#client_secret"
+    kmsFernetKey: "secret/data/aifactory/kms#fernet_key"
+    anthropicApiKey: "secret/data/aifactory/llm#anthropic_key"
+  # ClusterSecretStore name (created out-of-band by platform team).
+  clusterSecretStoreName: aifactory-secrets
+
+oidc:
+  enabled: false
+  provider: keycloak  # keycloak | okta | azure_ad
+  issuerUrl: ""
+  clientId: ""
+  # Mounted from the Secret created by externalSecrets (or a plain
+  # K8s Secret if externalSecrets.enabled=false).
+  clientSecretRef:
+    name: aifactory-oidc
+    key: client-secret
+  scope: ""  # empty → preset default per provider
+  groupToRole: {}  # e.g. {"aifactory-admin": "admin"}
+  defaultRole: "member"
+
+kms:
+  # One of: fernet (local key, POC only), aws_kms, vault_transit,
+  # azure_kv, gcp_kms.
+  backend: fernet
+  # Backend-specific key references (env vars at the pod).
+  fernetKeyRef:
+    name: aifactory-kms
+    key: fernet-key
+  awsKmsKeyId: ""
+  vaultTransitKey: "aifactory-root"
+  azureKeyvaultUrl: ""
+  azureKeyvaultKey: ""
+  gcpKmsKeyName: ""
+
+# Probes default to /api/health (P0); the cold-start window (database
+# migrations, model loading) is generous so PSS-restricted runtimes
+# without privileged init don't get killed.
+probes:
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 60  # 5min cold-start window
+
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Cross-cutting platform-team settings.
+global:
+  # When set, mounts a corporate root-CA bundle into the pod and
+  # points SSL_CERT_FILE at it. Required when egress passes through
+  # a TLS-intercepting proxy.
+  customCABundle:
+    secretName: ""  # e.g. "corp-root-ca"
+    key: "ca-bundle.crt"
+  # Image pull secrets shared across all pods (avoids per-template
+  # repetition).
+  imagePullSecrets: []
