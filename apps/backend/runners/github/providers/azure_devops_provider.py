@@ -8,14 +8,14 @@ Implements the GitProvider protocol for Azure DevOps using standard REST APIs.
 from __future__ import annotations
 
 import base64
-import httpx
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from .protocol import (
-    GitProvider,
     IssueData,
     IssueFilters,
     LabelData,
@@ -134,7 +134,7 @@ class AzureDevOpsProvider:
                 url=pr_data.get("_links", {}).get("web", {}).get("href") or "",
                 created_at=self._parse_datetime(pr_data.get("creationDate")),
                 updated_at=self._parse_datetime(pr_data.get("creationDate")),
-                labels=[l["name"] for l in pr_data.get("labels", [])] if pr_data.get("labels") else [],
+                labels=[lbl["name"] for lbl in pr_data.get("labels", [])] if pr_data.get("labels") else [],
                 reviewers=[r.get("uniqueName") or r.get("displayName") for r in pr_data.get("reviewers", [])] if pr_data.get("reviewers") else [],
                 is_draft=pr_data.get("isDraft") or False,
                 mergeable=pr_data.get("mergeStatus") == "succeeded",
@@ -299,9 +299,9 @@ class AzureDevOpsProvider:
             state_condition = "AND [System.State] = 'Closed'"
 
         wiql_query = f"""
-        SELECT [System.Id], [System.Title], [System.State] 
-        FROM workitems 
-        WHERE [System.TeamProject] = '{self._proj}' 
+        SELECT [System.Id], [System.Title], [System.State]
+        FROM workitems
+        WHERE [System.TeamProject] = '{self._proj}'
         {state_condition}
         ORDER BY [System.CreatedDate] DESC
         """

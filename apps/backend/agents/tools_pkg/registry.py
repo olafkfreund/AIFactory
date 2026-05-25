@@ -23,7 +23,6 @@ from .tools import (
     create_subtask_tools,
 )
 
-
 # Either a fixed Path (in-process agent sessions) or a callable returning Path
 # (standalone MCP server — re-reads AIFACTORY_SPEC_DIR / --spec-dir on each
 # tool call). The tool factories accept both shapes (Issue #10).

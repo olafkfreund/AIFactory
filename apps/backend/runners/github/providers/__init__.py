@@ -17,10 +17,10 @@ Usage:
     await provider.post_review(123, review)
 """
 
+from .azure_devops_provider import AzureDevOpsProvider
 from .factory import get_provider, register_provider
 from .github_provider import GitHubProvider
 from .gitlab_provider import GitLabProvider
-from .azure_devops_provider import AzureDevOpsProvider
 from .protocol import (
     GitProvider,
     IssueData,
