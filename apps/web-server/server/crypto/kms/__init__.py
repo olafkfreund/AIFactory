@@ -62,9 +62,14 @@ def get_backend() -> Backend:
         _INSTANCE = AwsKmsBackend.from_env()
         return _INSTANCE
 
+    if name == "vault_transit":
+        from .vault import VaultTransitBackend
+        _INSTANCE = VaultTransitBackend.from_env()
+        return _INSTANCE
+
     raise ValueError(
-        f"unknown KMS backend {name!r} — supported: fernet, aws_kms "
-        "(azure_kv, gcp_kms, vault_transit land in subsequent P2.4 chunks)"
+        f"unknown KMS backend {name!r} — supported: fernet, aws_kms, "
+        "vault_transit (azure_kv, gcp_kms land in subsequent P2.4 chunks)"
     )
 
 

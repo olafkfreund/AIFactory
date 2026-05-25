@@ -46,3 +46,7 @@ email-validator>=2.0.0
 # server.crypto.kms.aws so non-AWS deployments don't pay the cold-start
 # cost of boto3 (~1s on first import).
 boto3>=1.35.0
+
+# Epic #26 P2.4 — HashiCorp Vault Transit KMS backend. Required when
+# APP_KMS_BACKEND=vault_transit. Lazy-imported by server.crypto.kms.vault.
+hvac>=2.3.0

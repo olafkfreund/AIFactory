@@ -113,11 +113,76 @@ def test_gcp_kms_roundtrip() -> None:
     pytest.fail("P2.4 not landed")
 
 
+VAULT_ADDR = os.environ.get("VAULT_ADDR")
+VAULT_TOKEN = os.environ.get("VAULT_TOKEN")
+
+
 @pytest.mark.secrets
 @pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="Vault Transit requires a Vault server; CI-only")
+@pytest.mark.skipif(
+    not (VAULT_ADDR and VAULT_TOKEN),
+    reason="VAULT_ADDR + VAULT_TOKEN not set; Vault Transit test requires a Vault dev server",
+)
 @pytest.mark.skipif(not kms_backend_available("vault_transit"), reason="hvac not installed")
-@pytest.mark.skip(reason="P2.4 implementation pending: Vault Transit backend")
 def test_vault_transit_roundtrip() -> None:
-    """envelope-encrypt + decrypt via HashiCorp Vault Transit (dev-mode in CI)."""
-    pytest.fail("P2.4 not landed")
+    """envelope-encrypt + decrypt via HashiCorp Vault Transit (dev-mode locally / CI).
+
+    Steps:
+      1. Bootstrap: mount the transit engine (idempotent — tolerates the
+         "already mounted" case so this works against a long-lived dev
+         container) and create the named key ``aifactory-test``.
+      2. Re-import server.crypto with APP_KMS_BACKEND=vault_transit pointed
+         at the dev server.
+      3. Wrap a fresh 32-byte data key, then unwrap.
+      4. Assert plaintext round-trips, the wire format starts with
+         ``vault:v1:`` (key version 1 on a freshly-created key), and the
+         plaintext bytes never appear inside the wrapped blob.
+      5. Tamper-reject: flip a byte in the base64 ciphertext portion and
+         expect hvac to raise (Vault returns 400 with "invalid ciphertext").
+    """
+    import hvac
+    from hvac.exceptions import InvalidRequest
+
+    bootstrap = hvac.Client(url=VAULT_ADDR, token=VAULT_TOKEN)
+    # Mount transit. Idempotent: if it's already mounted (long-lived
+    # dev container reused across runs), Vault returns 400 with
+    # "path is already in use". We swallow that case only.
+    try:
+        bootstrap.sys.enable_secrets_engine(backend_type="transit", path="transit")
+    except InvalidRequest as e:
+        if "path is already in use" not in str(e):
+            raise
+
+    key_name = "aifactory-test"
+    bootstrap.secrets.transit.create_key(name=key_name)
+
+    reimport_crypto({
+        "APP_KMS_BACKEND": "vault_transit",
+        "VAULT_ADDR": VAULT_ADDR,
+        "VAULT_TOKEN": VAULT_TOKEN,
+        "VAULT_TRANSIT_KEY": key_name,
+    })
+    from server.crypto import get_backend  # noqa: E402
+
+    backend = get_backend()
+
+    plaintext = b"\xab" * 32
+    ciphertext = backend.encrypt(plaintext)
+
+    assert isinstance(ciphertext, bytes), "encrypt must return bytes"
+    assert ciphertext.startswith(b"vault:v1:"), \
+        f"expected vault:v1: prefix on a fresh key, got {ciphertext[:32]!r}"
+    assert plaintext not in ciphertext, \
+        "plaintext bytes must not appear inside the wrapped wire format"
+
+    decrypted = backend.decrypt(ciphertext)
+    assert decrypted == plaintext, "round-trip must recover the data key exactly"
+
+    # Tamper: flip a byte in the base64 segment (after the version prefix).
+    # Vault rejects with InvalidRequest (HTTP 400, "invalid ciphertext").
+    tampered = bytearray(ciphertext)
+    # Pick a byte well past the "vault:v1:" prefix.
+    idx = len(b"vault:v1:") + 4
+    tampered[idx] = ord("A") if tampered[idx] != ord("A") else ord("B")
+    with pytest.raises((InvalidRequest, ValueError)):
+        backend.decrypt(bytes(tampered))
