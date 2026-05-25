@@ -481,7 +481,66 @@ def test_user_disabled_in_idp_revoked_within_ttl(
 @pytest.mark.oidc
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
-@pytest.mark.skip(reason="P3.5 implementation pending: logout flow")
-def test_logout_redirects_to_end_session_endpoint(oidc_issuer_url, oidc_client_id) -> None:
-    """``POST /api/auth/oidc/logout`` redirects to the IdP's end_session_endpoint."""
-    pytest.fail("P3.5 not landed")
+def test_logout_redirects_to_end_session_endpoint(
+    oidc_issuer_url, oidc_client_id,
+) -> None:
+    """POST /api/auth/oidc/logout redirects to the IdP's end_session_endpoint.
+
+    Asserts:
+      - Response is a 302 to the IdP's end_session_endpoint
+        (Keycloak advertises this in its discovery doc).
+      - The post_logout_redirect_uri query param is included.
+      - The OidcRefreshSession row was deleted.
+      - access_token + refresh_token cookies are cleared.
+    """
+    import asyncio
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+
+    from server.database.models import OidcRefreshSession
+
+    app = _build_test_app()
+    SessionLocal = app.state.test_session_local
+    refresh_token = _complete_login_get_refresh_token(app, oidc_issuer_url)
+    assert refresh_token
+
+    # Confirm session was created at login.
+    async def _count_sessions():
+        async with SessionLocal() as s:
+            return len(
+                (await s.execute(select(OidcRefreshSession))).scalars().all()
+            )
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
+
+    with TestClient(app, follow_redirects=False) as client:
+        # The TestClient still has the refresh_token cookie from the
+        # login flow we ran earlier — but that was a different client
+        # instance, so we re-send it explicitly.
+        resp = client.post(
+            "/api/auth/oidc/logout",
+            json={"refresh_token": refresh_token},
+        )
+
+    assert resp.status_code == 302, (
+        f"logout should 302; got {resp.status_code} body={resp.text[:200]!r}"
+    )
+    loc = resp.headers["location"]
+    # Keycloak advertises this path in its discovery doc.
+    assert "/protocol/openid-connect/logout" in loc, (
+        f"expected redirect to Keycloak's end-session URL; got {loc!r}"
+    )
+    assert "post_logout_redirect_uri=" in loc, (
+        "post_logout_redirect_uri should be in the redirect URL"
+    )
+
+    # The session row was deleted.
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 0, (
+        "logout must delete the OidcRefreshSession row"
+    )
+
+    # Cookies were cleared. RFC: delete-cookie is signalled by a
+    # Set-Cookie with empty value + Max-Age=0. httpx exposes that on
+    # the response cookies; the test client's cookie jar reflects it.
+    set_cookie_headers = resp.headers.get_list("set-cookie")
+    assert any("access_token=" in h and "Max-Age=0" in h for h in set_cookie_headers)
+    assert any("refresh_token=" in h and "Max-Age=0" in h for h in set_cookie_headers)

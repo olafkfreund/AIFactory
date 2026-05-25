@@ -399,3 +399,89 @@ async def oidc_refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db))
     session.last_validated_at = datetime.utcnow()
     await db.commit()
     return RefreshResponse(access_token=_create_access_token(user))
+
+
+# ---------------------------------------------------------------------------
+# /api/auth/oidc/logout — delete session + redirect to IdP end-session (P3.5)
+# ---------------------------------------------------------------------------
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+
+
+@router.post("/logout", summary="Logout: delete session + redirect to IdP end-session")
+async def oidc_logout(
+    request: Request,
+    body: LogoutRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """End the OIDC session locally + redirect to IdP's end_session_endpoint.
+
+    Behavior:
+      - If a valid refresh token is present (body or cookie), look up
+        the OidcRefreshSession row and delete it. Invalidate the
+        userinfo cache for that sub.
+      - Look up the IdP's ``end_session_endpoint`` from its OIDC
+        discovery document. If advertised, 302 to it (with
+        post_logout_redirect_uri). If NOT advertised (some legacy
+        OAuth-only IdPs), 302 to our own post-logout page.
+      - In all paths, clear the access_token + refresh_token cookies.
+    """
+    if not is_oidc_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="OIDC SSO is not configured on this deployment",
+        )
+
+    refresh_token = (body.refresh_token if body else None) or request.cookies.get(
+        "refresh_token"
+    )
+
+    if refresh_token:
+        settings = get_settings()
+        try:
+            payload = jwt.decode(
+                refresh_token,
+                settings.JWT_SECRET,
+                algorithms=[settings.JWT_ALGORITHM],
+            )
+            jti = payload.get("jti")
+            if jti:
+                result = await db.execute(
+                    select(OidcRefreshSession).where(OidcRefreshSession.jti == jti)
+                )
+                session_row = result.scalar_one_or_none()
+                if session_row is not None:
+                    invalidate(session_row.oidc_sub)
+                    await db.delete(session_row)
+                    await db.commit()
+        except JWTError:
+            # Already-invalid token — still proceed with the logout
+            # redirect; we can't authenticate against the IdP without
+            # a valid token but we can still clear cookies + redirect.
+            pass
+
+    # Resolve the IdP's end_session_endpoint.
+    import os
+    issuer = os.environ["APP_OIDC_ISSUER_URL"].rstrip("/")
+    discovery_url = f"{issuer}/.well-known/openid-configuration"
+    end_session_url = None
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as http:
+            disc = (await http.get(discovery_url)).json()
+            end_session_url = disc.get("end_session_endpoint")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OIDC discovery failed during logout: %s", exc)
+
+    post_logout = os.environ.get("APP_OIDC_POST_LOGOUT_REDIRECT", "/")
+    if end_session_url:
+        from urllib.parse import urlencode
+        redirect_url = f"{end_session_url}?{urlencode({'post_logout_redirect_uri': post_logout})}"
+    else:
+        redirect_url = post_logout
+
+    response = RedirectResponse(url=redirect_url, status_code=302)
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
+    return response
