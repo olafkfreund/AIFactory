@@ -42,6 +42,14 @@ Access the application from any modern browser - no desktop installation require
 | [Architecture](ARCHITECTURE.md) | System design, data flow, and component interactions | Developers |
 | [API Reference](API-REFERENCE.md) | REST endpoints and WebSocket events documentation | Developers |
 
+### Operations
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [Image mirroring](operations/image-mirroring.md) | Mirror signed releases to a private registry (air-gapped / regulated envs) | Platform / SRE |
+| [KMS rotation runbook](operations/kms-rotation-runbook.md) | Rotate the encrypted-at-rest secrets root key (AWS / Azure / GCP / Vault / Fernet) | Platform / SRE |
+| [Encrypted-secrets disaster recovery](operations/encrypted-secrets-dr.md) | Recover from compromised / lost KMS keys or corrupted ciphertext rows | Platform / SRE |
+
 ---
 
 ## Quick Links

@@ -40,3 +40,29 @@ alembic>=1.13.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 email-validator>=2.0.0
+
+# Epic #26 P2.4 — AWS KMS backend for envelope-encrypted secrets at rest.
+# Required when APP_KMS_BACKEND=aws_kms. Lazy-imported by
+# server.crypto.kms.aws so non-AWS deployments don't pay the cold-start
+# cost of boto3 (~1s on first import).
+boto3>=1.35.0
+
+# Epic #26 P2.4 — HashiCorp Vault Transit KMS backend. Required when
+# APP_KMS_BACKEND=vault_transit. Lazy-imported by server.crypto.kms.vault.
+hvac>=2.3.0
+
+# Epic #26 P2.4 — Azure Key Vault KMS backend. Required when
+# APP_KMS_BACKEND=azure_kv. Both packages lazy-imported by
+# server.crypto.kms.azure. DefaultAzureCredential covers managed
+# identity, service principal env vars, az-CLI, etc. — no auth code
+# in the backend itself.
+azure-identity>=1.20.0
+azure-keyvault-keys>=4.10.0
+
+# Epic #26 P2.4 — Google Cloud KMS backend. Required when
+# APP_KMS_BACKEND=gcp_kms. google-crc32c is used to compute the
+# wire-format integrity checksums Cloud KMS verifies on every
+# encrypt/decrypt — it's a small (~30 KB) explicit dep, NOT pulled
+# in transitively by google-cloud-kms.
+google-cloud-kms>=3.0.0
+google-crc32c>=1.5.0

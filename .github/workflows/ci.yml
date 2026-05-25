@@ -98,6 +98,90 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/postgres/ -m postgres -v
 
+  secrets-acceptance:
+    name: secrets (P2 acceptance)
+    runs-on: ubuntu-latest
+    # P2 EncryptedString / KMS acceptance. Three services run as
+    # sidecars so the integration tests gate every PR:
+    #   - postgres   → P2.3 column migration + backfill tests
+    #   - localstack → P2.4 AWS KMS round-trip test
+    #   - vault      → P2.4 Vault Transit round-trip test
+    # Azure and GCP backends stay skipped in CI — no faithful emulator
+    # exists; they're verified at deploy time against real cloud creds.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aifactory_test
+          POSTGRES_PASSWORD: aifactory_test
+          POSTGRES_DB: aifactory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      localstack:
+        image: localstack/localstack:3
+        env:
+          SERVICES: kms
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health | grep -q '\"kms\"'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      vault:
+        image: hashicorp/vault:1.18
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: root-test-token
+        ports:
+          - 8200:8200
+        # The Vault image is Alpine-based and ships the `vault` binary
+        # but NOT `wget` or `curl`. Using `vault status` for the
+        # healthcheck guarantees the probe binary exists. Dev mode auto-
+        # unseals on boot, so `vault status` exits 0 once the server is
+        # serving requests — exactly the "healthy" semantics we want.
+        # IPC_LOCK is dropped because GitHub Actions sandboxes the cap
+        # anyway, and dev mode doesn't need mlock.
+        options: >-
+          --health-cmd "VAULT_ADDR=http://127.0.0.1:8200 vault status"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_URL: "postgresql+asyncpg://aifactory_test:aifactory_test@localhost:5432/aifactory_test"
+      AWS_ENDPOINT_URL: "http://localhost:4566"
+      VAULT_ADDR: "http://localhost:8200"
+      VAULT_TOKEN: "root-test-token"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest secrets acceptance
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/secrets/ -m secrets -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
