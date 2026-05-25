@@ -162,10 +162,58 @@ def test_login_callback_pkce_roundtrip(oidc_issuer_url, oidc_client_id) -> None:
 @pytest.mark.oidc
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
-@pytest.mark.skip(reason="P3.2 implementation pending: PKCE+state negative tests")
 def test_pkce_state_tamper_rejected(oidc_issuer_url, oidc_client_id) -> None:
-    """Tampering the ``state`` parameter at /callback must raise."""
-    pytest.fail("P3.2 not landed")
+    """Tampering the ``state`` parameter at /callback must raise.
+
+    Drive the normal flow up to the moment we'd hit /callback, then
+    swap the state value before submission. authlib's
+    authorize_access_token raises a state-mismatch error; our handler
+    returns 400 with a generic "OIDC callback rejected" message and
+    NEVER echoes the tampered state back (reflected-XSS defense).
+    No session cookie is set.
+    """
+    from fastapi.testclient import TestClient
+
+    app = _build_test_app()
+
+    with TestClient(app, follow_redirects=False) as client:
+        # Begin the OIDC flow normally.
+        resp = client.get("/api/auth/oidc/login")
+        assert resp.status_code in (302, 307)
+        kc_url = resp.headers["location"]
+        parsed = urlparse(kc_url)
+        qs = parse_qs(parsed.query)
+        original_state = qs["state"][0]
+
+        # Get an auth code from Keycloak — this code is bound to the
+        # *original* state (and PKCE verifier in the session).
+        code = keycloak_drive_login_url(
+            auth_url=kc_url,
+            username=TEST_USER_USERNAME,
+            password=TEST_USER_PASSWORD,
+        )
+
+        # Now tamper: replace state with attacker-controlled value.
+        tampered_state = "attacker-injected-state-value-xxxxxxxxx"
+        assert tampered_state != original_state, "fixture must use a distinct value"
+
+        resp = client.get(
+            f"/api/auth/oidc/callback?code={code}&state={tampered_state}"
+        )
+        assert resp.status_code == 400, (
+            f"tampered state must be rejected; got {resp.status_code} "
+            f"body={resp.text[:300]!r}"
+        )
+
+        # Defense-in-depth: the response body must NOT echo back the
+        # tampered state value (would create a reflected-XSS sink).
+        assert tampered_state not in resp.text, (
+            "response body must not echo tampered state (reflected-XSS defense)"
+        )
+
+        # No session was minted.
+        assert client.cookies.get("access_token") is None
+        assert client.cookies.get("refresh_token") is None
 
 
 @pytest.mark.oidc
