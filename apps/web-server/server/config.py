@@ -38,6 +38,14 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = ""  # Auto-generated if not set (sqlite+aiosqlite:///...)
+    # Alembic migration behaviour at app boot. P1.4 of Epic #26.
+    #   true  → app boot runs `alembic upgrade head` (default; suits local
+    #           dev + simple deployments)
+    #   false → app boot only verifies the schema is at head and fails fast
+    #           if not. Use this in K8s deployments where a Helm Job runs
+    #           migrations out-of-band before the app pods start (allows
+    #           the app role to lack DDL privileges).
+    MIGRATIONS_AUTO_APPLY: bool = True
 
     # Paths
     PROJECTS_DATA_DIR: str = ""  # Directory to store project metadata

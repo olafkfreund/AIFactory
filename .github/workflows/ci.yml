@@ -49,6 +49,55 @@ jobs:
           APP_DISABLE_AUTH: "true"  # endpoint tests use anonymous TestClient
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
+  postgres-acceptance:
+    name: postgres (P1 acceptance, PG ${{ matrix.pg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["15", "16"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_USER: aifactory_test
+          POSTGRES_PASSWORD: aifactory_test
+          POSTGRES_DB: aifactory_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_POSTGRES_URL: "postgresql+asyncpg://aifactory_test:aifactory_test@localhost:5432/aifactory_test"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest postgres acceptance (PG ${{ matrix.pg }})
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/postgres/ -m postgres -v
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest

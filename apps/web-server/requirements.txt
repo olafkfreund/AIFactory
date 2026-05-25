@@ -30,6 +30,11 @@ gitpython>=3.1.0
 # Database
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
+# asyncpg is the production driver; aiosqlite is kept for local dev
+# (engine.py picks via DATABASE_URL scheme — see P1.1).
+asyncpg>=0.30.0
+# Alembic for schema migrations (see apps/web-server/alembic.ini)
+alembic>=1.13.0
 
 # Authentication (JWT + password hashing)
 python-jose[cryptography]>=3.3.0
