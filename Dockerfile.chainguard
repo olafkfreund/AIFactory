@@ -1,0 +1,130 @@
+# =============================================================================
+# AIFactory — Chainguard distroless build
+# =============================================================================
+# P0.1 in Epic #26 (issue #27): minimal port from the legacy Ubuntu Dockerfile
+# to a Chainguard base. This phase ONLY needs to BUILD cleanly; the legacy
+# entrypoint script + privilege drops remain temporarily and are removed in:
+#
+#   P0.3 — drop iptables / NET_ADMIN / shell entrypoint
+#   P0.4 — run as uid 65532 from FROM onwards (remove root switches)
+#   P0.5 — PSS-restricted compatibility (RO root fs + dropped caps)
+#   P0.6 — multi-arch (amd64 + arm64) buildx
+#   P0.7 — pin base images by SHA-256 digest
+#
+# Each subsequent chunk turns one (or more) tests in tests/docker/ from
+# skipped → passing.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build the React frontend
+# ---------------------------------------------------------------------------
+FROM cgr.dev/chainguard/node:latest-dev AS frontend-build
+
+USER root
+WORKDIR /build
+
+# Workspace-aware install via root package + the frontend's package.json
+COPY package.json package-lock.json ./
+COPY apps/frontend-web/package.json apps/frontend-web/
+
+RUN npm ci --workspace=apps/frontend-web
+
+COPY apps/frontend-web/ apps/frontend-web/
+
+# vite.config.ts: build.outDir = '../web-server/static'
+RUN mkdir -p apps/web-server/static \
+ && cd apps/frontend-web \
+ && npm run build
+
+# ---------------------------------------------------------------------------
+# Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
+# happens in P0.5 once we know what the runtime *actually* needs)
+# ---------------------------------------------------------------------------
+FROM cgr.dev/chainguard/python:latest-dev AS runtime
+
+USER root
+
+# System packages from Wolfi APK index. Build tools come bundled in :latest-dev.
+#   git           — worktree operations
+#   curl, wget    — downloads (HEALTHCHECK uses curl)
+#   gh            — GitHub CLI (Wolfi apk package name)
+#   nodejs, npm   — runtime Node for `npm install -g @anthropic-ai/claude-code`
+#                   spawned by the agent. Installed via apk instead of
+#                   binary-copying from the frontend stage so dynamic linker
+#                   deps (libuv etc.) resolve correctly.
+#   ca-certificates — TLS roots
+#   bash          — entrypoint script (will be removed in P0.3)
+RUN apk add --no-cache \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gh \
+        gnupg \
+        nodejs \
+        npm \
+        wget
+
+# Project layout (keeping the legacy path under /home/projects for minimum
+# diff with the existing Dockerfile; P0.4 may relocate to /app under nonroot)
+RUN mkdir -p /home/projects/MagesticAI \
+ && chown -R nonroot:nonroot /home/projects
+
+# Copy project sources (respects .dockerignore)
+COPY --chown=nonroot:nonroot . /home/projects/MagesticAI/
+
+# Copy built frontend assets from Stage 1
+COPY --from=frontend-build --chown=nonroot:nonroot \
+    /build/apps/web-server/static/ \
+    /home/projects/MagesticAI/apps/web-server/static/
+
+# Legacy entrypoint script — removed in P0.3
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Drop to nonroot for venv + npm config (writeable paths only)
+USER nonroot
+
+# Configure npm global install dir under the nonroot home
+RUN mkdir -p /home/nonroot/.npm-global \
+ && npm config set prefix /home/nonroot/.npm-global
+
+# Single Python venv shared by web-server and backend scripts (matches
+# agent_service.py's sys.executable expectations)
+RUN python3 -m venv /home/projects/MagesticAI/.venv
+
+RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
+        -r /home/projects/MagesticAI/apps/web-server/requirements.txt \
+        -r /home/projects/MagesticAI/apps/backend/requirements.txt
+
+# Git identity for in-container worktree operations
+RUN git config --global user.name "AIFactory" \
+ && git config --global user.email "aifactory@container"
+
+# Persistent data directory
+RUN mkdir -p /home/nonroot/.aifactory
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+ENV APP_HOST=0.0.0.0 \
+    APP_PORT=3101 \
+    APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend \
+    APP_PROJECTS_DATA_DIR=/home/nonroot/.aifactory \
+    APP_DEFAULT_SHELL=/bin/bash \
+    PYTHONUNBUFFERED=1 \
+    PATH="/home/nonroot/.npm-global/bin:/home/projects/MagesticAI/.venv/bin:$PATH"
+
+EXPOSE 3101
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:3101/api/health || exit 1
+
+WORKDIR /home/projects/MagesticAI/apps/web-server
+
+# NOTE: legacy entrypoint still expects root (iptables + gosu drop). The
+# `USER root` + `docker-entrypoint.sh` lines below get removed in P0.3, and
+# the runtime user becomes nonroot end-to-end in P0.4.
+USER root
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["python", "-m", "server.main"]

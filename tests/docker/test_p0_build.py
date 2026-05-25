@@ -5,7 +5,6 @@ import pytest
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skip(reason="P0.1 implementation pending: Dockerfile.chainguard not yet written")
 def test_image_builds_clean(built_image: str) -> None:
     """`docker build -f Dockerfile.chainguard` exits 0.
 
