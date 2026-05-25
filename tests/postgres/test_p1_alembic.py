@@ -92,6 +92,7 @@ def _init_db_subprocess(test_postgres_url: str, auto_apply: bool) -> subprocess.
 def _drop_schema(test_postgres_url: str) -> None:
     """Drop + recreate the `public` schema, leaving the DB empty."""
     import asyncio
+
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -163,9 +164,10 @@ def test_alembic_succeeds_without_create_extension_privilege(test_postgres_url: 
         pytest.skip("alembic Python package not importable")
 
     import asyncio
+    from urllib.parse import urlparse, urlunparse
+
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
-    from urllib.parse import urlparse, urlunparse
 
     APP_ROLE = "aifactory_app_p1_5"
     APP_PASSWORD = "p1_5_test_pw"
