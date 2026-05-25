@@ -139,12 +139,18 @@ jobs:
           VAULT_DEV_ROOT_TOKEN_ID: root-test-token
         ports:
           - 8200:8200
+        # The Vault image is Alpine-based and ships the `vault` binary
+        # but NOT `wget` or `curl`. Using `vault status` for the
+        # healthcheck guarantees the probe binary exists. Dev mode auto-
+        # unseals on boot, so `vault status` exits 0 once the server is
+        # serving requests — exactly the "healthy" semantics we want.
+        # IPC_LOCK is dropped because GitHub Actions sandboxes the cap
+        # anyway, and dev mode doesn't need mlock.
         options: >-
-          --cap-add IPC_LOCK
-          --health-cmd "wget --spider -q http://localhost:8200/v1/sys/health || exit 1"
-          --health-interval 10s
+          --health-cmd "VAULT_ADDR=http://127.0.0.1:8200 vault status"
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
     env:
       TEST_POSTGRES_URL: "postgresql+asyncpg://aifactory_test:aifactory_test@localhost:5432/aifactory_test"
       AWS_ENDPOINT_URL: "http://localhost:4566"
