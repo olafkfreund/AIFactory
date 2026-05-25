@@ -27,13 +27,14 @@ IMAGE_TAG = "aifactory:p0-test"
 def built_image() -> str:
     """Build the P0 image once per session; return its tag.
 
-    Skips when Docker isn't available or the target Dockerfile doesn't
-    exist yet — lets the harness land before P0.1 ships.
+    Skips when Docker isn't available. Dockerfile is expected to exist
+    post-P0.1; if it doesn't, that's a real failure of the codebase, not
+    a skip condition.
     """
     if not docker_available():
         pytest.skip("Docker not available on this host")
     if not DOCKERFILE_PATH.exists():
-        pytest.skip(f"{DOCKERFILE_PATH.name} not present yet (P0.1 pending)")
+        pytest.fail(f"{DOCKERFILE_PATH} not found")
 
     result = docker_build(DOCKERFILE_PATH, IMAGE_TAG)
     if result.returncode != 0:

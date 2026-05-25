@@ -20,7 +20,7 @@ def test_base_images_pinned_by_digest() -> None:
         line.strip() for line in content.splitlines()
         if line.strip().upper().startswith("FROM ")
     ]
-    assert from_lines, "no FROM lines found in Dockerfile.chainguard"
+    assert from_lines, "no FROM lines found in Dockerfile"
     for line in from_lines:
         assert "@sha256:" in line, \
             f"FROM line is not digest-pinned: {line!r}"

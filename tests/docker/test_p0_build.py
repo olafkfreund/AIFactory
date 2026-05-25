@@ -6,7 +6,7 @@ import pytest
 @pytest.mark.docker
 @pytest.mark.slow
 def test_image_builds_clean(built_image: str) -> None:
-    """`docker build -f Dockerfile.chainguard` exits 0.
+    """`docker build` against the project Dockerfile exits 0.
 
     The `built_image` session fixture performs the build; if it returned
     a tag, the build succeeded.

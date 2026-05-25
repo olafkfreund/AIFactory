@@ -151,8 +151,8 @@ is a single command, not an archaeology project.
 
 ## See also
 
-- [`Dockerfile.chainguard`](../../Dockerfile.chainguard) — the image
-  being mirrored; base layers pinned by digest in P0.7
+- [`Dockerfile`](../../Dockerfile) — the image being mirrored; base
+  layers pinned by digest in P0.7
 - [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
   — the release pipeline that produces the signed, attested image
 - [Sigstore cosign docs](https://docs.sigstore.dev/cosign/) — upstream

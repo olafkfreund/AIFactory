@@ -15,9 +15,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Target Dockerfile that P0.1+ will introduce. Tests skip cleanly until it
-# exists, so the test harness can land before the Dockerfile rewrite.
-DOCKERFILE_PATH = REPO_ROOT / "Dockerfile.chainguard"
+# Path to the project's Dockerfile. Single source of truth for the test
+# fixtures so the P0.12 rename (Dockerfile.chainguard → Dockerfile) didn't
+# require touching every test file.
+DOCKERFILE_PATH = REPO_ROOT / "Dockerfile"
 
 
 def docker_available() -> bool:
