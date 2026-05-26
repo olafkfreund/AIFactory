@@ -38,6 +38,14 @@ export interface ProjectSettings {
   gitProject?: string;
   /** Repository name or path */
   gitRepo?: string;
+  /**
+   * When true, every NEW task in this project starts with
+   * ``enableRemoteControl: true`` in its metadata.  The wizard's
+   * per-task checkbox still overrides on a case-by-case basis.
+   * Requires a paid Anthropic subscription and a full-scope
+   * ``claude auth login`` on the AIFactory host.
+   */
+  remoteControlByDefault?: boolean;
 }
 
 export interface NotificationSettings {

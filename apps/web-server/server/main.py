@@ -25,6 +25,8 @@ from .routes import (
     api_keys,
     audit,
     auth_routes,
+    auto_fix,
+    capabilities,
     context,
     email,
     execution,
@@ -226,6 +228,16 @@ def create_app() -> FastAPI:
 
     # GitHub routes
     app.include_router(github.router, prefix="/api/github", tags=["GitHub"])
+
+    # Capability discovery (Epic #44 R2) — always mounted; the frontend
+    # consults this on load to know whether to render the Live Agent
+    # Console tab.  The router already declares its own prefix.
+    app.include_router(capabilities.router, tags=["Capabilities"])
+
+    # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
+    # Endpoints live under /api/projects/{id}/auto-fix/* so they match
+    # the per-project nesting the frontend already follows.
+    app.include_router(auto_fix.router, prefix="/api/projects", tags=["Auto-Fix"])
 
     # Git and utility routes
     app.include_router(git.router, prefix="/api/git", tags=["Git"])

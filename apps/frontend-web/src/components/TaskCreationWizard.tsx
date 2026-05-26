@@ -132,6 +132,7 @@ export function TaskCreationWizard({
 
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
+  const [enableRemoteControl, setEnableRemoteControl] = useState(false);
 
   // Skills state
   const [selectedSkills, setSelectedSkills] = useState<SelectedSkill[]>([]);
@@ -178,6 +179,7 @@ export function TaskCreationWizard({
         setImages(draft.images);
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
+        setEnableRemoteControl(draft.enableRemoteControl ?? false);
         setSelectedSkills(draft.selectedSkills ?? []);
         setMode(draft.mode || 'full');
         setIsDraftRestored(true);
@@ -262,9 +264,10 @@ export function TaskCreationWizard({
     images,
     referencedFiles,
     requireReviewBeforeCoding,
+    enableRemoteControl,
     selectedSkills,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, mode, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, selectedSkills]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, mode, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, enableRemoteControl, selectedSkills]);
   /**
    * Handle paste event for screenshot support
    * Strategy: Let browser handle text paste naturally, we only process images separately
@@ -657,6 +660,7 @@ export function TaskCreationWizard({
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
+      if (enableRemoteControl) metadata.enableRemoteControl = true;
       // Only include baseBranch if it's not the project default placeholder
       if (baseBranch && baseBranch !== PROJECT_DEFAULT_BRANCH) metadata.baseBranch = baseBranch;
       // Execution mode: 'quick' uses simplified prompts (~70% fewer tokens)
@@ -1170,6 +1174,38 @@ export function TaskCreationWizard({
               </Label>
               <p className="text-xs text-muted-foreground">
                 When enabled, you&apos;ll be prompted to review the spec and implementation plan before the coding phase begins. This allows you to approve, request changes, or provide feedback.
+              </p>
+            </div>
+          </div>
+
+          {/* Remote Control Toggle — drives Claude Code's native --remote-control flag */}
+          <div className="flex items-start gap-3 p-4 rounded-lg border border-border bg-muted/30">
+            <Checkbox
+              id="enable-remote-control"
+              checked={enableRemoteControl}
+              onCheckedChange={(checked) => setEnableRemoteControl(checked === true)}
+              disabled={isCreating}
+              className="mt-0.5"
+            />
+            <div className="flex-1 space-y-1">
+              <Label
+                htmlFor="enable-remote-control"
+                className="text-sm font-medium text-foreground cursor-pointer"
+              >
+                Enable Remote Control
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Drive this task from{' '}
+                <a
+                  href="https://claude.ai/code"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  claude.ai/code
+                </a>{' '}
+                or the Claude mobile app. The session appears as &quot;AIFactory: &lt;spec-id&gt;&quot; in your Claude session list. Requires a paid Anthropic subscription (Pro/Max/Team/Enterprise) and{' '}
+                <code className="text-xs bg-muted px-1 rounded">claude auth login</code> on the AIFactory host.
               </p>
             </div>
           </div>

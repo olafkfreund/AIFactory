@@ -163,15 +163,51 @@ const githubAPI: API['github'] = {
   onGitHubInvestigationProgress: () => () => {},
   onGitHubInvestigationComplete: () => () => {},
   onGitHubInvestigationError: () => () => {},
-  getAutoFixConfig: async () => null,
-  saveAutoFixConfig: async () => true,
-  getAutoFixQueue: async () => [],
+  getAutoFixConfig: async (projectId: string) => {
+    const result = await get(`/projects/${projectId}/auto-fix/config`);
+    return (result.success ? result.data : null) as never;
+  },
+  saveAutoFixConfig: async (projectId: string, config: unknown) => {
+    const result = await put(`/projects/${projectId}/auto-fix/config`, config);
+    return result.success;
+  },
+  getAutoFixQueue: async (projectId: string) => {
+    const result = await get(`/projects/${projectId}/auto-fix/queue`);
+    return (result.success ? result.data ?? [] : []) as never;
+  },
   checkAutoFixLabels: async () => [],
-  checkNewIssues: async () => [],
-  startAutoFix: () => {},
-  onAutoFixProgress: () => () => {},
-  onAutoFixComplete: () => () => {},
-  onAutoFixError: () => () => {},
+  checkNewIssues: async (projectId: string) => {
+    // Backend's check-new endpoint imports + starts each new issue and
+    // returns the list of started items. The hook expects an array of
+    // ``{number, ...}``-shaped issues so it can also fire ``startAutoFix``
+    // per-issue — that's redundant after this call (the agent is
+    // already running) but harmless: startAutoFix is idempotent on the
+    // spec side and ``agent_service`` rejects double-starts with a
+    // "already running" ValueError that we swallow.
+    const result = await post(`/projects/${projectId}/auto-fix/check-new`, {});
+    const data = (result.success ? result.data : null) as { started?: Array<{ number: number }> } | null;
+    return (data?.started ?? []) as never;
+  },
+  startAutoFix: (projectId: string, issueNumber: number) => {
+    post(`/projects/${projectId}/auto-fix/${issueNumber}/start`, {});
+  },
+  onAutoFixProgress: (callback) =>
+    registerCallback('auto_fix:progress',
+      (payload: { projectId: string; issueNumber: number; phase: string; progress: number; message: string }) => {
+        const { projectId, ...progressData } = payload;
+        callback(projectId, progressData as never);
+      }),
+  onAutoFixComplete: (callback) =>
+    registerCallback('auto_fix:complete',
+      (payload: { projectId: string; issueNumber?: number }) => {
+        callback(payload.projectId, payload as never);
+      }),
+  onAutoFixError: (callback) =>
+    registerCallback('auto_fix:error',
+      (payload: { projectId: string; issueNumber: number; error: string }) => {
+        const { projectId, ...errorData } = payload;
+        callback(projectId, errorData as never);
+      }),
   listPRs: async (projectId) => {
     const result = await get(`/projects/${projectId}/github/prs`);
     return (result.success ? result.data : []) as never;

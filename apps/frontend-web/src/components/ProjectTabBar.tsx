@@ -99,9 +99,10 @@ export function ProjectTabBar({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [projects, activeProjectId, onProjectSelect, onProjectClose]);
 
-  if (projects.length === 0) {
-    return null;
-  }
+  // Render the bar even when no project tabs are open — the global
+  // toolbar on the right (settings, theme, project switcher, add
+  // project, status badges) is the user's primary entry point and
+  // must always be reachable.
 
   return (
     <div className={cn(
