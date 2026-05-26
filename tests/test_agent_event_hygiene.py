@@ -121,6 +121,7 @@ def service() -> AgentService:
     """
     svc = AgentService.__new__(AgentService)
     svc._last_emitted_task_update = {}
+    svc._task_build_progress_offset = {}
     return svc
 
 
@@ -350,3 +351,190 @@ class TestUpdatePlanStatusEmitEvents:
             assert payload["executionProgress"]["phase"] == "completed"
             assert payload["executionProgress"]["overallProgress"] == 100
             assert payload.get("phase") == "completed"
+
+
+class TestBuildProgressTailEmit:
+    """Tier B auto-reload — _sync_worktree_files streams build-progress.txt
+    deltas as task:log events so the kanban detail view scrolls the agent's
+    narrative in real time.
+
+    These tests exercise the offset-tracking logic directly rather than
+    invoking the full ``_sync_worktree_files`` (which depends on settings,
+    workspace, etc.) — the contract we care about is:
+
+      1. First read of a file emits every line.
+      2. Subsequent reads with no new bytes emit nothing.
+      3. Subsequent reads after append emit only the new tail.
+      4. File truncation resets the offset to 0.
+    """
+
+    @pytest.mark.asyncio
+    async def test_first_read_emits_all_lines(
+        self, service: AgentService, tmp_path: Path
+    ) -> None:
+        bp = tmp_path / "build-progress.txt"
+        bp.write_text("line 1\nline 2\nline 3\n")
+        with patch(
+            "server.websockets.events.emit_task_log",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            await _tail_build_progress(service, bp, _TASK)
+            assert mock_emit.await_count == 3
+            assert service._task_build_progress_offset[_TASK] == bp.stat().st_size
+
+    @pytest.mark.asyncio
+    async def test_unchanged_file_emits_nothing(
+        self, service: AgentService, tmp_path: Path
+    ) -> None:
+        bp = tmp_path / "build-progress.txt"
+        bp.write_text("line 1\nline 2\n")
+        with patch(
+            "server.websockets.events.emit_task_log",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            await _tail_build_progress(service, bp, _TASK)
+            initial = mock_emit.await_count
+            # Second sync tick — file hasn't grown
+            await _tail_build_progress(service, bp, _TASK)
+            assert mock_emit.await_count == initial  # no new emits
+
+    @pytest.mark.asyncio
+    async def test_append_emits_only_new_tail(
+        self, service: AgentService, tmp_path: Path
+    ) -> None:
+        bp = tmp_path / "build-progress.txt"
+        bp.write_text("first\nsecond\n")
+        with patch(
+            "server.websockets.events.emit_task_log",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            await _tail_build_progress(service, bp, _TASK)
+            assert mock_emit.await_count == 2
+            # Agent appends two more lines
+            with bp.open("a", encoding="utf-8") as fh:
+                fh.write("third\nfourth\n")
+            await _tail_build_progress(service, bp, _TASK)
+            assert mock_emit.await_count == 4
+            # The two new emits carry the new content
+            recent_calls = [c.args[1] for c in mock_emit.await_args_list[-2:]]
+            assert recent_calls == ["third", "fourth"]
+
+    @pytest.mark.asyncio
+    async def test_truncation_resets_offset(
+        self, service: AgentService, tmp_path: Path
+    ) -> None:
+        bp = tmp_path / "build-progress.txt"
+        bp.write_text("alpha\nbeta\ngamma\n")
+        with patch(
+            "server.websockets.events.emit_task_log",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            await _tail_build_progress(service, bp, _TASK)
+            # Worktree recreated — file shrinks
+            bp.write_text("newrun\n")
+            await _tail_build_progress(service, bp, _TASK)
+            # Last emit must be the fresh first line, not a stale offset read
+            assert mock_emit.await_args_list[-1].args[1] == "newrun"
+
+
+async def _tail_build_progress(
+    service: AgentService, bp_main: Path, task_id: str
+) -> None:
+    """Mirror of the inline tail-and-emit block in _sync_worktree_files.
+
+    Kept here as a test-only helper so we can exercise the offset logic
+    without booting the full service. Any change to the production block
+    in agent_service.py must be reflected here, or the tests rot — kept
+    short on purpose so drift is obvious in code review.
+    """
+    if not bp_main.exists():
+        return
+    current_size = bp_main.stat().st_size
+    prev_offset = service._task_build_progress_offset.get(task_id, 0)
+    if current_size < prev_offset:
+        prev_offset = 0
+    if current_size > prev_offset:
+        with bp_main.open("r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(prev_offset)
+            new_text = fh.read()
+        service._task_build_progress_offset[task_id] = current_size
+        from server.websockets.events import emit_task_log
+        for line in new_text.splitlines():
+            stripped = line.rstrip()
+            if stripped:
+                await emit_task_log(task_id, stripped)
+
+
+class TestSafeEmitTaskUpdateForceBypass:
+    """``force=True`` bypasses structural dedup.
+
+    The 3-second worktree-sync tick passes ``force=True`` when files were
+    actually copied, because file CONTENT (task_logs.json, build-progress.txt)
+    may have changed even though the dedup signature (phase, progress,
+    subtask-status) did not. Without this escape hatch the kanban board
+    freezes for the full duration of a long subtask.
+    """
+
+    @pytest.mark.asyncio
+    async def test_force_true_bypasses_dedup(self, service: AgentService) -> None:
+        payload = {
+            "executionProgress": {"phase": "coding", "phaseProgress": 50,
+                                  "overallProgress": 30, "currentSubtask": "1.1",
+                                  "message": "0/3 subtasks completed",
+                                  "sequenceNumber": 1, "startedAt": "t"},
+            "phase": "coding",
+            "subtasks": [{"id": "1.1", "status": "pending"}],
+        }
+        with patch(
+            "server.services.agent_service.emit_task_update",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            # First emit: normal dedup path.
+            await service._safe_emit_task_update(_TASK, payload)
+            # Second emit with identical payload but force=True: must go through.
+            await service._safe_emit_task_update(_TASK, payload, force=True)
+            assert mock_emit.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_force_false_still_dedups(self, service: AgentService) -> None:
+        """Regression guard — default behaviour unchanged for other callers."""
+        payload = {
+            "executionProgress": {"phase": "coding", "phaseProgress": 50,
+                                  "overallProgress": 30, "currentSubtask": "1.1",
+                                  "message": "0/3 subtasks completed",
+                                  "sequenceNumber": 1, "startedAt": "t"},
+            "phase": "coding",
+            "subtasks": [{"id": "1.1", "status": "pending"}],
+        }
+        with patch(
+            "server.services.agent_service.emit_task_update",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            await service._safe_emit_task_update(_TASK, payload)
+            await service._safe_emit_task_update(_TASK, payload)  # implicit force=False
+            assert mock_emit.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_long_subtask_sync_heartbeat_unfrozen(
+        self, service: AgentService
+    ) -> None:
+        """Simulates the user-reported symptom: 20 sync ticks during a long
+        subtask, all with identical structural payload. Without ``force=True``
+        the frontend sees ONE event and the kanban freezes. With ``force=True``
+        it sees all 20 — the demo's auto-reload behaviour.
+        """
+        payload = {
+            "executionProgress": {"phase": "coding", "phaseProgress": 50,
+                                  "overallProgress": 30, "currentSubtask": "1.1",
+                                  "message": "0/3 subtasks completed",
+                                  "sequenceNumber": 1, "startedAt": "t"},
+            "phase": "coding",
+            "subtasks": [{"id": "1.1", "status": "pending"}],
+        }
+        with patch(
+            "server.services.agent_service.emit_task_update",
+            new_callable=AsyncMock,
+        ) as mock_emit:
+            for _ in range(20):
+                await service._safe_emit_task_update(_TASK, payload, force=True)
+            assert mock_emit.await_count == 20

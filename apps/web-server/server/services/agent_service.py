@@ -452,6 +452,11 @@ class AgentService:
         self._spec_dirs: dict[str, Path] = {}
         # Track tasks that were manually stopped (to prevent _monitor_process from re-handling)
         self._task_stopped: set[str] = set()
+        # Track byte offset into build-progress.txt per task so the periodic
+        # worktree-sync tick can emit only NEW lines as task:log events. Lets
+        # the kanban detail view scroll the agent's narrative in real time
+        # rather than waiting for full-page reload (Tier B auto-reload).
+        self._task_build_progress_offset: dict[str, int] = {}
 
     @property
     def backend_path(self) -> Path:
@@ -910,12 +915,23 @@ class AgentService:
 
         return proc
 
-    async def _safe_emit_task_update(self, task_id: str, payload: dict) -> None:
+    async def _safe_emit_task_update(
+        self, task_id: str, payload: dict, *, force: bool = False
+    ) -> None:
         """Funnel for all in-service task:update emissions with structural dedup.
 
         Compares the payload's structural signature (phase, progress, subtasks,
         etc. — see ``_dedup_signature``) against the last emission for this
         task. If identical, the emit is suppressed and we log at DEBUG.
+
+        ``force=True`` bypasses the dedup check and always broadcasts. Use it
+        from the periodic worktree-sync tick when we know files were just
+        copied (the file CONTENT may have changed even though the structural
+        signature didn't — e.g. ``task_logs.json`` grew, ``build-progress.txt``
+        was rewritten, qwen3 is mid-tool-loop inside a single subtask). Without
+        this escape hatch the kanban board freezes for the entire duration
+        of a long subtask because dedup correctly observes that phase/progress/
+        subtask-status haven't moved yet.
 
         asyncio single-thread invariant: the comparison and the dict write are
         not separated by any ``await`` — no other coroutine can interleave on
@@ -926,7 +942,7 @@ class AgentService:
         import logging
         _logger = logging.getLogger(__name__)
         sig = _dedup_signature(payload)
-        if self._last_emitted_task_update.get(task_id) == sig:
+        if not force and self._last_emitted_task_update.get(task_id) == sig:
             _logger.debug("[AgentService] dedup-suppressed task:update for %s", task_id)
             return
         self._last_emitted_task_update[task_id] = sig
@@ -1313,6 +1329,37 @@ class AgentService:
         if synced_count > 0:
             logger.debug(f"[AgentService] Synced {synced_count} files from worktree to main spec dir")
 
+        # Tier B auto-reload — stream new build-progress.txt lines as task:log
+        # events.  The agent appends a human-readable narrative ("Starting
+        # phase 1: PROJECT DISCOVERY", "Discovered 22 files", "Working on
+        # 1.1 — ...") that, until now, only the full-page-reload `getTask`
+        # endpoint surfaced.  Tailing the delta on each sync tick lets the
+        # kanban detail view scroll the narrative in real time.
+        if task_id:
+            try:
+                bp_main = main_spec / "build-progress.txt"
+                if bp_main.exists():
+                    current_size = bp_main.stat().st_size
+                    prev_offset = self._task_build_progress_offset.get(task_id, 0)
+                    # If the file was truncated/restarted, reset to 0 rather
+                    # than re-reading nonsense from a stale offset.
+                    if current_size < prev_offset:
+                        prev_offset = 0
+                    if current_size > prev_offset:
+                        with bp_main.open("r", encoding="utf-8", errors="replace") as fh:
+                            fh.seek(prev_offset)
+                            new_text = fh.read()
+                        self._task_build_progress_offset[task_id] = current_size
+                        # Emit one task:log per non-empty line so the frontend
+                        # batches them at its 16-ms tick (useIpc.ts:191).
+                        from ..websockets.events import emit_task_log
+                        for line in new_text.splitlines():
+                            stripped = line.rstrip()
+                            if stripped:
+                                await emit_task_log(task_id, stripped)
+            except Exception as e:
+                logger.debug(f"[AgentService] build-progress tail emit failed: {e}")
+
         # Always check for subtask status changes and emit WebSocket updates
         # This runs independently of file sync to ensure real-time updates
         try:
@@ -1369,26 +1416,35 @@ class AgentService:
                 # Update tracking for next comparison
                 self._task_subtask_states[tracking_key] = current_states
 
-                # Only emit task update if there were changes (to avoid flooding)
+                # Emit task update if subtasks changed OR worktree files were
+                # synced. The ``force`` flag tells _safe_emit_task_update to
+                # bypass the structural dedup when ``synced_count > 0`` —
+                # otherwise long subtasks where phase/progress/subtask-status
+                # haven't moved yet would suppress every 3-sec heartbeat and
+                # the kanban board freezes. Frontend's updateExecutionProgress
+                # is idempotent for identical payloads, so the cost is minimal.
                 if has_changes or synced_count > 0:
                     # Use the actual current execution phase from phase event tracking
                     actual_phase = self._task_current_phases.get(task_id, TaskPhase.PLANNING).value if task_id else "coding"
-                    # Emit task update — use task_id (projectId:specId) so frontend can match
-                    # Routed through _safe_emit_task_update so the periodic sync tick
-                    # cannot re-broadcast identical state during a long phase (Issue #14).
-                    await self._safe_emit_task_update(task_id or spec_id, {
-                        "executionProgress": {
-                            "phase": actual_phase,
-                            "phaseProgress": progress,
-                            "overallProgress": scale_progress(actual_phase, progress),
-                            "currentSubtask": current_subtask,
-                            "message": f"{completed}/{total} subtasks completed",
+                    await self._safe_emit_task_update(
+                        task_id or spec_id,
+                        {
+                            "executionProgress": {
+                                "phase": actual_phase,
+                                "phaseProgress": progress,
+                                "overallProgress": scale_progress(actual_phase, progress),
+                                "currentSubtask": current_subtask,
+                                "message": f"{completed}/{total} subtasks completed",
+                            },
+                            "phase": current_phase,
+                            "subtasksCompleted": completed,
+                            "subtasksTotal": total,
+                            "subtasks": subtasks_data,
                         },
-                        "phase": current_phase,
-                        "subtasksCompleted": completed,
-                        "subtasksTotal": total,
-                        "subtasks": subtasks_data,
-                    })
+                        # Sync ticks always go through: file CONTENT may have
+                        # changed even if the dedup signature didn't.
+                        force=synced_count > 0,
+                    )
         except Exception as e:
             logger.warning(f"[AgentService] Failed to emit task update: {e}")
 
