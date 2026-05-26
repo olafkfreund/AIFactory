@@ -108,12 +108,12 @@ class TestEnsureDaemon:
         socket_dir = tmp_path / "rmux-socket"
         assert not socket_dir.exists()
         wrapper = RmuxWrapper(rmux_bin="rmux", socket_dir=socket_dir)
-        # Patch subprocess.run so we don't actually invoke rmux.  The
-        # wrapper now uses stdlib subprocess (via asyncio.to_thread),
-        # not asyncio.create_subprocess_exec — see commit 5dbff7c.
-        from subprocess import CompletedProcess
-        fake = CompletedProcess(args=[], returncode=1, stdout=b"", stderr=b"no server running on socket")
-        with patch("subprocess.run", return_value=fake):
+        # Patch the subprocess so we don't actually run rmux here.
+        async def _fake_communicate():
+            return (b"", b"no server running on socket")
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_proc:
+            mock_proc.return_value.communicate = _fake_communicate
+            mock_proc.return_value.returncode = 1  # rmux returns non-zero when no server
             try:
                 await wrapper.ensure_daemon()
             except RmuxError:
@@ -135,38 +135,33 @@ class TestEnsureDaemon:
 
 class TestStderrClassification:
     """``_run`` maps rmux's stderr text into the typed exception hierarchy
-    so callers can branch without parsing strings themselves.
-
-    The wrapper now runs ``subprocess.run`` inside ``asyncio.to_thread``
-    (the asyncio-subprocess version hung when the web-server had open
-    PTY fds — see commit 5dbff7c).  Tests patch ``subprocess.run``
-    directly so we don't need a real rmux daemon for unit-level
-    classification checks.
-    """
-
-    @staticmethod
-    def _mock_completed(stderr_bytes: bytes, rc: int):
-        """Build a fake ``CompletedProcess`` matching the wrapper's call shape."""
-        from subprocess import CompletedProcess
-        return CompletedProcess(args=[], returncode=rc, stdout=b"", stderr=stderr_bytes)
+    so callers can branch without parsing strings themselves."""
 
     @pytest.mark.asyncio
     async def test_no_server_raises_daemon_error(self, tmp_path) -> None:
         wrapper = RmuxWrapper(socket_dir=tmp_path)
+        async def fake_comm():
+            return (b"", b"no server running on /tmp/sock")
         with patch(
-            "subprocess.run",
-            return_value=self._mock_completed(b"no server running on /tmp/sock", 1),
-        ):
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+        ) as mock_proc:
+            mock_proc.return_value.communicate = fake_comm
+            mock_proc.return_value.returncode = 1
             with pytest.raises(RmuxDaemonError):
                 await wrapper._run("list-sessions")
 
     @pytest.mark.asyncio
     async def test_missing_session_raises_session_error(self, tmp_path) -> None:
         wrapper = RmuxWrapper(socket_dir=tmp_path)
+        async def fake_comm():
+            return (b"", b"can't find session: ghost-session")
         with patch(
-            "subprocess.run",
-            return_value=self._mock_completed(b"can't find session: ghost-session", 1),
-        ):
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+        ) as mock_proc:
+            mock_proc.return_value.communicate = fake_comm
+            mock_proc.return_value.returncode = 1
             with pytest.raises(RmuxSessionError):
                 await wrapper._run("kill-session", "-t", "ghost-session")
 
@@ -174,10 +169,14 @@ class TestStderrClassification:
     async def test_swallow_no_server_returns_empty(self, tmp_path) -> None:
         """list_sessions wants "no server" to mean [] not raise."""
         wrapper = RmuxWrapper(socket_dir=tmp_path)
+        async def fake_comm():
+            return (b"", b"no server running")
         with patch(
-            "subprocess.run",
-            return_value=self._mock_completed(b"no server running", 1),
-        ):
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+        ) as mock_proc:
+            mock_proc.return_value.communicate = fake_comm
+            mock_proc.return_value.returncode = 1
             result = await wrapper._run(
                 "list-sessions", swallow_no_server=True, capture=True
             )
@@ -188,10 +187,14 @@ class TestStderrClassification:
         """Unrecognised stderr → plain RmuxError (still typed enough to
         catch broadly, but doesn't lie about being a daemon/session error)."""
         wrapper = RmuxWrapper(socket_dir=tmp_path)
+        async def fake_comm():
+            return (b"", b"some other weird rmux error")
         with patch(
-            "subprocess.run",
-            return_value=self._mock_completed(b"some other weird rmux error", 2),
-        ):
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+        ) as mock_proc:
+            mock_proc.return_value.communicate = fake_comm
+            mock_proc.return_value.returncode = 2
             with pytest.raises(RmuxError) as exc_info:
                 await wrapper._run("new-session")
             # Must be plain RmuxError, not the more specific subclasses

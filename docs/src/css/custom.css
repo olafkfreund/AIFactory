@@ -1,0 +1,76 @@
+/**
+ * AIFactory brand colors.  Primary is the blue from the AIFactory logo
+ * (assets/aifactory_logo.png).  Variants generated via Infima's color
+ * mixer convention (darker = -10% L, lighter = +10% L).
+ */
+
+:root {
+  --ifm-color-primary: #1a73e8;
+  --ifm-color-primary-dark: #1668d1;
+  --ifm-color-primary-darker: #1462c4;
+  --ifm-color-primary-darkest: #1051a2;
+  --ifm-color-primary-light: #2e80ea;
+  --ifm-color-primary-lighter: #3a87ec;
+  --ifm-color-primary-lightest: #5e9cf0;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(26, 115, 232, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #5e9cf0;
+  --ifm-color-primary-dark: #4790ee;
+  --ifm-color-primary-darker: #3a87ec;
+  --ifm-color-primary-darkest: #1a73e8;
+  --ifm-color-primary-light: #75a8f2;
+  --ifm-color-primary-lighter: #82b0f3;
+  --ifm-color-primary-lightest: #b1ccf8;
+  --docusaurus-highlighted-code-line-bg: rgba(94, 156, 240, 0.15);
+}
+
+/* Hero on the landing page */
+.hero-banner {
+  padding: 4rem 0 5rem;
+  text-align: center;
+  background: linear-gradient(180deg, var(--ifm-color-primary-darkest) 0%, var(--ifm-color-primary) 100%);
+  color: white;
+}
+
+.hero-banner h1 {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+
+.hero-banner .tagline {
+  font-size: 1.25rem;
+  opacity: 0.9;
+  margin-bottom: 2rem;
+}
+
+.hero-cta {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 2rem;
+}
+
+/* Feature cards on the landing page */
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 2rem;
+  padding: 3rem 0;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.feature-card {
+  padding: 1.5rem;
+  border-radius: 8px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-background-surface-color);
+}
+
+.feature-card h3 {
+  color: var(--ifm-color-primary);
+  margin-top: 0;
+}

@@ -96,22 +96,16 @@ class TestCreateForTask:
     async def test_calls_wrapper_in_correct_order(
         self, registry: SessionRegistry, mock_wrapper: AsyncMock, tmp_path: Path
     ) -> None:
-        """ensure_daemon → kill_session (defensive) → new_session → pipe_pane.
+        """ensure_daemon → new_session → pipe_pane.
 
-        Per R0a gotcha #2 pipe-pane must attach before the agent emits;
-        ``kill_session`` is a defensive reap of any stale namesake
-        left by a previous web-server lifetime (added after R2 when
-        we observed the daemon's session table outliving us).
+        Per R0a gotcha #2: pipe-pane must attach BEFORE the agent has
+        a chance to emit; we enforce that ordering inside create_for_task
+        so callers can't get it wrong.
         """
         await registry.create_for_task("001", tmp_path, "true")
 
         method_order = [c[0] for c in mock_wrapper.method_calls]
-        assert method_order == [
-            "ensure_daemon",
-            "kill_session",
-            "new_session",
-            "pipe_pane",
-        ]
+        assert method_order == ["ensure_daemon", "new_session", "pipe_pane"]
 
     @pytest.mark.asyncio
     async def test_duplicate_spec_id_raises(

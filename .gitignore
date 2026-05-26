@@ -179,7 +179,8 @@ _bmad-output/
 # excluded `.claude/` directory and never sees inner negations.
 .claude/*
 !.claude/skills/
-/docs
+# Note: the legacy /docs ignore was removed when the Docusaurus site
+# was added at docs/.  Build outputs are still ignored via docs/.gitignore.
 OPUS_ANALYSIS_AND_IDEAS.md
 /.github/agents
 .gitfilter-replacements.txt
