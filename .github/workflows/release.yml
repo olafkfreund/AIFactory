@@ -148,7 +148,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push multi-arch image
+      - name: Build + push bank-pilot image (WITH_RMUX=false, multi-arch)
         if: steps.detect.outputs.should_release == 'true'
         id: build
         uses: docker/build-push-action@v6
@@ -160,6 +160,31 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}
             ghcr.io/${{ github.repository_owner }}/aifactory:latest
+          # Default WITH_RMUX=false in the Dockerfile — bank-pilot image
+          # contains no rmux binary and no rmux deps.  Trivy + SBOM
+          # verify this in the post-build steps below.
+          provenance: mode=max
+          sbom: true
+
+      # Epic #44 R3 — second image variant bundling rmux v0.3.1.
+      # Tagged ``:vX-rmux``; intended for dev/demo deployments where
+      # operators opt in via Helm ``rmux.enabled=true``.  Arch-pinned
+      # to amd64 because rmux upstream has no aarch64 Linux build yet
+      # (tracked at https://github.com/Helvesec/rmux/issues).
+      - name: Build + push dev/demo image (WITH_RMUX=true, amd64-only)
+        if: steps.detect.outputs.should_release == 'true'
+        id: build_rmux
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            WITH_RMUX=true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}-rmux
+            ghcr.io/${{ github.repository_owner }}/aifactory:latest-rmux
           provenance: mode=max
           sbom: true
 
@@ -167,28 +192,37 @@ jobs:
         if: steps.detect.outputs.should_release == 'true'
         uses: sigstore/cosign-installer@v3.7.0
 
-      - name: Sign image (cosign keyless via Sigstore + GitHub OIDC)
+      - name: Sign both images (cosign keyless via Sigstore + GitHub OIDC)
         if: steps.detect.outputs.should_release == 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
+          IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
           cosign sign --yes "$IMAGE"
+          cosign sign --yes "$IMAGE_RMUX"
 
       - name: Install Syft
         if: steps.detect.outputs.should_release == 'true'
         uses: anchore/sbom-action/download-syft@v0.17.8
 
-      - name: Generate SBOM + attest with cosign
+      - name: Generate SBOMs + attest both images with cosign
         if: steps.detect.outputs.should_release == 'true'
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
+          IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
+          # Bank-pilot image
           syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
           syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
           cosign attest --yes --type spdxjson    --predicate sbom.spdx.json      "$IMAGE"
           cosign attest --yes --type cyclonedx   --predicate sbom.cyclonedx.json "$IMAGE"
+          # Dev/demo image (rmux variant)
+          syft scan "$IMAGE_RMUX" -o spdx-json=sbom-rmux.spdx.json
+          syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
+          cosign attest --yes --type spdxjson    --predicate sbom-rmux.spdx.json      "$IMAGE_RMUX"
+          cosign attest --yes --type cyclonedx   --predicate sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
 
       - name: Verify signature (release self-test)
         if: steps.detect.outputs.should_release == 'true'
