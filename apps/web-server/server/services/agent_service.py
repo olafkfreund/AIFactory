@@ -2638,6 +2638,23 @@ class AgentService:
         logger.info(f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}")
         logger.info(f"[AgentService] Command: {' '.join(cmd)}")
 
+        # E2E test mode (Epic #44 R4): when AIFACTORY_TEST_AGENT_CMD is
+        # set, the agent subprocess is replaced with the override (e.g.
+        # ``sleep 300``).  The rmux create hook below still fires because
+        # it derives the session purely from spec_id/project_path — so the
+        # Playwright suite can exercise the Live Console without burning
+        # LLM tokens.  MUST NOT be set in production — bypasses the agent
+        # entirely.  We log loudly when it kicks in.
+        _test_cmd = os.environ.get("AIFACTORY_TEST_AGENT_CMD", "").strip()
+        if _test_cmd:
+            import shlex
+            cmd = shlex.split(_test_cmd)
+            logger.warning(
+                "[AgentService] AIFACTORY_TEST_AGENT_CMD active — replacing "
+                "agent command with %r (task_id=%s). MUST NOT be set in prod.",
+                cmd, task_id,
+            )
+
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling
         import pty

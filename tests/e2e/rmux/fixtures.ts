@@ -1,63 +1,108 @@
 /**
  * Shared fixtures for the rmux E2E scenarios.
  *
- * All three scenarios start from the same precondition: a project
- * exists, a task has been started, and the rmux session is alive in
- * the daemon.  This file builds that state via the REST API so each
- * spec stays focused on its specific assertion.
+ * The ``activeTask`` fixture self-seeds: it registers a fixture project,
+ * creates a backlog task, and starts it.  The web-server side honours
+ * ``AIFACTORY_TEST_AGENT_CMD`` (typically ``sleep 300``) which replaces
+ * the agent subprocess with a NOOP — so the rmux session is created
+ * (the integration hook fires on ``start_task_execution`` regardless of
+ * what the subprocess actually does) but no LLM calls happen.
+ *
+ * Teardown stops the task.  Project + spec dirs are left for inspection
+ * if a test failed; ``AIFACTORY_E2E_FIXTURE_DIR`` is the disk root the
+ * CI workflow ``mkdir``s before invoking Playwright.
  */
 
 import { test as base, expect, APIRequestContext } from '@playwright/test';
 
 const API = process.env.AIFACTORY_E2E_API ?? 'http://localhost:3101';
 const TOKEN = process.env.AIFACTORY_E2E_TOKEN ?? '';
-const PROJECT_ID = process.env.AIFACTORY_E2E_PROJECT_ID ?? '';
+const FIXTURE_DIR =
+  process.env.AIFACTORY_E2E_FIXTURE_DIR ?? '/tmp/aifactory-e2e-fixture';
 
-if (!TOKEN || !PROJECT_ID) {
-  console.warn(
-    '[e2e] AIFACTORY_E2E_TOKEN and AIFACTORY_E2E_PROJECT_ID must be set'
-  );
+if (!TOKEN) {
+  console.warn('[e2e] AIFACTORY_E2E_TOKEN not set; expect 401s from the API');
 }
 
 const authHeaders = { Authorization: `Bearer ${TOKEN}` };
 
-/**
- * Snapshot of a live task we created for the test scope.  The fixture
- * tears it down (recover → backlog) on teardown so reruns are idempotent.
- */
 export interface ActiveTask {
   specId: string;
   taskId: string; // composite project:spec
+  projectId: string;
+}
+
+/**
+ * Find-or-create the fixture project.  Idempotent — multiple test runs
+ * share the same project so the projects.json doesn't grow unbounded.
+ */
+async function ensureFixtureProject(
+  request: APIRequestContext
+): Promise<string> {
+  // Try the create path.  409 means the path is already registered;
+  // in that case we list and find the matching project_id.
+  const createRes = await request.post(`${API}/api/projects`, {
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    data: { path: FIXTURE_DIR, name: 'aifactory-e2e-fixture' },
+  });
+
+  if (createRes.status() === 201) {
+    const body = await createRes.json();
+    return body.id;
+  }
+
+  if (createRes.status() === 409) {
+    // Already exists — list and find by path.
+    const listRes = await request.get(`${API}/api/projects`, {
+      headers: authHeaders,
+    });
+    expect(listRes.status()).toBe(200);
+    const projects = (await listRes.json()) as Array<{
+      id: string;
+      path: string;
+    }>;
+    const match = projects.find((p) => p.path === FIXTURE_DIR);
+    if (!match) {
+      throw new Error(
+        `[e2e] project at ${FIXTURE_DIR} 409'd on create but isn't in list`
+      );
+    }
+    return match.id;
+  }
+
+  throw new Error(
+    `[e2e] project create failed: ${createRes.status()} ${await createRes.text()}`
+  );
 }
 
 export const test = base.extend<{
   activeTask: ActiveTask;
 }>({
-  /**
-   * Imports the next available GitHub issue from aifactory-test and
-   * starts it.  Yields once the rmux session for the spec is live
-   * (verified via POST /attach probe — 200 or 409 both prove it).
-   * Teardown: recover the task back to backlog so we don't leak state.
-   */
   activeTask: async ({ request }, use) => {
-    // 1. Find the lowest-numbered backlog task that hasn't been started.
-    const listRes = await request.get(`${API}/api/projects/${PROJECT_ID}/tasks`, {
-      headers: authHeaders,
-    });
-    expect(listRes.status()).toBe(200);
-    const tasks: any[] = await listRes.json();
-    const backlog = tasks
-      .filter((t) => t.status === 'backlog')
-      .sort((a, b) => a.specId.localeCompare(b.specId));
-    if (backlog.length === 0) {
-      throw new Error('[e2e] no backlog task available — reset some via /recover');
-    }
-    const task = backlog[0];
-    const specId = task.specId;
-    const taskId = task.id;
+    const projectId = await ensureFixtureProject(request);
 
-    // 2. Recover with autoRestart → fires agent_service.start_task_execution
-    //    → fires the rmux create hook.
+    // Create a unique task — title is unique-per-run so reruns don't
+    // hit any stale-state issue in the spec_id generator.
+    const stamp = Date.now();
+    const taskTitle = `e2e-fixture-${stamp}`;
+    const createTaskRes = await request.post(
+      `${API}/api/projects/${projectId}/tasks`,
+      {
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        data: {
+          title: taskTitle,
+          description: `Auto-generated E2E fixture task (run ${stamp})`,
+        },
+      }
+    );
+    expect(createTaskRes.status()).toBe(200);
+    const task = await createTaskRes.json();
+    const specId: string = task.specId ?? task.spec_id ?? task.id;
+    const taskId: string = task.id ?? `${projectId}:${specId}`;
+
+    // Start the task.  The web-server has AIFACTORY_TEST_AGENT_CMD set
+    // (e.g. ``sleep 300``), so this spawns a noop subprocess and the
+    // rmux integration hook still creates the live session.
     const recoverRes = await request.post(
       `${API}/api/tasks/${encodeURIComponent(taskId)}/recover`,
       {
@@ -65,10 +110,14 @@ export const test = base.extend<{
         data: { targetStatus: 'backlog', autoRestart: true },
       }
     );
-    expect(recoverRes.status()).toBe(200);
+    expect(
+      [200, 201].includes(recoverRes.status()),
+      `recover/autoRestart failed: ${recoverRes.status()} ${await recoverRes.text()}`
+    ).toBe(true);
 
-    // 3. Poll the attach endpoint until it stops 404'ing — that proves
-    //    the rmux session is registered AND we can reach the bridge.
+    // Poll /attach until the rmux session is registered.  200 = we won
+    // the lock, 409 = something else has it — both prove the session
+    // exists.  404 = session not yet created (or wrong spec_id).
     await expect
       .poll(
         async () => {
@@ -88,9 +137,7 @@ export const test = base.extend<{
       )
       .toBeOneOf([200, 409]);
 
-    // Release the fixture's probe attach so the actual test can claim
-    // its own connection_id.  Ignore errors — could already be detached
-    // by the WS-disconnect path.
+    // Release the probe so the real test can claim a connection_id.
     await request
       .post(
         `${API}/api/tasks/${encodeURIComponent(specId)}/agent-console/detach`,
@@ -101,9 +148,11 @@ export const test = base.extend<{
       )
       .catch(() => {});
 
-    await use({ specId, taskId });
+    await use({ specId, taskId, projectId });
 
-    // ---- Teardown: stop the task and recover it to backlog ----
+    // ---- Teardown ----
+    // Stop the task — best effort, swallow errors.  We don't delete
+    // the project: it's reused across runs and that's the point.
     await request
       .post(`${API}/api/tasks/${encodeURIComponent(taskId)}/stop`, {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },

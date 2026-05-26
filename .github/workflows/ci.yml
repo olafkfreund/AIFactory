@@ -459,10 +459,22 @@ jobs:
       - name: Install Playwright browsers (chromium only)
         run: npx -w apps/frontend-web playwright install --with-deps chromium
 
-      - name: Boot web-server (background, rmux enabled)
+      - name: Prepare fixture project dir
+        # The Playwright ``activeTask`` fixture registers a project at
+        # this path; the web-server's ``POST /api/projects`` validates
+        # the dir exists, so we create it ahead of time.
+        run: mkdir -p /tmp/aifactory-e2e-fixture
+
+      - name: Boot web-server (background, rmux + test-agent enabled)
         env:
           AIFACTORY_RMUX_ENABLED: "true"
           APP_DISABLE_AUTH: "true"  # E2E uses anonymous TestClient-style access
+          # Replace the agent subprocess with ``sleep 300`` — the rmux
+          # session is still created (the integration hook fires on
+          # ``start_task_execution`` regardless of what the subprocess
+          # does), but no LLM calls happen.  See
+          # ``apps/web-server/server/services/agent_service.py``.
+          AIFACTORY_TEST_AGENT_CMD: "sleep 300"
         working-directory: apps/web-server
         run: |
           PYTHONPATH=. ../backend/.venv/bin/python -m server.main &
@@ -483,7 +495,7 @@ jobs:
       - name: Run Playwright suite
         env:
           AIFACTORY_E2E_TOKEN: ""  # auth disabled in CI
-          AIFACTORY_E2E_PROJECT_ID: "00000000-0000-0000-0000-000000000000"  # placeholder; suite creates its own
+          AIFACTORY_E2E_FIXTURE_DIR: "/tmp/aifactory-e2e-fixture"
           CI: "true"
         run: npm -w apps/frontend-web run test:e2e
 
