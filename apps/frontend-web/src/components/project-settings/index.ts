@@ -2,6 +2,7 @@
 export { GeneralSettings } from './GeneralSettings';
 export { IntegrationSettings } from './IntegrationSettings';
 export { SecuritySettings } from './SecuritySettings';
+export { MCPServersTab } from './MCPServersTab';
 export { useProjectSettings } from './hooks/useProjectSettings';
 export type { UseProjectSettingsReturn } from './hooks/useProjectSettings';
 
