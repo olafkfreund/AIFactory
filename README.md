@@ -1,557 +1,123 @@
+<div align="center">
+  <img src="apps/frontend-web/public/logo.png" alt="AIFactory" width="120" />
+
 # AIFactory
 
-**SDD (Spec-Driven Development) — a cloud and web-based AI task management and agent orchestration platform powered by LLMs**
+**Spec-Driven Development for AI agents — plan, code, ship.**
 
-[![CI](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Node.js](https://img.shields.io/badge/Node.js-24%2B-green.svg)](https://nodejs.org/)
-[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
-[![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688.svg)](https://fastapi.tiangolo.com/)
+[![CI](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-dataseeek.github.io%2FAIFactory-blue)](https://dataseeek.github.io/AIFactory/)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![Node 24+](https://img.shields.io/badge/node-24%2B-green)](https://nodejs.org/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
----
+[Docs](https://dataseeek.github.io/AIFactory/) ·
+[Demo](https://dataseeek.github.io/AIFactory/demo) ·
+[Architecture](https://dataseeek.github.io/AIFactory/architecture/overview) ·
+[Roadmap](https://dataseeek.github.io/AIFactory/roadmap) ·
+[Contributing](https://dataseeek.github.io/AIFactory/contributing)
 
-## Overview
-
-AIFactory is a browser-based platform for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for task creation, execution monitoring, terminal access, and code review - all accessible from any browser.
-
-### Key Features
-
-- **Kanban Task Board** - Visual task management with drag-and-drop
-- **Multi-Agent Orchestration** - Planner, Coder, and QA agents work together
-- **Real-time Terminal** - Full PTY terminal access in browser
-- **Monaco Code Editor** - VS Code-like editing experience
-- **Git Worktree Isolation** - Safe, isolated builds per task
-- **AI-Powered QA** - Automated code review and validation
-- **Local LLM Agentic Mode** - Ollama models with native tool calling (Read, Write, Edit, Bash, Glob, Grep) — no API fallback needed
-- **Multi-Provider Support** - Claude, Codex, Gemini, and Ollama with automatic agentic/text-only routing per phase. ⚠ **Gemini CLI sunset 2026-06-18** for free / Pro / Ultra personal-tier users (enterprise tier unaffected) — see the Quick Start section for the migration timeline.
-- **Graphiti Memory** - Cross-session learning and knowledge retention
-- **Multi-Project Support** - Manage multiple repositories
-- **Internationalization** - English, French, Portuguese (Brazil)
+</div>
 
 ---
 
-## Demo Video
+## What it is
 
-[![Watch the AIFactory demo](https://img.youtube.com/vi/L0DEeaLuxYA/maxresdefault.jpg)](https://youtu.be/L0DEeaLuxYA)
+AIFactory turns GitHub issues into shipping code via a coordinated **planner / coder / QA** agent pipeline. You bring an issue (or a one-line task description) — AIFactory writes a spec, plans the work, codes it in an isolated git worktree, validates against the spec's acceptance criteria, and hands you back a merge-ready branch.
 
-_A quick walkthrough of the Kanban board, task creation flow, and agent execution._
+You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive.
 
----
+## Why it's different
+
+- **Spec-first, not vibe-first.** Every agent run starts from a written, reviewable spec with acceptance criteria. Plans are editable before code is written.
+- **Multi-provider by design.** Pick a model per phase. Plan with Claude Opus, code with a cheap local Ollama qwen3, validate with Sonnet. Anthropic / OpenAI / Ollama / Gemini / Codex / any OpenAI-compatible endpoint.
+- **Isolated by default.** Each task runs in its own git worktree. Nothing touches your working tree until you merge.
+- **Auditable.** Hash-chained audit log, on-disk specs+plans+QA reports, full SOC2 evidence catalog in the enterprise build.
+
+## Quickstart (60 seconds)
+
+```bash
+git clone https://github.com/dataseeek/AIFactory
+cd AIFactory
+npm run install:all
+claude setup-token   # paste into apps/backend/.env as CLAUDE_CODE_OAUTH_TOKEN
+```
+
+Start the two servers (in separate terminals):
+
+```bash
+cd apps/web-server  && python -m server.main         # :3101
+cd apps/frontend-web && npm run dev                  # :3100
+```
+
+Open <http://localhost:3100> and create your first project.
+
+Full installation guide: **[Getting Started →](https://dataseeek.github.io/AIFactory/getting-started)**
+
+## See it work
+
+The repo ships with an end-to-end demo that walks through the full flow against a public sample repo:
+
+```bash
+./scripts/demo.sh
+```
+
+It seeds 3 GitHub issues, registers the demo repo with your portal, imports the issues as backlog tasks, prompts you to drive Claude Code from the terminal, then kicks off an autonomous build — all in about 90 seconds. Pass `--yolo` to skip the Enter-prompts between steps.
+
+Walkthrough with screenshots: **[Demo →](https://dataseeek.github.io/AIFactory/demo)**
 
 ## Screenshots
 
-| View | Preview |
-|------|---------|
-| Kanban task board       | ![kanban](assets/screenshots/kanban.png) |
-| Task creation wizard    | ![task-wizard](assets/screenshots/task-wizard.png) |
-| Built-in PTY terminal   | ![terminal](assets/screenshots/terminal.png) |
-| Monaco code editor      | ![editor](assets/screenshots/editor.png) |
-| Settings & onboarding   | ![settings](assets/screenshots/settings.png) |
-
----
-
-## Supported Platforms
-
-| OS / Runtime | Status | Notes |
-|---|---|---|
-| **Ubuntu 24.04 LTS** (kernel 6.8) | ✅ Tested | Primary development environment. Docker 27.x. |
-| Other recent Linux distros | ✅ Should work | Same dependencies (Python 3.12+, Node 24+, optionally Docker). |
-| **macOS** (Intel + Apple Silicon) | ⚠️ Should work, untested | Native install of the backend + frontend is straightforward. The Docker `macvlan` networking in `docker-compose.yml` is **Linux-only** — on macOS run the stack natively, or replace the macvlan network with a bridge + port mapping. |
-| **Windows (WSL2)** | ⚠️ Should work, untested | Run inside an Ubuntu WSL2 distro and treat it as Linux. Native Windows is not supported. |
-| **Windows (native)** | ❌ Not supported | Some scripts assume bash, Linux tools, and a POSIX filesystem. |
-
-> If you successfully run AIFactory on a platform marked untested, open a PR adding your config to this table — happy to mark it ✅.
-
----
-
-## How does it compare?
-
-AIFactory sits next to two open-source projects with overlapping goals but very different shapes:
-
-|  | [Spec Kit](https://github.com/github/spec-kit) | [Compozy](https://github.com/compozy/compozy) | **AIFactory** |
-|---|---|---|---|
-| **Primary interface** | CLI (`specify`) | CLI / single Go binary | Browser UI |
-| **Generates specs** | Yes — its core purpose | Partial — workflow artifacts | Yes — multi-agent spec authoring (3–8 stages, auto-scaled by complexity) |
-| **Executes the spec** | No — hands off to your external agent (Copilot / Claude Code / Cursor) | Orchestrates external agents via the ACP protocol | Yes — built-in Planner / Coder / QA Reviewer / QA Fixer |
-| **Task isolation** | None | Workflow state in a daemon | Git worktree per task |
-| **LLM provider model** | Inherited from whatever agent you hand off to | Inherited from the agent it orchestrates | Direct multi-provider: Claude, Codex CLI, Gemini, Ollama, any OpenAI-compatible endpoint |
-| **License** | MIT | MIT | AGPL-3.0 |
-
-**The short version:** Spec Kit is great for authoring specs you'll execute with an existing agent. Compozy is great if you want a terminal-first multi-agent runner driving external agents. AIFactory is the one to pick if you want the full spec → plan → code → QA loop in one self-hosted browser app, with first-class support for local and OpenAI-compatible LLMs.
-
----
-
-
-## Quick Start
-
-### Prerequisites
-
-- **Node.js 24+** and npm 10+
-- **Python 3.12+**
-- **Git**
-- **Claude Code OAuth Token** (run `claude setup-token`)
-
-### Installation
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/dataseeek/AIFactory.git
-cd AIFactory
-
-# 2. Install all dependencies
-npm run install:all
-
-# 3. Configure environment
-cp apps/backend/.env.example apps/backend/.env
-cp apps/web-server/.env.example apps/web-server/.env
-# Edit .env files with your CLAUDE_CODE_OAUTH_TOKEN
-```
-
-### Running the Application
-
-**Terminal 1 - Backend Server:**
-```bash
-cd apps/web-server
-source .venv/bin/activate
-python -m server.main
-# Server runs on http://localhost:3101
-# API token printed to console and saved to ~/.aifactory/.token
-```
-
-**Terminal 2 - Frontend Dev Server:**
-```bash
-cd apps/frontend-web
-npm run dev
-# UI available at http://localhost:3100
-```
-
-
-### Using AIFactory tools from Claude Code (auto-registered MCP server)
-
-This repo ships a project-scoped [`.mcp.json`](.mcp.json) that auto-registers AIFactory's MCP server (`update_subtask_status`, `get_build_progress`, `record_discovery`, `record_gotcha`, `get_session_context`, `update_qa_status`, `test_memory_integration`) whenever you open the repo with [Claude Code](https://claude.com/claude-code).
-
-**First-time setup**
-
-1. Run `npm run install:backend` from the repo root — this creates the Python venv at `apps/backend/.venv` that the MCP server runs in.
-2. Open the repo in Claude Code. On first launch Claude Code shows a **workspace-trust prompt** for the project-scoped MCP server. Approve it. (Reset later with `claude mcp reset-project-choices`.)
-3. Verify it's wired up: `claude mcp list` should include an `aifactory` entry with scope `project`.
-
-**Making the tools fully usable**
-
-Without context, the 7 tools return a clean "No active spec" guidance error per call (so Claude Code still lists them — they just refuse to write to the wrong place). To make them fully functional, point the server at the spec you're working on:
-
-```bash
-export AIFACTORY_SPEC_DIR=/absolute/path/to/.aifactory/specs/<spec-id>
-claude
-```
-
-This restriction will be lifted in a follow-up issue that adds a `.aifactory/current-spec` pointer file written automatically by AIFactory's backend.
-
-**Migration from the old hand-edit setup**
-
-If you previously added `aifactory` to `~/.claude/settings.json` for personal use, remove it — the project-scoped entry now takes precedence and would shadow yours silently:
-
-```bash
-claude mcp remove aifactory --scope user
-```
-
-Windows users: the `.mcp.json` invokes `bash scripts/start-aifactory-mcp.sh`. Use Git Bash, or override the `command` to `scripts\start-aifactory-mcp.cmd` in your personal `~/.claude/settings.json`.
-
-### Claude Code skill (auto-loaded when you open this repo)
-
-The repo ships a project-scope Claude Code skill at [`.claude/skills/aifactory-spec/SKILL.md`](.claude/skills/aifactory-spec/SKILL.md) that demonstrates the post-Jan-2026 frontmatter (`allowed-tools`, `context: fork`, `paths`, `hooks`). Once you open the repo in [Claude Code](https://claude.com/claude-code), invoke `/aifactory-spec` to kick off spec creation through `apps/backend/runners/spec_runner.py`.
-
-The skill's `paths` glob auto-activates it only inside the AIFactory tree, its narrow `allowed-tools` limits Bash to the spec runner itself, and a skill-scoped `PreToolUse` hook refuses any `rm` command during the skill's lifetime. Follow-up skills (`/aifactory-build`, `/aifactory-qa`) will land in future issues with the same modern shape.
-
-### Sample Claude Code `settings.json`
-
-For users running Claude Code alongside AIFactory, [`guides/settings.example.json`](guides/settings.example.json) is a starter `~/.claude/settings.json` that exercises the post-Jan-2026 fields (`effortLevel`, `skillOverrides`, `skillListingBudgetFraction`, `maxSkillDescriptionChars`, modern `hooks` block matching AIFactory's bash-security pattern). Field-by-field semantics, scope precedence, and common pitfalls live in [`guides/SETTINGS.md`](guides/SETTINGS.md).
-
-### Gemini CLI sunset (2026-06-18) — plan ahead
-
-Google [announced on 2026-05-19](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) that **Gemini CLI is sunsetting on 2026-06-18 for free / Pro / Ultra personal-tier users**. Enterprise-tier users keep working with their existing API key.
-
-AIFactory's Gemini providers (`providers/gemini.py`, `providers/gemini_agentic.py`) emit a `DeprecationWarning` at instantiation pointing at the same announcement. The recommended migration path is the new Antigravity CLI, but **AIFactory does not yet ship an Antigravity provider** — the SDK launched 2026-05-19 (v0.1.0) and Google's ToS for third-party integration is currently unclear. Issue [#13](https://github.com/olafkfreund/AIFactory/issues/13) is parked until the SDK stabilizes and the ToS clarifies.
-
-Affected users have ~4 weeks from launch to switch to enterprise tier, fall back to another provider (Claude / Codex / Ollama), or wait for AIFactory's Antigravity provider once #13 reopens.
-
-### Docker Deployment
-
-AIFactory includes a `Dockerfile` and `docker-compose.yml` for containerized deployment:
-
-```bash
-# Build and start (clean)
-docker compose down -v && docker compose build && docker compose up -d
-
-# Start without rebuilding
-docker compose up -d
-
-# Retrieve the auto-generated API token
-docker exec aifactory cat /home/aifactory/.aifactory/.token
-```
-
-Access the web UI at `http://YOUR_HOST:3101` after the container starts.
-
-See [ContainerAPP.md](ContainerAPP.md) for detailed Docker deployment instructions.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                   AIFactory                        │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   Browser (React 19 + Vite)           Port 3100                 │
-│   ├── Kanban Board                                               │
-│   ├── Terminal Grid (xterm.js)                                   │
-│   ├── Code Editor (Monaco)                                       │
-│   ├── Task Detail Modal                                          │
-│   └── Real-time WebSocket Updates                                │
-│                                                                  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   Web Server (FastAPI)                Port 3101                 │
-│   ├── REST API (/api/*)                                          │
-│   ├── WebSocket Endpoints (/ws/*)                                │
-│   ├── PTY Session Management                                     │
-│   ├── Agent Execution Service                                    │
-│   └── File Operations                                            │
-│                                                                  │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   Backend Agents (Python)                                        │
-│   ├── Claude Agent SDK Integration                               │
-│   ├── Multi-Provider Engine (Claude/Codex/Gemini/Ollama)         │
-│   ├── Local LLM Tool Calling (Read/Write/Edit/Bash/Glob/Grep)   │
-│   ├── Planner Agent (creates implementation plans)               │
-│   ├── Coder Agent (implements subtasks)                          │
-│   ├── QA Reviewer (validates code)                               │
-│   ├── QA Fixer (resolves issues)                                 │
-│   └── Graphiti Memory (LadybugDB)                                │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Tech Stack
-
-### Frontend (`apps/frontend-web/`)
-
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| React | 19.2.3 | UI Framework |
-| TypeScript | 5.9.3 | Type Safety |
-| Vite | 7.2.7 | Build Tool |
-| Tailwind CSS | 4.1.17 | Styling |
-| Zustand | 5.0.9 | State Management |
-| Radix UI | Latest | Accessible Components |
-| xterm.js | 6.0.0 | Terminal Emulation |
-| Monaco Editor | 4.6.0 | Code Editor |
-| i18next | 25.7.3 | Internationalization |
-| @dnd-kit | Latest | Drag and Drop |
-
-### Backend Web Server (`apps/web-server/`)
-
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| FastAPI | Latest | REST API Framework |
-| Uvicorn | Latest | ASGI Server |
-| Pydantic | v2 | Data Validation |
-| ptyprocess | Latest | Terminal Management |
-| websockets | Latest | Real-time Communication |
-| GitPython | Latest | Git Operations |
-
-### Backend Agents (`apps/backend/`)
-
-| Technology | Version | Purpose |
-|------------|---------|---------|
-| Python | 3.12+ | Runtime |
-| Claude Agent SDK | Latest | AI Agent Framework |
-| Ollama | Local | Local LLM with native tool calling |
-| Graphiti | Latest | Knowledge Graph Memory |
-| LadybugDB | Embedded | Graph Database (no Docker) |
-
----
-
-## Project Structure
-
-```
-AIFactory/
-├── apps/
-│   ├── frontend-web/        # React web frontend (Vite)
-│   │   ├── src/
-│   │   │   ├── components/  # 57+ React components
-│   │   │   ├── stores/      # 14 Zustand stores
-│   │   │   ├── hooks/       # Custom React hooks
-│   │   │   ├── lib/         # API client, WebSocket
-│   │   │   └── shared/      # Types, i18n, constants
-│   │   └── package.json
-│   │
-│   ├── web-server/          # FastAPI backend
-│   │   └── server/
-│   │       ├── routes/      # REST API endpoints
-│   │       ├── websockets/  # WebSocket handlers
-│   │       ├── services/    # Agent execution service
-│   │       └── pty/         # Terminal management
-│   │
-│   ├── backend/             # Python agent system
-│   │   ├── agents/          # Planner, Coder agents
-│   │   ├── providers/       # Multi-LLM adapters (Claude, Codex, Gemini, Ollama)
-│   │   ├── tools/           # Reusable tool executor (Read, Write, Edit, Bash, Glob, Grep)
-│   │   ├── qa/              # QA Reviewer, Fixer
-│   │   ├── spec/            # Spec creation pipeline
-│   │   ├── security/        # Command validation & path boundary
-│   │   ├── integrations/    # Graphiti, Linear, GitHub
-│   │   └── prompts/         # Agent system prompts
-│   │
-├── guides/                  # Extended documentation
-├── tests/                   # Test suite
-├── scripts/                 # Build scripts
-├── Dockerfile               # Container image definition
-├── docker-compose.yml       # Container orchestration
-├── CHANGELOG.md             # Version history
-├── RELEASE.md               # Release process guide
-├── AGENTS.md                # AI agent instructions
-├── GEMINI.md                # Gemini AI instructions
-├── ContainerAPP.md          # Docker deployment guide
-└── package.json             # Root package
-```
-
----
-
-## Views & Features
-
-| View | Description |
-|------|-------------|
-| **Kanban** | Task board with drag-and-drop status management |
-| **Terminals** | Multi-terminal grid with PTY support |
-| **Editor** | Monaco code editor with file browser |
-| **Worktrees** | Git worktree management and merge operations |
-| **Roadmap** | AI-generated feature roadmap |
-| **Ideation** | AI-powered feature brainstorming |
-| **Context** | Project indexing and memory system |
-| **GitHub Issues** | GitHub issue integration |
-| **GitLab Issues** | GitLab issue integration |
-| **GitHub PRs** | Pull request AI review |
-| **Changelog** | Automatic changelog generation |
-| **Insights** | AI analysis and project insights |
-| **MCP Overview** | Agent tools documentation |
-
----
-
-## Task Lifecycle
-
-```
-1. CREATE     →  TaskCreationWizard generates spec
-2. PLAN       →  Planner Agent creates subtask plan
-3. CODE       →  Coder Agent implements in isolated worktree
-4. QA REVIEW  →  QA Agent validates against acceptance criteria
-5. FIX        →  QA Fixer resolves any issues (loops back to QA)
-6. MERGE      →  Human reviews and merges to main branch
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-**Backend (`apps/backend/.env`):**
-```bash
-CLAUDE_CODE_OAUTH_TOKEN=your-oauth-token
-GRAPHITI_ENABLED=true
-# Optional: LINEAR_API_KEY, GITHUB_TOKEN
-```
-
-**Web Server (`apps/web-server/.env`):**
-```bash
-APP_HOST=0.0.0.0
-APP_PORT=3101
-APP_DEBUG=true
-# APP_API_TOKEN=xxx  # Auto-generated if not set
-```
-
-**Frontend (`apps/frontend-web/.env`):**
-```bash
-VITE_API_BASE_URL=/api
-VITE_WS_BASE_URL=ws://localhost:3101
-```
-
-### OpenAI-Compatible Endpoints
-
-AIFactory can talk to any service that implements the OpenAI
-`POST /v1/chat/completions` protocol: **LM Studio, vLLM, OpenRouter,
-Together AI, Groq, LocalAI**, and OpenAI itself.
-
-**1. Add the endpoint in the UI**
-Open Settings → LLM Accounts → "OpenAI-Compatible Endpoints" → "Add endpoint".
-Fill in:
-- *Label* (e.g. `LM Studio local`)
-- *Base URL* (e.g. `http://localhost:1234` — without the `/v1` suffix)
-- *API key* (leave blank for local servers like LM Studio that don't need one)
-- *Default model* (e.g. `qwen2.5-coder-32b-instruct`)
-
-Use the "Test" button to confirm the server is reachable.
-
-**2. Select it for a task**
-Prefix the model name with `openai:` or `openai-compatible:`:
-
-| Model string                                  | What happens                                    |
-|-----------------------------------------------|--------------------------------------------------|
-| `openai:`                                     | Use the first saved endpoint + its default model |
-| `openai:qwen/qwen3-14b`                       | Use the first saved endpoint with this model     |
-| `openai-compatible:LM studio .11:qwen3-14b`   | Use the endpoint labelled "LM studio .11"        |
-
-The backend reads ``base_url`` and ``api_key`` directly from the
-``llm_endpoints`` table in ``~/.aifactory/data.db`` — same row the
-Settings UI writes when you click Create.
-
-For power users without the UI, the env vars
-``OPENAI_COMPATIBLE_BASE_URL`` and ``OPENAI_COMPATIBLE_API_KEY`` (or
-``OPENAI_API_KEY``) act as a fallback when no DB row exists.
-
-**Model size matters.** Smaller local models (under ~30B parameters)
-can call tools and write files, but they sometimes drift from the
-exact JSON schemas AIFactory expects (`spec.md`,
-`implementation_plan.json`, `qa_report.md`, etc.). When that happens
-the build pipeline has a built-in retry loop that feeds the
-validation error back to the model and asks it to fix the file —
-but small models don't always recover, and a corrupted spec can fail
-the whole task. For reliable end-to-end runs, prefer one of:
-
-- **Larger local models**: `qwen2.5-coder-32b-instruct`,
-  `llama-3.3-70b-instruct`, `deepseek-coder-v2:33b`
-- **Hosted endpoints via OpenRouter / Together / Groq**: any
-  GPT-4-class or Claude-class model
-- **Test small models on a throwaway task first** before committing
-  to a multi-hour build
-
-Tool-call protocol support also varies — make sure your chosen model
-is one LM Studio / vLLM advertises as supporting OpenAI tool calling.
-
----
-
-## API Endpoints
-
-### REST API (`/api/`)
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/projects` | GET/POST | List/create projects |
-| `/api/projects/{id}` | GET/PUT/DELETE | Project CRUD |
-| `/api/tasks` | GET/POST | List/create tasks |
-| `/api/tasks/{id}/start` | POST | Start task execution |
-| `/api/terminals` | GET/POST | Terminal management |
-| `/api/files/list` | GET | Directory listing |
-| `/api/files/read` | GET | Read file content |
-| `/api/settings` | GET/PUT | App settings |
-
-### WebSocket Endpoints (`/ws/`)
-
-| Endpoint | Purpose |
-|----------|---------|
-| `/ws/events` | Global event broadcasting |
-| `/ws/terminal/{id}` | Terminal I/O |
-| `/ws/tasks/{id}/progress` | Task progress streaming |
-| `/ws/tasks/{id}/logs` | Task log streaming |
-
----
+<table>
+  <tr>
+    <td><img src="docs/static/img/screenshots/03-kanban.png" alt="Kanban board" /></td>
+    <td><img src="docs/static/img/screenshots/09-live-agent-console.png" alt="Live Agent Console" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
+    <td><img src="docs/static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
+  </tr>
+</table>
+
+> Screenshots are auto-captured by `scripts/capture-screenshots.ts` — refresh them with `npm -w apps/frontend-web run capture-screenshots`.
 
 ## Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** - AI assistant instructions and architecture reference
-- **[AGENTS.md](AGENTS.md)** - Agent configuration for AI coding tools
-- **[GEMINI.md](GEMINI.md)** - Gemini AI assistant instructions
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
-- **[RELEASE.md](RELEASE.md)** - Release process documentation
-- **[ContainerAPP.md](ContainerAPP.md)** - Docker deployment guide
-- **[guides/](guides/)** - Extended technical documentation
+The full documentation lives at **<https://dataseeek.github.io/AIFactory/>**:
 
----
+- **[Getting Started](https://dataseeek.github.io/AIFactory/getting-started)** — install + first task
+- **[Demo](https://dataseeek.github.io/AIFactory/demo)** — guided end-to-end walkthrough
+- **[Concepts](https://dataseeek.github.io/AIFactory/concepts/spec-driven-development)** — spec-driven development, multi-provider routing, the rmux Live Console
+- **[Architecture](https://dataseeek.github.io/AIFactory/architecture/overview)** — agents, data flow, security model, Mermaid diagrams
+- **[Wiki](https://dataseeek.github.io/AIFactory/wiki/faq)** — FAQ, troubleshooting, glossary
+- **[Compliance](https://dataseeek.github.io/AIFactory/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
 
-## Scripts
+Legacy guides (pre-2026-05-26 rewrite) are archived under [`docs-archive/2026-05-26/`](docs-archive/2026-05-26/) and remain searchable in git history.
 
-```bash
-# Development
-npm run dev              # Start web frontend (dev mode)
+## Stack
 
-# Installation
-npm run install:all      # Install all dependencies
-npm run install:backend  # Backend only
-npm run install:frontend # Frontend only
-
-# Testing
-npm run test             # Run frontend tests
-npm run test:backend     # Run backend tests
-
-# Production
-npm run build            # Build frontend for production
-```
-
----
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Cannot connect to backend | Ensure web-server running on port 3101 |
-| Invalid token | Get token from `~/.aifactory/.token` |
-| WebSocket failed | Check token in URL, verify ports accessible |
-| Task stuck | Check agent logs in Settings → Logs |
-| Memory errors | Verify `GRAPHITI_ENABLED=true` in backend .env |
-
----
+- **Frontend** — React 19 + Vite + xterm.js + Tailwind v4
+- **Web Server** — FastAPI + WebSocket, Postgres + Alembic migrations
+- **Agent Runtime** — Python 3.12, Claude Agent SDK, provider abstraction over Anthropic / OpenAI / Ollama / Gemini / Codex
+- **Deploy** — Helm chart (`charts/aifactory/`), distroless cosign-signed images, OIDC SSO, KMS-backed encryption at rest
 
 ## Contributing
 
-We welcome contributions! To get started:
+Branching: `dev` is the working branch. Branch from `origin/dev`, sign your commits (`git commit -s`), open PRs against `dev`. `main` is a release branch and only receives promotion merges.
 
-1. Fork the repository
-2. Create a feature branch from `develop`: `git checkout -b fix/my-fix develop`
-3. Make your changes and commit with sign-off: `git commit -s -m "fix: description"`
-4. Push to your branch: `git push origin fix/my-fix`
-5. Create a PR targeting `develop`: `gh pr create --base develop`
+```bash
+git fetch origin
+git checkout -b feat/my-feature origin/dev
+git push -u origin feat/my-feature
+gh pr create --base dev
+```
 
-See [RELEASE.md](RELEASE.md) for the full release and versioning process.
-
----
+CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple compliance gates on every PR. Full guide: **[Contributing →](https://dataseeek.github.io/AIFactory/contributing)**
 
 ## License
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+[AGPL-3.0](LICENSE). For commercial / enterprise licensing options, contact <hello@dataseek.team>.
 
-See [LICENSE](LICENSE) for the full license text and [NOTICE](NOTICE) for
-copyright and upstream attribution (AIFactory is a derivative work of
-[Aperant](https://github.com/AndyMik90/Aperant) by [@AndyMik90](https://github.com/AndyMik90)
-and inherits its AGPL-3.0 license).
+## Acknowledgements
 
----
-
-## Credits
-
-AIFactory is a fork of [Aperant](https://github.com/AndyMik90/Aperant) (formerly *Auto Claude Desktop*) by [@AndyMik90](https://github.com/AndyMik90). We thank the original authors for the foundational work.
-
----
-
-## Support
-
-- **Issues:** [GitHub Issues](https://github.com/dataseeek/AIFactory/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/dataseeek/AIFactory/discussions)
-
----
-
-**Made with AI by DataSeek Team**
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=dataseeek%2FAIFactory&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dataseeek/AIFactory&type=date&legend=top-left" />
- </picture>
-</a>
+Built with the [Claude Agent SDK](https://docs.anthropic.com/claude/docs/claude-agent-sdk), [FastAPI](https://fastapi.tiangolo.com/), [Docusaurus](https://docusaurus.io/), and [rmux](https://github.com/Helvesec/rmux) (terminal multiplexer fork in Rust, used for the Live Console).

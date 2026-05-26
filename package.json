@@ -1,6 +1,6 @@
 {
   "name": "aifactory",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "AIFactory - Web-based AI task management and agent orchestration platform powered by Claude AI",
   "license": "AGPL-3.0",
   "author": "DataSeek Team",
@@ -16,7 +16,12 @@
     "build": "cd apps/frontend-web && npm run build",
     "lint": "cd apps/frontend-web && npm run lint",
     "test": "cd apps/frontend-web && npm test",
-    "test:backend": "node scripts/test-backend.js"
+    "test:backend": "node scripts/test-backend.js",
+    "docs:install": "cd docs && npm install",
+    "docs:dev": "cd docs && npm start",
+    "docs:build": "cd docs && npm run build",
+    "demo": "./scripts/demo.sh",
+    "screenshots": "npm -w apps/frontend-web run capture-screenshots"
   },
   "engines": {
     "node": ">=24.0.0",
