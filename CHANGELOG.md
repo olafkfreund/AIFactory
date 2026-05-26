@@ -1,3 +1,61 @@
+## Unreleased
+
+### ⚖️ Licensing
+
+- **Relicensed from AGPL-3.0 → dual MIT OR GPL-3.0.** AIFactory is now
+  available under the recipient's choice of either license. See
+  `LICENSE`, `LICENSE-MIT`, and `LICENSE-GPL`. SPDX identifier:
+  `MIT OR GPL-3.0-only`. The `dataseek.team` enterprise-licensing
+  contact line (which referenced a non-existent email) was removed.
+
+### 🏷️ Branding
+
+- **Rebrand `dataseeek` → `olafkfreund`.** The `dataseeek` GitHub org
+  doesn't exist; every reference in non-archive files was rewritten to
+  point at the actual repo location (`olafkfreund/AIFactory`) and the
+  actual GitHub Pages URL (`olafkfreund.github.io/AIFactory`). Affects
+  README badges, docusaurus config, package.json URLs, demo repo path,
+  cosign verify identity in image-mirroring drills, and ghcr.io image
+  paths in the Helm chart docs.
+
+### 📚 Documentation
+
+- **Full docs rewrite + GitHub Pages site.** The `guides/` directory was
+  archived to `docs-archive/2026-05-26/guides/` (git history preserved).
+  A fresh Docusaurus site at `docs/` is published to
+  <https://olafkfreund.github.io/AIFactory/> via a new
+  `.github/workflows/docs.yml` workflow. Includes 18 reorganized pages:
+  Getting Started, Demo, Concepts (3), Architecture (3 with Mermaid
+  diagrams), Wiki (FAQ/Troubleshooting/Glossary), Showcase, Compliance
+  (SOC2/GDPR), Contributing, Roadmap. The legacy `guides/` content is
+  unchanged in archive form and still searchable via `git log --follow`.
+
+- **README.md slimmed from 557 to 115 lines.** Hero + tagline + 60-second
+  quickstart + demo callout + screenshot grid + prominent docs links.
+  Everything operational moved to the docs site.
+
+### ✨ Added
+
+- **`scripts/demo.sh`** — end-to-end demo runner (Bash + jq + gh).
+  Seeds `olafkfreund/aifactory-demo` with 3 issues, registers the repo
+  with your portal, imports the issues as backlog tasks, prompts you
+  to drive Claude Code from the terminal, then kicks off an autonomous
+  build. Flags: `--yolo`, `--no-reset`, `--portal=URL`.
+
+- **`scripts/capture-screenshots.ts`** — Playwright headless Chromium
+  driver that captures 14 named PNGs of the marquee portal views to
+  `docs/static/img/screenshots/`. Reproducible — anyone can refresh
+  the gallery with `npm -w apps/frontend-web run capture-screenshots`.
+
+- **`Justfile`** — canonical command index. `just --list` shows
+  `install`, `backend`, `frontend`, `docs-dev`, `demo`, `screenshots`,
+  `test-backend`, `test-frontend`, `test-postgres`, `test-all`.
+
+- **Root `package.json` scripts**: `docs:install`, `docs:dev`,
+  `docs:build`, `demo`, `screenshots`.
+
+---
+
 ## 3.0.2 - 2026-05-26
 
 Patch release fixing two leftover wiring + branding bugs from v3.0.0.
@@ -49,7 +107,7 @@ Patch release fixing two leftover wiring + branding bugs from v3.0.0.
   picks up both fixes with no schema or config changes.
 - Operators who deployed v3.0.1 had a non-functional `/metrics`
   endpoint. After upgrading, configure your Prometheus scrape job
-  against the now-live endpoint (see `guides/operations/observability.md`).
+  against the now-live endpoint (see `docs-archive/2026-05-26/guides/operations/observability.md`).
 
 ## 3.0.1 - 2026-05-26
 

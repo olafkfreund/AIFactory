@@ -122,7 +122,7 @@ gh release create v1.1.0 \
 ```
 
 Or create the release manually via GitHub UI:
-1. Go to [Releases](https://github.com/dataseeek/AIFactory/releases)
+1. Go to [Releases](https://github.com/olafkfreund/AIFactory/releases)
 2. Click "Create a new release"
 3. Select the tag
 4. Add release notes from CHANGELOG.md
@@ -239,6 +239,6 @@ gh release edit v1.1.0 --notes "Updated release notes"
 
 ## Resources
 
-- [GitHub Releases](https://github.com/dataseeek/AIFactory/releases)
+- [GitHub Releases](https://github.com/olafkfreund/AIFactory/releases)
 - [Semantic Versioning](https://semver.org/)
 - [GitHub CLI Documentation](https://cli.github.com/manual/)

@@ -7,9 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 AIFactory is a web-based AI task management and agent orchestration platform that builds software through coordinated AI agent sessions. It uses the Claude Agent SDK to run agents in isolated workspaces with security controls.
 
 **Project:** AIFactory
-**Repository:** https://github.com/dataseeek/AIFactory
+**Repository:** https://github.com/olafkfreund/AIFactory
 **Author:** DataSeek Team
-**License:** AGPL-3.0
+**License:** MIT OR GPL-3.0
 
 **CRITICAL: All AI interactions use the Claude Agent SDK (`claude-agent-sdk` package), NOT the Anthropic API directly.**
 

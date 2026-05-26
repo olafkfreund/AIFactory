@@ -176,5 +176,23 @@
         "unknown": "Automatically switched to {{profileName}}"
       }
     }
+  },
+  "agentConsole": {
+    "tab": "Live Console",
+    "noSession": "No live console available yet. Start the task to see the agent's pane.",
+    "connecting": "Connecting to live console…",
+    "connected": "Connected (read-only)",
+    "connectionLost": "Connection to live console lost",
+    "attachButton": "Attach",
+    "detachButton": "Detach",
+    "attachConfirmTitle": "Attach to the agent's shell?",
+    "attachConfirmBody": "You'll be able to type into the running agent's terminal. Everything you do is recorded in the audit log under your account. This cannot be undone for an in-flight task.",
+    "attachConfirmConfirm": "Attach now",
+    "attachConfirmCancel": "Cancel",
+    "attachedBadge": "Attached — input enabled",
+    "raceLostTitle": "Another session has control",
+    "raceLostBody": "Another viewer is already attached to this task's live console. Try again after they detach.",
+    "raceLostDismiss": "OK",
+    "headerHint": "Read-only mirror of the agent's terminal. Click Attach to take control."
   }
 }

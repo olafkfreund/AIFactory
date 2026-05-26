@@ -12,7 +12,7 @@ Manager).
 helm dep update
 helm install aifactory ./charts/aifactory \
   --set postgres.bundled=true \
-  --set image.repository=ghcr.io/dataseeek/aifactory \
+  --set image.repository=ghcr.io/olafkfreund/aifactory \
   --set image.tag=1.0.0
 ```
 
@@ -53,4 +53,4 @@ migration job mode, customCABundle for TLS-intercepting proxies.
 
 ## License
 
-AGPL-3.0
+Dual-licensed: MIT OR GPL-3.0 — see [LICENSE](../../LICENSE).

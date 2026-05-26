@@ -222,6 +222,28 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Epic #44 R3 — rmux Live Agent Console (opt-in dev/demo capability).
+# Pointing this at a bank-pilot image (built with ``WITH_RMUX=false``)
+# is safe: the pod logs a warning and the feature stays disabled
+# regardless of ``enabled: true`` here, so operator misconfiguration
+# never runs without the binary.
+#
+# When ``enabled: true``:
+#   • ``AIFACTORY_RMUX_ENABLED=true`` env var is injected
+#   • ``emptyDir`` volumes mounted at ``/var/run/aifactory/rmux/`` and
+#     ``/var/run/aifactory/panes/`` (owned by the pod user, tmpfs-backed
+#     by default for low-latency pipe-pane I/O)
+#   • Replicas are pinned to 1 regardless of HPA — multi-replica rmux
+#     requires v1.1's Redis pub/sub for session visibility across pods
+rmux:
+  enabled: false
+  # Memory cap for the panes ``emptyDir`` (FIFOs + buffered bytes).
+  # 100Mi is generous for the v1 single-task-at-a-time model.
+  panesEmptyDirSizeLimit: 100Mi
+  # Memory cap for the rmux daemon socket dir.  10Mi covers the
+  # socket + lockfile with plenty of margin.
+  rmuxEmptyDirSizeLimit: 10Mi
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and

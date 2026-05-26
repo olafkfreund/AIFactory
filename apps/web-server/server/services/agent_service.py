@@ -452,6 +452,11 @@ class AgentService:
         self._spec_dirs: dict[str, Path] = {}
         # Track tasks that were manually stopped (to prevent _monitor_process from re-handling)
         self._task_stopped: set[str] = set()
+        # Track byte offset into build-progress.txt per task so the periodic
+        # worktree-sync tick can emit only NEW lines as task:log events. Lets
+        # the kanban detail view scroll the agent's narrative in real time
+        # rather than waiting for full-page reload (Tier B auto-reload).
+        self._task_build_progress_offset: dict[str, int] = {}
 
     @property
     def backend_path(self) -> Path:
@@ -910,12 +915,23 @@ class AgentService:
 
         return proc
 
-    async def _safe_emit_task_update(self, task_id: str, payload: dict) -> None:
+    async def _safe_emit_task_update(
+        self, task_id: str, payload: dict, *, force: bool = False
+    ) -> None:
         """Funnel for all in-service task:update emissions with structural dedup.
 
         Compares the payload's structural signature (phase, progress, subtasks,
         etc. — see ``_dedup_signature``) against the last emission for this
         task. If identical, the emit is suppressed and we log at DEBUG.
+
+        ``force=True`` bypasses the dedup check and always broadcasts. Use it
+        from the periodic worktree-sync tick when we know files were just
+        copied (the file CONTENT may have changed even though the structural
+        signature didn't — e.g. ``task_logs.json`` grew, ``build-progress.txt``
+        was rewritten, qwen3 is mid-tool-loop inside a single subtask). Without
+        this escape hatch the kanban board freezes for the entire duration
+        of a long subtask because dedup correctly observes that phase/progress/
+        subtask-status haven't moved yet.
 
         asyncio single-thread invariant: the comparison and the dict write are
         not separated by any ``await`` — no other coroutine can interleave on
@@ -926,7 +942,7 @@ class AgentService:
         import logging
         _logger = logging.getLogger(__name__)
         sig = _dedup_signature(payload)
-        if self._last_emitted_task_update.get(task_id) == sig:
+        if not force and self._last_emitted_task_update.get(task_id) == sig:
             _logger.debug("[AgentService] dedup-suppressed task:update for %s", task_id)
             return
         self._last_emitted_task_update[task_id] = sig
@@ -1313,6 +1329,37 @@ class AgentService:
         if synced_count > 0:
             logger.debug(f"[AgentService] Synced {synced_count} files from worktree to main spec dir")
 
+        # Tier B auto-reload — stream new build-progress.txt lines as task:log
+        # events.  The agent appends a human-readable narrative ("Starting
+        # phase 1: PROJECT DISCOVERY", "Discovered 22 files", "Working on
+        # 1.1 — ...") that, until now, only the full-page-reload `getTask`
+        # endpoint surfaced.  Tailing the delta on each sync tick lets the
+        # kanban detail view scroll the narrative in real time.
+        if task_id:
+            try:
+                bp_main = main_spec / "build-progress.txt"
+                if bp_main.exists():
+                    current_size = bp_main.stat().st_size
+                    prev_offset = self._task_build_progress_offset.get(task_id, 0)
+                    # If the file was truncated/restarted, reset to 0 rather
+                    # than re-reading nonsense from a stale offset.
+                    if current_size < prev_offset:
+                        prev_offset = 0
+                    if current_size > prev_offset:
+                        with bp_main.open("r", encoding="utf-8", errors="replace") as fh:
+                            fh.seek(prev_offset)
+                            new_text = fh.read()
+                        self._task_build_progress_offset[task_id] = current_size
+                        # Emit one task:log per non-empty line so the frontend
+                        # batches them at its 16-ms tick (useIpc.ts:191).
+                        from ..websockets.events import emit_task_log
+                        for line in new_text.splitlines():
+                            stripped = line.rstrip()
+                            if stripped:
+                                await emit_task_log(task_id, stripped)
+            except Exception as e:
+                logger.debug(f"[AgentService] build-progress tail emit failed: {e}")
+
         # Always check for subtask status changes and emit WebSocket updates
         # This runs independently of file sync to ensure real-time updates
         try:
@@ -1369,26 +1416,35 @@ class AgentService:
                 # Update tracking for next comparison
                 self._task_subtask_states[tracking_key] = current_states
 
-                # Only emit task update if there were changes (to avoid flooding)
+                # Emit task update if subtasks changed OR worktree files were
+                # synced. The ``force`` flag tells _safe_emit_task_update to
+                # bypass the structural dedup when ``synced_count > 0`` —
+                # otherwise long subtasks where phase/progress/subtask-status
+                # haven't moved yet would suppress every 3-sec heartbeat and
+                # the kanban board freezes. Frontend's updateExecutionProgress
+                # is idempotent for identical payloads, so the cost is minimal.
                 if has_changes or synced_count > 0:
                     # Use the actual current execution phase from phase event tracking
                     actual_phase = self._task_current_phases.get(task_id, TaskPhase.PLANNING).value if task_id else "coding"
-                    # Emit task update — use task_id (projectId:specId) so frontend can match
-                    # Routed through _safe_emit_task_update so the periodic sync tick
-                    # cannot re-broadcast identical state during a long phase (Issue #14).
-                    await self._safe_emit_task_update(task_id or spec_id, {
-                        "executionProgress": {
-                            "phase": actual_phase,
-                            "phaseProgress": progress,
-                            "overallProgress": scale_progress(actual_phase, progress),
-                            "currentSubtask": current_subtask,
-                            "message": f"{completed}/{total} subtasks completed",
+                    await self._safe_emit_task_update(
+                        task_id or spec_id,
+                        {
+                            "executionProgress": {
+                                "phase": actual_phase,
+                                "phaseProgress": progress,
+                                "overallProgress": scale_progress(actual_phase, progress),
+                                "currentSubtask": current_subtask,
+                                "message": f"{completed}/{total} subtasks completed",
+                            },
+                            "phase": current_phase,
+                            "subtasksCompleted": completed,
+                            "subtasksTotal": total,
+                            "subtasks": subtasks_data,
                         },
-                        "phase": current_phase,
-                        "subtasksCompleted": completed,
-                        "subtasksTotal": total,
-                        "subtasks": subtasks_data,
-                    })
+                        # Sync ticks always go through: file CONTENT may have
+                        # changed even if the dedup signature didn't.
+                        force=synced_count > 0,
+                    )
         except Exception as e:
             logger.warning(f"[AgentService] Failed to emit task update: {e}")
 
@@ -1956,6 +2012,15 @@ class AgentService:
                         )
                     except Exception:
                         logger.debug("Failed to send task failure notification", exc_info=True)
+
+            # Epic #44 R1 — reap the rmux session if the feature was on.
+            # Idempotent + no-op when flag is unset, so safe on every path.
+            from ..rmux.integration import reap_if_enabled as _rmux_reap
+            _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+            try:
+                await _rmux_reap(_reap_spec_id)
+            except Exception:
+                logger.warning(f"[AgentService] rmux reap hook raised (ignored); spec_id={_reap_spec_id}")
 
             # Clean up tracking data AFTER all emissions are complete
             # This must happen after _emit_progress so it can still read
@@ -2573,6 +2638,23 @@ class AgentService:
         logger.info(f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}")
         logger.info(f"[AgentService] Command: {' '.join(cmd)}")
 
+        # E2E test mode (Epic #44 R4): when AIFACTORY_TEST_AGENT_CMD is
+        # set, the agent subprocess is replaced with the override (e.g.
+        # ``sleep 300``).  The rmux create hook below still fires because
+        # it derives the session purely from spec_id/project_path — so the
+        # Playwright suite can exercise the Live Console without burning
+        # LLM tokens.  MUST NOT be set in production — bypasses the agent
+        # entirely.  We log loudly when it kicks in.
+        _test_cmd = os.environ.get("AIFACTORY_TEST_AGENT_CMD", "").strip()
+        if _test_cmd:
+            import shlex
+            cmd = shlex.split(_test_cmd)
+            logger.warning(
+                "[AgentService] AIFACTORY_TEST_AGENT_CMD active — replacing "
+                "agent command with %r (task_id=%s). MUST NOT be set in prod.",
+                cmd, task_id,
+            )
+
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling
         import pty
@@ -2635,6 +2717,18 @@ class AgentService:
         # Start process monitor to clean up when finished (with file syncing and failover support)
         asyncio.create_task(self._monitor_process(task_id, proc, project_path, spec_id, cmd, env))
 
+        # Epic #44 R1 — opt-in Live Agent Console. No-op when
+        # AIFACTORY_RMUX_ENABLED is unset/false (the default), so the
+        # bank-pilot image's behaviour is byte-for-byte unchanged.
+        from ..rmux.integration import create_if_enabled as _rmux_create
+        try:
+            await _rmux_create(spec_id, project_path, " ".join(cmd))
+        except Exception:
+            # Already swallowed inside _rmux_create; this except is a
+            # belt-and-suspenders guard so a wrapper bug here cannot
+            # take down task execution.
+            logger.warning(f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}")
+
         return proc
 
     async def stop_task(self, task_id: str) -> bool:
@@ -2679,6 +2773,16 @@ class AgentService:
             project_path = spec_dir.parent.parent.parent
             spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
             await self._update_plan_status(project_path, spec_id, "failed", task_id)
+
+        # Epic #44 R1 — reap rmux session if the feature was on. Idempotent
+        # so safe even though _monitor_process may also reap on the natural
+        # exit path.
+        from ..rmux.integration import reap_if_enabled as _rmux_reap
+        _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+        try:
+            await _rmux_reap(_reap_spec_id)
+        except Exception:
+            logger.warning(f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={_reap_spec_id}")
 
         # Use pop with default to handle race condition where _monitor_process
         # might have already removed the task

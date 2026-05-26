@@ -537,9 +537,22 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             # Load subtasks - can be at top level or nested in phases
             all_subtasks = []
 
-            # First check for top-level subtasks (legacy format)
+            # First check for top-level subtasks (legacy format).
+            # Tolerate both list shape (canonical) and dict shape
+            # (partial-sync artifact from agent_service that maps
+            # subtask_id -> {status, notes, ...}).  Without this guard,
+            # iterating a dict yields the keys as strings and the loop
+            # at the bottom blows up with AttributeError on st.get(...).
             if "subtasks" in plan:
-                all_subtasks.extend(plan["subtasks"])
+                raw_subtasks = plan["subtasks"]
+                if isinstance(raw_subtasks, list):
+                    all_subtasks.extend(raw_subtasks)
+                elif isinstance(raw_subtasks, dict):
+                    for sid, st in raw_subtasks.items():
+                        if isinstance(st, dict):
+                            st_copy = dict(st)
+                            st_copy.setdefault("id", sid)
+                            all_subtasks.append(st_copy)
 
             # Then check for subtasks nested in phases (current format)
             if "phases" in plan:
@@ -556,12 +569,29 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             if all_subtasks:
                 metadata["subtasks"] = []
                 for i, st in enumerate(all_subtasks):
-                    # Build files list from 'file' (single) or 'files' (array) fields
+                    # Build files list from 'file' (single) or 'files'
+                    # (array) fields.  Tolerate three shapes the planner
+                    # has been observed to emit:
+                    #   files: "path/to/x.py"                  (str)
+                    #   files: ["a.py", "b.py"]                (list[str])
+                    #   files: {"create": ["a.py"], "modify": ["b.py"]}
+                    #     (dict — happens when the planner groups files
+                    #     by intent; flatten the values into a single
+                    #     list of strings)
                     files = []
                     if st.get("file"):
                         files.append(st["file"])
-                    if st.get("files"):
-                        files.extend(st["files"] if isinstance(st["files"], list) else [st["files"]])
+                    raw_files = st.get("files")
+                    if isinstance(raw_files, str):
+                        files.append(raw_files)
+                    elif isinstance(raw_files, list):
+                        files.extend(f for f in raw_files if isinstance(f, str))
+                    elif isinstance(raw_files, dict):
+                        for v in raw_files.values():
+                            if isinstance(v, list):
+                                files.extend(f for f in v if isinstance(f, str))
+                            elif isinstance(v, str):
+                                files.append(v)
 
                     # Build verification from 'verification' or 'verification_method' fields
                     verification = None

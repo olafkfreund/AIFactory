@@ -60,6 +60,48 @@ RUN apk add --no-cache \
         npm \
         wget
 
+# Epic #44 R3 — optionally bundle the rmux binary.
+#
+# Build args:
+#   WITH_RMUX=false   (default — bank-pilot image; no rmux binary at all)
+#   WITH_RMUX=true    (dev/demo image; pins rmux v0.3.1 by SHA-256)
+#
+# CI matrix builds both: ``aifactory:vX`` (default) and ``aifactory:vX-rmux``.
+# Bank-pilot image's Trivy report + Syft SBOM contain no rmux components.
+#
+# Arch support: only ``x86_64-unknown-linux-gnu`` is available upstream as
+# of v0.3.1 (no aarch64 Linux build yet — tracked in Helvesec/rmux roadmap).
+# ARM64 builds fail-fast with a clear message rather than silently install
+# the wrong binary.
+ARG WITH_RMUX=false
+ARG RMUX_VERSION=0.3.1
+# SHA-256 of rmux-v0.3.1-x86_64-unknown-linux-gnu.tar.gz from upstream
+# SHA256SUMS file.  Bump together with RMUX_VERSION on upgrades.
+ARG RMUX_SHA256_AMD64=511d3caceea4fcbc1458877a192efffcde5ceb1455f040f1a79c63ab00804cf8
+RUN if [ "$WITH_RMUX" = "true" ]; then \
+      arch="$(uname -m)"; \
+      case "$arch" in \
+        x86_64) \
+          target="x86_64-unknown-linux-gnu"; \
+          sha="${RMUX_SHA256_AMD64}" \
+          ;; \
+        *) \
+          echo "WITH_RMUX=true: unsupported arch '$arch' (rmux v${RMUX_VERSION} ships x86_64 Linux only)" >&2; \
+          exit 1 \
+          ;; \
+      esac; \
+      curl -fsSL "https://github.com/Helvesec/rmux/releases/download/v${RMUX_VERSION}/rmux-v${RMUX_VERSION}-${target}.tar.gz" \
+           -o /tmp/rmux.tar.gz; \
+      echo "${sha}  /tmp/rmux.tar.gz" | sha256sum -c -; \
+      mkdir -p /tmp/rmux-extract; \
+      tar -xzf /tmp/rmux.tar.gz -C /tmp/rmux-extract; \
+      find /tmp/rmux-extract -name rmux -type f -executable -exec install -m 0755 {} /usr/local/bin/rmux \; ; \
+      rm -rf /tmp/rmux.tar.gz /tmp/rmux-extract; \
+      /usr/local/bin/rmux -V; \
+    else \
+      echo "rmux integration not bundled (WITH_RMUX=false — bank-pilot image)"; \
+    fi
+
 # Project layout (keeping the legacy path under /home/projects for minimum
 # diff with the existing Dockerfile; P0.4 may relocate to /app under nonroot)
 RUN mkdir -p /home/projects/MagesticAI \

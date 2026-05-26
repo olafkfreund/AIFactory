@@ -348,8 +348,10 @@ def get_phase_model(
     Get the resolved model ID for a specific execution phase.
 
     Priority:
-    1. CLI argument (if provided)
-    2. Phase-specific config from task_metadata.json (if auto profile)
+    1. Phase-specific config from task_metadata.json (if auto profile) — wins
+       over CLI default because the auto profile is the user's explicit
+       per-phase choice (e.g. Claude plans, Ollama codes).
+    2. CLI argument (if provided)
     3. Single model from task_metadata.json (if not auto profile)
     4. Default phase configuration
 
@@ -361,23 +363,25 @@ def get_phase_model(
     Returns:
         Resolved full model ID
     """
-    # CLI argument takes precedence
+    # Load task metadata first — the auto profile's per-phase choice is the
+    # user's most specific intent and must win over the run.py CLI default
+    # model. (Without this, e.g. coding always falls back to the CLI's
+    # 'sonnet' default and never routes to Ollama/qwen3 even when the user
+    # selected ollama:qwen3:14b for the coding phase.)
+    metadata = load_task_metadata(spec_dir)
+
+    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"]
+        model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
+        return resolve_model_id(model)
+
+    # CLI argument takes precedence over non-auto metadata
     if cli_model:
         return resolve_model_id(cli_model)
 
-    # Load task metadata
-    metadata = load_task_metadata(spec_dir)
-
-    if metadata:
-        # Check for auto profile with phase-specific config
-        if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-            phase_models = metadata["phaseModels"]
-            model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-            return resolve_model_id(model)
-
-        # Non-auto profile: use single model
-        if metadata.get("model"):
-            return resolve_model_id(metadata["model"])
+    # Non-auto profile: use single model from metadata
+    if metadata and metadata.get("model"):
+        return resolve_model_id(metadata["model"])
 
     # Fall back to default phase configuration
     return resolve_model_id(DEFAULT_PHASE_MODELS[phase])
@@ -402,20 +406,19 @@ def get_phase_model_betas(
     Returns:
         List of beta header strings, or empty list if none required
     """
-    # Determine the model shorthand (before resolution to full ID)
+    # Same precedence as get_phase_model: auto profile metadata wins over CLI.
+    metadata = load_task_metadata(spec_dir)
+
+    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
+        phase_models = metadata["phaseModels"]
+        model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
+        return get_model_betas(model_short)
+
     if cli_model:
         return get_model_betas(cli_model)
 
-    metadata = load_task_metadata(spec_dir)
-
-    if metadata:
-        if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
-            phase_models = metadata["phaseModels"]
-            model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
-            return get_model_betas(model_short)
-
-        if metadata.get("model"):
-            return get_model_betas(metadata["model"])
+    if metadata and metadata.get("model"):
+        return get_model_betas(metadata["model"])
 
     return get_model_betas(DEFAULT_PHASE_MODELS[phase])
 
@@ -442,24 +445,19 @@ def get_phase_thinking(
     Returns:
         Thinking level string
     """
-    # CLI argument takes precedence
+    # Same precedence as get_phase_model: auto profile metadata wins over CLI.
+    metadata = load_task_metadata(spec_dir)
+
+    if metadata and metadata.get("isAutoProfile") and metadata.get("phaseThinking"):
+        phase_thinking = metadata["phaseThinking"]
+        return phase_thinking.get(phase, DEFAULT_PHASE_THINKING[phase])
+
     if cli_thinking:
         return cli_thinking
 
-    # Load task metadata
-    metadata = load_task_metadata(spec_dir)
+    if metadata and metadata.get("thinkingLevel"):
+        return metadata["thinkingLevel"]
 
-    if metadata:
-        # Check for auto profile with phase-specific config
-        if metadata.get("isAutoProfile") and metadata.get("phaseThinking"):
-            phase_thinking = metadata["phaseThinking"]
-            return phase_thinking.get(phase, DEFAULT_PHASE_THINKING[phase])
-
-        # Non-auto profile: use single thinking level
-        if metadata.get("thinkingLevel"):
-            return metadata["thinkingLevel"]
-
-    # Fall back to default phase configuration
     return DEFAULT_PHASE_THINKING[phase]
 
 

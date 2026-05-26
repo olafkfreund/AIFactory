@@ -8,7 +8,7 @@
 # Modes:
 #   --dry-run  : Print the cosign commands; don't execute.
 #   (no flag)  : Live mirror. Requires:
-#                  SOURCE_IMAGE          — e.g. ghcr.io/dataseeek/aifactory:1.0.0
+#                  SOURCE_IMAGE          — e.g. ghcr.io/olafkfreund/aifactory:1.0.0
 #                  TARGET_REGISTRY       — e.g. registry.internal.bank.com/aifactory
 #                  Push creds for TARGET_REGISTRY
 #                  cosign 2.2+ on PATH
@@ -38,7 +38,7 @@ USAGE
   image-mirroring.sh [--dry-run] [--help]
 
 ENVIRONMENT
-  SOURCE_IMAGE         e.g. ghcr.io/dataseeek/aifactory:1.0.0
+  SOURCE_IMAGE         e.g. ghcr.io/olafkfreund/aifactory:1.0.0
   TARGET_REGISTRY      e.g. registry.internal.bank.com/aifactory:1.0.0
   COSIGN_VERIFY_OIDC   Expected OIDC issuer for upstream signature
                        (defaults to https://token.actions.githubusercontent.com)
@@ -75,7 +75,7 @@ main() {
     if [[ "$DRY_RUN" == "0" ]]; then
         cosign verify \
             --certificate-oidc-issuer "${COSIGN_VERIFY_OIDC:-https://token.actions.githubusercontent.com}" \
-            --certificate-identity-regexp "${COSIGN_VERIFY_IDENTITY:-https://github.com/dataseeek/AIFactory/.+}" \
+            --certificate-identity-regexp "${COSIGN_VERIFY_IDENTITY:-https://github.com/olafkfreund/AIFactory/.+}" \
             "$SOURCE_IMAGE"
     fi
 
@@ -88,7 +88,7 @@ main() {
     if [[ "$DRY_RUN" == "0" ]]; then
         cosign verify \
             --certificate-oidc-issuer "${COSIGN_VERIFY_OIDC:-https://token.actions.githubusercontent.com}" \
-            --certificate-identity-regexp "${COSIGN_VERIFY_IDENTITY:-https://github.com/dataseeek/AIFactory/.+}" \
+            --certificate-identity-regexp "${COSIGN_VERIFY_IDENTITY:-https://github.com/olafkfreund/AIFactory/.+}" \
             "$TARGET_REGISTRY"
     fi
 

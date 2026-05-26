@@ -4,9 +4,9 @@ A quick map of where to go for what.
 
 | You want to…                              | Go to                                                          |
 |-------------------------------------------|----------------------------------------------------------------|
-| Ask a question, share an idea, or chat    | [GitHub Discussions](https://github.com/dataseeek/AIFactory/discussions) |
-| Report a bug                              | [Bug report template](https://github.com/dataseeek/AIFactory/issues/new?template=bug_report.yml) |
-| Suggest a feature or change in behaviour  | [Feature request via Discussions](https://github.com/dataseeek/AIFactory/discussions/categories/ideas) |
+| Ask a question, share an idea, or chat    | [GitHub Discussions](https://github.com/olafkfreund/AIFactory/discussions) |
+| Report a bug                              | [Bug report template](https://github.com/olafkfreund/AIFactory/issues/new?template=bug_report.yml) |
+| Suggest a feature or change in behaviour  | [Feature request via Discussions](https://github.com/olafkfreund/AIFactory/discussions/categories/ideas) |
 | Read the docs                             | [`README.md`](README.md), [`guides/`](guides/), [`CLAUDE.md`](CLAUDE.md) |
 | Set up the project                        | [README → Quick Start](README.md#quick-start), [CONTRIBUTING.md](CONTRIBUTING.md#development-setup) |
 | Understand release versions               | [RELEASE.md](RELEASE.md), [CHANGELOG.md](CHANGELOG.md)         |

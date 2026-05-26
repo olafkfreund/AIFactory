@@ -5,7 +5,11 @@ metadata:
   labels:
     {{- include "aifactory.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  # Epic #44 R3 — multi-replica rmux is out of scope for v1 (cross-pod
+  # session visibility needs Redis pub/sub, planned for v1.1).  Pin
+  # to 1 when ``rmux.enabled=true`` regardless of what replicaCount or
+  # HPA say.  When rmux is off, honour the operator-set replicaCount.
+  replicas: {{ if .Values.rmux.enabled }}1{{ else }}{{ .Values.replicaCount }}{{ end }}
   strategy:
     # Rolling update with maxSurge=0 — v1.0 has one replica, so we
     # tear down before bringing up to avoid double-DB-writes during
@@ -87,6 +91,17 @@ spec:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
             {{- end }}
+            {{- if .Values.rmux.enabled }}
+            # Epic #44 R3 — flip on the rmux Live Agent Console.
+            # The web-server's startup runtime checks for the binary
+            # before mounting the bridge router; if WITH_RMUX=false
+            # (no binary in the image), the flag is honoured at the
+            # env level but the feature stays off and a warning is
+            # logged — operator misconfiguration can't run rmux without
+            # the binary.
+            - name: AIFACTORY_RMUX_ENABLED
+              value: "true"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/health
@@ -111,6 +126,15 @@ spec:
               mountPath: /tmp
             - name: aifactory-data
               mountPath: /home/nonroot/.aifactory
+            {{- if .Values.rmux.enabled }}
+            # Epic #44 R3 — rmux daemon socket + pane FIFOs.  Owned by
+            # the pod user (nonroot) and tmpfs-backed for low-latency
+            # pipe-pane I/O.
+            - name: aifactory-rmux
+              mountPath: /var/run/aifactory/rmux
+            - name: aifactory-panes
+              mountPath: /var/run/aifactory/panes
+            {{- end }}
             {{- if and .Values.global .Values.global.customCABundle.secretName }}
             - name: custom-ca
               mountPath: /etc/ssl/custom-ca
@@ -121,6 +145,16 @@ spec:
           emptyDir: {}
         - name: aifactory-data
           emptyDir: {}
+        {{- if .Values.rmux.enabled }}
+        - name: aifactory-rmux
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.rmux.rmuxEmptyDirSizeLimit }}
+        - name: aifactory-panes
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.rmux.panesEmptyDirSizeLimit }}
+        {{- end }}
         {{- if and .Values.global .Values.global.customCABundle.secretName }}
         - name: custom-ca
           secret:
