@@ -204,7 +204,11 @@ from agents.tools_pkg import (
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
 from core.auth import get_sdk_env_vars, require_auth_token
-from prompts_pkg.project_context import detect_project_capabilities, load_project_index
+from prompts_pkg.project_context import (
+    detect_infra_markers,
+    detect_project_capabilities,
+    load_project_index,
+)
 from security import bash_security_hook
 
 
@@ -587,6 +591,11 @@ def create_client(
     # Uses caching to avoid reloading on every create_client() call
     project_index, project_capabilities = _get_cached_project_data(project_dir)
 
+    # Filesystem-only scan for infra markers (k8s/, terraform/, *.bicep, ...).
+    # Cheap enough that we recompute every spawn rather than cache —
+    # operators often add infra directories mid-task and expect immediate effect.
+    infra_markers = detect_infra_markers(project_dir)
+
     # Load per-project MCP configuration from .aifactory/.env
     mcp_config = load_project_mcp_config(project_dir)
 
@@ -601,11 +610,14 @@ def create_client(
 
     # Get required MCP servers for this agent type
     # This is the key optimization - only start servers the agent needs
-    # Now also respects per-project MCP configuration
+    # Now also respects per-project MCP configuration AND the catalog of
+    # default infra servers (github/k8s/aws/azure) which auto-enable when
+    # markers + credentials line up.
     required_servers = get_required_mcp_servers(
         agent_type,
         project_capabilities,
         mcp_config,
+        infra_markers,
     )
 
     # Check if Graphiti MCP is enabled (already filtered by get_required_mcp_servers)
@@ -793,6 +805,31 @@ def create_client(
         magestic_ai_mcp_server = create_magestic_ai_mcp_server(spec_dir, project_dir)
         if magestic_ai_mcp_server:
             mcp_servers["aifactory"] = magestic_ai_mcp_server
+
+    # ========== Catalog-driven servers (github, kubernetes, aws, azure, ...) =====
+    # ``get_required_mcp_servers`` already filtered the catalog by agent +
+    # markers + credentials. Here we just materialize the launcher config.
+    # ImportError is tolerated so a broken framework module doesn't take down
+    # the whole agent boot path; failures show up as missing tools, not a
+    # subprocess crash.
+    try:
+        from agents.tools_pkg.mcp_catalog import get_catalog_entry
+        from core.mcp_credentials import get_credential_status
+
+        for server_id in required_servers:
+            if server_id in mcp_servers:
+                continue  # already configured above
+            entry = get_catalog_entry(server_id)
+            if entry is None:
+                continue
+            creds = (
+                get_credential_status(entry.credential_provider)
+                if entry.credential_provider
+                else None
+            )
+            mcp_servers[entry.id] = entry.build_server_config(creds, read_only=True)
+    except ImportError as exc:
+        print(f"   - MCP catalog unavailable ({exc}); catalog servers skipped")
 
     # Add custom MCP servers from project config
     custom_servers = mcp_config.get("CUSTOM_MCP_SERVERS", [])
