@@ -400,6 +400,113 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/rmux/ -v
 
+  rmux-e2e:
+    name: rmux (R4 Playwright E2E)
+    runs-on: ubuntu-latest
+    # Epic #44 R4 — three Playwright scenarios driving the Live
+    # Agent Console end-to-end against a real web-server + Vite +
+    # rmux daemon.  Headless Chromium; zero retry budget (any flake
+    # is a real race to fix, not paper over).
+    #
+    # Continue-on-error so a flake doesn't block PRs — but the job
+    # still shows red.  Operators can downgrade this to a required
+    # check once we have 30 consecutive green runs.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rmux v0.3.1
+        run: |
+          set -euo pipefail
+          VERSION="0.3.1"
+          TARGET="x86_64-unknown-linux-gnu"
+          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/rmux-v${VERSION}-${TARGET}.tar.gz"
+          curl -fsSL -o /tmp/rmux.tar.gz "${URL}"
+          mkdir -p /tmp/rmux-extract
+          tar -xzf /tmp/rmux.tar.gz -C /tmp/rmux-extract
+          find /tmp/rmux-extract -name rmux -type f -executable \
+            -exec sudo install -m 0755 {} /usr/local/bin/rmux \;
+          rmux -V
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install backend deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Set up Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace deps
+        run: npm ci
+
+      - name: Install Playwright browsers (chromium only)
+        run: npx -w apps/frontend-web playwright install --with-deps chromium
+
+      - name: Boot web-server (background, rmux enabled)
+        env:
+          AIFACTORY_RMUX_ENABLED: "true"
+          APP_DISABLE_AUTH: "true"  # E2E uses anonymous TestClient-style access
+        working-directory: apps/web-server
+        run: |
+          PYTHONPATH=. ../backend/.venv/bin/python -m server.main &
+          echo $! > /tmp/web-server.pid
+          # Wait for /api/health
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3101/api/health && break || sleep 1
+          done
+
+      - name: Boot Vite dev server (background)
+        run: |
+          npm -w apps/frontend-web run dev > /tmp/vite.log 2>&1 &
+          echo $! > /tmp/vite.pid
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3100/ > /dev/null && break || sleep 1
+          done
+
+      - name: Run Playwright suite
+        env:
+          AIFACTORY_E2E_TOKEN: ""  # auth disabled in CI
+          AIFACTORY_E2E_PROJECT_ID: "00000000-0000-0000-0000-000000000000"  # placeholder; suite creates its own
+          CI: "true"
+        run: npm -w apps/frontend-web run test:e2e
+
+      - name: Tail logs on failure
+        if: failure()
+        run: |
+          echo '=== web-server log ==='
+          cat /tmp/vite.log 2>/dev/null || true
+
+      - name: Stop background processes
+        if: always()
+        run: |
+          kill $(cat /tmp/web-server.pid) 2>/dev/null || true
+          kill $(cat /tmp/vite.pid) 2>/dev/null || true
+
+      - name: Upload Playwright HTML report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/rmux/playwright-report/
+          retention-days: 14
+
   evidence-acceptance:
     name: evidence (P7 acceptance)
     runs-on: ubuntu-latest
