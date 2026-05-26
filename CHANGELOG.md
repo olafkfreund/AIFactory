@@ -1,3 +1,41 @@
+## 3.0.1 - 2026-05-26
+
+Patch release with two operator-visible fixes.
+
+### 🛠️ Fixed
+
+- **SQLite migration crash on fresh install**. The P2.3
+  `encrypt_credentials` migration (`c6e3b2d4a8f0`) used a direct
+  `op.alter_column(nullable=False)` to re-apply the NOT NULL
+  constraint on `email_accounts.access_token` after the encrypted-
+  column swap. SQLite doesn't support `ALTER TABLE ... ALTER
+  COLUMN ... SET NOT NULL` — backends booting against a fresh
+  SQLite (`autoApply=true` in the Helm chart's POC path; default
+  local-dev path) crashed during `alembic upgrade head`. Wrapped
+  the step in `op.batch_alter_table`, mirroring P3.3's
+  `d8f1a3c5e7b9` migration. Postgres deployments are unaffected
+  (their behavior was correct via the same native ALTER).
+  Regression test added at `tests/secrets/test_p2_sqlite_migration.py`
+  that runs `alembic upgrade head` against a temp SQLite file —
+  gates every PR going forward.
+
+- **AIFactory logo not displaying in the sidebar/loading screen/
+  onboarding**. The new logo + favicon assets were stashed before
+  P1 work began and never restored to the main release. Bundle
+  contains the updated `logo.png` (547 KB, full-res AIFactory
+  brand), `favicon.ico` (15 KB), `apple-touch-icon.png` (43 KB),
+  and 16/32 px favicon variants. The sidebar `<img src="/logo.png">`
+  reference is unchanged — the new files just slot in.
+
+### Upgrade notes
+
+- **Operators on v3.0.0**: this is a backwards-compatible patch.
+  `helm upgrade` to v3.0.1 picks up both fixes.
+- **Operators who already migrated** (the SQLite migration crash
+  blocked them from getting that far on v3.0.0): no special
+  handling needed — fresh install + `helm install aifactory --version 3.0.1`
+  works end-to-end.
+
 ## 3.0.0 - 2026-05-26
 
 The AIFactory **enterprise GA** release (Epic #26). Self-hosted Helm

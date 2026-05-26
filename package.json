@@ -1,6 +1,6 @@
 {
   "name": "aifactory",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "AIFactory - Web-based AI task management and agent orchestration platform powered by Claude AI",
   "license": "AGPL-3.0",
   "author": "DataSeek Team",
