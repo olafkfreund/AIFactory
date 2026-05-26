@@ -127,13 +127,19 @@ def upgrade() -> None:
         # Step 2 backfilled every row that wasn't already NULL — and if a row
         # was originally NULL on a NOT NULL column the original schema was
         # already inconsistent and we want this to fail loudly.
+        #
+        # v3.0.1: wrap in batch_alter_table for SQLite portability. SQLite
+        # doesn't support `ALTER TABLE ... ALTER COLUMN ... SET NOT NULL`
+        # via plain ALTER; batch mode re-creates the table atomically with
+        # the new NOT NULL constraint. On Postgres the batch reduces to a
+        # native ALTER COLUMN. Same pattern P3.3's d8f1a3c5e7b9 uses.
         if not nullable:
-            op.alter_column(
-                table,
-                col,
-                existing_type=sa.LargeBinary(),
-                nullable=False,
-            )
+            with op.batch_alter_table(table) as batch:
+                batch.alter_column(
+                    col,
+                    existing_type=sa.LargeBinary(),
+                    nullable=False,
+                )
 
 
 def downgrade() -> None:

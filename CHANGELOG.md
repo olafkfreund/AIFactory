@@ -1,3 +1,150 @@
+## 3.0.1 - 2026-05-26
+
+Patch release with two operator-visible fixes.
+
+### 🛠️ Fixed
+
+- **SQLite migration crash on fresh install**. The P2.3
+  `encrypt_credentials` migration (`c6e3b2d4a8f0`) used a direct
+  `op.alter_column(nullable=False)` to re-apply the NOT NULL
+  constraint on `email_accounts.access_token` after the encrypted-
+  column swap. SQLite doesn't support `ALTER TABLE ... ALTER
+  COLUMN ... SET NOT NULL` — backends booting against a fresh
+  SQLite (`autoApply=true` in the Helm chart's POC path; default
+  local-dev path) crashed during `alembic upgrade head`. Wrapped
+  the step in `op.batch_alter_table`, mirroring P3.3's
+  `d8f1a3c5e7b9` migration. Postgres deployments are unaffected
+  (their behavior was correct via the same native ALTER).
+  Regression test added at `tests/secrets/test_p2_sqlite_migration.py`
+  that runs `alembic upgrade head` against a temp SQLite file —
+  gates every PR going forward.
+
+- **AIFactory logo not displaying in the sidebar/loading screen/
+  onboarding**. The new logo + favicon assets were stashed before
+  P1 work began and never restored to the main release. Bundle
+  contains the updated `logo.png` (547 KB, full-res AIFactory
+  brand), `favicon.ico` (15 KB), `apple-touch-icon.png` (43 KB),
+  and 16/32 px favicon variants. The sidebar `<img src="/logo.png">`
+  reference is unchanged — the new files just slot in.
+
+### Upgrade notes
+
+- **Operators on v3.0.0**: this is a backwards-compatible patch.
+  `helm upgrade` to v3.0.1 picks up both fixes.
+- **Operators who already migrated** (the SQLite migration crash
+  blocked them from getting that far on v3.0.0): no special
+  handling needed — fresh install + `helm install aifactory --version 3.0.1`
+  works end-to-end.
+
+## 3.0.0 - 2026-05-26
+
+The AIFactory **enterprise GA** release (Epic #26). Self-hosted Helm
+chart with PSS-restricted defaults, encrypted-at-rest secrets backed
+by 5 KMS backends, OIDC SSO, tamper-evident audit chain, GDPR
+right-to-erasure, structured-JSON observability + Prometheus
+metrics, and a full SOC 2 / GDPR / STRIDE evidence pack with three
+ship-readiness drill scripts.
+
+### ⚠ Breaking changes
+
+- **Forward-only schema migration** `c6e3b2d4a8f0_encrypt_credentials`:
+  `email_accounts.access_token`, `email_accounts.refresh_token`, and
+  `llm_endpoints.api_key` columns convert from plaintext `Text` to
+  encrypted `LargeBinary`. The migration is **forward-only** — there
+  is no downgrade path. Operators MUST take a `pg_dump` backup before
+  upgrading from any v2.x install.
+- **Required Postgres backend for production**: SQLite remains
+  supported for dev/POC, but `kms_data_keys` + the audit chain
+  expect Postgres semantics for indexed lookups.
+- **Container runs as non-root uid 65532** with read-only root
+  filesystem and dropped capabilities. Operators with custom
+  init-containers writing to `/` must mount tmpfs/emptyDir.
+
+### ✨ Added — Epic #26 phases
+
+- **P0 — Container hygiene**: Chainguard distroless base
+  (digest-pinned), Trivy CVE scan, Syft SBOM, cosign keyless
+  signing via GitHub OIDC, multi-arch (amd64+arm64) manifest
+  inspection.
+- **P1 — Postgres backend**: `asyncpg` driver, Alembic migrations,
+  optional `APP_MIGRATIONS_AUTO_APPLY=false` for Helm Job mode,
+  bank-grade privilege model (no SUPERUSER, no CREATE EXTENSION).
+- **P2 — Encrypted secrets at rest**: `EncryptedString`
+  `TypeDecorator` over `LargeBinary`, per-org `kms_data_keys` with
+  LRU cache, 5 KMS backends (`fernet` for dev, `aws_kms`,
+  `vault_transit`, `azure_kv`, `gcp_kms`), root-key rotation CLI
+  (`python -m server.crypto rotate-root`), forward-only column
+  migration with KMS-aware backfill.
+- **P3 — OIDC SSO**: `authlib`-based Authorization Code + PKCE +
+  state + nonce, JIT user/`OrganizationMember` provisioning with
+  claim-mapped roles (`APP_OIDC_GROUP_TO_ROLE`), 15-minute access
+  TTL + 8-hour refresh, IdP-validated refresh path with userinfo
+  caching, logout redirect to IdP `end_session_endpoint`. Presets
+  for Keycloak, Okta, Azure AD.
+- **P4 — Helm chart**: `charts/aifactory/` with PSS-restricted
+  security contexts, default-deny NetworkPolicy + 443 egress
+  allowlist, ExternalSecret templates for 4 backends, optional
+  bundled Postgres `StatefulSet` for POC mode, `customCABundle`
+  for TLS-intercepting corporate proxies, schema-validated
+  `values.yaml`.
+- **P5 — Audit hardening**: SHA-256 hash chain on every audit-log
+  write, NDJSON + CSV streaming export at `/api/audit/export`,
+  air-gappable external verifier (`python -m server.audit
+  verify-chain`), GDPR Art. 17 erasure that re-hashes the chain so
+  `verify-chain` continues to pass, daily retention job (default
+  13 months = SOC 2 12 + buffer).
+- **P6 — Observability**: `structlog` JSON-to-stdout with
+  ISO-8601 timestamps + `request_id` binding, correlation-ID
+  middleware (`X-Request-ID`) with `httpx` propagation, Prometheus
+  `/metrics` with cardinality-capped `handler` labels (route
+  templates, not raw paths), optional `METRICS_SCRAPE_TOKEN`
+  bearer gate, Helm `ServiceMonitor` template, pre-built Grafana
+  dashboard JSON (7 panels).
+- **P7 — Evidence + ship-readiness drills**: SOC 2 evidence pack
+  (CC1-CC9 + A1 + C1), GDPR DPIA + data-flow diagram, STRIDE
+  threat model, 4-cloud-path deployment runbook (EKS+RDS / AKS+
+  Azure Postgres / GKE+Cloud SQL / vanilla K8s+Vault), v0.x → v3.0
+  upgrade guide, three executable drill scripts
+  (`backup-restore.sh`, `upgrade-in-place.sh`, `image-mirroring.sh`)
+  with `--dry-run` modes.
+
+### 📚 Documentation
+
+New operator runbooks under `guides/`:
+- `guides/operations/audit-trail.md`
+- `guides/operations/encrypted-secrets-dr.md`
+- `guides/operations/image-mirroring.md`
+- `guides/operations/kms-rotation-runbook.md`
+- `guides/operations/observability.md`
+- `guides/operations/oidc-setup.md`
+- `guides/deployment/helm-install.md`
+- `guides/deployment/runbook.md`
+- `guides/deployment/upgrade.md`
+- `guides/compliance/soc2-evidence.md`
+- `guides/compliance/dpia-data-flow.md`
+- `guides/security/threat-model.md`
+- `guides/observability/grafana-aifactory.json`
+
+### 🧪 CI
+
+11 acceptance jobs gate every PR (≈2000 tests total):
+`backend (ruff + pytest)`, `docker (P0)`, `postgres (P1) × {15, 16}`,
+`secrets (P2)`, `oidc (P3)`, `helm (P4)`, `audit (P5)`, `obs (P6)`,
+`evidence (P7)`, `frontend (typecheck)`.
+
+### ⚠ Documented v3.0 limitations (v3.1 follow-ups)
+
+Tracked in `guides/compliance/soc2-evidence.md § Documented
+limitations`. Each maps to a v3.1 Epic #35 issue:
+
+1. Audit chain has no signed external anchor.
+2. Revocation latency bounded by 15-minute access-token TTL (back-
+   channel logout deferred).
+3. FIPS 140-2/3 modules not validated.
+4. No built-in OpenTelemetry distributed tracing.
+5. Single-replica only (multi-replica via Redis pub/sub deferred).
+6. LLM-call audit deferred to v3.1 LiteLLM gateway.
+
 ### ✨ Added
 - **GitHub PR Review Integration**: End-to-end support for PR reviews including listing, fetching, posting reviews, checking new commits, and viewing logs via dedicated API endpoints.
 - **PR Review WebSocket Events**: Real-time progress, completion, and error events via WebSocket for live feedback during PR reviews.
