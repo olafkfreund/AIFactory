@@ -39,9 +39,38 @@ from .wrapper import RmuxError, RmuxWrapper
 
 logger = logging.getLogger(__name__)
 
-# Default panes directory in the runtime container.  Overridden for
-# tests via ``configure(panes_dir=...)`` so they can use a tmp_path.
-_DEFAULT_PANES_DIR = Path("/var/run/aifactory/panes")
+
+def _default_panes_dir() -> Path:
+    """Choose a panes directory that the current process can actually write to.
+
+    Precedence — matches ``wrapper._default_socket_dir`` so socket + FIFOs
+    end up on the same filesystem tree:
+
+      1. ``/var/run/aifactory/panes`` if it already exists and is
+         writable — this is what the container Helm chart mounts
+         (emptyDir owned by the pod user, see design §3.4)
+      2. ``$XDG_RUNTIME_DIR/aifactory-rmux/panes`` if XDG is set
+         (standard systemd user session path; tmpfs-backed)
+      3. ``~/.cache/aifactory/rmux/panes`` as a final portable fallback
+
+    Local dev shells almost never have write access to ``/var/run``,
+    so option 1 is essentially production-only.  The previous
+    ``Path('/var/run/aifactory/panes')`` constant fell over with
+    PermissionError on first ``mkdir`` for local devs running the
+    web-server outside a container.
+    """
+    container_default = Path("/var/run/aifactory/panes")
+    if container_default.exists() and os.access(container_default, os.W_OK):
+        return container_default
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    if xdg:
+        return Path(xdg) / "aifactory-rmux" / "panes"
+    return Path.home() / ".cache" / "aifactory" / "rmux" / "panes"
+
+
+# Resolved once at module-load time.  ``configure(panes_dir=...)`` lets
+# tests + container init override this without monkey-patching.
+_DEFAULT_PANES_DIR = _default_panes_dir()
 
 
 @dataclass
