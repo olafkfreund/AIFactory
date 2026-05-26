@@ -194,6 +194,11 @@ def create_app() -> FastAPI:
     app.include_router(terminal_ws.router, tags=["WebSocket"])
     app.include_router(events_ws.router, tags=["WebSocket"])
 
+    # Capability discovery — always mounted.  Frontend hits this on
+    # boot to decide which optional UI tabs to render.  Cheap & flat.
+    from .routes import capabilities as capabilities_route
+    app.include_router(capabilities_route.router)
+
     # Epic #44 R1 — rmux Live Agent Console (opt-in).  Only mount when
     # AIFACTORY_RMUX_ENABLED=true; otherwise the agent-console routes
     # are 404 and the JS frontend hides the Live Console tab.  Bank
