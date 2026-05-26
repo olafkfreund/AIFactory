@@ -74,6 +74,15 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         "/static/",
         "/api/auth/",  # Auth endpoints (register, login, refresh, logout)
         "/api/email/auth/",  # OAuth callbacks (redirect from Microsoft/Google)
+        # Remote MCP control plane (Epic #50 / Issue #83). The legacy
+        # TokenAuthMiddleware validates JWT + the legacy API_TOKEN;
+        # MCP clients send their ``acw_<key>`` instead, validated by
+        # ``mcp_remote.auth.authenticate`` inside the route handler.
+        # Adding the prefix here so the middleware doesn't 401 those
+        # requests before our adapter runs.  Routes are only mounted
+        # when AIFACTORY_MCP_REMOTE_ENABLED=true, so this prefix is a
+        # no-op on the default v1.0 pilot deployment.
+        "/api/mcp-remote/",
     )
 
     async def dispatch(self, request: Request, call_next):
