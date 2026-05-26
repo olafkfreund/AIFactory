@@ -45,6 +45,7 @@ import { TaskLogs } from './TaskLogs';
 import { TaskFiles } from './TaskFiles';
 import { TaskReview } from './TaskReview';
 import { PlanReviewSection } from './PlanReviewSection';
+import { AgentConsole } from './AgentConsole';
 import { CreatePRDialog } from './task-review/CreatePRDialog';
 import type { Task } from '../../shared/types';
 
@@ -84,6 +85,27 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const { t } = useTranslation(['tasks']);
   const state = useTaskDetail({ task });
   const showFilesTab = isFilesTabEnabled();
+
+  // Epic #44 R2 — show the Live Console tab only when the operator
+  // has enabled rmux (AIFACTORY_RMUX_ENABLED=true on the server).
+  // We probe /api/capabilities once per modal mount; it's a cheap
+  // GET that never 404s.  Default to false so the tab stays hidden
+  // if the probe fails.
+  const [rmuxEnabled, setRmuxEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/capabilities', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : { rmux: false }))
+      .then((c) => {
+        if (!cancelled) setRmuxEnabled(Boolean(c?.rmux));
+      })
+      .catch(() => {
+        if (!cancelled) setRmuxEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Memoize subtask-based calculations for reactivity
   const { subtaskProgress, completedSubtasks, totalSubtasks } = useMemo(() => {
@@ -524,6 +546,15 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                       {t('tasks:files.tab')}
                     </TabsTrigger>
                   )}
+                  {rmuxEnabled && (
+                    <TabsTrigger
+                      value="agent-console"
+                      className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-2.5 text-sm"
+                      data-testid="agent-console-tab-trigger"
+                    >
+                      {t('tasks:agentConsole.tab')}
+                    </TabsTrigger>
+                  )}
                 </TabsList>
 
                 {/* Overview Tab */}
@@ -624,6 +655,13 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                           : undefined
                       }
                     />
+                  </TabsContent>
+                )}
+
+                {/* Epic #44 R2 — Live Agent Console Tab (rmux opt-in) */}
+                {rmuxEnabled && (
+                  <TabsContent value="agent-console" className="flex-1 min-h-0 overflow-hidden mt-0">
+                    <AgentConsole taskId={task.id} />
                   </TabsContent>
                 )}
               </Tabs>

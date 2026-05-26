@@ -43,6 +43,12 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_API_URL || 'http://localhost:3101',
           changeOrigin: true,
           secure: false,
+          // ``ws: true`` is required for Epic #44's WS route
+          // (``/api/tasks/{spec_id}/agent-console/ws``) — without it
+          // the upgrade handshake stops at Vite's proxy and the
+          // browser sees code 1006 "abnormal closure".  HTTP requests
+          // under /api keep working the same as before.
+          ws: true,
         },
         '/ws': {
           target: env.VITE_WS_URL || 'ws://localhost:3101',

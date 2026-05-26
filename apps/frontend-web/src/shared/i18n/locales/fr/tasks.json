@@ -171,5 +171,23 @@
         "unknown": "Bascule automatique vers {{profileName}}"
       }
     }
+  },
+  "agentConsole": {
+    "tab": "Console en direct",
+    "noSession": "Aucune console en direct disponible pour l'instant. Démarrez la tâche pour voir le panneau de l'agent.",
+    "connecting": "Connexion à la console en direct…",
+    "connected": "Connecté (lecture seule)",
+    "connectionLost": "Connexion à la console en direct perdue",
+    "attachButton": "Prendre le contrôle",
+    "detachButton": "Relâcher",
+    "attachConfirmTitle": "Prendre le contrôle du shell de l'agent ?",
+    "attachConfirmBody": "Vous pourrez saisir dans le terminal de l'agent en cours d'exécution. Toutes vos actions seront enregistrées dans le journal d'audit sous votre compte. Ceci ne peut pas être annulé pour une tâche en cours.",
+    "attachConfirmConfirm": "Prendre le contrôle",
+    "attachConfirmCancel": "Annuler",
+    "attachedBadge": "Contrôle actif — saisie autorisée",
+    "raceLostTitle": "Une autre session a déjà le contrôle",
+    "raceLostBody": "Un autre utilisateur est déjà attaché à la console en direct de cette tâche. Réessayez après qu'il se soit déconnecté.",
+    "raceLostDismiss": "OK",
+    "headerHint": "Miroir en lecture seule du terminal de l'agent. Cliquez sur Prendre le contrôle pour intervenir."
   }
 }

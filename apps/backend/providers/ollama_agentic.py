@@ -112,6 +112,13 @@ class OllamaAgenticProvider(BaseLLMProvider):
         tool_names: list[str] | None = None,
         extra_options: dict[str, Any] | None = None,
     ) -> None:
+        # Callers (e.g. the phase resolver) pass the provider-prefixed form
+        # ``ollama:qwen3:14b`` because that's how AIFactory threads the
+        # provider hint through the system. Ollama itself only knows the
+        # bare tag (``qwen3:14b``) and returns HTTP 400 if you send the
+        # prefix in /api/chat's ``model`` field. Strip it once here.
+        if model.startswith("ollama:"):
+            model = model[len("ollama:"):]
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
