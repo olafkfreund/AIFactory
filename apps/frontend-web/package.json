@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --config ../../tests/e2e/rmux/playwright.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
