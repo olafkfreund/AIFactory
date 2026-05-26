@@ -160,6 +160,40 @@ CATALOG: list[MCPCatalogEntry] = [
         default_for_agents=["coder", "qa_reviewer"],
         docs_url="https://devblogs.microsoft.com/azure-sdk/announcing-azure-mcp-server-2-0-stable-release/",
     ),
+    # ---- V1.5: GitLab + Azure DevOps -----------------------------------
+    #
+    # GitLab: NO proper canonical npm package exists as of 2026-05.  The
+    # ``@modelcontextprotocol/server-gitlab`` package is too immature, so
+    # we ship the community fork ``@zereight/mcp-gitlab`` (72+ tools,
+    # actively shipping releases).  The vendor-disclosure note lives in
+    # docs/docs/concepts/mcp-servers.md — this catalog entry IS the
+    # disclosure: the launcher arg names the vendor explicitly so
+    # operators see what they're opting into.
+    MCPCatalogEntry(
+        id="gitlab",
+        launcher_command="npx",
+        launcher_args=["-y", "@zereight/mcp-gitlab@latest"],
+        marker_capability_keys=["has_gitlab_ci"],
+        credential_provider="gitlab",
+        readonly_args=[],  # rely on PAT scope (read_api, read_repository)
+        default_for_agents=["coder", "qa_reviewer"],
+        docs_url="https://github.com/zereight/gitlab-mcp",
+    ),
+    # Azure DevOps: Microsoft's local ``@azure-devops/mcp@next`` server
+    # works today but is being phased out in favour of an Azure DevOps
+    # Remote MCP HTTP server (public preview since 2026-03).  We ship the
+    # local version with a sunset notice in the docs — a follow-up Epic
+    # will migrate to Remote MCP once it goes GA.
+    MCPCatalogEntry(
+        id="azure_devops",
+        launcher_command="npx",
+        launcher_args=["-y", "@azure-devops/mcp@next"],
+        marker_capability_keys=["has_azure_devops"],
+        credential_provider="azure_devops",
+        readonly_args=[],  # rely on PAT scope (read-only)
+        default_for_agents=["coder", "qa_reviewer"],
+        docs_url="https://github.com/microsoft/azure-devops-mcp",
+    ),
 ]
 
 

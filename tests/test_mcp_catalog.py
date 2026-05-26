@@ -31,6 +31,68 @@ def test_v1_entries_present():
     assert {"github", "kubernetes", "aws", "azure"}.issubset(ids)
 
 
+def test_v1_5_entries_present():
+    """GitLab + ADO catalog entries exist (V1.5 ships behind V1)."""
+    ids = set(mcp_catalog.catalog_ids())
+    assert "gitlab" in ids
+    assert "azure_devops" in ids
+
+
+def test_gitlab_uses_community_fork():
+    """V1.5 GitLab ships the @zereight community fork (vendor disclosure
+    lives in the launcher arg itself, not just docs)."""
+    entry = mcp_catalog.get_catalog_entry("gitlab")
+    assert entry is not None
+    joined = " ".join(entry.launcher_args)
+    assert "@zereight/mcp-gitlab" in joined, (
+        "GitLab catalog entry must launch the @zereight community fork — "
+        "the launcher arg is the disclosure to operators."
+    )
+
+
+def test_gitlab_marker_is_has_gitlab_ci():
+    entry = mcp_catalog.get_catalog_entry("gitlab")
+    assert entry.marker_capability_keys == ["has_gitlab_ci"]
+
+
+def test_azure_devops_uses_next_channel():
+    """ADO catalog entry uses Microsoft's @next channel (the local server
+    they still publish while Remote MCP goes through preview)."""
+    entry = mcp_catalog.get_catalog_entry("azure_devops")
+    assert entry is not None
+    joined = " ".join(entry.launcher_args)
+    assert "@azure-devops/mcp@next" in joined
+
+
+def test_azure_devops_marker():
+    entry = mcp_catalog.get_catalog_entry("azure_devops")
+    assert entry.marker_capability_keys == ["has_azure_devops"]
+
+
+def test_gitlab_auto_enables_with_marker_and_creds(monkeypatch):
+    _stub_creds(monkeypatch, gitlab=True)
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_gitlab_ci": True}
+    )
+    assert "gitlab" in servers
+
+
+def test_gitlab_skipped_without_marker(monkeypatch):
+    _stub_creds(monkeypatch, gitlab=True)
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_gitlab_ci": False}
+    )
+    assert "gitlab" not in servers
+
+
+def test_azure_devops_auto_enables_with_marker_and_creds(monkeypatch):
+    _stub_creds(monkeypatch, azure_devops=True)
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_azure_devops": True}
+    )
+    assert "azure_devops" in servers
+
+
 def test_kubernetes_pins_safe_version():
     """CVE-2026-46519 is patched in v3.6.0 — pin must enforce that."""
     entry = mcp_catalog.get_catalog_entry("kubernetes")

@@ -126,6 +126,10 @@ AI_BOT_PATTERNS: dict[str, str] = {
     "gemini-code-assist[bot]": "Gemini Code Assist",
     "google-code-assist": "Gemini Code Assist",
     "google-code-assist[bot]": "Gemini Code Assist",
+    # === GitLab Duo (MCP delegation target, V1.5 catalog entry) ===
+    "gitlab-duo": "GitLab Duo",
+    "gitlab-duo[bot]": "GitLab Duo",
+    "gitlab-bot": "GitLab Duo",
     # === AI Coding Assistants ===
     "copilot": "GitHub Copilot",
     "copilot[bot]": "GitHub Copilot",
