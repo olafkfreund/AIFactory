@@ -94,6 +94,36 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
                 </Badge>
               </a>
             )}
+            {/* Live Console deep link — copy a shareable URL that opens
+                straight into a fullscreen agent-console (rmux pane stream)
+                with no portal chrome.  Useful for sharing with a
+                teammate over a VPN, or opening the same terminal from
+                a phone browser without nav clicks. */}
+            {task.projectId && task.specId && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  const url = `${window.location.origin}/console/${task.projectId}/${task.specId}`;
+                  void navigator.clipboard.writeText(url);
+                  // tiny inline feedback — flash the badge.  No toast
+                  // dependency on this code path; we already have the
+                  // useToast hook elsewhere if you want richer UX later.
+                  const btn = e.currentTarget;
+                  const original = btn.textContent;
+                  btn.textContent = 'Copied!';
+                  setTimeout(() => { btn.textContent = original; }, 1500);
+                }}
+                title="Copy a shareable URL to the live agent console"
+              >
+                <Badge
+                  variant="outline"
+                  className="text-xs bg-slate-500/10 text-slate-300 border-slate-500/30 hover:bg-slate-500/20 transition-colors"
+                >
+                  Copy console URL
+                </Badge>
+              </button>
+            )}
             {/* Category */}
             {task.metadata?.category && (
               <Badge

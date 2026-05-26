@@ -25,6 +25,7 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { ProjectSwitchLoadingModal } from './components/ProjectSwitchLoadingModal';
 import { LoginPage } from './pages/LoginPage';
 import { EditorPage } from './pages/EditorPage';
+import { ConsolePage } from './pages/ConsolePage';
 import { ViewStateProvider } from './contexts/ViewStateContext';
 import { useProjectStore, loadProjects } from './stores/project-store';
 import { useTaskStore, loadTasks } from './stores/task-store';
@@ -429,6 +430,13 @@ export default function App() {
       <Route
         path="/login"
         element={isAuthenticated ? <Navigate to="/" replace /> : <LoginPage />}
+      />
+      {/* Standalone Live Agent Console — shareable deep link.  Bypasses
+          the portal's sidebar + tab bar so the URL can be copied,
+          opened on a phone, sent to a teammate over a VPN, etc. */}
+      <Route
+        path="/console/:projectId/:specId"
+        element={isAuthenticated ? <ConsolePage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/*"
