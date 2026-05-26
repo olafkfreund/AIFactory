@@ -2638,6 +2638,59 @@ class AgentService:
         logger.info(f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}")
         logger.info(f"[AgentService] Command: {' '.join(cmd)}")
 
+        # Claude Code Remote Control (Issue #50 / native --remote-control flag).
+        # When enabled per-task, the spawned `claude` registers a session with
+        # Anthropic's API that the user can drive from claude.ai/code or the
+        # Claude mobile app.  Two prerequisites are tightly coupled:
+        #   1. Append ``--remote-control "AIFactory: <spec-id>"`` to cmd so the
+        #      session is named and discoverable in the claude.ai/code session list.
+        #   2. Scrub ``CLAUDE_CODE_OAUTH_TOKEN`` (and ``ANTHROPIC_AUTH_TOKEN``)
+        #      from env so the subprocess falls back to ~/.claude/.credentials.json.
+        #      Remote Control rejects setup-token-issued tokens with the error
+        #      "Remote Control requires a full-scope login token".  The full-scope
+        #      token lives in ~/.claude/.credentials.json (from ``claude auth login``)
+        #      and is what core/auth.py's fallback chain reaches when env vars are
+        #      absent (priority 4 in get_auth_token).
+        #
+        # Toggle source (in order):
+        #   1. task_metadata.json :: enableRemoteControl  (per-task, frontend-set)
+        #   2. project.settings.remoteControlByDefault    (per-project default)
+        # Default off — Remote Control requires a paid Anthropic subscription
+        # (Pro/Max/Team/Enterprise) so we can't enable it for everyone.
+        _rc_enabled = False
+        _rc_spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        _rc_metadata_file = _rc_spec_dir / "task_metadata.json"
+        if _rc_metadata_file.exists():
+            try:
+                _rc_meta = json.loads(_rc_metadata_file.read_text())
+                _rc_enabled = bool(_rc_meta.get("enableRemoteControl", False))
+            except (json.JSONDecodeError, OSError):
+                pass
+        if not _rc_enabled:
+            try:
+                from ..routes.projects import load_projects
+                _rc_projs = load_projects()
+                _rc_pid = task_id.split(":", 1)[0]
+                _rc_proj = _rc_projs.get(_rc_pid, {})
+                if (_rc_proj.get("settings") or {}).get("remoteControlByDefault"):
+                    _rc_enabled = True
+            except Exception:
+                pass
+
+        if _rc_enabled:
+            _rc_session_name = f"AIFactory: {spec_id}"
+            cmd.extend(["--remote-control", _rc_session_name])
+            env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+            logger.warning(
+                "[AgentService] Remote Control ENABLED for task_id=%s — "
+                "session %r will appear in claude.ai/code. "
+                "Scrubbed CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_AUTH_TOKEN — "
+                "agent will fall back to ~/.claude/.credentials.json "
+                "(must be a full-scope token from `claude auth login`).",
+                task_id, _rc_session_name,
+            )
+
         # E2E test mode (Epic #44 R4): when AIFACTORY_TEST_AGENT_CMD is
         # set, the agent subprocess is replaced with the override (e.g.
         # ``sleep 300``).  The rmux create hook below still fires because
