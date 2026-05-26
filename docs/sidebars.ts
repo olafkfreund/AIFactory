@@ -22,6 +22,8 @@ const sidebars: SidebarsConfig = {
         'concepts/multi-provider',
         'concepts/rmux-live-console',
         'concepts/remote-control',
+        'concepts/mcp-servers',
+        'concepts/mcp-credentials',
       ],
     },
     {
