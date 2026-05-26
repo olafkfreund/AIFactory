@@ -5,7 +5,7 @@
 - **Full docs rewrite + GitHub Pages site.** The `guides/` directory was
   archived to `docs-archive/2026-05-26/guides/` (git history preserved).
   A fresh Docusaurus site at `docs/` is published to
-  <https://dataseeek.github.io/AIFactory/> via a new
+  <https://olafkfreund.github.io/AIFactory/> via a new
   `.github/workflows/docs.yml` workflow. Includes 18 reorganized pages:
   Getting Started, Demo, Concepts (3), Architecture (3 with Mermaid
   diagrams), Wiki (FAQ/Troubleshooting/Glossary), Showcase, Compliance
@@ -19,7 +19,7 @@
 ### ✨ Added
 
 - **`scripts/demo.sh`** — end-to-end demo runner (Bash + jq + gh).
-  Seeds `dataseeek/aifactory-demo` with 3 issues, registers the repo
+  Seeds `olafkfreund/aifactory-demo` with 3 issues, registers the repo
   with your portal, imports the issues as backlog tasks, prompts you
   to drive Claude Code from the terminal, then kicks off an autonomous
   build. Flags: `--yolo`, `--no-reset`, `--portal=URL`.

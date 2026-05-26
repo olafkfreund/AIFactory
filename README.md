@@ -5,17 +5,17 @@
 
 **Spec-Driven Development for AI agents — plan, code, ship.**
 
-[![CI](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/dataseeek/AIFactory/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-dataseeek.github.io%2FAIFactory-blue)](https://dataseeek.github.io/AIFactory/)
+[![CI](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-olafkfreund.github.io%2FAIFactory-blue)](https://olafkfreund.github.io/AIFactory/)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-green)](https://nodejs.org/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
-[Docs](https://dataseeek.github.io/AIFactory/) ·
-[Demo](https://dataseeek.github.io/AIFactory/demo) ·
-[Architecture](https://dataseeek.github.io/AIFactory/architecture/overview) ·
-[Roadmap](https://dataseeek.github.io/AIFactory/roadmap) ·
-[Contributing](https://dataseeek.github.io/AIFactory/contributing)
+[Docs](https://olafkfreund.github.io/AIFactory/) ·
+[Demo](https://olafkfreund.github.io/AIFactory/demo) ·
+[Architecture](https://olafkfreund.github.io/AIFactory/architecture/overview) ·
+[Roadmap](https://olafkfreund.github.io/AIFactory/roadmap) ·
+[Contributing](https://olafkfreund.github.io/AIFactory/contributing)
 
 </div>
 
@@ -37,7 +37,7 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 ## Quickstart (60 seconds)
 
 ```bash
-git clone https://github.com/dataseeek/AIFactory
+git clone https://github.com/olafkfreund/AIFactory
 cd AIFactory
 npm run install:all
 claude setup-token   # paste into apps/backend/.env as CLAUDE_CODE_OAUTH_TOKEN
@@ -52,7 +52,7 @@ cd apps/frontend-web && npm run dev                  # :3100
 
 Open <http://localhost:3100> and create your first project.
 
-Full installation guide: **[Getting Started →](https://dataseeek.github.io/AIFactory/getting-started)**
+Full installation guide: **[Getting Started →](https://olafkfreund.github.io/AIFactory/getting-started)**
 
 ## See it work
 
@@ -64,7 +64,7 @@ The repo ships with an end-to-end demo that walks through the full flow against 
 
 It seeds 3 GitHub issues, registers the demo repo with your portal, imports the issues as backlog tasks, prompts you to drive Claude Code from the terminal, then kicks off an autonomous build — all in about 90 seconds. Pass `--yolo` to skip the Enter-prompts between steps.
 
-Walkthrough with screenshots: **[Demo →](https://dataseeek.github.io/AIFactory/demo)**
+Walkthrough with screenshots: **[Demo →](https://olafkfreund.github.io/AIFactory/demo)**
 
 ## Screenshots
 
@@ -83,14 +83,14 @@ Walkthrough with screenshots: **[Demo →](https://dataseeek.github.io/AIFactory
 
 ## Documentation
 
-The full documentation lives at **<https://dataseeek.github.io/AIFactory/>**:
+The full documentation lives at **<https://olafkfreund.github.io/AIFactory/>**:
 
-- **[Getting Started](https://dataseeek.github.io/AIFactory/getting-started)** — install + first task
-- **[Demo](https://dataseeek.github.io/AIFactory/demo)** — guided end-to-end walkthrough
-- **[Concepts](https://dataseeek.github.io/AIFactory/concepts/spec-driven-development)** — spec-driven development, multi-provider routing, the rmux Live Console
-- **[Architecture](https://dataseeek.github.io/AIFactory/architecture/overview)** — agents, data flow, security model, Mermaid diagrams
-- **[Wiki](https://dataseeek.github.io/AIFactory/wiki/faq)** — FAQ, troubleshooting, glossary
-- **[Compliance](https://dataseeek.github.io/AIFactory/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
+- **[Getting Started](https://olafkfreund.github.io/AIFactory/getting-started)** — install + first task
+- **[Demo](https://olafkfreund.github.io/AIFactory/demo)** — guided end-to-end walkthrough
+- **[Concepts](https://olafkfreund.github.io/AIFactory/concepts/spec-driven-development)** — spec-driven development, multi-provider routing, the rmux Live Console
+- **[Architecture](https://olafkfreund.github.io/AIFactory/architecture/overview)** — agents, data flow, security model, Mermaid diagrams
+- **[Wiki](https://olafkfreund.github.io/AIFactory/wiki/faq)** — FAQ, troubleshooting, glossary
+- **[Compliance](https://olafkfreund.github.io/AIFactory/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
 
 Legacy guides (pre-2026-05-26 rewrite) are archived under [`docs-archive/2026-05-26/`](docs-archive/2026-05-26/) and remain searchable in git history.
 
@@ -112,7 +112,7 @@ git push -u origin feat/my-feature
 gh pr create --base dev
 ```
 
-CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple compliance gates on every PR. Full guide: **[Contributing →](https://dataseeek.github.io/AIFactory/contributing)**
+CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple compliance gates on every PR. Full guide: **[Contributing →](https://olafkfreund.github.io/AIFactory/contributing)**
 
 ## License
 

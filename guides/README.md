@@ -2,7 +2,7 @@
 
 The legacy `guides/` content was archived on **2026-05-26** when the documentation was rewritten into a Docusaurus site.
 
-- **New docs**: <https://dataseeek.github.io/AIFactory/>
+- **New docs**: <https://olafkfreund.github.io/AIFactory/>
 - **Source**: [`docs/docs/`](../docs/docs/) (Markdown + MDX)
 - **Archived snapshot of the old `guides/`**: [`docs-archive/2026-05-26/guides/`](../docs-archive/2026-05-26/guides/)
 

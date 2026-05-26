@@ -15,8 +15,8 @@ AIFactory's enterprise build ships with the controls and evidence trail needed f
 | **Encryption in transit** | TLS-terminated at the ingress; mandated by the Helm chart's NetworkPolicy | `charts/aifactory/templates/networkpolicy.yaml` |
 | **Encryption at rest** | All sensitive columns (API keys, OAuth tokens) wrapped in `EncryptedString` SQLAlchemy type backed by KMS (AWS / Azure / GCP / Vault Transit) | `apps/web-server/server/database/encrypted.py` |
 | **Audit logging** | Hash-chained audit log table. Each row stores `prev_hash`; tampering breaks the chain. | `apps/web-server/server/database/audit_log.py` |
-| **Key rotation** | KMS key rotation runbook. Encrypted columns re-wrap on rotation without downtime. | [Operations: KMS rotation](https://github.com/dataseeek/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/kms-rotation-runbook.md) |
-| **Backup & DR** | Postgres + WAL archiving; chart configures `pg-backup` sidecar; documented recovery RTO 4h / RPO 1h | [DR runbook](https://github.com/dataseeek/AIFactory/blob/main/docs-archive/2026-05-26/guides/deployment/runbook.md) |
+| **Key rotation** | KMS key rotation runbook. Encrypted columns re-wrap on rotation without downtime. | [Operations: KMS rotation](https://github.com/olafkfreund/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/kms-rotation-runbook.md) |
+| **Backup & DR** | Postgres + WAL archiving; chart configures `pg-backup` sidecar; documented recovery RTO 4h / RPO 1h | [DR runbook](https://github.com/olafkfreund/AIFactory/blob/main/docs-archive/2026-05-26/guides/deployment/runbook.md) |
 | **Vulnerability management** | Docker images built distroless; cosign-signed; Syft SBOM published per release | `.github/workflows/release.yml` |
 
 ## Evidence catalog
@@ -45,4 +45,4 @@ Audit log rows are kept for 7 years by default (configurable via `AUDIT_RETENTIO
 
 ## Operator runbook
 
-See the [audit-trail runbook](https://github.com/dataseeek/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/audit-trail.md) for incident-response procedures.
+See the [audit-trail runbook](https://github.com/olafkfreund/AIFactory/blob/main/docs-archive/2026-05-26/guides/operations/audit-trail.md) for incident-response procedures.

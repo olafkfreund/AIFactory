@@ -5,7 +5,7 @@ sidebar_position: 3
 
 # Demo — Claude plans, the portal builds
 
-The repo ships with `scripts/demo.sh` — a Bash script that walks the full flow against a fixed public sample repo (`dataseeek/aifactory-demo`):
+The repo ships with `scripts/demo.sh` — a Bash script that walks the full flow against a fixed public sample repo (`olafkfreund/aifactory-demo`):
 
 1. Seed the demo repo with 3 GitHub issues
 2. Register the repo with your local portal
