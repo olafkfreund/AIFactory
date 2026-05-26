@@ -53,13 +53,12 @@ def client(tmp_path, monkeypatch):
     mcp_credentials.reset_cache()
 
     # Build the FastAPI app and TestClient
-    from fastapi.testclient import TestClient
-
     # Import the router directly — the full app pulls in OIDC / DB setup
     # that we don't need. We mount mcp.router on a minimal app.
     from fastapi import FastAPI
-    from server.routes import mcp as mcp_route
+    from fastapi.testclient import TestClient
     from server.config import get_settings
+    from server.routes import mcp as mcp_route
 
     # Override settings to use our tmp projects dir
     settings = get_settings()
