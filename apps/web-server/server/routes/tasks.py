@@ -15,8 +15,8 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from .projects import load_projects
 from ..paths import get_data_dir, get_data_file
+from .projects import load_projects
 
 router = APIRouter()
 
@@ -1434,6 +1434,19 @@ class ApprovePlanRequest(BaseModel):
     auto_restart: bool = Field(True, description="Auto-restart task after approval")
 
 
+class RejectPlanRequest(BaseModel):
+    """Request to reject a plan with feedback for the planner.
+
+    Mirrors ApprovePlanRequest's shape but carries the operator's reason so the
+    planner's next iteration sees it in the spec's review feedback log.
+    """
+
+    feedback: str | None = Field(
+        None,
+        description="Optional reason for rejection — gets recorded on the review state's feedback log.",
+    )
+
+
 @router.post("/{task_id}/approve-plan")
 async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRequest()):
     """Approve a task's plan to allow coding to proceed.
@@ -1495,7 +1508,7 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
 
             plan_file.write_text(json.dumps(plan, indent=2))
             plan_updated = True
-            logger.info(f"[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress")
+            logger.info("[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress")
         except (json.JSONDecodeError, OSError) as e:
             import logging
             logging.getLogger(__name__).error(f"[ApprovePlan] Failed to update plan file: {e}")
@@ -1560,6 +1573,231 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
         "message": "Plan approved" + (" and task restarted" if auto_restarted else ""),
         "autoRestarted": auto_restarted,
     }
+
+
+@router.post("/{task_id}/reject-plan")
+async def reject_plan(task_id: str, request: RejectPlanRequest = RejectPlanRequest()):
+    """Reject a task's plan and send the planner back to iterate.
+
+    Used by the human-review checkpoint when the implementation plan needs
+    rework. The optional ``feedback`` field is appended to the spec's
+    review-state feedback log so the planner's next pass picks it up.
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid task ID format"
+        )
+
+    project_id, spec_id = task_id.split(":", 1)
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    project_path = Path(projects[project_id]["path"])
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    if not spec_dir.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+        )
+
+    # Import ReviewState the same way approve_plan does (sys.path shim
+    # because the web-server doesn't have ``backend`` on its PYTHONPATH
+    # in every install layout).
+    import sys
+
+    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+
+    from review.state import ReviewState
+
+    review_state = ReviewState.load(spec_dir)
+    review_state.reject(spec_dir)
+    if request.feedback:
+        review_state.add_feedback(request.feedback, spec_dir=spec_dir)
+
+    # Mirror approve_plan's bookkeeping: flip the plan back to "needs work"
+    # so the next planner pass sees a clean slate.
+    plan_file = spec_dir / "implementation_plan.json"
+    if plan_file.exists():
+        try:
+            plan = json.loads(plan_file.read_text())
+            plan["status"] = "rejected"
+            plan["planStatus"] = "rejected"
+            if request.feedback:
+                plan["reviewReason"] = request.feedback
+            plan_file.write_text(json.dumps(plan, indent=2))
+        except (OSError, json.JSONDecodeError) as exc:
+            # Plan file unreadable — review state was already updated, so
+            # the reject took effect even if the bookkeeping fails. Log
+            # and continue.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"[RejectPlan] couldn't update implementation_plan.json: {exc}"
+            )
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "feedback_recorded": bool(request.feedback),
+    }
+
+
+@router.get("/{task_id}/qa-report")
+async def get_qa_report(task_id: str):
+    """Return the QA report markdown for a task.
+
+    Tasks that have completed the QA phase have a ``qa_report.md`` written
+    to their spec dir. This endpoint surfaces that content + a few derived
+    fields so an MCP client can show it inline without separately reading
+    the filesystem.
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid task ID format"
+        )
+
+    project_id, spec_id = task_id.split(":", 1)
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    project_path = Path(projects[project_id]["path"])
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    qa_report_file = spec_dir / "qa_report.md"
+
+    if not qa_report_file.exists():
+        # 404 is the right answer — clients should treat "no report yet"
+        # as "task hasn't reached QA" rather than a hard error.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="QA report not found — task may not have reached the QA phase yet",
+        )
+
+    try:
+        content = qa_report_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not read QA report: {exc}",
+        ) from exc
+
+    return {
+        "task_id": task_id,
+        "spec_id": spec_id,
+        "exists": True,
+        "size_bytes": qa_report_file.stat().st_size,
+        "modified_at": qa_report_file.stat().st_mtime,
+        "content": content,
+    }
+
+
+@router.get("/{task_id}/agent-console/sse")
+async def stream_agent_console(task_id: str):
+    """Server-Sent Events stream of the running agent's console output.
+
+    V1.1 strategy: read ``build-progress.txt`` from the spec dir and emit
+    deltas as they appear. This is the same file the portal's progress
+    sidebar polls — it covers the 80% case (the user wants to *watch* an
+    agent without needing the rmux pane).
+
+    The richer rmux-driven SSE re-broadcast (which would let an MCP client
+    drive a live terminal) is a follow-up — it depends on the rmux bridge
+    being enabled, which isn't a given on all deployments. The poll-based
+    fallback here works regardless.
+
+    Client behaviour: subscribe to the stream, receive ``data:`` events,
+    detect ``event: done`` when the agent finishes.
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid task ID format"
+        )
+
+    project_id, spec_id = task_id.split(":", 1)
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    project_path = Path(projects[project_id]["path"])
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    if not spec_dir.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
+        )
+
+    progress_file = spec_dir / "build-progress.txt"
+
+    async def event_generator():
+        """Yield SSE-formatted deltas from build-progress.txt.
+
+        Sleeps 1s between polls. Emits an ``event: done`` line + closes
+        when the file stops growing for 30s (heuristic: agent finished
+        or the file isn't being written anymore). Caps total stream
+        duration at 30 minutes to avoid leaking connections from
+        misbehaving clients.
+        """
+        import asyncio
+
+        max_duration_s = 30 * 60
+        idle_timeout_s = 30
+        poll_interval_s = 1.0
+        start = asyncio.get_event_loop().time()
+        last_size = 0
+        last_change = start
+
+        # Emit a kickoff event so the client knows the stream is live
+        # even before there's content (useful when the agent hasn't
+        # started writing yet).
+        yield f"event: open\ndata: {json.dumps({'task_id': task_id, 'spec_id': spec_id})}\n\n"
+
+        try:
+            while True:
+                now = asyncio.get_event_loop().time()
+                if now - start > max_duration_s:
+                    yield "event: done\ndata: {\"reason\": \"max-duration\"}\n\n"
+                    return
+
+                if progress_file.exists():
+                    current_size = progress_file.stat().st_size
+                    if current_size > last_size:
+                        with progress_file.open("rb") as fh:
+                            fh.seek(last_size)
+                            chunk = fh.read(current_size - last_size)
+                        last_size = current_size
+                        last_change = now
+                        # SSE data lines: encode each newline as its own
+                        # ``data:`` so multi-line chunks render correctly
+                        # in standard EventSource clients.
+                        text = chunk.decode("utf-8", errors="replace")
+                        for line in text.splitlines():
+                            yield f"data: {line}\n"
+                        yield "\n"  # blank line terminates the event
+                    elif now - last_change > idle_timeout_s:
+                        yield 'event: done\ndata: {"reason": "idle-timeout"}\n\n'
+                        return
+                else:
+                    # File doesn't exist yet — keep waiting, may appear
+                    # once the agent starts writing.
+                    if now - last_change > idle_timeout_s:
+                        yield 'event: done\ndata: {"reason": "no-progress-file"}\n\n'
+                        return
+
+                await asyncio.sleep(poll_interval_s)
+        except asyncio.CancelledError:
+            # Client disconnected — fastapi cancels the generator.
+            return
+
+    from fastapi.responses import StreamingResponse
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/{task_id}/plan-html")
@@ -1693,7 +1931,7 @@ async def get_task_logs(task_id: str):
             logger.error(f"[GetTaskLogs] JSON decode error: {e}")
             pass
     else:
-        logger.warning(f"[GetTaskLogs] No task_logs.json found, returning fallback format")
+        logger.warning("[GetTaskLogs] No task_logs.json found, returning fallback format")
 
     # Fallback: Collect logs from legacy sources
     logs = []
@@ -3234,7 +3472,7 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     # is on GitLab or Azure DevOps the gh CLI path can't open the PR (we
     # pushed to the GitLab `origin`, not to a GitHub remote). Only fall back
     # to `gh pr create` when the project is actually a GitHub project.
-    from .github import run_gh_command, _use_provider_api, _get_project_provider
+    from .github import _get_project_provider, _use_provider_api, run_gh_command
 
     if _use_provider_api(project_id):
         try:
@@ -3824,7 +4062,7 @@ async def get_worktree_diff(task_id: str):
                     content = f.read_text(errors='replace')
                     line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
                     # Generate a unified diff for display
-                    diff_lines = [f"--- /dev/null", f"+++ b/{f.name}"]
+                    diff_lines = ["--- /dev/null", f"+++ b/{f.name}"]
                     diff_lines.append(f"@@ -0,0 +1,{line_count} @@")
                     for line in content.splitlines():
                         diff_lines.append(f"+{line}")

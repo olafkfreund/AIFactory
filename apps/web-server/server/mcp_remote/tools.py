@@ -194,12 +194,79 @@ def get_tool_definitions() -> list[dict[str, Any]]:
                 "required": ["task_id"],
             },
         },
+        # ── V1.1 — backed by new REST endpoints in routes/tasks.py ─────
+        {
+            "name": "aifactory.get_qa_report",
+            "description": (
+                "Return the qa_report.md content for a task that has reached "
+                "the QA phase. 404s if the task hasn't generated a report yet."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}},
+                "required": ["task_id"],
+            },
+        },
+        {
+            "name": "aifactory.tail_agent_console",
+            "description": (
+                "Return the absolute URL of the SSE stream for a task's "
+                "agent-console output. The MCP client follows up with its "
+                "own GET to that URL (same Authorization header) to consume "
+                "the stream — cleaner than wrapping SSE-in-MCP."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"task_id": {"type": "string"}},
+                "required": ["task_id"],
+            },
+        },
+        {
+            "name": "aifactory.reject_plan",
+            "description": (
+                "Reject a task's implementation plan and send the planner "
+                "back to iterate. Optional feedback gets recorded on the "
+                "review state's feedback log. Requires mcp:write scope."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "feedback": {
+                        "type": "string",
+                        "description": "Optional reason for rejection",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        },
+        {
+            "name": "aifactory.recover_task",
+            "description": (
+                "Recover a stuck task — resets its status and optionally "
+                "restarts the agent. Same surface as the stdio task_recover "
+                "tool. Requires mcp:write scope."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string"},
+                    "auto_restart": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Restart the agent after recovery",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        },
     ]
 
 
 # Scope requirement per tool — keep it next to the tool list above so
 # they don't drift. ``dispatch_tool_call`` consults this map.
 _SCOPE_FOR_TOOL: dict[str, str] = {
+    # V1
     "aifactory.list_projects": MCP_READ_SCOPE,
     "aifactory.list_tasks": MCP_READ_SCOPE,
     "aifactory.get_task": MCP_READ_SCOPE,
@@ -208,6 +275,11 @@ _SCOPE_FOR_TOOL: dict[str, str] = {
     "aifactory.stop_task": MCP_WRITE_SCOPE,
     "aifactory.approve_plan": MCP_WRITE_SCOPE,
     "aifactory.merge_pr": MCP_WRITE_SCOPE,
+    # V1.1
+    "aifactory.get_qa_report": MCP_READ_SCOPE,
+    "aifactory.tail_agent_console": MCP_READ_SCOPE,
+    "aifactory.reject_plan": MCP_WRITE_SCOPE,
+    "aifactory.recover_task": MCP_WRITE_SCOPE,
 }
 
 
@@ -281,6 +353,55 @@ async def dispatch_tool_call(
                     f"/api/tasks/{arguments['task_id']}/worktree/merge",
                     key,
                     json={"merge_method": arguments.get("merge_method", "merge")},
+                )
+            )
+        # ── V1.1 tools ────────────────────────────────────────────────
+        if tool_name == "aifactory.get_qa_report":
+            return _format_json(
+                await _call_internal(
+                    "GET",
+                    f"/api/tasks/{arguments['task_id']}/qa-report",
+                    key,
+                )
+            )
+        if tool_name == "aifactory.tail_agent_console":
+            # SSE streams don't fit cleanly inside MCP's request/response
+            # envelope. Instead of proxying the bytes, return the URL the
+            # client should connect to itself. The client uses the same
+            # Authorization header it already has.
+            task_id = arguments["task_id"]
+            url = f"{_loopback_url()}/api/tasks/{task_id}/agent-console/sse"
+            return _format_json(
+                {
+                    "task_id": task_id,
+                    "sse_url": url,
+                    "auth_hint": (
+                        "Connect to sse_url with the same Authorization header "
+                        "you used for this MCP call. Stream emits 'data:' lines "
+                        "as the agent's build-progress.txt grows; closes with "
+                        "'event: done' on idle-timeout or max-duration."
+                    ),
+                }
+            )
+        if tool_name == "aifactory.reject_plan":
+            payload = {}
+            if arguments.get("feedback"):
+                payload["feedback"] = arguments["feedback"]
+            return _format_json(
+                await _call_internal(
+                    "POST",
+                    f"/api/tasks/{arguments['task_id']}/reject-plan",
+                    key,
+                    json=payload,
+                )
+            )
+        if tool_name == "aifactory.recover_task":
+            return _format_json(
+                await _call_internal(
+                    "POST",
+                    f"/api/tasks/{arguments['task_id']}/recover",
+                    key,
+                    json={"autoRestart": arguments.get("auto_restart", False)},
                 )
             )
     except KeyError as exc:
