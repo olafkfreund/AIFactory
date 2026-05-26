@@ -260,6 +260,30 @@
       "integrationTitle": "Mémoire",
       "integrationDescription": "Configurer la mémoire persistante inter-sessions pour les agents",
       "syncDescription": "Configurer la mémoire persistante"
+    },
+    "mcp": {
+      "title": "Serveurs MCP",
+      "description": "Outils infra activés auto pour les agents",
+      "integrationTitle": "Serveurs MCP",
+      "integrationDescription": "Catalogue des serveurs MCP par défaut. Chaque ligne montre si le serveur serait activé automatiquement pour ce projet — consultez la documentation pour la configuration des identifiants et les surcharges par projet.",
+      "columns": {
+        "server": "Serveur",
+        "status": "Statut",
+        "credentials": "Identifiants",
+        "markers": "Marqueurs projet",
+        "agents": "Agents",
+        "docs": "Docs"
+      },
+      "status": {
+        "active": "Activé auto",
+        "noCreds": "Identifiants manquants",
+        "noMarker": "Aucun marqueur correspondant",
+        "ready": "Prêt"
+      },
+      "empty": "Aucune entrée MCP disponible — le framework n'est peut-être pas chargé.",
+      "refresh": "Actualiser",
+      "openDocs": "Voir la doc",
+      "explainerHint": "Surcharge via .aifactory/.env : AGENT_MCP_<agent>_ADD ou _REMOVE"
     }
   },
   "agentProfile": {

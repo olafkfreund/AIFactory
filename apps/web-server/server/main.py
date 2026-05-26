@@ -33,6 +33,7 @@ from .routes import (
     files,
     git,
     github,
+    mcp,
     notifications,
     organizations,
     projects,
@@ -233,6 +234,7 @@ def create_app() -> FastAPI:
     # consults this on load to know whether to render the Live Agent
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
+    app.include_router(mcp.router)
 
     # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
     # Endpoints live under /api/projects/{id}/auto-fix/* so they match

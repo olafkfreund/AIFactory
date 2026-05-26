@@ -260,6 +260,30 @@
       "integrationTitle": "Memory",
       "integrationDescription": "Configure persistent cross-session memory for agents",
       "syncDescription": "Configure persistent memory"
+    },
+    "mcp": {
+      "title": "MCP Servers",
+      "description": "Auto-enabled infra tools for agents",
+      "integrationTitle": "MCP Servers",
+      "integrationDescription": "Catalog of default MCP servers. Each row shows whether it would auto-enable for this project — see the docs for credential setup and per-project overrides.",
+      "columns": {
+        "server": "Server",
+        "status": "Status",
+        "credentials": "Credentials",
+        "markers": "Project markers",
+        "agents": "Agents",
+        "docs": "Docs"
+      },
+      "status": {
+        "active": "Auto-enabled",
+        "noCreds": "Missing credentials",
+        "noMarker": "No matching markers",
+        "ready": "Ready"
+      },
+      "empty": "No MCP catalog entries available — the framework may not be loaded.",
+      "refresh": "Refresh",
+      "openDocs": "Open docs",
+      "explainerHint": "Override via .aifactory/.env: AGENT_MCP_<agent>_ADD or _REMOVE"
     }
   },
   "agentProfile": {
