@@ -537,9 +537,22 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             # Load subtasks - can be at top level or nested in phases
             all_subtasks = []
 
-            # First check for top-level subtasks (legacy format)
+            # First check for top-level subtasks (legacy format).
+            # Tolerate both list shape (canonical) and dict shape
+            # (partial-sync artifact from agent_service that maps
+            # subtask_id -> {status, notes, ...}).  Without this guard,
+            # iterating a dict yields the keys as strings and the loop
+            # at the bottom blows up with AttributeError on st.get(...).
             if "subtasks" in plan:
-                all_subtasks.extend(plan["subtasks"])
+                raw_subtasks = plan["subtasks"]
+                if isinstance(raw_subtasks, list):
+                    all_subtasks.extend(raw_subtasks)
+                elif isinstance(raw_subtasks, dict):
+                    for sid, st in raw_subtasks.items():
+                        if isinstance(st, dict):
+                            st_copy = dict(st)
+                            st_copy.setdefault("id", sid)
+                            all_subtasks.append(st_copy)
 
             # Then check for subtasks nested in phases (current format)
             if "phases" in plan:
