@@ -244,3 +244,210 @@ async def test_write_error_does_not_silently_swallow(tools_by_name, monkeypatch)
     result = await tools_by_name["task_start"]({"task_id": "t8"})
     assert result.get("isError") is True
     assert "token rejected" in _content_text(result)
+
+
+# ════════════════════════════════════════════════════════════════════
+# M2 — destructive tools (confirm-gated) + extra read tools
+# ════════════════════════════════════════════════════════════════════
+
+
+def test_all_fifteen_tools_registered_after_m2():
+    tools = create_task_control_tools()
+    names = {t.name for t in tools}
+    expected = {
+        # M1
+        "task_list",
+        "task_running",
+        "task_get",
+        "task_status",
+        "task_get_logs",
+        "task_start",
+        "task_stop",
+        "task_approve_plan",
+        # M2
+        "task_create_and_run",
+        "task_recover",
+        "task_create_pr",
+        "task_merge_pr",
+        "task_get_diff",
+        "project_list",
+        "agent_status",
+    }
+    assert expected.issubset(names), f"missing: {expected - names}"
+
+
+# ── Confirm-gate behavior ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "tool_name, args",
+    [
+        (
+            "task_create_and_run",
+            {"project_id": "p1", "title": "x", "description": "y"},
+        ),
+        ("task_recover", {"task_id": "t1"}),
+        ("task_create_pr", {"task_id": "t1"}),
+        ("task_merge_pr", {"task_id": "t1"}),
+    ],
+)
+async def test_destructive_tool_refuses_without_confirm(
+    tools_by_name, monkeypatch, tool_name, args
+):
+    """All 4 destructive M2 tools must refuse without confirm=true.
+
+    Confirm-gate is structural — no REST call happens at all (so the
+    monkeypatched request would NOT be invoked). We assert that AND the
+    response shape so future regressions on either side fail loudly.
+    """
+    called = []
+
+    async def stub(method, path, **kwargs):
+        called.append((method, path))
+        return {}
+
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
+
+    result = await tools_by_name[tool_name](args)
+    payload = json.loads(_content_text(result))
+    assert payload["requires_confirmation"] is True
+    assert "to_proceed" in payload
+    assert called == [], (
+        f"{tool_name} hit the REST endpoint without confirm=true — confirm-gate broken"
+    )
+
+
+async def test_create_and_run_with_confirm_calls_endpoint(tools_by_name, monkeypatch):
+    captured: list = []
+    _make_request_stub(monkeypatch, {"task_id": "new123"}, captured)
+    result = await tools_by_name["task_create_and_run"](
+        {
+            "project_id": "p1",
+            "title": "Add login",
+            "description": "Build a login form",
+            "confirm": True,
+        }
+    )
+    assert captured[0]["method"] == "POST"
+    assert captured[0]["path"] == "/api/tasks/create-and-run"
+    payload = json.loads(_content_text(result))
+    assert payload["created_and_started"] is True
+
+
+async def test_recover_with_confirm(tools_by_name, monkeypatch):
+    captured: list = []
+    _make_request_stub(monkeypatch, {"ok": True}, captured)
+    result = await tools_by_name["task_recover"](
+        {"task_id": "t1", "auto_restart": True, "confirm": True}
+    )
+    assert captured[0]["path"] == "/api/tasks/t1/recover"
+    assert captured[0]["kwargs"]["json"] == {"auto_restart": True}
+    payload = json.loads(_content_text(result))
+    assert payload["recovered"] is True
+
+
+async def test_create_pr_with_confirm(tools_by_name, monkeypatch):
+    captured: list = []
+    _make_request_stub(
+        monkeypatch, {"pr_url": "https://github.com/x/y/pull/1", "pr_number": 1}, captured
+    )
+    result = await tools_by_name["task_create_pr"](
+        {"task_id": "t1", "title": "Add X", "confirm": True}
+    )
+    assert captured[0]["path"] == "/api/tasks/t1/worktree/create-pr"
+    payload = json.loads(_content_text(result))
+    assert payload["created"] is True
+
+
+async def test_merge_pr_with_confirm(tools_by_name, monkeypatch):
+    captured: list = []
+    _make_request_stub(monkeypatch, {"merged": True, "sha": "abc"}, captured)
+    result = await tools_by_name["task_merge_pr"](
+        {"task_id": "t1", "merge_method": "squash", "confirm": True}
+    )
+    assert captured[0]["path"] == "/api/tasks/t1/worktree/merge"
+    assert captured[0]["kwargs"]["json"] == {"merge_method": "squash"}
+    payload = json.loads(_content_text(result))
+    assert payload["merged"] is True
+
+
+# ── M2 read tools ─────────────────────────────────────────────────
+
+
+async def test_task_get_diff_truncates_at_max_lines(tools_by_name, monkeypatch):
+    big_diff = "\n".join(f"+ line {i}" for i in range(5000))
+    _make_request_stub(monkeypatch, {"diff": big_diff})
+    result = await tools_by_name["task_get_diff"](
+        {"task_id": "t1", "max_lines": 100}
+    )
+    payload = json.loads(_content_text(result))
+    assert payload["truncated"] is True
+    assert payload["lines"] == 101  # 100 lines + truncation marker
+    assert "[truncated after 100 lines]" in payload["diff"]
+
+
+async def test_task_get_diff_under_limit_not_truncated(tools_by_name, monkeypatch):
+    small_diff = "\n".join(f"+ line {i}" for i in range(10))
+    _make_request_stub(monkeypatch, {"diff": small_diff})
+    result = await tools_by_name["task_get_diff"]({"task_id": "t1"})
+    payload = json.loads(_content_text(result))
+    assert payload["truncated"] is False
+    assert payload["lines"] == 10
+
+
+async def test_task_get_diff_handles_raw_string_response(tools_by_name, monkeypatch):
+    """Server might return the diff as raw text, not wrapped — handle both."""
+    _make_request_stub(monkeypatch, "diff --git a/x b/x\n+ change")
+    result = await tools_by_name["task_get_diff"]({"task_id": "t1"})
+    payload = json.loads(_content_text(result))
+    assert "change" in payload["diff"]
+
+
+async def test_project_list(tools_by_name, monkeypatch):
+    _make_request_stub(
+        monkeypatch,
+        [
+            {"id": "p1", "name": "alpha", "path": "/x", "git_provider": "github"},
+            {"id": "p2", "name": "beta", "path": "/y", "gitProvider": "gitlab"},
+        ],
+    )
+    result = await tools_by_name["project_list"]({})
+    payload = json.loads(_content_text(result))
+    assert payload["count"] == 2
+    # Both camelCase (gitProvider) and snake_case (git_provider) normalize
+    assert payload["projects"][0]["git_provider"] == "github"
+    assert payload["projects"][1]["git_provider"] == "gitlab"
+
+
+async def test_agent_status_combines_two_endpoints(tools_by_name, monkeypatch):
+    """agent_status makes 2 REST calls and merges them into one payload."""
+    calls: list = []
+
+    async def stub(method, path, **kwargs):
+        calls.append(path)
+        if path.endswith("/status"):
+            return {
+                "phase": "coding",
+                "overall_progress": 42,
+                "model_in_use": "sonnet-4-6",
+                "current_subtask_id": "st-3",
+                "current_subtask": "Wire login endpoint",
+            }
+        # Full task
+        return {
+            "id": "t1",
+            "phaseModels": {"coding": "sonnet-4-6", "planning": "opus-4-7"},
+        }
+
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
+
+    result = await tools_by_name["agent_status"]({"task_id": "t1"})
+    payload = json.loads(_content_text(result))
+    # Both endpoints hit
+    assert "/api/tasks/t1/status" in calls
+    assert "/api/tasks/t1" in calls
+    # Merged into a single coherent shape
+    assert payload["phase"] == "coding"
+    assert payload["model"] == "sonnet-4-6"
+    assert payload["overall_progress"] == 42
+    assert payload["current_subtask_title"] == "Wire login endpoint"
