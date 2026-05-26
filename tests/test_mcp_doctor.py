@@ -16,7 +16,6 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
-
 from cli.mcp_commands import handle_mcp_doctor_command
 
 
