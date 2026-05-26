@@ -47,9 +47,12 @@ from .websockets import logs as logs_ws
 from .websockets import progress as progress_ws
 from .websockets import terminal as terminal_ws
 
-# Configure logging with file output
-settings = get_settings()
-setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO")
+# v3.0.2 — logging is configured INSIDE create_app() (was at module
+# level until v3.0.1). Module-level setup_logging() was an import-
+# side-effect that clobbered pytest's caplog handler whenever this
+# module was imported during a test session, breaking ~7 unrelated
+# stdlib-logging tests. Moving the call inside the factory means
+# importing this module is a pure operation.
 logger = logging.getLogger(__name__)
 
 
@@ -90,14 +93,55 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Magestic AI Web Server...")
 
 
+def _read_app_version() -> str:
+    """Return the canonical package version.
+
+    Reads ``apps/backend/__init__.py``'s ``__version__`` — that's the
+    file bump-version.js updates on every release. We deliberately
+    don't ``from apps.backend import __version__`` because the
+    web-server's PYTHONPATH doesn't reliably include the repo root in
+    every install layout (especially the container image). Reading
+    the file via a relative path keeps it robust.
+    """
+    import re
+    from pathlib import Path
+
+    backend_init = Path(__file__).resolve().parents[2] / "backend" / "__init__.py"
+    try:
+        content = backend_init.read_text(encoding="utf-8")
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+        if match:
+            return match.group(1)
+    except OSError:
+        pass
+    return "0.0.0-unknown"
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
 
+    # v3.0.2 — stdlib logging configured here (was module-level
+    # in v3.0.0/v3.0.1; see note at the top of this file).
+    setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO")
+
+    # Epic #26 P6 (wired in v3.0.2) — structlog JSON-to-stdout logging.
+    # Configured here so every log line emitted during create_app() +
+    # lifespan startup is JSON-formatted from the very first event.
+    # Idempotent: re-calling overrides the processor chain wholesale.
+    from .observability import configure_structlog
+    configure_structlog(level="DEBUG" if settings.DEBUG else "INFO")
+
+    # Version comes from apps/backend/__init__.py — the canonical source
+    # of truth that bump-version.js updates on every release. Reading it
+    # at runtime avoids the v3.0.0/v3.0.1 drift where main.py's
+    # hardcoded "1.0.0" lagged behind the actual package version.
+    _app_version = _read_app_version()
+
     app = FastAPI(
-        title="Magestic AI Web API",
-        description="Web API for Magestic AI autonomous coding framework",
-        version="1.0.0",
+        title="AIFactory Web API",
+        description="Web API for AIFactory — self-hosted AI task management + agent orchestration",
+        version=_app_version,
         lifespan=lifespan,
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
@@ -128,6 +172,17 @@ def create_app() -> FastAPI:
         same_site="lax",
         https_only=False,  # operator's reverse-proxy adds Secure
     )
+
+    # Epic #26 P6 (wired in v3.0.2) — CorrelationIdMiddleware. Added
+    # LAST so it's the outermost layer: it sets the X-Request-ID
+    # contextvar BEFORE TokenAuth runs (so 401-rejected requests still
+    # carry the ID in their response, which auditors rely on to trace
+    # failed auth attempts).
+    from .observability import CorrelationIdMiddleware, install_httpx_propagation
+    app.add_middleware(CorrelationIdMiddleware)
+    # Patch httpx clients to forward the correlation ID on outbound
+    # calls. Idempotent.
+    install_httpx_propagation()
 
     # Auth routes (prefix defined in router: /api/auth)
     app.include_router(auth_routes.router)
@@ -194,10 +249,18 @@ def create_app() -> FastAPI:
     app.include_router(terminal_ws.router, tags=["WebSocket"])
     app.include_router(events_ws.router, tags=["WebSocket"])
 
+    # Epic #26 P6 (wired in v3.0.2) — Prometheus /metrics. Called
+    # AFTER all routers are mounted so the instrumentator can derive
+    # cardinality-capped `handler` labels from FastAPI's route table.
+    # Optional METRICS_SCRAPE_TOKEN bearer gate is read from env at
+    # install time.
+    from .observability import install_metrics
+    install_metrics(app)
+
     # Health check endpoint (no auth required)
     @app.get("/api/health")
     async def health_check():
-        return {"status": "healthy", "version": "1.0.0"}
+        return {"status": "healthy", "version": app.version}
 
     # Mount static files for SPA (if build directory exists)
     static_dir = Path(__file__).parent.parent / "static"
@@ -208,7 +271,7 @@ def create_app() -> FastAPI:
         @app.get("/")
         async def root():
             return {
-                "message": "Magestic AI Web Server",
+                "message": "AIFactory Web Server",
                 "docs": "/docs",
                 "note": "Frontend not built yet. Run 'npm run build' in apps/frontend-web/",
             }
