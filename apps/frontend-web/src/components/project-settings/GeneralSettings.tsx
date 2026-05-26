@@ -123,6 +123,44 @@ export function GeneralSettings({
 
           <Separator />
 
+          {/* Remote Control default — when on, new tasks start with
+              enableRemoteControl: true unless the wizard overrides */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="font-normal text-foreground">
+                  Enable Remote Control by default
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Every new task in this project gets the Claude Code{' '}
+                  <code className="text-xs bg-muted px-1 rounded">--remote-control</code>{' '}
+                  flag, so you can drive its session from{' '}
+                  <a
+                    href="https://claude.ai/code"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-foreground"
+                  >
+                    claude.ai/code
+                  </a>{' '}
+                  or the Claude mobile app. The wizard's per-task toggle still
+                  overrides on a case-by-case basis. Requires a paid Anthropic
+                  subscription and{' '}
+                  <code className="text-xs bg-muted px-1 rounded">claude auth login</code>{' '}
+                  on the AIFactory host.
+                </p>
+              </div>
+              <Switch
+                checked={settings.remoteControlByDefault ?? false}
+                onCheckedChange={(checked) =>
+                  setSettings({ ...settings, remoteControlByDefault: checked })
+                }
+              />
+            </div>
+          </section>
+
+          <Separator />
+
           {/* Notifications */}
           <section className="space-y-4">
             <h3 className="text-sm font-semibold text-foreground">Notifications</h3>
