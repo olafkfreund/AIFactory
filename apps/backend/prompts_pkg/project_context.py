@@ -164,6 +164,74 @@ def detect_project_capabilities(project_index: dict) -> dict:
     return capabilities
 
 
+def detect_infra_markers(project_dir: Path) -> dict[str, bool]:
+    """Detect infrastructure markers in the project root.
+
+    Drives auto-enable of default MCP servers (Kubernetes, AWS, Azure, GCP,
+    GitLab, Azure DevOps). Filesystem-only scan — cheap, no parsing — because
+    these markers are conventional directory / filename signals each tool's
+    own docs use. Anything beyond a presence check (e.g. parsing a Terraform
+    file for the actual provider) would be brittle and is left to the MCP
+    server itself.
+
+    Returns a dict of flags consumed by ``mcp_catalog.MCPCatalogEntry``'s
+    ``marker_capability_keys`` field. New keys here must match the catalog
+    entry that uses them.
+    """
+
+    def _any_exists(*patterns: str) -> bool:
+        # Mix of dir/file/glob signals. ``Path.exists()`` covers dirs+files;
+        # ``Path.glob`` covers patterns. Anything truthy wins.
+        for pattern in patterns:
+            target = project_dir / pattern
+            if "*" in pattern or "?" in pattern:
+                try:
+                    if next(project_dir.glob(pattern), None) is not None:
+                        return True
+                except (OSError, ValueError):
+                    continue
+            else:
+                try:
+                    if target.exists():
+                        return True
+                except OSError:
+                    continue
+        return False
+
+    return {
+        "has_kubernetes": _any_exists(
+            "k8s",
+            "kubernetes",
+            "charts",
+            "kustomization.yaml",
+            "kustomization.yml",
+            "Chart.yaml",
+        ),
+        "has_aws": _any_exists(
+            "terraform",
+            "*.tf",
+            "aws",
+            "serverless.yml",
+            "samconfig.toml",
+            "template.yaml",  # AWS SAM
+        ),
+        "has_azure": _any_exists(
+            "azure",
+            "*.bicep",
+            "azuredeploy.json",
+            "main.bicep",
+        ),
+        "has_gcp": _any_exists(
+            "gcp",
+            "app.yaml",
+            "cloudbuild.yaml",
+            "cloudbuild.yml",
+        ),
+        "has_gitlab_ci": _any_exists(".gitlab-ci.yml", ".gitlab-ci.yaml"),
+        "has_azure_devops": _any_exists("azure-pipelines.yml", ".azuredevops"),
+    }
+
+
 def should_refresh_project_index(project_dir: Path) -> bool:
     """
     Check if project_index.json needs refresh based on dependency file changes.

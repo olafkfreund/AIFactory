@@ -347,6 +347,15 @@ def _map_mcp_server_name(
     mapped = mappings.get(name.lower().strip())
     if mapped:
         return mapped
+    # Catalog servers (github, kubernetes, aws, azure, ...): accept by id verbatim.
+    # Imported lazily so the mapping module stays cheap to load.
+    try:
+        from agents.tools_pkg.mcp_catalog import is_catalog_server
+
+        if is_catalog_server(name.lower().strip()):
+            return name.lower().strip()
+    except ImportError:
+        pass
     # Check if it's a custom server ID (accept as-is)
     if custom_server_ids and name in custom_server_ids:
         return name
@@ -357,6 +366,7 @@ def get_required_mcp_servers(
     agent_type: str,
     project_capabilities: dict | None = None,
     mcp_config: dict | None = None,
+    infra_markers: dict | None = None,
 ) -> list[str]:
     """
     Get MCP servers required for this agent type.
@@ -364,8 +374,12 @@ def get_required_mcp_servers(
     Handles dynamic server selection:
     - "browser" → playwright (if is_web_frontend)
     - "graphiti" → only if GRAPHITI_MCP_URL is set
+    - Catalog servers (github/kubernetes/aws/azure) auto-enable when their
+      ``marker_capability_keys`` match ``infra_markers`` AND credentials probe
+      succeeds. See ``agents.tools_pkg.mcp_catalog``.
     - Respects per-project MCP config overrides from .aifactory/.env
     - Applies per-agent ADD/REMOVE overrides from AGENT_MCP_<agent>_ADD/REMOVE
+      (these run LAST so operators can always force-enable or force-disable)
 
     Args:
         agent_type: The agent type identifier
@@ -373,6 +387,9 @@ def get_required_mcp_servers(
         mcp_config: Per-project MCP server toggles from .aifactory/.env
                    Keys: CONTEXT7_ENABLED,
                          PLAYWRIGHT_MCP_ENABLED, AGENT_MCP_<agent>_ADD/REMOVE
+        infra_markers: Dict from detect_infra_markers() — has_kubernetes, has_aws, etc.
+                       When None, catalog auto-enable is skipped entirely (legacy callers
+                       keep current behavior).
 
     Returns:
         List of MCP server names to start
@@ -411,6 +428,36 @@ def get_required_mcp_servers(
     if "graphiti" in servers:
         if not os.environ.get("GRAPHITI_MCP_URL"):
             servers = [s for s in servers if s != "graphiti"]
+
+    # ========== Catalog auto-enable (github/kubernetes/aws/azure/...) ==========
+    # Walks ``mcp_catalog.CATALOG`` and appends any entry where the agent is in
+    # ``default_for_agents`` AND the project markers match AND credentials are
+    # available. Lazily imported so module load stays cheap; ImportError just
+    # skips the framework (legacy behaviour).
+    if infra_markers is not None:
+        try:
+            from agents.tools_pkg.mcp_catalog import CATALOG
+            from core.mcp_credentials import get_credential_status
+
+            for entry in CATALOG:
+                if agent_type not in entry.default_for_agents:
+                    continue
+                if entry.id in servers:
+                    continue  # already in base list from AGENT_CONFIGS
+                # Empty marker list = always-on (e.g. github — every repo qualifies)
+                if entry.marker_capability_keys and not any(
+                    infra_markers.get(key) for key in entry.marker_capability_keys
+                ):
+                    continue
+                if entry.credential_provider:
+                    creds = get_credential_status(entry.credential_provider)
+                    if not creds.available:
+                        continue
+                servers.append(entry.id)
+        except ImportError:
+            # Framework not installed (or running in a stripped-down context) —
+            # silently skip catalog auto-enable rather than break the existing path.
+            pass
 
     # ========== Apply per-agent MCP overrides ==========
     # Format: AGENT_MCP_<agent_type>_ADD=server1,server2
