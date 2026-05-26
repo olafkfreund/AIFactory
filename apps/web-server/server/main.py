@@ -25,6 +25,7 @@ from .routes import (
     api_keys,
     audit,
     auth_routes,
+    auto_fix,
     context,
     email,
     execution,
@@ -226,6 +227,11 @@ def create_app() -> FastAPI:
 
     # GitHub routes
     app.include_router(github.router, prefix="/api/github", tags=["GitHub"])
+
+    # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
+    # Endpoints live under /api/projects/{id}/auto-fix/* so they match
+    # the per-project nesting the frontend already follows.
+    app.include_router(auto_fix.router, prefix="/api/projects", tags=["Auto-Fix"])
 
     # Git and utility routes
     app.include_router(git.router, prefix="/api/git", tags=["Git"])
