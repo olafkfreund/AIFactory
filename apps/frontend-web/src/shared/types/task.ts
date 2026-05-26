@@ -158,6 +158,11 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
+  /**
+   * Spawn the agent with Claude Code's --remote-control flag so the
+   * session is drivable from claude.ai/code / Claude mobile app.
+   */
+  enableRemoteControl?: boolean;
   selectedSkills?: SelectedSkill[];
   savedAt: Date;
 }
@@ -222,6 +227,10 @@ export interface TaskMetadata {
 
   // Review settings
   requireReviewBeforeCoding?: boolean;  // Require human review of spec/plan before coding starts
+
+  // Remote Control — spawn agent with Claude Code's --remote-control flag
+  // so the session is drivable from claude.ai/code / Claude mobile app
+  enableRemoteControl?: boolean;
 
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Model to use (e.g. 'opus', 'ollama:llama3', 'openai_compat:mistral-7b') - used when not auto profile

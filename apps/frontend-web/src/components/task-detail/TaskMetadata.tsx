@@ -78,6 +78,22 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
                 Quick
               </Badge>
             )}
+            {/* Remote Control — click the badge to open claude.ai/code session list */}
+            {task.metadata?.enableRemoteControl && (
+              <a
+                href="https://claude.ai/code"
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open this session in claude.ai/code — appears as "AIFactory: ${task.specId}" in the session list`}
+              >
+                <Badge
+                  variant="outline"
+                  className="text-xs bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20 transition-colors"
+                >
+                  Drive remotely ↗
+                </Badge>
+              </a>
+            )}
             {/* Category */}
             {task.metadata?.category && (
               <Badge
