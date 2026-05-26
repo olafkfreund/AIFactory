@@ -556,6 +556,10 @@ class ProjectSettingsUpdate(BaseModel):
     gitOrg: str | None = Field(default=None, alias="git_org")
     gitProject: str | None = Field(default=None, alias="git_project")
     gitRepo: str | None = Field(default=None, alias="git_repo")
+    # When true, every NEW task in this project gets ``enableRemoteControl: true``
+    # in its task_metadata.  Per-task overrides win — this is just the default
+    # when the user creates a task without flipping the wizard toggle.
+    remoteControlByDefault: bool | None = Field(default=None, alias="remote_control_by_default")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -615,6 +619,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
         bool_mapping = {
             "graphitiMcpEnabled": "GRAPHITI_ENABLED",
             "useClaudeMd": "USE_CLAUDE_MD",
+            "remoteControlByDefault": "REMOTE_CONTROL_BY_DEFAULT",
         }
 
         # Update string/value settings
@@ -932,7 +937,7 @@ Created via Magestic AI Web UI
         # Copy model-related fields that phase_config.py expects
         # Also include 'mode' for Quick Mode prompt selection and 'requireReviewBeforeCoding' for approval gate
         # Also include selectedSkills so agent_service.py can inject skill context
-        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills"]
+        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl"]
         for field in model_fields:
             if field in task_data.metadata:
                 task_metadata[field] = task_data.metadata[field]
