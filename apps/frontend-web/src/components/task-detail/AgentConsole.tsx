@@ -25,6 +25,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 
+import { getAuthenticatedWsUrl } from '../../lib/auth';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import {
@@ -48,27 +49,6 @@ type AttachState =
 interface AgentConsoleProps {
   /** Composite task ID — ``projectId:specId`` as the backend expects. */
   taskId: string;
-}
-
-/**
- * Resolve the WebSocket base URL.  Mirrors the pattern used by the
- * existing logs/progress WS clients (api-client.ts).  We don't import
- * the helper directly to keep this component self-contained for the
- * vitest harness.
- */
-function getWsBaseUrl(): string {
-  // Vite injects this at build time.  Falls back to the page origin
-  // (matches the API proxy in vite.config.ts during development).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const env = (import.meta as any)?.env ?? {};
-  if (env.VITE_WS_BASE_URL) {
-    return env.VITE_WS_BASE_URL.replace(/\/$/, '');
-  }
-  if (typeof window !== 'undefined') {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}`;
-  }
-  return '';
 }
 
 function getApiBaseUrl(): string {
@@ -145,8 +125,13 @@ export function AgentConsole({ taskId }: AgentConsoleProps) {
       ws.send(data);
     });
 
-    // Open the WS.
-    const url = `${getWsBaseUrl()}/api/tasks/${encodeURIComponent(taskId)}/agent-console/ws`;
+    // Open the WS.  ``getAuthenticatedWsUrl`` is the same helper the
+    // logs/terminal/progress WS clients use — it pulls the bearer token
+    // out of the auth store and appends ``?token=...`` so the FastAPI
+    // ``verify_websocket_token`` middleware accepts the upgrade.  Without
+    // it the server closes the WS with code 4001 before our onopen
+    // fires and the UI stays at "Connecting…" forever.
+    const url = getAuthenticatedWsUrl(`/api/tasks/${encodeURIComponent(taskId)}/agent-console/ws`);
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;

@@ -34,18 +34,26 @@ def _add_request_id(_logger, _name, event_dict):
 
 
 def configure_structlog(level: str = "INFO") -> None:
-    """Wire stdlib logging → structlog → JSON-to-stdout.
+    """Wire structlog → JSON-to-stdout.
 
     Idempotent: re-configuring is a no-op for callers (structlog's
     ``configure`` replaces the processor chain wholesale).
+
+    Deliberately does NOT call ``logging.basicConfig(force=True)``.
+    Earlier versions did, which silently nuked the file handlers
+    ``setup_logging`` had installed seconds before for
+    ``server.log`` / ``errors.log`` / ``agent.log`` — every line
+    emitted after this call vanished to stdout instead of reaching
+    the rotating file handlers operators monitor.  structlog still
+    writes via its own ``PrintLoggerFactory`` to stdout; the stdlib
+    loggers keep their file handlers untouched.
     """
     log_level = getattr(logging, level.upper(), logging.INFO)
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=log_level,
-        force=True,
-    )
+    # Only set the root level if no handler is attached, so we don't
+    # override an embedding test's logging config.
+    root = logging.getLogger()
+    if not root.handlers:
+        root.setLevel(log_level)
 
     structlog.configure(
         processors=[

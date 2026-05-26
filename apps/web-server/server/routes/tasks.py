@@ -569,12 +569,29 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             if all_subtasks:
                 metadata["subtasks"] = []
                 for i, st in enumerate(all_subtasks):
-                    # Build files list from 'file' (single) or 'files' (array) fields
+                    # Build files list from 'file' (single) or 'files'
+                    # (array) fields.  Tolerate three shapes the planner
+                    # has been observed to emit:
+                    #   files: "path/to/x.py"                  (str)
+                    #   files: ["a.py", "b.py"]                (list[str])
+                    #   files: {"create": ["a.py"], "modify": ["b.py"]}
+                    #     (dict — happens when the planner groups files
+                    #     by intent; flatten the values into a single
+                    #     list of strings)
                     files = []
                     if st.get("file"):
                         files.append(st["file"])
-                    if st.get("files"):
-                        files.extend(st["files"] if isinstance(st["files"], list) else [st["files"]])
+                    raw_files = st.get("files")
+                    if isinstance(raw_files, str):
+                        files.append(raw_files)
+                    elif isinstance(raw_files, list):
+                        files.extend(f for f in raw_files if isinstance(f, str))
+                    elif isinstance(raw_files, dict):
+                        for v in raw_files.values():
+                            if isinstance(v, list):
+                                files.extend(f for f in v if isinstance(f, str))
+                            elif isinstance(v, str):
+                                files.append(v)
 
                     # Build verification from 'verification' or 'verification_method' fields
                     verification = None

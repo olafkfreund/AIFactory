@@ -154,22 +154,69 @@ class SessionRegistry:
                 fifo_path.unlink()
             os.mkfifo(str(fifo_path), mode=0o600)
 
-            # Bring up rmux + session + pipe-pane in one shot.
+            # Bring up rmux + session + pipe-pane.
+            #
+            # IMPORTANT ordering: register ``_states`` AS SOON AS
+            # ``new_session`` returns successfully — BEFORE we attempt
+            # ``pipe_pane``.  Earlier the order was new_session →
+            # pipe_pane → _states, which meant a transient pipe_pane
+            # failure (race against the freshly-spawned daemon's pane
+            # registration) would leave an orphaned rmux session AND
+            # an empty registry — so the bridge endpoint correctly
+            # answered "no session for spec_id" even though the
+            # session existed.  Re-ordering keeps the registry
+            # consistent with the daemon: if rmux has a session
+            # named ``aifactory-task-<spec_id>``, the registry has
+            # it too.
             await self._wrapper.ensure_daemon()
+            logger.info(
+                "[rmux.session] create_for_task: ensure_daemon OK spec_id=%s", spec_id,
+            )
+
+            # Defensive: the rmux daemon's session table can outlive a
+            # web-server lifetime (we restart the server frequently
+            # during dev; the daemon is a separate process and keeps
+            # running).  If a session named ``aifactory-task-<spec_id>``
+            # is lingering from a previous web-server's task, ``new-session``
+            # would fail with "duplicate session" and leave our in-memory
+            # ``_states`` empty.  Reap any stale namesake first; the
+            # ignore_missing flag makes this a no-op when there's nothing
+            # to clean.
+            await self._wrapper.kill_session(session_name, ignore_missing=True)
             await self._wrapper.new_session(
                 session_name, worktree_path, agent_cmd
             )
-            await self._wrapper.pipe_pane(session_name, fifo_path)
+            logger.info(
+                "[rmux.session] create_for_task: new_session OK spec_id=%s session=%s",
+                spec_id, session_name,
+            )
 
+            # Register BEFORE pipe_pane so the WS can find us even if
+            # pipe-pane attaches late (the FIFO simply has no bytes
+            # until then, but the bridge can still resolve the session).
             self._states[spec_id] = SessionState(
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
             )
             logger.info(
-                "rmux session created: spec_id=%s session=%s fifo=%s",
-                spec_id, session_name, fifo_path,
+                "[rmux.session] create_for_task: registered in _states spec_id=%s (states count=%d)",
+                spec_id, len(self._states),
             )
+
+            try:
+                await self._wrapper.pipe_pane(session_name, fifo_path)
+                logger.info(
+                    "[rmux.session] create_for_task: pipe_pane OK spec_id=%s", spec_id,
+                )
+            except Exception as e:
+                # Don't unregister — caller can still see "session
+                # exists but no bytes".  Log so the operator notices.
+                logger.warning(
+                    "[rmux.session] create_for_task: pipe_pane FAILED spec_id=%s err=%s — session still registered",
+                    spec_id, e,
+                )
+
             return fifo_path
 
     async def reap_for_task(self, spec_id: str) -> None:
