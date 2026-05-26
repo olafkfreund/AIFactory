@@ -244,6 +244,52 @@ rmux:
   # socket + lockfile with plenty of margin.
   rmuxEmptyDirSizeLimit: 10Mi
 
+# ---------------------------------------------------------------------------
+# Remote Control — Claude Code's native --remote-control flag.
+#
+# When per-task ``enableRemoteControl: true`` is set (or the project's
+# ``remoteControlByDefault`` is on), the agent subprocess registers a
+# session with Anthropic's API and the user can drive it from
+# claude.ai/code or the Claude mobile app.  Anthropic's docs:
+#   https://code.claude.com/docs/en/remote-control
+#
+# Auth: Remote Control rejects the inference-only OAuth token AIFactory
+# uses by default; it requires the full-scope credentials in
+# ~/.claude/.credentials.json (produced by ``claude auth login``).
+# The agent_service scrubs CLAUDE_CODE_OAUTH_TOKEN from the spawned
+# env when remote-control is enabled, so the subprocess falls through
+# to ~/.claude/.credentials.json.  For K8s deployments, we mount that
+# file from a Secret.
+#
+# Operator setup (one time, from a logged-in workstation):
+#   kubectl create secret generic claude-remote-credentials \
+#     --from-file=credentials.json=$HOME/.claude/.credentials.json \
+#     -n aifactory
+#
+# Then set credentialsSecretName below to "claude-remote-credentials".
+# Rotate by re-running ``claude auth login`` + ``kubectl create secret``
+# with --dry-run + ``kubectl apply``.
+#
+# Constraints (from Anthropic's docs):
+#   • Subscription: Pro / Max / Team / Enterprise (not API-key users)
+#   • Provider: Anthropic API only — Bedrock/Vertex/Foundry not supported
+#   • Concurrency: one Remote Control session per claude process
+#     (already matches AIFactory's one-claude-per-task model)
+remoteControl:
+  # Master toggle.  When false (default), no Remote Control wiring is
+  # added to the pod at all — behaviour is byte-for-byte unchanged.
+  enabled: false
+  # Name of a Kubernetes Secret with key ``credentials.json`` containing
+  # the contents of ~/.claude/.credentials.json from a machine where
+  # the operator has run ``claude auth login``.  Required when
+  # ``enabled: true``.
+  credentialsSecretName: ""
+  # Where Claude Code looks for credentials inside the container.
+  # The image runs as the ``nonroot`` user, so the default home is
+  # /home/nonroot.  Don't change this unless you've also changed the
+  # container's runAsUser / fsGroup.
+  mountPath: "/home/nonroot/.claude/.credentials.json"
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and

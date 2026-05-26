@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
         'concepts/spec-driven-development',
         'concepts/multi-provider',
         'concepts/rmux-live-console',
+        'concepts/remote-control',
       ],
     },
     {
@@ -37,7 +38,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Showcase',
       collapsed: true,
-      items: ['showcase/index', 'showcase/demo-walkthrough'],
+      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo'],
     },
     {
       type: 'category',

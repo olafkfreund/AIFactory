@@ -102,6 +102,15 @@ spec:
             - name: AIFACTORY_RMUX_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.remoteControl.enabled }}
+            # Claude Code Remote Control — signal to the agent_service
+            # that this deployment is set up to serve remote-control
+            # sessions.  The per-task ``enableRemoteControl`` flag
+            # still gates whether a SPECIFIC task uses Remote Control;
+            # this env var is just a "deployment supports it" marker.
+            - name: AIFACTORY_REMOTE_CONTROL_SUPPORTED
+              value: "true"
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/health
@@ -135,6 +144,20 @@ spec:
             - name: aifactory-panes
               mountPath: /var/run/aifactory/panes
             {{- end }}
+            {{- if .Values.remoteControl.enabled }}
+            # Claude Code Remote Control — mount the full-scope OAuth
+            # credentials from the operator's ``claude auth login`` so
+            # spawned agents fall through to them (the inference-only
+            # token AIFactory uses by default gets rejected by Remote
+            # Control).  ``subPath`` ensures the file lands at exactly
+            # the path Claude Code expects, not in a directory of
+            # secret-projected files.  readOnly + the implicit 0400
+            # mode on secret volumes keeps the token tightly scoped.
+            - name: claude-remote-credentials
+              mountPath: {{ .Values.remoteControl.mountPath | quote }}
+              subPath: credentials.json
+              readOnly: true
+            {{- end }}
             {{- if and .Values.global .Values.global.customCABundle.secretName }}
             - name: custom-ca
               mountPath: /etc/ssl/custom-ca
@@ -154,6 +177,18 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.rmux.panesEmptyDirSizeLimit }}
+        {{- end }}
+        {{- if .Values.remoteControl.enabled }}
+        - name: claude-remote-credentials
+          secret:
+            secretName: {{ required "remoteControl.credentialsSecretName is required when remoteControl.enabled=true — see charts/aifactory/values.yaml for the kubectl create secret command" .Values.remoteControl.credentialsSecretName }}
+            # defaultMode 0400 on the projected file — Claude Code
+            # refuses to read credentials with looser perms.  K8s
+            # converts this to mode 0400 inside the volume.
+            defaultMode: 0400
+            items:
+              - key: credentials.json
+                path: credentials.json
         {{- end }}
         {{- if and .Values.global .Values.global.customCABundle.secretName }}
         - name: custom-ca
