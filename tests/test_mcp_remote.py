@@ -65,10 +65,12 @@ def test_is_enabled_falsy_values(val, monkeypatch):
 # ── Catalog shape ──────────────────────────────────────────────────
 
 
-def test_eight_tools_in_v1_catalog():
+def test_twelve_tools_in_full_catalog():
+    """V1 (8) + V1.1 (4) = the full 12-tool catalog from issue #83."""
     defs = get_tool_definitions()
     names = {d["name"] for d in defs}
     expected = {
+        # V1
         "aifactory.list_projects",
         "aifactory.list_tasks",
         "aifactory.get_task",
@@ -77,6 +79,11 @@ def test_eight_tools_in_v1_catalog():
         "aifactory.stop_task",
         "aifactory.approve_plan",
         "aifactory.merge_pr",
+        # V1.1
+        "aifactory.get_qa_report",
+        "aifactory.tail_agent_console",
+        "aifactory.reject_plan",
+        "aifactory.recover_task",
     }
     assert expected == names
 
@@ -332,3 +339,123 @@ async def test_arbitrary_exception_becomes_isError(read_only_key):
         )
     assert result.get("isError") is True
     assert "boom" in result["content"][0]["text"]
+
+
+# ════════════════════════════════════════════════════════════════════
+# V1.1 tools — qa_report, tail_agent_console, reject_plan, recover_task
+# ════════════════════════════════════════════════════════════════════
+
+
+async def test_get_qa_report_hits_correct_endpoint(read_only_key):
+    mock_call = AsyncMock(
+        return_value={"content": "# QA report\nAll good", "exists": True}
+    )
+    with patch("server.mcp_remote.tools._call_internal", mock_call):
+        result = await dispatch_tool_call(
+            "aifactory.get_qa_report", {"task_id": "p1:001"}, read_only_key
+        )
+    call_args = mock_call.call_args
+    assert call_args.args[0] == "GET"
+    assert call_args.args[1] == "/api/tasks/p1:001/qa-report"
+    assert not result.get("isError")
+
+
+async def test_qa_report_requires_read_scope(no_scope_key):
+    result = await dispatch_tool_call(
+        "aifactory.get_qa_report", {"task_id": "p1:001"}, no_scope_key
+    )
+    assert result.get("isError") is True
+    assert "mcp:read" in result["content"][0]["text"]
+
+
+async def test_tail_agent_console_returns_sse_url(read_only_key, monkeypatch):
+    """SSE-in-MCP is awkward; we return the URL for the client to follow."""
+    monkeypatch.setenv("AIFACTORY_MCP_LOOPBACK_URL", "https://aifactory.example.com")
+    # No _call_internal mock needed — this tool builds a URL, not a REST call.
+    result = await dispatch_tool_call(
+        "aifactory.tail_agent_console", {"task_id": "p1:001"}, read_only_key
+    )
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["sse_url"] == (
+        "https://aifactory.example.com/api/tasks/p1:001/agent-console/sse"
+    )
+    assert "auth_hint" in payload
+
+
+async def test_tail_agent_console_requires_read_scope(no_scope_key):
+    result = await dispatch_tool_call(
+        "aifactory.tail_agent_console", {"task_id": "p1:001"}, no_scope_key
+    )
+    assert result.get("isError") is True
+    assert "mcp:read" in result["content"][0]["text"]
+
+
+async def test_reject_plan_hits_correct_endpoint_with_feedback(write_key):
+    mock_call = AsyncMock(return_value={"success": True, "feedback_recorded": True})
+    with patch("server.mcp_remote.tools._call_internal", mock_call):
+        result = await dispatch_tool_call(
+            "aifactory.reject_plan",
+            {"task_id": "p1:001", "feedback": "Plan is too vague"},
+            write_key,
+        )
+    call_args = mock_call.call_args
+    assert call_args.args[0] == "POST"
+    assert call_args.args[1] == "/api/tasks/p1:001/reject-plan"
+    assert call_args.kwargs["json"] == {"feedback": "Plan is too vague"}
+    assert not result.get("isError")
+
+
+async def test_reject_plan_without_feedback(write_key):
+    """Feedback is optional — omitting it produces an empty JSON body."""
+    mock_call = AsyncMock(return_value={"success": True, "feedback_recorded": False})
+    with patch("server.mcp_remote.tools._call_internal", mock_call):
+        await dispatch_tool_call(
+            "aifactory.reject_plan", {"task_id": "p1:001"}, write_key
+        )
+    call_args = mock_call.call_args
+    assert call_args.kwargs["json"] == {}
+
+
+async def test_reject_plan_blocked_with_only_read_scope(read_only_key):
+    result = await dispatch_tool_call(
+        "aifactory.reject_plan", {"task_id": "p1:001"}, read_only_key
+    )
+    assert result.get("isError") is True
+    assert "mcp:write" in result["content"][0]["text"]
+
+
+async def test_recover_task_hits_correct_endpoint(write_key):
+    mock_call = AsyncMock(return_value={"recovered": True})
+    with patch("server.mcp_remote.tools._call_internal", mock_call):
+        result = await dispatch_tool_call(
+            "aifactory.recover_task",
+            {"task_id": "p1:001", "auto_restart": True},
+            write_key,
+        )
+    call_args = mock_call.call_args
+    assert call_args.args[0] == "POST"
+    assert call_args.args[1] == "/api/tasks/p1:001/recover"
+    # The REST endpoint expects camelCase ``autoRestart`` (see
+    # routes/execution.py::RecoverTaskRequest); the MCP tool exposes it
+    # as snake_case ``auto_restart`` because that's the Python idiom MCP
+    # clients are easier to write against.
+    assert call_args.kwargs["json"] == {"autoRestart": True}
+    assert not result.get("isError")
+
+
+async def test_recover_task_default_auto_restart_is_false(write_key):
+    mock_call = AsyncMock(return_value={"recovered": True})
+    with patch("server.mcp_remote.tools._call_internal", mock_call):
+        await dispatch_tool_call(
+            "aifactory.recover_task", {"task_id": "p1:001"}, write_key
+        )
+    call_args = mock_call.call_args
+    assert call_args.kwargs["json"] == {"autoRestart": False}
+
+
+async def test_recover_task_blocked_with_only_read_scope(read_only_key):
+    result = await dispatch_tool_call(
+        "aifactory.recover_task", {"task_id": "p1:001"}, read_only_key
+    )
+    assert result.get("isError") is True
+    assert "mcp:write" in result["content"][0]["text"]

@@ -112,12 +112,18 @@ async with sse_client(
 | `aifactory.stop_task` | ✓ shipped | `mcp:write` | Stop a running task |
 | `aifactory.approve_plan` | ✓ shipped | `mcp:write` | Approve plan at the review checkpoint |
 | `aifactory.merge_pr` | ✓ shipped | `mcp:write` | Merge the worktree PR |
-| `aifactory.get_qa_report` | ⏳ V1.1 | `mcp:read` | Needs `GET /api/tasks/{id}/qa-report` |
-| `aifactory.tail_agent_console` | ⏳ V1.1 | `mcp:read` | Needs `GET /api/tasks/{id}/agent-console/sse` |
-| `aifactory.reject_plan` | ⏳ V1.1 | `mcp:write` | Needs `POST /api/tasks/{id}/reject-plan` |
-| `aifactory.recover_task` | ⏳ V1.1 | `mcp:write` | Builds on stdio M2's recover surface |
+| `aifactory.get_qa_report` | ✓ shipped | `mcp:read` | Reads `qa_report.md` from the spec dir |
+| `aifactory.tail_agent_console` | ✓ shipped | `mcp:read` | Returns SSE URL the client connects to (cleaner than wrapping SSE-in-MCP) |
+| `aifactory.reject_plan` | ✓ shipped | `mcp:write` | Optional `feedback` lands on the spec's review-state feedback log |
+| `aifactory.recover_task` | ✓ shipped | `mcp:write` | Wraps `POST /api/tasks/{id}/recover` |
 
-The 4 deferred tools land in a follow-up PR once their backing REST endpoints exist.
+**Full 12-tool catalog now shipped — Epic #50 complete.**
+
+### Notes on the V1.1 additions
+
+**`tail_agent_console` returns a URL, not a stream.** SSE-inside-MCP is awkward (the MCP envelope is request/response, SSE is push). Instead the tool returns the absolute SSE URL + a hint to use the same `Authorization` header — the client makes a separate GET against that URL and consumes the stream natively. The SSE endpoint emits `data:` lines as the agent's `build-progress.txt` grows, then closes with `event: done` on idle timeout (30s) or max duration (30min).
+
+**`reject_plan` records feedback on the review-state log.** When `feedback` is supplied, it's appended to the spec's review-state feedback list so the planner's next iteration sees it. The plan file is flipped to `planStatus: "rejected"` for portal visibility.
 
 ## Architecture — how this fits with the stdio server
 
