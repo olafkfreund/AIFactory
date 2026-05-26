@@ -1,100 +1,51 @@
 # =============================================================================
-# AIFactory - Docker Compose
+# AIFactory — local-dev docker-compose
 # =============================================================================
-# Deploys with a static LAN IP via macvlan.
-# No port mapping needed — the container is directly reachable on the LAN.
-#
-# Required environment variables (set in .env or shell — see .env.example):
-#   INSTANCE_IP    — LAN IP for this instance (e.g. 192.168.1.100)
-#   HOST_NIC       — Host's physical NIC name (e.g. eth0, eno1, enp0s31f6)
-#   LAN_SUBNET     — Your LAN subnet      (e.g. 192.168.1.0/24)
-#   LAN_GATEWAY    — Your LAN gateway IP  (e.g. 192.168.1.1)
-#
-# Optional environment variables (have defaults):
-#   INSTANCE_NAME      — Container name and disk label   (default: aifactory)
-#   AIFACTORY_DATA_DIR  — Host directory for persistent data (default: ./data)
+# Simple compose file for running AIFactory on a developer laptop.
+# Production deployments use the Helm chart (P0.13's runbook); this file
+# is NOT the production deployment surface.
 #
 # Usage:
-#   cp .env.example .env && $EDITOR .env       # set the required vars above
-#   sudo bash scripts/setup-docker-disk.sh ${INSTANCE_NAME:-aifactory}
+#   cp .env.example .env       # optional — defaults below cover common cases
 #   docker compose up -d
 #
-# Multiple instances (each needs a unique INSTANCE_NAME + INSTANCE_IP):
-#   sudo bash scripts/setup-docker-disk.sh client-acme
-#   INSTANCE_NAME=client-acme INSTANCE_IP=192.168.1.101 docker compose up -d
-#
-# DISK QUOTA:
-#   Each instance gets its own 2 GB loopback ext4 disk at
-#   ${AIFACTORY_DATA_DIR}/<INSTANCE_NAME>-data.
-#   Run scripts/setup-docker-disk.sh <name> to create it (idempotent).
-#   To teardown: sudo bash scripts/setup-docker-disk.sh <name> teardown
-#
-# MACVLAN CAVEAT:
-#   By default, the Docker host CANNOT talk to macvlan containers directly.
-#   To enable host-to-container communication, create a macvlan shim
-#   interface on the host (once per instance IP):
-#
-#     sudo ip link add aifactory-shim link "${HOST_NIC}" type macvlan mode bridge
-#     sudo ip addr add <HOST_LAN_IP>/32 dev aifactory-shim
-#     sudo ip link set aifactory-shim up
-#     sudo ip route add "${INSTANCE_IP}/32" dev aifactory-shim
-#
-#   To make it persistent, add to /etc/networkd-dispatcher or rc.local.
+# The chainguard-based image (uid 65532, no NET_ADMIN, distroless runtime,
+# read-only-fs friendly) means the legacy macvlan + iptables firewall setup
+# is gone. Egress control belongs in the customer's K8s NetworkPolicy
+# (Helm chart, P4 of Epic #26), not in the image.
 # =============================================================================
 
 services:
   app:
     build: .
-    container_name: ${INSTANCE_NAME:-aifactory}
+    image: aifactory:local
+    container_name: aifactory
     restart: unless-stopped
-    networks:
-      aifactory-lan:
-        ipv4_address: ${INSTANCE_IP:?INSTANCE_IP is required — see .env.example}
+    ports:
+      - "${HOST_PORT:-3101}:3101"
     volumes:
-      # Persistent data — 2 GB loopback disk (run scripts/setup-docker-disk.sh <name> first)
-      # AIFACTORY_DATA_DIR must be an absolute path if you use snap Docker
-      # (snap resolves $HOME to its own snap dir).
-      - ${AIFACTORY_DATA_DIR:-./data}/${INSTANCE_NAME:-aifactory}-data:/home/aifactory/.aifactory
-      # Optional: bind-mount a host directory for agent project work
-      # - /path/to/host/projects:/home/aifactory/projects
-    cap_add:
-      - NET_ADMIN                       # Required for iptables firewall rules in entrypoint
+      - ${AIFACTORY_DATA_DIR:-./data}:/home/nonroot/.aifactory
     environment:
-      # All optional — configure via the web UI onboarding wizard
-      - APP_DEBUG=false                 # Set to true for Swagger docs at /docs
-      # - APP_API_TOKEN=                # Auto-generated if not set
-      # - CLAUDE_CODE_OAUTH_TOKEN=      # Set via UI OAuth flow instead
-      # LAN firewall (blocks RFC 1918 egress, preserves internet access)
-      - CONTAINER_LAN_FIREWALL=true
-      - CONTAINER_GATEWAY=${LAN_GATEWAY:?LAN_GATEWAY is required — see .env.example}
-      # - CONTAINER_BLOCKED_RANGES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
-
-    # Resource limits
+      - APP_DEBUG=false
+      # APP_API_TOKEN auto-generated on first run if unset
+      # CLAUDE_CODE_OAUTH_TOKEN: set via UI OAuth flow
+    # PSS-restricted security context (matches what the Helm chart sets).
+    # Dropped capabilities and read-only root fs are documented in P0.5's
+    # docker-acceptance tests; production deployments enforce them.
+    user: "65532:65532"
+    read_only: false  # set true and add tmpfs mounts for stricter local parity
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     deploy:
       resources:
         limits:
-          memory: 2G                    # Hard memory cap
+          memory: 2G
         reservations:
-          memory: 512M                  # Guaranteed minimum
-    tmpfs:
-      - /tmp:size=500M                  # Limit temp disk usage
+          memory: 512M
     logging:
       driver: json-file
       options:
-        max-size: "50m"                 # Max 50 MB per log file
-        max-file: "3"                   # Keep 3 rotated log files (150 MB total)
-
-    # Uncomment for interactive debugging:
-    # command: /bin/bash
-    # stdin_open: true
-    # tty: true
-
-networks:
-  aifactory-lan:
-    driver: macvlan
-    driver_opts:
-      parent: ${HOST_NIC:?HOST_NIC is required — see .env.example}
-    ipam:
-      config:
-        - subnet: ${LAN_SUBNET:?LAN_SUBNET is required — see .env.example}
-          gateway: ${LAN_GATEWAY:?LAN_GATEWAY is required — see .env.example}
+        max-size: "50m"
+        max-file: "3"

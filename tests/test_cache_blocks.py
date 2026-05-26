@@ -31,7 +31,6 @@ if str(_BACKEND) not in sys.path:
 
 from core.cache import build_cached_system_blocks, build_cached_system_str  # noqa: E402
 
-
 # ===========================================================================
 # Fixtures
 # ===========================================================================

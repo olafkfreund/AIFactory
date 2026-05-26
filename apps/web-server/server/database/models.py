@@ -14,12 +14,18 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# Re-export under a private alias so the model definitions read cleanly
+# while making it obvious this is the encrypted-at-rest column type
+# (Epic #26 P2). See apps/web-server/server/crypto/.
+from ..crypto.encrypted_string import EncryptedString as _EncryptedString
 
 
 def _generate_uuid() -> str:
@@ -51,9 +57,24 @@ class User(Base):
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=_generate_uuid
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Epic #26 P3.3 — Stable OIDC subject identifier. Set on first
+    # successful OIDC login (JIT-provisioned). Nullable so that
+    # locally-registered users (no SSO) don't need it; unique so that
+    # the same IdP user can't accidentally collide across logins.
+    oidc_sub: Mapped[str | None] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    # Epic #26 P5.5 — GDPR right-to-erasure timestamp. When set, PII
+    # columns (email, name, OAuth tokens) MUST be NULL. Used by the
+    # admin UI to render "Erased on YYYY-MM-DD" placeholders instead
+    # of treating the user row as deleted. The audit chain preserves
+    # historical user_id references via SHA-256 hashing.
+    gdpr_erased_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -179,6 +200,51 @@ class OrgMember(Base):
         return (
             f"<OrgMember org_id={self.org_id!r} "
             f"user_id={self.user_id!r} role={self.role!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# OIDC Refresh Sessions (Epic #26 P3.4)
+# ---------------------------------------------------------------------------
+
+
+class OidcRefreshSession(Base):
+    """Per-refresh-token session for OIDC-authenticated users.
+
+    Created when a user completes OIDC login (P3.1) and tracks the
+    refresh path's IdP revalidation cadence (P3.4). The row is deleted
+    when the user logs out (P3.5) or when the IdP rejects a refresh
+    (revocation propagation).
+
+    The refresh token itself is NOT stored — only its ``jti`` claim,
+    which lets refresh lookups find the session without exposing the
+    bearer secret to anyone with DB read access.
+    """
+
+    __tablename__ = "oidc_refresh_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
+    jti: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False
+    )
+    oidc_sub: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    last_validated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<OidcRefreshSession user_id={self.user_id!r} "
+            f"jti={self.jti[:8]!r}... sub={self.oidc_sub!r}>"
         )
 
 
@@ -334,8 +400,14 @@ class EmailAccount(Base):
         String(50), nullable=False
     )  # "outlook" | "gmail"
     email_address: Mapped[str] = mapped_column(String(255), nullable=False)
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P2.3: OAuth credentials encrypted at rest via EncryptedString.
+    # See apps/web-server/server/crypto/ for the at-rest encryption layer.
+    access_token: Mapped[str] = mapped_column(
+        _EncryptedString(), nullable=False
+    )
+    refresh_token: Mapped[str | None] = mapped_column(
+        _EncryptedString(), nullable=True
+    )
     token_expiry: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -377,7 +449,8 @@ class LLMEndpoint(Base):
     )
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     base_url: Mapped[str] = mapped_column(String(1024), nullable=False)
-    api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # P2.3: provider API key encrypted at rest via EncryptedString.
+    api_key: Mapped[str | None] = mapped_column(_EncryptedString(), nullable=True)
     default_model: Mapped[str] = mapped_column(String(255), nullable=False)
     headers_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -429,6 +502,20 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
+    # Epic #26 P5.1 — daily retention job deletes rows where
+    # retention_until <= now(). Default policy: 13 months (SOC2 12mo +
+    # buffer); set per-row at write time so the policy can vary by
+    # action class (login events: short, security events: long).
+    retention_until: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    # Epic #26 P5.2 — Per-row hash chain. SHA-256 of the previous
+    # row's content (or the genesis sentinel for the first row).
+    # Threat model: tamper-detection within the audit log only.
+    # Signed external anchor = v1.1.
+    prev_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
 
     # Relationships (read-only lookups, no back_populates needed)
     organization: Mapped["Organization | None"] = relationship(
@@ -442,4 +529,56 @@ class AuditLog(Base):
         return (
             f"<AuditLog id={self.id!r} action={self.action!r} "
             f"resource_type={self.resource_type!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# P2.2 — KMS data keys (per-organization, wrapped by KMS root key)
+# ---------------------------------------------------------------------------
+
+
+class KmsDataKey(Base):
+    """Per-organization data key, wrapped by the active KMS root.
+
+    Each organization gets one (and only one) active row. Workflow:
+      1. App generates a random 32-byte data key.
+      2. The active KMS backend (`crypto.kms.get_backend()`) encrypts the
+         data key under the root key, producing `wrapped_key`.
+      3. EncryptedString columns scoped to that org are encrypted under
+         the data key (P2.3 wires the binding).
+      4. KMS root rotation re-wraps `wrapped_key` and bumps `rotated_at`
+         so the in-process LRU cache (DataKeyManager) re-fetches (P2.5).
+    """
+
+    __tablename__ = "kms_data_keys"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    wrapped_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    kms_key_id: Mapped[str] = mapped_column(
+        String(255), nullable=False,
+        comment="Identifier of the KMS root key that wrapped this data key. "
+                "For fernet backend: literal `fernet:default`. For aws_kms: "
+                "the KMS ARN. Lets rotation runbooks know which backend "
+                "wrapped each row.",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    rotated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+        comment="Updated on every re-wrap (root key rotation). The "
+                "DataKeyManager polls this column to invalidate its "
+                "in-process LRU cache.",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<KmsDataKey id={self.id!r} org_id={self.org_id!r} "
+            f"kms_key_id={self.kms_key_id!r}>"
         )

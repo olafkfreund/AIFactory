@@ -40,7 +40,6 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Spec / project resolution
 # ---------------------------------------------------------------------------
@@ -99,12 +98,11 @@ async def _run(spec_dir_factory: Callable[[], Path]) -> None:
     # Imports deferred so a bare ``--help`` doesn't pay the SDK import cost
     # (and so the error path in __main__ can still produce a useful message
     # if the SDK isn't installed).
-    from mcp.server.models import InitializationOptions
-    from mcp.server.stdio import stdio_server
-
     # Late import: agents/tools_pkg pulls in the rest of AIFactory's backend,
     # so we don't want to trip module-import errors on a help screen.
     from agents.tools_pkg.registry import create_magestic_ai_mcp_server
+    from mcp.server.models import InitializationOptions
+    from mcp.server.stdio import stdio_server
 
     project_dir_factory = _build_project_dir_resolver()
 

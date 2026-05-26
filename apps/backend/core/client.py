@@ -192,9 +192,9 @@ def invalidate_project_cache(project_dir: Path | None = None) -> None:
 
 
 from agents.tools_pkg import (
+    AI_FACTORY_TOOLS,
     CONTEXT7_TOOLS,
     GRAPHITI_MCP_TOOLS,
-    AI_FACTORY_TOOLS,
     PLAYWRIGHT_TOOLS,
     create_magestic_ai_mcp_server,
     get_allowed_tools,
@@ -906,7 +906,7 @@ def create_client(
     # reason to use the new shape, in which case we preserve the legacy
     # behaviour exactly so the 11+ call sites that don't pass `thinking_level`
     # see no change.
-    from phase_config import thinking_config_for, interleaved_thinking_betas_for
+    from phase_config import interleaved_thinking_betas_for, thinking_config_for
 
     _level = thinking_level or (
         "high" if (max_thinking_tokens or 0) >= 16384

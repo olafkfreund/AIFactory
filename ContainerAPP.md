@@ -14,11 +14,11 @@ sudo docker compose up -d
 
 ## Access
 
-- **URL:** `http://${INSTANCE_IP}:3101` (from `.env`) — or `http://localhost:3101` if not using macvlan
+- **URL:** `http://localhost:${HOST_PORT:-3101}`
 - **Token:** Auto-generated on first run, retrieve with:
 
 ```bash
-sudo docker exec aifactory cat /home/aifactory/.aifactory/.token
+sudo docker exec aifactory cat /home/nonroot/.aifactory/.token
 ```
 
 ## Useful Commands

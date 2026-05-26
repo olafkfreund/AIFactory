@@ -22,6 +22,11 @@ Desktop.ini
 .secrets
 secrets/
 credentials/
+# Explicit allow for the P2 EncryptedString / KMS test directory —
+# the generic `secrets/` rule above is for credential dumps, not our
+# pytest module path. Must come AFTER the broad rule it overrides.
+!tests/secrets/
+!tests/secrets/**
 
 # ===========================
 # IDE & Editors

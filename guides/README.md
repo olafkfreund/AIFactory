@@ -42,6 +42,28 @@ Access the application from any modern browser - no desktop installation require
 | [Architecture](ARCHITECTURE.md) | System design, data flow, and component interactions | Developers |
 | [API Reference](API-REFERENCE.md) | REST endpoints and WebSocket events documentation | Developers |
 
+### Operations
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [Image mirroring](operations/image-mirroring.md) | Mirror signed releases to a private registry (air-gapped / regulated envs) | Platform / SRE |
+| [KMS rotation runbook](operations/kms-rotation-runbook.md) | Rotate the encrypted-at-rest secrets root key (AWS / Azure / GCP / Vault / Fernet) | Platform / SRE |
+| [Encrypted-secrets disaster recovery](operations/encrypted-secrets-dr.md) | Recover from compromised / lost KMS keys or corrupted ciphertext rows | Platform / SRE |
+| [OIDC SSO setup](operations/oidc-setup.md) | Wire AIFactory to Keycloak / Okta / Azure AD for federated identity | Platform / SRE |
+| [Helm install runbook](deployment/helm-install.md) | Deploy AIFactory to Kubernetes (POC + production paths) | Platform / SRE |
+| [Audit trail](operations/audit-trail.md) | Hash chain, retention, GDPR erasure, export + verification | Compliance / SRE |
+| [Observability](operations/observability.md) | structlog JSON, /metrics, Grafana dashboard, correlation IDs | SRE |
+
+### Compliance & Security (v1.0 evidence pack)
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [SOC 2 evidence](compliance/soc2-evidence.md) | CC1-CC9 + A1 + C1 control mapping; documented limitations | Auditors, compliance |
+| [DPIA + data-flow](compliance/dpia-data-flow.md) | GDPR Art. 35 DPIA; PII inventory; lawful basis matrix | DPO, legal |
+| [STRIDE threat model](security/threat-model.md) | Per-asset threats + mitigations; attack tree examples | Security teams |
+| [Deployment runbook](deployment/runbook.md) | EKS+RDS / AKS+Azure / GKE+Cloud SQL / vanilla K8s+Vault | Platform / SRE |
+| [Upgrade guide](deployment/upgrade.md) | v0.x → v1.0 forward-only path + rollback procedure | Platform / SRE |
+
 ---
 
 ## Quick Links
