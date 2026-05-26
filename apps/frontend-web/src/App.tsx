@@ -271,23 +271,25 @@ function AuthenticatedApp() {
 
           {/* Main content */}
           <div className="flex flex-1 flex-col overflow-hidden">
-            {/* Project Tab Bar - shows open projects */}
-            {openProjects.length > 0 && (
-              <ProjectTabBar
-                projects={openProjects}
-                activeProjectId={activeProjectId}
-                onProjectSelect={(projectId) => {
-                  setActiveProject(projectId);
-                  // Also update selectedProjectId so components use the correct project context
-                  useProjectStore.getState().selectProject(projectId);
-                }}
-                onProjectClose={(projectId) => closeProjectTab(projectId)}
-                onAddProject={handleAddProject}
-                onProjectAdded={handleProjectAdded}
-                onSettingsClick={() => setIsSettingsDialogOpen(true)}
-                onOpenOnboarding={() => setIsOnboardingOpen(true)}
-              />
-            )}
+            {/* Project Tab Bar — always rendered so the global toolbar
+                (settings cog, theme toggle, add-project, status badges)
+                stays accessible even when no project tab is open. The
+                tab strip on the left simply renders empty when
+                ``openProjects`` is empty. */}
+            <ProjectTabBar
+              projects={openProjects}
+              activeProjectId={activeProjectId}
+              onProjectSelect={(projectId) => {
+                setActiveProject(projectId);
+                // Also update selectedProjectId so components use the correct project context
+                useProjectStore.getState().selectProject(projectId);
+              }}
+              onProjectClose={(projectId) => closeProjectTab(projectId)}
+              onAddProject={handleAddProject}
+              onProjectAdded={handleProjectAdded}
+              onSettingsClick={() => setIsSettingsDialogOpen(true)}
+              onOpenOnboarding={() => setIsOnboardingOpen(true)}
+            />
 
             <main className="flex-1 overflow-hidden">
               {selectedProject ? (
