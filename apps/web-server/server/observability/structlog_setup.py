@@ -34,18 +34,28 @@ def _add_request_id(_logger, _name, event_dict):
 
 
 def configure_structlog(level: str = "INFO") -> None:
-    """Wire stdlib logging → structlog → JSON-to-stdout.
+    """Wire structlog → JSON-to-stdout.
 
     Idempotent: re-configuring is a no-op for callers (structlog's
     ``configure`` replaces the processor chain wholesale).
+
+    v3.0.2 note: deliberately does NOT call ``logging.basicConfig(force=True)``.
+    Earlier versions did, which clobbered pytest's ``caplog`` handler
+    and broke stdlib-logging tests when the production app was
+    constructed inside a test. Stdlib loggers keep their existing
+    handlers (caplog in test, default in prod); structlog writes
+    independently via ``PrintLoggerFactory`` to stdout.
+
+    If you also want stdlib ``logger.info(...)`` calls to appear in
+    the JSON stream, install a separate stdlib → structlog bridge —
+    that's a v3.1 follow-up.
     """
     log_level = getattr(logging, level.upper(), logging.INFO)
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=log_level,
-        force=True,
-    )
+    # Only set the root level if no handler is already attached, so we
+    # don't override an embedding test's logging config.
+    root = logging.getLogger()
+    if not root.handlers:
+        root.setLevel(log_level)
 
     structlog.configure(
         processors=[

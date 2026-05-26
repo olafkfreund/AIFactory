@@ -47,9 +47,12 @@ from .websockets import logs as logs_ws
 from .websockets import progress as progress_ws
 from .websockets import terminal as terminal_ws
 
-# Configure logging with file output
-settings = get_settings()
-setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO")
+# v3.0.2 — logging is configured INSIDE create_app() (was at module
+# level until v3.0.1). Module-level setup_logging() was an import-
+# side-effect that clobbered pytest's caplog handler whenever this
+# module was imported during a test session, breaking ~7 unrelated
+# stdlib-logging tests. Moving the call inside the factory means
+# importing this module is a pure operation.
 logger = logging.getLogger(__name__)
 
 
@@ -117,6 +120,10 @@ def _read_app_version() -> str:
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     settings = get_settings()
+
+    # v3.0.2 — stdlib logging configured here (was module-level
+    # in v3.0.0/v3.0.1; see note at the top of this file).
+    setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO")
 
     # Epic #26 P6 (wired in v3.0.2) — structlog JSON-to-stdout logging.
     # Configured here so every log line emitted during create_app() +
