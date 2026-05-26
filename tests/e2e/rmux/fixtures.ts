@@ -118,6 +118,11 @@ export const test = base.extend<{
     // Poll /attach until the rmux session is registered.  200 = we won
     // the lock, 409 = something else has it — both prove the session
     // exists.  404 = session not yet created (or wrong spec_id).
+    //
+    // expect.poll returns a thenable that supports the *value* matchers
+    // (toBe, toEqual…) but NOT array matchers like toBeOneOf — that
+    // belongs on standalone expect().  We wrap the status check in a
+    // boolean callback and assert toBe(true).
     await expect
       .poll(
         async () => {
@@ -128,14 +133,14 @@ export const test = base.extend<{
               data: { connection_id: 'fixture-probe' },
             }
           );
-          return r.status();
+          return [200, 409].includes(r.status());
         },
         {
           timeout: 60_000,
           message: 'rmux session for spec never appeared in registry',
         }
       )
-      .toBeOneOf([200, 409]);
+      .toBe(true);
 
     // Release the probe so the real test can claim a connection_id.
     await request
