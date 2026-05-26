@@ -1,7 +1,7 @@
 /**
- * AIFactory brand colors.  Primary is the blue from the AIFactory logo
- * (assets/aifactory_logo.png).  Variants generated via Infima's color
- * mixer convention (darker = -10% L, lighter = +10% L).
+ * AIFactory landing-page styling.  Primary palette comes from the
+ * AIFactory logo blue (#1a73e8).  All animations respect
+ * prefers-reduced-motion so accessibility users see a still page.
  */
 
 :root {
@@ -14,6 +14,11 @@
   --ifm-color-primary-lightest: #5e9cf0;
   --ifm-code-font-size: 92%;
   --docusaurus-highlighted-code-line-bg: rgba(26, 115, 232, 0.08);
+
+  /* AIFactory-brand accent for gradients + glows.  Slightly warmer than
+     the primary so the hero gradient reads with depth rather than flat. */
+  --aif-accent-warm: #7c3aed;
+  --aif-accent-cool: #06b6d4;
 }
 
 [data-theme='dark'] {
@@ -27,50 +32,353 @@
   --docusaurus-highlighted-code-line-bg: rgba(94, 156, 240, 0.15);
 }
 
-/* Hero on the landing page */
+/* ─── Hero ─────────────────────────────────────────────────────────── */
+
 .hero-banner {
-  padding: 4rem 0 5rem;
+  position: relative;
+  overflow: hidden;
+  padding: 6rem 0 7rem;
   text-align: center;
-  background: linear-gradient(180deg, var(--ifm-color-primary-darkest) 0%, var(--ifm-color-primary) 100%);
+  background: linear-gradient(
+    135deg,
+    var(--ifm-color-primary-darkest) 0%,
+    var(--ifm-color-primary) 60%,
+    var(--aif-accent-warm) 100%
+  );
   color: white;
+  isolation: isolate;
 }
 
-.hero-banner h1 {
-  font-size: 3rem;
-  margin-bottom: 0.5rem;
+/* Background "orbs" that slowly drift across the hero.  Pure CSS; no JS
+   library involved.  Three orbs at different speeds creates depth. */
+.hero-orbs {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.55;
+  animation: orb-drift 22s ease-in-out infinite;
+}
+
+.orb-1 {
+  width: 480px;
+  height: 480px;
+  background: var(--aif-accent-cool);
+  top: -120px;
+  left: -100px;
+  animation-delay: 0s;
+}
+
+.orb-2 {
+  width: 380px;
+  height: 380px;
+  background: var(--aif-accent-warm);
+  top: 30%;
+  right: -100px;
+  animation-delay: -7s;
+  animation-duration: 27s;
+}
+
+.orb-3 {
+  width: 320px;
+  height: 320px;
+  background: #ffffff;
+  bottom: -100px;
+  left: 50%;
+  opacity: 0.3;
+  animation-delay: -14s;
+  animation-duration: 30s;
+}
+
+@keyframes orb-drift {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(40px, -30px) scale(1.1);
+  }
+  66% {
+    transform: translate(-30px, 40px) scale(0.95);
+  }
+}
+
+.hero-content {
+  position: relative;
+  z-index: 1;
+  animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.hero-logo {
+  width: 96px;
+  height: 96px;
+  margin-bottom: 1.5rem;
+  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25));
+}
+
+.hero-title {
+  font-size: 3.5rem;
+  font-weight: 800;
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.15);
 }
 
 .hero-banner .tagline {
-  font-size: 1.25rem;
-  opacity: 0.9;
+  font-size: 1.3rem;
+  opacity: 0.95;
+  margin-bottom: 1.5rem;
+  font-weight: 400;
+}
+
+/* Compact pill row that shows what AIFactory is, at a glance.  Replaces
+   the "scroll down to read 6 features" friction. */
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
   margin-bottom: 2rem;
+}
+
+.hero-badge {
+  display: inline-block;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 0.85rem;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .hero-cta {
   display: flex;
   gap: 1rem;
   justify-content: center;
-  margin-top: 2rem;
+  margin-top: 1.5rem;
+  flex-wrap: wrap;
 }
 
-/* Feature cards on the landing page */
-.features {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 2rem;
-  padding: 3rem 0;
-  max-width: 1100px;
+.hero-cta-secondary {
+  color: white !important;
+  border-color: rgba(255, 255, 255, 0.6) !important;
+}
+.hero-cta-secondary:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* ─── Section headers ─────────────────────────────────────────────── */
+
+.features-section,
+.recent-section {
+  padding: 5rem 1rem;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
+.features-header,
+.recent-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.features-header h2,
+.recent-header h2 {
+  font-size: 2.25rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.features-subtitle {
+  font-size: 1.1rem;
+  color: var(--ifm-color-emphasis-700);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ─── Feature cards ───────────────────────────────────────────────── */
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
 .feature-card {
-  padding: 1.5rem;
-  border-radius: 8px;
+  padding: 1.75rem;
+  border-radius: 12px;
   border: 1px solid var(--ifm-color-emphasis-200);
   background: var(--ifm-background-surface-color);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(26, 115, 232, 0.12);
+  border-color: var(--ifm-color-primary-light);
+}
+
+.feature-icon {
+  font-size: 2rem;
+  margin-bottom: 0.75rem;
+  display: inline-block;
 }
 
 .feature-card h3 {
   color: var(--ifm-color-primary);
   margin-top: 0;
+  margin-bottom: 0.75rem;
+  font-size: 1.25rem;
+}
+
+.feature-card p {
+  color: var(--ifm-color-emphasis-800);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ─── "Recently shipped" timeline ─────────────────────────────────── */
+
+.recent-section {
+  background: var(--ifm-color-emphasis-100);
+  border-radius: 16px;
+  margin: 2rem auto 5rem;
+}
+
+[data-theme='dark'] .recent-section {
+  background: var(--ifm-color-emphasis-200);
+}
+
+.recent-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+}
+
+.recent-item {
+  padding: 1.5rem;
+  border-radius: 10px;
+  background: var(--ifm-background-color);
+  border-left: 3px solid var(--ifm-color-primary);
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+
+.recent-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+}
+
+.recent-when {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ifm-color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.recent-title {
+  font-size: 1.15rem;
+  margin: 0 0 0.5rem;
+}
+
+.recent-item p {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  margin: 0 0 0.75rem;
+}
+
+.recent-link {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* ─── Bottom CTA strip ───────────────────────────────────────────── */
+
+.cta-strip {
+  padding: 4rem 1rem 5rem;
+  text-align: center;
+  background: linear-gradient(
+    135deg,
+    var(--ifm-color-primary-darkest) 0%,
+    var(--ifm-color-primary-dark) 100%
+  );
+  color: white;
+}
+
+.cta-strip h2 {
+  font-size: 2.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.cta-strip p {
+  font-size: 1.1rem;
+  opacity: 0.95;
+  max-width: 600px;
+  margin: 0 auto 2rem;
+}
+
+/* ─── Scroll-reveal animation ─────────────────────────────────────── */
+
+/*  Pure-CSS scroll-reveal — cards fade + slide up on first paint.  No JS,
+    no IntersectionObserver, no Framer.  Works because Docusaurus renders
+    static HTML and the user scrolls into a viewport that already has the
+    cards in the DOM.  For a "wait until visible" effect we'd need JS — but
+    "all cards fade in once on load" is plenty for this scope. */
+
+.reveal-on-scroll {
+  animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ─── Accessibility — kill all motion for users who asked us to. ──── */
+
+@media (prefers-reduced-motion: reduce) {
+  .orb,
+  .hero-content,
+  .reveal-on-scroll {
+    animation: none !important;
+  }
+  .feature-card:hover,
+  .recent-item:hover {
+    transform: none;
+  }
+}
+
+/* ─── Responsive tweaks ──────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .hero-banner {
+    padding: 4rem 0 5rem;
+  }
+  .hero-title {
+    font-size: 2.5rem;
+  }
+  .hero-banner .tagline {
+    font-size: 1.1rem;
+  }
+  .features-header h2,
+  .recent-header h2,
+  .cta-strip h2 {
+    font-size: 1.75rem;
+  }
 }
