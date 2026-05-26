@@ -249,6 +249,18 @@ def create_app() -> FastAPI:
     app.include_router(terminal_ws.router, tags=["WebSocket"])
     app.include_router(events_ws.router, tags=["WebSocket"])
 
+    # Epic #44 R1 — rmux Live Agent Console (opt-in).  Only mount when
+    # AIFACTORY_RMUX_ENABLED=true; otherwise the agent-console routes
+    # are 404 and the JS frontend hides the Live Console tab.  Bank
+    # pilot image (WITH_RMUX=false) cannot reach this code anyway —
+    # the rmux/ package imports break at module load when the
+    # bundled binary isn't present.
+    from .rmux import is_rmux_enabled
+    if is_rmux_enabled():
+        from .rmux import console_router
+        app.include_router(console_router)
+        logger.info("[main] rmux Live Agent Console enabled — bridge router mounted")
+
     # Epic #26 P6 (wired in v3.0.2) — Prometheus /metrics. Called
     # AFTER all routers are mounted so the instrumentator can derive
     # cardinality-capped `handler` labels from FastAPI's route table.

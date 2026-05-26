@@ -13,6 +13,9 @@ This package contains:
 See ``guides/plans/2026-05-24-aifactory-rmux-integration-design.md``.
 """
 
+from .bridge import router as console_router
+from .integration import is_enabled as is_rmux_enabled
+from .session import SessionRegistry, SessionState, configure, get_registry
 from .wrapper import (
     RmuxDaemonError,
     RmuxError,
@@ -22,9 +25,19 @@ from .wrapper import (
 )
 
 __all__ = [
+    # wrapper layer
     "RmuxWrapper",
     "RmuxError",
     "RmuxDaemonError",
     "RmuxSessionError",
     "RmuxNotInstalledError",
+    # session layer
+    "SessionRegistry",
+    "SessionState",
+    "get_registry",
+    "configure",
+    # bridge layer
+    "console_router",
+    # integration shim
+    "is_rmux_enabled",
 ]

@@ -1957,6 +1957,15 @@ class AgentService:
                     except Exception:
                         logger.debug("Failed to send task failure notification", exc_info=True)
 
+            # Epic #44 R1 — reap the rmux session if the feature was on.
+            # Idempotent + no-op when flag is unset, so safe on every path.
+            from ..rmux.integration import reap_if_enabled as _rmux_reap
+            _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+            try:
+                await _rmux_reap(_reap_spec_id)
+            except Exception:
+                logger.warning(f"[AgentService] rmux reap hook raised (ignored); spec_id={_reap_spec_id}")
+
             # Clean up tracking data AFTER all emissions are complete
             # This must happen after _emit_progress so it can still read
             # _spec_dirs, _task_sequence_numbers, and _task_start_times
@@ -2635,6 +2644,18 @@ class AgentService:
         # Start process monitor to clean up when finished (with file syncing and failover support)
         asyncio.create_task(self._monitor_process(task_id, proc, project_path, spec_id, cmd, env))
 
+        # Epic #44 R1 — opt-in Live Agent Console. No-op when
+        # AIFACTORY_RMUX_ENABLED is unset/false (the default), so the
+        # bank-pilot image's behaviour is byte-for-byte unchanged.
+        from ..rmux.integration import create_if_enabled as _rmux_create
+        try:
+            await _rmux_create(spec_id, project_path, " ".join(cmd))
+        except Exception:
+            # Already swallowed inside _rmux_create; this except is a
+            # belt-and-suspenders guard so a wrapper bug here cannot
+            # take down task execution.
+            logger.warning(f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}")
+
         return proc
 
     async def stop_task(self, task_id: str) -> bool:
@@ -2679,6 +2700,16 @@ class AgentService:
             project_path = spec_dir.parent.parent.parent
             spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
             await self._update_plan_status(project_path, spec_id, "failed", task_id)
+
+        # Epic #44 R1 — reap rmux session if the feature was on. Idempotent
+        # so safe even though _monitor_process may also reap on the natural
+        # exit path.
+        from ..rmux.integration import reap_if_enabled as _rmux_reap
+        _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+        try:
+            await _rmux_reap(_reap_spec_id)
+        except Exception:
+            logger.warning(f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={_reap_spec_id}")
 
         # Use pop with default to handle race condition where _monitor_process
         # might have already removed the task
