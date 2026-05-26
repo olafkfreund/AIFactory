@@ -117,4 +117,4 @@ from workspace import setup_workspace
 
 ## License
 
-AGPL-3.0
+Dual-licensed: MIT OR GPL-3.0 — see [LICENSE](../../LICENSE).

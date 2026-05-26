@@ -119,7 +119,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} DataSeek. AGPL-3.0. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Olaf Krasicki-Freund and AIFactory contributors. Dual-licensed MIT OR GPL-3.0. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

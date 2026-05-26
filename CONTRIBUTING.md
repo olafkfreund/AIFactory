@@ -131,4 +131,4 @@ bash scripts/setup-branch-protection.sh
 
 ## License
 
-By contributing you agree your work is licensed under [AGPL-3.0](LICENSE).
+By contributing you agree your work is dual-licensed under the project's terms (MIT or GPL-3.0 at the recipient's option) — see [LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT), and [LICENSE-GPL](LICENSE-GPL).
