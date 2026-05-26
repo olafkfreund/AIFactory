@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before asking:** Check [GitHub Discussions](https://github.com/dataseeek/AIFactory/discussions) - your question may already be answered there!
+        **Before asking:** Check [GitHub Discussions](https://github.com/olafkfreund/AIFactory/discussions) - your question may already be answered there!
 
   - type: checkboxes
     id: checklist

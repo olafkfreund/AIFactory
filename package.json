@@ -29,11 +29,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dataseeek/AIFactory.git"
+    "url": "https://github.com/olafkfreund/AIFactory.git"
   },
-  "homepage": "https://github.com/dataseeek/AIFactory",
+  "homepage": "https://github.com/olafkfreund/AIFactory",
   "bugs": {
-    "url": "https://github.com/dataseeek/AIFactory/issues"
+    "url": "https://github.com/olafkfreund/AIFactory/issues"
   },
   "keywords": [
     "ai",

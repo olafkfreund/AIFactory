@@ -2,7 +2,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// AIFactory documentation site — served at https://dataseeek.github.io/AIFactory/
+// AIFactory documentation site — served at https://olafkfreund.github.io/AIFactory/
 
 const config: Config = {
   title: 'AIFactory',
@@ -13,10 +13,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://dataseeek.github.io',
+  url: 'https://olafkfreund.github.io',
   baseUrl: '/AIFactory/',
 
-  organizationName: 'dataseeek',
+  organizationName: 'olafkfreund',
   projectName: 'AIFactory',
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
@@ -43,7 +43,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           routeBasePath: '/',
-          editUrl: 'https://github.com/dataseeek/AIFactory/edit/dev/docs/',
+          editUrl: 'https://github.com/olafkfreund/AIFactory/edit/dev/docs/',
         },
         // Blog is disabled — we don't ship one. Pages + Docs only.
         blog: false,
@@ -85,7 +85,7 @@ const config: Config = {
         {to: '/architecture/overview', label: 'Architecture', position: 'left'},
         {to: '/showcase/', label: 'Showcase', position: 'left'},
         {
-          href: 'https://github.com/dataseeek/AIFactory',
+          href: 'https://github.com/olafkfreund/AIFactory',
           label: 'GitHub',
           position: 'right',
         },
@@ -105,8 +105,8 @@ const config: Config = {
         {
           title: 'Community',
           items: [
-            {label: 'GitHub Issues', href: 'https://github.com/dataseeek/AIFactory/issues'},
-            {label: 'Discussions', href: 'https://github.com/dataseeek/AIFactory/discussions'},
+            {label: 'GitHub Issues', href: 'https://github.com/olafkfreund/AIFactory/issues'},
+            {label: 'Discussions', href: 'https://github.com/olafkfreund/AIFactory/discussions'},
             {label: 'Contributing', to: '/contributing'},
           ],
         },
@@ -115,7 +115,7 @@ const config: Config = {
           items: [
             {label: 'Roadmap', to: '/roadmap'},
             {label: 'Compliance', to: '/compliance/soc2'},
-            {label: 'Changelog', href: 'https://github.com/dataseeek/AIFactory/blob/main/CHANGELOG.md'},
+            {label: 'Changelog', href: 'https://github.com/olafkfreund/AIFactory/blob/main/CHANGELOG.md'},
           ],
         },
       ],

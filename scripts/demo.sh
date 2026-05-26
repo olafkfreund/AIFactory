@@ -3,7 +3,7 @@
 # AIFactory end-to-end demo.
 #
 # What it shows:
-#   1. Seed dataseeek/aifactory-demo with 3 GitHub issues (resets to known state)
+#   1. Seed olafkfreund/aifactory-demo with 3 GitHub issues (resets to known state)
 #   2. Register the repo with your local AIFactory portal
 #   3. Import the issues → portal backlog tasks
 #   4. Show the portal picked them up
@@ -32,7 +32,7 @@ set -euo pipefail
 
 # ---------- defaults + flag parsing ----------
 
-DEMO_REPO="dataseeek/aifactory-demo"
+DEMO_REPO="olafkfreund/aifactory-demo"
 DEMO_REPO_LOCAL="/tmp/aifactory-demo"
 PORTAL="http://localhost:3101"
 YOLO=0

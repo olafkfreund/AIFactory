@@ -7,12 +7,12 @@
 #   gh auth status
 #
 # Usage:
-#   bash scripts/setup-branch-protection.sh                # uses dataseeek/AIFactory
+#   bash scripts/setup-branch-protection.sh                # uses olafkfreund/AIFactory
 #   REPO=other/repo bash scripts/setup-branch-protection.sh
 # =============================================================================
 set -euo pipefail
 
-REPO="${REPO:-dataseeek/AIFactory}"
+REPO="${REPO:-olafkfreund/AIFactory}"
 
 if ! command -v gh >/dev/null 2>&1; then
   echo "error: gh CLI is required (https://cli.github.com/)" >&2

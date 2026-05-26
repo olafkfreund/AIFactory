@@ -16,7 +16,7 @@ This guide gets you from a fresh clone to a running portal in about 60 seconds.
 ## Install
 
 ```bash
-git clone https://github.com/dataseeek/AIFactory
+git clone https://github.com/olafkfreund/AIFactory
 cd AIFactory
 npm run install:all
 ```

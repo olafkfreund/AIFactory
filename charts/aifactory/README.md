@@ -12,7 +12,7 @@ Manager).
 helm dep update
 helm install aifactory ./charts/aifactory \
   --set postgres.bundled=true \
-  --set image.repository=ghcr.io/dataseeek/aifactory \
+  --set image.repository=ghcr.io/olafkfreund/aifactory \
   --set image.tag=1.0.0
 ```
 

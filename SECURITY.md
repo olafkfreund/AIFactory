@@ -8,7 +8,7 @@ Thanks for helping keep AIFactory and its users safe.
 
 Use GitHub's private reporting:
 
-> https://github.com/dataseeek/AIFactory/security/advisories/new
+> https://github.com/olafkfreund/AIFactory/security/advisories/new
 
 This routes the report directly to the maintainers via a private
 GitHub Security Advisory.

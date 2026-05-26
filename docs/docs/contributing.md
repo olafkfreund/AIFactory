@@ -57,4 +57,4 @@ CI runs all of these on every PR. Don't ship red.
 
 ## Code of Conduct
 
-See [CODE_OF_CONDUCT.md](https://github.com/dataseeek/AIFactory/blob/main/CODE_OF_CONDUCT.md). Be kind, assume good faith, escalate to maintainers if you encounter problems.
+See [CODE_OF_CONDUCT.md](https://github.com/olafkfreund/AIFactory/blob/main/CODE_OF_CONDUCT.md). Be kind, assume good faith, escalate to maintainers if you encounter problems.
