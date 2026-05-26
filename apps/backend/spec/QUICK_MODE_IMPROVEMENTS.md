@@ -271,4 +271,4 @@ To add new quick templates:
 
 ## License
 
-Same as main project (AGPL-3.0)
+Same as main project (dual-licensed MIT OR GPL-3.0).

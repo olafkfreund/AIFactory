@@ -9,7 +9,7 @@ AIFactory is a web-based AI task management and agent orchestration platform tha
 **Project:** AIFactory
 **Repository:** https://github.com/olafkfreund/AIFactory
 **Author:** DataSeek Team
-**License:** AGPL-3.0
+**License:** MIT OR GPL-3.0
 
 **CRITICAL: All AI interactions use the Claude Agent SDK (`claude-agent-sdk` package), NOT the Anthropic API directly.**
 

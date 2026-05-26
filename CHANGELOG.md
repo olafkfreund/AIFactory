@@ -1,5 +1,23 @@
 ## Unreleased
 
+### ⚖️ Licensing
+
+- **Relicensed from AGPL-3.0 → dual MIT OR GPL-3.0.** AIFactory is now
+  available under the recipient's choice of either license. See
+  `LICENSE`, `LICENSE-MIT`, and `LICENSE-GPL`. SPDX identifier:
+  `MIT OR GPL-3.0-only`. The `dataseek.team` enterprise-licensing
+  contact line (which referenced a non-existent email) was removed.
+
+### 🏷️ Branding
+
+- **Rebrand `dataseeek` → `olafkfreund`.** The `dataseeek` GitHub org
+  doesn't exist; every reference in non-archive files was rewritten to
+  point at the actual repo location (`olafkfreund/AIFactory`) and the
+  actual GitHub Pages URL (`olafkfreund.github.io/AIFactory`). Affects
+  README badges, docusaurus config, package.json URLs, demo repo path,
+  cosign verify identity in image-mirroring drills, and ghcr.io image
+  paths in the Helm chart docs.
+
 ### 📚 Documentation
 
 - **Full docs rewrite + GitHub Pages site.** The `guides/` directory was

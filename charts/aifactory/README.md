@@ -53,4 +53,4 @@ migration job mode, customCABundle for TLS-intercepting proxies.
 
 ## License
 
-AGPL-3.0
+Dual-licensed: MIT OR GPL-3.0 — see [LICENSE](../../LICENSE).

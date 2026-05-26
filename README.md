@@ -7,7 +7,7 @@
 
 [![CI](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-olafkfreund.github.io%2FAIFactory-blue)](https://olafkfreund.github.io/AIFactory/)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20GPL--3.0-blue.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-green)](https://nodejs.org/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
@@ -116,7 +116,7 @@ CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple comp
 
 ## License
 
-[AGPL-3.0](LICENSE). For commercial / enterprise licensing options, contact <hello@dataseek.team>.
+Dual-licensed under **MIT** or **GPL-3.0** at your option — see [LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT), and [LICENSE-GPL](LICENSE-GPL).
 
 ## Acknowledgements
 
