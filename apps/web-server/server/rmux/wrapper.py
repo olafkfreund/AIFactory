@@ -283,91 +283,22 @@ class RmuxWrapper:
 
         Returns stdout as a string when ``capture=True``, else "".
         Classifies non-zero exits into the typed error hierarchy.
-
-        Note on stdio:
-
-        ``new-session -d`` tells rmux to detach the spawned pane from
-        the controlling terminal, but rmux's daemon will happily
-        inherit the client's stdio file descriptors into the forked
-        child if we hand it a pipe.  When we pipe both stdout and
-        stderr and then call ``proc.communicate()``, ``communicate()``
-        waits for ALL pipe writers to close — including the spawned
-        agent (which inherits the fds and lives for the whole task).
-        Result: ``await new_session`` hangs forever.
-
-        Fix: pipe only the stream we actually need (stderr, for error
-        classification), redirect stdout to ``DEVNULL``.  Hard cap the
-        wait with a timeout so a genuinely hung rmux command never
-        blocks task startup indefinitely.
         """
         cmd = [self._bin, "-S", str(self._sock), *args]
-
-        # Run rmux via the stdlib subprocess module in a thread, NOT
-        # via asyncio.create_subprocess_exec.  Reason:
-        #
-        # When the web-server has an open PTY master (which agent_service
-        # always does once any run.py is running), spawning rmux through
-        # asyncio's subprocess machinery hits a hang in
-        # ``proc.communicate()`` — rmux's daemon ends up holding a
-        # descriptor that asyncio is waiting to see closed.  The exact
-        # cause is asyncio's pipe-reading semantics + close_fds
-        # interaction with the daemon's fork-and-fork-again pane spawn.
-        #
-        # The stdlib ``subprocess.run`` (which we offload to a thread via
-        # ``asyncio.to_thread``) does NOT hit this — it uses straight
-        # ``waitpid`` and the pipes close as expected.
-        #
-        # ``start_new_session=True`` is kept defensively so rmux is in
-        # its own process-group regardless of where it's launched from.
-        import subprocess as _sp
-        stdout_arg = _sp.PIPE if capture else _sp.DEVNULL
-
-        def _do_run() -> tuple[int, bytes, bytes]:
-            try:
-                completed = _sp.run(
-                    cmd,
-                    stdout=stdout_arg,
-                    stderr=_sp.PIPE,
-                    start_new_session=True,
-                    timeout=15.0,
-                )
-            except FileNotFoundError:
-                raise
-            except _sp.TimeoutExpired as exc:
-                # Mark via a sentinel so the caller can raise the right
-                # typed RmuxError (we can't raise our own classes from
-                # inside the thread because we want to keep this helper
-                # totally subprocess-flavoured).
-                return (-1, b"", (exc.stderr or b"") + b"\n__rmux_timeout__")
-            return (
-                completed.returncode,
-                completed.stdout or b"",
-                completed.stderr or b"",
-            )
-
         try:
-            returncode, stdout_bytes, stderr_bytes = await asyncio.to_thread(_do_run)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
         except FileNotFoundError as e:
             raise RmuxNotInstalledError(
                 f"rmux binary '{self._bin}' not found on PATH"
             ) from e
 
-        # Sentinel check for timeout signalled by the worker.
-        if returncode == -1 and b"__rmux_timeout__" in stderr_bytes:
-            raise RmuxError(
-                f"rmux {args[0] if args else '?'} timed out after 15s"
-            )
-
-        # Build a stand-in ``proc`` shape so the existing error
-        # classification code below works unchanged.
-        stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stdout_bytes, stderr_bytes = await proc.communicate()
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
         stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
-
-        class _StubProc:
-            def __init__(self, rc: int) -> None:
-                self.returncode = rc
-
-        proc = _StubProc(returncode)
 
         if proc.returncode == 0:
             return stdout if capture else ""

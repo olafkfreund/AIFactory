@@ -1,3 +1,96 @@
+## Unreleased
+
+### 📚 Documentation
+
+- **Full docs rewrite + GitHub Pages site.** The `guides/` directory was
+  archived to `docs-archive/2026-05-26/guides/` (git history preserved).
+  A fresh Docusaurus site at `docs/` is published to
+  <https://dataseeek.github.io/AIFactory/> via a new
+  `.github/workflows/docs.yml` workflow. Includes 18 reorganized pages:
+  Getting Started, Demo, Concepts (3), Architecture (3 with Mermaid
+  diagrams), Wiki (FAQ/Troubleshooting/Glossary), Showcase, Compliance
+  (SOC2/GDPR), Contributing, Roadmap. The legacy `guides/` content is
+  unchanged in archive form and still searchable via `git log --follow`.
+
+- **README.md slimmed from 557 to 115 lines.** Hero + tagline + 60-second
+  quickstart + demo callout + screenshot grid + prominent docs links.
+  Everything operational moved to the docs site.
+
+### ✨ Added
+
+- **`scripts/demo.sh`** — end-to-end demo runner (Bash + jq + gh).
+  Seeds `dataseeek/aifactory-demo` with 3 issues, registers the repo
+  with your portal, imports the issues as backlog tasks, prompts you
+  to drive Claude Code from the terminal, then kicks off an autonomous
+  build. Flags: `--yolo`, `--no-reset`, `--portal=URL`.
+
+- **`scripts/capture-screenshots.ts`** — Playwright headless Chromium
+  driver that captures 14 named PNGs of the marquee portal views to
+  `docs/static/img/screenshots/`. Reproducible — anyone can refresh
+  the gallery with `npm -w apps/frontend-web run capture-screenshots`.
+
+- **`Justfile`** — canonical command index. `just --list` shows
+  `install`, `backend`, `frontend`, `docs-dev`, `demo`, `screenshots`,
+  `test-backend`, `test-frontend`, `test-postgres`, `test-all`.
+
+- **Root `package.json` scripts**: `docs:install`, `docs:dev`,
+  `docs:build`, `demo`, `screenshots`.
+
+---
+
+## 3.0.2 - 2026-05-26
+
+Patch release fixing two leftover wiring + branding bugs from v3.0.0.
+
+### 🛠️ Fixed
+
+- **P6 observability never wired into `main.py`**. The
+  `server/observability/` package shipped in v3.0.0 (Epic #26 P6)
+  but `main.create_app()` never called `install_metrics(app)`,
+  `configure_structlog()`, or `app.add_middleware(CorrelationIdMiddleware)`.
+  As a result the production portal exposed neither `/metrics` nor
+  structured JSON logs nor correlation IDs — despite all P6 unit
+  tests passing (they built their own minimal FastAPI app and called
+  the functions directly, bypassing main.py). v3.0.2 wires the three
+  calls in the correct order:
+  - `configure_structlog()` at the top of `create_app()` so
+    boot-time logs are already JSON.
+  - `CorrelationIdMiddleware` added LAST so it's the outermost
+    layer (sets X-Request-ID before TokenAuth runs; 401 responses
+    still carry the ID — auditors rely on this).
+  - `install_metrics(app)` after all routers are mounted so the
+    Prometheus instrumentator can derive cardinality-capped
+    `handler` labels from the route table.
+
+  Regression test added at `tests/obs/test_p6_main_wiring.py`:
+  imports `main.create_app()` and asserts `/metrics` returns 200 +
+  CorrelationIdMiddleware echoes back `X-Request-ID` + the FastAPI
+  app title is AIFactory + `app.version` matches the package version.
+  Gates every PR forward.
+
+- **Leftover Magestic branding in `main.py`**. The v3.0.0 rebrand
+  missed three string constants:
+  - `title="Magestic AI Web API"` → `"AIFactory Web API"`
+  - `description="Web API for Magestic AI autonomous coding framework"`
+    → `"Web API for AIFactory — self-hosted AI task management +
+    agent orchestration"`
+  - Root-route message `"Magestic AI Web Server"` →
+    `"AIFactory Web Server"`
+
+  Plus the hardcoded `version="1.0.0"` on the FastAPI app + on
+  `/api/health` was a drift hazard. v3.0.2 reads the canonical
+  version from `apps/backend/__init__.py` at startup (the file
+  `bump-version.js` already updates on every release), via a tiny
+  `_read_app_version()` helper. No more silent version-skew.
+
+### Upgrade notes
+
+- Backwards-compatible patch: `helm upgrade aifactory --version 3.0.2`
+  picks up both fixes with no schema or config changes.
+- Operators who deployed v3.0.1 had a non-functional `/metrics`
+  endpoint. After upgrading, configure your Prometheus scrape job
+  against the now-live endpoint (see `docs-archive/2026-05-26/guides/operations/observability.md`).
+
 ## 3.0.1 - 2026-05-26
 
 Patch release with two operator-visible fixes.

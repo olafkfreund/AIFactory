@@ -1,0 +1,123 @@
+# AIFactory - Documentation
+
+Welcome to the **AIFactory** documentation! This guides section provides comprehensive documentation for users, developers, and contributors working with our web-based AI task management platform.
+
+## What is AIFactory?
+
+AIFactory is a **browser-based platform** for managing AI-powered coding tasks through coordinated autonomous agents. It provides a modern web interface for:
+
+- **Task Creation & Management** - Create and track coding tasks through an intuitive Kanban board
+- **AI Agent Orchestration** - Coordinate Planner, Coder, and QA agents to implement features
+- **Real-time Terminal Access** - Full PTY terminal access directly in your browser
+- **Code Editing** - VS Code-like editing experience with Monaco Editor
+- **Git Worktree Isolation** - Safe, isolated branches per task with easy merge workflows
+
+Access the application from any modern browser - no desktop installation required!
+
+---
+
+## Guide Overview
+
+### Getting Started
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [Getting Started](GETTING-STARTED.md) | Installation, first run, and your first task | New Users |
+| [Web UI Guide](WEB-UI-GUIDE.md) | Complete walkthrough of all views and features | All Users |
+| [Task Workflow](TASK-WORKFLOW.md) | Understanding the task lifecycle (Create → Plan → Code → QA → Merge) | All Users |
+
+### Using the Application
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [CLI Usage](CLI-USAGE.md) | Terminal-based operations and power user workflows | Power Users |
+| [Configuration](CONFIGURATION.md) | Environment variables, settings, and customization | All Users |
+| [Troubleshooting](TROUBLESHOOTING.md) | Common issues, solutions, and debugging tips | All Users |
+
+### Development & Contributing
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [Development Setup](DEVELOPMENT-SETUP.md) | Setting up the development environment | Developers |
+| [Architecture](ARCHITECTURE.md) | System design, data flow, and component interactions | Developers |
+| [API Reference](API-REFERENCE.md) | REST endpoints and WebSocket events documentation | Developers |
+
+### Operations
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [Image mirroring](operations/image-mirroring.md) | Mirror signed releases to a private registry (air-gapped / regulated envs) | Platform / SRE |
+| [KMS rotation runbook](operations/kms-rotation-runbook.md) | Rotate the encrypted-at-rest secrets root key (AWS / Azure / GCP / Vault / Fernet) | Platform / SRE |
+| [Encrypted-secrets disaster recovery](operations/encrypted-secrets-dr.md) | Recover from compromised / lost KMS keys or corrupted ciphertext rows | Platform / SRE |
+| [OIDC SSO setup](operations/oidc-setup.md) | Wire AIFactory to Keycloak / Okta / Azure AD for federated identity | Platform / SRE |
+| [Helm install runbook](deployment/helm-install.md) | Deploy AIFactory to Kubernetes (POC + production paths) | Platform / SRE |
+| [Audit trail](operations/audit-trail.md) | Hash chain, retention, GDPR erasure, export + verification | Compliance / SRE |
+| [Observability](operations/observability.md) | structlog JSON, /metrics, Grafana dashboard, correlation IDs | SRE |
+
+### Compliance & Security (v1.0 evidence pack)
+
+| Guide | Description | Audience |
+|-------|-------------|----------|
+| [SOC 2 evidence](compliance/soc2-evidence.md) | CC1-CC9 + A1 + C1 control mapping; documented limitations | Auditors, compliance |
+| [DPIA + data-flow](compliance/dpia-data-flow.md) | GDPR Art. 35 DPIA; PII inventory; lawful basis matrix | DPO, legal |
+| [STRIDE threat model](security/threat-model.md) | Per-asset threats + mitigations; attack tree examples | Security teams |
+| [Deployment runbook](deployment/runbook.md) | EKS+RDS / AKS+Azure / GKE+Cloud SQL / vanilla K8s+Vault | Platform / SRE |
+| [Upgrade guide](deployment/upgrade.md) | v0.x → v1.0 forward-only path + rollback procedure | Platform / SRE |
+
+---
+
+## Quick Links
+
+| Resource | Description |
+|----------|-------------|
+| [Main README](../README.md) | Project overview, quick start, and tech stack |
+| [Technical Docs](../DOCS.md) | In-depth technical documentation |
+| [Contributing Guide](../CONTRIBUTING.md) | How to contribute to the project |
+| [Changelog](../CHANGELOG.md) | Release history and version notes |
+| [License](../LICENSE) | AGPL-3.0 license details |
+
+---
+
+## Application Views at a Glance
+
+AIFactory provides multiple specialized views accessible from the sidebar:
+
+| View | Purpose |
+|------|---------|
+| **Kanban** | Task board with drag-and-drop status management |
+| **Terminals** | Multi-terminal grid with full PTY support |
+| **Editor** | Monaco code editor with integrated file browser |
+| **Worktrees** | Git worktree management and merge operations |
+| **Roadmap** | AI-generated feature roadmap visualization |
+| **Ideation** | AI-powered feature brainstorming |
+| **Context** | Project indexing and memory management |
+| **GitHub/GitLab Issues** | Issue tracker integrations |
+| **GitHub PRs** | Pull request AI review workflow |
+| **Changelog** | Automatic changelog generation |
+| **Insights** | AI analysis and project health metrics |
+
+---
+
+## Getting Help
+
+- **Issues:** [GitHub Issues](https://github.com/dataseeek/Claude-Code-Manager-Web/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/dataseeek/Claude-Code-Manager-Web/discussions)
+- **Troubleshooting:** See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
+---
+
+## Prerequisites Summary
+
+Before using AIFactory, ensure you have:
+
+- **Node.js 24+** with npm 10+
+- **Python 3.12+**
+- **Git** (for repository operations)
+- **Claude Code OAuth Token** (run `claude setup-token` to obtain)
+- **A modern web browser** (Chrome, Firefox, Safari, or Edge)
+
+For detailed installation instructions, see [Getting Started](GETTING-STARTED.md).
+
+---
+
+**AIFactory** - Orchestrate AI coding agents from your browser.

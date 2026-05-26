@@ -39,38 +39,9 @@ from .wrapper import RmuxError, RmuxWrapper
 
 logger = logging.getLogger(__name__)
 
-
-def _default_panes_dir() -> Path:
-    """Choose a panes directory that the current process can actually write to.
-
-    Precedence — matches ``wrapper._default_socket_dir`` so socket + FIFOs
-    end up on the same filesystem tree:
-
-      1. ``/var/run/aifactory/panes`` if it already exists and is
-         writable — this is what the container Helm chart mounts
-         (emptyDir owned by the pod user, see design §3.4)
-      2. ``$XDG_RUNTIME_DIR/aifactory-rmux/panes`` if XDG is set
-         (standard systemd user session path; tmpfs-backed)
-      3. ``~/.cache/aifactory/rmux/panes`` as a final portable fallback
-
-    Local dev shells almost never have write access to ``/var/run``,
-    so option 1 is essentially production-only.  The previous
-    ``Path('/var/run/aifactory/panes')`` constant fell over with
-    PermissionError on first ``mkdir`` for local devs running the
-    web-server outside a container.
-    """
-    container_default = Path("/var/run/aifactory/panes")
-    if container_default.exists() and os.access(container_default, os.W_OK):
-        return container_default
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return Path(xdg) / "aifactory-rmux" / "panes"
-    return Path.home() / ".cache" / "aifactory" / "rmux" / "panes"
-
-
-# Resolved once at module-load time.  ``configure(panes_dir=...)`` lets
-# tests + container init override this without monkey-patching.
-_DEFAULT_PANES_DIR = _default_panes_dir()
+# Default panes directory in the runtime container.  Overridden for
+# tests via ``configure(panes_dir=...)`` so they can use a tmp_path.
+_DEFAULT_PANES_DIR = Path("/var/run/aifactory/panes")
 
 
 @dataclass
@@ -154,69 +125,22 @@ class SessionRegistry:
                 fifo_path.unlink()
             os.mkfifo(str(fifo_path), mode=0o600)
 
-            # Bring up rmux + session + pipe-pane.
-            #
-            # IMPORTANT ordering: register ``_states`` AS SOON AS
-            # ``new_session`` returns successfully — BEFORE we attempt
-            # ``pipe_pane``.  Earlier the order was new_session →
-            # pipe_pane → _states, which meant a transient pipe_pane
-            # failure (race against the freshly-spawned daemon's pane
-            # registration) would leave an orphaned rmux session AND
-            # an empty registry — so the bridge endpoint correctly
-            # answered "no session for spec_id" even though the
-            # session existed.  Re-ordering keeps the registry
-            # consistent with the daemon: if rmux has a session
-            # named ``aifactory-task-<spec_id>``, the registry has
-            # it too.
+            # Bring up rmux + session + pipe-pane in one shot.
             await self._wrapper.ensure_daemon()
-            logger.info(
-                "[rmux.session] create_for_task: ensure_daemon OK spec_id=%s", spec_id,
-            )
-
-            # Defensive: the rmux daemon's session table can outlive a
-            # web-server lifetime (we restart the server frequently
-            # during dev; the daemon is a separate process and keeps
-            # running).  If a session named ``aifactory-task-<spec_id>``
-            # is lingering from a previous web-server's task, ``new-session``
-            # would fail with "duplicate session" and leave our in-memory
-            # ``_states`` empty.  Reap any stale namesake first; the
-            # ignore_missing flag makes this a no-op when there's nothing
-            # to clean.
-            await self._wrapper.kill_session(session_name, ignore_missing=True)
             await self._wrapper.new_session(
                 session_name, worktree_path, agent_cmd
             )
-            logger.info(
-                "[rmux.session] create_for_task: new_session OK spec_id=%s session=%s",
-                spec_id, session_name,
-            )
+            await self._wrapper.pipe_pane(session_name, fifo_path)
 
-            # Register BEFORE pipe_pane so the WS can find us even if
-            # pipe-pane attaches late (the FIFO simply has no bytes
-            # until then, but the bridge can still resolve the session).
             self._states[spec_id] = SessionState(
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
             )
             logger.info(
-                "[rmux.session] create_for_task: registered in _states spec_id=%s (states count=%d)",
-                spec_id, len(self._states),
+                "rmux session created: spec_id=%s session=%s fifo=%s",
+                spec_id, session_name, fifo_path,
             )
-
-            try:
-                await self._wrapper.pipe_pane(session_name, fifo_path)
-                logger.info(
-                    "[rmux.session] create_for_task: pipe_pane OK spec_id=%s", spec_id,
-                )
-            except Exception as e:
-                # Don't unregister — caller can still see "session
-                # exists but no bytes".  Log so the operator notices.
-                logger.warning(
-                    "[rmux.session] create_for_task: pipe_pane FAILED spec_id=%s err=%s — session still registered",
-                    spec_id, e,
-                )
-
             return fifo_path
 
     async def reap_for_task(self, spec_id: str) -> None:

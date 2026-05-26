@@ -1,6 +1,6 @@
 {
   "name": "aifactory-web",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "type": "module",
   "description": "Web UI for AIFactory autonomous coding framework",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx",
     "typecheck": "tsc --noEmit",
-    "test:e2e": "playwright test --config ../../tests/e2e/rmux/playwright.config.ts"
+    "capture-screenshots": "tsx ../../scripts/capture-screenshots.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -63,6 +63,7 @@
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@tailwindcss/postcss": "^4.1.17",
+    "tsx": "^4.20.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@types/highlight.js": "^9.12.4",
