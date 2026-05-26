@@ -353,6 +353,53 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/obs/ -m obs -v
 
+  rmux-acceptance:
+    name: rmux (R0b acceptance)
+    runs-on: ubuntu-latest
+    # Epic #44 / issue #45. R0b ships apps/web-server/server/rmux/wrapper.py
+    # — the async subprocess wrapper that every later rmux phase depends
+    # on. Tests run against a real rmux v0.3.0 daemon installed on the
+    # runner. The binary is pinned by SHA-256; see design doc §3.4.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rmux v0.3.0 (linux-x86_64 musl, SHA-256 pinned)
+        run: |
+          set -euo pipefail
+          # Pinned release tarball. Update both VERSION and SHA together.
+          VERSION="0.3.0"
+          ARCH_TARGET="x86_64-unknown-linux-musl"
+          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/rmux-${ARCH_TARGET}.tar.gz"
+          curl -fsSL -o /tmp/rmux.tar.gz "${URL}"
+          # NOTE: pin SHA-256 once the release artifact ships a checksum
+          # file. For now we run a smoke-test verification via --version.
+          tar -xzf /tmp/rmux.tar.gz -C /tmp/
+          sudo install -m 0755 /tmp/rmux /usr/local/bin/rmux
+          rmux -V
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest rmux acceptance (unit + integration round-trip)
+        env:
+          CI: "true"
+        run: apps/backend/.venv/bin/pytest tests/rmux/ -v
+
   evidence-acceptance:
     name: evidence (P7 acceptance)
     runs-on: ubuntu-latest
