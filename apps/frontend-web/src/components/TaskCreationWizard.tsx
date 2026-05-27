@@ -1220,16 +1220,18 @@ export function TaskCreationWizard({
             </div>
           </div>
 
-          {/* Copilot Delegation Toggle — hand the coding phase off to
-              GitHub Copilot Coding Agent. AIFactory still plans the spec.
-              Disabled for non-GitHub projects until V1.5 (#98) ships
-              Duo Workflow delegation. */}
+          {/* Delegation Toggle — hand the coding phase off to the
+              project's autonomous coding agent (GitHub Copilot Coding
+              Agent on GitHub, GitLab Duo Workflow on GitLab — V1.5,
+              #98). AIFactory still plans the spec locally. Disabled for
+              Azure DevOps (no equivalent agent exists). */}
           {(() => {
-            const delegationDisabled = isCreating || projectGitProvider !== 'github';
-            const delegationTooltip =
-              projectGitProvider !== 'github'
-                ? t('tasks:delegation.githubOnlyTooltip')
-                : undefined;
+            const delegationSupported =
+              projectGitProvider === 'github' || projectGitProvider === 'gitlab';
+            const delegationDisabled = isCreating || !delegationSupported;
+            const delegationTooltip = !delegationSupported
+              ? t('tasks:delegation.githubOrGitlabTooltip')
+              : undefined;
             return (
               <div
                 className="flex items-start gap-3 p-4 rounded-lg border border-border bg-muted/30"
@@ -1237,7 +1239,7 @@ export function TaskCreationWizard({
               >
                 <Checkbox
                   id="enable-delegation"
-                  checked={enableDelegation && projectGitProvider === 'github'}
+                  checked={enableDelegation && delegationSupported}
                   onCheckedChange={(checked) => setEnableDelegation(checked === true)}
                   disabled={delegationDisabled}
                   className="mt-0.5"

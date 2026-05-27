@@ -459,7 +459,13 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     # the queue carries the right initial status.
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     task_metadata = _read_task_metadata(spec_dir)
-    delegate = bool(task_metadata.get("enableDelegation")) and provider_type == "github"
+    # Delegation works on GitHub (Copilot, V1) and GitLab (Duo Workflow,
+    # V1.5 #98). ADO has no autonomous-agent equivalent — the provider's
+    # assign_to_user raises NotImplementedError which the runner handles.
+    delegate = bool(task_metadata.get("enableDelegation")) and provider_type in (
+        "github",
+        "gitlab",
+    )
     initial_status = "planning" if delegate else "building"
 
     queue_item = {

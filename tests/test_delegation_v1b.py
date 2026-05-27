@@ -378,21 +378,26 @@ async def test_start_auto_fix_default_branch_when_delegation_off(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_start_auto_fix_delegation_skipped_for_non_github_provider(
+async def test_start_auto_fix_delegation_skipped_for_ado_provider(
     tmp_path: Path,
 ):
-    """Even with enableDelegation=True, GitLab projects fall through to the
-    full pipeline until V1.5 ships."""
+    """Azure DevOps has no autonomous coding agent. Even with
+    enableDelegation=True, ADO projects must fall through to the local
+    pipeline. GitHub + GitLab both take the delegation branch
+    (V1 + V1.5)."""
     project_path = _make_project_layout(tmp_path, enable_delegation=True)
-    # Rename the spec dir so the gitlab provider_type ("mr" prefix) finds it.
+    # Rename the spec dir so the ado provider_type ("wi" prefix) finds it.
     src = project_path / ".aifactory" / "specs" / "001-gh42-test"
-    dst = project_path / ".aifactory" / "specs" / "001-mr42-test"
+    dst = project_path / ".aifactory" / "specs" / "001-wi42-test"
     src.rename(dst)
 
     projects_fixture = {
         "proj-1": {
             "path": str(project_path),
-            "settings": {"gitProvider": "gitlab", "gitRepo": "acme/widgets"},
+            "settings": {
+                "gitProvider": "azure_devops",
+                "gitRepo": "acme/widgets",
+            },
         }
     }
 

@@ -199,18 +199,103 @@ async def test_github_assign_empty_list_is_noop():
 
 
 # ---------------------------------------------------------------------------
-# GitLab — V1 stub raises NotImplementedError
+# GitLab — V1.5: assign_to_user triggers Duo Workflow
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gitlab_assign_to_user_raises_notimplemented():
-    provider = GitLabProvider(_repo="acme/widgets", _token="dummy")
-    with pytest.raises(NotImplementedError) as exc:
-        await provider.assign_to_user(42, ["Copilot"])
-    msg = str(exc.value)
-    assert "V1.5" in msg or "#98" in msg
-    assert "duo_workflows" in msg.lower()
+async def test_gitlab_assign_to_user_triggers_duo_workflow():
+    """When given the Copilot/Duo alias, GitLabProvider should POST to
+    /api/v4/ai/duo_workflows/workflows with the issue context."""
+    from unittest.mock import patch
+    provider = GitLabProvider(_repo="acme/widgets", _token="OAUTH_TOKEN")
+
+    # Stub get_repository_info so we don't make a real HTTP call to resolve
+    # the project_id.
+    captured: dict = {}
+
+    class _FakeResp:
+        def __init__(self, status_code=201, payload=None):
+            self.status_code = status_code
+            self._payload = payload or {"id": 999}
+            self.content = b'{"id": 999}'
+            self.text = ""
+        def json(self):
+            return self._payload
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            captured["headers"] = kw.get("headers", {})
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["json"] = json
+            captured["post_headers"] = headers
+            return _FakeResp(201)
+
+    async def fake_get_repo_info():
+        return {"id": 42}
+
+    provider.get_repository_info = fake_get_repo_info  # type: ignore[assignment]
+
+    with patch("httpx.AsyncClient", _FakeClient):
+        await provider.assign_to_user(7, ["Copilot"])
+
+    assert captured["url"].endswith("/api/v4/ai/duo_workflows/workflows")
+    assert captured["post_headers"]["Authorization"] == "Bearer OAUTH_TOKEN"
+    payload = captured["json"]
+    assert payload["issue_id"] == 7
+    assert payload["project_id"] == "42"
+    assert payload["workflow_definition"] == "software_development"
+    assert "goal" in payload and "#7" in payload["goal"]
+
+
+@pytest.mark.asyncio
+async def test_gitlab_assign_to_user_no_token_skips_quietly():
+    """With no GitLab token configured, _trigger_duo_workflow must
+    silently no-op rather than raise (matches the GitHub silent-no-op
+    contract when Copilot isn't enabled at org level)."""
+    provider = GitLabProvider(_repo="acme/widgets", _token=None)
+    # Must not raise.
+    await provider.assign_to_user(7, ["Copilot"])
+
+
+@pytest.mark.asyncio
+async def test_gitlab_assign_to_user_unauth_silently_noops():
+    """A 401 / 403 from the Duo endpoint (no Duo seat on the token) must
+    be a silent no-op — the tracker detects the miss by polling for the
+    MR."""
+    from unittest.mock import patch
+    provider = GitLabProvider(_repo="acme/widgets", _token="OAUTH_TOKEN")
+
+    class _FakeResp:
+        status_code = 401
+        content = b""
+        text = ""
+        def json(self):
+            return {}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def post(self, url, headers=None, json=None):
+            return _FakeResp()
+
+    async def fake_get_repo_info():
+        return {"id": 42}
+
+    provider.get_repository_info = fake_get_repo_info  # type: ignore[assignment]
+
+    with patch("httpx.AsyncClient", _FakeClient):
+        # Must not raise.
+        await provider.assign_to_user(7, ["Copilot"])
 
 
 # ---------------------------------------------------------------------------
