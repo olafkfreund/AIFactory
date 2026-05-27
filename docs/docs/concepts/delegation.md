@@ -35,15 +35,31 @@ In **Project Settings → General**, toggle **"Delegate coding to Copilot for ne
 
 The "Delegated to Copilot ↗" badge appears on the task detail panel once a task is delegated. It links to Copilot's resulting PR once one is opened (within ~5 minutes); until then it links to the originating issue.
 
+## Provider differences
+
+The hybrid model is identical across providers — AIFactory's planner runs locally, posts the enriched comment, then hands off. The wiring differs slightly:
+
+| | GitHub Copilot | GitLab Duo Workflow |
+|---|---|---|
+| Trigger | Assign `copilot-swe-agent` via GraphQL `replaceActorsForAssignable` | POST `/api/v4/ai/duo_workflows/workflows` with the workflow payload |
+| Entitlement | Org-level Copilot Coding Agent permissions on the repo | Duo Pro or Duo Enterprise add-on on the namespace (GitLab Premium 17.4+ floor) |
+| Auth | `gh` CLI token (Copilot scope) | Project `gitToken` setting (Bearer header, **not** `PRIVATE-TOKEN`) |
+| Result | Bot-authored PR titled with `#<issue-num>` | Bot-authored MR referencing the workflow id |
+| AIFactory tracks via | `delegation_tracker.scan_delegated_tasks` polling matching PRs | Same tracker, polling matching MRs |
+
+Both surface in the UI as identical `delegated` → `in_review` transitions. The "Delegated to Copilot ↗" badge text reads "Delegated to Duo ↗" on GitLab projects.
+
 ## Status flow
+
+The status machine is provider-agnostic. Replace "Copilot" with "Duo" mentally if your project is on GitLab.
 
 ```mermaid
 flowchart LR
     A[created] --> B[planning]
     B -->|AIFactory writes plan| C[delegated]
-    C -->|Copilot opens PR| D[in_review]
+    C -->|agent opens PR/MR| D[in_review]
     D -->|reviewer merges| E[merged]
-    C -->|24h with no PR| F[declined]
+    C -->|24h with no PR/MR| F[declined]
     F -->|user retries| B
 ```
 

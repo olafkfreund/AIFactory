@@ -27,12 +27,13 @@ AIFactory turns GitHub issues into shipping code via a coordinated **planner / c
 
 You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive.
 
-> **🚀 What's new (May 2026)** — the MCP Control-Plane Epic (#50) and Default MCP Servers Epic (#100) shipped. Highlights:
+> **🚀 What's new (May 2026)** — three more epics closed on top of the May MCP shipset:
 >
-> - **27 MCP tools** across stdio + remote HTTP+SSE transports. Drive AIFactory from Claude Code, Cursor, Continue.dev, or any MCP-aware client.
-> - **`/handover` skill** for Claude Code — type `/handover` mid-conversation, AIFactory captures the context, runs the build autonomously, and hands you back a draft PR.
-> - **Default MCP servers** auto-enable per project when infra markers + credentials line up. Kubernetes, AWS, Azure, GitHub now ship; GitLab + Azure DevOps + GCP on the roadmap.
-> - **Remote Control** — wires Claude Code's native `--remote-control` flag into the agent spawn so you can drive a running task from `claude.ai/code` on any device.
+> - **Delegation (#92)** — hand the coder phase off to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps the planning + governance. Hybrid only: planner runs on Claude, the structured plan lands as a comment on the issue, then the provider's agent codes. See [`docs/docs/concepts/delegation.md`](docs/docs/concepts/delegation.md).
+> - **Portal-managed Git clones (#82)** — point the portal at a Git URL, it clones into a workspace root (laptop default `~/.aifactory/workspaces/`, Helm-templated PVC on K8s). Stored Personal Access Tokens encrypted at rest. Required for SaaS / Kubernetes deployments. See [`docs/docs/concepts/portal-clones.md`](docs/docs/concepts/portal-clones.md).
+> - **Scoped MCP API keys (#154)** — replace the host-wide admin token at `~/.aifactory/.token` with per-developer scope-gated `acw_` keys. Mint via **Settings → API Keys**, drop in `$AIFACTORY_MCP_KEY`, done. Legacy admin token still works as a wildcard fallback. See [`docs/docs/concepts/mcp-stdio-keys.md`](docs/docs/concepts/mcp-stdio-keys.md).
+>
+> Earlier May 2026 shipset (still current): **27 MCP tools** across stdio + remote HTTP+SSE transports, the **`/handover` skill** for Claude Code, **default MCP servers** that auto-enable per project, and **Remote Control** wiring for `claude.ai/code` on any device.
 >
 > See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
 
@@ -40,7 +41,9 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 
 - **Spec-first, not vibe-first.** Every agent run starts from a written, reviewable spec with acceptance criteria. Plans are editable before code is written.
 - **Multi-provider by design.** Pick a model per phase. Plan with Claude Opus, code with a cheap local Ollama qwen3, validate with Sonnet. Anthropic / OpenAI / Ollama / Gemini / Codex / any OpenAI-compatible endpoint.
-- **MCP control plane.** 27 tools across two transports let any MCP-aware editor inspect and direct AIFactory. The `/handover` skill turns "this is bigger than I thought" into an autonomous overnight run with one keystroke.
+- **MCP control plane.** 27 tools across two transports let any MCP-aware editor inspect and direct AIFactory. The `/handover` skill turns "this is bigger than I thought" into an autonomous overnight run with one keystroke. **Scope-gated per-developer keys** in v1.1 mean shared hosts and SaaS deployments don't hand out admin power.
+- **Provider-agent delegation.** On GitHub repos, AIFactory can hand the coder phase off to **Copilot Coding Agent**; on GitLab, to **Duo Workflow**. AIFactory still authors the spec + plan; the provider's agent does the typing. Cuts Claude spend ~10× for delegated tasks.
+- **Portal-managed clones.** Point AIFactory at a Git URL and it clones into a workspace PVC (on K8s) or a configurable workspace root (on laptops). Stored PATs are encrypted at rest. Required for SaaS / Kubernetes installs.
 - **Infra-aware out of the box.** A catalog of default MCP servers (Kubernetes, AWS, Azure, GitHub) auto-enables per project when markers + credentials line up. Read-only by default, audit-logged, CVE-aware version pins.
 - **Isolated by default.** Each task runs in its own git worktree. Nothing touches your working tree until you merge.
 - **Auditable.** Hash-chained audit log, on-disk specs+plans+QA reports, full SOC2 evidence catalog in the enterprise build.

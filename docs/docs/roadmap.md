@@ -7,6 +7,12 @@ sidebar_position: 5
 
 What we're working on, in priority order.
 
+## Recently shipped
+
+- **Epic #92 — Delegation (Copilot + Duo)** ✅ — hand the coder phase off to GitHub Copilot or GitLab Duo Workflow while AIFactory keeps the planning + governance. See the [Delegation concept page](./concepts/delegation).
+- **Epic #82 — Portal-managed Git clones** ✅ — clone repos into the portal's workspace root (env-aware on laptop vs Helm PVC), with encrypted-at-rest stored credentials for private repos. See [Portal-managed clones](./concepts/portal-clones).
+- **Issue #154 — Scoped MCP API keys** ✅ — replace the host-wide admin token with per-developer scope-gated `acw_` keys for the stdio MCP. See [MCP API keys](./concepts/mcp-stdio-keys).
+
 ## Shipping now (stacked PRs)
 
 - **#67 — rmux R0b**: async wrapper around rmux CLI
@@ -20,6 +26,7 @@ When this stack lands on `dev`, the [Live Agent Console](./concepts/rmux-live-co
 ## Next quarter
 
 - **Epic #50 — MCP Control-Plane Tools**: expose AIFactory itself as an MCP server so Claude Code can create projects, kick off builds, and read QA reports without leaving the terminal.
+- **Epic #35 — Enterprise v1.1**: tenant isolation, multi-org picker, audit log enrichment.
 - **First-class Linear integration**: bidirectional sync (today is one-way GitHub import only).
 - **Algolia DocSearch** on this docs site.
 - **Browser-side runtime config** so the frontend can talk to a portal at a custom origin without a rebuild.
