@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         'concepts/delegation',
         'concepts/mcp-servers',
         'concepts/mcp-credentials',
+        'concepts/mcp-stdio-keys',
       ],
     },
     {

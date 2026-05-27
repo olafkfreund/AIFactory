@@ -36,6 +36,7 @@ import { LanguageSettings } from './LanguageSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { IntegrationSettings } from './IntegrationSettings';
 import { GitCredentialsSettings } from './sections/GitCredentialsSettings';
+import { McpApiKeysSettings } from './sections/McpApiKeysSettings';
 import { AdvancedSettings } from './AdvancedSettings';
 import { DebugSettings } from './DebugSettings';
 import { LLMProvidersPage } from './sections/LLMProvidersPage';
@@ -53,7 +54,7 @@ interface AppSettingsDialogProps {
 }
 
 // App-level settings sections
-export type AppSection = 'language' | 'agent' | 'llmProvider' | 'integrations' | 'gitCredentials' | 'notifications' | 'debug';
+export type AppSection = 'language' | 'agent' | 'llmProvider' | 'integrations' | 'gitCredentials' | 'apiKeys' | 'notifications' | 'debug';
 
 interface NavItemConfig<T extends string> {
   id: T;
@@ -65,6 +66,7 @@ const appNavItemsConfig: NavItemConfig<AppSection>[] = [
   { id: 'llmProvider', icon: Cpu },
   { id: 'integrations', icon: Key },
   { id: 'gitCredentials', icon: KeyRound },
+  { id: 'apiKeys', icon: KeyRound },
   { id: 'notifications', icon: Bell },
   { id: 'debug', icon: Bug },
   { id: 'language', icon: Globe }
@@ -171,6 +173,8 @@ export function AppSettingsDialog({ open, onOpenChange, initialSection, initialP
         return <IntegrationSettings settings={settings} onSettingsChange={setSettings} />;
       case 'gitCredentials':
         return <GitCredentialsSettings />;
+      case 'apiKeys':
+        return <McpApiKeysSettings />;
       case 'notifications':
         return <AdvancedSettings settings={settings} onSettingsChange={setSettings} section="notifications" version={version} />;
       case 'debug':
