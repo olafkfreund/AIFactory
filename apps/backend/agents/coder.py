@@ -74,6 +74,7 @@ async def run_autonomous_agent(
     max_iterations: int | None = None,
     verbose: bool = False,
     source_spec_dir: Path | None = None,
+    stop_after_planning: bool = False,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -88,6 +89,10 @@ async def run_autonomous_agent(
         max_iterations: Maximum number of iterations (None for unlimited)
         verbose: Whether to show detailed output
         source_spec_dir: Original spec directory in main project (for syncing from worktree)
+        stop_after_planning: Return as soon as the planner phase finishes
+            writing implementation_plan.json. Used by the Copilot delegation
+            flow — AIFactory enriches the plan locally then hands the issue
+            off to GitHub Copilot Coding Agent (#92, #94).
     """
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
@@ -291,6 +296,21 @@ async def run_autonomous_agent(
             # Switch to coding phase after planning
             if is_planning_phase:
                 is_planning_phase = False
+
+                # Copilot delegation: planner is done — return so
+                # auto_fix_service can post the enriched plan as a
+                # comment and assign the Copilot bot (#94). Skip
+                # the human-review gate and all downstream phases.
+                if stop_after_planning:
+                    if task_logger:
+                        task_logger.end_phase(
+                            LogPhase.PLANNING,
+                            success=True,
+                            message="Plan created — delegating to Copilot",
+                        )
+                    if source_spec_dir:
+                        sync_plan_to_source(spec_dir, source_spec_dir)
+                    return
 
                 # Check if human review is required before coding
                 require_review = _should_require_human_review(spec_dir)

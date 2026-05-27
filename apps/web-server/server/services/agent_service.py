@@ -19,7 +19,12 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from ..websockets.events import emit_task_status, emit_task_update, emit_task_logs_stream, emit_subtask_update
+from ..websockets.events import (
+    emit_subtask_update,
+    emit_task_logs_stream,
+    emit_task_status,
+    emit_task_update,
+)
 
 
 class TaskPhase(str, Enum):
@@ -1955,7 +1960,7 @@ class AgentService:
                 await self._update_plan_status(
                     project_path, spec_id, status, task_id, emit_events=False
                 )
-                logger.info(f"[AgentService._monitor_process] _update_plan_status call completed")
+                logger.info("[AgentService._monitor_process] _update_plan_status call completed")
 
             # Send email/in-app notifications on task completion or failure
             _notif_user_id = self._task_user_ids.pop(task_id, "")
@@ -2082,7 +2087,7 @@ class AgentService:
         logger.info(f"[AgentService._update_plan_status] plan_file path: {plan_file}")
         logger.info(f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}")
         if not plan_file.exists():
-            logger.warning(f"[AgentService._update_plan_status] plan_file does not exist, returning early")
+            logger.warning("[AgentService._update_plan_status] plan_file does not exist, returning early")
             return
 
         # Map internal status to frontend-compatible status using the canonical helpers
@@ -2119,7 +2124,7 @@ class AgentService:
 
             logger.info(f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}")
             plan_file.write_text(json.dumps(plan, indent=2))
-            logger.info(f"[AgentService._update_plan_status] Successfully wrote plan_file")
+            logger.info("[AgentService._update_plan_status] Successfully wrote plan_file")
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
             # Extract subtasks for WebSocket broadcast
@@ -2474,12 +2479,17 @@ class AgentService:
         mode: str | None = "full",
         force: bool = False,
         user_id: str = "",
+        stop_after_planning: bool = False,
     ) -> asyncio.subprocess.Process:
         """Start task execution (run.py).
 
         Args:
             mode: "quick" for simplified prompts (~70% fewer tokens), "full" for comprehensive prompts.
             force: If True, bypasses approval checks (use when plan was already manually approved).
+            stop_after_planning: Passes ``--stop-after-planning`` to run.py.
+                Used by the Copilot delegation flow (#94) — the planner writes
+                implementation_plan.json and run.py exits cleanly before the
+                coder/QA phases.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -2560,6 +2570,11 @@ class AgentService:
             cmd.append("--skip-qa")
             logger.info(f"[AgentService] Skipping QA for quick mode task {task_id}")
 
+        # Stop after planning for Copilot delegation flow (#94)
+        if stop_after_planning:
+            cmd.append("--stop-after-planning")
+            logger.info(f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)")
+
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
@@ -2606,7 +2621,7 @@ class AgentService:
                             value = value.strip()
                             if key not in env:
                                 env[key] = value
-                logger.info(f"[AgentService] Loaded project .env for task execution")
+                logger.info("[AgentService] Loaded project .env for task execution")
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 

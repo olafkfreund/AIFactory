@@ -182,6 +182,11 @@ Environment Variables:
         action="store_true",
         help="Skip automatic QA validation after build completes",
     )
+    parser.add_argument(
+        "--stop-after-planning",
+        action="store_true",
+        help="Run only the planner phase, then exit (used by Copilot delegation)",
+    )
 
     # Follow-up options
     parser.add_argument(
@@ -427,6 +432,7 @@ def main() -> None:
         skip_qa=args.skip_qa,
         force_bypass_approval=args.force,
         base_branch=args.base_branch,
+        stop_after_planning=args.stop_after_planning,
     )
 
 

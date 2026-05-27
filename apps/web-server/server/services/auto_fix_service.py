@@ -351,15 +351,48 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     return new
 
 
+def _read_task_metadata(spec_dir: Path) -> dict[str, Any]:
+    """Best-effort read of requirements.json/task_metadata.json for delegation flags.
+
+    The frontend writes delegation flags to ``requirements.json[metadata]``;
+    the backend reads them from there or from ``task_metadata.json``. Either
+    source is acceptable. Missing files return an empty dict.
+    """
+    out: dict[str, Any] = {}
+    req_file = spec_dir / "requirements.json"
+    if req_file.exists():
+        try:
+            req = json.loads(req_file.read_text())
+            md = req.get("metadata")
+            if isinstance(md, dict):
+                out.update(md)
+        except (json.JSONDecodeError, OSError):
+            pass
+    tm_file = spec_dir / "task_metadata.json"
+    if tm_file.exists():
+        try:
+            tm = json.loads(tm_file.read_text())
+            if isinstance(tm, dict):
+                out.update(tm)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return out
+
+
 async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
-    """Import a single issue → write spec → start the agent.
+    """Import a single issue → write spec → start the agent (or delegate).
 
     Idempotent on the spec side: if the issue is already imported, the
     existing spec is reused and the agent is started against it.
+
+    Delegation branch (#94): when the task's ``enableDelegation`` flag is
+    set AND the project's git provider is GitHub, we run only the planner
+    phase, post the enriched plan as an issue comment, assign Copilot,
+    and stop. The local coder/QA pipeline does not run for delegated tasks.
     """
     from ..routes.projects import load_projects
     from ..services.agent_service import get_agent_service
-    from ..websockets.events import broadcast_event
+    from ..websockets.events import broadcast_event, emit_task_status
 
     projects = load_projects()
     if project_id not in projects:
@@ -379,7 +412,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
                 spec_id = d.name
                 break
 
-    now = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     if spec_id is None:
         # Fetch the issue and create the spec
@@ -395,21 +428,103 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
         }
         spec_id = _write_spec_dir(project_path, issue_dict, provider_type)
 
-    # Record in the queue
+    # Determine whether to delegate before recording the queue item, so
+    # the queue carries the right initial status.
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    task_metadata = _read_task_metadata(spec_dir)
+    delegate = bool(task_metadata.get("enableDelegation")) and provider_type == "github"
+    initial_status = "planning" if delegate else "building"
+
     queue_item = {
         "issueNumber": issue_number,
         "repo": settings.get("gitRepo", ""),
-        "status": "building",
+        "status": initial_status,
         "specId": spec_id,
-        "createdAt": now,
-        "updatedAt": now,
+        "createdAt": now_iso,
+        "updatedAt": now_iso,
     }
     _upsert_queue_item(project_id, queue_item)
 
-    # Start the agent.  task_id format matches the existing convention
-    # used by execution.py and agent_service: "{project_id}:{spec_id}".
     task_id = f"{project_id}:{spec_id}"
     agent_service = get_agent_service()
+
+    if delegate:
+        # ------------------------------------------------------------------
+        # Delegation flow (#94): planner-only run → enriched comment →
+        # assign Copilot. Local coder/QA skipped.
+        # ------------------------------------------------------------------
+        await emit_task_status(task_id, "planning")
+        try:
+            await agent_service.start_task_execution(
+                task_id=task_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                auto_continue=True,
+                force=True,
+                stop_after_planning=True,
+            )
+        except ValueError as e:
+            # "Already running" is fine — fall through to the comment+assign step
+            if "already running" not in str(e):
+                raise
+
+        # The planner subprocess writes implementation_plan.json into the
+        # spec dir before returning. The agent service syncs from the
+        # worktree on completion (see agent_service._sync_worktree_files).
+        from .delegation_formatter import render_plan_as_comment
+
+        plan_md = render_plan_as_comment(
+            spec_dir / "implementation_plan.json",
+            spec_dir / "spec.md",
+        )
+        provider = _provider_for(project_id)
+        try:
+            await provider.add_comment(issue_number, plan_md)
+        except Exception as e:
+            logger.warning(
+                "[auto_fix] delegation comment post failed project=%s issue=%d err=%s",
+                project_id,
+                issue_number,
+                e,
+            )
+
+        try:
+            await provider.assign_to_user(issue_number, ["Copilot"])
+        except NotImplementedError:
+            # Defence in depth — `delegate` is already gated to GitHub but
+            # this future-proofs against provider type misconfiguration.
+            logger.warning(
+                "[auto_fix] provider %s does not support delegation; skipping assign",
+                provider_type,
+            )
+
+        # Persist the delegated state with timestamps the tracker uses
+        # to detect Copilot decline.
+        delegated_at = datetime.now(timezone.utc).isoformat()
+        _upsert_queue_item(
+            project_id,
+            {
+                **queue_item,
+                "status": "delegated",
+                "delegatedAt": delegated_at,
+                "updatedAt": delegated_at,
+            },
+        )
+        await emit_task_status(task_id, "delegated")
+        await broadcast_event(
+            "auto_fix:delegated",
+            {
+                "projectId": project_id,
+                "issueNumber": issue_number,
+                "specId": spec_id,
+                "delegateAgent": "github-copilot",
+            },
+        )
+        return {"specId": spec_id, "taskId": task_id, "status": "delegated"}
+
+    # ----------------------------------------------------------------------
+    # Default flow: AIFactory runs the full pipeline.
+    # ----------------------------------------------------------------------
     try:
         await agent_service.start_task_execution(
             task_id=task_id,
@@ -434,6 +549,10 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
 async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     """Manual-poll convenience: find new issues + start each one.
 
+    Also advances delegated tasks (#94): for items already in
+    ``status="delegated"``, scan the provider for Copilot's resulting PR
+    and transition to ``in_review`` (or ``declined`` after 24h).
+
     This is what the frontend's "Poll now" button and the 5-min
     auto-poll loop ultimately invoke.
     """
@@ -456,8 +575,19 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
             )
             errors.append({"issueNumber": iss["number"], "error": str(e)})
 
+    # Advance any delegated tasks alongside polling for new issues.
+    delegation_summary: dict[str, Any] = {}
+    try:
+        from .delegation_tracker import scan_delegated_tasks
+        delegation_summary = await scan_delegated_tasks(project_id)
+    except Exception as e:  # pragma: no cover
+        logger.warning(
+            "[auto_fix] delegation tracker failed project=%s err=%s", project_id, e
+        )
+
     return {
         "checked": len(new_issues),
         "started": started,
         "errors": errors,
+        "delegation": delegation_summary,
     }
