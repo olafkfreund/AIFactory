@@ -31,6 +31,7 @@ from .routes import (
     execution,
     files,
     git,
+    git_credentials,
     github,
     mcp,
     notifications,
@@ -201,6 +202,9 @@ def create_app() -> FastAPI:
 
     # API key management (prefix defined in router: /api/keys)
     app.include_router(api_keys.router)
+
+    # Git credentials for portal-managed clone auth (epic #82 PR-C)
+    app.include_router(git_credentials.router)
 
     # Audit log routes (prefix defined in router: /api/orgs)
     app.include_router(audit.router)
