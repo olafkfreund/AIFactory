@@ -19,7 +19,12 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from ..websockets.events import emit_task_status, emit_task_update, emit_task_logs_stream, emit_subtask_update
+from ..websockets.events import (
+    emit_subtask_update,
+    emit_task_logs_stream,
+    emit_task_status,
+    emit_task_update,
+)
 
 
 class TaskPhase(str, Enum):
@@ -429,6 +434,8 @@ class AgentService:
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
+        # Per-spec stderr capture file paths (#146).
+        self._spec_stderr_logs: dict[str, Path] = {}
         # Track sequence numbers per task for frontend out-of-order detection
         self._task_sequence_numbers: dict[str, int] = {}
         # Issue #14 — last emitted task:update signature per task. Used by
@@ -1105,6 +1112,16 @@ class AgentService:
             # Log stderr to server logs for debugging
             if is_stderr and line:
                 logger.warning(f"[AgentService] Task {task_id} stderr: {line}")
+                # Also mirror stderr to a per-spec file so post-mortem
+                # debugging works even when the subprocess dies before
+                # writing its own task_logs.json (#146).
+                stderr_file = self._spec_stderr_logs.get(task_id)
+                if stderr_file is not None:
+                    try:
+                        with stderr_file.open("a", encoding="utf-8") as fh:
+                            fh.write(line + "\n")
+                    except OSError:
+                        pass
 
             # Create log entry
             log = TaskLog(
@@ -1955,7 +1972,7 @@ class AgentService:
                 await self._update_plan_status(
                     project_path, spec_id, status, task_id, emit_events=False
                 )
-                logger.info(f"[AgentService._monitor_process] _update_plan_status call completed")
+                logger.info("[AgentService._monitor_process] _update_plan_status call completed")
 
             # Send email/in-app notifications on task completion or failure
             _notif_user_id = self._task_user_ids.pop(task_id, "")
@@ -2082,7 +2099,7 @@ class AgentService:
         logger.info(f"[AgentService._update_plan_status] plan_file path: {plan_file}")
         logger.info(f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}")
         if not plan_file.exists():
-            logger.warning(f"[AgentService._update_plan_status] plan_file does not exist, returning early")
+            logger.warning("[AgentService._update_plan_status] plan_file does not exist, returning early")
             return
 
         # Map internal status to frontend-compatible status using the canonical helpers
@@ -2119,7 +2136,7 @@ class AgentService:
 
             logger.info(f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}")
             plan_file.write_text(json.dumps(plan, indent=2))
-            logger.info(f"[AgentService._update_plan_status] Successfully wrote plan_file")
+            logger.info("[AgentService._update_plan_status] Successfully wrote plan_file")
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
             # Extract subtasks for WebSocket broadcast
@@ -2474,12 +2491,17 @@ class AgentService:
         mode: str | None = "full",
         force: bool = False,
         user_id: str = "",
+        stop_after_planning: bool = False,
     ) -> asyncio.subprocess.Process:
         """Start task execution (run.py).
 
         Args:
             mode: "quick" for simplified prompts (~70% fewer tokens), "full" for comprehensive prompts.
             force: If True, bypasses approval checks (use when plan was already manually approved).
+            stop_after_planning: Passes ``--stop-after-planning`` to run.py.
+                Used by the Copilot delegation flow (#94) — the planner writes
+                implementation_plan.json and run.py exits cleanly before the
+                coder/QA phases.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -2560,6 +2582,11 @@ class AgentService:
             cmd.append("--skip-qa")
             logger.info(f"[AgentService] Skipping QA for quick mode task {task_id}")
 
+        # Stop after planning for Copilot delegation flow (#94)
+        if stop_after_planning:
+            cmd.append("--stop-after-planning")
+            logger.info(f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)")
+
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
         # see apps/backend/core/auth.py).
@@ -2606,7 +2633,7 @@ class AgentService:
                             value = value.strip()
                             if key not in env:
                                 env[key] = value
-                logger.info(f"[AgentService] Loaded project .env for task execution")
+                logger.info("[AgentService] Loaded project .env for task execution")
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 
@@ -2714,6 +2741,19 @@ class AgentService:
 
         master_fd, slave_fd = pty.openpty()
 
+        # Tee stderr to a per-spec file so failures that happen before
+        # the agent writes task_logs.json are still debuggable (#146).
+        # _process_output still drains the PIPE; this is an additional
+        # post-mortem capture, not a replacement.
+        spec_stderr_log = (
+            project_path / ".aifactory" / "specs" / spec_id / "spawn_stderr.log"
+        )
+        try:
+            spec_stderr_log.parent.mkdir(parents=True, exist_ok=True)
+            spec_stderr_log.write_text("")  # truncate any previous capture
+        except OSError as _e:
+            logger.debug(f"[AgentService] could not prep spawn_stderr.log: {_e}")
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -2725,6 +2765,10 @@ class AgentService:
 
         # Close slave fd in parent process
         os.close(slave_fd)
+
+        # Track the per-spec stderr file so _process_output can mirror
+        # stderr lines into it.
+        self._spec_stderr_logs[task_id] = spec_stderr_log
 
         self.running_tasks[task_id] = proc
 

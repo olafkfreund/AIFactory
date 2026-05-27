@@ -11,6 +11,7 @@ from .models import (
     AuditLog,
     Base,
     EmailAccount,
+    GitCredential,
     LLMEndpoint,
     Organization,
     OrgMember,
@@ -33,5 +34,6 @@ __all__ = [
     "ApiKey",
     "AuditLog",
     "EmailAccount",
+    "GitCredential",
     "LLMEndpoint",
 ]

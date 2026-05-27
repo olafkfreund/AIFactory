@@ -307,7 +307,38 @@ export const webAPI: API & { _isWebMode: boolean } = {
 
   // ========== Project Operations ==========
   addProject: (projectPath: string) => post<Project>('/projects', { path: projectPath }),
+  addProjectFromGitUrl: (gitUrl: string, branch?: string, name?: string) =>
+    post<Project>('/projects', {
+      gitUrl,
+      ...(branch ? { branch } : {}),
+      ...(name ? { name } : {}),
+    }),
   removeProject: (projectId: string) => del(`/projects/${projectId}`),
+
+  // Git credentials (#82 PR-C). API mounted at /api/git-credentials.
+  // The api-client `get`/`post`/`del` helpers automatically prepend
+  // /api so we pass paths starting at /git-credentials here.
+  listGitCredentials: (orgId: string) =>
+    get<import('../shared/types/ipc').GitCredentialSummary[]>(
+      `/git-credentials?org_id=${encodeURIComponent(orgId)}`,
+    ),
+  createGitCredential: (body: import('../shared/types/ipc').CreateGitCredentialBody) =>
+    post<import('../shared/types/ipc').GitCredentialSummary>(
+      '/git-credentials',
+      body as unknown as Record<string, unknown>,
+    ),
+  deleteGitCredential: (credentialId: string) =>
+    del(`/git-credentials/${credentialId}`),
+
+  // Scoped acw_ API keys (#154). API mounted at /api/keys.
+  listApiKeys: () =>
+    get<import('../shared/types/ipc').ApiKeySummary[]>('/keys'),
+  createApiKey: (body: import('../shared/types/ipc').CreateApiKeyBody) =>
+    post<import('../shared/types/ipc').CreateApiKeyResponse>(
+      '/keys',
+      body as unknown as Record<string, unknown>,
+    ),
+  revokeApiKey: (keyId: string) => del(`/keys/${keyId}`),
   getProjects: () => get<Project[]>('/projects'),
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) =>
     patch(`/projects/${projectId}/settings`, settings),

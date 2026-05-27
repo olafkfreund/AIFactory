@@ -99,8 +99,18 @@ mock_client = MagicMock()
 mock_client.create_client = MagicMock()
 sys.modules['client'] = mock_client
 
-# Now we can safely add the aifactory path and import
-sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
+# Now we can safely add the aifactory path and import.
+# Note: `apps` (lowercase) — the previous capital-A path was a no-op on
+# case-sensitive filesystems. The conftest already installs the correct
+# path, but keeping this here for self-contained runs.
+sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
+
+# If qa.criteria was already imported by an earlier test (against the
+# real progress/ui/etc. modules), its module-level bindings point at
+# the wrong objects. Evict so the next import re-runs the module body
+# under our freshly installed mocks.
+for _qa_mod in ("qa.criteria", "qa.report", "qa.loop", "qa"):
+    sys.modules.pop(_qa_mod, None)
 
 # Import criteria functions directly to avoid going through qa/__init__.py
 # which imports reviewer and fixer that need the SDK

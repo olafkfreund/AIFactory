@@ -127,10 +127,101 @@ export interface DiscoveredProject {
   has_claude_md: boolean;
 }
 
+/**
+ * Git credential row as returned by /api/git-credentials (epic #82 PR-C).
+ * Token is never carried — it's encrypted at rest on the backend and
+ * only the clone service reads the plaintext.
+ */
+export interface GitCredentialSummary {
+  id: string;
+  org_id: string;
+  name: string;
+  kind: string;
+  host: string | null;
+  username: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface CreateGitCredentialBody {
+  org_id: string;
+  name: string;
+  token: string;
+  kind?: string;
+  host?: string;
+  username?: string;
+}
+
+/**
+ * API key row as returned by GET /api/keys. The raw key is NEVER
+ * included — only the 8-char preview the backend computed at create
+ * time. After creation the user has one chance to copy the full key;
+ * losing it means revoking and minting a new one. (Issue #154.)
+ */
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  org_id: string;
+  scopes: string[] | null;
+  key_preview: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Response from POST /api/keys. Same fields as ApiKeySummary plus
+ * the one-time-visible raw_key. Show, let the user copy, then drop
+ * from memory — the backend can never return it again.
+ */
+export interface CreateApiKeyResponse extends ApiKeySummary {
+  raw_key: string;
+}
+
+export interface CreateApiKeyBody {
+  org_id: string;
+  name: string;
+  /** Scope names to grant. The stdio MCP proxy understands
+   *  `mcp:read`, `project:write`, `task:write`, `task:merge`. */
+  scopes?: string[];
+  /** Optional expiration in days from now (1-365). */
+  expires_in_days?: number;
+}
+
 export interface API {
   // Project operations
   addProject: (projectPath: string) => Promise<IPCResult<Project>>;
+  /**
+   * Register a project by Git URL. The backend clones the repo into
+   * ``PROJECT_WORKSPACE_ROOT`` (defaults to ``~/.aifactory/workspaces/``
+   * on laptop installs; a PVC on K8s) and returns the registered
+   * project pointing at the local clone.
+   *
+   * Added in epic #82 PR-A; surfaced to the UI in PR-B.
+   */
+  addProjectFromGitUrl: (
+    gitUrl: string,
+    branch?: string,
+    name?: string,
+  ) => Promise<IPCResult<Project>>;
   removeProject: (projectId: string) => Promise<IPCResult>;
+
+  // Git credentials for portal-managed clones (epic #82 PR-C). Tokens
+  // are encrypted at rest on the backend; create returns the row
+  // metadata but NEVER the raw token after creation.
+  listGitCredentials: (orgId: string) => Promise<IPCResult<GitCredentialSummary[]>>;
+  createGitCredential: (
+    body: CreateGitCredentialBody,
+  ) => Promise<IPCResult<GitCredentialSummary>>;
+  deleteGitCredential: (credentialId: string) => Promise<IPCResult>;
+
+  // Scoped acw_ API keys for stdio MCP control plane (#154). The
+  // create response carries the raw key — shown once, then dropped.
+  listApiKeys: () => Promise<IPCResult<ApiKeySummary[]>>;
+  createApiKey: (
+    body: CreateApiKeyBody,
+  ) => Promise<IPCResult<CreateApiKeyResponse>>;
+  revokeApiKey: (keyId: string) => Promise<IPCResult>;
   getProjects: () => Promise<IPCResult<Project[]>>;
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
   initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;

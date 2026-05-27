@@ -101,6 +101,12 @@ export function TaskCreationWizard({
     const project = projects.find((p) => p.id === projectId);
     return project?.path ?? null;
   }, [projects, projectId]);
+  // Used by the Copilot delegation checkbox — delegation only works on
+  // GitHub repos in V1; the toggle is disabled with a tooltip otherwise.
+  const projectGitProvider = useMemo(() => {
+    const project = projects.find((p) => p.id === projectId);
+    return (project?.settings?.gitProvider ?? 'github').toLowerCase();
+  }, [projects, projectId]);
 
   // Metadata fields
   const [category, setCategory] = useState<TaskCategory | ''>('');
@@ -133,6 +139,7 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [enableRemoteControl, setEnableRemoteControl] = useState(false);
+  const [enableDelegation, setEnableDelegation] = useState(false);
 
   // Skills state
   const [selectedSkills, setSelectedSkills] = useState<SelectedSkill[]>([]);
@@ -180,6 +187,7 @@ export function TaskCreationWizard({
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
         setEnableRemoteControl(draft.enableRemoteControl ?? false);
+        setEnableDelegation(draft.enableDelegation ?? false);
         setSelectedSkills(draft.selectedSkills ?? []);
         setMode(draft.mode || 'full');
         setIsDraftRestored(true);
@@ -265,9 +273,10 @@ export function TaskCreationWizard({
     referencedFiles,
     requireReviewBeforeCoding,
     enableRemoteControl,
+    enableDelegation,
     selectedSkills,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, mode, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, enableRemoteControl, selectedSkills]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, mode, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, enableRemoteControl, enableDelegation, selectedSkills]);
   /**
    * Handle paste event for screenshot support
    * Strategy: Let browser handle text paste naturally, we only process images separately
@@ -661,6 +670,7 @@ export function TaskCreationWizard({
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
       if (enableRemoteControl) metadata.enableRemoteControl = true;
+      if (enableDelegation) metadata.enableDelegation = true;
       // Only include baseBranch if it's not the project default placeholder
       if (baseBranch && baseBranch !== PROJECT_DEFAULT_BRANCH) metadata.baseBranch = baseBranch;
       // Execution mode: 'quick' uses simplified prompts (~70% fewer tokens)
@@ -1209,6 +1219,50 @@ export function TaskCreationWizard({
               </p>
             </div>
           </div>
+
+          {/* Delegation Toggle — hand the coding phase off to the
+              project's autonomous coding agent (GitHub Copilot Coding
+              Agent on GitHub, GitLab Duo Workflow on GitLab — V1.5,
+              #98). AIFactory still plans the spec locally. Disabled for
+              Azure DevOps (no equivalent agent exists). */}
+          {(() => {
+            const delegationSupported =
+              projectGitProvider === 'github' || projectGitProvider === 'gitlab';
+            const delegationDisabled = isCreating || !delegationSupported;
+            const delegationTooltip = !delegationSupported
+              ? t('tasks:delegation.githubOrGitlabTooltip')
+              : undefined;
+            return (
+              <div
+                className="flex items-start gap-3 p-4 rounded-lg border border-border bg-muted/30"
+                title={delegationTooltip}
+              >
+                <Checkbox
+                  id="enable-delegation"
+                  checked={enableDelegation && delegationSupported}
+                  onCheckedChange={(checked) => setEnableDelegation(checked === true)}
+                  disabled={delegationDisabled}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 space-y-1">
+                  <Label
+                    htmlFor="enable-delegation"
+                    className={cn(
+                      'text-sm font-medium cursor-pointer',
+                      delegationDisabled
+                        ? 'text-muted-foreground'
+                        : 'text-foreground'
+                    )}
+                  >
+                    {t('tasks:delegation.enableLabel')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {t('tasks:delegation.enableHelp')}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Git Options Toggle */}
           <button

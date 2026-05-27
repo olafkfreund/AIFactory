@@ -187,7 +187,7 @@ class GitHubProvider:
         cmd.append("--yes")
 
         try:
-            await self._gh_client._run_gh_command(cmd)
+            await self._gh_client.run(cmd)
             return True
         except Exception:
             return False
@@ -201,7 +201,7 @@ class GitHubProvider:
         try:
             if comment:
                 await self.add_comment(pr_number, comment)
-            await self._gh_client._run_gh_command(["pr", "close", str(pr_number)])
+            await self._gh_client.run(["pr", "close", str(pr_number)])
             return True
         except Exception:
             return False
@@ -294,11 +294,11 @@ class GitHubProvider:
             for assignee in assignees:
                 cmd.extend(["--assignee", assignee])
 
-        result = await self._gh_client._run_gh_command(cmd)
+        result = await self._gh_client.run(cmd)
 
         # Parse the issue URL to get the number
         # gh issue create outputs the URL
-        url = result.strip()
+        url = result.stdout.strip()
         number = int(url.split("/")[-1])
 
         return await self.fetch_issue(number)
@@ -312,7 +312,7 @@ class GitHubProvider:
         try:
             if comment:
                 await self.add_comment(number, comment)
-            await self._gh_client._run_gh_command(["issue", "close", str(number)])
+            await self._gh_client.run(["issue", "close", str(number)])
             return True
         except Exception:
             return False
@@ -326,6 +326,146 @@ class GitHubProvider:
         await self._gh_client.issue_comment(issue_or_pr_number, body)
         # gh CLI doesn't return comment ID, return 0
         return 0
+
+    # The Copilot Coding Agent's bot login on GitHub.
+    # Verified via GraphQL suggestedActors(capabilities: [CAN_BE_ASSIGNED]).
+    _COPILOT_ALIAS = "copilot"
+    _COPILOT_BOT_LOGIN = "copilot-swe-agent"
+
+    async def assign_to_user(
+        self,
+        issue_number: int,
+        assignees: list[str],
+    ) -> None:
+        """Assign an issue to users or the Copilot Coding Agent.
+
+        Uses the GraphQL replaceActorsForAssignable mutation. The string
+        "Copilot" (case-insensitive) is the alias for copilot-swe-agent.
+        Silently no-ops when Copilot is disabled at org/repo level so the
+        caller can detect the no-op by re-reading the issue's assignees.
+        """
+        if not assignees:
+            return
+
+        owner, name = self._repo.split("/", 1)
+        wants_copilot = any(
+            a.strip().lower() == self._COPILOT_ALIAS for a in assignees
+        )
+        regular_logins = [
+            a for a in assignees if a.strip().lower() != self._COPILOT_ALIAS
+        ]
+
+        # Resolve actor node IDs. suggestedActors is the only way to get
+        # the Copilot bot's GraphQL node ID; it also tells us whether the
+        # agent is enabled on this repo at all.
+        actors_query = """
+        query($owner: String!, $name: String!) {
+          repository(owner: $owner, name: $name) {
+            id
+            suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 100) {
+              nodes { login __typename ... on Bot { id } ... on User { id } }
+            }
+          }
+        }
+        """
+        actors_resp = await self._graphql(
+            actors_query, {"owner": owner, "name": name}
+        )
+        repo_node = actors_resp.get("data", {}).get("repository") or {}
+        nodes = (
+            repo_node.get("suggestedActors", {}).get("nodes", []) if repo_node else []
+        )
+
+        actor_ids: list[str] = []
+
+        if wants_copilot:
+            bot_id = next(
+                (
+                    n.get("id")
+                    for n in nodes
+                    if n.get("__typename") == "Bot"
+                    and n.get("login") == self._COPILOT_BOT_LOGIN
+                    and n.get("id")
+                ),
+                None,
+            )
+            if bot_id is None:
+                # Copilot Coding Agent isn't enabled / available — silent
+                # no-op per the protocol contract. The tracker will detect
+                # this by re-fetching the issue's assignees.
+                return
+            actor_ids.append(bot_id)
+
+        for login in regular_logins:
+            user_id = next(
+                (
+                    n.get("id")
+                    for n in nodes
+                    if n.get("__typename") == "User"
+                    and n.get("login") == login
+                    and n.get("id")
+                ),
+                None,
+            )
+            if user_id is not None:
+                actor_ids.append(user_id)
+
+        if not actor_ids:
+            return
+
+        # Resolve the issue's node ID.
+        issue_resp = await self._graphql(
+            """
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                issue(number: $number) { id }
+              }
+            }
+            """,
+            {"owner": owner, "name": name, "number": issue_number},
+        )
+        assignable_id = (
+            issue_resp.get("data", {})
+            .get("repository", {})
+            .get("issue", {})
+            .get("id")
+        )
+        if not assignable_id:
+            return
+
+        await self._graphql(
+            """
+            mutation($assignableId: ID!, $actorIds: [ID!]!) {
+              replaceActorsForAssignable(
+                input: {assignableId: $assignableId, actorIds: $actorIds}
+              ) { assignable { ... on Issue { number } } }
+            }
+            """,
+            {"assignableId": assignable_id, "actorIds": actor_ids},
+        )
+
+    async def _graphql(
+        self, query: str, variables: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Run a GraphQL query/mutation via `gh api graphql`.
+
+        Encodes variables for `gh api graphql`: `-f` for raw strings,
+        `-F` for ints/bools (typed), and one `-f key[]=value` per element
+        for list arguments (gh CLI's array convention).
+        """
+        cmd = ["api", "graphql", "-f", f"query={query}"]
+        for key, value in variables.items():
+            if isinstance(value, list):
+                for item in value:
+                    cmd.extend(["-f", f"{key}[]={item}"])
+            elif isinstance(value, bool):
+                cmd.extend(["-F", f"{key}={'true' if value else 'false'}"])
+            elif isinstance(value, int):
+                cmd.extend(["-F", f"{key}={value}"])
+            else:
+                cmd.extend(["-f", f"{key}={value}"])
+        result = await self._gh_client.run(cmd)
+        return json.loads(result.stdout) if result.stdout else {}
 
     # -------------------------------------------------------------------------
     # Label Operations
@@ -354,11 +494,11 @@ class GitHubProvider:
             cmd.extend(["--description", label.description])
         cmd.append("--force")  # Update if exists
 
-        await self._gh_client._run_gh_command(cmd)
+        await self._gh_client.run(cmd)
 
     async def list_labels(self) -> list[LabelData]:
         """List all labels in the repository."""
-        result = await self._gh_client._run_gh_command(
+        result = await self._gh_client.run(
             [
                 "label",
                 "list",
@@ -367,7 +507,7 @@ class GitHubProvider:
             ]
         )
 
-        labels_data = json.loads(result) if result else []
+        labels_data = json.loads(result.stdout) if result.stdout else []
         return [
             LabelData(
                 name=label["name"],

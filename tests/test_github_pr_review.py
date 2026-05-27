@@ -104,7 +104,7 @@ class TestPRReviewResult:
         """Test saving and loading review result."""
         # Save
         import asyncio
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             sample_review_result.save(temp_github_dir)
         )
 
@@ -293,7 +293,7 @@ class TestOrchestratorSkipLogic:
         import asyncio
 
         # Save existing review
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             sample_review_result.save(temp_github_dir)
         )
 
@@ -427,7 +427,7 @@ class TestPostedFindingsTracking:
         sample_review_result.posted_at = "2025-01-01T10:00:00"
 
         # Save
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             sample_review_result.save(temp_github_dir)
         )
 

@@ -11,7 +11,7 @@ from typing import Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -48,10 +48,64 @@ class ProjectBase(BaseModel):
     name: str | None = Field(None, description="Display name for the project")
 
 
-class ProjectCreate(ProjectBase):
-    """Model for creating a new project."""
+class ProjectCreate(BaseModel):
+    """Model for creating a new project.
 
-    pass
+    Two mutually exclusive shapes (#82 PR-A):
+
+    1. **Local path** (laptop installs) — set ``path``. Existing
+       behaviour: the directory is registered as-is.
+    2. **Git URL** (SaaS/K8s installs) — set ``gitUrl`` (alias of
+       ``git_url``), optionally ``branch``. The portal clones the
+       repository into ``PROJECT_WORKSPACE_ROOT`` (defaults to
+       ``~/.aifactory/workspaces/``) and registers the clone's path.
+       This is the path that unblocks shared-host deployment shapes
+       where the user's repo isn't on the portal's filesystem.
+
+    Exactly one of ``path`` or ``gitUrl`` must be provided.
+    """
+    model_config = ConfigDict(populate_by_name=True)
+
+    path: str | None = Field(
+        None, description="Absolute path to the project directory (local mode)"
+    )
+    name: str | None = Field(None, description="Display name for the project")
+    gitUrl: str | None = Field(
+        None,
+        alias="git_url",
+        description="Git URL to clone (HTTPS or SSH). Triggers the portal-managed clone path.",
+    )
+    branch: str | None = Field(
+        None,
+        description="Branch to checkout after clone. Defaults to the remote's HEAD.",
+    )
+    gitCredentialId: str | None = Field(
+        None,
+        alias="git_credential_id",
+        description="Reference to a stored git credential. Reserved for PR-C; ignored in PR-A.",
+    )
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def _normalize_path(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) and v.strip() else None
+
+    @field_validator("gitUrl", mode="after")
+    @classmethod
+    def _normalize_git_url(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) and v.strip() else None
+
+    @model_validator(mode="after")
+    def _require_exactly_one_source(self):
+        if not self.path and not self.gitUrl:
+            raise ValueError(
+                "Either 'path' (local mode) or 'gitUrl' (clone mode) must be provided"
+            )
+        if self.path and self.gitUrl:
+            raise ValueError(
+                "'path' and 'gitUrl' are mutually exclusive — provide one or the other"
+            )
+        return self
 
 
 class NotificationSettings(BaseModel):
@@ -215,6 +269,33 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
 # --------------------------------------------------------------------------
 
 
+async def _resolve_git_credential(cred_id: str) -> tuple[str, str] | None:
+    """Look up a stored Git credential by id and return (username, token).
+
+    Returns ``None`` (rather than raising) if the credential doesn't
+    exist or its kind isn't supported — the caller falls back to an
+    unauthenticated clone, which will give a clearer error if the
+    remote actually needs auth. Used by ``add_project`` (#82 PR-C).
+    """
+    from sqlalchemy import select
+
+    from ..database import GitCredential
+    from ..database.engine import get_db
+
+    async for session in get_db():
+        result = await session.execute(
+            select(GitCredential).where(GitCredential.id == cred_id)
+        )
+        cred = result.scalar_one_or_none()
+        if cred is None:
+            return None
+        if cred.kind != "pat":
+            # Deploy Keys + GitHub App tokens are out of scope for V1.
+            return None
+        return (cred.username or "oauth2", cred.token)
+    return None
+
+
 @router.get("")
 async def list_projects():
     """List all registered projects.
@@ -356,30 +437,65 @@ async def scan_for_projects(request: ScanProjectsRequest):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def add_project(project: ProjectCreate):
-    """Add a new project (register a directory as an Magestic AI project).
+    """Add a new project. Two paths (#82 PR-A):
+
+    1. **Local path** (``path`` set) — register an existing directory
+       as-is. The legacy behaviour, unchanged.
+    2. **Git URL** (``gitUrl`` set) — clone the repository into the
+       portal's workspace root and register the local clone's path.
+       Used for SaaS/K8s deployments where the user's repo isn't on the
+       portal's filesystem.
 
     Returns project dict directly (not wrapped) because
     the frontend api-client.ts adds the {success, data} wrapper automatically.
     """
-    # Validate path — create directory if it doesn't exist
-    project_path = Path(project.path).expanduser()
     created_directory = False
 
-    if not project_path.exists():
+    if project.gitUrl:
+        # Clone mode — defer to project_workspace_service.
+        from ..services.project_workspace_service import (
+            GitOperationError,
+            clone_or_update,
+        )
+        # Stored credential lookup (#82 PR-C). When the caller passes
+        # gitCredentialId, fetch the (username, token) tuple from the
+        # git_credentials table and pass it to the clone service.
+        credential: tuple[str, str] | None = None
+        if project.gitCredentialId:
+            credential = await _resolve_git_credential(project.gitCredentialId)
         try:
-            project_path.mkdir(parents=True, exist_ok=True)
-            created_directory = True
-        except OSError as e:
+            cloned_path = await clone_or_update(
+                git_url=project.gitUrl,
+                branch=project.branch,
+                credential=credential,
+            )
+        except GitOperationError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Cannot create directory: {project.path} ({e})",
+                detail=f"Clone failed: {e}",
             )
+        project_path = cloned_path.resolve()
+        created_directory = True
+    else:
+        # Local mode — register the existing directory.
+        assert project.path is not None  # model_validator guarantees this
+        project_path = Path(project.path).expanduser()
 
-    if not project_path.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Path is not a directory: {project.path}",
-        )
+        if not project_path.exists():
+            try:
+                project_path.mkdir(parents=True, exist_ok=True)
+                created_directory = True
+            except OSError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot create directory: {project.path} ({e})",
+                )
+
+        if not project_path.is_dir():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Path is not a directory: {project.path}",
+            )
 
     # Check if already registered
     projects = load_projects()
@@ -399,6 +515,13 @@ async def add_project(project: ProjectCreate):
         "created_at": now,
         "updated_at": now,
     }
+    # Clone-mode (#82 PR-A) — persist the source URL + branch so the
+    # Auto-Fix pull-on-poll hook (PR-B) can fast-forward the workspace
+    # before each poll cycle. Local-mode projects don't carry these.
+    if project.gitUrl:
+        project_data["clonedFrom"] = project.gitUrl
+        if project.branch:
+            project_data["clonedBranch"] = project.branch
 
     projects[project_id] = project_data
     save_projects(projects)
@@ -560,6 +683,10 @@ class ProjectSettingsUpdate(BaseModel):
     # in its task_metadata.  Per-task overrides win — this is just the default
     # when the user creates a task without flipping the wizard toggle.
     remoteControlByDefault: bool | None = Field(default=None, alias="remote_control_by_default")
+    # When true, every NEW task in this project gets ``enableDelegation: true``
+    # in its task_metadata. Only effective on GitHub projects — V1.5 (#98)
+    # extends to GitLab Duo Workflow. Per-task overrides win.
+    delegateByDefault: bool | None = Field(default=None, alias="delegate_by_default")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -620,6 +747,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
             "graphitiMcpEnabled": "GRAPHITI_ENABLED",
             "useClaudeMd": "USE_CLAUDE_MD",
             "remoteControlByDefault": "REMOTE_CONTROL_BY_DEFAULT",
+            "delegateByDefault": "DELEGATE_BY_DEFAULT",
         }
 
         # Update string/value settings
@@ -937,7 +1065,7 @@ Created via Magestic AI Web UI
         # Copy model-related fields that phase_config.py expects
         # Also include 'mode' for Quick Mode prompt selection and 'requireReviewBeforeCoding' for approval gate
         # Also include selectedSkills so agent_service.py can inject skill context
-        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl"]
+        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl", "enableDelegation"]
         for field in model_fields:
             if field in task_data.metadata:
                 task_metadata[field] = task_data.metadata[field]

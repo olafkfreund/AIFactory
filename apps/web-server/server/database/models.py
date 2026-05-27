@@ -376,6 +376,65 @@ class ApiKey(Base):
 
 
 # ---------------------------------------------------------------------------
+# Git Credentials (encrypted PATs for cloning private repos — epic #82 PR-C)
+# ---------------------------------------------------------------------------
+
+
+class GitCredential(Base):
+    """Stored Git credential for the portal-managed clone flow (#82 PR-C).
+
+    V1 supports HTTPS personal-access-token (PAT) credentials only. Deploy
+    Keys (SSH) and GitHub App install IDs (short-lived tokens) are out of
+    scope for V1 — both are tracked as follow-ups on epic #82.
+
+    The token is encrypted at rest via ``EncryptedString`` (Epic #26 P2).
+    Scope is **per-org** rather than per-user: anyone with rights on the
+    org can use the credential to clone — matches how teams typically
+    share Deploy Keys today.
+
+    Per-project binding happens via ``ProjectCreate.gitCredentialId``
+    (already accepted by the API since PR-A — wired in this PR-C). The
+    credential's ``host`` field is informational only (e.g. ``github.com``,
+    ``gitlab.example.internal``); URL matching is the caller's job.
+    """
+
+    __tablename__ = "git_credentials"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    org_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organizations.id"), nullable=False
+    )
+    # Human-readable label, e.g. "github-deploy-bot" or "gitlab-readonly".
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Credential kind. V1: ``pat`` only. ``deploy_key`` and ``github_app``
+    # land in later follow-ups; the enum-by-convention keeps the column
+    # forward-compatible without a migration.
+    kind: Mapped[str] = mapped_column(String(50), nullable=False, default="pat")
+    # Informational host (no enforcement) — surfaces in the UI so users
+    # can tell which credential applies to which project.
+    host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # GitHub PATs prefer the ``oauth2`` username; GitLab PATs use ``oauth2``
+    # too. Empty/None means "username portion not needed" (rare).
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The actual token — never logged, never returned via API after creation.
+    token: Mapped[str] = mapped_column(_EncryptedString(), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    organization: Mapped["Organization"] = relationship("Organization")
+
+    def __repr__(self) -> str:
+        return f"<GitCredential id={self.id!r} name={self.name!r}>"
+
+
+# ---------------------------------------------------------------------------
 # Email Accounts (OAuth-connected email for notifications)
 # ---------------------------------------------------------------------------
 

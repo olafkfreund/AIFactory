@@ -345,7 +345,7 @@ export async function loadProjects(): Promise<void> {
 }
 
 /**
- * Add a new project
+ * Add a new project by registering an existing local directory.
  */
 export async function addProject(projectPath: string): Promise<Project | null> {
   const store = useProjectStore.getState();
@@ -360,6 +360,38 @@ export async function addProject(projectPath: string): Promise<Project | null> {
       return result.data;
     } else {
       store.setError(result.error || 'Failed to add project');
+      return null;
+    }
+  } catch (error) {
+    store.setError(error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
+/**
+ * Add a new project by cloning from a Git URL (epic #82 PR-B).
+ *
+ * The backend clones into ``PROJECT_WORKSPACE_ROOT`` (default
+ * ``~/.aifactory/workspaces/`` on laptops; a PVC on K8s) and registers
+ * the local clone. ``branch`` and ``name`` are optional — branch
+ * defaults to the remote's HEAD, name defaults to the repo basename.
+ */
+export async function addProjectFromGitUrl(
+  gitUrl: string,
+  branch?: string,
+  name?: string,
+): Promise<Project | null> {
+  const store = useProjectStore.getState();
+
+  try {
+    const result = await window.API.addProjectFromGitUrl(gitUrl, branch, name);
+    if (result.success && result.data) {
+      store.addProject(result.data);
+      store.selectProject(result.data.id);
+      store.openProjectTab(result.data.id);
+      return result.data;
+    } else {
+      store.setError(result.error || 'Failed to clone project');
       return null;
     }
   } catch (error) {

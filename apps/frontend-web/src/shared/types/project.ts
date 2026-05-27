@@ -46,6 +46,13 @@ export interface ProjectSettings {
    * ``claude auth login`` on the AIFactory host.
    */
   remoteControlByDefault?: boolean;
+  /**
+   * When true, every NEW task in this project starts with
+   * ``enableDelegation: true`` in its metadata.  The wizard's
+   * per-task checkbox still overrides.  Only meaningful when
+   * ``gitProvider === "github"``; ignored otherwise.
+   */
+  delegateByDefault?: boolean;
 }
 
 export interface NotificationSettings {

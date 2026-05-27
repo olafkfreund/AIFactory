@@ -111,6 +111,14 @@ spec:
             - name: AIFACTORY_REMOTE_CONTROL_SUPPORTED
               value: "true"
             {{- end }}
+            {{- if .Values.workspaces.enabled }}
+            # Portal-managed project workspaces (#82 PR-B).  Points the
+            # clone service in project_workspace_service.py at the PVC
+            # mount so ``POST /api/projects {gitUrl}`` writes the cloned
+            # repos to durable storage instead of the pod's tmpfs root.
+            - name: PROJECT_WORKSPACE_ROOT
+              value: {{ .Values.workspaces.mountPath | quote }}
+            {{- end }}
             {{- if .Values.mcpCredentials.enabled }}
             # MCP credentials — env-var-only providers.  File-based
             # providers (AWS / GCP / Kubernetes) land via volumeMount.
@@ -257,6 +265,14 @@ spec:
               mountPath: /etc/ssl/custom-ca
               readOnly: true
             {{- end }}
+            {{- if .Values.workspaces.enabled }}
+            # Portal-managed project workspaces (#82 PR-B).  Backing PVC
+            # is templated by workspaces-pvc.yaml.  Path is also what
+            # PROJECT_WORKSPACE_ROOT env var (set above) points the
+            # clone service at.
+            - name: aifactory-workspaces
+              mountPath: {{ .Values.workspaces.mountPath | quote }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -325,4 +341,11 @@ spec:
         - name: custom-ca
           secret:
             secretName: {{ .Values.global.customCABundle.secretName }}
+        {{- end }}
+        {{- if .Values.workspaces.enabled }}
+        # PVC for portal-managed project workspaces (#82 PR-B).  See
+        # templates/workspaces-pvc.yaml for the claim itself.
+        - name: aifactory-workspaces
+          persistentVolumeClaim:
+            claimName: {{ include "aifactory.fullname" . }}-workspaces
         {{- end }}

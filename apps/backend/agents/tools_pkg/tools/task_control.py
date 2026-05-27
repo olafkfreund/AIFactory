@@ -530,6 +530,88 @@ def create_task_control_tools() -> list:
         return _format_json({"count": len(lean), "projects": lean})
 
     @tool(
+        "project_create",
+        "Register a new AIFactory project. Two mutually-exclusive modes: "
+        "(1) local mode — pass `path` to register an existing directory; "
+        "(2) clone mode — pass `git_url` (+ optional `branch`) and the "
+        "portal clones the repo into PROJECT_WORKSPACE_ROOT (~/.aifactory/"
+        "workspaces/ by default) and registers the clone. DESTRUCTIVE: "
+        "creates on-disk state (and in clone mode, performs a network "
+        "fetch) — requires confirm=true. Returns the new project_id.",
+        {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Local mode — absolute path to register",
+                },
+                "git_url": {
+                    "type": "string",
+                    "description": "Clone mode — HTTPS or SSH git URL to clone",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Clone mode — branch to checkout (defaults to remote HEAD)",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Display name (defaults to the directory/repo basename)",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Required true to actually create the project",
+                },
+            },
+        },
+    )
+    async def project_create(args: dict[str, Any]) -> dict[str, Any]:
+        path = args.get("path")
+        git_url = args.get("git_url")
+        # Schema mirror of the backend's ProjectCreate model_validator —
+        # surface the error early rather than waiting for a 422.
+        if not path and not git_url:
+            return _format_error(ValueError(
+                "project_create requires either `path` (local mode) or "
+                "`git_url` (clone mode)."
+            ))
+        if path and git_url:
+            return _format_error(ValueError(
+                "`path` and `git_url` are mutually exclusive — pass one or the other."
+            ))
+        if not args.get("confirm"):
+            return _confirm_gate_response(
+                "create_project",
+                {
+                    "mode": "clone" if git_url else "local",
+                    "path": path,
+                    "git_url": git_url,
+                    "branch": args.get("branch"),
+                    "name": args.get("name"),
+                },
+            )
+        payload: dict[str, Any] = {}
+        if path:
+            payload["path"] = path
+        if git_url:
+            payload["gitUrl"] = git_url
+            if args.get("branch"):
+                payload["branch"] = args["branch"]
+        if args.get("name"):
+            payload["name"] = args["name"]
+        try:
+            raw = await request("POST", "/api/projects", json=payload)
+        except MCPHTTPError as exc:
+            return _format_error(exc)
+        return _format_json(
+            {
+                "created": True,
+                "project_id": raw.get("id") if isinstance(raw, dict) else None,
+                "details": raw,
+            }
+        )
+
+    @tool(
         "agent_status",
         "Single-call answer to 'what's this agent doing right now?' Combines "
         "task_status (phase + progress) with the model + subtask in flight. "
@@ -606,6 +688,7 @@ def create_task_control_tools() -> list:
             task_merge_pr,
             task_get_diff,
             project_list,
+            project_create,
             agent_status,
         ]
     )

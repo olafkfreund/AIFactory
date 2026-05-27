@@ -61,6 +61,8 @@ def handle_build_command(
     skip_qa: bool,
     force_bypass_approval: bool,
     base_branch: str | None = None,
+    stop_after_planning: bool = False,
+    remote_control_session: str | None = None,
 ) -> None:
     """
     Handle the main build command.
@@ -77,6 +79,10 @@ def handle_build_command(
         skip_qa: Skip automatic QA validation
         force_bypass_approval: Force bypass approval check
         base_branch: Base branch for worktree creation (default: current branch)
+        stop_after_planning: Exit cleanly after the planner phase writes
+            implementation_plan.json. Used by the Copilot delegation flow,
+            where AIFactory generates the plan locally and then hands off
+            implementation to GitHub Copilot Coding Agent (#92, #94).
     """
     # Lazy imports to avoid loading heavy modules
     from agent import run_autonomous_agent, sync_plan_to_source
@@ -241,9 +247,21 @@ def handle_build_command(
                 max_iterations=max_iterations,
                 verbose=verbose,
                 source_spec_dir=source_spec_dir,  # For syncing progress back to main project
+                stop_after_planning=stop_after_planning,
+                remote_control_session=remote_control_session,
             )
         )
         debug_success("run.py", "Agent execution completed")
+
+        # Delegation mode: planner has written implementation_plan.json and
+        # we hand off to the vendor agent (Copilot) from auto_fix_service.
+        # No QA, no finalization — auto_fix_service drives the rest.
+        if stop_after_planning:
+            debug_info(
+                "run.py",
+                "Stop-after-planning: planner done, returning to delegation caller",
+            )
+            return
 
         # Run QA validation BEFORE finalization (while worktree still exists)
         # QA must sign off before the build is considered complete

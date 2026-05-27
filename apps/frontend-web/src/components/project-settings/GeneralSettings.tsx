@@ -161,6 +161,35 @@ export function GeneralSettings({
 
           <Separator />
 
+          {/* Copilot Delegation default — when on, new tasks start with
+              enableDelegation: true (only effective on GitHub projects) */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="font-normal text-foreground">
+                  Delegate coding to Copilot for new tasks by default
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Every new task in this GitHub project starts with delegation
+                  enabled — AIFactory plans the spec, then hands the issue to
+                  GitHub Copilot Coding Agent for implementation. Uses your
+                  Copilot seat instead of Claude tokens for the coder phase.
+                  The wizard's per-task toggle still overrides. Only effective
+                  on GitHub projects; GitLab Duo Workflow delegation lands in
+                  a later release.
+                </p>
+              </div>
+              <Switch
+                checked={settings.delegateByDefault ?? false}
+                onCheckedChange={(checked) =>
+                  setSettings({ ...settings, delegateByDefault: checked })
+                }
+              />
+            </div>
+          </section>
+
+          <Separator />
+
           {/* Notifications */}
           <section className="space-y-4">
             <h3 className="text-sm font-semibold text-foreground">Notifications</h3>

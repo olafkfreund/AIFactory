@@ -12,7 +12,10 @@ when_to_use: >
 allowed-tools:
   - mcp__aifactory__task_create_and_run
   - mcp__aifactory__project_list
+  - mcp__aifactory__project_create
   - mcp__aifactory__task_status
+  - Bash(git config*)
+  - Bash(git rev-parse*)
 disable-model-invocation: false
 user-invocable: true
 ---
@@ -50,7 +53,35 @@ The current working directory points at a repo that should be registered in
 AIFactory's project list. Call `mcp__aifactory__project_list` and pick the
 project whose `path` matches (or starts with) the cwd.
 
-If no project matches, ask the user which project to use — don't guess.
+#### If no project matches
+
+Two options — pick based on what's actually available:
+
+1. **Cwd is a git repo with a remote origin** (epic #82 PR-A path).
+   `git rev-parse --is-inside-work-tree` succeeds AND
+   `git config --get remote.origin.url` returns a value. Offer:
+
+   > *"I don't see a matching project on the portal, but I see `<origin URL>` for this cwd. Should I register it so the portal clones it itself? [y/N]"*
+
+   On yes, also grab the current branch (`git rev-parse --abbrev-ref HEAD`)
+   and call `mcp__aifactory__project_create` with:
+
+   - `git_url`: the origin URL
+   - `branch`: the current branch
+   - `name`: the repo basename
+   - `confirm`: false first to surface the confirm-gate preview, then
+     `confirm: true` to actually create.
+
+   On portal-managed deployments (K8s/SaaS) this is the only viable path —
+   the user's repo isn't on the portal's filesystem. On local laptop
+   installs, this is also a perfectly fine path (just slower than option 2
+   because of the clone). The clone lands in `PROJECT_WORKSPACE_ROOT`
+   (defaults to `~/.aifactory/workspaces/`).
+
+2. **Cwd is NOT a git repo OR has no origin remote**.
+   Ask the user which project to use — don't guess.
+
+Either way: once a project_id is in hand, proceed to step 3.
 
 ### 3. Compose the title
 

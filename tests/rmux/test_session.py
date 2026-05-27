@@ -20,7 +20,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-
 from server.rmux.session import (
     SessionRegistry,
     SessionState,
@@ -29,7 +28,6 @@ from server.rmux.session import (
     reset_for_tests,
 )
 from server.rmux.wrapper import RmuxError, RmuxWrapper
-
 
 # ---------------------------------------------------------------------------
 # Unit — no rmux required

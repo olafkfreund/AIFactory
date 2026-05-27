@@ -182,6 +182,26 @@ Environment Variables:
         action="store_true",
         help="Skip automatic QA validation after build completes",
     )
+    parser.add_argument(
+        "--stop-after-planning",
+        action="store_true",
+        help="Run only the planner phase, then exit (used by Copilot delegation)",
+    )
+    parser.add_argument(
+        "--remote-control",
+        type=str,
+        default=None,
+        metavar="SESSION_NAME",
+        help=(
+            "Claude Code Remote Control session name. Passed through to the "
+            "underlying claude CLI via the SDK's extra_args, which registers "
+            "a Remote Control session with this name on Anthropic's API. The "
+            "session appears in claude.ai/code's session list under this "
+            "name so the user can drive the same conversation from any "
+            "device. Requires a full-scope claude auth login on the host "
+            "(see CLAUDE.md \"Remote Control\" section)."
+        ),
+    )
 
     # Follow-up options
     parser.add_argument(
@@ -427,6 +447,8 @@ def main() -> None:
         skip_qa=args.skip_qa,
         force_bypass_approval=args.force,
         base_branch=args.base_branch,
+        stop_after_planning=args.stop_after_planning,
+        remote_control_session=args.remote_control,
     )
 
 

@@ -261,11 +261,20 @@ def _write_spec_dir(
     project_path: Path,
     issue: dict[str, Any],
     provider_type: str,
+    *,
+    delegate_by_default: bool = False,
 ) -> str:
     """Create ``.aifactory/specs/NNN-{prefix}{N}-{slug}/`` with
     requirements.json + spec.md.  Returns the spec id (dir name).
 
     Provider-agnostic — works for any ``IssueData``-shaped dict.
+
+    Args:
+        delegate_by_default: When True (project setting ``delegateByDefault``
+            is on AND ``gitProvider == "github"``), the freshly-written
+            ``requirements.json`` carries ``metadata.enableDelegation = true``
+            so the subsequent ``start_auto_fix`` call takes the delegation
+            branch. Closes gap #2 from issue #144.
     """
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -281,7 +290,7 @@ def _write_spec_dir(
     spec_dir = specs_dir / spec_name
     spec_dir.mkdir(parents=True, exist_ok=True)
 
-    requirements = {
+    requirements: dict[str, Any] = {
         "title": title,
         "description": body,
         "source": provider_type,
@@ -292,6 +301,14 @@ def _write_spec_dir(
             "labels": labels,
         },
     }
+    if delegate_by_default:
+        # Note also the issue number under metadata so the wizard task-start
+        # path (which doesn't have an explicit issue_number param) can find
+        # it via task_metadata.githubIssueNumber.
+        requirements["metadata"] = {
+            "enableDelegation": True,
+            "githubIssueNumber": issue_number,
+        }
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     spec_md = f"# {title}\n\n"
@@ -351,11 +368,44 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     return new
 
 
+def _read_task_metadata(spec_dir: Path) -> dict[str, Any]:
+    """Best-effort read of requirements.json/task_metadata.json for delegation flags.
+
+    The frontend writes delegation flags to ``requirements.json[metadata]``;
+    the backend reads them from there or from ``task_metadata.json``. Either
+    source is acceptable. Missing files return an empty dict.
+    """
+    out: dict[str, Any] = {}
+    req_file = spec_dir / "requirements.json"
+    if req_file.exists():
+        try:
+            req = json.loads(req_file.read_text())
+            md = req.get("metadata")
+            if isinstance(md, dict):
+                out.update(md)
+        except (json.JSONDecodeError, OSError):
+            pass
+    tm_file = spec_dir / "task_metadata.json"
+    if tm_file.exists():
+        try:
+            tm = json.loads(tm_file.read_text())
+            if isinstance(tm, dict):
+                out.update(tm)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return out
+
+
 async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
-    """Import a single issue → write spec → start the agent.
+    """Import a single issue → write spec → start the agent (or delegate).
 
     Idempotent on the spec side: if the issue is already imported, the
     existing spec is reused and the agent is started against it.
+
+    Delegation branch (#94): when the task's ``enableDelegation`` flag is
+    set AND the project's git provider is GitHub, we run only the planner
+    phase, post the enriched plan as an issue comment, assign Copilot,
+    and stop. The local coder/QA pipeline does not run for delegated tasks.
     """
     from ..routes.projects import load_projects
     from ..services.agent_service import get_agent_service
@@ -379,7 +429,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
                 spec_id = d.name
                 break
 
-    now = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     if spec_id is None:
         # Fetch the issue and create the spec
@@ -393,23 +443,81 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
             "labels": list(iss.labels or []),
             "url": iss.url,
         }
-        spec_id = _write_spec_dir(project_path, issue_dict, provider_type)
+        # Gap #2 (#144): honour the project-level delegateByDefault toggle
+        # by injecting enableDelegation into the new spec's metadata.
+        delegate_default = (
+            bool(settings.get("delegateByDefault")) and provider_type == "github"
+        )
+        spec_id = _write_spec_dir(
+            project_path,
+            issue_dict,
+            provider_type,
+            delegate_by_default=delegate_default,
+        )
 
-    # Record in the queue
+    # Determine whether to delegate before recording the queue item, so
+    # the queue carries the right initial status.
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    task_metadata = _read_task_metadata(spec_dir)
+    # Delegation works on GitHub (Copilot, V1) and GitLab (Duo Workflow,
+    # V1.5 #98). ADO has no autonomous-agent equivalent — the provider's
+    # assign_to_user raises NotImplementedError which the runner handles.
+    delegate = bool(task_metadata.get("enableDelegation")) and provider_type in (
+        "github",
+        "gitlab",
+    )
+    initial_status = "planning" if delegate else "building"
+
     queue_item = {
         "issueNumber": issue_number,
         "repo": settings.get("gitRepo", ""),
-        "status": "building",
+        "status": initial_status,
         "specId": spec_id,
-        "createdAt": now,
-        "updatedAt": now,
+        "createdAt": now_iso,
+        "updatedAt": now_iso,
     }
     _upsert_queue_item(project_id, queue_item)
 
-    # Start the agent.  task_id format matches the existing convention
-    # used by execution.py and agent_service: "{project_id}:{spec_id}".
     task_id = f"{project_id}:{spec_id}"
     agent_service = get_agent_service()
+
+    if delegate:
+        # Delegation flow (#94, #144): hand off to the shared runner so
+        # the wizard's task-start path (routes/execution.py) and Auto-Fix
+        # take the exact same code path. The runner awaits the planner
+        # subprocess (fix for gap #3 from #144) before reading the plan
+        # and posting the enrichment comment.
+        from .delegation_runner import run_delegation
+
+        provider = _provider_for(project_id)
+        result = await run_delegation(
+            project_id=project_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            issue_number=issue_number,
+            provider=provider,
+        )
+
+        # Mirror the delegation outcome onto the queue so the tracker has
+        # a delegatedAt timestamp to start its 24h decline clock.
+        _upsert_queue_item(
+            project_id,
+            {
+                **queue_item,
+                "status": "delegated",
+                "delegatedAt": result["delegatedAt"],
+                "updatedAt": result["delegatedAt"],
+            },
+        )
+        return {
+            "specId": spec_id,
+            "taskId": task_id,
+            "status": "delegated",
+        }
+
+    # ----------------------------------------------------------------------
+    # Default flow: AIFactory runs the full pipeline.
+    # ----------------------------------------------------------------------
     try:
         await agent_service.start_task_execution(
             task_id=task_id,
@@ -431,8 +539,52 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     return {"specId": spec_id, "taskId": task_id, "status": "started"}
 
 
+async def _pull_clone_if_any(project_id: str) -> None:
+    """If the project was registered via gitUrl (#82 PR-A), fast-forward
+    the local clone before reading the issue list (#82 PR-B's
+    pull-on-poll hook).
+
+    No-op for local-path projects (the common laptop case) and on git
+    errors — a stale clone is better than a poll cycle that aborts.
+    """
+    from ..routes.projects import load_projects
+    projects = load_projects()
+    proj = projects.get(project_id) or {}
+    git_url = proj.get("clonedFrom")
+    if not git_url:
+        return
+    project_path = Path(proj.get("path", ""))
+    if not project_path.is_dir():
+        return
+    try:
+        from .project_workspace_service import (
+            GitOperationError,
+            clone_or_update,
+        )
+        await clone_or_update(
+            git_url=git_url,
+            branch=proj.get("clonedBranch"),
+            slug=project_path.name,
+            root=project_path.parent,
+        )
+        logger.debug("[auto_fix] pulled %s before poll", project_path)
+    except GitOperationError as e:
+        logger.warning(
+            "[auto_fix] pull-on-poll failed for project=%s: %s — continuing with stale clone",
+            project_id,
+            e,
+        )
+
+
 async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     """Manual-poll convenience: find new issues + start each one.
+
+    Also advances delegated tasks (#94): for items already in
+    ``status="delegated"``, scan the provider for Copilot's resulting PR
+    and transition to ``in_review`` (or ``declined`` after 24h).
+
+    For portal-managed clones (#82 PR-B): runs ``git pull`` before
+    reading the issue list so the agent always sees the latest commits.
 
     This is what the frontend's "Poll now" button and the 5-min
     auto-poll loop ultimately invoke.
@@ -440,6 +592,9 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     cfg = get_config(project_id)
     if not cfg:
         raise ValueError(f"Project {project_id} not found")
+
+    # Fast-forward portal-managed clones before we look for new issues.
+    await _pull_clone_if_any(project_id)
 
     new_issues = await check_new_issues(project_id)
     started: list[dict[str, Any]] = []
@@ -456,8 +611,19 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
             )
             errors.append({"issueNumber": iss["number"], "error": str(e)})
 
+    # Advance any delegated tasks alongside polling for new issues.
+    delegation_summary: dict[str, Any] = {}
+    try:
+        from .delegation_tracker import scan_delegated_tasks
+        delegation_summary = await scan_delegated_tasks(project_id)
+    except Exception as e:  # pragma: no cover
+        logger.warning(
+            "[auto_fix] delegation tracker failed project=%s err=%s", project_id, e
+        )
+
     return {
         "checked": len(new_issues),
         "started": started,
         "errors": errors,
+        "delegation": delegation_summary,
     }

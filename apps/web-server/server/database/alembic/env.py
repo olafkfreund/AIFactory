@@ -38,7 +38,12 @@ if _env_url:
     config.set_main_option("sqlalchemy.url", _env_url)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False — fileConfig defaults to True, which
+    # silences every logger that existed when this module imports. That's
+    # fine for `alembic upgrade` invoked as its own process, but env.py is
+    # also imported when migrations run inside the long-running web-server
+    # (or under pytest), where killing app/caplog loggers is a real bug.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
