@@ -1,0 +1,80 @@
+---
+title: Enterprise demo
+sidebar_position: 3
+---
+
+import AsciinemaCast from '@site/src/components/AsciinemaCast';
+
+# Enterprise demo: Claude plans, AIFactory builds
+
+> One developer + Claude → a multi-issue epic shipped end-to-end while you watch.
+
+This page captures the **enterprise pitch** for AIFactory in one continuous run. There are no cuts and no edits — the asciinema and browser recordings below were taken in a single take against the public [`olafkfreund/aifactory-demo`](https://github.com/olafkfreund/aifactory-demo) repo.
+
+## The pitch in 30 seconds
+
+In a traditional workflow a senior engineer would spend their morning:
+
+1. Designing an epic
+2. Breaking it into actionable GitHub issues
+3. Writing the code for each one
+4. Reviewing the result
+
+In the AIFactory workflow that same engineer:
+
+1. Opens Claude Code in their terminal: *"Draft an epic for X with 3 sub-issues against the repo"*
+2. **AIFactory's Auto-Fix toggle** picks up the new issues from GitHub automatically (every 5 minutes, or one-click)
+3. **A planner / coder / QA agent** runs on each issue in its own isolated git worktree
+4. Three PRs land while the engineer is in their next meeting
+5. They review the PRs at the end of the day
+
+## What you're watching
+
+The two recordings below run in parallel — same demo, two angles.
+
+### The terminal side
+
+The developer asks Claude to draft 3 issues. Claude calls `gh issue create` × 3. The AIFactory poll endpoint picks them up; the script then polls task status until all three agents finish.
+
+<AsciinemaCast src="/AIFactory/recordings/enterprise-demo-terminal.cast" />
+
+### The portal side
+
+While the agents are running, here's what the AIFactory portal shows: the Kanban board with three in-progress tasks, the Live Agent Console streaming each agent's output, and the final GitHub PRs view with three new pull requests ready for review.
+
+<video controls width="100%" src="/AIFactory/recordings/enterprise-demo-browser.mp4" />
+
+## How the auto-takeover works
+
+The "AIFactory takes over automatically" beat is the **Auto-Fix toggle** in each project's GitHub Issues view (or any provider — it also works with GitLab and Azure DevOps). When enabled:
+
+- The frontend polls `POST /api/projects/{id}/auto-fix/check-new` every 5 minutes
+- The backend calls the project's configured provider, fetches open issues, diffs against existing `.aifactory/specs/` directories
+- Each new issue → spec dir → agent run in an isolated worktree
+- A WebSocket event broadcasts so the UI updates live
+
+In production, the same flow is also exposed as a webhook receiver (`POST /api/webhooks/{provider}`) so polling isn't required. For the demo we use the polling path because it doesn't need the portal to be reachable from the internet.
+
+## Run it yourself
+
+Prerequisites:
+
+- The portal running locally (`apps/web-server/.../server.main` + `apps/frontend-web/npm run dev`)
+- A Claude OAuth token in `apps/backend/.env`
+- `gh`, `jq`, `asciinema`, `ffmpeg` on `PATH`
+- `git clone https://github.com/olafkfreund/aifactory-demo /tmp/aifactory-demo`
+- The demo repo registered as an AIFactory project (`POST /api/projects` with `path=/tmp/aifactory-demo`)
+
+Then:
+
+```bash
+./scripts/demo-record.sh
+```
+
+It produces fresh `.cast` and `.mp4` artifacts under `docs/static/recordings/`. Add `--dry-run` to walk the flow without recording, or `--skip-claude` to retake the recording against issues you already opened.
+
+## Honest caveats
+
+- The agents take **real time** — typically 5-15 minutes per issue with Claude Sonnet for the coding phase. Asciinema's `--idle-time-limit=2` compresses the wait in playback to roughly 3-5 minutes total.
+- The recording captures **real LLM output**. The code in the resulting PRs is what Claude actually produced on the day of recording — not curated. If you watch closely you can see the planner asking clarifying questions in `requirements.json` before writing the spec.
+- The demo repo is intentionally tiny so each agent run is bounded. For real enterprise use, the same flow scales to repos of any size; the planner's complexity assessor adapts the pipeline length per task.
