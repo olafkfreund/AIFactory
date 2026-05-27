@@ -329,6 +329,16 @@ export const webAPI: API & { _isWebMode: boolean } = {
     ),
   deleteGitCredential: (credentialId: string) =>
     del(`/git-credentials/${credentialId}`),
+
+  // Scoped acw_ API keys (#154). API mounted at /api/keys.
+  listApiKeys: () =>
+    get<import('../shared/types/ipc').ApiKeySummary[]>('/keys'),
+  createApiKey: (body: import('../shared/types/ipc').CreateApiKeyBody) =>
+    post<import('../shared/types/ipc').CreateApiKeyResponse>(
+      '/keys',
+      body as unknown as Record<string, unknown>,
+    ),
+  revokeApiKey: (keyId: string) => del(`/keys/${keyId}`),
   getProjects: () => get<Project[]>('/projects'),
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) =>
     patch(`/projects/${projectId}/settings`, settings),
