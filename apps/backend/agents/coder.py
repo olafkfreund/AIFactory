@@ -75,6 +75,7 @@ async def run_autonomous_agent(
     verbose: bool = False,
     source_spec_dir: Path | None = None,
     stop_after_planning: bool = False,
+    remote_control_session: str | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -254,6 +255,7 @@ async def run_autonomous_agent(
                 phase_model,
                 agent_type="planner" if first_run else "coder",
                 max_thinking_tokens=phase_thinking_budget,
+                remote_control_session=remote_control_session,
             )
         else:
             # Use agentic provider for non-Claude models

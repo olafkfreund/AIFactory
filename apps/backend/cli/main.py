@@ -193,12 +193,13 @@ Environment Variables:
         default=None,
         metavar="SESSION_NAME",
         help=(
-            "Claude Code Remote Control session name. Accepted but currently "
-            "a no-op inside run.py — the Claude Agent SDK does not yet expose "
-            "the underlying claude CLI's --remote-control flag (issue #146). "
-            "This argument exists so AgentService.start_task_execution can "
-            "append it without crashing the subprocess on projects that have "
-            "remoteControlByDefault=true."
+            "Claude Code Remote Control session name. Passed through to the "
+            "underlying claude CLI via the SDK's extra_args, which registers "
+            "a Remote Control session with this name on Anthropic's API. The "
+            "session appears in claude.ai/code's session list under this "
+            "name so the user can drive the same conversation from any "
+            "device. Requires a full-scope claude auth login on the host "
+            "(see CLAUDE.md \"Remote Control\" section)."
         ),
     )
 
@@ -288,17 +289,6 @@ def main() -> None:
     """Main CLI entry point."""
     # Set up environment first
     setup_environment()
-
-    # If the agent_service appended --remote-control, log it for visibility
-    # but don't fail. Full SDK wiring for Remote Control is tracked separately.
-    _args_peek = sys.argv
-    if "--remote-control" in _args_peek:
-        import logging
-        logging.getLogger(__name__).warning(
-            "[run.py] --remote-control received but currently a no-op. "
-            "Remote Control session naming will land when the SDK exposes "
-            "the equivalent (see issue #146)."
-        )
 
     # Parse arguments
     args = parse_args()
@@ -458,6 +448,7 @@ def main() -> None:
         force_bypass_approval=args.force,
         base_branch=args.base_branch,
         stop_after_planning=args.stop_after_planning,
+        remote_control_session=args.remote_control,
     )
 
 
