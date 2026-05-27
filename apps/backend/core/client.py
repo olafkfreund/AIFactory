@@ -499,6 +499,7 @@ def create_client(
     effort_level: str | None = None,
     fast_mode: bool = False,
     thinking_level: str | None = None,
+    remote_control_session: str | None = None,
 ) -> ClaudeSDKClient:
     """
     Create a Claude Agent SDK client with multi-layered security.
@@ -970,5 +971,21 @@ def create_client(
     )
     if _all_betas:
         options_kwargs["betas"] = _all_betas  # type: ignore[arg-type]
+
+    # Remote Control session naming (#149). The Claude Agent SDK forwards
+    # ``extra_args`` to the underlying ``claude`` CLI, so passing
+    # ``{"remote-control": "AIFactory: <spec-id>"}`` makes the spawned
+    # claude register a Remote Control session under that name. The
+    # session shows up in the user's claude.ai/code session list and the
+    # mobile app, so they can drive the same conversation from anywhere.
+    #
+    # Caller is responsible for env scrubbing (CLAUDE_CODE_OAUTH_TOKEN,
+    # ANTHROPIC_AUTH_TOKEN) so the subprocess falls back to the
+    # full-scope ~/.claude/.credentials.json. See agent_service.py for
+    # that scrubbing — it must happen at subprocess spawn time, not here.
+    if remote_control_session:
+        existing_extra = dict(options_kwargs.get("extra_args") or {})
+        existing_extra["remote-control"] = remote_control_session
+        options_kwargs["extra_args"] = existing_extra  # type: ignore[typeddict-item]
 
     return ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))

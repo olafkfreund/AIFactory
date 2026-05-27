@@ -62,6 +62,7 @@ def handle_build_command(
     force_bypass_approval: bool,
     base_branch: str | None = None,
     stop_after_planning: bool = False,
+    remote_control_session: str | None = None,
 ) -> None:
     """
     Handle the main build command.
@@ -247,6 +248,7 @@ def handle_build_command(
                 verbose=verbose,
                 source_spec_dir=source_spec_dir,  # For syncing progress back to main project
                 stop_after_planning=stop_after_planning,
+                remote_control_session=remote_control_session,
             )
         )
         debug_success("run.py", "Agent execution completed")
