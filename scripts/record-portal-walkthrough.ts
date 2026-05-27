@@ -4,8 +4,11 @@
  * narration, and QA report all captured in one continuous shot.
  *
  * Output: docs/static/recordings/portal-walkthrough-frames/*.webm  (the .webm
- * Playwright drops at context close).  scripts/demo-record.sh converts it to
- * an mp4 the /demo page embeds.
+ * Playwright drops at context close).  Post-process to mp4 with ffmpeg —
+ * e.g. trim/crop and re-encode H.264:
+ *   ffmpeg -y -i path/to/page.webm -t 55 -filter:v "crop=880:900:0:0" \
+ *     -vcodec libx264 -preset slow -crf 24 -pix_fmt yuv420p \
+ *     -movflags +faststart -an docs/static/recordings/portal-walkthrough.mp4
  *
  * Prereqs (script asserts these before launching):
  *   1. Portal up on PORTAL_URL (default http://localhost:3100)
