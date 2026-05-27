@@ -26,6 +26,7 @@ const sidebars: SidebarsConfig = {
         'concepts/mcp-servers',
         'concepts/mcp-credentials',
         'concepts/mcp-stdio-keys',
+        'concepts/portal-clones',
       ],
     },
     {
