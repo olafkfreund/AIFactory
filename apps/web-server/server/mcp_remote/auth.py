@@ -46,6 +46,10 @@ class AuthenticatedKey:
     user_id: str | None
     """Resolved user id for audit attribution. May be None for legacy keys."""
 
+    org_id: str | None = None
+    """Resolved org id from the ApiKey row. Used to scope audit log
+    entries to the right organization (Epic #50 acceptance criterion #2)."""
+
     def has_scope(self, scope: str) -> bool:
         return scope in self.scopes
 
@@ -119,6 +123,7 @@ async def _lookup_by_digest(session: AsyncSession, digest: str) -> Authenticated
         key_id=str(row.id),
         scopes=scopes,
         user_id=str(row.user_id) if row.user_id else None,
+        org_id=str(row.org_id) if row.org_id else None,
     )
 
 

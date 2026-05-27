@@ -66,6 +66,21 @@ ACTION_TASK_MERGE = "task.merge"
 ACTION_API_KEY_CREATE = "api_key.create"
 ACTION_API_KEY_REVOKE = "api_key.revoke"
 
+# MCP control-plane actions (Epic #50 acceptance criterion #2).
+# Every write tool exposed via the ``/api/mcp-stdio/*`` proxy logs
+# its action under the ``mcp.*`` namespace. The mcp prefix keeps these
+# distinguishable from equivalent UI-driven actions (e.g. ``task.start``
+# from a JWT user vs ``mcp.task.start`` from an ``acw_`` key), which
+# matters for compliance review.
+ACTION_MCP_PROJECT_CREATE = "mcp.project.create"
+ACTION_MCP_TASK_CREATE_AND_RUN = "mcp.task.create_and_run"
+ACTION_MCP_TASK_START = "mcp.task.start"
+ACTION_MCP_TASK_STOP = "mcp.task.stop"
+ACTION_MCP_TASK_RECOVER = "mcp.task.recover"
+ACTION_MCP_TASK_APPROVE_PLAN = "mcp.task.approve_plan"
+ACTION_MCP_TASK_CREATE_PR = "mcp.task.create_pr"
+ACTION_MCP_TASK_MERGE = "mcp.task.merge"
+
 
 # ---------------------------------------------------------------------------
 # Core audit logging function
@@ -122,6 +137,7 @@ async def log_audit_event(
         # constraint; v1.1 multi-replica adds a SELECT FOR UPDATE on
         # the chain head.
         from sqlalchemy import select as _select
+
         from .audit_chain import GENESIS, compute_hash, row_as_mapping
 
         last = await db.execute(
