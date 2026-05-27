@@ -187,6 +187,20 @@ Environment Variables:
         action="store_true",
         help="Run only the planner phase, then exit (used by Copilot delegation)",
     )
+    parser.add_argument(
+        "--remote-control",
+        type=str,
+        default=None,
+        metavar="SESSION_NAME",
+        help=(
+            "Claude Code Remote Control session name. Accepted but currently "
+            "a no-op inside run.py — the Claude Agent SDK does not yet expose "
+            "the underlying claude CLI's --remote-control flag (issue #146). "
+            "This argument exists so AgentService.start_task_execution can "
+            "append it without crashing the subprocess on projects that have "
+            "remoteControlByDefault=true."
+        ),
+    )
 
     # Follow-up options
     parser.add_argument(
@@ -274,6 +288,17 @@ def main() -> None:
     """Main CLI entry point."""
     # Set up environment first
     setup_environment()
+
+    # If the agent_service appended --remote-control, log it for visibility
+    # but don't fail. Full SDK wiring for Remote Control is tracked separately.
+    _args_peek = sys.argv
+    if "--remote-control" in _args_peek:
+        import logging
+        logging.getLogger(__name__).warning(
+            "[run.py] --remote-control received but currently a no-op. "
+            "Remote Control session naming will land when the SDK exposes "
+            "the equivalent (see issue #146)."
+        )
 
     # Parse arguments
     args = parse_args()
