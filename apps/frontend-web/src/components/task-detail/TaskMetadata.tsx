@@ -94,6 +94,33 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
                 </Badge>
               </a>
             )}
+            {/* Copilot Delegation — shown when this task was handed to
+                Copilot. Links to the resulting PR once the tracker
+                (#94) has set task.prNumber; falls back to the issue. */}
+            {task.metadata?.enableDelegation && (() => {
+              const prNumber = (task as unknown as { prNumber?: number }).prNumber;
+              const prUrl = (task as unknown as { prUrl?: string }).prUrl;
+              const issueUrl = task.metadata?.githubUrl;
+              const href = prUrl || issueUrl || '#';
+              const tooltip = prNumber
+                ? `Open Copilot's PR #${prNumber}`
+                : 'AIFactory handed this issue to GitHub Copilot Coding Agent. Watching for the resulting PR.';
+              return (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={tooltip}
+                >
+                  <Badge
+                    variant="outline"
+                    className="text-xs bg-purple-500/10 text-purple-400 border-purple-500/30 hover:bg-purple-500/20 transition-colors"
+                  >
+                    Delegated to Copilot ↗
+                  </Badge>
+                </a>
+              );
+            })()}
             {/* Live Console deep link — copy a shareable URL that opens
                 straight into a fullscreen agent-console (rmux pane stream)
                 with no portal chrome.  Useful for sharing with a

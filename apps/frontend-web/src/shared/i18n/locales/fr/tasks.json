@@ -189,5 +189,16 @@
     "raceLostBody": "Un autre utilisateur est déjà attaché à la console en direct de cette tâche. Réessayez après qu'il se soit déconnecté.",
     "raceLostDismiss": "OK",
     "headerHint": "Miroir en lecture seule du terminal de l'agent. Cliquez sur Prendre le contrôle pour intervenir."
+  },
+  "delegation": {
+    "enableLabel": "Déléguer le codage à l'agent Copilot Coding",
+    "enableHelp": "AIFactory rédige toujours le plan, puis transmet le ticket à GitHub Copilot pour l'implémentation. Utilise votre siège Copilot — aucun jeton Claude supplémentaire pour le codage.",
+    "githubOnlyTooltip": "La délégation nécessite un projet GitHub. La prise en charge de GitLab Duo Workflow est prévue pour une version ultérieure.",
+    "projectDefaultLabel": "Déléguer le codage à Copilot par défaut pour les nouvelles tâches",
+    "projectDefaultHelp": "Chaque nouvelle tâche dans ce projet GitHub démarre avec la délégation activée. Le bouton par tâche de l'assistant peut toujours l'outrepasser au cas par cas.",
+    "badgeLabel": "Délégué à Copilot ↗",
+    "badgeTooltipPending": "AIFactory a transmis ce ticket à l'agent Copilot Coding de GitHub. En attente de la PR résultante — rafraîchissez dans quelques minutes.",
+    "badgeTooltipInReview": "Copilot a ouvert une PR pour ce ticket. Cliquez pour l'ouvrir.",
+    "declinedNotice": "Copilot a peut-être refusé cette tâche — aucune PR correspondante ouverte dans les 24 heures. Vous pouvez réessayer avec l'agent local d'AIFactory."
   }
 }
