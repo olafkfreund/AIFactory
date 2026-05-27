@@ -67,7 +67,13 @@ Full installation guide: **[Getting Started →](https://olafkfreund.github.io/A
 
 ## See it work
 
-The repo ships with an end-to-end demo that walks through the full flow against a public sample repo:
+<p align="center">
+  <img src="docs/static/img/handover-workflow.gif" alt="Terminal walkthrough — clone the demo repo, file a GitHub issue, type /handover in Claude Code, watch AIFactory's planner / coder / QA pipeline produce a merge-ready branch" width="720" />
+</p>
+
+A 45-second terminal walkthrough of the `/handover` workflow: clone the demo repo, file a GitHub issue, type `/handover` in Claude Code, AIFactory's planner → coder → QA pipeline lands at a merge-ready branch. Every artifact shown was produced by a real agent run — the recording compresses the timeline.
+
+The repo also ships a scripted end-to-end demo that exercises the whole pipeline against a public sample repo:
 
 ```bash
 ./scripts/demo.sh
@@ -75,7 +81,7 @@ The repo ships with an end-to-end demo that walks through the full flow against 
 
 It seeds 3 GitHub issues, registers the demo repo with your portal, imports the issues as backlog tasks, prompts you to drive Claude Code from the terminal, then kicks off an autonomous build — all in about 90 seconds. Pass `--yolo` to skip the Enter-prompts between steps.
 
-Walkthrough with screenshots: **[Demo →](https://olafkfreund.github.io/AIFactory/demo)**
+Walkthrough with screenshots + browser-side video: **[Demo →](https://olafkfreund.github.io/AIFactory/demo)**
 
 ## Screenshots
 
