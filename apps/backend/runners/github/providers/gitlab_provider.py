@@ -379,18 +379,148 @@ class GitLabProvider:
             issue_resp.raise_for_status()
             return issue_resp.json()["id"]
 
+    # GitLab Duo's "alias" for delegation. The runner passes ``["Copilot"]``
+    # to every provider; we treat that as the GitLab-specific Duo trigger
+    # since this is a GitLab project. ``"Duo"`` is also accepted (case-
+    # insensitive) for callers that want explicit naming.
+    _DUO_ALIASES = frozenset({"copilot", "duo", "gitlab-duo"})
+
     async def assign_to_user(
         self, issue_number: int, assignees: list[str]
     ) -> None:
-        """Autonomous-agent assignment for GitLab — lands in V1.5 (#98).
+        """Trigger a GitLab Duo Workflow against the issue (#98, V1.5).
 
-        The real implementation will POST to /api/v4/ai/duo_workflows/workflows
-        with goal, project_id, and issue_id to trigger Duo Workflow.
+        Mirrors the GitHub provider's ``assign_to_user`` contract: when
+        ``"Copilot"`` (or ``"Duo"``) is in ``assignees``, dispatch the
+        delegation. Other assignees fall back to regular GitLab issue
+        assignment (assignee_ids).
+
+        The Duo Workflow API expects an OAuth-Bearer-authenticated POST
+        to ``/api/v4/ai/duo_workflows/workflows`` with at minimum
+        ``goal``, ``project_id``, and ``issue_id``. We verified the
+        endpoint surface live during the V1 smoke test (see #92
+        comment trail).
+
+        Silently no-ops on auth/entitlement failures (401/403) so the
+        tracker can detect the missed assignment by re-reading the issue.
         """
-        raise NotImplementedError(
-            "GitLab Duo Workflow delegation lands in V1.5 (issue #98). "
-            "The target endpoint is POST /api/v4/ai/duo_workflows/workflows."
+        if not assignees:
+            return
+
+        wants_duo = any(a.strip().lower() in self._DUO_ALIASES for a in assignees)
+        regular_logins = [
+            a for a in assignees if a.strip().lower() not in self._DUO_ALIASES
+        ]
+
+        if wants_duo:
+            await self._trigger_duo_workflow(issue_number)
+
+        # Regular GitLab assignment for any non-Duo usernames (mirrors the
+        # behavior the GitHub provider has for non-Copilot users).
+        if regular_logins:
+            await self._assign_users(issue_number, regular_logins)
+
+    async def _trigger_duo_workflow(self, issue_iid: int) -> None:
+        """POST to /api/v4/ai/duo_workflows/workflows with the issue context.
+
+        Uses ``Authorization: Bearer`` auth (the Duo endpoints reject
+        ``PRIVATE-TOKEN`` — verified during V1 smoke testing). Caller
+        must therefore have configured an OAuth-style token in the
+        project's ``gitToken`` setting.
+        """
+        if not self._token:
+            logger.warning(
+                "[gitlab_provider] Duo Workflow requires a GitLab token; skipping assignment"
+            )
+            return
+
+        # Resolve the GitLab project's numeric ID. The Duo endpoint wants
+        # ``project_id`` as a string, but it'll accept the URL-encoded
+        # path too — try the numeric form first since it's the canonical.
+        project_numeric_id: str | None = None
+        try:
+            info = await self.get_repository_info()
+            project_numeric_id = str(info.get("id"))
+        except Exception as e:
+            logger.warning(
+                "[gitlab_provider] could not resolve project_id for Duo Workflow: %s",
+                e,
+            )
+            # Fall back to the URL-encoded path; the API accepts both.
+            project_numeric_id = self._project_id
+
+        # Build a "goal" string the Duo agent can use as its prompt. The
+        # AIFactory enrichment comment (posted by delegation_runner BEFORE
+        # this call) already lives on the issue, so a short reference is
+        # sufficient — the Duo agent will read the issue context itself.
+        goal = (
+            f"Implement the change requested in issue #{issue_iid}. "
+            "See the AIFactory enrichment comment on the issue for the "
+            "structured implementation plan."
         )
+
+        payload = {
+            "goal": goal,
+            "project_id": project_numeric_id,
+            "issue_id": issue_iid,
+            # Software development is the closest match to "go fix this
+            # issue". Other definitions (`code_review`, `secret_detection_fp`)
+            # are for narrower workflows.
+            "workflow_definition": "software_development",
+        }
+
+        url = f"{self._base_url}/api/v4/ai/duo_workflows/workflows"
+        bearer_headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, headers=bearer_headers, json=payload)
+
+        if resp.status_code in (200, 201):
+            logger.info(
+                "[gitlab_provider] Duo Workflow triggered for issue=%d (workflow id=%s)",
+                issue_iid,
+                resp.json().get("id", "?") if resp.content else "?",
+            )
+            return
+
+        if resp.status_code in (401, 403):
+            # Most likely no Duo seat on this token. Silent no-op so the
+            # tracker can detect this by polling for the resulting MR.
+            logger.warning(
+                "[gitlab_provider] Duo Workflow returned %d for issue=%d — "
+                "likely no Duo entitlement on the configured token",
+                resp.status_code,
+                issue_iid,
+            )
+            return
+
+        # 4xx (other) / 5xx — log + return without raising. The runner's
+        # post-call assignee re-check handles "did this actually fire?".
+        logger.warning(
+            "[gitlab_provider] Duo Workflow returned %d for issue=%d: %s",
+            resp.status_code,
+            issue_iid,
+            (resp.text or "")[:200],
+        )
+
+    async def _assign_users(self, issue_iid: int, usernames: list[str]) -> None:
+        """Assign a regular GitLab issue to one or more users by username."""
+        async with self._client() as client:
+            assignee_ids: list[int] = []
+            for username in usernames:
+                user_resp = await client.get(
+                    "/api/v4/users", params={"username": username}
+                )
+                if user_resp.status_code == 200 and user_resp.json():
+                    assignee_ids.append(user_resp.json()[0]["id"])
+            if not assignee_ids:
+                return
+            await client.put(
+                f"/api/v4/projects/{self._project_id}/issues/{issue_iid}",
+                json={"assignee_ids": assignee_ids},
+            )
 
     # -------------------------------------------------------------------------
     # Label Operations

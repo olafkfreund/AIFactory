@@ -407,7 +407,7 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     if isinstance(issue_number, str) and issue_number.isdigit():
         issue_number = int(issue_number)
 
-    if wants_delegation and provider_type == "github" and isinstance(issue_number, int):
+    if wants_delegation and provider_type in ("github", "gitlab") and isinstance(issue_number, int):
         from ..services.auto_fix_service import _provider_for
         from ..services.delegation_runner import run_delegation
         try:

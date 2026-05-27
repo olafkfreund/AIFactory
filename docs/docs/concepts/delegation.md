@@ -3,11 +3,11 @@ title: Delegation
 sidebar_position: 5
 ---
 
-# Delegation — let Copilot do the coding, keep AIFactory's planning + governance
+# Delegation — let your provider's agent do the coding, keep AIFactory's planning + governance
 
-> *AIFactory drafts the spec and the implementation plan. GitHub Copilot Coding Agent writes the code.*
+> *AIFactory drafts the spec and the implementation plan. GitHub Copilot Coding Agent (GitHub projects) or GitLab Duo Workflow (GitLab projects) writes the code.*
 
-Delegation hands the coder + QA phases off to GitHub Copilot Coding Agent — using your **Copilot seat** instead of spending Claude tokens on the build. AIFactory's value (spec authoring, plan structuring, governance) still runs on every task; only the implementation phase moves.
+Delegation hands the coder + QA phases off to the project's autonomous coding agent — **GitHub Copilot Coding Agent** on GitHub projects, **GitLab Duo Workflow** on GitLab projects. Uses your Copilot/Duo seat instead of spending Claude tokens on the build. AIFactory's value (spec authoring, plan structuring, governance) still runs on every task; only the implementation phase moves.
 
 It is **hybrid only** — AIFactory always runs the planner first and posts the enriched plan as a structured comment on the issue. Copilot sees both the original issue and AIFactory's `## ✨ AIFactory enrichment` comment before it starts.
 
@@ -27,7 +27,7 @@ When **not** to use it:
 
 ### Per-task
 
-In the Task Creation Wizard's Advanced section, tick **"Delegate coding to Copilot Coding Agent"**. The checkbox is disabled with a tooltip on non-GitHub projects.
+In the Task Creation Wizard's Advanced section, tick **"Delegate coding to the project's autonomous agent"**. The checkbox is disabled with a tooltip on Azure DevOps projects (no equivalent agent exists). On GitHub projects it delegates to Copilot; on GitLab projects it triggers Duo Workflow.
 
 ### Per-project
 
@@ -89,7 +89,7 @@ Format lives in `apps/web-server/server/services/delegation_formatter.py`. If `i
 ## Limitations
 
 - **Org-level Copilot Coding Agent permissions.** If the org admin has disabled Copilot Coding Agent on the repo, `assign_to_user(["Copilot"])` silently no-ops. AIFactory detects this by re-reading the issue's assignees after the call — if `copilot-swe-agent` isn't there, the task surfaces a notice.
-- **GitLab.** Duo Workflow delegation is planned for V1.5 (see issue [#98](https://github.com/olafkfreund/AIFactory/issues/98)). Requires GitLab Premium 17.4+ with Duo Pro/Enterprise add-on. The wizard checkbox is disabled with a tooltip until V1.5 ships.
+- **GitLab Duo entitlement.** GitLab projects need a Duo Pro or Duo Enterprise add-on attached to the namespace (GitLab Premium 17.4+ is the floor). The Duo Workflow API authenticates with `Authorization: Bearer <token>` (not `PRIVATE-TOKEN`) — configure the project's `gitToken` setting accordingly. Calls to `POST /api/v4/ai/duo_workflows/workflows` return 401/403 without an active Duo seat; AIFactory silently no-ops on those and the tracker detects the miss by polling for the resulting MR.
 - **Azure DevOps.** Permanently unsupported — ADO has no autonomous coding agent equivalent. The toggle stays disabled.
 - **Polling lag.** Up to 5 minutes between Copilot opening a PR and the AIFactory UI reflecting it. Webhook-driven receiver TBD.
 - **Decline detection is heuristic.** "24h with no matching PR" → declined. If Copilot opened a PR with a title that doesn't reference `#<issue-number>`, the tracker won't link it and the task may incorrectly be marked declined. Title conventions matter.

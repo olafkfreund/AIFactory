@@ -191,9 +191,10 @@
     "headerHint": "Miroir en lecture seule du terminal de l'agent. Cliquez sur Prendre le contrôle pour intervenir."
   },
   "delegation": {
-    "enableLabel": "Déléguer le codage à l'agent Copilot Coding",
-    "enableHelp": "AIFactory rédige toujours le plan, puis transmet le ticket à GitHub Copilot pour l'implémentation. Utilise votre siège Copilot — aucun jeton Claude supplémentaire pour le codage.",
+    "enableLabel": "Déléguer le codage à l'agent autonome du projet",
+    "enableHelp": "AIFactory rédige toujours le plan, puis transmet le ticket à GitHub Copilot Coding Agent (projets GitHub) ou GitLab Duo Workflow (projets GitLab). Utilise votre siège Copilot/Duo — aucun jeton Claude supplémentaire pour le codage.",
     "githubOnlyTooltip": "La délégation nécessite un projet GitHub. La prise en charge de GitLab Duo Workflow est prévue pour une version ultérieure.",
+    "githubOrGitlabTooltip": "La délégation nécessite un projet GitHub ou GitLab. Azure DevOps n'a pas d'agent de codage autonome équivalent.",
     "projectDefaultLabel": "Déléguer le codage à Copilot par défaut pour les nouvelles tâches",
     "projectDefaultHelp": "Chaque nouvelle tâche dans ce projet GitHub démarre avec la délégation activée. Le bouton par tâche de l'assistant peut toujours l'outrepasser au cas par cas.",
     "badgeLabel": "Délégué à Copilot ↗",
