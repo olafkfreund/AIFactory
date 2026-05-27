@@ -7,6 +7,7 @@ import {
   Bot,
   Cpu,
   Key,
+  KeyRound,
   Bell,
   Settings2,
   Github,
@@ -34,6 +35,7 @@ import { useSettings } from './hooks/useSettings';
 import { LanguageSettings } from './LanguageSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { IntegrationSettings } from './IntegrationSettings';
+import { GitCredentialsSettings } from './sections/GitCredentialsSettings';
 import { AdvancedSettings } from './AdvancedSettings';
 import { DebugSettings } from './DebugSettings';
 import { LLMProvidersPage } from './sections/LLMProvidersPage';
@@ -51,7 +53,7 @@ interface AppSettingsDialogProps {
 }
 
 // App-level settings sections
-export type AppSection = 'language' | 'agent' | 'llmProvider' | 'integrations' | 'notifications' | 'debug';
+export type AppSection = 'language' | 'agent' | 'llmProvider' | 'integrations' | 'gitCredentials' | 'notifications' | 'debug';
 
 interface NavItemConfig<T extends string> {
   id: T;
@@ -62,6 +64,7 @@ const appNavItemsConfig: NavItemConfig<AppSection>[] = [
   { id: 'agent', icon: Bot },
   { id: 'llmProvider', icon: Cpu },
   { id: 'integrations', icon: Key },
+  { id: 'gitCredentials', icon: KeyRound },
   { id: 'notifications', icon: Bell },
   { id: 'debug', icon: Bug },
   { id: 'language', icon: Globe }
@@ -166,6 +169,8 @@ export function AppSettingsDialog({ open, onOpenChange, initialSection, initialP
         return <LLMProvidersPage isOpen={open} />;
       case 'integrations':
         return <IntegrationSettings settings={settings} onSettingsChange={setSettings} />;
+      case 'gitCredentials':
+        return <GitCredentialsSettings />;
       case 'notifications':
         return <AdvancedSettings settings={settings} onSettingsChange={setSettings} section="notifications" version={version} />;
       case 'debug':

@@ -66,6 +66,32 @@
       "title": "Intégrations",
       "description": "Connexions aux services tiers et identifiants OAuth"
     },
+    "gitCredentials": {
+      "title": "Identifiants Git",
+      "description": "PATs stockés pour cloner des dépôts privés",
+      "info": "Quand vous enregistrez un projet via une URL Git (Ajouter un projet → Cloner depuis une URL Git), sélectionnez un identifiant ici pour cloner des dépôts privés. Les jetons sont chiffrés au repos et jamais journalisés.",
+      "noOrg": "Aucune organisation configurée — enregistrez d'abord un projet.",
+      "orgIdLabel": "ID d'organisation",
+      "orgIdHelp": "L'UUID de votre organisation. Trouvez-le dans n'importe quelle URL d'org ou via l'API orgs. Le sélecteur multi-org arrivera avec Epic #35.",
+      "existing": "Identifiants existants",
+      "add": "Ajouter un identifiant",
+      "loading": "Chargement des identifiants…",
+      "empty": "Aucun identifiant enregistré.",
+      "anyHost": "tout hôte",
+      "created": "créé",
+      "copyId": "Copier l'ID de l'identifiant",
+      "newCredential": "Nouvel identifiant",
+      "name": "Nom",
+      "host": "Hôte (facultatif)",
+      "username": "Nom d'utilisateur (facultatif)",
+      "token": "Personal Access Token",
+      "tokenHelp": "Le jeton est chiffré au repos. Une fois enregistré, il ne peut plus être récupéré — copiez-le ailleurs si vous voulez une sauvegarde.",
+      "fieldsRequired": "Le nom et le jeton sont requis.",
+      "confirmDelete": "Supprimer cet identifiant ? Cette action est irréversible.",
+      "cancel": "Annuler",
+      "save": "Enregistrer l'identifiant",
+      "saving": "Enregistrement…"
+    },
     "api-profiles": {
       "title": "Profils API",
       "description": "Profils d'endpoint API personnalisés"
