@@ -261,11 +261,20 @@ def _write_spec_dir(
     project_path: Path,
     issue: dict[str, Any],
     provider_type: str,
+    *,
+    delegate_by_default: bool = False,
 ) -> str:
     """Create ``.aifactory/specs/NNN-{prefix}{N}-{slug}/`` with
     requirements.json + spec.md.  Returns the spec id (dir name).
 
     Provider-agnostic — works for any ``IssueData``-shaped dict.
+
+    Args:
+        delegate_by_default: When True (project setting ``delegateByDefault``
+            is on AND ``gitProvider == "github"``), the freshly-written
+            ``requirements.json`` carries ``metadata.enableDelegation = true``
+            so the subsequent ``start_auto_fix`` call takes the delegation
+            branch. Closes gap #2 from issue #144.
     """
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -281,7 +290,7 @@ def _write_spec_dir(
     spec_dir = specs_dir / spec_name
     spec_dir.mkdir(parents=True, exist_ok=True)
 
-    requirements = {
+    requirements: dict[str, Any] = {
         "title": title,
         "description": body,
         "source": provider_type,
@@ -292,6 +301,14 @@ def _write_spec_dir(
             "labels": labels,
         },
     }
+    if delegate_by_default:
+        # Note also the issue number under metadata so the wizard task-start
+        # path (which doesn't have an explicit issue_number param) can find
+        # it via task_metadata.githubIssueNumber.
+        requirements["metadata"] = {
+            "enableDelegation": True,
+            "githubIssueNumber": issue_number,
+        }
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     spec_md = f"# {title}\n\n"
@@ -392,7 +409,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     """
     from ..routes.projects import load_projects
     from ..services.agent_service import get_agent_service
-    from ..websockets.events import broadcast_event, emit_task_status
+    from ..websockets.events import broadcast_event
 
     projects = load_projects()
     if project_id not in projects:
@@ -426,7 +443,17 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
             "labels": list(iss.labels or []),
             "url": iss.url,
         }
-        spec_id = _write_spec_dir(project_path, issue_dict, provider_type)
+        # Gap #2 (#144): honour the project-level delegateByDefault toggle
+        # by injecting enableDelegation into the new spec's metadata.
+        delegate_default = (
+            bool(settings.get("delegateByDefault")) and provider_type == "github"
+        )
+        spec_id = _write_spec_dir(
+            project_path,
+            issue_dict,
+            provider_type,
+            delegate_by_default=delegate_default,
+        )
 
     # Determine whether to delegate before recording the queue item, so
     # the queue carries the right initial status.
@@ -449,78 +476,38 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     agent_service = get_agent_service()
 
     if delegate:
-        # ------------------------------------------------------------------
-        # Delegation flow (#94): planner-only run → enriched comment →
-        # assign Copilot. Local coder/QA skipped.
-        # ------------------------------------------------------------------
-        await emit_task_status(task_id, "planning")
-        try:
-            await agent_service.start_task_execution(
-                task_id=task_id,
-                project_path=project_path,
-                spec_id=spec_id,
-                auto_continue=True,
-                force=True,
-                stop_after_planning=True,
-            )
-        except ValueError as e:
-            # "Already running" is fine — fall through to the comment+assign step
-            if "already running" not in str(e):
-                raise
+        # Delegation flow (#94, #144): hand off to the shared runner so
+        # the wizard's task-start path (routes/execution.py) and Auto-Fix
+        # take the exact same code path. The runner awaits the planner
+        # subprocess (fix for gap #3 from #144) before reading the plan
+        # and posting the enrichment comment.
+        from .delegation_runner import run_delegation
 
-        # The planner subprocess writes implementation_plan.json into the
-        # spec dir before returning. The agent service syncs from the
-        # worktree on completion (see agent_service._sync_worktree_files).
-        from .delegation_formatter import render_plan_as_comment
-
-        plan_md = render_plan_as_comment(
-            spec_dir / "implementation_plan.json",
-            spec_dir / "spec.md",
-        )
         provider = _provider_for(project_id)
-        try:
-            await provider.add_comment(issue_number, plan_md)
-        except Exception as e:
-            logger.warning(
-                "[auto_fix] delegation comment post failed project=%s issue=%d err=%s",
-                project_id,
-                issue_number,
-                e,
-            )
+        result = await run_delegation(
+            project_id=project_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            issue_number=issue_number,
+            provider=provider,
+        )
 
-        try:
-            await provider.assign_to_user(issue_number, ["Copilot"])
-        except NotImplementedError:
-            # Defence in depth — `delegate` is already gated to GitHub but
-            # this future-proofs against provider type misconfiguration.
-            logger.warning(
-                "[auto_fix] provider %s does not support delegation; skipping assign",
-                provider_type,
-            )
-
-        # Persist the delegated state with timestamps the tracker uses
-        # to detect Copilot decline.
-        delegated_at = datetime.now(timezone.utc).isoformat()
+        # Mirror the delegation outcome onto the queue so the tracker has
+        # a delegatedAt timestamp to start its 24h decline clock.
         _upsert_queue_item(
             project_id,
             {
                 **queue_item,
                 "status": "delegated",
-                "delegatedAt": delegated_at,
-                "updatedAt": delegated_at,
+                "delegatedAt": result["delegatedAt"],
+                "updatedAt": result["delegatedAt"],
             },
         )
-        await emit_task_status(task_id, "delegated")
-        await broadcast_event(
-            "auto_fix:delegated",
-            {
-                "projectId": project_id,
-                "issueNumber": issue_number,
-                "specId": spec_id,
-                "delegateAgent": "github-copilot",
-            },
-        )
-        return {"specId": spec_id, "taskId": task_id, "status": "delegated"}
+        return {
+            "specId": spec_id,
+            "taskId": task_id,
+            "status": "delegated",
+        }
 
     # ----------------------------------------------------------------------
     # Default flow: AIFactory runs the full pipeline.
