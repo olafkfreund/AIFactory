@@ -14,7 +14,7 @@ import {
   DialogTitle
 } from './ui/dialog';
 import { cn } from '../lib/utils';
-import { addProject } from '../stores/project-store';
+import { addProject, addProjectFromGitUrl } from '../stores/project-store';
 import type { Project } from '../shared/types';
 
 interface DiscoveredProject {
@@ -48,6 +48,13 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
   const [useCustomPath, setUseCustomPath] = useState(false);
   const [showClaudeReadyOnly, setShowClaudeReadyOnly] = useState(false);
   const [createdDirPath, setCreatedDirPath] = useState<string | null>(null);
+  // Epic #82 PR-B — clone-from-Git-URL mode. Mutually exclusive with the
+  // local-folder mode above; toggled via the segmented button at the top
+  // of the modal body.
+  const [mode, setMode] = useState<'local' | 'clone'>('local');
+  const [gitUrl, setGitUrl] = useState('');
+  const [gitBranch, setGitBranch] = useState('');
+  const [gitName, setGitName] = useState('');
 
   // Filter and sort projects - Claude-ready projects first
   const sortedProjects = [...discoveredProjects].sort((a, b) => {
@@ -99,29 +106,57 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
       setShowClaudeReadyOnly(false);
       setError(null);
       setCreatedDirPath(null);
+      setMode('local');
+      setGitUrl('');
+      setGitBranch('');
+      setGitName('');
       scanProjects();
     }
   }, [open, scanProjects]);
 
   const handleAddProject = async () => {
-    const path = useCustomPath ? customPath.trim() : selectedProject?.path;
-    if (!path) {
-      setError('Please select a project or enter a custom path');
-      return;
-    }
-
     setIsAdding(true);
     setError(null);
 
     try {
-      const project = await addProject(path);
-      if (project) {
+      let project: Project | null;
+      let resolvedPath: string | null = null;
+
+      if (mode === 'clone') {
+        const url = gitUrl.trim();
+        if (!url) {
+          setError(t('addProject.gitUrlLabel', 'Git repository URL') + ' is required');
+          setIsAdding(false);
+          return;
+        }
+        project = await addProjectFromGitUrl(
+          url,
+          gitBranch.trim() || undefined,
+          gitName.trim() || undefined,
+        );
+        if (project) {
+          resolvedPath = project.path;
+        }
+      } else {
+        const path = useCustomPath ? customPath.trim() : selectedProject?.path;
+        if (!path) {
+          setError('Please select a project or enter a custom path');
+          setIsAdding(false);
+          return;
+        }
+        project = await addProject(path);
+        resolvedPath = path;
+      }
+
+      // Common post-add handling (main-branch detection + onProjectAdded
+      // callback). Skipped on null project; the catch below logs.
+      if (project && resolvedPath) {
         // Try to detect and save main branch
         try {
-          const mainBranchResult = await window.API.detectMainBranch(path);
+          const mainBranchResult = await window.API.detectMainBranch(resolvedPath);
           if (mainBranchResult.success && mainBranchResult.data) {
             await window.API.updateProjectSettings(project.id, {
-              mainBranch: mainBranchResult.data
+              mainBranch: mainBranchResult.data,
             });
           }
         } catch {
@@ -139,7 +174,11 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
           onOpenChange(false);
         }
       } else {
-        setError('Failed to add project. Please check the path is valid.');
+        setError(
+          mode === 'clone'
+            ? 'Failed to clone the repository. Check the URL and try again.'
+            : 'Failed to add project. Please check the path is valid.',
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add project');
@@ -174,6 +213,86 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
         </DialogHeader>
 
         <div className="py-4 space-y-4">
+          {/* Mode toggle — local folder vs clone from Git URL (#82 PR-B) */}
+          <div className="flex rounded-lg border border-border p-1 bg-muted/30">
+            <button
+              type="button"
+              onClick={() => setMode('local')}
+              className={cn(
+                'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
+                mode === 'local'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t('addProject.modeLocal', 'Local folder')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('clone')}
+              className={cn(
+                'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
+                mode === 'clone'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t('addProject.modeClone', 'Clone from Git URL')}
+            </button>
+          </div>
+
+          {mode === 'clone' && (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="git-url">
+                  {t('addProject.gitUrlLabel', 'Git repository URL')}
+                </Label>
+                <Input
+                  id="git-url"
+                  placeholder={t('addProject.gitUrlPlaceholder', 'https://github.com/owner/repo.git')}
+                  value={gitUrl}
+                  onChange={(e) => setGitUrl(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  autoFocus
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    'addProject.gitUrlHelp',
+                    'Portal clones into the workspace root (~/.aifactory/workspaces/ on laptop, the PVC on K8s).',
+                  )}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <Label htmlFor="git-branch">
+                    {t('addProject.gitBranchLabel', 'Branch (optional)')}
+                  </Label>
+                  <Input
+                    id="git-branch"
+                    placeholder={t('addProject.gitBranchPlaceholder', 'main')}
+                    value={gitBranch}
+                    onChange={(e) => setGitBranch(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="git-name">
+                    {t('addProject.gitNameLabel', 'Display name (optional)')}
+                  </Label>
+                  <Input
+                    id="git-name"
+                    placeholder={t('addProject.gitNamePlaceholder', 'Defaults to repo basename')}
+                    value={gitName}
+                    onChange={(e) => setGitName(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {mode === 'local' && (
+          <>
           {/* Projects folder input */}
           <div className="space-y-2">
             <Label htmlFor="projects-folder">Projects Folder</Label>
@@ -292,6 +411,8 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
               />
             </div>
           )}
+          </>
+          )}
 
           {/* Directory created info */}
           {createdDirPath && (
@@ -315,9 +436,18 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
           </Button>
           <Button
             onClick={handleAddProject}
-            disabled={isAdding || isScanning || (!selectedProject && !useCustomPath) || (useCustomPath && !customPath.trim())}
+            disabled={
+              isAdding ||
+              isScanning ||
+              (mode === 'clone'
+                ? !gitUrl.trim()
+                : (!selectedProject && !useCustomPath) ||
+                  (useCustomPath && !customPath.trim()))
+            }
           >
-            {isAdding ? 'Adding...' : 'Add Project'}
+            {isAdding
+              ? (mode === 'clone' ? t('addProject.cloning', 'Cloning…') : 'Adding...')
+              : 'Add Project'}
           </Button>
         </DialogFooter>
       </DialogContent>

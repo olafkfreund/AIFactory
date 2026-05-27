@@ -307,6 +307,12 @@ export const webAPI: API & { _isWebMode: boolean } = {
 
   // ========== Project Operations ==========
   addProject: (projectPath: string) => post<Project>('/projects', { path: projectPath }),
+  addProjectFromGitUrl: (gitUrl: string, branch?: string, name?: string) =>
+    post<Project>('/projects', {
+      gitUrl,
+      ...(branch ? { branch } : {}),
+      ...(name ? { name } : {}),
+    }),
   removeProject: (projectId: string) => del(`/projects/${projectId}`),
   getProjects: () => get<Project[]>('/projects'),
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) =>
