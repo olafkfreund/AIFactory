@@ -31,7 +31,8 @@ def test_create_client_injects_remote_control_into_extra_args(tmp_path: Path):
     spec_dir.mkdir()
     project_dir = tmp_path
 
-    with patch("core.client.ClaudeSDKClient", side_effect=_capture):
+    with patch("core.client.ClaudeSDKClient", side_effect=_capture), \
+         patch("core.client.require_auth_token", return_value="sk-ant-oat01-test"):
         from core.client import create_client
         create_client(
             project_dir=project_dir,
@@ -65,7 +66,8 @@ def test_create_client_omits_remote_control_when_session_none(tmp_path: Path):
     spec_dir = tmp_path / "001-test-spec"
     spec_dir.mkdir()
 
-    with patch("core.client.ClaudeSDKClient", side_effect=_capture):
+    with patch("core.client.ClaudeSDKClient", side_effect=_capture), \
+         patch("core.client.require_auth_token", return_value="sk-ant-oat01-test"):
         from core.client import create_client
         create_client(
             project_dir=tmp_path,
