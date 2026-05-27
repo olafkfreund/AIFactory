@@ -134,8 +134,14 @@ def pytest_runtest_setup(item):
                 cleaned_up = True
 
     # If we cleaned up mocks, we need to reload modules that might have cached
-    # references to the mocked versions
-    if cleaned_up and module_name in ('test_qa_loop', 'test_review'):
+    # references to the mocked versions.
+    #
+    # test_qa_criteria also re-installs progress/task_logger/etc. mocks at
+    # module-import time, but qa.criteria may have already been imported by
+    # an earlier test against the REAL progress module — its module-level
+    # bindings then point at the wrong object. Reload the qa chain so the
+    # mocks take effect.
+    if cleaned_up and module_name in ('test_qa_loop', 'test_review', 'test_qa_criteria'):
         # Reload progress first
         if 'progress' in sys.modules:
             importlib.reload(sys.modules['progress'])

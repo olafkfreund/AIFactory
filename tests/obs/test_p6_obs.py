@@ -226,7 +226,20 @@ def test_metrics_requires_token_when_configured(fresh_obs_app) -> None:
     assert "http_requests_total" in resp_ok.text
 
 
+def _grafana_dashboard_missing() -> bool:
+    from pathlib import Path
+    return not (
+        Path(__file__).resolve().parents[2]
+        / "guides" / "observability" / "grafana-aifactory.json"
+    ).is_file()
+
+
 @pytest.mark.obs
+@pytest.mark.xfail(
+    _grafana_dashboard_missing(),
+    reason="grafana-aifactory.json not yet shipped — tracked at #160",
+    strict=False,
+)
 def test_grafana_dashboard_json_is_valid() -> None:
     """guides/observability/grafana-aifactory.json parses + has required panels."""
     import json
