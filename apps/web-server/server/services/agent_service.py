@@ -434,6 +434,8 @@ class AgentService:
         self._log_callbacks: dict[str, list[Callable]] = {}
         self._progress_callbacks: dict[str, list[Callable]] = {}
         self._task_log_writers: dict[str, tuple[TaskLogWriter, TaskLogWriter]] = {}
+        # Per-spec stderr capture file paths (#146).
+        self._spec_stderr_logs: dict[str, Path] = {}
         # Track sequence numbers per task for frontend out-of-order detection
         self._task_sequence_numbers: dict[str, int] = {}
         # Issue #14 — last emitted task:update signature per task. Used by
@@ -1110,6 +1112,16 @@ class AgentService:
             # Log stderr to server logs for debugging
             if is_stderr and line:
                 logger.warning(f"[AgentService] Task {task_id} stderr: {line}")
+                # Also mirror stderr to a per-spec file so post-mortem
+                # debugging works even when the subprocess dies before
+                # writing its own task_logs.json (#146).
+                stderr_file = self._spec_stderr_logs.get(task_id)
+                if stderr_file is not None:
+                    try:
+                        with stderr_file.open("a", encoding="utf-8") as fh:
+                            fh.write(line + "\n")
+                    except OSError:
+                        pass
 
             # Create log entry
             log = TaskLog(
@@ -2729,6 +2741,19 @@ class AgentService:
 
         master_fd, slave_fd = pty.openpty()
 
+        # Tee stderr to a per-spec file so failures that happen before
+        # the agent writes task_logs.json are still debuggable (#146).
+        # _process_output still drains the PIPE; this is an additional
+        # post-mortem capture, not a replacement.
+        spec_stderr_log = (
+            project_path / ".aifactory" / "specs" / spec_id / "spawn_stderr.log"
+        )
+        try:
+            spec_stderr_log.parent.mkdir(parents=True, exist_ok=True)
+            spec_stderr_log.write_text("")  # truncate any previous capture
+        except OSError as _e:
+            logger.debug(f"[AgentService] could not prep spawn_stderr.log: {_e}")
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -2740,6 +2765,10 @@ class AgentService:
 
         # Close slave fd in parent process
         os.close(slave_fd)
+
+        # Track the per-spec stderr file so _process_output can mirror
+        # stderr lines into it.
+        self._spec_stderr_logs[task_id] = spec_stderr_log
 
         self.running_tasks[task_id] = proc
 
