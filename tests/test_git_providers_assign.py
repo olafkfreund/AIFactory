@@ -23,10 +23,11 @@ _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from runners.github.providers.azure_devops_provider import AzureDevOpsProvider  # noqa: E402
+from runners.github.providers.azure_devops_provider import (
+    AzureDevOpsProvider,  # noqa: E402
+)
 from runners.github.providers.github_provider import GitHubProvider  # noqa: E402
 from runners.github.providers.gitlab_provider import GitLabProvider  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Helpers
