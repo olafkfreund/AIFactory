@@ -379,6 +379,19 @@ class GitLabProvider:
             issue_resp.raise_for_status()
             return issue_resp.json()["id"]
 
+    async def assign_to_user(
+        self, issue_number: int, assignees: list[str]
+    ) -> None:
+        """Autonomous-agent assignment for GitLab — lands in V1.5 (#98).
+
+        The real implementation will POST to /api/v4/ai/duo_workflows/workflows
+        with goal, project_id, and issue_id to trigger Duo Workflow.
+        """
+        raise NotImplementedError(
+            "GitLab Duo Workflow delegation lands in V1.5 (issue #98). "
+            "The target endpoint is POST /api/v4/ai/duo_workflows/workflows."
+        )
+
     # -------------------------------------------------------------------------
     # Label Operations
     # -------------------------------------------------------------------------
