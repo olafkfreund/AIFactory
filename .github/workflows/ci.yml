@@ -358,23 +358,31 @@ jobs:
     runs-on: ubuntu-latest
     # Epic #44 / issue #45. R0b ships apps/web-server/server/rmux/wrapper.py
     # — the async subprocess wrapper that every later rmux phase depends
-    # on. Tests run against a real rmux v0.3.0 daemon installed on the
-    # runner. The binary is pinned by SHA-256; see design doc §3.4.
+    # on. Tests run against a real rmux daemon installed on the runner.
+    # The binary is pinned by SHA-256; see design doc §3.4.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install rmux v0.3.0 (linux-x86_64 musl, SHA-256 pinned)
+      - name: Install rmux v0.3.1 (linux-x86_64 gnu, SHA-256 pinned)
         run: |
           set -euo pipefail
-          # Pinned release tarball. Update both VERSION and SHA together.
-          VERSION="0.3.0"
-          ARCH_TARGET="x86_64-unknown-linux-musl"
-          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/rmux-${ARCH_TARGET}.tar.gz"
+          # Pinned release tarball. Update VERSION + EXPECTED_SHA together
+          # whenever bumping. Helvesec/rmux's v0.3.x assets are versioned
+          # in the filename (rmux-v${VERSION}-…) and ship the gnu (not
+          # musl) linux target.
+          VERSION="0.3.1"
+          ARCH_TARGET="x86_64-unknown-linux-gnu"
+          ASSET="rmux-v${VERSION}-${ARCH_TARGET}.tar.gz"
+          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/${ASSET}"
+          EXPECTED_SHA="511d3caceea4fcbc1458877a192efffcde5ceb1455f040f1a79c63ab00804cf8"
           curl -fsSL -o /tmp/rmux.tar.gz "${URL}"
-          # NOTE: pin SHA-256 once the release artifact ships a checksum
-          # file. For now we run a smoke-test verification via --version.
+          echo "${EXPECTED_SHA}  /tmp/rmux.tar.gz" | sha256sum -c -
           tar -xzf /tmp/rmux.tar.gz -C /tmp/
-          sudo install -m 0755 /tmp/rmux /usr/local/bin/rmux
+          # The v0.3.x tarballs unpack into a versioned subdir; locate
+          # the binary rather than assuming /tmp/rmux.
+          BIN_PATH="/tmp/rmux-v${VERSION}-${ARCH_TARGET}/rmux"
+          test -x "${BIN_PATH}"
+          sudo install -m 0755 "${BIN_PATH}" /usr/local/bin/rmux
           rmux -V
 
       - name: Set up Python
