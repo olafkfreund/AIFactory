@@ -3,6 +3,7 @@ import type { Project, ProjectSettings as ProjectSettingsType, AutoBuildVersionI
 import { SettingsSection } from '../SettingsSection';
 import { GeneralSettings } from '../../project-settings/GeneralSettings';
 import { SecuritySettings } from '../../project-settings/SecuritySettings';
+import { MCPServersTab } from '../../project-settings/MCPServersTab';
 import { GitHubIntegration } from '../integrations/GitHubIntegration';
 import { InitializationGuard } from '../common/InitializationGuard';
 import type { ProjectSettingsSection } from '../ProjectSettingsContent';
@@ -97,6 +98,16 @@ export function SectionRouter({
               setSettings={setSettings}
             />
           </InitializationGuard>
+        </SettingsSection>
+      );
+
+    case 'mcp':
+      return (
+        <SettingsSection
+          title={t('projectSections.mcp.integrationTitle')}
+          description={t('projectSections.mcp.integrationDescription')}
+        >
+          <MCPServersTab project={project} />
         </SettingsSection>
       );
 

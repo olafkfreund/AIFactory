@@ -27,10 +27,21 @@ AIFactory turns GitHub issues into shipping code via a coordinated **planner / c
 
 You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive.
 
+> **🚀 What's new (May 2026)** — the MCP Control-Plane Epic (#50) and Default MCP Servers Epic (#100) shipped. Highlights:
+>
+> - **27 MCP tools** across stdio + remote HTTP+SSE transports. Drive AIFactory from Claude Code, Cursor, Continue.dev, or any MCP-aware client.
+> - **`/handover` skill** for Claude Code — type `/handover` mid-conversation, AIFactory captures the context, runs the build autonomously, and hands you back a draft PR.
+> - **Default MCP servers** auto-enable per project when infra markers + credentials line up. Kubernetes, AWS, Azure, GitHub now ship; GitLab + Azure DevOps + GCP on the roadmap.
+> - **Remote Control** — wires Claude Code's native `--remote-control` flag into the agent spawn so you can drive a running task from `claude.ai/code` on any device.
+>
+> See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
+
 ## Why it's different
 
 - **Spec-first, not vibe-first.** Every agent run starts from a written, reviewable spec with acceptance criteria. Plans are editable before code is written.
 - **Multi-provider by design.** Pick a model per phase. Plan with Claude Opus, code with a cheap local Ollama qwen3, validate with Sonnet. Anthropic / OpenAI / Ollama / Gemini / Codex / any OpenAI-compatible endpoint.
+- **MCP control plane.** 27 tools across two transports let any MCP-aware editor inspect and direct AIFactory. The `/handover` skill turns "this is bigger than I thought" into an autonomous overnight run with one keystroke.
+- **Infra-aware out of the box.** A catalog of default MCP servers (Kubernetes, AWS, Azure, GitHub) auto-enables per project when markers + credentials line up. Read-only by default, audit-logged, CVE-aware version pins.
 - **Isolated by default.** Each task runs in its own git worktree. Nothing touches your working tree until you merge.
 - **Auditable.** Hash-chained audit log, on-disk specs+plans+QA reports, full SOC2 evidence catalog in the enterprise build.
 
@@ -76,6 +87,9 @@ Walkthrough with screenshots: **[Demo →](https://olafkfreund.github.io/AIFacto
   <tr>
     <td><img src="docs/static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
     <td><img src="docs/static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/static/img/screenshots/13-settings-mcp-servers.png" alt="Settings → MCP Servers tab — the new default-MCP-server catalog (Epic #100) showing per-project auto-enable status" /></td>
   </tr>
 </table>
 

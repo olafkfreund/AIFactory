@@ -20,7 +20,6 @@ from .auth import TokenAuthMiddleware
 from .config import get_settings
 from .database.engine import init_db
 from .logging_config import setup_logging
-from .services.skills_service import init_skills_service
 from .routes import (
     api_keys,
     audit,
@@ -33,6 +32,7 @@ from .routes import (
     files,
     git,
     github,
+    mcp,
     notifications,
     organizations,
     projects,
@@ -40,10 +40,11 @@ from .routes import (
     tasks,
     terminal,
 )
-from .routes import logs as logs_routes
 from .routes import cli_accounts as cli_accounts_routes
 from .routes import llm_endpoints as llm_endpoints_routes
+from .routes import logs as logs_routes
 from .routes import settings as settings_routes
+from .services.skills_service import init_skills_service
 from .websockets import events as events_ws
 from .websockets import logs as logs_ws
 from .websockets import progress as progress_ws
@@ -233,6 +234,19 @@ def create_app() -> FastAPI:
     # consults this on load to know whether to render the Live Agent
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
+    app.include_router(mcp.router)
+
+    # Remote HTTP+SSE MCP server (Epic #50 / Issue #83) — opt-in via
+    # AIFACTORY_MCP_REMOTE_ENABLED=true.  Exposes the AIFactory task
+    # control plane to non-Claude MCP clients (Cursor, Continue.dev,
+    # custom scripts).
+    from . import mcp_remote
+
+    if mcp_remote.is_enabled():
+        from .mcp_remote.server import router as mcp_remote_router
+
+        app.include_router(mcp_remote_router)
+        logger.info("Remote MCP server enabled — mounted at /api/mcp-remote")
 
     # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
     # Endpoints live under /api/projects/{id}/auto-fix/* so they match

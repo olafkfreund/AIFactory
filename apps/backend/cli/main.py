@@ -204,6 +204,13 @@ Environment Variables:
         help="Non-interactive mode: auto-continue existing builds, skip prompts (for UI integration)",
     )
 
+    # MCP diagnostics
+    parser.add_argument(
+        "--mcp-doctor",
+        action="store_true",
+        help="Print MCP catalog × credentials matrix (use with --project-dir for per-project markers)",
+    )
+
     # Worktree management
     parser.add_argument(
         "--list-worktrees",
@@ -279,6 +286,20 @@ def main() -> None:
     # Get model from CLI arg or env var (None if not explicitly set)
     # This allows get_phase_model() to fall back to task_metadata.json
     model = args.model or os.environ.get("AUTO_BUILD_MODEL")
+
+    # Handle --mcp-doctor command (no spec needed, no banner — output is plain operator diagnostics)
+    if args.mcp_doctor:
+        from .mcp_commands import handle_mcp_doctor_command
+
+        # If --project-dir wasn't explicitly passed, pass None so the doctor
+        # skips per-project marker resolution (otherwise it'd scan the CWD,
+        # which is rarely what an operator running mcp-doctor wants — they
+        # want to see "what would work on this machine" first).
+        explicit_project = (
+            project_dir if args.project_dir is not None else None
+        )
+        rc = handle_mcp_doctor_command(explicit_project)
+        sys.exit(rc)
 
     # Handle --list command
     if args.list:

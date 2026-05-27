@@ -290,6 +290,64 @@ remoteControl:
   # container's runAsUser / fsGroup.
   mountPath: "/home/nonroot/.claude/.credentials.json"
 
+# ---------------------------------------------------------------------------
+# MCP credentials — for the default-MCP-servers catalog (Epic #100).
+#
+# When enabled, mounts a single Kubernetes Secret with well-known keys at
+# the standard paths each cloud CLI expects.  The MCP subprocess catalog
+# (apps/backend/agents/tools_pkg/mcp_catalog.py) auto-detects credentials
+# via these files / env vars — no extra wiring needed beyond populating
+# the Secret.
+#
+# Toggle individual providers via ``mcpCredentials.providers.<name>: true``
+# to mount only the keys you have populated.  Each provider is independent
+# — you can mount AWS creds but not Azure, etc.
+#
+# Operator setup (one-time, from a logged-in workstation):
+#
+#   kubectl create secret generic aifactory-mcp-credentials \
+#     --from-file=aws-credentials=$HOME/.aws/credentials \
+#     --from-file=kubeconfig=$HOME/.kube/config \
+#     --from-file=gcp-service-account.json=/path/to/sa.json \
+#     --from-literal=github-token=ghp_xxxxx \
+#     --from-literal=gitlab-token=glpat-xxxxx \
+#     --from-literal=gitlab-instance-url=https://gitlab.example.com \
+#     --from-literal=azure-devops-token=adopat_xxxxx \
+#     --from-literal=azure-devops-org-url=https://dev.azure.com/myorg \
+#     --from-literal=azure-tenant-id=xxxx \
+#     --from-literal=azure-client-id=xxxx \
+#     --from-literal=azure-client-secret=xxxx \
+#     -n aifactory
+#
+# Cloud-native identity is PREFERRED over mounted creds where available:
+#   • AWS: IRSA — annotate the ServiceAccount with eks.amazonaws.com/role-arn;
+#     leave mcpCredentials.providers.aws=false.
+#   • Azure: AKS Pod Identity / Managed Identity — set
+#     ``AZURE_USE_MSI=true`` via env (extraEnv) and leave .providers.azure=false.
+#   • GCP: Workload Identity Federation — annotate the SA with
+#     iam.gke.io/gcp-service-account; leave .providers.gcp=false.
+#
+# Use the Secret-mount path below for bare-metal / on-prem K8s where
+# cloud-native identity isn't available.
+mcpCredentials:
+  # Master toggle.  When false (default), no MCP credential wiring is
+  # added to the pod — behaviour is byte-for-byte unchanged.
+  enabled: false
+  # Name of a Kubernetes Secret with the well-known keys listed above.
+  # Required when ``enabled: true`` AND at least one provider is true.
+  secretName: aifactory-mcp-credentials
+  # Per-provider toggles.  Each one mounts ONLY the keys / env vars
+  # that provider's MCP server needs — set to true only after you've
+  # populated the corresponding Secret keys.
+  providers:
+    aws: false           # mounts ``aws-credentials`` -> ~/.aws/credentials (0400)
+    azure: false         # injects AZURE_* env triplet from string keys
+    gcp: false           # mounts ``gcp-service-account.json`` -> /etc/aifactory/gcp-sa.json (0400)
+    kubernetes: false    # mounts ``kubeconfig`` -> ~/.kube/config (0400)
+    github: false        # injects GITHUB_TOKEN env from ``github-token`` string key
+    gitlab: false        # injects GITLAB_TOKEN + GITLAB_INSTANCE_URL env
+    azureDevOps: false   # injects AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN + AZURE_DEVOPS_ORG_SERVICE_URL env
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and

@@ -111,6 +111,71 @@ spec:
             - name: AIFACTORY_REMOTE_CONTROL_SUPPORTED
               value: "true"
             {{- end }}
+            {{- if .Values.mcpCredentials.enabled }}
+            # MCP credentials — env-var-only providers.  File-based
+            # providers (AWS / GCP / Kubernetes) land via volumeMount.
+            # Each block is independent so operators can mount partial
+            # provider sets.  Empty Secret keys are tolerated by K8s
+            # (the env var just resolves to the empty string), but the
+            # MCP credential probes treat empty as "not configured" —
+            # they only enable the catalog server when the value is
+            # truthy.
+            {{- if .Values.mcpCredentials.providers.github }}
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: github-token
+            {{- end }}
+            {{- if .Values.mcpCredentials.providers.gitlab }}
+            - name: GITLAB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: gitlab-token
+            - name: GITLAB_INSTANCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: gitlab-instance-url
+                  optional: true
+            {{- end }}
+            {{- if .Values.mcpCredentials.providers.azureDevOps }}
+            - name: AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: azure-devops-token
+            - name: AZURE_DEVOPS_ORG_SERVICE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: azure-devops-org-url
+            {{- end }}
+            {{- if .Values.mcpCredentials.providers.azure }}
+            - name: AZURE_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: azure-tenant-id
+            - name: AZURE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: azure-client-id
+            - name: AZURE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpCredentials.secretName | quote }}
+                  key: azure-client-secret
+            {{- end }}
+            {{- if .Values.mcpCredentials.providers.gcp }}
+            # GCP MCP reads the SA JSON via GOOGLE_APPLICATION_CREDENTIALS.
+            # The file mount happens below; this env points at it.
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/etc/aifactory/gcp-sa.json"
+            {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /api/health
@@ -158,6 +223,35 @@ spec:
               subPath: credentials.json
               readOnly: true
             {{- end }}
+            {{- if and .Values.mcpCredentials.enabled .Values.mcpCredentials.providers.aws }}
+            # AWS credentials — mounted at the path the awscli/SDK
+            # native discovery checks first.  ``subPath`` projects the
+            # single Secret key as a file at the exact location, not
+            # a directory.
+            - name: mcp-aws-credentials
+              mountPath: /home/nonroot/.aws/credentials
+              subPath: aws-credentials
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.mcpCredentials.enabled .Values.mcpCredentials.providers.kubernetes }}
+            # Kubernetes — operator-supplied kubeconfig.  For
+            # cloud-native identity (in-cluster ServiceAccount), set
+            # providers.kubernetes=false; the MCP server will pick up
+            # /var/run/secrets/kubernetes.io/serviceaccount/ on its own.
+            - name: mcp-kubeconfig
+              mountPath: /home/nonroot/.kube/config
+              subPath: kubeconfig
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.mcpCredentials.enabled .Values.mcpCredentials.providers.gcp }}
+            # GCP service account JSON.  GOOGLE_APPLICATION_CREDENTIALS
+            # env (set above) points here.  Path is under /etc rather
+            # than /home/nonroot to make the source obvious in audits.
+            - name: mcp-gcp-sa
+              mountPath: /etc/aifactory/gcp-sa.json
+              subPath: gcp-service-account.json
+              readOnly: true
+            {{- end }}
             {{- if and .Values.global .Values.global.customCABundle.secretName }}
             - name: custom-ca
               mountPath: /etc/ssl/custom-ca
@@ -189,6 +283,43 @@ spec:
             items:
               - key: credentials.json
                 path: credentials.json
+        {{- end }}
+        {{- if .Values.mcpCredentials.enabled }}
+        # Each file-mounted MCP provider gets its own Volume that
+        # projects ONLY the key it needs from the shared Secret.  This
+        # gives the operator one Secret to rotate while keeping the
+        # pod's volume list explicit about which keys are exposed.
+        # All mounts use defaultMode: 0400 — the cloud CLIs (and
+        # Kubernetes' kubectl) refuse to read credentials with looser
+        # perms, same posture as remoteControl above.
+        {{- $secretName := required "mcpCredentials.secretName is required when mcpCredentials.enabled=true — see charts/aifactory/values.yaml for the kubectl create secret command" .Values.mcpCredentials.secretName }}
+        {{- if .Values.mcpCredentials.providers.aws }}
+        - name: mcp-aws-credentials
+          secret:
+            secretName: {{ $secretName | quote }}
+            defaultMode: 0400
+            items:
+              - key: aws-credentials
+                path: aws-credentials
+        {{- end }}
+        {{- if .Values.mcpCredentials.providers.kubernetes }}
+        - name: mcp-kubeconfig
+          secret:
+            secretName: {{ $secretName | quote }}
+            defaultMode: 0400
+            items:
+              - key: kubeconfig
+                path: kubeconfig
+        {{- end }}
+        {{- if .Values.mcpCredentials.providers.gcp }}
+        - name: mcp-gcp-sa
+          secret:
+            secretName: {{ $secretName | quote }}
+            defaultMode: 0400
+            items:
+              - key: gcp-service-account.json
+                path: gcp-service-account.json
+        {{- end }}
         {{- end }}
         {{- if and .Values.global .Values.global.customCABundle.secretName }}
         - name: custom-ca

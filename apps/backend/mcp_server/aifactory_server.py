@@ -100,22 +100,45 @@ async def _run(spec_dir_factory: Callable[[], Path]) -> None:
     # if the SDK isn't installed).
     # Late import: agents/tools_pkg pulls in the rest of AIFactory's backend,
     # so we don't want to trip module-import errors on a help screen.
-    from agents.tools_pkg.registry import create_magestic_ai_mcp_server
+    from agents.tools_pkg.registry import (
+        create_all_tools,
+        create_magestic_ai_mcp_server,
+    )
+    from agents.tools_pkg.tools.task_control import create_task_control_tools
+    from claude_agent_sdk import create_sdk_mcp_server
     from mcp.server.models import InitializationOptions
     from mcp.server.stdio import stdio_server
 
     project_dir_factory = _build_project_dir_resolver()
 
-    sdk_cfg = create_magestic_ai_mcp_server(
-        spec_dir=spec_dir_factory,
-        project_dir=project_dir_factory,
+    # Build the tool list ourselves so the standalone server can register
+    # task-control tools (Epic #50 M1) IN ADDITION to the spec-internal
+    # tools the in-process agent gets. The in-process Claude Agent SDK
+    # session deliberately does NOT get task-control tools — the agent
+    # shouldn't drive itself recursively (start its own siblings, kill
+    # itself, etc.). That's why this lives in aifactory_server.py and
+    # NOT in registry.create_all_tools.
+    spec_internal_tools = create_all_tools(
+        spec_dir=spec_dir_factory, project_dir=project_dir_factory
     )
-    if sdk_cfg is None:
+    if not spec_internal_tools:
+        # Replicate the original create_magestic_ai_mcp_server failure path
+        # so the error message stays identical for operators who hit it.
+        _ = create_magestic_ai_mcp_server(
+            spec_dir=spec_dir_factory, project_dir=project_dir_factory
+        )
         sys.stderr.write(
             "aifactory MCP: claude-agent-sdk not installed in this venv.\n"
             "Run 'npm run install:backend' from the AIFactory repo root.\n"
         )
         sys.exit(2)
+
+    task_control_tools = create_task_control_tools()
+    sdk_cfg = create_sdk_mcp_server(
+        name="aifactory",
+        version="1.0.0",
+        tools=spec_internal_tools + task_control_tools,
+    )
 
     server = sdk_cfg["instance"]  # mcp.server.lowlevel.server.Server
 
