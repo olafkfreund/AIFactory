@@ -481,6 +481,13 @@ async def add_project(project: ProjectCreate):
         "created_at": now,
         "updated_at": now,
     }
+    # Clone-mode (#82 PR-A) — persist the source URL + branch so the
+    # Auto-Fix pull-on-poll hook (PR-B) can fast-forward the workspace
+    # before each poll cycle. Local-mode projects don't carry these.
+    if project.gitUrl:
+        project_data["clonedFrom"] = project.gitUrl
+        if project.branch:
+            project_data["clonedBranch"] = project.branch
 
     projects[project_id] = project_data
     save_projects(projects)

@@ -245,6 +245,50 @@ rmux:
   rmuxEmptyDirSizeLimit: 10Mi
 
 # ---------------------------------------------------------------------------
+# Portal-managed project workspaces (epic #82).
+#
+# When AIFactory accepts a Git URL via ``POST /api/projects {gitUrl}``
+# (added in PR-A), the portal clones the repo into a writable directory
+# rooted at ``PROJECT_WORKSPACE_ROOT``.  On laptop installs that defaults
+# to ``~/.aifactory/workspaces/``; on K8s installs we need a PVC mounted
+# at a fixed path so cloned workspaces survive pod restarts.
+#
+# When ``workspaces.enabled: true``:
+#   1. A PVC of ``workspaces.size`` is created in the release namespace.
+#   2. The PVC is mounted at ``workspaces.mountPath`` on the web-server pod.
+#   3. ``PROJECT_WORKSPACE_ROOT`` env var is set to ``workspaces.mountPath``
+#      so the clone service in ``project_workspace_service.py`` puts every
+#      cloned repo under that path.
+#
+# When ``workspaces.enabled: false`` (default) nothing about the pod
+# changes — laptop / single-tenant deployments that don't use the
+# clone-from-URL flow keep working exactly as they did pre-#82.
+#
+# Multi-replica caveat: ``accessMode: ReadWriteOnce`` is fine for the
+# v1.0 single-replica web-server.  v1.1's Redis-fan-out (#40) will let
+# replicas > 1 share state, but the workspace PVC will then need to be
+# RWX (NFS / Azure Files / EFS / CephFS) for cross-pod access.
+workspaces:
+  # Master toggle.  False means: no PVC, no env var, behaviour unchanged.
+  enabled: false
+  # PVC size.  100Gi is the recommended default — enough for ~50 cloned
+  # repos averaging 2Gi each.  Resize via ``kubectl edit pvc`` on
+  # supporting storage classes; recreate the PVC if not.
+  size: 100Gi
+  # StorageClass name.  Empty string lets Kubernetes pick the cluster
+  # default; set explicitly for clusters with multiple classes (e.g.
+  # ``gp3``, ``managed-premium``, ``standard-rwo``).
+  storageClass: ""
+  # Access mode.  Stay on RWO for v1.0 (single replica); v1.1 will need
+  # RWX when Redis fan-out lets replicas > 1.
+  accessMode: ReadWriteOnce
+  # In-container mount path + ``PROJECT_WORKSPACE_ROOT`` value.  Keep
+  # under /var/lib so it's clearly out-of-tree from the app code; the
+  # ``nonroot`` user needs write access (the PVC's fsGroup honours
+  # podSecurityContext.fsGroup automatically).
+  mountPath: "/var/lib/aifactory/workspaces"
+
+# ---------------------------------------------------------------------------
 # Remote Control — Claude Code's native --remote-control flag.
 #
 # When per-task ``enableRemoteControl: true`` is set (or the project's

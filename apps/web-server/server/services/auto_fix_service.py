@@ -539,6 +539,43 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     return {"specId": spec_id, "taskId": task_id, "status": "started"}
 
 
+async def _pull_clone_if_any(project_id: str) -> None:
+    """If the project was registered via gitUrl (#82 PR-A), fast-forward
+    the local clone before reading the issue list (#82 PR-B's
+    pull-on-poll hook).
+
+    No-op for local-path projects (the common laptop case) and on git
+    errors — a stale clone is better than a poll cycle that aborts.
+    """
+    from ..routes.projects import load_projects
+    projects = load_projects()
+    proj = projects.get(project_id) or {}
+    git_url = proj.get("clonedFrom")
+    if not git_url:
+        return
+    project_path = Path(proj.get("path", ""))
+    if not project_path.is_dir():
+        return
+    try:
+        from .project_workspace_service import (
+            GitOperationError,
+            clone_or_update,
+        )
+        await clone_or_update(
+            git_url=git_url,
+            branch=proj.get("clonedBranch"),
+            slug=project_path.name,
+            root=project_path.parent,
+        )
+        logger.debug("[auto_fix] pulled %s before poll", project_path)
+    except GitOperationError as e:
+        logger.warning(
+            "[auto_fix] pull-on-poll failed for project=%s: %s — continuing with stale clone",
+            project_id,
+            e,
+        )
+
+
 async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     """Manual-poll convenience: find new issues + start each one.
 
@@ -546,12 +583,18 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     ``status="delegated"``, scan the provider for Copilot's resulting PR
     and transition to ``in_review`` (or ``declined`` after 24h).
 
+    For portal-managed clones (#82 PR-B): runs ``git pull`` before
+    reading the issue list so the agent always sees the latest commits.
+
     This is what the frontend's "Poll now" button and the 5-min
     auto-poll loop ultimately invoke.
     """
     cfg = get_config(project_id)
     if not cfg:
         raise ValueError(f"Project {project_id} not found")
+
+    # Fast-forward portal-managed clones before we look for new issues.
+    await _pull_clone_if_any(project_id)
 
     new_issues = await check_new_issues(project_id)
     started: list[dict[str, Any]] = []
