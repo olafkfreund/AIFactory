@@ -88,6 +88,9 @@ Walkthrough with screenshots: **[Demo →](https://olafkfreund.github.io/AIFacto
     <td><img src="docs/static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
     <td><img src="docs/static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
   </tr>
+  <tr>
+    <td colspan="2"><img src="docs/static/img/screenshots/13-settings-mcp-servers.png" alt="Settings → MCP Servers tab — the new default-MCP-server catalog (Epic #100) showing per-project auto-enable status" /></td>
+  </tr>
 </table>
 
 > Screenshots are auto-captured by `scripts/capture-screenshots.ts` — refresh them with `npm -w apps/frontend-web run capture-screenshots`.
