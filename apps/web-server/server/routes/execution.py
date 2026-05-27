@@ -253,7 +253,7 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
             # Mark plan as valid so we fall through to the execution path below
             plan_is_valid = True
-            logger.info(f"[StartTask] Fast path: spec + plan generated, proceeding to execution")
+            logger.info("[StartTask] Fast path: spec + plan generated, proceeding to execution")
 
         else:
             # === STANDARD PATH: Run full spec creation ===
@@ -328,7 +328,7 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
         task_complexity = task_metadata.get("complexity")
         if task_complexity == "simple":
             effective_mode = "quick"
-            logger.info(f"[StartTask] Auto-derived quick mode from simple complexity")
+            logger.info("[StartTask] Auto-derived quick mode from simple complexity")
 
     agent_service = get_agent_service()
 
@@ -395,6 +395,52 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     # Extract user_id from auth context for email notifications
     _user = getattr(raw_request.state, "user", None)
     _user_id = _user["id"] if isinstance(_user, dict) and _user.get("id") else ""
+
+    # Delegation branch (gap #1 from #144) — when the task asks for
+    # Copilot delegation AND the project's git provider is GitHub AND we
+    # know which issue this task came from, hand off to the shared
+    # delegation runner instead of running the local coder/QA pipeline.
+    settings = projects[project_id].get("settings") or {}
+    provider_type = (settings.get("gitProvider") or "github").lower()
+    wants_delegation = bool(task_metadata.get("enableDelegation"))
+    issue_number = task_metadata.get("githubIssueNumber")
+    if isinstance(issue_number, str) and issue_number.isdigit():
+        issue_number = int(issue_number)
+
+    if wants_delegation and provider_type == "github" and isinstance(issue_number, int):
+        from ..services.auto_fix_service import _provider_for
+        from ..services.delegation_runner import run_delegation
+        try:
+            provider = _provider_for(project_id)
+            result = await run_delegation(
+                project_id=project_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                issue_number=int(issue_number),
+                provider=provider,
+            )
+        except Exception as e:
+            logger.exception(f"[StartTask] Delegation failed for {task_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Delegation failed: {e}",
+            )
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "delegated",
+            "delegatedAt": result["delegatedAt"],
+            "commentPosted": result["commentPosted"],
+            "commentSkippedAsDuplicate": result["commentSkippedAsDuplicate"],
+            "copilotAssigned": result["copilotAssigned"],
+        }
+
+    if wants_delegation and not isinstance(issue_number, int):
+        logger.warning(
+            "[StartTask] Task %s has enableDelegation=true but no githubIssueNumber "
+            "in metadata — falling through to local execution",
+            task_id,
+        )
 
     try:
         await agent_service.start_task_execution(
@@ -470,7 +516,6 @@ async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRe
     Use this when a task shows as running but the process has died.
     Optionally auto-restart the task after recovery.
     """
-    import json
 
     # Parse task ID
     if ":" not in task_id:
