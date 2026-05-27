@@ -187,7 +187,7 @@ class GitHubProvider:
         cmd.append("--yes")
 
         try:
-            await self._gh_client._run_gh_command(cmd)
+            await self._gh_client.run(cmd)
             return True
         except Exception:
             return False
@@ -201,7 +201,7 @@ class GitHubProvider:
         try:
             if comment:
                 await self.add_comment(pr_number, comment)
-            await self._gh_client._run_gh_command(["pr", "close", str(pr_number)])
+            await self._gh_client.run(["pr", "close", str(pr_number)])
             return True
         except Exception:
             return False
@@ -294,11 +294,11 @@ class GitHubProvider:
             for assignee in assignees:
                 cmd.extend(["--assignee", assignee])
 
-        result = await self._gh_client._run_gh_command(cmd)
+        result = await self._gh_client.run(cmd)
 
         # Parse the issue URL to get the number
         # gh issue create outputs the URL
-        url = result.strip()
+        url = result.stdout.strip()
         number = int(url.split("/")[-1])
 
         return await self.fetch_issue(number)
@@ -312,7 +312,7 @@ class GitHubProvider:
         try:
             if comment:
                 await self.add_comment(number, comment)
-            await self._gh_client._run_gh_command(["issue", "close", str(number)])
+            await self._gh_client.run(["issue", "close", str(number)])
             return True
         except Exception:
             return False
@@ -494,11 +494,11 @@ class GitHubProvider:
             cmd.extend(["--description", label.description])
         cmd.append("--force")  # Update if exists
 
-        await self._gh_client._run_gh_command(cmd)
+        await self._gh_client.run(cmd)
 
     async def list_labels(self) -> list[LabelData]:
         """List all labels in the repository."""
-        result = await self._gh_client._run_gh_command(
+        result = await self._gh_client.run(
             [
                 "label",
                 "list",
@@ -507,7 +507,7 @@ class GitHubProvider:
             ]
         )
 
-        labels_data = json.loads(result) if result else []
+        labels_data = json.loads(result.stdout) if result.stdout else []
         return [
             LabelData(
                 name=label["name"],
