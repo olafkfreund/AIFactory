@@ -314,6 +314,21 @@ export const webAPI: API & { _isWebMode: boolean } = {
       ...(name ? { name } : {}),
     }),
   removeProject: (projectId: string) => del(`/projects/${projectId}`),
+
+  // Git credentials (#82 PR-C). API mounted at /api/git-credentials.
+  // The api-client `get`/`post`/`del` helpers automatically prepend
+  // /api so we pass paths starting at /git-credentials here.
+  listGitCredentials: (orgId: string) =>
+    get<import('../shared/types/ipc').GitCredentialSummary[]>(
+      `/git-credentials?org_id=${encodeURIComponent(orgId)}`,
+    ),
+  createGitCredential: (body: import('../shared/types/ipc').CreateGitCredentialBody) =>
+    post<import('../shared/types/ipc').GitCredentialSummary>(
+      '/git-credentials',
+      body as unknown as Record<string, unknown>,
+    ),
+  deleteGitCredential: (credentialId: string) =>
+    del(`/git-credentials/${credentialId}`),
   getProjects: () => get<Project[]>('/projects'),
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) =>
     patch(`/projects/${projectId}/settings`, settings),

@@ -66,6 +66,32 @@
       "title": "Integrations",
       "description": "Third-party service connections and OAuth credentials"
     },
+    "gitCredentials": {
+      "title": "Git Credentials",
+      "description": "Stored PATs for cloning private repositories",
+      "info": "When you register a project via Git URL (Add Project → Clone from Git URL), select a credential here to clone private repos. Tokens are encrypted at rest and never logged.",
+      "noOrg": "No organization configured yet — register a project first.",
+      "orgIdLabel": "Organization ID",
+      "orgIdHelp": "Your organization's UUID. Find it in any org URL or via the orgs API. Multi-org picker lands with Epic #35.",
+      "existing": "Existing credentials",
+      "add": "Add credential",
+      "loading": "Loading credentials…",
+      "empty": "No credentials stored yet.",
+      "anyHost": "any host",
+      "created": "created",
+      "copyId": "Copy credential ID",
+      "newCredential": "New credential",
+      "name": "Name",
+      "host": "Host (optional)",
+      "username": "Username (optional)",
+      "token": "Personal Access Token",
+      "tokenHelp": "Token is encrypted at rest. After save it cannot be retrieved again — copy elsewhere if you need a backup.",
+      "fieldsRequired": "Name and token are required.",
+      "confirmDelete": "Delete this credential? This cannot be undone.",
+      "cancel": "Cancel",
+      "save": "Save credential",
+      "saving": "Saving…"
+    },
     "api-profiles": {
       "title": "API Profiles",
       "description": "Custom API endpoint profiles"

@@ -127,6 +127,31 @@ export interface DiscoveredProject {
   has_claude_md: boolean;
 }
 
+/**
+ * Git credential row as returned by /api/git-credentials (epic #82 PR-C).
+ * Token is never carried — it's encrypted at rest on the backend and
+ * only the clone service reads the plaintext.
+ */
+export interface GitCredentialSummary {
+  id: string;
+  org_id: string;
+  name: string;
+  kind: string;
+  host: string | null;
+  username: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface CreateGitCredentialBody {
+  org_id: string;
+  name: string;
+  token: string;
+  kind?: string;
+  host?: string;
+  username?: string;
+}
+
 export interface API {
   // Project operations
   addProject: (projectPath: string) => Promise<IPCResult<Project>>;
@@ -144,6 +169,15 @@ export interface API {
     name?: string,
   ) => Promise<IPCResult<Project>>;
   removeProject: (projectId: string) => Promise<IPCResult>;
+
+  // Git credentials for portal-managed clones (epic #82 PR-C). Tokens
+  // are encrypted at rest on the backend; create returns the row
+  // metadata but NEVER the raw token after creation.
+  listGitCredentials: (orgId: string) => Promise<IPCResult<GitCredentialSummary[]>>;
+  createGitCredential: (
+    body: CreateGitCredentialBody,
+  ) => Promise<IPCResult<GitCredentialSummary>>;
+  deleteGitCredential: (credentialId: string) => Promise<IPCResult>;
   getProjects: () => Promise<IPCResult<Project[]>>;
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
   initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
