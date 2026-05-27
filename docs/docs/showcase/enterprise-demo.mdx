@@ -55,23 +55,28 @@ The "AIFactory takes over automatically" beat is the **Auto-Fix toggle** in each
 
 In production, the same flow is also exposed as a webhook receiver (`POST /api/webhooks/{provider}`) so polling isn't required. For the demo we use the polling path because it doesn't need the portal to be reachable from the internet.
 
-## Run it yourself
+## Reproduce these recordings
+
+The two recordings on this page are produced by independent scripts so each can be re-shot without affecting the other.
 
 Prerequisites:
 
-- The portal running locally (`apps/web-server/.../server.main` + `apps/frontend-web/npm run dev`)
+- The portal running locally (`apps/web-server` + `apps/frontend-web` per the [Getting Started](../getting-started) guide)
 - A Claude OAuth token in `apps/backend/.env`
-- `gh`, `jq`, `asciinema`, `ffmpeg` on `PATH`
-- `git clone https://github.com/olafkfreund/aifactory-demo /tmp/aifactory-demo`
-- The demo repo registered as an AIFactory project (`POST /api/projects` with `path=/tmp/aifactory-demo`)
-
-Then:
+- `asciinema` + `ffmpeg` on `PATH`
+- `git clone https://github.com/olafkfreund/aifactory-demo /tmp/aifactory-demo` and the repo registered as an AIFactory project
+- An existing completed run for the demo task (the narrator script reads its real artifacts — `spec.md`, `implementation_plan.json`, `build-progress.txt`, `qa_report.md`)
 
 ```bash
-./scripts/demo-record.sh
-```
+# Terminal cast — narrates over the completed task's real artifacts.
+asciinema rec --overwrite --idle-time-limit 2 \
+  --command "bash $(pwd)/scripts/record-handover-demo.sh" \
+  docs/static/recordings/handover-workflow.cast
 
-It produces fresh `.cast` and `.mp4` artifacts under `docs/static/recordings/`. Add `--dry-run` to walk the flow without recording, or `--skip-claude` to retake the recording against issues you already opened.
+# Browser walkthrough — drives the live portal via Playwright.
+node_modules/.bin/tsx scripts/record-portal-walkthrough.ts
+# (then ffmpeg-trim/crop the resulting webm into the .mp4 under docs/static/recordings/)
+```
 
 ## Honest caveats
 
