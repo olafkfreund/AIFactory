@@ -79,6 +79,22 @@ def slug_from_git_url(git_url: str) -> str:
     return slug or "workspace"
 
 
+def _inject_credential(git_url: str, username: str, token: str) -> str:
+    """Rewrite an HTTPS git URL to embed a PAT (#82 PR-C).
+
+    ``https://github.com/owner/repo.git`` →
+    ``https://oauth2:<token>@github.com/owner/repo.git``
+
+    SSH URLs (``git@host:...``) are returned unchanged — they auth via
+    keys, not URLs; stored Deploy Keys are a separate path (out of
+    scope for V1 of PR-C).
+    """
+    if not git_url.startswith("https://"):
+        return git_url
+    rest = git_url[len("https://") :]
+    return f"https://{username}:{token}@{rest}"
+
+
 async def clone_or_update(
     git_url: str,
     branch: str | None = None,
@@ -86,6 +102,7 @@ async def clone_or_update(
     *,
     root: Path | None = None,
     timeout_seconds: float = DEFAULT_GIT_TIMEOUT_SECONDS,
+    credential: tuple[str, str] | None = None,
 ) -> Path:
     """Clone the repo into the workspace root, or fast-forward an existing clone.
 
@@ -99,6 +116,12 @@ async def clone_or_update(
             ``workspace_root()`` (PROJECT_WORKSPACE_ROOT env or
             ``~/.aifactory/workspaces/``).
         timeout_seconds: Per-operation timeout.
+        credential: Optional ``(username, token)`` tuple. When provided
+            and ``git_url`` is HTTPS, the credential is injected into
+            the URL for the network operation only — never persisted to
+            git's config (the workspace dir gets a sanitized origin
+            via ``git remote set-url`` after the fetch). Use this with
+            credentials from the ``git_credentials`` table (#82 PR-C).
 
     Returns:
         Absolute path to the local clone.
@@ -109,24 +132,53 @@ async def clone_or_update(
     workspace = (root or workspace_root()) / (slug or slug_from_git_url(git_url))
     workspace.parent.mkdir(parents=True, exist_ok=True)
 
+    # Build the URL that actually gets passed to ``git`` for network ops.
+    # Note: ``credential`` is the secret material — never log it.
+    fetch_url = git_url
+    if credential is not None:
+        username, token = credential
+        fetch_url = _inject_credential(git_url, username, token)
+
     if (workspace / ".git").is_dir():
-        # Existing clone — fetch + reset/fast-forward
-        await _run_git(
-            ["fetch", "--prune", "origin"],
-            cwd=workspace,
-            timeout=timeout_seconds,
-        )
-        if branch:
+        # Existing clone — fetch + reset/fast-forward.
+        # For credentialed pulls, point origin at the URL-with-token
+        # FOR THIS OPERATION ONLY, then restore the sanitized origin so
+        # the credential doesn't end up in ``.git/config``.
+        if credential is not None:
             await _run_git(
-                ["checkout", branch],
+                ["remote", "set-url", "origin", fetch_url],
                 cwd=workspace,
                 timeout=timeout_seconds,
             )
-        await _run_git(
-            ["pull", "--ff-only"],
-            cwd=workspace,
-            timeout=timeout_seconds,
-        )
+        try:
+            await _run_git(
+                ["fetch", "--prune", "origin"],
+                cwd=workspace,
+                timeout=timeout_seconds,
+            )
+            if branch:
+                await _run_git(
+                    ["checkout", branch],
+                    cwd=workspace,
+                    timeout=timeout_seconds,
+                )
+            await _run_git(
+                ["pull", "--ff-only"],
+                cwd=workspace,
+                timeout=timeout_seconds,
+            )
+        finally:
+            if credential is not None:
+                # Restore origin to the sanitized URL so credentials
+                # don't leak via ``git config``.
+                try:
+                    await _run_git(
+                        ["remote", "set-url", "origin", git_url],
+                        cwd=workspace,
+                        timeout=timeout_seconds,
+                    )
+                except GitOperationError:
+                    pass
         logger.info("[workspace] pulled latest into %s", workspace)
         return workspace
 
@@ -134,8 +186,19 @@ async def clone_or_update(
     cmd = ["clone"]
     if branch:
         cmd.extend(["--branch", branch])
-    cmd.extend([git_url, str(workspace)])
+    cmd.extend([fetch_url, str(workspace)])
     await _run_git(cmd, cwd=workspace.parent, timeout=timeout_seconds)
+    if credential is not None:
+        # Strip the credential from origin so it isn't persisted in
+        # the workspace's ``.git/config``.
+        try:
+            await _run_git(
+                ["remote", "set-url", "origin", git_url],
+                cwd=workspace,
+                timeout=timeout_seconds,
+            )
+        except GitOperationError:
+            pass
     logger.info("[workspace] cloned %s → %s", git_url, workspace)
     return workspace
 

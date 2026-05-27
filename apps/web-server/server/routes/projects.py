@@ -269,6 +269,33 @@ def project_to_response(project_id: str, project_data: dict) -> dict:
 # --------------------------------------------------------------------------
 
 
+async def _resolve_git_credential(cred_id: str) -> tuple[str, str] | None:
+    """Look up a stored Git credential by id and return (username, token).
+
+    Returns ``None`` (rather than raising) if the credential doesn't
+    exist or its kind isn't supported — the caller falls back to an
+    unauthenticated clone, which will give a clearer error if the
+    remote actually needs auth. Used by ``add_project`` (#82 PR-C).
+    """
+    from sqlalchemy import select
+
+    from ..database import GitCredential
+    from ..database.engine import get_db
+
+    async for session in get_db():
+        result = await session.execute(
+            select(GitCredential).where(GitCredential.id == cred_id)
+        )
+        cred = result.scalar_one_or_none()
+        if cred is None:
+            return None
+        if cred.kind != "pat":
+            # Deploy Keys + GitHub App tokens are out of scope for V1.
+            return None
+        return (cred.username or "oauth2", cred.token)
+    return None
+
+
 @router.get("")
 async def list_projects():
     """List all registered projects.
@@ -430,10 +457,17 @@ async def add_project(project: ProjectCreate):
             GitOperationError,
             clone_or_update,
         )
+        # Stored credential lookup (#82 PR-C). When the caller passes
+        # gitCredentialId, fetch the (username, token) tuple from the
+        # git_credentials table and pass it to the clone service.
+        credential: tuple[str, str] | None = None
+        if project.gitCredentialId:
+            credential = await _resolve_git_credential(project.gitCredentialId)
         try:
             cloned_path = await clone_or_update(
                 git_url=project.gitUrl,
                 branch=project.branch,
+                credential=credential,
             )
         except GitOperationError as e:
             raise HTTPException(
