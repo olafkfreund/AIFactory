@@ -560,6 +560,10 @@ class ProjectSettingsUpdate(BaseModel):
     # in its task_metadata.  Per-task overrides win — this is just the default
     # when the user creates a task without flipping the wizard toggle.
     remoteControlByDefault: bool | None = Field(default=None, alias="remote_control_by_default")
+    # When true, every NEW task in this project gets ``enableDelegation: true``
+    # in its task_metadata. Only effective on GitHub projects — V1.5 (#98)
+    # extends to GitLab Duo Workflow. Per-task overrides win.
+    delegateByDefault: bool | None = Field(default=None, alias="delegate_by_default")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -620,6 +624,7 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
             "graphitiMcpEnabled": "GRAPHITI_ENABLED",
             "useClaudeMd": "USE_CLAUDE_MD",
             "remoteControlByDefault": "REMOTE_CONTROL_BY_DEFAULT",
+            "delegateByDefault": "DELEGATE_BY_DEFAULT",
         }
 
         # Update string/value settings
@@ -937,7 +942,7 @@ Created via Magestic AI Web UI
         # Copy model-related fields that phase_config.py expects
         # Also include 'mode' for Quick Mode prompt selection and 'requireReviewBeforeCoding' for approval gate
         # Also include selectedSkills so agent_service.py can inject skill context
-        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl"]
+        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl", "enableDelegation"]
         for field in model_fields:
             if field in task_data.metadata:
                 task_metadata[field] = task_data.metadata[field]

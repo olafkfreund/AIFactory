@@ -194,5 +194,16 @@
     "raceLostBody": "Another viewer is already attached to this task's live console. Try again after they detach.",
     "raceLostDismiss": "OK",
     "headerHint": "Read-only mirror of the agent's terminal. Click Attach to take control."
+  },
+  "delegation": {
+    "enableLabel": "Delegate coding to Copilot Coding Agent",
+    "enableHelp": "AIFactory still plans the spec, then hands the issue to GitHub Copilot for implementation. Uses your Copilot seat — no extra Claude tokens spent on coding.",
+    "githubOnlyTooltip": "Delegation requires a GitHub project. GitLab Duo Workflow support is planned for a later release.",
+    "projectDefaultLabel": "Delegate coding to Copilot for new tasks by default",
+    "projectDefaultHelp": "Every new task in this GitHub project starts with delegation enabled. The wizard's per-task toggle still overrides on a case-by-case basis.",
+    "badgeLabel": "Delegated to Copilot ↗",
+    "badgeTooltipPending": "AIFactory handed this issue to GitHub Copilot Coding Agent. Watching for the resulting PR — refresh in a few minutes.",
+    "badgeTooltipInReview": "Copilot opened a PR for this issue. Click to open the PR.",
+    "declinedNotice": "Copilot may have declined this task — no matching PR opened within 24 hours. You can re-run with the local AIFactory agent."
   }
 }

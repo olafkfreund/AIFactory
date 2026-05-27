@@ -163,6 +163,15 @@ export interface TaskDraft {
    * session is drivable from claude.ai/code / Claude mobile app.
    */
   enableRemoteControl?: boolean;
+  /**
+   * Delegate the coding phase to GitHub Copilot Coding Agent.
+   * AIFactory still runs the planner phase locally (so the spec gets
+   * a structured implementation plan posted on the issue), but the
+   * actual implementation is done by Copilot using the user's seat.
+   * Only honoured when the project's ``gitProvider === "github"``.
+   * GitLab Duo Workflow delegation lands in V1.5 (#98).
+   */
+  enableDelegation?: boolean;
   selectedSkills?: SelectedSkill[];
   savedAt: Date;
 }
@@ -231,6 +240,10 @@ export interface TaskMetadata {
   // Remote Control — spawn agent with Claude Code's --remote-control flag
   // so the session is drivable from claude.ai/code / Claude mobile app
   enableRemoteControl?: boolean;
+
+  // Delegation — hand the coding phase off to GitHub Copilot Coding
+  // Agent (planner still runs locally). Only honoured on GitHub.
+  enableDelegation?: boolean;
 
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Model to use (e.g. 'opus', 'ollama:llama3', 'openai_compat:mistral-7b') - used when not auto profile
