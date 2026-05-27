@@ -130,6 +130,19 @@ export interface DiscoveredProject {
 export interface API {
   // Project operations
   addProject: (projectPath: string) => Promise<IPCResult<Project>>;
+  /**
+   * Register a project by Git URL. The backend clones the repo into
+   * ``PROJECT_WORKSPACE_ROOT`` (defaults to ``~/.aifactory/workspaces/``
+   * on laptop installs; a PVC on K8s) and returns the registered
+   * project pointing at the local clone.
+   *
+   * Added in epic #82 PR-A; surfaced to the UI in PR-B.
+   */
+  addProjectFromGitUrl: (
+    gitUrl: string,
+    branch?: string,
+    name?: string,
+  ) => Promise<IPCResult<Project>>;
   removeProject: (projectId: string) => Promise<IPCResult>;
   getProjects: () => Promise<IPCResult<Project[]>>;
   updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
