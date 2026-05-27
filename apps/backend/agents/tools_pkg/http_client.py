@@ -13,10 +13,17 @@ Why a separate client (not just ``httpx.AsyncClient`` inline):
 - Lazy-initialized client so a bare ``--help`` on the server doesn't
   open a connection pool.
 
-Per the Epic #50 design: tools have full admin via the legacy bearer
-token at ``~/.aifactory/.token``. Per-user tokens land in the v1.1
-RBAC work; this client gets a token rotation when those mint flows go
-live.
+Per Issue #154 (v1.1 RBAC): tools now talk to the scope-gated proxy
+under ``/api/mcp-stdio/*`` and prefer the per-user ``acw_`` key from
+``AIFACTORY_MCP_KEY`` (or ``~/.aifactory/.mcp-key``) over the legacy
+admin token at ``~/.aifactory/.token``. The legacy token continues to
+work as a wildcard fallback so v1.0 single-user laptops keep working.
+
+Token resolution order (first non-empty wins):
+1. ``$AIFACTORY_MCP_KEY``                  — env, recommended for enterprise
+2. ``~/.aifactory/.mcp-key``               — file form of #1
+3. ``$AIFACTORY_API_TOKEN_FILE`` (legacy)  — legacy override
+4. ``~/.aifactory/.token``                 — legacy admin token (wildcard)
 """
 
 from __future__ import annotations
@@ -36,7 +43,12 @@ except ImportError:
 
 DEFAULT_API_URL = "http://localhost:3101"
 DEFAULT_TOKEN_FILE = "~/.aifactory/.token"
+DEFAULT_MCP_KEY_FILE = "~/.aifactory/.mcp-key"
 DEFAULT_TIMEOUT = 30.0
+# All stdio-MCP requests go through the scope-gated proxy mounted at
+# this prefix (Issue #154). The proxy delegates to the same service
+# the regular ``/api/`` routes use, so payload shapes are identical.
+MCP_PROXY_PREFIX = "/api/mcp-stdio"
 
 
 class MCPHTTPError(RuntimeError):
@@ -79,19 +91,46 @@ _state = _ClientState()
 
 
 def _read_token() -> str:
-    """Return the bearer token from $AIFACTORY_API_TOKEN_FILE or the default.
+    """Return the bearer token used to call the stdio-MCP proxy.
 
     Re-read at every call so operators can rotate the token (regenerate via
     the web UI, write the file, no restart needed) without redeploying the
     MCP subprocess. Never echo this value in error messages.
+
+    Resolution order — first non-empty source wins:
+    1. ``$AIFACTORY_MCP_KEY`` env (recommended for enterprise: scope-gated)
+    2. ``~/.aifactory/.mcp-key`` file (file form of #1)
+    3. ``$AIFACTORY_API_TOKEN_FILE`` (legacy override path)
+    4. ``~/.aifactory/.token`` (legacy admin token — wildcard scopes)
     """
+    # 1. Env var — highest precedence so a developer can scope a single
+    # shell to a different key without touching the file.
+    env_key = os.environ.get("AIFACTORY_MCP_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    # 2. Per-user scoped key file. Same shape as the legacy token file
+    # but holds an ``acw_`` key instead of the admin token.
+    mcp_key_path = Path(DEFAULT_MCP_KEY_FILE).expanduser()
+    if mcp_key_path.exists():
+        try:
+            token = mcp_key_path.read_text().strip()
+        except OSError as exc:
+            raise MCPHTTPError(
+                f"Cannot read AIFactory MCP key at {mcp_key_path}: {exc}"
+            ) from exc
+        if token:
+            return token
+
+    # 3-4. Legacy admin token fallback.
     token_path = Path(
         os.environ.get("AIFACTORY_API_TOKEN_FILE", DEFAULT_TOKEN_FILE)
     ).expanduser()
     if not token_path.exists():
         raise MCPHTTPError(
-            f"AIFactory API token not found at {token_path} — "
-            "regenerate via the web UI or run: python -m server.main"
+            f"AIFactory MCP key not found — set $AIFACTORY_MCP_KEY, write "
+            f"{mcp_key_path}, or regenerate the legacy token at {token_path} "
+            "via the web UI."
         )
     try:
         token = token_path.read_text().strip()
@@ -130,6 +169,12 @@ async def request(method: str, path: str, **kwargs: Any) -> dict[str, Any] | lis
     headers = dict(kwargs.pop("headers", {}) or {})
     headers["Authorization"] = f"Bearer {token}"
 
+    # Rewrite ``/api/...`` → ``/api/mcp-stdio/...`` so every stdio MCP call
+    # hits the scope-gated proxy. Paths already under the proxy prefix
+    # pass through unchanged (allows future direct callers / tests).
+    if path.startswith("/api/") and not path.startswith(f"{MCP_PROXY_PREFIX}/"):
+        path = MCP_PROXY_PREFIX + path[len("/api"):]
+
     client = await _state.get_client()
     base = _state.base_url()
 
@@ -146,9 +191,17 @@ async def request(method: str, path: str, **kwargs: Any) -> dict[str, Any] | lis
         ) from exc
 
     if response.status_code == 401:
-        token_path = os.environ.get("AIFACTORY_API_TOKEN_FILE", DEFAULT_TOKEN_FILE)
         raise MCPHTTPError(
-            f"AIFactory token at {token_path} rejected — regenerate via the web UI"
+            "AIFactory MCP key rejected — mint a fresh key in Settings → "
+            "API Keys (or check $AIFACTORY_MCP_KEY / ~/.aifactory/.mcp-key)."
+        )
+    if response.status_code == 403:
+        # The proxy includes the missing scope name in the body. Pull it
+        # out so the user knows exactly which key to mint.
+        body = response.text[:300]
+        raise MCPHTTPError(
+            f"AIFactory MCP key lacks the required scope: {body} — "
+            "mint a new key with the right scope in Settings → API Keys."
         )
     if response.status_code == 404:
         # Tools may want to differentiate "no such resource" from other

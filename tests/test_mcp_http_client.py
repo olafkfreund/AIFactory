@@ -91,8 +91,11 @@ async def test_401_returns_actionable_error(tmp_path, monkeypatch):
 
     with pytest.raises(hc.MCPHTTPError) as exc_info:
         await hc.request("GET", "/api/tasks")
+    # After Issue #154 the 401 error guides the user toward minting an
+    # acw_ key, not regenerating the legacy admin token.
     assert "rejected" in str(exc_info.value).lower()
-    assert "regenerate" in str(exc_info.value).lower()
+    assert "mint" in str(exc_info.value).lower()
+    assert "settings" in str(exc_info.value).lower()
 
 
 async def test_404_returns_resource_not_found(tmp_path, monkeypatch):

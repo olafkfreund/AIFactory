@@ -252,6 +252,16 @@ def create_app() -> FastAPI:
         app.include_router(mcp_remote_router)
         logger.info("Remote MCP server enabled — mounted at /api/mcp-remote")
 
+    # Stdio MCP control-plane proxy (Issue #154).
+    # acw_-keyed proxy in front of the operations the stdio MCP exercises,
+    # so enterprise installs can hand each laptop a scoped key instead of
+    # the host-wide admin token. Legacy admin token still works as a wildcard
+    # so v1.0 single-user deployments are unaffected — always mounted.
+    from .mcp_stdio import router as mcp_stdio_router
+
+    app.include_router(mcp_stdio_router)
+    logger.info("Stdio MCP proxy mounted at /api/mcp-stdio")
+
     # Auto-Fix routes (multi-provider polling backing useAutoFix.ts).
     # Endpoints live under /api/projects/{id}/auto-fix/* so they match
     # the per-project nesting the frontend already follows.

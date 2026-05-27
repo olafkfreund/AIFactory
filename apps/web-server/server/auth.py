@@ -83,6 +83,12 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         # when AIFACTORY_MCP_REMOTE_ENABLED=true, so this prefix is a
         # no-op on the default v1.0 pilot deployment.
         "/api/mcp-remote/",
+        # Stdio MCP control-plane proxy (Issue #154). Same shape as
+        # mcp-remote: the proxy handlers do their own ``acw_`` key
+        # validation via ``mcp_stdio.auth.require_acw_scope``, so this
+        # middleware must let those requests through without checking
+        # JWT/legacy first.
+        "/api/mcp-stdio/",
     )
 
     async def dispatch(self, request: Request, call_next):
