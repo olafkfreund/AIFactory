@@ -35,19 +35,23 @@ from runners.github.providers.gitlab_provider import GitLabProvider  # noqa: E40
 
 
 def _make_github_provider(graphql_responses: list[dict]) -> GitHubProvider:
-    """Build a GitHubProvider with a mocked gh_client._run_gh_command.
+    """Build a GitHubProvider with a mocked gh_client.run().
 
     Passes `_gh_client` directly so `__post_init__` skips real GHClient
     construction (which would otherwise pull in subprocess + logging
     setup that pollutes downstream tests' caplog state).
 
     `graphql_responses` is the ordered list of dicts each call should
-    return, encoded as JSON strings (matching what gh CLI returns).
+    return. Each is wrapped in a stub mimicking GHCommandResult so the
+    provider's `result.stdout` access works.
     """
+    def _stub(resp_dict: dict):
+        stub = MagicMock()
+        stub.stdout = json.dumps(resp_dict)
+        return stub
+
     mock_client = MagicMock()
-    mock_client._run_gh_command = AsyncMock(
-        side_effect=[json.dumps(resp) for resp in graphql_responses]
-    )
+    mock_client.run = AsyncMock(side_effect=[_stub(r) for r in graphql_responses])
     return GitHubProvider(_repo="acme/widgets", _gh_client=mock_client)
 
 
@@ -94,7 +98,7 @@ async def test_github_assign_copilot_happy_path():
     await provider.assign_to_user(42, ["Copilot"])
 
     # Three gh api graphql calls in order: actors lookup, issue lookup, mutation.
-    calls = provider._gh_client._run_gh_command.await_args_list
+    calls = provider._gh_client.run.await_args_list
     assert len(calls) == 3, f"expected 3 GraphQL calls, got {len(calls)}"
 
     # Last call is the mutation — verify it sends the right node IDs.
@@ -134,7 +138,7 @@ async def test_github_assign_copilot_silent_noop_when_disabled():
 
     # Only the actor lookup should fire — no issue lookup, no mutation,
     # no exception raised. The tracker detects the no-op by re-fetching.
-    assert provider._gh_client._run_gh_command.await_count == 1
+    assert provider._gh_client.run.await_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +179,7 @@ async def test_github_assign_copilot_alias_case_insensitive_and_mixed():
     )
     await provider.assign_to_user(42, ["copilot", "alice"])
 
-    mutation_cmd = provider._gh_client._run_gh_command.await_args_list[2].args[0]
+    mutation_cmd = provider._gh_client.run.await_args_list[2].args[0]
     flat = " ".join(mutation_cmd)
     # Both actor IDs should be in the mutation payload.
     assert "actorIds[]=BOT_NODE_ID" in flat
@@ -191,7 +195,7 @@ async def test_github_assign_copilot_alias_case_insensitive_and_mixed():
 async def test_github_assign_empty_list_is_noop():
     provider = _make_github_provider([])
     await provider.assign_to_user(42, [])
-    assert provider._gh_client._run_gh_command.await_count == 0
+    assert provider._gh_client.run.await_count == 0
 
 
 # ---------------------------------------------------------------------------
