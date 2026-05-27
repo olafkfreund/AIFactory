@@ -450,7 +450,7 @@ class GitHubProvider:
         """Run a GraphQL query/mutation via `gh api graphql`.
 
         Encodes variables for `gh api graphql`: `-f` for raw strings,
-        `-F` for ints/bools (typed), and one `-F key[]=value` per element
+        `-F` for ints/bools (typed), and one `-f key[]=value` per element
         for list arguments (gh CLI's array convention).
         """
         cmd = ["api", "graphql", "-f", f"query={query}"]
@@ -464,8 +464,8 @@ class GitHubProvider:
                 cmd.extend(["-F", f"{key}={value}"])
             else:
                 cmd.extend(["-f", f"{key}={value}"])
-        raw = await self._gh_client._run_gh_command(cmd)
-        return json.loads(raw) if raw else {}
+        result = await self._gh_client.run(cmd)
+        return json.loads(result.stdout) if result.stdout else {}
 
     # -------------------------------------------------------------------------
     # Label Operations
