@@ -27,11 +27,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from server.rmux.bridge import router
 from server.rmux.session import SessionRegistry, configure, reset_for_tests
 from server.rmux.wrapper import RmuxWrapper
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

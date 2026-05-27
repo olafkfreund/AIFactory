@@ -32,7 +32,6 @@ from server.rmux import (
 )
 from server.rmux.wrapper import _default_socket_dir
 
-
 # ---------------------------------------------------------------------------
 # Error hierarchy
 # ---------------------------------------------------------------------------
