@@ -365,6 +365,35 @@ class GitProvider(Protocol):
         """
         ...
 
+    async def assign_to_user(
+        self,
+        issue_number: int,
+        assignees: list[str],
+    ) -> None:
+        """
+        Assign an issue to one or more users or autonomous agents.
+
+        Special aliases recognized by GitHub provider:
+            - "Copilot" — maps to GitHub Copilot Coding Agent
+              (login: copilot-swe-agent). The agent is assigned via the
+              GraphQL replaceActorsForAssignable mutation.
+
+        Silent no-op semantics: if a requested assignee cannot be assigned
+        because the agent is disabled at the org/repo level, the call
+        returns without raising. Callers should verify success by
+        re-fetching the issue and checking IssueData.assignees.
+
+        Other providers (GitLab, Azure DevOps) raise NotImplementedError
+        until their equivalent autonomous-agent APIs are wired up
+        (Duo Workflow lands in V1.5 — see issue #98).
+
+        Args:
+            issue_number: Issue number (GitHub) or IID (GitLab/ADO)
+            assignees: List of usernames or aliases. The string "Copilot"
+                is recognized as the Copilot Coding Agent alias.
+        """
+        ...
+
     # -------------------------------------------------------------------------
     # Label Operations
     # -------------------------------------------------------------------------

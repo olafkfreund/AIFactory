@@ -383,6 +383,15 @@ class AzureDevOpsProvider:
             resp_wi.raise_for_status()
             return resp_wi.json()["id"]
 
+    async def assign_to_user(
+        self, issue_number: int, assignees: list[str]
+    ) -> None:
+        """Permanent stub — ADO has no autonomous coding agent."""
+        raise NotImplementedError(
+            "Azure DevOps has no autonomous coding agent equivalent to "
+            "GitHub Copilot Coding Agent or GitLab Duo Workflow."
+        )
+
     # -------------------------------------------------------------------------
     # Label Operations
     # -------------------------------------------------------------------------
