@@ -8,12 +8,19 @@ Threat model:
     rows by an attacker who has write access to the DB but cannot
     re-compute the chain (e.g., a compromised DB read-replica
     replayed forward).
-  DOES NOT PROTECT against: an attacker who can ALSO re-compute the
-    entire chain from any point forward (which any DB admin can do).
-    Defense for that scenario = signed external anchor (e.g.,
-    timestamping the daily chain head to an external authority).
-    That's a v1.1 follow-up; documented in
-    guides/operations/audit-trail.md.
+  DOES NOT PROTECT against: an attacker who can re-compute the entire
+    chain from any point forward (which any DB admin can do).
+    Defense for that scenario = the daily signed audit-chain anchor
+    (Epic #35 #43, shipped). The anchor signs the chain head with an
+    HMAC key the DB admin doesn't have, so a rewritten chain produces
+    a different head + anchor mismatch on verify. See
+    ``apps/web-server/server/services/audit_anchor.py`` for the signer
+    and ``docs/docs/concepts/audit-anchor.md`` for the operator-facing
+    explanation.
+  STILL DOES NOT PROTECT against: an attacker who has BOTH DB write
+    access AND the unwrapped HMAC key. v1.2 closes that via external
+    publication (S3 Object Lock / RFC 3161 TSA / Sigstore) — see the
+    "What's not yet supported" section of the audit-anchor concept doc.
 
 Canonical encoding (the bytes we SHA-256):
   GENESIS for first row, else previous row's hash || \\x1f ||
