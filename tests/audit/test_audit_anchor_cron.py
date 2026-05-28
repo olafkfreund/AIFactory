@@ -79,9 +79,16 @@ def test_first_anchor_no_rows_uses_genesis(fresh_db):
     assert row.key_version == 1
 
 
-def test_first_anchor_with_rows_uses_latest_prev_hash(fresh_db):
-    """No prior anchors but audit rows exist → anchor uses the latest
-    row's prev_hash."""
+def test_first_anchor_with_rows_uses_outgoing_chain_head(fresh_db):
+    """No prior anchors but audit rows exist → anchor's chain_head_hash
+    is the OUTGOING hash of the last row (compute_hash(last.prev_hash,
+    last)), NOT just last.prev_hash. This matches what the verifier
+    expects after replaying the chain through the last row."""
+    from server.services.audit_chain import (
+        compute_hash,
+        serialize_for_export,
+    )
+
     _engine, SessionLocal = fresh_db
 
     async def _go():
@@ -94,23 +101,26 @@ def test_first_anchor_with_rows_uses_latest_prev_hash(fresh_db):
                 prev_hash="aa" * 32,
                 classification="internal",
             ))
-            db.add(AuditLog(
+            r2 = AuditLog(
                 id="a-002",
                 action="test.event",
                 resource_type="test",
                 created_at=datetime(2026, 5, 27, 14, 0, 0),
                 prev_hash="bb" * 32,
                 classification="internal",
-            ))
+            )
+            db.add(r2)
             await db.commit()
+            await db.refresh(r2)
 
             row = await cron.emit_anchor_for_day(db, date(2026, 5, 27))
             await db.commit()
-            return row
+            return row, serialize_for_export(r2), r2.prev_hash
 
-    row = _run(_go())
+    row, r2_serialized, r2_prev = _run(_go())
     assert row is not None
-    assert row.chain_head_hash == "bb" * 32  # latest row's prev_hash
+    expected = compute_hash(r2_prev, r2_serialized)
+    assert row.chain_head_hash == expected
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +130,8 @@ def test_first_anchor_with_rows_uses_latest_prev_hash(fresh_db):
 
 def test_zero_row_day_emits_anchor_with_same_head(fresh_db):
     """A quiescent day still emits an anchor; chain_head matches the
-    last non-empty day's head."""
+    last non-empty day's head (same outgoing hash since no new rows
+    have been added)."""
     _engine, SessionLocal = fresh_db
 
     async def _go():
@@ -146,7 +157,9 @@ def test_zero_row_day_emits_anchor_with_same_head(fresh_db):
     a1, a2 = _run(_go())
     assert a1 is not None and a2 is not None
     # Both anchors sign the same chain head — that's "quiescent day".
-    assert a1.chain_head_hash == a2.chain_head_hash == "dd" * 32
+    # The hash is the outgoing chain head of day1-row, not "dd"*32.
+    assert a1.chain_head_hash == a2.chain_head_hash
+    assert a1.chain_head_hash != "dd" * 32  # not the raw prev_hash
 
 
 # ---------------------------------------------------------------------------

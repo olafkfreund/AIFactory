@@ -260,20 +260,31 @@ async def _existing_anchor_for_day(
 async def _latest_chain_head_before(
     db: AsyncSession, before_utc: datetime,
 ) -> str:
-    """The prev_hash of the last audit_logs row with created_at < before_utc.
+    """The chain head AFTER the last audit_logs row with
+    created_at < before_utc.
 
-    Returns ``GENESIS_CHAIN_HEAD`` when no such row exists (e.g. the
-    very first anchor before any audit events).
+    "Chain head" matches ``audit_chain.verify_chain``'s semantics:
+    it's the value that WOULD be stored as the next inserted row's
+    ``prev_hash`` — i.e. ``compute_hash(last_row.prev_hash, last_row)``,
+    NOT just ``last_row.prev_hash`` (which would exclude the last
+    row's contribution from the signed window).
+
+    Returns ``GENESIS_CHAIN_HEAD`` when no such row exists.
     """
+    from ..services.audit_chain import compute_hash, serialize_for_export
+
     before_naive = before_utc.replace(tzinfo=None)
-    stmt = select(AuditLog.prev_hash).where(
+    stmt = select(AuditLog).where(
         AuditLog.created_at < before_naive,
     ).order_by(AuditLog.created_at.desc()).limit(1)
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
         return GENESIS_CHAIN_HEAD
-    return row or GENESIS_CHAIN_HEAD
+    # Outgoing hash of the last row = next-row's expected prev_hash.
+    return compute_hash(
+        row.prev_hash or GENESIS_CHAIN_HEAD, serialize_for_export(row),
+    )
 
 
 async def _classifications_hash_before(
