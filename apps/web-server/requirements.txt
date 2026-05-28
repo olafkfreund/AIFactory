@@ -110,3 +110,10 @@ itsdangerous>=2.2.0
 # `handler` labels (route templates, not raw paths).
 structlog>=24.4.0
 prometheus-fastapi-instrumentator>=7.0.0
+
+# Epic #35 #41 — SAML 2.0 SP-side wiring (legacy-IdP banks).
+# python3-saml is the OneLogin SDK; depends on the xmlsec C library
+# (ships statically-linked in the python wheel for linux x86_64, but
+# the Dockerfile must install libxmlsec1 / libxmlsec1-openssl when
+# building for distros without the wheel).
+python3-saml>=1.16
