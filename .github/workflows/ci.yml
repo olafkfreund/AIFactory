@@ -18,11 +18,11 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
-    # Service containers for the integration tests:
-    #   - Redis: cross-replica WS fan-out (Epic #35 #40 half-A)
-    #   - MinIO: S3-compatible workspace storage (Epic #35 #40 half-B)
-    # Without them those tests skip silently; with them they actually
-    # fire and prove the wire-level contract works end-to-end.
+    # Redis service container for the cross-replica WS fan-out
+    # integration tests (Epic #35 #40 half-A). MinIO for the
+    # S3-workspaces tests (Epic #35 #40 half-B) starts via a
+    # ``docker run`` step below — service containers can't pass the
+    # ``server /data`` command the upstream MinIO image needs.
     services:
       redis:
         image: redis:7-alpine
@@ -33,20 +33,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minio
-          MINIO_ROOT_PASSWORD: minio12345
-          MINIO_DEFAULT_BUCKETS: aifactory-test
-        ports:
-          - 9000:9000
-        options: >-
-          --health-cmd "mc ready local || exit 0"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 15s
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +57,29 @@ jobs:
 
       - name: Ruff lint
         run: apps/backend/.venv/bin/ruff check apps/backend tests
+
+      # MinIO for the S3-workspaces integration tests (Epic #35 #40
+      # half-B). Started as a regular ``docker run`` rather than a
+      # service container because (a) bitnami/minio:latest was retired
+      # mid-2026, and (b) GHA service containers can't pass the
+      # ``server /data`` command upstream minio/minio needs.
+      - name: Start MinIO
+        run: |
+          docker run -d --name aif-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minio \
+            -e MINIO_ROOT_PASSWORD=minio12345 \
+            quay.io/minio/minio:latest server /data
+          # Wait for healthcheck to pass before pytest fires the
+          # integration tests. Times out after ~30s if MinIO never
+          # comes up — the tests would just skip in that case.
+          for i in $(seq 1 30); do
+            if curl -fsSL "http://localhost:9000/minio/health/live" >/dev/null 2>&1; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
 
       - name: Pytest (skip slow)
         env:
