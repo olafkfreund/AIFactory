@@ -19,6 +19,10 @@ Desktop.ini
 *.crt
 *.p12
 *.pfx
+# Allowlist: SAML test fixtures (deliberately committed low-security
+# self-signed keys — see tests/fixtures/saml/README.md).
+!tests/fixtures/saml/*.crt
+!tests/fixtures/saml/*.key
 .secrets
 secrets/
 credentials/
