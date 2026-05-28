@@ -117,7 +117,12 @@ class OllamaProvider(BaseLLMProvider):
         extra_options: dict[str, Any] | None = None,
     ) -> None:
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # Epic #35 #38 PR-1 — when LITELLM_GATEWAY_URL is set, all
+        # provider HTTP calls route through the gateway for per-tenant
+        # budget / rate-limit / allowlist / audit. Zero behavior change
+        # when the env var is unset.
+        from ._gateway import resolve_base_url
+        self._base_url = resolve_base_url(base_url).rstrip("/")
         self._timeout = timeout
         self._extra_options: dict[str, Any] = extra_options or {}
         # Default to 32K context for QA review of large codebases

@@ -119,7 +119,12 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         extra_options: dict[str, Any] | None = None,
     ) -> None:
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # Epic #35 #38 PR-1 — when LITELLM_GATEWAY_URL is set, all
+        # provider HTTP calls route through the gateway for per-tenant
+        # budget / rate-limit / allowlist / audit. Zero behavior change
+        # when the env var is unset (operator hasn't opted in via Helm).
+        from ._gateway import resolve_base_url
+        self._base_url = resolve_base_url(base_url).rstrip("/")
         self._api_key = api_key or None  # treat empty string as None
         self._timeout = timeout
         self._extra_headers: dict[str, str] = extra_headers or {}
