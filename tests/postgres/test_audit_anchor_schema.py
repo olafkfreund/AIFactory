@@ -144,12 +144,24 @@ def test_audit_anchors_unique_per_utc_day(test_postgres_url: str) -> None:
 @pytest.mark.postgres
 @pytest.mark.slow
 def test_downgrade_clean(test_postgres_url: str) -> None:
+    """Down + up round-trip must succeed without orphan indexes / FKs.
+
+    Pin to the revision BEFORE audit-anchor (the immediate parent)
+    rather than ``downgrade -1`` so subsequent migrations stacked on
+    top of this one don't break this test (#36 PR-1 surfaced this —
+    a relative ``-1`` made the test brittle). Same fix pattern as
+    #178's ``test_external_identities.py``.
+    """
     if not alembic_available():
         pytest.skip("alembic CLI not on PATH")
 
     env = {"DATABASE_URL": test_postgres_url}
     run_alembic(["upgrade", "head"], env=env)
-    down = run_alembic(["downgrade", "-1"], env=env)
+    # 7a3e1c8f9b2d is external_identities, the migration immediately
+    # before d4f8c1a3e2b7 (audit-anchor). Targeting it explicitly
+    # downgrades through any newer migrations first, then drops the
+    # audit-anchor tables last.
+    down = run_alembic(["downgrade", "7a3e1c8f9b2d"], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))

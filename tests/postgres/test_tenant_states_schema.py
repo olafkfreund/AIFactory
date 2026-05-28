@@ -91,8 +91,8 @@ def test_isolation_mode_defaults_to_shared(test_postgres_url: str) -> None:
             ON CONFLICT (id) DO NOTHING
         """))
         conn.execute(text("""
-            INSERT INTO organizations (id, name, slug, owner_id)
-            VALUES ('org-iso-test', 'Iso', 'iso-test', 'u-iso-test')
+            INSERT INTO organizations (id, name, slug, owner_id, plan)
+            VALUES ('org-iso-test', 'Iso', 'iso-test', 'u-iso-test', 'free')
             ON CONFLICT (id) DO NOTHING
         """))
         # Insert with only the FK populated.
@@ -129,8 +129,8 @@ def test_cascade_delete_wipes_tenant_state(test_postgres_url: str) -> None:
             VALUES ('u-cas-2', 'cas@example.com', 'x', 'user', true)
         """))
         conn.execute(text("""
-            INSERT INTO organizations (id, name, slug, owner_id)
-            VALUES ('org-cas-2', 'Cas', 'cas-2', 'u-cas-2')
+            INSERT INTO organizations (id, name, slug, owner_id, plan)
+            VALUES ('org-cas-2', 'Cas', 'cas-2', 'u-cas-2', 'free')
         """))
         conn.execute(text("""
             INSERT INTO tenant_states (org_id, isolation_mode)
