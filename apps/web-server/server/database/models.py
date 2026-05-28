@@ -99,6 +99,12 @@ class User(Base):
     api_keys: Mapped[list["ApiKey"]] = relationship(
         "ApiKey", back_populates="user"
     )
+    # Epic #35 #41 PR-1b — per-IdP identity records. One row per
+    # (kind, subject) pair the user has logged in with.
+    external_identities: Mapped[list["ExternalIdentity"]] = relationship(
+        "ExternalIdentity", back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id!r} email={self.email!r}>"
@@ -640,4 +646,59 @@ class KmsDataKey(Base):
         return (
             f"<KmsDataKey id={self.id!r} org_id={self.org_id!r} "
             f"kms_key_id={self.kms_key_id!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# External identities (Epic #35 #41 PR-1b)
+# ---------------------------------------------------------------------------
+
+
+class ExternalIdentity(Base):
+    """Per-IdP identity record for a User.
+
+    One row per (user, IdP-kind, subject) tuple. ``kind`` uses a
+    structured prefix so future queries can filter all OIDC vs all
+    SAML identities:
+
+        'oidc:legacy'      — pre-#41 OIDC users (backfilled by migration)
+        'oidc:okta'        — OIDC against Okta
+        'oidc:github'      — OIDC against GitHub
+        'saml:corp-sso'    — SAML against an IdP the operator named 'corp-sso'
+
+    Cross-IdP collision guard (design decision #4): the SAML routes
+    layer rejects with 409 when an incoming SAML assertion's email
+    matches a user that already has a DIFFERENT-kind identity. Linking
+    is admin-only (out of v1.1 scope).
+    """
+
+    __tablename__ = "external_identities"
+    __table_args__ = (
+        UniqueConstraint(
+            "kind", "subject", name="uq_external_identities_kind_subject",
+        ),
+        Index("ix_external_identities_user_id", "user_id"),
+        Index("ix_external_identities_kind", "kind"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    subject: Mapped[str] = mapped_column(String(512), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    user: Mapped["User"] = relationship(
+        "User", back_populates="external_identities",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ExternalIdentity user_id={self.user_id!r} kind={self.kind!r}>"
         )
