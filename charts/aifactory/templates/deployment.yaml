@@ -97,6 +97,46 @@ spec:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
             {{- end }}
+            {{- if .Values.workspaces.storage.enabled }}
+            # S3-compatible durable workspace storage (Epic #35 #40
+            # half-B PR-2). ``WORKSPACE_S3_URI_BASE`` switches the
+            # WorkspaceStore from local-only no-op into fsspec-driven
+            # snapshot+restore mode. The required-validator below
+            # blocks helm template when uriBase is empty AND for s3://
+            # URIs when neither IRSA nor a credentials Secret is set.
+            - name: WORKSPACE_S3_URI_BASE
+              value: {{ required "workspaces.storage.enabled=true requires workspaces.storage.uriBase (e.g. s3://my-bucket/workspaces)." .Values.workspaces.storage.uriBase | quote }}
+            {{- if .Values.workspaces.storage.aws.endpointUrl }}
+            # MinIO / S3-compatible endpoint. AIFactory's own env
+            # namespace (NOT FSSPEC_S3_*) — fsspec auto-promotes any
+            # FSSPEC_S3_<kwarg> into the S3FileSystem constructor,
+            # which breaks addressing_style by stuffing it into
+            # AioSession.__init__. WorkspaceStore reads these vars
+            # and forwards them via boto3's Config object instead.
+            - name: AIFACTORY_S3_ENDPOINT_URL
+              value: {{ .Values.workspaces.storage.aws.endpointUrl | quote }}
+            {{- end }}
+            {{- if and .Values.workspaces.storage.aws.addressingStyle (ne .Values.workspaces.storage.aws.addressingStyle "auto") }}
+            - name: AIFACTORY_S3_ADDRESSING_STYLE
+              value: {{ .Values.workspaces.storage.aws.addressingStyle | quote }}
+            {{- end }}
+            {{- if and (hasPrefix "s3://" .Values.workspaces.storage.uriBase) (not .Values.workspaces.storage.aws.useInstanceRole) }}
+            # Static AWS creds — required when uriBase is s3:// AND
+            # the operator hasn't opted into IRSA / instance-role auth.
+            # IRSA users leave credentialsSecretName empty + set the SA
+            # annotation outside the chart.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "workspaces.storage uriBase=s3:// requires either aws.useInstanceRole=true (for IRSA / instance-role) or aws.credentialsSecretName (Secret with AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)." .Values.workspaces.storage.aws.credentialsSecretName | quote }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.workspaces.storage.aws.credentialsSecretName | quote }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
+            {{- end }}
             {{- if .Values.redis.enabled }}
             # Redis pub/sub for cross-replica WebSocket fan-out
             # (Epic #35 #40 PR-1). Must be set for ``replicas > 1`` —

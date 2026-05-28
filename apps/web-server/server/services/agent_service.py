@@ -964,8 +964,67 @@ class AgentService:
         is harmless (the frontend just reapplies the same column move). Kept
         as a helper for symmetry with _safe_emit_task_update and for future
         evolution (e.g. inserting metrics, alerting).
+
+        Side effect (Epic #35 #40 half-B): fires a workspace-store snapshot
+        upload at the four phase boundaries that matter — coding /
+        review_pending / completed / failed. Failure-safe per the store's
+        own contract; never crashes this hot path.
         """
         await emit_task_status(task_id, status, review_reason)
+        if status in ("coding", "review_pending", "completed", "failed"):
+            await self._snapshot_project_workspace(task_id, status)
+
+    async def _snapshot_project_workspace(
+        self, task_id: str, phase: str,
+    ) -> None:
+        """Snapshot the project workspace to S3 (or whichever fsspec
+        backend is configured). No-op when WORKSPACE_S3_URI_BASE is
+        unset. The store handles all failure modes internally; this
+        wrapper just resolves the project context."""
+        try:
+            from .workspace_store import WorkspaceStore
+            store = WorkspaceStore.from_settings()
+            if not store.is_remote():
+                return  # local-only mode; no upload to do
+
+            # task_id format established by execution.py:
+            # `{project_id}:{spec_id}` for normal tasks, plain
+            # `{spec_id}` for legacy CLI-spawned ones we can't snapshot.
+            if ":" not in task_id:
+                return
+            project_id = task_id.split(":", 1)[0]
+
+            # Resolve the project record + its local path.
+            from ..routes.projects import load_projects
+            projects = load_projects()
+            proj = projects.get(project_id)
+            if proj is None:
+                return  # project was deleted while task was running
+            local_path = Path(proj.get("path", ""))
+            if not local_path.is_dir():
+                return  # workspace got cleaned up; nothing to snapshot
+
+            # org_id is optional today (single-tenant default). Epic #36
+            # will populate it on every project; we fall back to
+            # "default" so single-tenant deployments still snapshot
+            # cleanly without a migration.
+            org_id = proj.get("org_id") or "default"
+
+            await store.upload_project(
+                org_id=org_id,
+                project_id=project_id,
+                local_path=local_path,
+                triggered_by_task_id=task_id,
+                triggered_by_phase=phase,
+            )
+        except Exception:
+            # Belt-and-braces: the store is already failure-safe but a
+            # bug in this wrapper shouldn't crash the status emission.
+            import logging
+            logging.getLogger(__name__).warning(
+                "[workspace_store] snapshot hook failed for task=%s phase=%s",
+                task_id, phase, exc_info=True,
+            )
 
     async def _emit_progress(self, progress: TaskProgress, previous_phase: TaskPhase | None = None) -> None:
         """Emit progress to all registered callbacks and broadcast via WebSocket.

@@ -321,6 +321,54 @@ workspaces:
   # podSecurityContext.fsGroup automatically).
   mountPath: "/var/lib/aifactory/workspaces"
 
+  # S3-compatible durable storage for project workspaces (Epic #35 #40
+  # half-B PR-2).  When enabled, the app snapshots each project's
+  # workspace dir to the configured bucket at task phase transitions
+  # (coding / review_pending / completed / failed) and lazily restores
+  # it on cold-pod access. Combined with ``redis.enabled=true``, this
+  # makes ``replicas > 1`` survive pod death without losing in-flight
+  # task state.
+  #
+  # Independent of ``workspaces.enabled``: operators can pair (PVC as
+  # hot cache + S3 as durable store) OR run with S3-only (no PVC).
+  #
+  # Auth: AWS S3 + MinIO get typed values blocks. Azure / GCS are
+  # supported via fsspec but configured via raw env (operator sets
+  # AZURE_STORAGE_CONNECTION_STRING or GOOGLE_APPLICATION_CREDENTIALS
+  # via extraEnv) — see docs/docs/concepts/workspace-storage.md.
+  storage:
+    # Master toggle. When false (default), no S3 wiring is added —
+    # the app runs in PVC-only mode (or laptop-FS mode if
+    # ``workspaces.enabled`` is also off). Setting this true on
+    # ``replicas > 1`` is strongly recommended.
+    enabled: false
+    # fsspec URI base. REQUIRED when ``storage.enabled=true``. Examples:
+    #   s3://aifactory-prod/workspaces        (AWS S3)
+    #   s3://my-minio-bucket/workspaces        (MinIO; also set aws.endpointUrl)
+    #   gs://my-gcs-bucket/workspaces          (GCS via gcsfs — env-var auth only)
+    #   azure://container/aifactory            (Azure Blob via adlfs — env-var auth only)
+    uriBase: ""
+    # AWS-style auth. Also covers MinIO (an S3-compatible API) via the
+    # endpointUrl override below.
+    aws:
+      # IRSA / IAM-role-for-service-account (EKS) OR
+      # IAM-instance-role (EC2-backed nodes). When true, no Secret is
+      # referenced and the operator sets the appropriate SA
+      # annotation / role outside the chart. Recommended for production.
+      useInstanceRole: false
+      # Name of an existing Secret with keys ``AWS_ACCESS_KEY_ID`` +
+      # ``AWS_SECRET_ACCESS_KEY``. REQUIRED when
+      # ``useInstanceRole=false`` AND ``uriBase`` is an s3:// URI.
+      credentialsSecretName: ""
+      # MinIO / other S3-compatible: override the endpoint URL. Leave
+      # empty for AWS S3 itself.
+      endpointUrl: ""
+      # MinIO typically needs path-style addressing
+      # (``http://minio:9000/bucket/key``); AWS S3 prefers virtual-
+      # hosted (``http://bucket.s3.amazonaws.com/key``). ``auto`` lets
+      # boto3 pick.
+      addressingStyle: "auto"  # auto | virtual | path
+
 # ---------------------------------------------------------------------------
 # Remote Control — Claude Code's native --remote-control flag.
 #

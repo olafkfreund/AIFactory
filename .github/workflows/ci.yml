@@ -18,9 +18,11 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
-    # Redis service for the cross-replica WS fan-out integration test
-    # (Epic #35 #40 PR-2). Without it those tests skip silently; with
-    # it they actually fire and prove the bus works end-to-end.
+    # Service containers for the integration tests:
+    #   - Redis: cross-replica WS fan-out (Epic #35 #40 half-A)
+    #   - MinIO: S3-compatible workspace storage (Epic #35 #40 half-B)
+    # Without them those tests skip silently; with them they actually
+    # fire and prove the wire-level contract works end-to-end.
     services:
       redis:
         image: redis:7-alpine
@@ -31,6 +33,20 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minio
+          MINIO_ROOT_PASSWORD: minio12345
+          MINIO_DEFAULT_BUCKETS: aifactory-test
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "mc ready local || exit 0"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 15s
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +80,14 @@ jobs:
           # services.redis container above. Test still skips on local
           # dev runs that don't have a Redis available.
           TEST_REDIS_URL: "redis://localhost:6379/15"
+          # Workspace-storage integration test points at the
+          # services.minio container. MINIO_DEFAULT_BUCKETS on the
+          # service auto-creates the bucket; the test fixture
+          # idempotently re-creates it if needed.
+          TEST_S3_URI_BASE: "s3://aifactory-test/workspaces"
+          TEST_S3_ENDPOINT_URL: "http://localhost:9000"
+          AWS_ACCESS_KEY_ID: "minio"
+          AWS_SECRET_ACCESS_KEY: "minio12345"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
   postgres-acceptance:

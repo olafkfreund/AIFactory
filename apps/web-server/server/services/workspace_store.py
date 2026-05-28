@@ -330,26 +330,42 @@ class WorkspaceStore:
     def _open_fs(self) -> tuple[object, str]:
         """Return ``(fsspec_filesystem, key_prefix)`` for the configured
         base URI. fsspec is imported lazily so the no-op path doesn't
-        pay for the import."""
+        pay for the import.
+
+        S3-specific env overrides (set by the Helm chart for MinIO etc.):
+        - ``AIFACTORY_S3_ENDPOINT_URL`` — passed as boto3's endpoint_url
+        - ``AIFACTORY_S3_ADDRESSING_STYLE`` — passed via a botocore.Config
+          object inside client_kwargs (MinIO typically wants 'path')
+
+        Why not the fsspec-native ``FSSPEC_S3_*`` namespace: fsspec
+        auto-promotes any ``FSSPEC_S3_<kwarg>`` env var straight into
+        the S3FileSystem constructor's ``**kwargs``, which means
+        ``addressing_style`` ends up in ``AioSession.__init__`` and
+        explodes. Using our own namespace avoids that magic.
+        """
         import fsspec
 
-        # fsspec.url_to_fs returns (filesystem, path_within_filesystem).
-        # Pass any S3/MinIO endpoint via env (the chart sets
-        # FSSPEC_S3_ENDPOINT_URL and FSSPEC_S3_ADDRESSING_STYLE).
         client_kwargs: dict = {}
-        endpoint = os.environ.get("FSSPEC_S3_ENDPOINT_URL")
+        endpoint = os.environ.get("AIFACTORY_S3_ENDPOINT_URL")
         if endpoint:
             client_kwargs["endpoint_url"] = endpoint
-        addressing = os.environ.get("FSSPEC_S3_ADDRESSING_STYLE")
-        config_kwargs: dict = {}
-        if addressing and addressing.lower() in ("path", "virtual"):
-            config_kwargs["s3"] = {"addressing_style": addressing.lower()}
 
-        fs, path = fsspec.url_to_fs(
-            self._base_uri,
-            client_kwargs=client_kwargs or None,
-            config_kwargs=config_kwargs or None,
-        )
+        # s3fs accepts a ``config_kwargs`` kwarg that it routes into
+        # botocore.config.Config — that's the clean way to set
+        # addressing_style without colliding with the ``config``
+        # kwarg s3fs already passes to create_client itself.
+        config_kwargs: dict = {}
+        addressing = (os.environ.get("AIFACTORY_S3_ADDRESSING_STYLE") or "").lower()
+        if addressing in ("path", "virtual"):
+            config_kwargs["s3"] = {"addressing_style": addressing}
+
+        fs_kwargs: dict = {}
+        if client_kwargs:
+            fs_kwargs["client_kwargs"] = client_kwargs
+        if config_kwargs:
+            fs_kwargs["config_kwargs"] = config_kwargs
+
+        fs, path = fsspec.url_to_fs(self._base_uri, **fs_kwargs)
         return fs, path.rstrip("/")
 
 
