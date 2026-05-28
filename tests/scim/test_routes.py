@@ -54,30 +54,32 @@ _HEADERS = {"Authorization": f"Bearer {_BEARER}"}
 
 
 @pytest.fixture
-def fresh_db():
-    """Per-test in-memory SQLite with the full schema. Returns (engine, SessionLocal)."""
+def fresh_db(tmp_path):
+    """Per-test file-backed SQLite. Returns (engine, SessionLocal).
+
+    Uses a tmp_path file (not ``mode=memory&cache=shared``) for two reasons:
+    1. ``cache=shared`` in-memory dbs require the init connection to stay
+       alive — closing the init event loop tears down aiosqlite background
+       threads in a way that interferes with later ``asyncio.run()`` calls
+       in CI (where every test is collected up-front + pytest's plugin
+       layer creates its own loops). File-backed is bulletproof.
+    2. ``tmp_path`` is per-test and auto-cleaned by pytest, so isolation
+       is guaranteed without nonce gymnastics.
+    """
     from server.database.models import Base
 
-    nonce = _secrets.token_hex(8)
-    engine = create_async_engine(
-        f"sqlite+aiosqlite:///file:scim-routes-{nonce}"
-        "?mode=memory&cache=shared&uri=true",
-    )
+    db_path = tmp_path / "test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
 
     async def _init():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-    loop = asyncio.new_event_loop()
-    try:
-        loop.run_until_complete(_init())
-    finally:
-        loop.close()
+    asyncio.run(_init())
 
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
     return engine, SessionLocal
-
-
 @pytest.fixture(autouse=True)
 def _set_token_env(monkeypatch):
     """Ensure SCIM_BEARER_TOKEN is set for every test (overrideable)."""
