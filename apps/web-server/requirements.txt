@@ -21,6 +21,21 @@ redis>=5.0
 # clouds — not bundled by default to keep the image lean.
 fsspec[s3]>=2024.6.0
 
+# OpenTelemetry distributed tracing (Epic #35 #42).
+# Optional at runtime — only exports when OTEL_EXPORTER_OTLP_ENDPOINT
+# is set. Auto-instrumentation builds spans in memory at near-zero
+# cost when no exporter is configured; spans drop at export time.
+# Pin the contrib instrumentation packages together: they're versioned
+# in lockstep with the core SDK (0.NN-beta tracks 1.NN core).
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27
+opentelemetry-exporter-otlp>=1.27
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-sqlalchemy>=0.48b0
+opentelemetry-instrumentation-asyncpg>=0.48b0
+opentelemetry-instrumentation-httpx>=0.48b0
+opentelemetry-instrumentation-redis>=0.48b0
+
 # PTY (Terminal)
 ptyprocess>=0.7.0
 

@@ -165,15 +165,33 @@ def _serialize_envelope(
     else:
         raise TypeError(f"Unknown scope type: {type(scope)!r}")
 
-    return json.dumps(
-        {
-            "v": ENVELOPE_VERSION,
-            "source": self_replica_id,
-            "scope": scope_obj,
-            "type": event_type,
-            "payload": payload,
-        }
-    )
+    envelope: dict = {
+        "v": ENVELOPE_VERSION,
+        "source": self_replica_id,
+        "scope": scope_obj,
+        "type": event_type,
+        "payload": payload,
+    }
+
+    # Additive trace context (Epic #35 #42 PR-1). Older subscribers
+    # ignore this field; OTel-aware subscribers extract it to create
+    # a child ``event_bus.deliver`` span on the receiving replica.
+    # Backward-compatible — no envelope version bump.
+    _tp = _try_traceparent()
+    if _tp:
+        envelope["trace"] = {"traceparent": _tp, "tracestate": ""}
+
+    return json.dumps(envelope)
+
+
+def _try_traceparent() -> str | None:
+    """Pull the W3C traceparent for the current span. Failure-safe:
+    OTel-not-installed or no-active-span → None."""
+    try:
+        from ..observability.tracing import get_current_traceparent
+        return get_current_traceparent()
+    except Exception:
+        return None
 
 
 def _parse_envelope(raw: bytes | str) -> tuple[str, Scope, str, dict] | None:
@@ -421,7 +439,12 @@ async def _subscriber_loop() -> None:
 
 
 async def _dispatch_envelope(raw: bytes | str | None) -> None:
-    """Parse an envelope and dispatch to local delivery if it's not ours."""
+    """Parse an envelope and dispatch to local delivery if it's not ours.
+
+    When the envelope carries a ``trace.traceparent`` (Epic #35 #42 PR-1),
+    open a child ``event_bus.deliver`` span linked to the publisher's
+    span so the cross-replica delivery shows up in the parent trace.
+    """
     if raw is None:
         return
     parsed = _parse_envelope(raw)
@@ -430,4 +453,68 @@ async def _dispatch_envelope(raw: bytes | str | None) -> None:
     source, scope, event_type, payload = parsed
     if source == self_replica_id:
         return  # echo from our own publish; deliver_local already ran
-    await deliver_local(scope, event_type, payload)
+
+    traceparent = _extract_traceparent_from_raw(raw)
+    if traceparent:
+        await _dispatch_with_trace_context(
+            traceparent, scope, event_type, payload,
+        )
+    else:
+        await deliver_local(scope, event_type, payload)
+
+
+def _extract_traceparent_from_raw(raw: bytes | str) -> str | None:
+    """Pull ``trace.traceparent`` out of the envelope without disturbing
+    the existing ``_parse_envelope`` contract.
+
+    Older envelopes (without trace) → None. Malformed envelopes are
+    already rejected upstream by ``_parse_envelope``; this is a cheap
+    re-parse of an already-validated payload.
+    """
+    try:
+        obj = json.loads(raw)
+        trace = obj.get("trace")
+        if isinstance(trace, dict):
+            tp = trace.get("traceparent")
+            if isinstance(tp, str) and tp:
+                return tp
+    except Exception:
+        pass
+    return None
+
+
+async def _dispatch_with_trace_context(
+    traceparent: str, scope: Scope, event_type: str, payload: dict,
+) -> None:
+    """Open a child ``event_bus.deliver`` span linked to the
+    publisher's span via the W3C TraceContext propagator, then run
+    local delivery inside that span.
+
+    Failure-safe: if OTel isn't installed or propagation fails,
+    falls back to plain ``deliver_local`` so cross-replica delivery
+    never breaks just because tracing is misconfigured.
+    """
+    try:
+        from opentelemetry import context as otel_context
+        from opentelemetry import trace
+        from opentelemetry.propagators.textmap import DefaultGetter
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+
+        propagator = TraceContextTextMapPropagator()
+        carrier = {"traceparent": traceparent}
+        ctx = propagator.extract(carrier, getter=DefaultGetter())
+
+        token = otel_context.attach(ctx)
+        try:
+            tracer = trace.get_tracer("aifactory.event_bus")
+            with tracer.start_as_current_span("event_bus.deliver") as span:
+                span.set_attribute("event_bus.type", event_type)
+                span.set_attribute("event_bus.scope", type(scope).__name__)
+                await deliver_local(scope, event_type, payload)
+        finally:
+            otel_context.detach(token)
+    except Exception:
+        # Tracing must never break delivery.
+        await deliver_local(scope, event_type, payload)
