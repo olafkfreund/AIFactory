@@ -32,6 +32,7 @@ const sidebars: SidebarsConfig = {
         'concepts/workspace-storage',
         'concepts/observability-tracing',
         'concepts/audit-anchor',
+        'concepts/cloud-llm-routing',
       ],
     },
     {
