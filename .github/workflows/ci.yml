@@ -18,6 +18,19 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
+    # Redis service for the cross-replica WS fan-out integration test
+    # (Epic #35 #40 PR-2). Without it those tests skip silently; with
+    # it they actually fire and prove the bus works end-to-end.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +60,10 @@ jobs:
         env:
           GRAPHITI_ENABLED: "false"
           APP_DISABLE_AUTH: "true"  # endpoint tests use anonymous TestClient
+          # Cross-replica WS fan-out integration test points at the
+          # services.redis container above. Test still skips on local
+          # dev runs that don't have a Redis available.
+          TEST_REDIS_URL: "redis://localhost:6379/15"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
   postgres-acceptance:

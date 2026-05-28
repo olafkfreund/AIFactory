@@ -97,6 +97,26 @@ spec:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
             {{- end }}
+            {{- if .Values.redis.enabled }}
+            # Redis pub/sub for cross-replica WebSocket fan-out
+            # (Epic #35 #40 PR-1). Must be set for ``replicas > 1`` —
+            # without it, broadcast events stay on the originating
+            # replica. ``url`` is inline (dev only); production uses
+            # ``externalSecretName``. The required-validator below
+            # blocks helm template when both sources are empty.
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- else }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "redis.enabled=true requires either redis.url (dev-only inline) or redis.externalSecretName (Secret with a REDIS_URL key). Neither is set — see charts/aifactory/values.yaml." .Values.redis.externalSecretName | quote }}
+                  key: REDIS_URL
+            {{- end }}
+            - name: REDIS_CHANNEL
+              value: {{ .Values.redis.channel | quote }}
+            {{- end }}
             {{- if .Values.rmux.enabled }}
             # Epic #44 R3 — flip on the rmux Live Agent Console.
             # The web-server's startup runtime checks for the binary

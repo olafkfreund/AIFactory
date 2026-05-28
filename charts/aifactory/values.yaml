@@ -27,7 +27,12 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
-replicaCount: 1  # v1.1 will support >1 via Redis pub/sub for WS fan-out
+replicaCount: 1
+# To scale beyond 1 replica, set ``redis.enabled: true`` AND configure
+# either ``redis.url`` (dev/test only) or ``redis.externalSecretName``.
+# Without Redis, multi-replica deployments will receive WebSocket events
+# only on the replica that originated them — cross-replica delivery
+# requires the pub/sub bridge (Epic #35 #40 PR-1).
 
 resources:
   requests:
@@ -115,6 +120,10 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
+# Horizontal Pod Autoscaler. Default off — operators flip ``enabled: true``
+# to opt in. **Requires ``redis.enabled: true`` for cross-replica WebSocket
+# delivery to work** — otherwise the autoscaler will spin up additional
+# pods that can't see events from other replicas (Epic #35 #40 PR-1).
 autoscaling:
   enabled: false
   minReplicas: 1
@@ -415,6 +424,47 @@ mcpCredentials:
     github: false        # injects GITHUB_TOKEN env from ``github-token`` string key
     gitlab: false        # injects GITLAB_TOKEN + GITLAB_INSTANCE_URL env
     azureDevOps: false   # injects AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN + AZURE_DEVOPS_ORG_SERVICE_URL env
+
+# Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
+#
+# Default OFF — single-replica deployments work unchanged with no
+# Redis dependency. Multi-replica deployments MUST enable this so
+# events fired on replica A reach WebSocket clients connected to
+# replica B; without it, ``broadcast_event`` / ``send_to_user`` /
+# ``send_to_org`` only reach clients on the originating replica.
+#
+# Behaviour when Redis is later unreachable at runtime: app keeps
+# accepting requests, in-process delivery still works, ERROR log on
+# every reconnect attempt with exponential backoff (1s → 30s). See
+# docs/docs/concepts/multi-replica.md for the operator playbook.
+#
+# Auth: ``REDIS_URL`` may include the password inline
+# (``redis://:password@host:6379/0``) or use Redis 6 ACL via the
+# username field. For Sentinel / Cluster mode the URL form follows
+# redis-py's conventions; see https://redis-py.readthedocs.io/.
+#
+# Terminal WebSocket streams (/ws/terminal/*) are intentionally NOT
+# fan-out'd — they hold an rmux subprocess on one specific replica.
+# Operators running ``replicas > 1`` add a sticky-cookie annotation
+# at the ingress for /ws/terminal/* so each browser session pins to
+# the replica that owns its terminal.
+redis:
+  # Master toggle. When false (default), no Redis wiring is added —
+  # the app starts in in-process-only mode (REDIS_URL env unset).
+  enabled: false
+  # Inline URL — use ONLY in dev / test. Leaks the password into the
+  # rendered manifest and into ``kubectl describe pod``. Production
+  # deployments use ``externalSecretName`` instead.
+  url: ""
+  # Name of an existing Secret with a ``REDIS_URL`` key. The app reads
+  # the URL from this Secret via valueFrom.secretKeyRef. Required when
+  # ``enabled: true`` AND ``url`` is empty — helm template fails with
+  # a clear message otherwise.
+  externalSecretName: ""
+  # Pub/sub channel name. Override only when running multiple
+  # AIFactory deployments against a single shared Redis (then each
+  # deployment should pick a unique channel to avoid cross-talk).
+  channel: "aifactory:events"
 
 # Cross-cutting platform-team settings.
 global:
