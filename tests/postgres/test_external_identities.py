@@ -128,13 +128,23 @@ def test_cascade_delete_on_user(test_postgres_url: str) -> None:
 @pytest.mark.postgres
 @pytest.mark.slow
 def test_downgrade_drops_table(test_postgres_url: str) -> None:
-    """Down + up round-trip must succeed without orphan indexes / FKs."""
+    """Down + up round-trip must succeed without orphan indexes / FKs.
+
+    Pin to the revision BEFORE external_identities (the immediate
+    parent) rather than ``downgrade -1`` so subsequent migrations
+    stacked on top of this one don't break this test (#43 PR-1a
+    surfaced this — a relative ``-1`` made the test brittle).
+    """
     if not alembic_available():
         pytest.skip("alembic CLI not on PATH")
 
     env = {"DATABASE_URL": test_postgres_url}
     run_alembic(["upgrade", "head"], env=env)
-    down = run_alembic(["downgrade", "-1"], env=env)
+    # b2d4f7e9c3a1 is git_credentials, the migration immediately
+    # before 7a3e1c8f9b2d (external_identities). Targeting it
+    # explicitly downgrades through any newer migrations first,
+    # then drops external_identities last.
+    down = run_alembic(["downgrade", "b2d4f7e9c3a1"], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
