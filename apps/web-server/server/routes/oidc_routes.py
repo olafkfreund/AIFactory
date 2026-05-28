@@ -31,12 +31,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import get_settings
-from ..database import Organization, OrgMember, User
+from ..database import User
 from ..database.engine import get_db
 from ..database.models import OidcRefreshSession
 from ..oidc import get_oauth_client, is_oidc_enabled
 from ..oidc.provisioning import jit_provision_user
-from ..oidc.userinfo_cache import get_cached, invalidate, put as cache_put
+from ..oidc.userinfo_cache import get_cached, invalidate
+from ..oidc.userinfo_cache import put as cache_put
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,12 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # JIT provisioning: stable sub-based User lookup + claim-mapped role
     # + OrganizationMember row in the configured default org.
     user = await jit_provision_user(db, userinfo)
+
+    # Epic #35 #43 PR-1b4 — stamp last successful login time. Read by
+    # the /api/admin/access-review endpoint (SOC2 CC6.2 / ISO 27001
+    # A.9.2.5). Naive-UTC by convention; we strip tzinfo to match the
+    # DateTime column type.
+    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # Create a RefreshSession so the refresh path can hit IdP userinfo
     # and propagate revocation. The jti binds the refresh JWT to the
