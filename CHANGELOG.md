@@ -90,7 +90,7 @@
     cron-knob flow-through, security-context match with web pod.
   - Closes v3.0 limitation #1 ("Audit chain has no signed external
     anchor").
-- **#41 — SAML 2.0 + SCIM 2.0 for legacy-IdP banks** (in flight, ~60% done)
+- **#41 — SAML 2.0 + SCIM 2.0 for legacy-IdP banks** ✅ (closed)
   - PR #177 (PR-1a): Security-foundation modules. SAML replay cache with
     per-assertion TTL (not blanket-LRU — the reviewer-flagged trap), OneLogin
     SDK wrapper with `strict=True` + `wantAssertionsSigned=True` + RSA-SHA256
@@ -102,8 +102,27 @@
   - PR #178 (PR-1b1): `external_identities` table (kind + subject + FK
     CASCADE) for multi-IdP linkage; backfills existing `users.oidc_sub`
     rows as `kind='oidc:legacy'`. 4 Postgres-marked tests.
-  - Remaining: SAML routes (/login, /acs, /metadata), SCIM CRUD, login
-    discovery dropdown, Helm `saml:` + `scim:` blocks, concept doc, e2e.
+  - PR #195 (PR-1b2): SAML SP routes `/login` + `/acs` + `/metadata` with
+    HMAC RelayState verification, per-assertion-TTL replay defence, and
+    the cross-IdP collision guard (decision #4 — auto-link only when no
+    other-kind identity exists; otherwise 409).
+  - PR #198 (PR-1b3): full SCIM CRUD on `/api/scim/v2/Users` + `/Groups`
+    per RFC 7644: array-append PATCH semantics (the Azure-AD-relies-on-it
+    bug), soft-delete + 404-on-GET (the Azure-AD-resync-loop trap), `If-Match`
+    accepted as advisory only.
+  - PR #196 (PR-1b4): merged identity-provider discovery for the login
+    page (`GET /api/auth/identity-providers`); SAML + OIDC routers
+    auto-mount on enable. SAML session extended into `auth.py`'s
+    `current_user_dependency` (cookie shape matches OIDC).
+  - PR-2 (this PR): Helm `saml:` + `scim:` blocks with 4 schema validators
+    (operator misconfigs fail at `helm install`, not first pod start), env
+    + Secret-mount wiring, SP cert rotation via projected-volume optional
+    source. Concept doc at [/concepts/saml-scim](https://olafkfreund.github.io/AIFactory/concepts/saml-scim)
+    with Okta / Azure AD / Keycloak IdP preset recipes + SP cert rotation
+    runbook + decision-#11 local-logout note. 30 helm-toggle tests
+    covering all 4 validators + env wiring + coexistence with v1.1 toggles.
+    New `saml-scim (P8 acceptance)` CI job.
+  - Closes v3.0 limitation #2 ("SSO is OIDC-only").
 - **#37 — gVisor RuntimeClass** ✅ (closed previously this cycle): agent
   pods can opt in to `runtimeClassName: gvisor` for kernel-level isolation.
 - **#40 — S3 workspace storage + Redis pub/sub** ✅ (closed previously this

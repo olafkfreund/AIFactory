@@ -1,0 +1,12 @@
+# Operator turned SAML on but forgot to point at IdP metadata.
+# Expected: `helm template` fails with the saml.enabled-requires-
+# metadata validator message.
+postgres:
+  externalSecretName: test-pg
+
+saml:
+  enabled: true
+  spEntityId: "https://aifactory.example.com/saml"
+  acsUrl: "https://aifactory.example.com/api/auth/saml/acs"
+  idpMetadataUrl: ""
+  idpMetadataSecretName: ""

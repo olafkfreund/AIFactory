@@ -157,6 +157,99 @@ spec:
             - name: REDIS_CHANNEL
               value: {{ .Values.redis.channel | quote }}
             {{- end }}
+            {{- /* SAML + SCIM validators (Epic #35 #41 PR-2). Run at template
+                   time so operators see misconfigurations at `helm install`,
+                   not at first pod start. Same shape as the OTel + workspaces
+                   validators above. */ -}}
+            {{- if .Values.saml.requireEncryptedAssertion }}
+            {{- if not .Values.saml.enabled }}
+            {{- fail "saml.requireEncryptedAssertion=true requires saml.enabled=true — either turn SAML on or clear requireEncryptedAssertion. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.saml.enabled }}
+            {{- if not .Values.saml.spEntityId }}
+            {{- fail "saml.enabled=true requires saml.spEntityId (e.g. https://aifactory.example.com/saml). See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if not .Values.saml.acsUrl }}
+            {{- fail "saml.enabled=true requires saml.acsUrl (e.g. https://aifactory.example.com/api/auth/saml/acs). See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if and (not .Values.saml.idpMetadataUrl) (not .Values.saml.idpMetadataSecretName) }}
+            {{- fail "saml.enabled=true requires exactly one of saml.idpMetadataUrl OR saml.idpMetadataSecretName. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if and .Values.saml.idpMetadataUrl .Values.saml.idpMetadataSecretName }}
+            {{- fail "saml.idpMetadataUrl and saml.idpMetadataSecretName are mutually exclusive — set exactly one. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if and .Values.saml.requireEncryptedAssertion (not .Values.saml.spCertSecretName) }}
+            {{- fail "saml.requireEncryptedAssertion=true requires saml.spCertSecretName (the SP private key is needed to decrypt assertions). See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.scim.enabled }}
+            {{- if not .Values.scim.tokenSecretName }}
+            {{- fail "scim.enabled=true requires scim.tokenSecretName (K8s Secret with key SCIM_BEARER_TOKEN). See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.saml.enabled }}
+            # SAML 2.0 Web SSO (Epic #35 #41 PR-2). The web-server's
+            # ``server.saml.client.config_from_env()`` reads these to build
+            # the OneLogin SDK settings dict. Required values are
+            # double-checked at startup; missing pieces crashloop with a
+            # clear log line so the operator can see exactly what's
+            # missing instead of a generic 500 at first login.
+            - name: SAML_ENABLED
+              value: "true"
+            - name: SAML_SP_ENTITY_ID
+              value: {{ .Values.saml.spEntityId | quote }}
+            - name: SAML_ACS_URL
+              value: {{ .Values.saml.acsUrl | quote }}
+            {{- if .Values.saml.idpMetadataUrl }}
+            - name: SAML_IDP_METADATA_URL
+              value: {{ .Values.saml.idpMetadataUrl | quote }}
+            {{- end }}
+            {{- if .Values.saml.idpMetadataSecretName }}
+            # File path matches the volumeMount below — the Secret's
+            # ``idp-metadata.xml`` key projects to this exact path.
+            - name: SAML_IDP_METADATA_FILE
+              value: "/etc/saml/idp-metadata.xml"
+            {{- end }}
+            {{- if .Values.saml.spCertSecretName }}
+            # SP signing cert + key — paths match the volumeMount below.
+            # SAML_SP_CERT_PREVIOUS_FILE is opt-in; the web-server's
+            # config_from_env() tolerates a missing file (empty PEM →
+            # SP cert rotation overlap not active).
+            - name: SAML_SP_CERT_FILE
+              value: "/etc/saml/sp/cert.pem"
+            - name: SAML_SP_KEY_FILE
+              value: "/etc/saml/sp/key.pem"
+            - name: SAML_SP_CERT_PREVIOUS_FILE
+              value: "/etc/saml/sp/cert.pem.previous"
+            {{- end }}
+            - name: SAML_REQUIRE_ENCRYPTED_ASSERTION
+              value: {{ .Values.saml.requireEncryptedAssertion | quote }}
+            {{- if .Values.saml.idpName }}
+            - name: SAML_IDP_NAME
+              value: {{ .Values.saml.idpName | quote }}
+            {{- end }}
+            {{- if .Values.saml.idpDisplayName }}
+            - name: SAML_IDP_DISPLAY_NAME
+              value: {{ .Values.saml.idpDisplayName | quote }}
+            {{- end }}
+            {{- if .Values.saml.idpInitDefaultReturnTo }}
+            - name: SAML_IDP_INIT_DEFAULT_RETURN_TO
+              value: {{ .Values.saml.idpInitDefaultReturnTo | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.scim.enabled }}
+            # SCIM 2.0 provisioning (Epic #35 #41 PR-2). The Bearer
+            # token is read once at startup by ``server.scim.auth``;
+            # rotate by recreating the Secret + restarting the pod
+            # (rollout restart with maxSurge=1 gives zero-downtime
+            # rotation).
+            - name: SCIM_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.scim.tokenSecretName | quote }}
+                  key: SCIM_BEARER_TOKEN
+            {{- end }}
             {{- /* Validate: OTel headersSecretName can't be set unless otel.enabled.
                    Setting it alone is a typo / partial config — fail loud rather than
                    render a Secret reference the running pod won't consume. */ -}}
@@ -469,6 +562,25 @@ spec:
               subPath: gcp-service-account.json
               readOnly: true
             {{- end }}
+            {{- if and .Values.saml.enabled .Values.saml.idpMetadataSecretName }}
+            # SAML IdP metadata XML (Epic #35 #41 PR-2). Operator-supplied
+            # Secret with key ``idp-metadata.xml``; the SAML client reads
+            # it from this path on startup (no URL refresher when file-
+            # sourced — rotation is recreate-Secret + restart-pod).
+            - name: saml-idp-metadata
+              mountPath: /etc/saml/idp-metadata.xml
+              subPath: idp-metadata.xml
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.saml.enabled .Values.saml.spCertSecretName }}
+            # SAML SP signing cert + key (Epic #35 #41 PR-2). Mounted as
+            # a directory so the optional ``cert.pem.previous`` key (for
+            # the rotation overlap window — see concept doc) projects
+            # alongside ``cert.pem`` + ``key.pem`` when present.
+            - name: saml-sp-cert
+              mountPath: /etc/saml/sp
+              readOnly: true
+            {{- end }}
             {{- if and .Values.global .Values.global.customCABundle.secretName }}
             - name: custom-ca
               mountPath: /etc/ssl/custom-ca
@@ -545,6 +657,46 @@ spec:
               - key: gcp-service-account.json
                 path: gcp-service-account.json
         {{- end }}
+        {{- end }}
+        {{- if and .Values.saml.enabled .Values.saml.idpMetadataSecretName }}
+        - name: saml-idp-metadata
+          secret:
+            secretName: {{ .Values.saml.idpMetadataSecretName | quote }}
+            defaultMode: 0444
+            items:
+              - key: idp-metadata.xml
+                path: idp-metadata.xml
+        {{- end }}
+        {{- if and .Values.saml.enabled .Values.saml.spCertSecretName }}
+        # SP cert + private key. Private key gets mode 0400 (owner-only)
+        # via the items projection; cert.pem is world-readable. The
+        # optional ``cert.pem.previous`` key (for the rotation overlap
+        # window — see docs/docs/concepts/saml-scim.md) projects via a
+        # second volume marked ``optional: true`` so the Secret missing
+        # that key during steady-state operation doesn't block pod
+        # startup. Operators rotating SP certs add the previous PEM as
+        # ``cert.pem.previous`` in the same Secret, restart the pod,
+        # then drop the key after IdP-side propagation.
+        - name: saml-sp-cert
+          projected:
+            defaultMode: 0444
+            sources:
+              - secret:
+                  name: {{ .Values.saml.spCertSecretName | quote }}
+                  items:
+                    - key: cert.pem
+                      path: cert.pem
+                      mode: 0444
+                    - key: key.pem
+                      path: key.pem
+                      mode: 0400
+              - secret:
+                  name: {{ .Values.saml.spCertSecretName | quote }}
+                  optional: true
+                  items:
+                    - key: cert.pem.previous
+                      path: cert.pem.previous
+                      mode: 0444
         {{- end }}
         {{- if and .Values.global .Values.global.customCABundle.secretName }}
         - name: custom-ca
