@@ -58,6 +58,30 @@ containerSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# Sandbox: opt-in stronger pod isolation via Kubernetes RuntimeClass.
+# Currently supports gVisor (Google's user-space kernel that filters
+# syscalls between the workload and the host kernel). Disabled by
+# default — gVisor adds ~5-15% CPU overhead and blocks a handful of
+# syscalls that some workloads need.
+#
+# Prereqs (cluster operator must provision separately):
+#   1. gVisor runsc installed on the node pool
+#   2. A RuntimeClass object named per ``runtimeClassName`` below
+#      (default ``gvisor``) created in the cluster
+#
+# AIFactory's bash allowlist (git, curl, npm install, apt-get) works
+# under gVisor in practice. Workloads known NOT to work: tcpdump,
+# BPF programs, nested containers, anything that mmap()'s /dev/kvm.
+# See guides/security/gvisor.md for the full compatibility note.
+#
+# Epic #35 child #37.
+sandbox:
+  gvisor:
+    enabled: false
+    # Override only if your cluster operator created the RuntimeClass
+    # under a different name (e.g. some platforms use "runsc" directly).
+    runtimeClassName: gvisor
+
 service:
   type: ClusterIP
   port: 80
