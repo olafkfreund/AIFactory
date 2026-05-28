@@ -274,6 +274,32 @@ spec:
               value: {{ .Values.litellm.audit.extraRedactionPatterns | toJson | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.tenant.isolationEnabled }}
+            # Epic #35 #36 PR-3 — Tenant Isolation Mode.
+            # When enabled, the reconciler in the web pod creates per-
+            # tenant Namespace + SA + NetPol + S3 prefix + Vault path
+            # on Organization create. All env vars below are read by
+            # ``services/tenant_reconciler.py`` at start-up; changing
+            # values.yaml + ``helm upgrade`` is the supported way to
+            # tune them (no live-reload). See concept doc at
+            # docs/docs/concepts/tenant-isolation.md.
+            - name: TENANT_ISOLATION_ENABLED
+              value: "true"
+            - name: TENANT_NAMESPACE_PREFIX
+              value: {{ .Values.tenant.namespacePrefix | quote }}
+            - name: TENANT_CNI_BACKEND
+              value: {{ .Values.tenant.networkPolicy.cniBackend | quote }}
+            - name: TENANT_DELETION_GRACE_DAYS
+              value: {{ .Values.tenant.deletionGraceDays | quote }}
+            - name: TENANT_LIMIT_RANGE_CPU
+              value: {{ .Values.tenant.limitRange.defaultCpu | quote }}
+            - name: TENANT_LIMIT_RANGE_MEMORY
+              value: {{ .Values.tenant.limitRange.defaultMemory | quote }}
+            - name: TENANT_QUOTA_MAX_PODS
+              value: {{ .Values.tenant.resourceQuota.maxPods | quote }}
+            - name: TENANT_QUOTA_MAX_PVCS
+              value: {{ .Values.tenant.resourceQuota.maxPvcs | quote }}
+            {{- end }}
             {{- if .Values.rmux.enabled }}
             # Epic #44 R3 — flip on the rmux Live Agent Console.
             # The web-server's startup runtime checks for the binary

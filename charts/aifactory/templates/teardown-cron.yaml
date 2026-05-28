@@ -1,0 +1,122 @@
+{{- /*
+  Daily tenant tear-down CronJob (Epic #35 #36 PR-3).
+
+  Runs ``python -m server.services.tenant_teardown`` once a day at
+  ``tenant.teardown.cronSchedule`` (default 03:00 UTC). The entry-
+  point loads every org with ``deleted_at`` older than
+  ``tenant.deletionGraceDays``, then calls
+  ``tenant_reconciler.tear_down_org(org_id)`` for each — that
+  function lives in PR-2's K8s/IAM/Vault layer and is responsible for
+  the actual deletion (namespace cascade, S3 prefix recursive delete
+  with §4a prefix-shape assertion, Vault path + policy delete, IAM
+  role delete).
+
+  Failure-safe contract (per design §1): the entry-point catches all
+  exceptions per-org and records them in ``tenant_states.reconcile_
+  error`` rather than crashing the pod. Operators see stuck tear-
+  downs via:
+      SELECT org_id, reconcile_error FROM tenant_states
+      WHERE deleted_at IS NOT NULL AND reconcile_error IS NOT NULL;
+
+  Only rendered when ``tenant.isolationEnabled=true``. The Stage-1
+  soft-delete (PII scrub, immediate per GDPR Art. 17) happens in the
+  web pod's request handler — it does NOT need this cron.
+
+  concurrencyPolicy=Forbid: only one tear-down sweep at a time. A
+  long-running deletion (large S3 prefix, slow Vault) is preferred
+  over racing reconcilers fighting for the same resources.
+*/}}
+{{- if .Values.tenant.isolationEnabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "aifactory.fullname" . }}-tenant-teardown
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-teardown-cron
+spec:
+  schedule: {{ .Values.tenant.teardown.cronSchedule | quote }}
+  # Forbid: don't start a new sweep until the previous one finishes.
+  # Tear-downs can take minutes (S3 recursive delete on a large prefix),
+  # and overlapping reconcilers would fight on the same resources.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  timeZone: "UTC"
+  jobTemplate:
+    spec:
+      # Generous deadline — tear-downs scale with the largest tenant's
+      # S3 prefix size. 30 minutes covers a ~100GB S3 prefix on AWS;
+      # operators with larger prefixes should raise this.
+      activeDeadlineSeconds: 1800
+      # backoffLimit=0: tear-down failures are recorded in
+      # tenant_states.reconcile_error and retried on the next cron
+      # tick. Don't burn CPU with K8s-level retries.
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "aifactory.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: tenant-teardown-cron
+        spec:
+          serviceAccountName: {{ include "aifactory.serviceAccountName" . }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: OnFailure
+          containers:
+            - name: tenant-teardown
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - server.services.tenant_teardown
+              envFrom:
+                # Inherit the same app-config ConfigMap as the web pod
+                # so all the non-secret settings are in scope.
+                - configMapRef:
+                    name: {{ include "aifactory.fullname" . }}-config
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.externalSecretName }}
+                      key: database-url
+                # Mirror the web pod's tenant env block so the entry
+                # script reads the same prefix + grace period values.
+                - name: TENANT_ISOLATION_ENABLED
+                  value: "true"
+                - name: TENANT_NAMESPACE_PREFIX
+                  value: {{ .Values.tenant.namespacePrefix | quote }}
+                - name: TENANT_DELETION_GRACE_DAYS
+                  value: {{ .Values.tenant.deletionGraceDays | quote }}
+                - name: TENANT_TEARDOWN_DRY_RUN_HOURS
+                  value: {{ .Values.tenant.teardown.dryRunHours | quote }}
+                {{- if eq .Values.kms.backend "fernet" }}
+                - name: KMS_FERNET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.kms.fernetKeyRef.name }}
+                      key: {{ .Values.kms.fernetKeyRef.key }}
+                {{- end }}
+              resources:
+                # Bounded by per-tenant Stage-2 work. Conservative
+                # defaults; raise if the largest tenant's S3 prefix
+                # delete pushes memory pressure.
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+              securityContext:
+                # Match the web pod's hardening.
+                runAsNonRoot: true
+                runAsUser: 65532
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+{{- end }}
