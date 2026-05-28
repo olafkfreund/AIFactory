@@ -28,6 +28,7 @@ const sidebars: SidebarsConfig = {
         'concepts/mcp-stdio-keys',
         'concepts/portal-clones',
         'concepts/gvisor-sandbox',
+        'concepts/multi-replica',
       ],
     },
     {
