@@ -79,6 +79,11 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 - **AIFactory contribution**: Scoped MCP API keys (Epic #35 #154) replace the host-wide admin token with per-developer `acw_` keys; mutating MCP routes are scope-gated.
 - **Operator responsibility**: Document who has `acw_*` keys with admin scopes. Rotate quarterly.
 
+### A.9.2 Privileged access management (tenant reconciler)
+
+- **AIFactory contribution**: When Tenant Isolation Mode (Epic #35 #36) is enabled, the reconciler authenticates to Vault via a dedicated `aifactory-reconciler` AppRole with the minimum-needed `sys/policies/acl/aifactory-tenant-*` + `auth/kubernetes/role/aifactory-tenant-*` capabilities (it can MANAGE tenant policies but cannot READ tenant secrets). Per-tenant ServiceAccounts use IRSA (AWS) / Workload Identity (GCP/Azure) — never a shared cluster-wide cloud credential. See [tenant-isolation concept doc](../../docs/docs/concepts/tenant-isolation.md).
+- **Operator responsibility**: Pre-create the `aifactory-reconciler` AppRole with the documented minimum capabilities. **Never** use a root token for the reconciler (documented anti-pattern). Rotate the AppRole secret per your KMS policy.
+
 ---
 
 ## A.10 Cryptography
@@ -145,6 +150,11 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 - **AIFactory contribution**: `NetworkPolicy` template (`charts/aifactory/templates/networkpolicy.yaml`) restricts traffic to ingress + Postgres + KMS endpoints. gVisor opt-in for agent pods (Epic #35 #37) provides syscall-level isolation.
 - **Operator responsibility**: Verify the rendered NetworkPolicy matches your cluster's CNI plugin. Validate by running `kubectl exec` from an unprivileged pod and confirming egress is blocked.
 
+### A.13.1 Network segmentation (multi-tenant deployments)
+
+- **AIFactory contribution**: Tenant Isolation Mode (Epic #35 #36) provisions per-Organization Kubernetes Namespace + ServiceAccount + default-deny NetworkPolicy + FQDN-based egress allowlist (Calico FQDN beta OR Cilium `CiliumNetworkPolicy`). Agent pods spawn into the tenant's namespace and cannot reach other tenants' workloads by construction. The Helm pre-install hook (`templates/pre-install-cni-probe.yaml`) hard-fails the install when neither Calico nor Cilium CRDs are present, so operators see CNI capability gaps at install time rather than first reconcile. Opt-in via `tenant.isolationEnabled=true`. See [tenant-isolation concept doc](../../docs/docs/concepts/tenant-isolation.md).
+- **Operator responsibility**: Install Calico or Cilium as your cluster CNI. Enable `tenant.isolationEnabled=true` for multi-tenant deployments. Strongly consider also enabling `tenant.gatekeeperEnabled=true` (OPA sample policies that deny non-`aifactory-tenant-*` namespaces — closes the reconciler RBAC privilege concentration documented in the concept doc).
+
 ### A.13.2.1 Information transfer policies and procedures
 
 - **AIFactory contribution**: All HTTP egress goes through `httpx` clients with TLS verification on; correlation IDs (`X-Request-ID`) propagated through every outbound call; OpenTelemetry tracing across HTTP / DB / agent subprocess (Epic #35 #42).
@@ -200,6 +210,11 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 - **AIFactory contribution**: GDPR right-to-erasure endpoint (`POST /api/admin/users/{id}/erase`); erasure rewrites `details_json` + nulls `user_id` while preserving the audit chain (Epic #26 P5.5). PII columns (email, name) marked nullable in the schema so erasure leaves clean placeholders.
 - **Operator responsibility**: Document your DPIA. Map your GDPR/CCPA-relevant data flows to AIFactory's User / OrgMember / AuditLog tables.
+
+### A.18.1 Compliance with legal requirements (tenant decommissioning)
+
+- **AIFactory contribution**: Tenant Isolation Mode's two-stage tear-down (Epic #35 #36) distinguishes between PII (deleted IMMEDIATELY on org soft-delete per GDPR Art. 17 "without undue delay") and infrastructure (30-day grace period configurable via `tenant.deletionGraceDays`, supports mistaken-delete recovery + legal-hold negotiation). Stage-1 (`Organization.deleted_at` set) nulls `User.email`/`User.name` for users with exclusive membership + hashes `user_id` in audit logs. Stage-2 (daily `tenant-teardown` CronJob after grace elapses, plus 24-hour dry-run preview window) deletes the namespace + S3 prefix (with `^orgs/[0-9a-f-]{36}/$` shape assertion) + Vault path. See [tenant-isolation concept doc](../../docs/docs/concepts/tenant-isolation.md) §tear-down.
+- **Operator responsibility**: Set `tenant.deletionGraceDays` to match your data-retention policy (default 30 days; day 0 allowed but logs WARNING). Monitor stuck-terminating tenants via `SELECT org_id, reconcile_error FROM tenant_states WHERE deleted_at IS NOT NULL AND reconcile_error IS NOT NULL`. Document the PII-vs-infrastructure deletion distinction in your DPIA so auditors see both windows.
 
 ---
 

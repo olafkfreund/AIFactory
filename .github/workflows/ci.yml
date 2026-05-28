@@ -411,6 +411,55 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/obs/ -m obs -v
 
+  tenant-isolation-acceptance:
+    name: tenant-isolation (P9 acceptance)
+    runs-on: ubuntu-latest
+    # Epic #35 #36 — Tenant Isolation Mode. Covers:
+    #   - reconciler decision logic (tests/test_tenant_reconciler.py)
+    #   - schema migration / TenantState ORM (tests/postgres/test_tenant_states_schema.py)
+    #   - Helm chart rendering: env vars, RBAC, CronJob, Gatekeeper
+    #     samples, CNI pre-install probe, schema validators
+    #     (tests/helm/test_tenant_toggle.py — requires helm binary)
+    # No service containers — reconciler tests use in-memory SQLite;
+    # Helm tests use `helm template` against the local chart.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: latest
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Helm dependency build
+        run: helm dependency build charts/aifactory/
+
+      - name: Pytest tenant-isolation acceptance
+        env:
+          CI: "true"
+        run: |
+          apps/backend/.venv/bin/pytest \
+            tests/test_tenant_reconciler.py \
+            tests/helm/test_tenant_toggle.py \
+            -v
+
   rmux-acceptance:
     name: rmux (R0b acceptance)
     runs-on: ubuntu-latest

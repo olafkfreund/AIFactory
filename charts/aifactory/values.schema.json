@@ -180,6 +180,50 @@
         }
       }
     },
+    "tenant": {
+      "type": "object",
+      "properties": {
+        "isolationEnabled": {"type": "boolean"},
+        "deletionGraceDays": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Days between soft-delete and infra tear-down. 0 disables the grace window (operator gets a WARNING on every reconcile pass)."
+        },
+        "namespacePrefix": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,40}[a-z0-9]$",
+          "description": "DNS-label-safe prefix. Constrained so the final ``<prefix>-<slug>`` namespace stays under the 63-char DNS limit."
+        },
+        "networkPolicy": {
+          "type": "object",
+          "properties": {
+            "cniBackend": {"enum": ["auto", "calico", "cilium"]}
+          }
+        },
+        "limitRange": {
+          "type": "object",
+          "properties": {
+            "defaultCpu": {"type": "string"},
+            "defaultMemory": {"type": "string"}
+          }
+        },
+        "resourceQuota": {
+          "type": "object",
+          "properties": {
+            "maxPods": {"type": "integer", "minimum": 1},
+            "maxPvcs": {"type": "integer", "minimum": 0}
+          }
+        },
+        "gatekeeperEnabled": {"type": "boolean"},
+        "teardown": {
+          "type": "object",
+          "properties": {
+            "cronSchedule": {"type": "string"},
+            "dryRunHours": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
     "global": {
       "type": "object",
       "properties": {

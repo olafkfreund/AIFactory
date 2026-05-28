@@ -786,6 +786,140 @@ monitoring:
     # deployments override per-env (e.g. "AIFactory (staging)").
     folder: "AIFactory"
 
+# ---------------------------------------------------------------------------
+# Tenant Isolation Mode (Epic #35 #36).
+#
+# When enabled, every Organization gets its own Kubernetes namespace,
+# ServiceAccount, NetworkPolicy (default-deny + explicit egress allow-
+# list), ResourceQuota, LimitRange, S3 prefix + IAM role (AWS) or
+# operator-supplied per-tenant credentials (other clouds), and Vault
+# path. Agent pods spawn into the tenant's namespace and inherit the
+# isolation by construction.
+#
+# Default: OFF. Pre-#36 deployments are byte-for-byte unchanged until
+# the operator flips ``tenant.isolationEnabled=true``. See the concept
+# doc at docs/docs/concepts/tenant-isolation.md for the full operator
+# walkthrough — threat model, prerequisites, tear-down lifecycle,
+# OPA Gatekeeper recommendation, failure modes.
+#
+# Prerequisites (operator MUST satisfy BEFORE enabling):
+#   1. CNI plugin with FQDN-policy support — Calico (FQDN beta) OR
+#      Cilium (CiliumNetworkPolicy CRD). The Helm pre-install hook
+#      below (pre-install-cni-probe.yaml) probes for these CRDs and
+#      fails the install loudly if neither is present.
+#   2. Redis enabled (``redis.enabled=true``) — multi-replica
+#      deployments need the reconciler's distributed mutex. Single-
+#      replica deployments may run without Redis but the reconciler
+#      refuses to write if Redis is unavailable mid-tick.
+#   3. Vault `aifactory-reconciler` AppRole pre-created with the
+#      minimum-needed sys/policies/acl/aifactory-tenant-* +
+#      auth/kubernetes/role/aifactory-tenant-* capabilities (see
+#      concept doc §5 — never use a root token).
+#   4. (AWS only) IRSA enabled on the cluster so per-tenant IAM roles
+#      can be assumed by per-tenant ServiceAccounts.
+#
+# Security caveat (honest acknowledgement, design §1):
+#   The web pod's ClusterRole grants cluster-wide create on Namespace
+#   + RoleBinding so the reconciler can provision tenant namespaces
+#   at run time. This is a privilege concentration: a compromised web
+#   pod can create arbitrary namespaces + bindings. Production
+#   deployments SHOULD enable both:
+#     - sandbox.gvisor.enabled=true   (syscall-level isolation)
+#     - tenant.gatekeeperEnabled=true (OPA samples that deny non-
+#                                      aifactory-tenant-* namespaces)
+#   See the tenant-reconciler-rbac.yaml template comment for the full
+#   threat-model link.
+tenant:
+  # Master toggle. When false (default), the reconciler does NOT run;
+  # all orgs map to the deployment-default namespace (legacy v1.0
+  # behaviour). Setting true requires the prerequisites above; the
+  # pre-install hook hard-fails if the CNI probe doesn't find Calico
+  # or Cilium CRDs.
+  isolationEnabled: false
+
+  # Days between Organization soft-delete (Stage 1 — PII scrubbed
+  # immediately per GDPR Art. 17) and infrastructure tear-down
+  # (Stage 2 — namespace + S3 prefix + Vault path deleted). 30 days
+  # is the recommended default — long enough for mistaken-delete
+  # recovery + legal-hold negotiation, short enough that abandoned
+  # tenants don't accumulate quota. Day 0 is allowed but produces a
+  # WARNING log on every reconcile pass reminding the operator of
+  # the recovery-window loss.
+  deletionGraceDays: 30
+
+  # Prefix for the per-tenant K8s namespace name. The reconciler
+  # computes ``<namespacePrefix>-<org.slug>`` once on first reconcile
+  # under isolation; the result is stored in
+  # ``organizations.tenant_namespace`` and locked for the org's
+  # lifetime (slug renames do NOT change the namespace name). Override
+  # only if your cluster has a naming convention that conflicts with
+  # the default — must satisfy ^[a-z][a-z0-9-]{0,40}[a-z0-9]$ so the
+  # final namespace stays under the 63-char DNS label limit.
+  namespacePrefix: "aifactory-tenant"
+
+  networkPolicy:
+    # CNI backend hint for FQDN-policy emission. The reconciler emits
+    # either ``CiliumNetworkPolicy`` (Cilium) or a Calico
+    # ``GlobalNetworkPolicy`` (Calico) depending on this value:
+    #   auto    — detect at reconcile time (probes both CRDs)
+    #   calico  — emit Calico CRDs only
+    #   cilium  — emit Cilium CRDs only
+    # The pre-install hook validates BEFORE chart install that the
+    # selected backend's CRDs are present; ``auto`` accepts either.
+    cniBackend: "auto"
+
+  limitRange:
+    # Per-pod CPU/memory defaults injected into each tenant namespace's
+    # LimitRange. Prevents noisy-neighbour between tenants: a tenant
+    # spawning an unbounded agent pod can't starve other tenants.
+    # Operators with high-performance workloads (large-context coding
+    # tasks) may need to raise these; the LimitRange is a DEFAULT, not
+    # a hard cap (the ResourceQuota below sets the hard cap).
+    defaultCpu: "500m"
+    defaultMemory: "512Mi"
+
+  resourceQuota:
+    # Hard cap on resource creation per tenant namespace. Prevents
+    # one tenant's runaway from exhausting cluster quota. Tune to
+    # match your largest expected tenant's footprint — exceeded quota
+    # blocks new pod / PVC creation with a clear K8s error that the
+    # frontend surfaces.
+    maxPods: 50
+    maxPvcs: 20
+
+  # Opt-in OPA Gatekeeper constraint samples. When true, ships two
+  # ConstraintTemplates + Constraints that defence-in-depth the
+  # privilege-concentration acknowledged in the security caveat above:
+  #   1. namespace-prefix — denies any Namespace create whose name
+  #      doesn't start with ``<namespacePrefix>-``. A compromised web
+  #      pod cannot create arbitrary namespaces.
+  #   2. rolebinding-tenant-scope — denies any RoleBinding that
+  #      references the web pod's ServiceAccount in a non-tenant
+  #      namespace.
+  # Requires the Gatekeeper CRDs (templates.gatekeeper.sh) to already
+  # be installed on the cluster. The chart does NOT install Gatekeeper
+  # itself — operators install it once cluster-wide. False (default)
+  # ships nothing; the operator who has not adopted Gatekeeper sees
+  # no behaviour change.
+  gatekeeperEnabled: false
+
+  teardown:
+    # Cron schedule for the daily Stage-2 tear-down sweep. The cron
+    # pod scans for orgs with deleted_at older than
+    # ``tenant.deletionGraceDays`` and tears down their resources via
+    # the reconciler's ``tear_down_org()`` path. Default = 03:00 UTC
+    # (low traffic window for most operators). Operators with multiple
+    # AIFactory deployments writing into a shared cluster MUST stagger
+    # schedules to avoid colliding on the same tear-down window.
+    cronSchedule: "0 3 * * *"
+
+    # Hours the reconciler logs intended deletions BEFORE actually
+    # running them. Per design §4a, a 24-hour dry-run pass gives the
+    # operator a window to intervene if a tear-down was triggered in
+    # error. Setting 0 disables the dry-run pass (deletions execute
+    # immediately at the next cron tick); setting >24 extends it.
+    dryRunHours: 24
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and

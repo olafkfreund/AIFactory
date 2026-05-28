@@ -1,0 +1,71 @@
+{{- /*
+  OPA Gatekeeper ConstraintTemplate — tenant namespace prefix
+  (Epic #35 #36 PR-3).
+
+  Denies any Namespace create whose name doesn't start with the
+  configured ``tenant.namespacePrefix``. Without this, the
+  ClusterRole the reconciler holds (see rbac/tenant-reconciler-rbac
+  .yaml) is effectively cluster-admin: a compromised web pod can
+  create arbitrary namespaces. This template + its companion
+  Constraint restore prefix-based scoping at the admission-controller
+  level.
+
+  This is a SAMPLE policy bundle. Operators with an existing
+  Gatekeeper installation may need to:
+    - rename the ConstraintTemplate kind to match their convention
+    - merge the Rego with their existing namespace-naming policies
+    - add an exempted-namespaces parameter for kube-system, monitoring,
+      etc. (we exempt those by default in the Constraint, but operator
+      lists vary)
+
+  Requires: Gatekeeper CRDs (templates.gatekeeper.sh/v1) installed
+  cluster-wide. The chart does NOT install Gatekeeper itself.
+*/}}
+{{- if and .Values.tenant.isolationEnabled .Values.tenant.gatekeeperEnabled }}
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: aifactorytenantnamespaceprefix
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-gatekeeper-sample
+spec:
+  crd:
+    spec:
+      names:
+        kind: AIFactoryTenantNamespacePrefix
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            prefix:
+              type: string
+              description: Required prefix for tenant namespaces.
+            exemptNamespaces:
+              type: array
+              items:
+                type: string
+              description: Namespace names exempt from the prefix check (kube-system, monitoring, etc.).
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package aifactorytenantnamespaceprefix
+
+        # Allow if the namespace name is in the exempt list.
+        is_exempt {
+          input.review.object.metadata.name == input.parameters.exemptNamespaces[_]
+        }
+
+        # Deny when the namespace name does NOT start with the
+        # configured prefix AND is not exempt.
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "Namespace"
+          input.review.operation == "CREATE"
+          not is_exempt
+          not startswith(input.review.object.metadata.name, input.parameters.prefix)
+          msg := sprintf(
+            "namespace %q does not start with required tenant prefix %q (Epic #35 #36 — AIFactory tenant isolation)",
+            [input.review.object.metadata.name, input.parameters.prefix],
+          )
+        }
+{{- end }}
