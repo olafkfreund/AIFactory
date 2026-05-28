@@ -340,7 +340,18 @@ limitations`. Each maps to a v3.1 Epic #35 issue:
 5. ~~Single-replica only (multi-replica via Redis pub/sub deferred).~~
    ✅ **Closed by Epic #35 #40** — multi-replica works with
    `redis.enabled=true` + `workspaces.storage.enabled=true`.
-6. LLM-call audit deferred to v3.1 LiteLLM gateway. (Open — #38)
+6. ~~LLM-call audit deferred to v3.1 LiteLLM gateway.~~ ✅ **Closed by
+   Epic #35 #38** — operator opts in via `litellm.enabled=true`; the
+   sub-chart deploys a per-tenant budget / rate-limit / allowlist
+   gateway with PII-redacted `audit_logs` rows + Grafana dashboards.
+   **Scope caveat:** Claude calls (via the Claude Agent SDK) bypass
+   the gateway in v1.1 — the SDK speaks Anthropic-format `/v1/messages`
+   which is wire-incompatible with LiteLLM's OpenAI endpoint.
+   Claude retains its existing chain-audit coverage (`claude.session.*`
+   events signed by the daily anchor from #43); v1.2 closes the
+   enforcement gap via an in-process SDK wrapper. See the
+   [LiteLLM gateway concept doc](https://olafkfreund.github.io/AIFactory/concepts/litellm-gateway)
+   for the full operator walkthrough.
 
 ### ✨ Added
 - **GitHub PR Review Integration**: End-to-end support for PR reviews including listing, fetching, posting reviews, checking new commits, and viewing logs via dedicated API endpoints.

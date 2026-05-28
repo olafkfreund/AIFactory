@@ -336,6 +336,14 @@ jobs:
           uv venv
           uv pip install -r ../../tests/requirements-test.txt
 
+      # Pull sub-chart dependencies (LiteLLM 1.86.x for Epic #35 #38)
+      # BEFORE the pytest helm-acceptance suite renders the chart.
+      # Without this step, helm template fails with "chart directory
+      # is missing these dependencies" the moment any test sets
+      # litellm.enabled=true. Idempotent — re-runs are cheap.
+      - name: Helm dep update
+        run: helm dep update charts/aifactory/
+
       - name: Pytest helm acceptance
         env:
           CI: "true"

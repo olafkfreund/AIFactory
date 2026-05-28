@@ -209,6 +209,71 @@ spec:
             - name: AUDIT_ANCHOR_SCHEDULER
               value: {{ $scheduler | quote }}
             {{- end }}
+            {{- /* Validate: litellm.audit.fullTextCapture=true requires litellm.enabled.
+                   Catches the operator who sets the audit knob on a deployment that
+                   doesn't run the gateway — silent no-op otherwise. */ -}}
+            {{- if and .Values.litellm.audit.fullTextCapture (not .Values.litellm.enabled) }}
+            {{- fail "litellm.audit.fullTextCapture=true requires litellm.enabled=true — either enable the gateway or clear the fullTextCapture flag. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- /* Validate: litellm.audit.failureMode enum */ -}}
+            {{- $llFail := .Values.litellm.audit.failureMode | default "closed" }}
+            {{- if not (has $llFail (list "closed" "open")) }}
+            {{- fail (printf "litellm.audit.failureMode=%q is invalid — must be 'closed' or 'open'. See charts/aifactory/values.yaml." $llFail) }}
+            {{- end }}
+            {{- if .Values.litellm.enabled }}
+            # Epic #35 #38 — LiteLLM gateway integration.
+            # When the sub-chart is enabled, the AIFactory web pod
+            # routes OpenAI-compatible provider calls (OpenAI, Codex,
+            # Gemini, Ollama, Bedrock, Vertex) through the in-cluster
+            # LiteLLM Service. Claude calls bypass — the Agent SDK
+            # spawns the `claude` CLI which speaks Anthropic-format
+            # `/v1/messages`, wire-incompatible with LiteLLM's OpenAI
+            # endpoint (closed in v1.2). See concept doc at
+            # docs/docs/concepts/litellm-gateway.md.
+            #
+            # LITELLM_GATEWAY_URL: when ``litellm.gatewayUrl`` is set,
+            # we honour it verbatim (operator-managed external
+            # gateway). Otherwise we compute the sub-chart's in-cluster
+            # Service URL — the upstream chart names its Service after
+            # ``{ReleaseName}-{ChartName}`` and our alias is ``litellm``
+            # so the final form is ``{Release}-litellm.{Ns}.svc:4000``.
+            {{- if .Values.litellm.gatewayUrl }}
+            - name: LITELLM_GATEWAY_URL
+              value: {{ .Values.litellm.gatewayUrl | quote }}
+            {{- else }}
+            - name: LITELLM_GATEWAY_URL
+              value: "http://{{ .Release.Name }}-litellm.{{ .Release.Namespace }}.svc.cluster.local:4000"
+            {{- end }}
+            # Master key (KMS-wrapped) for the LiteLLM admin API
+            # (key/generate, budget/update, key/list, key/delete used
+            # by the virtual-key lifecycle reconciler from PR-2b). The
+            # web pod's startup unwraps the value via the configured
+            # KMS backend before any admin call. Required when the
+            # gateway is enabled — schema validator above enforces.
+            - name: LITELLM_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "litellm.enabled=true requires litellm.masterKeySecretName (a Kubernetes Secret with a key named LITELLM_MASTER_KEY containing the KMS-wrapped master key). See charts/aifactory/values.yaml." .Values.litellm.masterKeySecretName | quote }}
+                  key: LITELLM_MASTER_KEY
+            # Audit hook knobs — read by the provider classes (PR-2b
+            # work, env vars wired here so the chart is forward-ready).
+            - name: LITELLM_AUDIT_ENABLED
+              value: {{ .Values.litellm.audit.enabled | quote }}
+            - name: LITELLM_AUDIT_FULL_TEXT
+              value: {{ .Values.litellm.audit.fullTextCapture | quote }}
+            - name: LITELLM_AUDIT_FAILURE_MODE
+              value: {{ $llFail | quote }}
+            {{- if .Values.litellm.audit.extraRedactionPatterns }}
+            # Operator-supplied PII patterns layered on top of the
+            # built-ins (US SSN, email, US phone — design §4). Encoded
+            # as a JSON array string for env-var transport; the
+            # web-pod's llm_pii_redactor parses + compiles at start.
+            # Bad regexes log a WARNING and are skipped (one bad
+            # pattern doesn't disable all redaction).
+            - name: LITELLM_AUDIT_EXTRA_PATTERNS
+              value: {{ .Values.litellm.audit.extraRedactionPatterns | toJson | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.rmux.enabled }}
             # Epic #44 R3 — flip on the rmux Live Agent Console.
             # The web-server's startup runtime checks for the binary
