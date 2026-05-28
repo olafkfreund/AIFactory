@@ -159,7 +159,11 @@ def test_downgrade_drops_everything(test_postgres_url: str) -> None:
 
     env = {"DATABASE_URL": test_postgres_url}
     run_alembic(["upgrade", "head"], env=env)
-    down = run_alembic(["downgrade", "-1"], env=env)
+    # Pin to the immediate parent (d4f8c1a3e2b7 — audit_anchor) so
+    # future migrations stacked on top don't break this test. Same
+    # brittleness-fix pattern as #178/#181/#192. #38 PR-2a's
+    # allowed_models migration is what broke the relative ``-1``.
+    down = run_alembic(["downgrade", "d4f8c1a3e2b7"], env=env)
     assert down.returncode == 0, f"downgrade failed: {down.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
