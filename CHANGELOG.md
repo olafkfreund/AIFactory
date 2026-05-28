@@ -34,6 +34,47 @@
   quickstart + demo callout + screenshot grid + prominent docs links.
   Everything operational moved to the docs site.
 
+### 🏛️ Enterprise v1.1 (Epic #35)
+
+- **#42 — OpenTelemetry distributed tracing** ✅ (closed)
+  - PR #175: in-process tracer + auto-instrumentation (FastAPI, SQLAlchemy,
+    asyncpg, httpx, Redis), per-phase manual `task:phase:*` spans for the
+    agent lifecycle, W3C `traceparent` injected into Redis envelopes for
+    cross-replica trace continuity, `TRACEPARENT` env injected into
+    subprocess for cross-process continuity, `CorrelationIdMiddleware`
+    sources `request_id` from active `trace_id` (client header still wins
+    for back-compat), full failure-safe contract (broken collector never
+    crashes the app), 14 unit tests with `InMemorySpanExporter`.
+  - PR #176: Helm `otel:` block (typed config, `samplingRatio ∈ [0.0, 1.0]`,
+    `headersSecretName` for vendor-auth), two operator-misconfig validators
+    that fail `helm template` loud, agent-subprocess `tracing_bootstrap.py`
+    that re-attaches the parent context from `TRACEPARENT`, concept doc
+    at [`/concepts/observability-tracing`](https://olafkfreund.github.io/AIFactory/concepts/observability-tracing),
+    23 new tests (12 helm + 8 bootstrap + 3 e2e).
+  - Closes v3.0 limitation #4 ("No built-in OpenTelemetry distributed tracing").
+- **#41 — SAML 2.0 + SCIM 2.0 for legacy-IdP banks** (in flight, ~60% done)
+  - PR #177 (PR-1a): Security-foundation modules. SAML replay cache with
+    per-assertion TTL (not blanket-LRU — the reviewer-flagged trap), OneLogin
+    SDK wrapper with `strict=True` + `wantAssertionsSigned=True` + RSA-SHA256
+    hard-coded, HMAC-signed RelayState (CSRF defence with constant-time
+    verify), SCIM Pydantic schemas per RFC 7643, minimum-viable filter
+    parser (eq-only on `userName`/`externalId`/`active`), Bearer-token
+    middleware with 503-loud-on-misconfig + constant-time compare. 48 unit
+    tests, all the security-critical surface where bugs become security holes.
+  - PR #178 (PR-1b1): `external_identities` table (kind + subject + FK
+    CASCADE) for multi-IdP linkage; backfills existing `users.oidc_sub`
+    rows as `kind='oidc:legacy'`. 4 Postgres-marked tests.
+  - Remaining: SAML routes (/login, /acs, /metadata), SCIM CRUD, login
+    discovery dropdown, Helm `saml:` + `scim:` blocks, concept doc, e2e.
+- **#37 — gVisor RuntimeClass** ✅ (closed previously this cycle): agent
+  pods can opt in to `runtimeClassName: gvisor` for kernel-level isolation.
+- **#40 — S3 workspace storage + Redis pub/sub** ✅ (closed previously this
+  cycle): workspaces snapshot to fsspec-backed S3 (AWS / MinIO / GCS /
+  Azure); Redis pub/sub fans out WebSocket events across replicas.
+  Closes v3.0 limitation #5 ("Single-replica only").
+- **#154 — Scoped MCP API keys** ✅ (closed previously this cycle):
+  per-developer `acw_` keys with scope-gated mutating routes.
+
 ### ✨ Added
 
 - **`scripts/demo.sh`** — end-to-end demo runner (Bash + jq + gh).
@@ -248,13 +289,16 @@ New operator runbooks under `guides/`:
 Tracked in `guides/compliance/soc2-evidence.md § Documented
 limitations`. Each maps to a v3.1 Epic #35 issue:
 
-1. Audit chain has no signed external anchor.
+1. Audit chain has no signed external anchor. (Open — #43)
 2. Revocation latency bounded by 15-minute access-token TTL (back-
    channel logout deferred).
 3. FIPS 140-2/3 modules not validated.
-4. No built-in OpenTelemetry distributed tracing.
-5. Single-replica only (multi-replica via Redis pub/sub deferred).
-6. LLM-call audit deferred to v3.1 LiteLLM gateway.
+4. ~~No built-in OpenTelemetry distributed tracing.~~ ✅ **Closed by
+   Epic #35 #42** — see `## Unreleased § Enterprise v1.1`.
+5. ~~Single-replica only (multi-replica via Redis pub/sub deferred).~~
+   ✅ **Closed by Epic #35 #40** — multi-replica works with
+   `redis.enabled=true` + `workspaces.storage.enabled=true`.
+6. LLM-call audit deferred to v3.1 LiteLLM gateway. (Open — #38)
 
 ### ✨ Added
 - **GitHub PR Review Integration**: End-to-end support for PR reviews including listing, fetching, posting reviews, checking new commits, and viewing logs via dedicated API endpoints.
