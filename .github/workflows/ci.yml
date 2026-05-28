@@ -18,9 +18,11 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
-    # Redis service for the cross-replica WS fan-out integration test
-    # (Epic #35 #40 PR-2). Without it those tests skip silently; with
-    # it they actually fire and prove the bus works end-to-end.
+    # Redis service container for the cross-replica WS fan-out
+    # integration tests (Epic #35 #40 half-A). MinIO for the
+    # S3-workspaces tests (Epic #35 #40 half-B) starts via a
+    # ``docker run`` step below — service containers can't pass the
+    # ``server /data`` command the upstream MinIO image needs.
     services:
       redis:
         image: redis:7-alpine
@@ -56,6 +58,29 @@ jobs:
       - name: Ruff lint
         run: apps/backend/.venv/bin/ruff check apps/backend tests
 
+      # MinIO for the S3-workspaces integration tests (Epic #35 #40
+      # half-B). Started as a regular ``docker run`` rather than a
+      # service container because (a) bitnami/minio:latest was retired
+      # mid-2026, and (b) GHA service containers can't pass the
+      # ``server /data`` command upstream minio/minio needs.
+      - name: Start MinIO
+        run: |
+          docker run -d --name aif-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minio \
+            -e MINIO_ROOT_PASSWORD=minio12345 \
+            quay.io/minio/minio:latest server /data
+          # Wait for healthcheck to pass before pytest fires the
+          # integration tests. Times out after ~30s if MinIO never
+          # comes up — the tests would just skip in that case.
+          for i in $(seq 1 30); do
+            if curl -fsSL "http://localhost:9000/minio/health/live" >/dev/null 2>&1; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - name: Pytest (skip slow)
         env:
           GRAPHITI_ENABLED: "false"
@@ -64,6 +89,14 @@ jobs:
           # services.redis container above. Test still skips on local
           # dev runs that don't have a Redis available.
           TEST_REDIS_URL: "redis://localhost:6379/15"
+          # Workspace-storage integration test points at the
+          # services.minio container. MINIO_DEFAULT_BUCKETS on the
+          # service auto-creates the bucket; the test fixture
+          # idempotently re-creates it if needed.
+          TEST_S3_URI_BASE: "s3://aifactory-test/workspaces"
+          TEST_S3_ENDPOINT_URL: "http://localhost:9000"
+          AWS_ACCESS_KEY_ID: "minio"
+          AWS_SECRET_ACCESS_KEY: "minio12345"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
   postgres-acceptance:

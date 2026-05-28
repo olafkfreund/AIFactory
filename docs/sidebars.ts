@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
         'concepts/portal-clones',
         'concepts/gvisor-sandbox',
         'concepts/multi-replica',
+        'concepts/workspace-storage',
       ],
     },
     {
