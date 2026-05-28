@@ -44,6 +44,13 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
     REDIS_CHANNEL: str = "aifactory:events"
 
+    # S3-compatible workspace storage (Epic #35 #40 half-B).
+    # Empty = local-only (no snapshotting). Setting a non-empty fsspec
+    # URI (s3://, gs://, azure://) enables snapshot-at-task-phase-
+    # transition upload and lazy on-demand restore. Default preserves
+    # v1.0 PVC-only behavior exactly. See docs/plans/2026-05-28-s3-workspaces-design.md.
+    WORKSPACE_S3_URI_BASE: str = ""
+
     # Database
     DATABASE_URL: str = ""  # Auto-generated if not set (sqlite+aiosqlite:///...)
     # Alembic migration behaviour at app boot. P1.4 of Epic #26.
