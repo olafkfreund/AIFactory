@@ -30,6 +30,7 @@ const sidebars: SidebarsConfig = {
         'concepts/gvisor-sandbox',
         'concepts/multi-replica',
         'concepts/workspace-storage',
+        'concepts/observability-tracing',
       ],
     },
     {
