@@ -514,6 +514,69 @@ redis:
   # deployment should pick a unique channel to avoid cross-talk).
   channel: "aifactory:events"
 
+# ---------------------------------------------------------------------------
+# OpenTelemetry distributed tracing (Epic #35 #42).
+#
+# When enabled, the web-server emits OTLP spans for HTTP requests,
+# DB calls (SQLAlchemy / asyncpg), outbound httpx, redis ops, and
+# the agent-task phase transitions. The agent subprocess inherits
+# the parent's trace context via the ``TRACEPARENT`` env var (the
+# web-server injects it automatically — see make_subprocess_env).
+#
+# When ``otel.enabled: false`` (default) the app starts an OTel
+# TracerProvider with NO exporter — spans build in memory and drop
+# at export. Zero observable cost; safe to keep off in single-replica
+# dev. Toggle on once a collector is reachable.
+#
+# Collector targets we test against:
+#   • Grafana Tempo (gRPC on :4317 or HTTP on :4318)
+#   • Jaeger (OTLP-native ingest on :4317 / :4318)
+#   • Datadog Agent (OTLP receiver, requires DD_API_KEY in headers)
+#   • Honeycomb / NewRelic (HTTPS endpoint + headers secret)
+#
+# Sampling: ``ParentBased`` (children inherit parent's decision) wrapped
+# around ``TraceIdRatioBased(samplingRatio)``. Default 1.0 (sample
+# everything). Drop to 0.1 when traffic is high; 0.0 is accepted and
+# means "drop all spans" (useful for proving the no-export code path).
+#
+# Headers Secret: production deployments use an external Secret with
+# the ``OTEL_EXPORTER_OTLP_HEADERS`` key (e.g.
+# ``api-key=xxxx,team=infra``). The pod consumes the value via
+# valueFrom.secretKeyRef. The required-validator below blocks helm
+# template when ``headersSecretName`` is set but ``enabled`` isn't
+# (operator misconfiguration that would silently no-op).
+otel:
+  # Master toggle. When false (default), no exporter is installed
+  # and OTEL_EXPORTER_OTLP_ENDPOINT stays unset — the app respects
+  # the absence as "no collector" and skips the OTLP exporter.
+  enabled: false
+  # OTLP collector endpoint. REQUIRED when ``enabled: true``.
+  # Examples:
+  #   http://tempo.observability.svc:4317  (in-cluster Tempo, gRPC)
+  #   https://api.honeycomb.io:443         (Honeycomb, HTTP)
+  endpoint: ""
+  # Wire protocol. gRPC is more efficient (binary, multiplexed,
+  # streaming) but http/protobuf works behind proxies that only
+  # speak HTTP/1.1. Pick to match your collector's ingress.
+  protocol: "grpc"  # grpc | http/protobuf
+  # Resource attribute attached to every span. Lets a multi-tenant
+  # Tempo distinguish AIFactory from neighbour workloads. Change
+  # only when running multiple AIFactory deployments against one
+  # backend (e.g. ``aifactory-staging`` vs ``aifactory-prod``).
+  serviceName: "aifactory-web"
+  # Sampling ratio in [0.0, 1.0]. ParentBased(TraceIdRatioBased(x)):
+  # children always inherit the parent's decision; root spans get
+  # kept with probability x. 1.0 = sample all (good for staging);
+  # 0.1 = 10% in production. 0.0 is valid — accepts no spans at the
+  # export stage (still constructs them, still flows through
+  # propagation), useful for the no-export acceptance test.
+  samplingRatio: 1.0
+  # Optional Kubernetes Secret with the ``OTEL_EXPORTER_OTLP_HEADERS``
+  # key. Used for vendor-auth (Honeycomb / Datadog / NewRelic API
+  # keys) or for tenant routing. Setting this without ``enabled: true``
+  # is rejected at helm template time — see validator note above.
+  headersSecretName: ""
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and
