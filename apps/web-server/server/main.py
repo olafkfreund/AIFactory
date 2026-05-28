@@ -247,6 +247,11 @@ def create_app() -> FastAPI:
     from .routes import gdpr as gdpr_routes
     app.include_router(gdpr_routes.router)
 
+    # Epic #35 #43 PR-1b4 — /api/admin/access-review endpoint for
+    # SOC2 CC6.2 + ISO 27001 A.9.2.5 quarterly access reviews.
+    from .routes import access_review as access_review_routes
+    app.include_router(access_review_routes.router)
+
     # Notification routes (prefix defined in router: /api/notifications)
     app.include_router(notifications.router)
 
