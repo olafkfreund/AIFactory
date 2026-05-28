@@ -825,3 +825,205 @@ class TenantReconciler:
             vault_client=self.vault_client,
             redis_client=self.redis_client,
         )
+
+
+# ---------------------------------------------------------------------------
+# Epic #35 #38 PR-2b — LiteLLM virtual-key lifecycle
+# ---------------------------------------------------------------------------
+#
+# Per the locked design (implementation plan PR-2 + reviewer
+# recommendation #5), the reconciler owns per-tenant LiteLLM admin-API
+# sync alongside its existing K8s/IAM/Vault decision interface. The
+# lifecycle hooks below run on org create / soft-delete / hard-delete
+# and a periodic drift sweep reconciles AIFactory's `organizations`
+# table against LiteLLM's `/key/list` for divergence after a DB
+# restore.
+#
+# Coordination note: #36 PR-2 is being authored in parallel on
+# `feat/36-tenant-resources` and lands K8s/IAM/Vault apply methods on
+# this same module. The hooks below intentionally use distinct method
+# names so the merge conflict is method-coexistence (textual) not
+# behaviour-coexistence (semantic).
+#
+# Failure-safe contract: every method wraps the admin-client call in
+# try/except. A LiteLLM admin failure during reconcile logs WARNING
+# + the next reconciler tick retries.
+
+
+async def sync_virtual_key_on_create(
+    org: Organization,
+    admin_client,
+) -> str | None:
+    """Provision a LiteLLM virtual key for a newly-created org.
+
+    Called from the reconciler when the decision is ``action='create'``
+    OR from the org-create route post-commit (whichever runs first
+    wins; the second is a no-op due to ``user_id`` uniqueness on the
+    LiteLLM side, which surfaces as a HTTP 409 we treat as success).
+
+    Returns the generated key string on success, ``None`` on a
+    failure that the reconciler should retry next tick.
+    """
+    try:
+        # WHY: pull allowed_models off the ORM row at call-time so
+        # the value reflects the most recent UI update. Stale values
+        # only surface 1 reconcile tick later.
+        key = await admin_client.create_virtual_key(
+            org_id=org.id,
+            allowed_models=list(org.allowed_models or ["*"]),
+        )
+        logger.info(
+            "litellm virtual-key created: org=%s allowed_models=%r",
+            org.id, org.allowed_models,
+        )
+        return key
+    except Exception:
+        # Failure-safe: log + return None; next tick retries.
+        logger.warning(
+            "litellm virtual-key create failed for org=%s; "
+            "will retry on next reconcile tick",
+            org.id, exc_info=True,
+        )
+        return None
+
+
+async def sync_virtual_key_on_soft_delete(
+    org: Organization,
+    admin_client,
+) -> bool:
+    """Disable a LiteLLM virtual key (budget_duration=0) on soft-delete.
+
+    Records an audit row noting the disable (so SOC2 evidence can
+    show the enforcement event, not just the org-delete event).
+    Returns True on success, False on failure (next tick retries).
+    """
+    try:
+        await admin_client.disable_virtual_key(org_id=org.id)
+        logger.info(
+            "litellm virtual-key disabled (soft-delete): org=%s",
+            org.id,
+        )
+        # Best-effort audit record. The disable is the
+        # enforcement-relevant event; the org.delete row already
+        # exists via the orgs route.
+        try:
+            from .audit_service import log_audit_event_bg
+            await log_audit_event_bg(
+                org_id=org.id, user_id=None,
+                action="llm.virtual_key.disabled",
+                resource_type="litellm_key",
+                resource_id=org.id,
+                details={"reason": "org_soft_delete"},
+            )
+        except Exception:
+            # Audit failure is non-fatal; the LiteLLM-side disable
+            # already happened, which is the security-critical part.
+            logger.debug(
+                "litellm virtual-key disable audit write failed for "
+                "org=%s; LiteLLM state is correct", org.id,
+                exc_info=True,
+            )
+        return True
+    except Exception:
+        logger.warning(
+            "litellm virtual-key disable failed for org=%s; "
+            "will retry on next reconcile tick",
+            org.id, exc_info=True,
+        )
+        return False
+
+
+async def sync_virtual_key_on_hard_delete(
+    org: Organization,
+    admin_client,
+) -> bool:
+    """Hard-delete a LiteLLM virtual key on tear-down (day 30 per #36).
+
+    Returns True on success; False on failure (next tick retries).
+    """
+    try:
+        await admin_client.delete_virtual_key(org_id=org.id)
+        logger.info(
+            "litellm virtual-key hard-deleted: org=%s", org.id,
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "litellm virtual-key hard-delete failed for org=%s; "
+            "will retry on next reconcile tick",
+            org.id, exc_info=True,
+        )
+        return False
+
+
+async def reconcile_virtual_keys_drift(
+    db: AsyncSession,
+    admin_client,
+) -> dict[str, int]:
+    """Periodic drift sweep: align LiteLLM key state with AIFactory orgs.
+
+    Two divergence cases covered:
+    1. Org row exists but no LiteLLM key (DB restore from before the
+       key was provisioned) → create.
+    2. LiteLLM key exists but org row gone (LiteLLM DB restored from
+       a later backup than AIFactory's) → delete.
+
+    Returns counts ``{"created": N, "revoked": M, "errors": K}`` for
+    operator observability. Never raises — drift recovery is
+    best-effort and a failed sweep just retries next tick.
+    """
+    counts = {"created": 0, "revoked": 0, "errors": 0}
+    try:
+        live_keys = await admin_client.list_virtual_keys()
+    except Exception:
+        logger.warning(
+            "litellm drift sweep: list_virtual_keys failed; aborting "
+            "this tick", exc_info=True,
+        )
+        counts["errors"] += 1
+        return counts
+
+    # LiteLLM tags keys with the org id via the metadata.aifactory_org_id
+    # field (set in create_virtual_key). Build the set of org ids that
+    # currently have a key.
+    live_org_ids: set[str] = set()
+    for key in live_keys:
+        metadata = key.get("metadata") or {}
+        if isinstance(metadata, dict):
+            org_id = metadata.get("aifactory_org_id")
+            if isinstance(org_id, str):
+                live_org_ids.add(org_id)
+
+    # Active orgs (not soft-deleted) should each have a key.
+    stmt = select(Organization).where(Organization.deleted_at.is_(None))
+    result = await db.execute(stmt)
+    active_orgs = list(result.scalars())
+    active_org_ids = {org.id for org in active_orgs}
+
+    # Case 1: orgs missing a key.
+    for org in active_orgs:
+        if org.id in live_org_ids:
+            continue
+        key = await sync_virtual_key_on_create(org, admin_client)
+        if key is not None:
+            counts["created"] += 1
+        else:
+            counts["errors"] += 1
+
+    # Case 2: keys with no org (or org soft-deleted).
+    for org_id in live_org_ids - active_org_ids:
+        try:
+            await admin_client.delete_virtual_key(org_id=org_id)
+            counts["revoked"] += 1
+            logger.info(
+                "litellm drift sweep: revoked orphan key for org=%s",
+                org_id,
+            )
+        except Exception:
+            counts["errors"] += 1
+            logger.warning(
+                "litellm drift sweep: orphan key revoke failed for "
+                "org=%s; will retry next tick", org_id, exc_info=True,
+            )
+
+    return counts
