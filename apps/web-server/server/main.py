@@ -43,8 +43,11 @@ from .routes import (
 )
 from .routes import cli_accounts as cli_accounts_routes
 from .routes import llm_endpoints as llm_endpoints_routes
+from .routes import login_discovery as login_discovery_routes
 from .routes import logs as logs_routes
 from .routes import settings as settings_routes
+from .saml import routes as saml_routes
+from .scim import routes as scim_routes
 from .services.skills_service import init_skills_service
 from .websockets import events as events_ws
 from .websockets import logs as logs_ws
@@ -229,6 +232,29 @@ def create_app() -> FastAPI:
     # no-op for installations that haven't configured an IdP.
     from .routes import oidc_routes
     app.include_router(oidc_routes.router)
+
+    # Epic #35 #41 PR-1b4 — IdP discovery endpoint.  Always mounted (no
+    # feature flag) because the login page must be able to call it even
+    # before knowing which protocols are configured.  Returns [] when
+    # nothing is enabled — the login page falls back to local-password form.
+    app.include_router(login_discovery_routes.router)
+
+    # Epic #35 #41 PR-1b2 — SAML 2.0 SP routes (/login, /acs, /metadata).
+    # Mounted unconditionally — mirrors the OIDC pattern where endpoints
+    # return 404 when the feature flag is off, rather than skipping the
+    # mount entirely.  This keeps the OpenAPI schema consistent regardless
+    # of runtime config.
+    app.include_router(saml_routes.router)
+
+    # Epic #35 #41 PR-1b3 — SCIM 2.0 CRUD routes.
+    # Mounted unconditionally — the Bearer-token auth middleware (scim/auth.py)
+    # gates every route.  The module is imported at module level (above) so
+    # that SQLAlchemy mapper configuration for the SCIM models happens at
+    # import time, before any async event loops start.  Late import inside
+    # create_app() would trigger mapper configuration inside the anyio loop
+    # used by TestClient in tests, leaving aiosqlite background threads
+    # associated with a loop that closes before subsequent tests run.
+    app.include_router(scim_routes.router)
 
     # Organization routes (prefix defined in router: /api/orgs)
     app.include_router(organizations.router)
