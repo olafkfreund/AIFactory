@@ -111,6 +111,75 @@
         }
       }
     },
+    "litellm": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "masterKeySecretName": {"type": "string"},
+        "gatewayUrl": {"type": "string"},
+        "audit": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "fullTextCapture": {"type": "boolean"},
+            "failureMode": {"enum": ["closed", "open"]},
+            "extraRedactionPatterns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["pattern", "replacement"],
+                "properties": {
+                  "pattern": {"type": "string", "minLength": 1},
+                  "replacement": {"type": "string"}
+                }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"enabled": {"const": true}},
+            "required": ["enabled"]
+          },
+          "then": {
+            "required": ["masterKeySecretName"],
+            "properties": {
+              "masterKeySecretName": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "audit": {
+                "properties": {"fullTextCapture": {"const": true}},
+                "required": ["fullTextCapture"]
+              }
+            },
+            "required": ["audit"]
+          },
+          "then": {
+            "required": ["enabled"],
+            "properties": {"enabled": {"const": true}}
+          }
+        }
+      ]
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "grafanaDashboards": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "namespaceLabel": {"type": "string"},
+            "folder": {"type": "string"}
+          }
+        }
+      }
+    },
     "global": {
       "type": "object",
       "properties": {

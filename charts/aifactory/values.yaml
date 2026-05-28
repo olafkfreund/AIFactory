@@ -632,6 +632,160 @@ audit:
       successfulJobsHistoryLimit: 1
       failedJobsHistoryLimit: 3
 
+# ---------------------------------------------------------------------------
+# LiteLLM gateway (Epic #35 #38 PR-3).
+#
+# Optional sub-chart from upstream berriai/litellm-helm. When enabled,
+# a single in-cluster LiteLLM Service mediates every OpenAI-compatible
+# LLM call AIFactory makes (OpenAI, Codex CLI, Gemini, Ollama,
+# Bedrock, Vertex). Claude calls stay direct via the Claude Agent SDK
+# because the SDK speaks Anthropic-format `/v1/messages` which is
+# wire-incompatible with LiteLLM's OpenAI-format `/v1/chat/completions`
+# — closing that gap is a v1.2 work item.
+#
+# What LiteLLM gives operators:
+#   • Per-tenant token budget                ($500/month per org)
+#   • Per-tenant rate limit                  (60 req/min per org)
+#   • Per-tenant model allowlist             (gpt-4o yes, gpt-5 no)
+#   • Audit hook (PII-redacted prompt + response in audit_logs)
+#   • Prometheus metrics → Grafana dashboards (dashboards/litellm.json)
+#
+# Default OFF — single-developer pilots and laptop installs run with
+# the existing direct-provider path. Pre-#38 deployments are
+# byte-for-byte unchanged until the operator flips
+# ``litellm.enabled: true``. See the concept doc at
+# docs/docs/concepts/litellm-gateway.md for the full operator
+# walkthrough — failure modes, master-key rotation, allowlist
+# discipline, virtual-key lifecycle, and dashboard import recipe.
+#
+# Multi-tenant operators MUST also configure the audit + redactor
+# block below. The audit.failureMode setting decides what happens
+# when the audit-write path fails — closed (reject the call) is the
+# compliance-safe default; open (let the call through with a logged
+# warning) is the operator escape hatch for during-incident triage.
+litellm:
+  # Master toggle. False (default) means no sub-chart pulled, no
+  # LITELLM_* env vars on the web pod, no Grafana ConfigMap rendered.
+  enabled: false
+
+  # Name of a Kubernetes Secret containing the KMS-wrapped master
+  # key (design §3). REQUIRED when enabled=true. The Secret must
+  # have a key named ``LITELLM_MASTER_KEY`` whose value is the
+  # KMS-wrapped key (NOT plaintext — the reconciler unwraps via the
+  # configured KMS backend before calling LiteLLM admin APIs).
+  #
+  # Anti-pattern (forbidden): putting the plaintext master key in
+  # the generic ``aifactory-config`` Secret. The startup validator
+  # refuses to call admin APIs without a successful KMS unwrap.
+  # Rotation runbook: same cadence as the audit-anchor signing key
+  # documented in #43 — see concept doc.
+  masterKeySecretName: ""
+
+  # When set, this overrides the in-cluster Service URL. Use for
+  # operator-managed external LiteLLM deployments (e.g. a shared
+  # gateway running in a neighbour namespace, or a multi-deployment
+  # gateway-as-a-service). Leave empty to use the in-cluster
+  # sub-chart Service.
+  gatewayUrl: ""
+
+  # AIFactory-specific audit + PII redaction options. These are
+  # AIFactory's, NOT the upstream chart's — wired into the audit
+  # hook the web pod runs against every LLM response.
+  audit:
+    # Master toggle for AIFactory's audit hook. When true, the
+    # provider classes wrap each LLM response in an audit_logs
+    # writer with classification='confidential' (design §5).
+    # When litellm.enabled=true, default this to true for
+    # SOC2/ISO compliance. Operators can opt out only for the
+    # short, well-bounded reasons documented in the concept doc.
+    enabled: true
+
+    # Opt-in encrypted full-text capture of prompt + response.
+    # OFF by default: the audit row stores the first 4KB only
+    # (design §5). Operators with strict full-prompt retention
+    # mandates flip this to true; the bytes go through the
+    # EncryptedString column type from Epic #26 P2.
+    fullTextCapture: false
+
+    # Operator extensions to the built-in PII redaction patterns
+    # (design §4). Built-in patterns cover US SSN, email, US phone
+    # in the hyphenated forms; CC pattern is INTENTIONALLY OMITTED
+    # in v1.1 due to false-positive rate (Luhn-validated CC pattern
+    # ships in v1.2). Operators with PCI data add their own here:
+    #
+    #   extraRedactionPatterns:
+    #     - pattern: 'ACC-\d{8}'
+    #       replacement: '[REDACTED_ACCT]'
+    #     - pattern: '\b4\d{15}\b'          # Visa, no spaces (Luhn-check yourself)
+    #       replacement: '[REDACTED_CC]'
+    #
+    # Patterns are Python `re` syntax. Compile failures log
+    # WARNING + skip the bad pattern (fail-safe; one bad regex
+    # doesn't disable all redaction).
+    extraRedactionPatterns: []
+
+    # What to do when the audit-write path fails (KMS down,
+    # DB unreachable, PII regex compile error, etc):
+    #   "closed" — reject the LLM call with a clear operator-
+    #              visible error. Compliance-safe default; the
+    #              whole point of the gateway is the audit
+    #              evidence, so bypassing on failure defeats
+    #              the purpose.
+    #   "open"   — let the call through with a logged WARNING.
+    #              Operator escape hatch for during-incident
+    #              triage (e.g. KMS outage where you'd rather
+    #              continue serving than block all LLM traffic).
+    #              Documented as a compliance regression; the
+    #              concept doc walks through the trade-off.
+    failureMode: "closed"
+
+  # ---------------------------------------------------------------
+  # Upstream berriai/litellm-helm chart values pass through here.
+  # See https://github.com/BerriAI/litellm/tree/main/deploy/charts/litellm-helm
+  # for the full list. Operators configure backend providers (OpenAI,
+  # Bedrock, Vertex, Ollama), per-tenant accounting, and pod resource
+  # limits via the standard upstream value paths under this same
+  # ``litellm:`` block (Helm sub-chart values are nested under the
+  # parent chart's dependency name / alias).
+  #
+  # Example (operator override in their own values.yaml):
+  #
+  #   litellm:
+  #     enabled: true
+  #     masterKeySecretName: "aifactory-litellm-master-key"
+  #     proxy_config:
+  #       model_list:
+  #         - model_name: gpt-4o-mini
+  #           litellm_params:
+  #             model: openai/gpt-4o-mini
+  #             api_key: os.environ/OPENAI_API_KEY
+  #         - model_name: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+  #           litellm_params:
+  #             model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+  #             aws_region_name: us-east-1
+  #     environmentSecrets:
+  #       - aifactory-llm-backend-keys
+
+# ---------------------------------------------------------------------------
+# Monitoring add-ons that wrap Grafana dashboards and other observability
+# resources. Each toggle is independent — operators can ship the Grafana
+# ConfigMaps without the Prometheus ServiceMonitor and vice versa.
+monitoring:
+  grafanaDashboards:
+    # When true, the LiteLLM Grafana dashboard JSON in
+    # dashboards/litellm.json is wrapped in a ConfigMap with the
+    # ``grafana_dashboard: "1"`` label that the Grafana operator
+    # auto-discovers and imports. When false (default), no ConfigMap
+    # is rendered — operators using a non-operator Grafana install
+    # import the JSON manually via the Grafana UI.
+    enabled: false
+    # Namespace label that scopes the dashboard discovery. Override
+    # only when running multiple Grafana operators on one cluster.
+    namespaceLabel: "monitoring"
+    # Folder name in Grafana. Operators with multiple AIFactory
+    # deployments override per-env (e.g. "AIFactory (staging)").
+    folder: "AIFactory"
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and

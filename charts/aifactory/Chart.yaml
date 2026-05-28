@@ -32,4 +32,27 @@ annotations:
 # external Postgres only — production deployments typically point at
 # a managed instance (RDS / Cloud SQL / AKS Postgres) via
 # ExternalSecret anyway.
-dependencies: []
+#
+# LiteLLM gateway (Epic #35 #38 PR-3). Optional sub-chart that gives
+# operators per-tenant LLM budget enforcement, rate-limiting, model
+# allowlists, and a Prometheus metrics surface for the Grafana
+# dashboards shipped in dashboards/litellm.json. Pulled lazily — when
+# litellm.enabled=false (default), the dependency is not fetched and
+# no LiteLLM pods deploy.
+#
+# Version pin policy (design §3 + reviewer recommendation #3):
+#   • PATCH bumps (1.86.2 → 1.86.x): tracked by renovate.json,
+#     auto-mergeable after CI passes.
+#   • MINOR bumps (1.86.x → 1.87.x): require manual review + a
+#     staging-cluster test against the budget + allowlist admin API.
+#     Upstream sometimes ships breaking values.yaml schema changes
+#     in minor versions; never auto-merge these.
+#   • MAJOR bumps (1.x → 2.x): full re-evaluation of the design.
+# See docs/docs/concepts/litellm-gateway.md "Version pin + bump
+# cadence" section for the operator-facing version of this policy.
+dependencies:
+  - name: litellm-helm
+    version: "1.86.2"
+    repository: oci://ghcr.io/berriai
+    condition: litellm.enabled
+    alias: litellm

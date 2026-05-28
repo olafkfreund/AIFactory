@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         'concepts/observability-tracing',
         'concepts/audit-anchor',
         'concepts/cloud-llm-routing',
+        'concepts/litellm-gateway',
       ],
     },
     {

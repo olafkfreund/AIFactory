@@ -177,6 +177,16 @@ playwright/.cache/
 dev/
 _bmad/
 _bmad-output/
+
+# ===========================
+# Helm sub-chart cache (Epic #35 #38)
+# ===========================
+# `helm dep update` writes Chart.lock + pulled .tgz files under
+# charts/aifactory/charts/. We commit Chart.yaml (the source of truth
+# for pinning) and let CI re-pull on every run. Same posture as
+# package-lock.json being source-of-truth while node_modules/ isn't.
+charts/aifactory/Chart.lock
+charts/aifactory/charts/
 # Ignore everything directly under .claude/ EXCEPT the project-scope skills
 # directory (Issue #9). `.claude/*` (no trailing slash) is required for the
 # `!exception` pattern to take effect — git stops descending into a fully-

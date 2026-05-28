@@ -1,0 +1,42 @@
+{{- /*
+Grafana dashboard ConfigMap (Epic #35 #38 PR-3).
+
+Wraps charts/aifactory/dashboards/litellm.json in a ConfigMap that
+the Grafana sidecar / operator auto-imports based on the
+``grafana_dashboard: "1"`` label (Grafana's published convention).
+
+Only rendered when BOTH:
+  • monitoring.grafanaDashboards.enabled is true
+  • litellm.enabled is true (no point shipping the dashboard for a
+    feature that isn't deployed; this is the only metrics source
+    behind the panels)
+
+Operators using a non-operator Grafana install (vanilla Helm chart,
+Grafana Cloud, etc) flip monitoring.grafanaDashboards.enabled=false
+and import dashboards/litellm.json manually via the Grafana UI.
+
+Namespace label scoping: the Grafana operator's sidecar restricts
+discovery to ConfigMaps in the namespace labelled with
+``monitoring.grafanaDashboards.namespaceLabel`` (default ``monitoring``).
+The ConfigMap below lives in the release namespace; operators using
+Grafana operator across namespaces add a label-selector override
+either here or in the Grafana operator's own values.
+*/ -}}
+{{- if and .Values.monitoring.grafanaDashboards.enabled .Values.litellm.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aifactory.fullname" . }}-grafana-litellm
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+    app.kubernetes.io/component: grafana-dashboard
+  annotations:
+    # Grafana operator folder placement. Operators with multiple
+    # AIFactory deployments override per-env via
+    # ``monitoring.grafanaDashboards.folder``.
+    grafana_folder: {{ .Values.monitoring.grafanaDashboards.folder | quote }}
+data:
+  litellm.json: |-
+{{ .Files.Get "dashboards/litellm.json" | indent 4 }}
+{{- end }}
