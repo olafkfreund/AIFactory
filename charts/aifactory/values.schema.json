@@ -72,6 +72,28 @@
         "provider": {"enum": ["keycloak", "okta", "azure_ad"]}
       }
     },
+    "saml": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "spEntityId": {"type": "string"},
+        "acsUrl": {"type": "string"},
+        "idpMetadataUrl": {"type": "string"},
+        "idpMetadataSecretName": {"type": "string"},
+        "idpName": {"type": "string"},
+        "idpDisplayName": {"type": "string"},
+        "spCertSecretName": {"type": "string"},
+        "requireEncryptedAssertion": {"type": "boolean"},
+        "idpInitDefaultReturnTo": {"type": "string"}
+      }
+    },
+    "scim": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "tokenSecretName": {"type": "string"}
+      }
+    },
     "kms": {
       "type": "object",
       "properties": {

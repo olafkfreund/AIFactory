@@ -203,6 +203,123 @@ oidc:
   groupToRole: {}  # e.g. {"aifactory-admin": "admin"}
   defaultRole: "member"
 
+# ---------------------------------------------------------------------------
+# SAML 2.0 Web SSO (Epic #35 #41).
+#
+# When ``saml.enabled: true``, the web-server mounts ``/api/auth/saml/login``,
+# ``/api/auth/saml/acs``, ``/api/auth/saml/metadata`` and surfaces the
+# IdP in the login-page dropdown next to any configured OIDC IdP.
+#
+# When ``saml.enabled: false`` (default), no SAML routes are mounted and
+# the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+#
+# IdP metadata source — pick exactly ONE of:
+#   • ``idpMetadataUrl`` — the operator's IdP publishes federation
+#     metadata at a stable URL. The web-server fetches it on startup
+#     and refreshes every 4 hours in the background (48-hour stale-
+#     warn, never crashes the pod).
+#   • ``idpMetadataSecretName`` — operator-supplied K8s Secret with
+#     key ``idp-metadata.xml`` mounted at /etc/saml/idp-metadata.xml.
+#     Rotation = recreate Secret + restart pod.
+#
+# SP cert (signing AuthnRequests + decrypting EncryptedAssertions):
+#   • Optional in plain-vanilla flows; REQUIRED when
+#     ``requireEncryptedAssertion: true``.
+#   • Provide via ``spCertSecretName`` — K8s Secret with keys
+#     ``cert.pem`` + ``key.pem`` (and optional ``cert.pem.previous`` for
+#     the rotation overlap window — see docs/docs/concepts/saml-scim.md).
+#
+# Identity-key contract (locked in design decision #6 + v1.1 hard
+# constraint): ``scim.userName == saml.NameID == users.email``. SCIM
+# provisions the User row first; SAML's NameID matches by case-
+# insensitive email lookup. SAML alone never creates users (no JIT).
+#
+# Cross-IdP linkage (decision #4): if a User already has an OIDC
+# identity, the first SAML login for that email is rejected with 409
+# until an admin runs the linkage via DB. v1.2 ships the admin UI.
+#
+# Logout is LOCAL only (decision #11): we clear our session cookie and
+# do NOT issue a SAML LogoutRequest to the IdP. Operators wanting
+# IdP-side session kill use short session TTLs or the IdP admin console.
+saml:
+  # Master toggle. When false (default), no SAML wiring is added and
+  # ``/api/auth/saml/*`` routes 404.
+  enabled: false
+  # Service Provider EntityID — the stable identifier the IdP knows
+  # us by. Typically the public ACS URL's origin + ``/saml``, e.g.
+  # ``https://aifactory.example.com/saml``. Must match the EntityID
+  # the operator registered at the IdP.
+  spEntityId: ""
+  # Assertion Consumer Service URL — where the IdP POSTs the signed
+  # assertion. Must be the absolute URL the browser can reach, e.g.
+  # ``https://aifactory.example.com/api/auth/saml/acs``.
+  acsUrl: ""
+  # IdP federation-metadata URL (pick this OR idpMetadataSecretName).
+  # The web-server fetches on startup + refreshes every 4 hours; the
+  # last-known-good XML stays cached through transient IdP outages.
+  idpMetadataUrl: ""
+  # K8s Secret name with key ``idp-metadata.xml`` (pick this OR
+  # idpMetadataUrl). Operator rotates by recreating the Secret +
+  # restarting the pod. Mounted at /etc/saml/idp-metadata.xml.
+  idpMetadataSecretName: ""
+  # Machine-readable IdP key — matches the ``identityProviders[].name``
+  # entry the login page renders. Default ``saml`` is fine for the
+  # single-SAML-IdP v1.1 shape. Must NOT contain spaces.
+  idpName: ""
+  # Human-readable label for the login-page dropdown, e.g.
+  # ``Corp SSO (SAML)``. Falls back to ``idpName`` when empty.
+  idpDisplayName: ""
+  # K8s Secret name with keys ``cert.pem`` + ``key.pem`` for the SP
+  # signing cert + private key. Optional unless
+  # ``requireEncryptedAssertion: true``. May also include
+  # ``cert.pem.previous`` for the rotation overlap window — see the
+  # SP cert rotation runbook in docs/docs/concepts/saml-scim.md.
+  spCertSecretName: ""
+  # When true, the SP rejects any assertion whose ``<Assertion>`` is
+  # not encrypted. ``spCertSecretName`` is then mandatory (the SDK
+  # uses the SP private key to decrypt). When false, assertions may
+  # be plain XML — signature still required.
+  requireEncryptedAssertion: false
+  # Absolute URL to land on after an IdP-init flow (no RelayState).
+  # Validator: scheme + host MUST match ``spEntityId`` to prevent open-
+  # redirect via crafted IdP-init URLs. Leave empty to reject IdP-init
+  # flows entirely (SP-init only).
+  idpInitDefaultReturnTo: ""
+
+# ---------------------------------------------------------------------------
+# SCIM 2.0 user + group provisioning endpoint (Epic #35 #41).
+#
+# When ``scim.enabled: true``, the web-server mounts
+# ``/api/scim/v2/Users`` + ``/api/scim/v2/Groups`` per RFC 7644. The
+# operator's IdP (Okta / Azure AD / Keycloak) POSTs to these as users
+# join, change roles, or leave the org. Soft-deleted users return 404
+# on subsequent GET — matches Azure AD's deprovision-then-GET sync.
+#
+# Auth is a single static Bearer token from a K8s Secret (decision #3):
+# every request to ``/api/scim/v2/*`` must carry
+# ``Authorization: Bearer <token>``. Constant-time compare; rotation =
+# recreate Secret + restart pod (the SDK reads at startup).
+#
+# Rate-limiting: NOT in-process (decision #12). Operators who want it
+# set an ingress annotation, e.g.
+#   nginx.ingress.kubernetes.io/limit-rps: "100"
+#
+# Filter grammar subset (decision #5): eq-only on
+# ``userName`` / ``externalId`` / ``active``. Covers 100% of what
+# Okta + Azure AD send during sync. Other operators return 400 with
+# ``scimType: invalidFilter``.
+scim:
+  # Master toggle. When false (default), no SCIM routes are mounted —
+  # the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+  enabled: false
+  # K8s Secret name with key ``SCIM_BEARER_TOKEN`` — the static Bearer
+  # the IdP sends in the Authorization header. Required when
+  # ``enabled: true``. Generate via: ``openssl rand -base64 48 |
+  # tr -d '\n=' | head -c 48`` then ``kubectl create secret generic
+  # aifactory-scim --from-literal=SCIM_BEARER_TOKEN=<the-value>``.
+  # Operator paste the same token into the IdP's SCIM connector.
+  tokenSecretName: ""
+
 kms:
   # One of: fernet (local key, POC only), aws_kms, vault_transit,
   # azure_kv, gcp_kms.

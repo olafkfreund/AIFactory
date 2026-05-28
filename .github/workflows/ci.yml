@@ -291,6 +291,51 @@ jobs:
           OIDC_CLIENT_SECRET: "aifactory-test-secret"
         run: apps/backend/.venv/bin/pytest tests/oidc/ -m oidc -v
 
+  saml-scim-acceptance:
+    name: saml-scim (P8 acceptance)
+    runs-on: ubuntu-latest
+    # P8 SAML + SCIM tests. Unlike P3 (OIDC) we don't boot a real IdP:
+    # the SAML test fixtures generate signed `<Response>` documents
+    # in-process using committed test certs (see tests/fixtures/saml/),
+    # and the SCIM tests hit the FastAPI app directly via TestClient.
+    # The helm-toggle test in this suite needs `helm` on PATH; we
+    # install it the same way the helm-acceptance job does.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.16.0"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Pytest saml + scim + helm-toggle
+        env:
+          CI: "true"
+        run: |
+          apps/backend/.venv/bin/pytest \
+            tests/saml/ \
+            tests/scim/ \
+            tests/helm/test_saml_scim_toggle.py \
+            -v
+
   helm-acceptance:
     name: helm (P4 acceptance)
     runs-on: ubuntu-latest
