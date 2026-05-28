@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -152,6 +153,15 @@ class Organization(Base):
     # (immediate PII scrub); stage-2 (day 30) tears down infra.
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True,
+    )
+    # Epic #35 #38 PR-2a — per-org LLM model allowlist. JSON array of
+    # model name patterns the org may use. ``["*"]`` (default) means
+    # all models allowed (backward compat). Concrete examples:
+    # ``["claude-*"]``, ``["gpt-4o-mini", "gpt-4o"]``,
+    # ``["bedrock/anthropic.*"]``. The reconciler (PR-2b) syncs this
+    # into LiteLLM's per-tenant virtual-key model list via admin API.
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, server_default='["*"]', default=list,
     )
 
     # Relationships
