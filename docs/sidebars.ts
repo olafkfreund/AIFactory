@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
         'concepts/mcp-credentials',
         'concepts/mcp-stdio-keys',
         'concepts/portal-clones',
+        'concepts/gvisor-sandbox',
       ],
     },
     {

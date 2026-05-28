@@ -39,6 +39,12 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.sandbox.gvisor.enabled }}
+      # gVisor sandboxing (Epic #35 #37). Routes syscalls through the
+      # runsc user-space kernel. RuntimeClass must already exist in
+      # the cluster — see values.yaml's ``sandbox.gvisor`` block.
+      runtimeClassName: {{ .Values.sandbox.gvisor.runtimeClassName | quote }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if .Values.priorityClassName }}
