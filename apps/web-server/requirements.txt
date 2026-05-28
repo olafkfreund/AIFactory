@@ -8,6 +8,11 @@ python-multipart>=0.0.6
 # WebSocket
 websockets>=12.0
 
+# Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
+# Optional at runtime — only used when REDIS_URL is set. The asyncio
+# client lives in redis.asyncio; no separate aioredis package needed.
+redis>=5.0
+
 # PTY (Terminal)
 ptyprocess>=0.7.0
 

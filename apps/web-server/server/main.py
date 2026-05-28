@@ -91,10 +91,27 @@ async def lifespan(app: FastAPI):
     init_skills_service()
     logger.info("SkillsService initialized")
 
+    # Start the Redis pub/sub subscriber when REDIS_URL is configured
+    # (Epic #35 #40 PR-1). No-op when unset — the event bus runs in
+    # in-process-only mode and own-replica delivery still works.
+    from .websockets import event_bus
+    if settings.REDIS_URL:
+        await event_bus.start_redis_subscriber()
+        logger.info(
+            "Redis pub/sub enabled — replica %s, channel %r",
+            event_bus.self_replica_id, settings.REDIS_CHANNEL,
+        )
+    else:
+        logger.info(
+            "Redis pub/sub disabled (REDIS_URL unset) — in-process broadcasts only"
+        )
+
     yield
 
     # Shutdown
     logger.info("Shutting down Magestic AI Web Server...")
+    if settings.REDIS_URL:
+        await event_bus.stop_redis_subscriber()
 
 
 def _read_app_version() -> str:

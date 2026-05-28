@@ -13,6 +13,10 @@ pytest-mock>=3.0.0
 # For testing async code
 anyio>=4.0.0
 
+# In-memory Redis stand-in for the event-bus unit tests (Epic #35 #40 PR-1).
+# Speaks the redis-py async API so the production code path runs unchanged.
+fakeredis>=2.20
+
 # Code coverage
 coverage>=7.0.0
 
