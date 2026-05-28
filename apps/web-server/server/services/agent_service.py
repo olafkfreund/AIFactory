@@ -969,10 +969,17 @@ class AgentService:
         upload at the four phase boundaries that matter — coding /
         review_pending / completed / failed. Failure-safe per the store's
         own contract; never crashes this hot path.
+
+        Side effect (Epic #35 #42 PR-1): wraps phase-boundary work in an
+        OTel ``task:phase:<status>`` span so the agent-task lifecycle
+        shows up in traces. No-op when OTel SDK isn't initialised.
         """
+        from ..observability.tracing import task_phase_span
+
         await emit_task_status(task_id, status, review_reason)
         if status in ("coding", "review_pending", "completed", "failed"):
-            await self._snapshot_project_workspace(task_id, status)
+            with task_phase_span(task_id, status):
+                await self._snapshot_project_workspace(task_id, status)
 
     async def _snapshot_project_workspace(
         self, task_id: str, phase: str,

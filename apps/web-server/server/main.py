@@ -91,6 +91,14 @@ async def lifespan(app: FastAPI):
     init_skills_service()
     logger.info("SkillsService initialized")
 
+    # OpenTelemetry distributed tracing (Epic #35 #42 PR-1). Idempotent;
+    # no-op exporter when OTEL_EXPORTER_OTLP_ENDPOINT is unset — spans
+    # still build in memory at near-zero cost. The middleware order
+    # below depends on tracing running BEFORE CorrelationIdMiddleware
+    # so the FastAPI auto-instrumentor opens the root span first.
+    from .observability.tracing import init_tracing
+    init_tracing()
+
     # Start the Redis pub/sub subscriber when REDIS_URL is configured
     # (Epic #35 #40 PR-1). No-op when unset — the event bus runs in
     # in-process-only mode and own-replica delivery still works.
@@ -167,6 +175,14 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
     )
+
+    # OTel FastAPI instrumentation (Epic #35 #42 PR-1). Installs at
+    # the ASGI layer so the request span is opened BEFORE any user
+    # middleware (incl. CorrelationIdMiddleware below) runs. That
+    # lets CorrelationIdMiddleware source request_id from trace_id.
+    # No-op when OTel isn't installed (failure-safe per the helper).
+    from .observability.tracing import instrument_fastapi_app
+    instrument_fastapi_app(app)
 
     # Add CORS middleware
     app.add_middleware(
