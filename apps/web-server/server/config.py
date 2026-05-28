@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     JWT_ALGORITHM: str = "HS256"
 
+    # Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
+    # Empty = in-process broadcasts only (laptop / single-replica K8s).
+    # Multi-replica deployments set this from a Secret to enable Redis
+    # bridging. ``REDIS_CHANNEL`` is overridable for shared Redis
+    # instances where channel collision matters.
+    REDIS_URL: str = ""
+    REDIS_CHANNEL: str = "aifactory:events"
+
     # Database
     DATABASE_URL: str = ""  # Auto-generated if not set (sqlite+aiosqlite:///...)
     # Alembic migration behaviour at app boot. P1.4 of Epic #26.

@@ -2,99 +2,86 @@
 Global Events WebSocket with per-client routing.
 
 Supports both broadcast (legacy) and targeted delivery based on
-user identity.  When a JWT-authenticated user connects, events
+user identity. When a JWT-authenticated user connects, events
 can be routed only to members of the relevant organization.
 Legacy (bearer-token) connections receive all events (backward
 compatible).
+
+Epic #35 #40 PR-1: the three public functions (``broadcast_event``,
+``send_to_user``, ``send_to_org``) are now thin shims over
+``event_bus.publish_event``. Their signatures, behavior, and the
+client registry semantics are unchanged. Setting ``REDIS_URL``
+enables cross-replica delivery; leaving it unset preserves v1.0
+in-process-only behavior.
 """
 
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..auth import WebSocketAuthError, authenticate_websocket, verify_websocket_token
+from ..auth import WebSocketAuthError, authenticate_websocket
+from . import event_bus
+from .event_bus import (
+    BroadcastScope,
+    ConnectedClient,
+    OrgScope,
+    UserScope,
+    active_connections,
+    register_client,
+    unregister_client,
+    update_client_orgs,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-# ---------------------------------------------------------------------------
-# Client tracking
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ConnectedClient:
-    """A connected WebSocket client with optional identity."""
-
-    websocket: WebSocket
-    user_id: str | None = None
-    org_ids: set[str] = field(default_factory=set)
-
-
-# Active WebSocket connections — keyed by WebSocket object for fast lookup
-_clients: dict[WebSocket, ConnectedClient] = {}
-
-# Legacy set kept for backward compatibility with code that still
-# references ``active_connections`` directly.
-active_connections: set[WebSocket] = set()
-
-
-def _register_client(ws: WebSocket, user_info: dict | None) -> ConnectedClient:
-    """Register a new client connection."""
-    client = ConnectedClient(
-        websocket=ws,
-        user_id=user_info["id"] if user_info else None,
-    )
-    _clients[ws] = client
-    active_connections.add(ws)
-    return client
-
-
-def _unregister_client(ws: WebSocket) -> None:
-    """Remove a client connection."""
-    _clients.pop(ws, None)
-    active_connections.discard(ws)
+# Re-export so any external code that imported these from events.py
+# (legacy module path) keeps working unchanged.
+__all__ = [
+    "ConnectedClient",
+    "active_connections",
+    "broadcast_event",
+    "emit_changelog_progress",
+    "emit_insights_chunk",
+    "emit_insights_status",
+    "emit_profile_switch",
+    "emit_subtask_update",
+    "emit_task_error",
+    "emit_task_log",
+    "emit_task_logs_stream",
+    "emit_task_progress",
+    "emit_task_status",
+    "emit_task_update",
+    "router",
+    "send_to_org",
+    "send_to_user",
+    "update_client_orgs",
+]
 
 
 # ---------------------------------------------------------------------------
-# Event routing
+# Public event-emit functions — thin shims over the event bus.
+#
+# The 65+ call sites across the codebase use these. Their signatures
+# stay frozen; only the internals route through the bus so a single
+# code change unlocks cross-replica delivery for everyone.
 # ---------------------------------------------------------------------------
 
 
 async def broadcast_event(event_type: str, payload: dict):
     """Broadcast an event to all connected clients (legacy behavior)."""
-    message = json.dumps({"type": event_type, "payload": payload})
-    disconnected: list[WebSocket] = []
-
-    for ws in list(active_connections):
-        try:
-            await ws.send_text(message)
-        except Exception:
-            disconnected.append(ws)
-
-    for ws in disconnected:
-        _unregister_client(ws)
+    await event_bus.publish_event(BroadcastScope(), event_type, payload)
 
 
 async def send_to_user(user_id: str, event_type: str, payload: dict):
     """Send an event to a specific user (all their connections)."""
-    message = json.dumps({"type": event_type, "payload": payload})
-    disconnected: list[WebSocket] = []
-
-    for ws, client in list(_clients.items()):
-        if client.user_id == user_id:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                disconnected.append(ws)
-
-    for ws in disconnected:
-        _unregister_client(ws)
+    await event_bus.publish_event(
+        UserScope(user_id=user_id), event_type, payload
+    )
 
 
 async def send_to_org(org_id: str, event_type: str, payload: dict):
@@ -103,30 +90,7 @@ async def send_to_org(org_id: str, event_type: str, payload: dict):
     Falls back to broadcast for legacy (non-JWT) connections so they
     aren't excluded.
     """
-    message = json.dumps({"type": event_type, "payload": payload})
-    disconnected: list[WebSocket] = []
-
-    for ws, client in list(_clients.items()):
-        # Send to: org members, or legacy clients (no user_id)
-        if client.user_id is None or org_id in client.org_ids:
-            try:
-                await ws.send_text(message)
-            except Exception:
-                disconnected.append(ws)
-
-    for ws in disconnected:
-        _unregister_client(ws)
-
-
-def update_client_orgs(user_id: str, org_ids: set[str]) -> None:
-    """Update the org memberships for all connections of a given user.
-
-    Call this after the user's org memberships change so routing
-    reflects the new state.
-    """
-    for client in _clients.values():
-        if client.user_id == user_id:
-            client.org_ids = org_ids
+    await event_bus.publish_event(OrgScope(org_id=org_id), event_type, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -145,14 +109,15 @@ async def events_websocket(websocket: WebSocket):
     except WebSocketAuthError:
         return
 
-    client = _register_client(websocket, user_info)
+    client = register_client(websocket, user_info)
 
     # If authenticated user, load their org memberships for routing
     if user_info and user_info.get("id"):
         try:
-            from ..database.engine import async_session_factory
-            from ..database import OrgMember
             from sqlalchemy import select
+
+            from ..database import OrgMember
+            from ..database.engine import async_session_factory
 
             async with async_session_factory() as session:
                 result = await session.execute(
@@ -185,10 +150,14 @@ async def events_websocket(websocket: WebSocket):
     except Exception:
         pass
     finally:
-        _unregister_client(websocket)
+        unregister_client(websocket)
 
 
+# ---------------------------------------------------------------------------
 # Helper functions for different event types
+# ---------------------------------------------------------------------------
+
+
 async def emit_task_progress(task_id: str, progress: dict):
     import logging
     logging.getLogger(__name__).info(f"[WebSocket] Emitting task:progress - taskId: {task_id}, percentage: {progress.get('percentage', 'N/A')}%")
