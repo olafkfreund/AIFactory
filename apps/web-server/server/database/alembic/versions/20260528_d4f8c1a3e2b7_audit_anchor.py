@@ -89,9 +89,16 @@ def upgrade() -> None:
     # exercise both).
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":
+        # ``signed_at`` is TIMESTAMP WITHOUT TIME ZONE; the cron writer
+        # always stores naive-UTC datetimes (``datetime.now(timezone.utc)``
+        # with tzinfo stripped). So ``(signed_at::date)`` IS the UTC date
+        # and is IMMUTABLE (Postgres rejects index expressions involving
+        # ``AT TIME ZONE`` because that depends on session state). The
+        # UTC discipline is enforced in audit_anchor_cron.py via an
+        # assertion before INSERT.
         op.execute(
             "CREATE UNIQUE INDEX uq_audit_anchors_date "
-            "ON audit_anchors ((DATE(signed_at AT TIME ZONE 'UTC')))"
+            "ON audit_anchors ((signed_at::date))"
         )
     # SQLite test path: enforced application-side.
 
