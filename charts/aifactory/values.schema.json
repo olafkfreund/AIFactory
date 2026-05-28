@@ -89,6 +89,28 @@
         "headersSecretName": {"type": "string"}
       }
     },
+    "audit": {
+      "type": "object",
+      "properties": {
+        "anchor": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "scheduler": {"enum": ["cronjob", "in-process"]},
+            "cron": {
+              "type": "object",
+              "properties": {
+                "schedule": {"type": "string"},
+                "activeDeadlineSeconds": {"type": "integer", "minimum": 1},
+                "backoffLimit": {"type": "integer", "minimum": 0},
+                "successfulJobsHistoryLimit": {"type": "integer", "minimum": 0},
+                "failedJobsHistoryLimit": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    },
     "global": {
       "type": "object",
       "properties": {

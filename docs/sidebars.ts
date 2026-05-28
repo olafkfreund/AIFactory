@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         'concepts/multi-replica',
         'concepts/workspace-storage',
         'concepts/observability-tracing',
+        'concepts/audit-anchor',
       ],
     },
     {

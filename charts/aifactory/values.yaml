@@ -577,6 +577,61 @@ otel:
   # is rejected at helm template time — see validator note above.
   headersSecretName: ""
 
+# ---------------------------------------------------------------------------
+# Signed audit-chain anchor (Epic #35 #43).
+#
+# The v1.0 audit chain (Epic #26 P5) hashes every row to its
+# predecessor — detects insertion/deletion/mutation by an attacker
+# without DB access, but does NOT detect a DB admin who re-computes
+# the entire chain from any point forward.
+#
+# #43 closes that gap by signing the chain head daily with an
+# HMAC-SHA256 key wrapped by the existing KMS backend
+# (``crypto/kms/``). External verifiers receive both rows AND the
+# daily anchors in the audit export, and can prove untamperedness
+# by re-computing the chain + verifying the HMAC.
+#
+# Cadence: 00:00 UTC daily. Kubernetes CronJob below; the in-process
+# scheduler (lifespan-managed asyncio) is an alternative the operator
+# can run by setting ``audit.anchor.scheduler: in-process`` — useful
+# for single-pod deployments where a separate CronJob feels heavy.
+#
+# Failure-safe: every code path in the cron + signer wraps in
+# try/except. A broken KMS or DB never crashes the lifespan; the
+# next tick retries.
+audit:
+  anchor:
+    # Master toggle. When false (default), no anchors are emitted —
+    # audit chain operates as v1.0. Signing keys also remain
+    # un-bootstrapped, so existing deployments are byte-for-byte
+    # unchanged until the operator opts in.
+    enabled: false
+    # How the daily 00:00 UTC tick is invoked:
+    #   "cronjob"    — Kubernetes CronJob (recommended for production
+    #                  + multi-replica; uses the same image + env as
+    #                  the web pod)
+    #   "in-process" — asyncio task managed by the web-server's
+    #                  lifespan (single-replica only; the task can
+    #                  fire on whichever replica wins startup)
+    scheduler: "cronjob"  # cronjob | in-process
+    # Cron schedule for the Kubernetes CronJob (only honoured when
+    # scheduler=cronjob). Default = 00:00 UTC daily. Operators with
+    # multiple AIFactory deployments writing to the same audit log
+    # MUST stagger schedules to avoid colliding on the UTC-day
+    # unique constraint.
+    cron:
+      schedule: "0 0 * * *"   # daily at 00:00 UTC
+      # Active-deadline + back-off — what to do if the cron pod gets
+      # stuck or fails repeatedly. Generous defaults so a slow
+      # large-tenant signing pass doesn't get killed.
+      activeDeadlineSeconds: 300
+      backoffLimit: 3
+      # Failed jobs to keep around in the Kubernetes API for ops
+      # forensics. Successful jobs are pruned to 1 (just the most
+      # recent).
+      successfulJobsHistoryLimit: 1
+      failedJobsHistoryLimit: 3
+
 # Cross-cutting platform-team settings.
 global:
   # When set, mounts a corporate root-CA bundle into the pod and
