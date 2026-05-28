@@ -13,6 +13,14 @@ websockets>=12.0
 # client lives in redis.asyncio; no separate aioredis package needed.
 redis>=5.0
 
+# S3-compatible workspace storage (Epic #35 #40 half-B).
+# Optional at runtime — only exercised when WORKSPACE_S3_URI_BASE is
+# set. fsspec[s3] pulls in s3fs which covers both AWS S3 and MinIO
+# via the FSSPEC_S3_ENDPOINT_URL env override. Azure (adlfs) and
+# GCS (gcsfs) backends can be installed by operators who use those
+# clouds — not bundled by default to keep the image lean.
+fsspec[s3]>=2024.6.0
+
 # PTY (Terminal)
 ptyprocess>=0.7.0
 
