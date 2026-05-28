@@ -743,6 +743,98 @@ class ExternalIdentity(Base):
 
 
 # ---------------------------------------------------------------------------
+# SCIM Groups (Epic #35 #41 PR-1b3)
+# ---------------------------------------------------------------------------
+
+
+class ScimGroup(Base):
+    """Parallel SCIM Group resource — design decision #5 locks this as
+    a standalone table for v1.1. Integration with the orgs/roles model
+    is deferred to Epic #36 (tenant isolation).
+
+    ``external_id`` is the IdP-side group identifier (Azure AD group
+    object ID, Okta group ID, etc.). Nullable — not all IdPs send it.
+
+    ``active`` mirrors the SCIM User active flag pattern: soft-deletes
+    set it to False. DELETE on /scim/v2/Groups soft-deletes; GET on a
+    soft-deleted group returns 404 so Azure AD's sync sees it as gone.
+    """
+
+    __tablename__ = "scim_groups"
+    __table_args__ = (
+        Index("ix_scim_groups_external_id", "external_id"),
+        Index("ix_scim_groups_active", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, unique=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    members: Mapped[list["ScimGroupMember"]] = relationship(
+        "ScimGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScimGroup id={self.id!r} display_name={self.display_name!r}>"
+
+
+class ScimGroupMember(Base):
+    """Many-to-many join between ScimGroup and User (by User.id).
+
+    Storing User.id here means deleting a user silently orphans these
+    rows; the CASCADE on FK handles cleanup. The ``display`` field is
+    informational (the user's display name at the time the IdP sent it)
+    — we don't keep it in sync with User.name on purpose: SCIM member
+    payloads typically include it, and dropping it would lose the IdP's
+    original labelling.
+    """
+
+    __tablename__ = "scim_group_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id", "user_id", name="uq_scim_group_members_group_user"
+        ),
+        Index("ix_scim_group_members_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    group_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("scim_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    display: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    group: Mapped["ScimGroup"] = relationship(
+        "ScimGroup", back_populates="members"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ScimGroupMember group_id={self.group_id!r} "
+            f"user_id={self.user_id!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Audit anchor + signing key (Epic #35 #43 PR-1)
 # ---------------------------------------------------------------------------
 
