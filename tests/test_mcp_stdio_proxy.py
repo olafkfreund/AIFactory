@@ -1,6 +1,6 @@
-"""Tests for the stdio-MCP proxy (Issue #154).
+"""Tests for the stdio-MCP proxy (Issues #154 + #50).
 
-Two concerns:
+Three concerns:
 
 1. **Auth + scope:** ``require_acw_scope`` accepts the legacy admin
    token as a wildcard, rejects missing / bad / scope-mismatched
@@ -11,6 +11,12 @@ Two concerns:
    ``AIFACTORY_MCP_KEY`` over the legacy admin token, and the
    ``request()`` path rewrite prepends ``/api/mcp-stdio`` to outbound
    calls so they hit the proxy.
+
+3. **Audit logging (Epic #50 acceptance criterion #2):** every write
+   route fires ``log_audit_event_bg`` with the right
+   ``action=mcp.<verb>`` constant; read routes do NOT log; audit
+   failures don't crash the route (failure-safe via the bg helper's
+   try/except).
 """
 
 from __future__ import annotations
@@ -228,3 +234,130 @@ def test_client_rewrites_path_to_proxy_prefix(monkeypatch):
     # And paths already under the proxy prefix pass through unchanged.
     asyncio.run(http_client.request("GET", "/api/mcp-stdio/projects"))
     assert captured["path"] == "/api/mcp-stdio/projects"
+
+
+# ── Audit logging on writes (Epic #50 acceptance criterion #2) ──────
+
+
+def test_audit_helper_passes_right_fields_for_authenticated_key(monkeypatch):
+    """``_audit_mcp_write`` should forward user_id + org_id + key_id +
+    action to ``log_audit_event_bg`` so audit rows carry full provenance."""
+    # The package __init__ re-exports the APIRouter as ``router``,
+    # which shadows the module attribute. Grab the actual module
+    # via sys.modules — `import server.mcp_stdio.router` ensures
+    # it's loaded.
+    import sys
+    from unittest.mock import AsyncMock
+
+    import server.mcp_stdio.router  # noqa: F401  (load into sys.modules)
+    proxy_router = sys.modules["server.mcp_stdio.router"]
+
+    captured: dict = {}
+
+    async def _fake_bg(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(proxy_router, "log_audit_event_bg", _fake_bg)
+
+    key = AuthenticatedKey(
+        key_id="key-abc",
+        scopes=frozenset({"task:write"}),
+        user_id="user-42",
+        org_id="org-99",
+    )
+
+    class _FakeRequest:
+        class _Client:
+            host = "10.0.0.1"
+        client = _Client()
+
+    import asyncio
+    asyncio.run(
+        proxy_router._audit_mcp_write(
+            key,
+            action="mcp.task.start",
+            resource_type="task",
+            resource_id="spec-001",
+            request=_FakeRequest(),
+        )
+    )
+
+    assert captured["user_id"] == "user-42"
+    assert captured["org_id"] == "org-99"
+    assert captured["action"] == "mcp.task.start"
+    assert captured["resource_type"] == "task"
+    assert captured["resource_id"] == "spec-001"
+    assert captured["ip"] == "10.0.0.1"
+    # mcp_key_id must end up in details so we can correlate audit
+    # rows back to the specific minted key.
+    assert captured["details"]["mcp_key_id"] == "key-abc"
+
+
+def test_audit_helper_marks_legacy_admin_calls(monkeypatch):
+    """Calls made via the legacy admin token wildcard should still
+    audit-log, but with ``mcp_key_id=legacy-admin`` so operators can
+    tell wildcard calls apart from scoped-key calls."""
+    # The package __init__ re-exports the APIRouter as ``router``,
+    # which shadows the module attribute. Grab the actual module
+    # via sys.modules — `import server.mcp_stdio.router` ensures
+    # it's loaded.
+    import sys
+
+    import server.mcp_stdio.router  # noqa: F401  (load into sys.modules)
+    proxy_router = sys.modules["server.mcp_stdio.router"]
+
+    captured: dict = {}
+
+    async def _fake_bg(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(proxy_router, "log_audit_event_bg", _fake_bg)
+
+    class _FakeRequest:
+        client = None  # exercises the IP-less branch
+
+    import asyncio
+    asyncio.run(
+        proxy_router._audit_mcp_write(
+            _LegacyAdminKey(),
+            action="mcp.task.stop",
+            resource_type="task",
+            resource_id="spec-077",
+            request=_FakeRequest(),
+        )
+    )
+
+    assert captured["user_id"] is None
+    assert captured["org_id"] is None
+    assert captured["details"]["mcp_key_id"] == "legacy-admin"
+    assert captured["ip"] is None
+
+
+def test_audit_constants_use_mcp_namespace():
+    """Every constant added for Epic #50 must use the ``mcp.`` prefix
+    so audit reviewers can grep MCP-initiated mutations apart from
+    UI-driven ones (``task.start`` vs ``mcp.task.start``)."""
+    from server.services.audit_service import (
+        ACTION_MCP_PROJECT_CREATE,
+        ACTION_MCP_TASK_APPROVE_PLAN,
+        ACTION_MCP_TASK_CREATE_AND_RUN,
+        ACTION_MCP_TASK_CREATE_PR,
+        ACTION_MCP_TASK_MERGE,
+        ACTION_MCP_TASK_RECOVER,
+        ACTION_MCP_TASK_START,
+        ACTION_MCP_TASK_STOP,
+    )
+
+    for action in [
+        ACTION_MCP_PROJECT_CREATE,
+        ACTION_MCP_TASK_APPROVE_PLAN,
+        ACTION_MCP_TASK_CREATE_AND_RUN,
+        ACTION_MCP_TASK_CREATE_PR,
+        ACTION_MCP_TASK_MERGE,
+        ACTION_MCP_TASK_RECOVER,
+        ACTION_MCP_TASK_START,
+        ACTION_MCP_TASK_STOP,
+    ]:
+        assert action.startswith("mcp."), (
+            f"Expected mcp.* namespace for Epic #50 audit constant, got {action!r}"
+        )

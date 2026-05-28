@@ -52,7 +52,20 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        rid = request.headers.get(CORRELATION_ID_HEADER) or str(uuid.uuid4())
+        # Resolution order:
+        #   1. Client-provided X-Request-ID — explicit caller intent,
+        #      always wins (operators correlate across services with
+        #      their own IDs).
+        #   2. Active OTel span's trace_id — when FastAPI's OTel
+        #      instrumentor has already opened a request span, use
+        #      that 32-hex trace_id so logs + traces share an ID.
+        #   3. Fresh UUID — fallback when neither exists.
+        # See Epic #35 #42 design doc.
+        rid = (
+            request.headers.get(CORRELATION_ID_HEADER)
+            or _try_trace_id()
+            or str(uuid.uuid4())
+        )
         token = _correlation_id.set(rid)
         try:
             response = await call_next(request)
@@ -60,6 +73,24 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             _correlation_id.reset(token)
         response.headers[CORRELATION_ID_HEADER] = rid
         return response
+
+
+def _try_trace_id() -> str | None:
+    """Return the current OTel span's 32-hex trace_id, or None when
+    no span is active / OTel isn't installed. Failure-safe: any
+    exception (import error, missing context) yields None so the
+    fallback path runs."""
+    try:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span is None:
+            return None
+        ctx = span.get_span_context()
+        if not ctx.is_valid:
+            return None
+        return f"{ctx.trace_id:032x}"
+    except Exception:
+        return None
 
 
 def install_httpx_propagation() -> None:

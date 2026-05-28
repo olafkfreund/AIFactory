@@ -91,10 +91,35 @@ async def lifespan(app: FastAPI):
     init_skills_service()
     logger.info("SkillsService initialized")
 
+    # OpenTelemetry distributed tracing (Epic #35 #42 PR-1). Idempotent;
+    # no-op exporter when OTEL_EXPORTER_OTLP_ENDPOINT is unset — spans
+    # still build in memory at near-zero cost. The middleware order
+    # below depends on tracing running BEFORE CorrelationIdMiddleware
+    # so the FastAPI auto-instrumentor opens the root span first.
+    from .observability.tracing import init_tracing
+    init_tracing()
+
+    # Start the Redis pub/sub subscriber when REDIS_URL is configured
+    # (Epic #35 #40 PR-1). No-op when unset — the event bus runs in
+    # in-process-only mode and own-replica delivery still works.
+    from .websockets import event_bus
+    if settings.REDIS_URL:
+        await event_bus.start_redis_subscriber()
+        logger.info(
+            "Redis pub/sub enabled — replica %s, channel %r",
+            event_bus.self_replica_id, settings.REDIS_CHANNEL,
+        )
+    else:
+        logger.info(
+            "Redis pub/sub disabled (REDIS_URL unset) — in-process broadcasts only"
+        )
+
     yield
 
     # Shutdown
     logger.info("Shutting down Magestic AI Web Server...")
+    if settings.REDIS_URL:
+        await event_bus.stop_redis_subscriber()
 
 
 def _read_app_version() -> str:
@@ -150,6 +175,14 @@ def create_app() -> FastAPI:
         docs_url="/docs" if settings.DEBUG else None,
         redoc_url="/redoc" if settings.DEBUG else None,
     )
+
+    # OTel FastAPI instrumentation (Epic #35 #42 PR-1). Installs at
+    # the ASGI layer so the request span is opened BEFORE any user
+    # middleware (incl. CorrelationIdMiddleware below) runs. That
+    # lets CorrelationIdMiddleware source request_id from trace_id.
+    # No-op when OTel isn't installed (failure-safe per the helper).
+    from .observability.tracing import instrument_fastapi_app
+    instrument_fastapi_app(app)
 
     # Add CORS middleware
     app.add_middleware(
@@ -213,6 +246,11 @@ def create_app() -> FastAPI:
     app.include_router(audit.export_router)
     from .routes import gdpr as gdpr_routes
     app.include_router(gdpr_routes.router)
+
+    # Epic #35 #43 PR-1b4 — /api/admin/access-review endpoint for
+    # SOC2 CC6.2 + ISO 27001 A.9.2.5 quarterly access reviews.
+    from .routes import access_review as access_review_routes
+    app.include_router(access_review_routes.router)
 
     # Notification routes (prefix defined in router: /api/notifications)
     app.include_router(notifications.router)

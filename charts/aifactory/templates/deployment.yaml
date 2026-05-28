@@ -39,6 +39,12 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.sandbox.gvisor.enabled }}
+      # gVisor sandboxing (Epic #35 #37). Routes syscalls through the
+      # runsc user-space kernel. RuntimeClass must already exist in
+      # the cluster — see values.yaml's ``sandbox.gvisor`` block.
+      runtimeClassName: {{ .Values.sandbox.gvisor.runtimeClassName | quote }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{- if .Values.priorityClassName }}
@@ -90,6 +96,118 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
+            {{- end }}
+            {{- if .Values.workspaces.storage.enabled }}
+            # S3-compatible durable workspace storage (Epic #35 #40
+            # half-B PR-2). ``WORKSPACE_S3_URI_BASE`` switches the
+            # WorkspaceStore from local-only no-op into fsspec-driven
+            # snapshot+restore mode. The required-validator below
+            # blocks helm template when uriBase is empty AND for s3://
+            # URIs when neither IRSA nor a credentials Secret is set.
+            - name: WORKSPACE_S3_URI_BASE
+              value: {{ required "workspaces.storage.enabled=true requires workspaces.storage.uriBase (e.g. s3://my-bucket/workspaces)." .Values.workspaces.storage.uriBase | quote }}
+            {{- if .Values.workspaces.storage.aws.endpointUrl }}
+            # MinIO / S3-compatible endpoint. AIFactory's own env
+            # namespace (NOT FSSPEC_S3_*) — fsspec auto-promotes any
+            # FSSPEC_S3_<kwarg> into the S3FileSystem constructor,
+            # which breaks addressing_style by stuffing it into
+            # AioSession.__init__. WorkspaceStore reads these vars
+            # and forwards them via boto3's Config object instead.
+            - name: AIFACTORY_S3_ENDPOINT_URL
+              value: {{ .Values.workspaces.storage.aws.endpointUrl | quote }}
+            {{- end }}
+            {{- if and .Values.workspaces.storage.aws.addressingStyle (ne .Values.workspaces.storage.aws.addressingStyle "auto") }}
+            - name: AIFACTORY_S3_ADDRESSING_STYLE
+              value: {{ .Values.workspaces.storage.aws.addressingStyle | quote }}
+            {{- end }}
+            {{- if and (hasPrefix "s3://" .Values.workspaces.storage.uriBase) (not .Values.workspaces.storage.aws.useInstanceRole) }}
+            # Static AWS creds — required when uriBase is s3:// AND
+            # the operator hasn't opted into IRSA / instance-role auth.
+            # IRSA users leave credentialsSecretName empty + set the SA
+            # annotation outside the chart.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "workspaces.storage uriBase=s3:// requires either aws.useInstanceRole=true (for IRSA / instance-role) or aws.credentialsSecretName (Secret with AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)." .Values.workspaces.storage.aws.credentialsSecretName | quote }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.workspaces.storage.aws.credentialsSecretName | quote }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
+            {{- end }}
+            {{- if .Values.redis.enabled }}
+            # Redis pub/sub for cross-replica WebSocket fan-out
+            # (Epic #35 #40 PR-1). Must be set for ``replicas > 1`` —
+            # without it, broadcast events stay on the originating
+            # replica. ``url`` is inline (dev only); production uses
+            # ``externalSecretName``. The required-validator below
+            # blocks helm template when both sources are empty.
+            {{- if .Values.redis.url }}
+            - name: REDIS_URL
+              value: {{ .Values.redis.url | quote }}
+            {{- else }}
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "redis.enabled=true requires either redis.url (dev-only inline) or redis.externalSecretName (Secret with a REDIS_URL key). Neither is set — see charts/aifactory/values.yaml." .Values.redis.externalSecretName | quote }}
+                  key: REDIS_URL
+            {{- end }}
+            - name: REDIS_CHANNEL
+              value: {{ .Values.redis.channel | quote }}
+            {{- end }}
+            {{- /* Validate: OTel headersSecretName can't be set unless otel.enabled.
+                   Setting it alone is a typo / partial config — fail loud rather than
+                   render a Secret reference the running pod won't consume. */ -}}
+            {{- if and .Values.otel.headersSecretName (not .Values.otel.enabled) }}
+            {{- fail "otel.headersSecretName is set but otel.enabled is false — either set otel.enabled=true to use the headers, or clear otel.headersSecretName. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if .Values.otel.enabled }}
+            # OpenTelemetry distributed tracing (Epic #35 #42 PR-2).
+            # The web-server's init_tracing() reads OTEL_EXPORTER_OTLP_ENDPOINT
+            # to decide whether to install an OTLP exporter. When unset
+            # (default), spans build in memory + drop; setting these env
+            # vars turns on real export. Headers Secret is optional and
+            # only mounted via valueFrom when ``headersSecretName`` is set.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ required "otel.enabled=true requires otel.endpoint (e.g. http://tempo.observability.svc:4317). See charts/aifactory/values.yaml." .Values.otel.endpoint | quote }}
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ .Values.otel.protocol | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.serviceName | quote }}
+            # SDK env-var names per the OTel spec. ParentBased + ratio
+            # sampler are the SDK's built-in pair; the Python SDK reads
+            # these directly so no app-side parsing needed.
+            - name: OTEL_TRACES_SAMPLER
+              value: "parentbased_traceidratio"
+            - name: OTEL_TRACES_SAMPLER_ARG
+              value: {{ .Values.otel.samplingRatio | quote }}
+            {{- if .Values.otel.headersSecretName }}
+            - name: OTEL_EXPORTER_OTLP_HEADERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.otel.headersSecretName | quote }}
+                  key: OTEL_EXPORTER_OTLP_HEADERS
+            {{- end }}
+            {{- end }}
+            {{- /* Validate audit.anchor.scheduler enum */ -}}
+            {{- if .Values.audit.anchor.enabled }}
+            {{- $scheduler := .Values.audit.anchor.scheduler | default "cronjob" }}
+            {{- if not (has $scheduler (list "cronjob" "in-process")) }}
+            {{- fail (printf "audit.anchor.scheduler=%q is invalid — must be 'cronjob' or 'in-process'. See charts/aifactory/values.yaml." $scheduler) }}
+            {{- end }}
+            # Epic #35 #43 PR-2 — signed audit-chain anchor.
+            # AUDIT_ANCHOR_ENABLED is consumed by the web-server's
+            # lifespan: it bootstraps the signing key (audit_signing_keys
+            # table) on startup and, when scheduler=in-process, kicks
+            # off the daily asyncio cron. For scheduler=cronjob the
+            # Kubernetes CronJob template below runs the same
+            # `python -m server.jobs.audit_anchor_cron` invocation.
+            - name: AUDIT_ANCHOR_ENABLED
+              value: "true"
+            - name: AUDIT_ANCHOR_SCHEDULER
+              value: {{ $scheduler | quote }}
             {{- end }}
             {{- if .Values.rmux.enabled }}
             # Epic #44 R3 — flip on the rmux Live Agent Console.

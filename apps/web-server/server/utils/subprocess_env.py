@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
-
 # Env vars we explicitly strip from subprocess environments to prevent
 # silent direct-API billing. Keep this list narrow — anything not in here
 # is passed through unchanged.
@@ -53,6 +52,31 @@ def make_subprocess_env(
     if strip_anthropic_api_key:
         for var in _STRIP_VARS:
             env.pop(var, None)
+
+    # Inject W3C TRACEPARENT when called inside an OTel span (Epic
+    # #35 #42 PR-1). The agent subprocess's own OTel SDK reads
+    # ``TRACEPARENT`` on init to seed its root context as a child
+    # of the web-server's span — so a single trace covers the HTTP
+    # request through to the LLM call. Best-effort: if OTel isn't
+    # installed or there's no active span, the env var is just
+    # omitted (subprocess starts a fresh root trace).
+    _inject_traceparent(env)
+
     if extra:
         env.update(extra)
     return env
+
+
+def _inject_traceparent(env: dict[str, str]) -> None:
+    """Add ``TRACEPARENT`` to ``env`` when an OTel span is active.
+
+    Wrapped in try/except so this helper can never crash a
+    subprocess spawn — tracing is always optional.
+    """
+    try:
+        from ..observability.tracing import get_current_traceparent
+        tp = get_current_traceparent()
+        if tp:
+            env["TRACEPARENT"] = tp
+    except Exception:
+        pass

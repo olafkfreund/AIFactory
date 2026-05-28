@@ -18,6 +18,21 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
+    # Redis service container for the cross-replica WS fan-out
+    # integration tests (Epic #35 #40 half-A). MinIO for the
+    # S3-workspaces tests (Epic #35 #40 half-B) starts via a
+    # ``docker run`` step below — service containers can't pass the
+    # ``server /data`` command the upstream MinIO image needs.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -43,10 +58,45 @@ jobs:
       - name: Ruff lint
         run: apps/backend/.venv/bin/ruff check apps/backend tests
 
+      # MinIO for the S3-workspaces integration tests (Epic #35 #40
+      # half-B). Started as a regular ``docker run`` rather than a
+      # service container because (a) bitnami/minio:latest was retired
+      # mid-2026, and (b) GHA service containers can't pass the
+      # ``server /data`` command upstream minio/minio needs.
+      - name: Start MinIO
+        run: |
+          docker run -d --name aif-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minio \
+            -e MINIO_ROOT_PASSWORD=minio12345 \
+            quay.io/minio/minio:latest server /data
+          # Wait for healthcheck to pass before pytest fires the
+          # integration tests. Times out after ~30s if MinIO never
+          # comes up — the tests would just skip in that case.
+          for i in $(seq 1 30); do
+            if curl -fsSL "http://localhost:9000/minio/health/live" >/dev/null 2>&1; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
       - name: Pytest (skip slow)
         env:
           GRAPHITI_ENABLED: "false"
           APP_DISABLE_AUTH: "true"  # endpoint tests use anonymous TestClient
+          # Cross-replica WS fan-out integration test points at the
+          # services.redis container above. Test still skips on local
+          # dev runs that don't have a Redis available.
+          TEST_REDIS_URL: "redis://localhost:6379/15"
+          # Workspace-storage integration test points at the
+          # services.minio container. MINIO_DEFAULT_BUCKETS on the
+          # service auto-creates the bucket; the test fixture
+          # idempotently re-creates it if needed.
+          TEST_S3_URI_BASE: "s3://aifactory-test/workspaces"
+          TEST_S3_ENDPOINT_URL: "http://localhost:9000"
+          AWS_ACCESS_KEY_ID: "minio"
+          AWS_SECRET_ACCESS_KEY: "minio12345"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
   postgres-acceptance:
@@ -358,23 +408,31 @@ jobs:
     runs-on: ubuntu-latest
     # Epic #44 / issue #45. R0b ships apps/web-server/server/rmux/wrapper.py
     # — the async subprocess wrapper that every later rmux phase depends
-    # on. Tests run against a real rmux v0.3.0 daemon installed on the
-    # runner. The binary is pinned by SHA-256; see design doc §3.4.
+    # on. Tests run against a real rmux daemon installed on the runner.
+    # The binary is pinned by SHA-256; see design doc §3.4.
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install rmux v0.3.0 (linux-x86_64 musl, SHA-256 pinned)
+      - name: Install rmux v0.3.1 (linux-x86_64 gnu, SHA-256 pinned)
         run: |
           set -euo pipefail
-          # Pinned release tarball. Update both VERSION and SHA together.
-          VERSION="0.3.0"
-          ARCH_TARGET="x86_64-unknown-linux-musl"
-          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/rmux-${ARCH_TARGET}.tar.gz"
+          # Pinned release tarball. Update VERSION + EXPECTED_SHA together
+          # whenever bumping. Helvesec/rmux's v0.3.x assets are versioned
+          # in the filename (rmux-v${VERSION}-…) and ship the gnu (not
+          # musl) linux target.
+          VERSION="0.3.1"
+          ARCH_TARGET="x86_64-unknown-linux-gnu"
+          ASSET="rmux-v${VERSION}-${ARCH_TARGET}.tar.gz"
+          URL="https://github.com/Helvesec/rmux/releases/download/v${VERSION}/${ASSET}"
+          EXPECTED_SHA="511d3caceea4fcbc1458877a192efffcde5ceb1455f040f1a79c63ab00804cf8"
           curl -fsSL -o /tmp/rmux.tar.gz "${URL}"
-          # NOTE: pin SHA-256 once the release artifact ships a checksum
-          # file. For now we run a smoke-test verification via --version.
+          echo "${EXPECTED_SHA}  /tmp/rmux.tar.gz" | sha256sum -c -
           tar -xzf /tmp/rmux.tar.gz -C /tmp/
-          sudo install -m 0755 /tmp/rmux /usr/local/bin/rmux
+          # The v0.3.x tarballs unpack into a versioned subdir; locate
+          # the binary rather than assuming /tmp/rmux.
+          BIN_PATH="/tmp/rmux-v${VERSION}-${ARCH_TARGET}/rmux"
+          test -x "${BIN_PATH}"
+          sudo install -m 0755 "${BIN_PATH}" /usr/local/bin/rmux
           rmux -V
 
       - name: Set up Python

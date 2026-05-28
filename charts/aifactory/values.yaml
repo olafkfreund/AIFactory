@@ -27,7 +27,12 @@ image:
   pullPolicy: IfNotPresent
   pullSecrets: []
 
-replicaCount: 1  # v1.1 will support >1 via Redis pub/sub for WS fan-out
+replicaCount: 1
+# To scale beyond 1 replica, set ``redis.enabled: true`` AND configure
+# either ``redis.url`` (dev/test only) or ``redis.externalSecretName``.
+# Without Redis, multi-replica deployments will receive WebSocket events
+# only on the replica that originated them — cross-replica delivery
+# requires the pub/sub bridge (Epic #35 #40 PR-1).
 
 resources:
   requests:
@@ -57,6 +62,30 @@ containerSecurityContext:
       - ALL
   seccompProfile:
     type: RuntimeDefault
+
+# Sandbox: opt-in stronger pod isolation via Kubernetes RuntimeClass.
+# Currently supports gVisor (Google's user-space kernel that filters
+# syscalls between the workload and the host kernel). Disabled by
+# default — gVisor adds ~5-15% CPU overhead and blocks a handful of
+# syscalls that some workloads need.
+#
+# Prereqs (cluster operator must provision separately):
+#   1. gVisor runsc installed on the node pool
+#   2. A RuntimeClass object named per ``runtimeClassName`` below
+#      (default ``gvisor``) created in the cluster
+#
+# AIFactory's bash allowlist (git, curl, npm install, apt-get) works
+# under gVisor in practice. Workloads known NOT to work: tcpdump,
+# BPF programs, nested containers, anything that mmap()'s /dev/kvm.
+# See guides/security/gvisor.md for the full compatibility note.
+#
+# Epic #35 child #37.
+sandbox:
+  gvisor:
+    enabled: false
+    # Override only if your cluster operator created the RuntimeClass
+    # under a different name (e.g. some platforms use "runsc" directly).
+    runtimeClassName: gvisor
 
 service:
   type: ClusterIP
@@ -91,6 +120,10 @@ podDisruptionBudget:
   enabled: true
   minAvailable: 1
 
+# Horizontal Pod Autoscaler. Default off — operators flip ``enabled: true``
+# to opt in. **Requires ``redis.enabled: true`` for cross-replica WebSocket
+# delivery to work** — otherwise the autoscaler will spin up additional
+# pods that can't see events from other replicas (Epic #35 #40 PR-1).
 autoscaling:
   enabled: false
   minReplicas: 1
@@ -288,6 +321,54 @@ workspaces:
   # podSecurityContext.fsGroup automatically).
   mountPath: "/var/lib/aifactory/workspaces"
 
+  # S3-compatible durable storage for project workspaces (Epic #35 #40
+  # half-B PR-2).  When enabled, the app snapshots each project's
+  # workspace dir to the configured bucket at task phase transitions
+  # (coding / review_pending / completed / failed) and lazily restores
+  # it on cold-pod access. Combined with ``redis.enabled=true``, this
+  # makes ``replicas > 1`` survive pod death without losing in-flight
+  # task state.
+  #
+  # Independent of ``workspaces.enabled``: operators can pair (PVC as
+  # hot cache + S3 as durable store) OR run with S3-only (no PVC).
+  #
+  # Auth: AWS S3 + MinIO get typed values blocks. Azure / GCS are
+  # supported via fsspec but configured via raw env (operator sets
+  # AZURE_STORAGE_CONNECTION_STRING or GOOGLE_APPLICATION_CREDENTIALS
+  # via extraEnv) — see docs/docs/concepts/workspace-storage.md.
+  storage:
+    # Master toggle. When false (default), no S3 wiring is added —
+    # the app runs in PVC-only mode (or laptop-FS mode if
+    # ``workspaces.enabled`` is also off). Setting this true on
+    # ``replicas > 1`` is strongly recommended.
+    enabled: false
+    # fsspec URI base. REQUIRED when ``storage.enabled=true``. Examples:
+    #   s3://aifactory-prod/workspaces        (AWS S3)
+    #   s3://my-minio-bucket/workspaces        (MinIO; also set aws.endpointUrl)
+    #   gs://my-gcs-bucket/workspaces          (GCS via gcsfs — env-var auth only)
+    #   azure://container/aifactory            (Azure Blob via adlfs — env-var auth only)
+    uriBase: ""
+    # AWS-style auth. Also covers MinIO (an S3-compatible API) via the
+    # endpointUrl override below.
+    aws:
+      # IRSA / IAM-role-for-service-account (EKS) OR
+      # IAM-instance-role (EC2-backed nodes). When true, no Secret is
+      # referenced and the operator sets the appropriate SA
+      # annotation / role outside the chart. Recommended for production.
+      useInstanceRole: false
+      # Name of an existing Secret with keys ``AWS_ACCESS_KEY_ID`` +
+      # ``AWS_SECRET_ACCESS_KEY``. REQUIRED when
+      # ``useInstanceRole=false`` AND ``uriBase`` is an s3:// URI.
+      credentialsSecretName: ""
+      # MinIO / other S3-compatible: override the endpoint URL. Leave
+      # empty for AWS S3 itself.
+      endpointUrl: ""
+      # MinIO typically needs path-style addressing
+      # (``http://minio:9000/bucket/key``); AWS S3 prefers virtual-
+      # hosted (``http://bucket.s3.amazonaws.com/key``). ``auto`` lets
+      # boto3 pick.
+      addressingStyle: "auto"  # auto | virtual | path
+
 # ---------------------------------------------------------------------------
 # Remote Control — Claude Code's native --remote-control flag.
 #
@@ -391,6 +472,165 @@ mcpCredentials:
     github: false        # injects GITHUB_TOKEN env from ``github-token`` string key
     gitlab: false        # injects GITLAB_TOKEN + GITLAB_INSTANCE_URL env
     azureDevOps: false   # injects AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN + AZURE_DEVOPS_ORG_SERVICE_URL env
+
+# Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
+#
+# Default OFF — single-replica deployments work unchanged with no
+# Redis dependency. Multi-replica deployments MUST enable this so
+# events fired on replica A reach WebSocket clients connected to
+# replica B; without it, ``broadcast_event`` / ``send_to_user`` /
+# ``send_to_org`` only reach clients on the originating replica.
+#
+# Behaviour when Redis is later unreachable at runtime: app keeps
+# accepting requests, in-process delivery still works, ERROR log on
+# every reconnect attempt with exponential backoff (1s → 30s). See
+# docs/docs/concepts/multi-replica.md for the operator playbook.
+#
+# Auth: ``REDIS_URL`` may include the password inline
+# (``redis://:password@host:6379/0``) or use Redis 6 ACL via the
+# username field. For Sentinel / Cluster mode the URL form follows
+# redis-py's conventions; see https://redis-py.readthedocs.io/.
+#
+# Terminal WebSocket streams (/ws/terminal/*) are intentionally NOT
+# fan-out'd — they hold an rmux subprocess on one specific replica.
+# Operators running ``replicas > 1`` add a sticky-cookie annotation
+# at the ingress for /ws/terminal/* so each browser session pins to
+# the replica that owns its terminal.
+redis:
+  # Master toggle. When false (default), no Redis wiring is added —
+  # the app starts in in-process-only mode (REDIS_URL env unset).
+  enabled: false
+  # Inline URL — use ONLY in dev / test. Leaks the password into the
+  # rendered manifest and into ``kubectl describe pod``. Production
+  # deployments use ``externalSecretName`` instead.
+  url: ""
+  # Name of an existing Secret with a ``REDIS_URL`` key. The app reads
+  # the URL from this Secret via valueFrom.secretKeyRef. Required when
+  # ``enabled: true`` AND ``url`` is empty — helm template fails with
+  # a clear message otherwise.
+  externalSecretName: ""
+  # Pub/sub channel name. Override only when running multiple
+  # AIFactory deployments against a single shared Redis (then each
+  # deployment should pick a unique channel to avoid cross-talk).
+  channel: "aifactory:events"
+
+# ---------------------------------------------------------------------------
+# OpenTelemetry distributed tracing (Epic #35 #42).
+#
+# When enabled, the web-server emits OTLP spans for HTTP requests,
+# DB calls (SQLAlchemy / asyncpg), outbound httpx, redis ops, and
+# the agent-task phase transitions. The agent subprocess inherits
+# the parent's trace context via the ``TRACEPARENT`` env var (the
+# web-server injects it automatically — see make_subprocess_env).
+#
+# When ``otel.enabled: false`` (default) the app starts an OTel
+# TracerProvider with NO exporter — spans build in memory and drop
+# at export. Zero observable cost; safe to keep off in single-replica
+# dev. Toggle on once a collector is reachable.
+#
+# Collector targets we test against:
+#   • Grafana Tempo (gRPC on :4317 or HTTP on :4318)
+#   • Jaeger (OTLP-native ingest on :4317 / :4318)
+#   • Datadog Agent (OTLP receiver, requires DD_API_KEY in headers)
+#   • Honeycomb / NewRelic (HTTPS endpoint + headers secret)
+#
+# Sampling: ``ParentBased`` (children inherit parent's decision) wrapped
+# around ``TraceIdRatioBased(samplingRatio)``. Default 1.0 (sample
+# everything). Drop to 0.1 when traffic is high; 0.0 is accepted and
+# means "drop all spans" (useful for proving the no-export code path).
+#
+# Headers Secret: production deployments use an external Secret with
+# the ``OTEL_EXPORTER_OTLP_HEADERS`` key (e.g.
+# ``api-key=xxxx,team=infra``). The pod consumes the value via
+# valueFrom.secretKeyRef. The required-validator below blocks helm
+# template when ``headersSecretName`` is set but ``enabled`` isn't
+# (operator misconfiguration that would silently no-op).
+otel:
+  # Master toggle. When false (default), no exporter is installed
+  # and OTEL_EXPORTER_OTLP_ENDPOINT stays unset — the app respects
+  # the absence as "no collector" and skips the OTLP exporter.
+  enabled: false
+  # OTLP collector endpoint. REQUIRED when ``enabled: true``.
+  # Examples:
+  #   http://tempo.observability.svc:4317  (in-cluster Tempo, gRPC)
+  #   https://api.honeycomb.io:443         (Honeycomb, HTTP)
+  endpoint: ""
+  # Wire protocol. gRPC is more efficient (binary, multiplexed,
+  # streaming) but http/protobuf works behind proxies that only
+  # speak HTTP/1.1. Pick to match your collector's ingress.
+  protocol: "grpc"  # grpc | http/protobuf
+  # Resource attribute attached to every span. Lets a multi-tenant
+  # Tempo distinguish AIFactory from neighbour workloads. Change
+  # only when running multiple AIFactory deployments against one
+  # backend (e.g. ``aifactory-staging`` vs ``aifactory-prod``).
+  serviceName: "aifactory-web"
+  # Sampling ratio in [0.0, 1.0]. ParentBased(TraceIdRatioBased(x)):
+  # children always inherit the parent's decision; root spans get
+  # kept with probability x. 1.0 = sample all (good for staging);
+  # 0.1 = 10% in production. 0.0 is valid — accepts no spans at the
+  # export stage (still constructs them, still flows through
+  # propagation), useful for the no-export acceptance test.
+  samplingRatio: 1.0
+  # Optional Kubernetes Secret with the ``OTEL_EXPORTER_OTLP_HEADERS``
+  # key. Used for vendor-auth (Honeycomb / Datadog / NewRelic API
+  # keys) or for tenant routing. Setting this without ``enabled: true``
+  # is rejected at helm template time — see validator note above.
+  headersSecretName: ""
+
+# ---------------------------------------------------------------------------
+# Signed audit-chain anchor (Epic #35 #43).
+#
+# The v1.0 audit chain (Epic #26 P5) hashes every row to its
+# predecessor — detects insertion/deletion/mutation by an attacker
+# without DB access, but does NOT detect a DB admin who re-computes
+# the entire chain from any point forward.
+#
+# #43 closes that gap by signing the chain head daily with an
+# HMAC-SHA256 key wrapped by the existing KMS backend
+# (``crypto/kms/``). External verifiers receive both rows AND the
+# daily anchors in the audit export, and can prove untamperedness
+# by re-computing the chain + verifying the HMAC.
+#
+# Cadence: 00:00 UTC daily. Kubernetes CronJob below; the in-process
+# scheduler (lifespan-managed asyncio) is an alternative the operator
+# can run by setting ``audit.anchor.scheduler: in-process`` — useful
+# for single-pod deployments where a separate CronJob feels heavy.
+#
+# Failure-safe: every code path in the cron + signer wraps in
+# try/except. A broken KMS or DB never crashes the lifespan; the
+# next tick retries.
+audit:
+  anchor:
+    # Master toggle. When false (default), no anchors are emitted —
+    # audit chain operates as v1.0. Signing keys also remain
+    # un-bootstrapped, so existing deployments are byte-for-byte
+    # unchanged until the operator opts in.
+    enabled: false
+    # How the daily 00:00 UTC tick is invoked:
+    #   "cronjob"    — Kubernetes CronJob (recommended for production
+    #                  + multi-replica; uses the same image + env as
+    #                  the web pod)
+    #   "in-process" — asyncio task managed by the web-server's
+    #                  lifespan (single-replica only; the task can
+    #                  fire on whichever replica wins startup)
+    scheduler: "cronjob"  # cronjob | in-process
+    # Cron schedule for the Kubernetes CronJob (only honoured when
+    # scheduler=cronjob). Default = 00:00 UTC daily. Operators with
+    # multiple AIFactory deployments writing to the same audit log
+    # MUST stagger schedules to avoid colliding on the UTC-day
+    # unique constraint.
+    cron:
+      schedule: "0 0 * * *"   # daily at 00:00 UTC
+      # Active-deadline + back-off — what to do if the cron pod gets
+      # stuck or fails repeatedly. Generous defaults so a slow
+      # large-tenant signing pass doesn't get killed.
+      activeDeadlineSeconds: 300
+      backoffLimit: 3
+      # Failed jobs to keep around in the Kubernetes API for ops
+      # forensics. Successful jobs are pruned to 1 (just the most
+      # recent).
+      successfulJobsHistoryLimit: 1
+      failedJobsHistoryLimit: 3
 
 # Cross-cutting platform-team settings.
 global:

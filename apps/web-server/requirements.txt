@@ -8,6 +8,34 @@ python-multipart>=0.0.6
 # WebSocket
 websockets>=12.0
 
+# Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
+# Optional at runtime — only used when REDIS_URL is set. The asyncio
+# client lives in redis.asyncio; no separate aioredis package needed.
+redis>=5.0
+
+# S3-compatible workspace storage (Epic #35 #40 half-B).
+# Optional at runtime — only exercised when WORKSPACE_S3_URI_BASE is
+# set. fsspec[s3] pulls in s3fs which covers both AWS S3 and MinIO
+# via the FSSPEC_S3_ENDPOINT_URL env override. Azure (adlfs) and
+# GCS (gcsfs) backends can be installed by operators who use those
+# clouds — not bundled by default to keep the image lean.
+fsspec[s3]>=2024.6.0
+
+# OpenTelemetry distributed tracing (Epic #35 #42).
+# Optional at runtime — only exports when OTEL_EXPORTER_OTLP_ENDPOINT
+# is set. Auto-instrumentation builds spans in memory at near-zero
+# cost when no exporter is configured; spans drop at export time.
+# Pin the contrib instrumentation packages together: they're versioned
+# in lockstep with the core SDK (0.NN-beta tracks 1.NN core).
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27
+opentelemetry-exporter-otlp>=1.27
+opentelemetry-instrumentation-fastapi>=0.48b0
+opentelemetry-instrumentation-sqlalchemy>=0.48b0
+opentelemetry-instrumentation-asyncpg>=0.48b0
+opentelemetry-instrumentation-httpx>=0.48b0
+opentelemetry-instrumentation-redis>=0.48b0
+
 # PTY (Terminal)
 ptyprocess>=0.7.0
 
@@ -82,3 +110,10 @@ itsdangerous>=2.2.0
 # `handler` labels (route templates, not raw paths).
 structlog>=24.4.0
 prometheus-fastapi-instrumentator>=7.0.0
+
+# Epic #35 #41 — SAML 2.0 SP-side wiring (legacy-IdP banks).
+# python3-saml is the OneLogin SDK; depends on the xmlsec C library
+# (ships statically-linked in the python wheel for linux x86_64, but
+# the Dockerfile must install libxmlsec1 / libxmlsec1-openssl when
+# building for distros without the wheel).
+python3-saml>=1.16
