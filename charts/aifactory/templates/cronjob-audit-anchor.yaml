@@ -1,0 +1,104 @@
+{{- /*
+  Daily audit-chain anchor CronJob (Epic #35 #43 PR-2).
+
+  Runs `python -m server.jobs.audit_anchor_cron` once a day at 00:00 UTC
+  (or whatever schedule the operator overrides). Same image + env as
+  the web pod so the unwrapped signing key, KMS access, and DB
+  credentials all just work without any per-cron config.
+
+  Only rendered when:
+    - audit.anchor.enabled = true
+    - audit.anchor.scheduler = "cronjob" (the alternative,
+      "in-process", is an asyncio task in the web-server lifespan
+      and needs no CronJob).
+*/}}
+{{- if and .Values.audit.anchor.enabled (eq (.Values.audit.anchor.scheduler | default "cronjob") "cronjob") }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "aifactory.fullname" . }}-audit-anchor
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-anchor-cron
+spec:
+  schedule: {{ .Values.audit.anchor.cron.schedule | quote }}
+  # Replace any in-flight run when the next tick fires — anchoring
+  # is idempotent (UTC-day unique index), so doubled work is safe
+  # but not useful.
+  concurrencyPolicy: Replace
+  successfulJobsHistoryLimit: {{ .Values.audit.anchor.cron.successfulJobsHistoryLimit | default 1 }}
+  failedJobsHistoryLimit: {{ .Values.audit.anchor.cron.failedJobsHistoryLimit | default 3 }}
+  # Force the timezone explicitly. Without this, the schedule string
+  # is interpreted in whatever timezone the kube-controller-manager
+  # is running in — which historically has bitten everyone.
+  timeZone: "UTC"
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: {{ .Values.audit.anchor.cron.activeDeadlineSeconds | default 300 }}
+      backoffLimit: {{ .Values.audit.anchor.cron.backoffLimit | default 3 }}
+      template:
+        metadata:
+          labels:
+            {{- include "aifactory.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: audit-anchor-cron
+        spec:
+          serviceAccountName: {{ include "aifactory.serviceAccountName" . }}
+          {{- with .Values.global.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: OnFailure
+          containers:
+            - name: audit-anchor-cron
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - python
+                - -m
+                - server.jobs.audit_anchor_cron
+              envFrom:
+                # Inherit the same app-config ConfigMap as the web pod
+                # so all the non-secret settings are in scope.
+                - configMapRef:
+                    name: {{ include "aifactory.fullname" . }}-config
+              env:
+                # DATABASE_URL — same source as the web deployment.
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.postgres.externalSecretName }}
+                      key: database-url
+                # KMS unwrap path — only the Fernet local-key backend
+                # needs a secret env; cloud KMS backends use their own
+                # auth (IRSA / WI / etc.) which is already on the pod
+                # via the ServiceAccount.
+                {{- if eq .Values.kms.backend "fernet" }}
+                - name: KMS_FERNET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.kms.fernetKeyRef.name }}
+                      key: {{ .Values.kms.fernetKeyRef.key }}
+                {{- end }}
+                - name: AUDIT_ANCHOR_ENABLED
+                  value: "true"
+                - name: AUDIT_ANCHOR_SCHEDULER
+                  value: "cronjob"
+              resources:
+                # The cron is short-lived (seconds) and bounded by
+                # the DB scan cost. Conservative limits; bump if a
+                # large-tenant deployment hits the activeDeadline.
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                # Match the web pod's hardening.
+                runAsNonRoot: true
+                runAsUser: 65532
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+{{- end }}

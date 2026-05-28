@@ -52,6 +52,44 @@
     at [`/concepts/observability-tracing`](https://olafkfreund.github.io/AIFactory/concepts/observability-tracing),
     23 new tests (12 helm + 8 bootstrap + 3 e2e).
   - Closes v3.0 limitation #4 ("No built-in OpenTelemetry distributed tracing").
+- **#43 — ISO 27001 evidence + signed audit-chain anchor** ✅ (closed)
+  - PR #180: design doc with 8 brainstorm decisions + 5 critical
+    reviewer findings baked in.
+  - PR #181: schema migration adding `audit_anchors`, `audit_signing_keys`,
+    `audit_logs.classification`, `users.last_login_at`. Postgres
+    UTC-day unique index makes daily anchoring idempotent. 5 Postgres
+    acceptance tests.
+  - PR #182: `audit_anchor.py` signer/verifier service. `_SigningKey`
+    newtype with leak-safe `__repr__`, HMAC sign/verify, versioned
+    KMS-wrapped key storage so root-key rotation doesn't invalidate
+    prior anchors. KMS-decrypt contract enforced (raises on wrong
+    type or wrong length so cloud backends can't silently produce
+    wrong HMACs). 15 unit tests including log-safety verification.
+  - PR #183: `audit_anchor_cron.py` — daily 00:00 UTC tick, startup
+    backfill of missed days, zero-row-day handling, first-anchor
+    semantics, idempotency. Classification-window hashing closes the
+    "flip confidential→public to leak past export filter" attack
+    surface — design decision #5 honest revision (the original
+    `_canonical()` extension was mathematically incompatible with
+    pre-#43 chain re-verification, so classification protection moved
+    to the anchor layer). 8 unit tests.
+  - PR #184: `audit_export.py` interleaves anchors deterministically
+    into NDJSON. `verify_anchored_export()` is the offline verifier
+    helper auditors use. Caught + fixed a real semantic bug in #183
+    where the cron stored raw `prev_hash` instead of the outgoing
+    chain head. 7 unit tests.
+  - PR #185: `GET /api/admin/access-review` endpoint for SOC2 CC6.2 +
+    ISO 27001 A.9.2.5 quarterly access reviews. `users.last_login_at`
+    stamped on every successful OIDC login. 6 unit tests.
+  - PR #186: Helm `audit.anchor:` block with Kubernetes CronJob OR
+    in-process scheduler. ISO 27001 Annex A evidence map at
+    `guides/compliance/iso27001-evidence.md` (~30 controls directly
+    evidenced; remainder marked as operator responsibility). Concept
+    doc at [/concepts/audit-anchor](https://olafkfreund.github.io/AIFactory/concepts/audit-anchor).
+    10 helm acceptance tests covering toggle, scheduler enum,
+    cron-knob flow-through, security-context match with web pod.
+  - Closes v3.0 limitation #1 ("Audit chain has no signed external
+    anchor").
 - **#41 — SAML 2.0 + SCIM 2.0 for legacy-IdP banks** (in flight, ~60% done)
   - PR #177 (PR-1a): Security-foundation modules. SAML replay cache with
     per-assertion TTL (not blanket-LRU — the reviewer-flagged trap), OneLogin
@@ -289,7 +327,11 @@ New operator runbooks under `guides/`:
 Tracked in `guides/compliance/soc2-evidence.md § Documented
 limitations`. Each maps to a v3.1 Epic #35 issue:
 
-1. Audit chain has no signed external anchor. (Open — #43)
+1. ~~Audit chain has no signed external anchor.~~ ✅ **Closed by
+   Epic #35 #43** — daily HMAC-signed anchor + KMS-wrapped key
+   rotation + offline verifier helper. See
+   [audit-anchor concept doc](https://olafkfreund.github.io/AIFactory/concepts/audit-anchor)
+   and `guides/compliance/iso27001-evidence.md` for ISO 27001 Annex A mapping.
 2. Revocation latency bounded by 15-minute access-token TTL (back-
    channel logout deferred).
 3. FIPS 140-2/3 modules not validated.

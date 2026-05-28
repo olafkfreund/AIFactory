@@ -191,6 +191,24 @@ spec:
                   key: OTEL_EXPORTER_OTLP_HEADERS
             {{- end }}
             {{- end }}
+            {{- /* Validate audit.anchor.scheduler enum */ -}}
+            {{- if .Values.audit.anchor.enabled }}
+            {{- $scheduler := .Values.audit.anchor.scheduler | default "cronjob" }}
+            {{- if not (has $scheduler (list "cronjob" "in-process")) }}
+            {{- fail (printf "audit.anchor.scheduler=%q is invalid — must be 'cronjob' or 'in-process'. See charts/aifactory/values.yaml." $scheduler) }}
+            {{- end }}
+            # Epic #35 #43 PR-2 — signed audit-chain anchor.
+            # AUDIT_ANCHOR_ENABLED is consumed by the web-server's
+            # lifespan: it bootstraps the signing key (audit_signing_keys
+            # table) on startup and, when scheduler=in-process, kicks
+            # off the daily asyncio cron. For scheduler=cronjob the
+            # Kubernetes CronJob template below runs the same
+            # `python -m server.jobs.audit_anchor_cron` invocation.
+            - name: AUDIT_ANCHOR_ENABLED
+              value: "true"
+            - name: AUDIT_ANCHOR_SCHEDULER
+              value: {{ $scheduler | quote }}
+            {{- end }}
             {{- if .Values.rmux.enabled }}
             # Epic #44 R3 — flip on the rmux Live Agent Console.
             # The web-server's startup runtime checks for the binary
