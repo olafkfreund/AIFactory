@@ -237,6 +237,26 @@ spec:
             - name: SAML_IDP_INIT_DEFAULT_RETURN_TO
               value: {{ .Values.saml.idpInitDefaultReturnTo | quote }}
             {{- end }}
+            {{- /* SLO validator: slo.enabled requires saml.enabled (Epic #35 #209). */ -}}
+            {{- if and .Values.saml.slo.enabled (not .Values.saml.enabled) }}
+            {{- fail "saml.slo.enabled=true requires saml.enabled=true. Enable SAML first. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if .Values.saml.slo.enabled }}
+            # SAML SLO (Epic #35 #209 v1.2). Opt-in; default off.
+            # When enabled, /api/auth/saml/logout and /api/auth/saml/sls
+            # are active. The SP's SLS callback URL is derived from
+            # saml.acsUrl (same base) with path /sls, or set explicitly.
+            - name: SAML_SLO_ENABLED
+              value: "true"
+            - name: SAML_SLO_URL
+              value: {{ .Values.saml.slo.slsUrl | default (print .Values.saml.acsUrl | replace "/acs" "/sls") | quote }}
+            {{- if .Values.saml.slo.idpSloUrl }}
+            # Explicit IdP SLO URL override. When empty, the SP derives
+            # the URL from the IdP metadata's <SingleLogoutService> element.
+            - name: SAML_IDP_SLO_URL
+              value: {{ .Values.saml.slo.idpSloUrl | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if .Values.scim.enabled }}
             # SCIM 2.0 provisioning (Epic #35 #41 PR-2). The Bearer

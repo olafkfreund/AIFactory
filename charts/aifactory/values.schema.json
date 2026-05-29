@@ -84,7 +84,15 @@
         "idpDisplayName": {"type": "string"},
         "spCertSecretName": {"type": "string"},
         "requireEncryptedAssertion": {"type": "boolean"},
-        "idpInitDefaultReturnTo": {"type": "string"}
+        "idpInitDefaultReturnTo": {"type": "string"},
+        "slo": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "idpSloUrl": {"type": "string"},
+            "slsUrl": {"type": "string"}
+          }
+        }
       }
     },
     "scim": {

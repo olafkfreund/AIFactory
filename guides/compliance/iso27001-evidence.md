@@ -79,6 +79,17 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 - **AIFactory contribution**: Scoped MCP API keys (Epic #35 #154) replace the host-wide admin token with per-developer `acw_` keys; mutating MCP routes are scope-gated.
 - **Operator responsibility**: Document who has `acw_*` keys with admin scopes. Rotate quarterly.
 
+### A.9.4 (supplementary) — SAML SLO: session termination propagation (v1.2)
+
+- **AIFactory contribution**: SAML Single Logout (SLO) is supported in v1.2 (Epic #35 #209), opt-in via `saml.slo.enabled=true`. This closes the "stale SP session after IdP-side disable" gap documented in v1.1 design decision #11. Implementation:
+  - **SP-initiated SLO** (`POST /api/auth/saml/logout`): user clicks "Sign out" → AIFactory builds a signed `LogoutRequest` → IdP propagates to other SPs → IdP confirms back to AIFactory's SLS endpoint → session cookies cleared.
+  - **IdP-initiated SLO** (`POST /api/auth/saml/sls`): IdP administrator disables a user → IdP pushes a signed `LogoutRequest` to AIFactory → AIFactory validates signature + replay cache → clears cookies → returns signed `LogoutResponse`. When the SP has no live session for the NameID (already expired), returns `NoSession` status rather than a 4xx, preserving the IdP's propagation chain to other SPs.
+  - Replay defence: `LogoutRequest` IDs tracked in `SamlReplayCache` with per-request TTL (same mechanism as assertion replay from v1.1).
+  - RelayState HMAC protects the SP-init round-trip from open-redirect injection.
+  - Default (local-only logout) is unchanged when `saml.slo.enabled=false` — backward compatible.
+  - Source: `apps/web-server/server/saml/routes.py` (`saml_logout`, `saml_sls` endpoints). Design rationale: `docs/plans/2026-05-29-saml-slo-design.md`.
+- **Operator responsibility**: Enable SLO with `saml.slo.enabled=true` and re-upload SP metadata at the IdP. Configure MFA at the IdP. Even with SLO enabled, a stolen access-token JWT remains valid for up to 15 minutes (standard JWT stateless property) — configure short TTLs for high-security deployments.
+
 ### A.9.2 Privileged access management (tenant reconciler)
 
 - **AIFactory contribution**: When Tenant Isolation Mode (Epic #35 #36) is enabled, the reconciler authenticates to Vault via a dedicated `aifactory-reconciler` AppRole with the minimum-needed `sys/policies/acl/aifactory-tenant-*` + `auth/kubernetes/role/aifactory-tenant-*` capabilities (it can MANAGE tenant policies but cannot READ tenant secrets). Per-tenant ServiceAccounts use IRSA (AWS) / Workload Identity (GCP/Azure) — never a shared cluster-wide cloud credential. See [tenant-isolation concept doc](../../docs/docs/concepts/tenant-isolation.md).

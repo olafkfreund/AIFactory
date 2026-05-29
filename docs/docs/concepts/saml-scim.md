@@ -36,7 +36,7 @@ You **don't** need it for:
 | HMAC-signed RelayState (SP-init CSRF defence) | ✅ |
 | Cross-IdP collision guard (OIDC ↔ SAML auto-link rejection) | ✅ |
 | Login-page IdP discovery dropdown | ✅ |
-| SAML Single Logout (SLO) | ❌ (decision #11 — local logout only) |
+| SAML Single Logout (SLO) | ✅ opt-in (`saml.slo.enabled=true`, v1.2 #209) |
 | Per-tenant SAML IdP routing | ❌ (v1.2, ships with #36 tenant isolation) |
 | Just-in-time provisioning via SAML alone (no SCIM) | ❌ (decision #4 — SCIM provisions first) |
 | OAuth client-credentials grant for SCIM | ❌ (decision #3 — static Bearer in v1.1) |
@@ -232,9 +232,56 @@ The token is read once at startup; the constant-time compare protects against a 
 
 ### Logout
 
-> **Local logout only.** AIFactory's "Sign out" clears our session cookie and redirects to the login page. We do **not** issue a SAML `LogoutRequest` to the IdP.
+> **v1.2 update:** SAML Single Logout (SLO) is now supported and opt-in via `saml.slo.enabled=true`. The default behaviour (local logout only) is unchanged for backward compatibility. See below for both modes.
 
-If the IdP is the system of record for "is this human at work right now", configure short access-token TTLs (default 30 min) and rely on the IdP's session-kill admin console for force-logout scenarios. Some compliance auditors specifically ask whether we do SLO — the answer is "no, by design, in v1.1". v1.2 may revisit if there's actual demand.
+#### Default behaviour — local logout (backward compatible)
+
+When `saml.slo.enabled: false` (the default), "Sign out" clears the AIFactory session cookie and redirects to the login page. No SAML `LogoutRequest` is issued to the IdP. This is the same behaviour as v1.1.
+
+For contexts where SLO is not required, configure short access-token TTLs (default 15 min) and rely on the IdP's session-kill admin console for force-logout scenarios.
+
+#### SLO — SAML Single Logout (v1.2, opt-in)
+
+When `saml.slo.enabled: true`, AIFactory supports full SAML 2.0 SLO:
+
+**SP-initiated flow** (user clicks "Sign out" in AIFactory):
+
+1. AIFactory builds a signed `LogoutRequest` and redirects the browser to the IdP's SLO URL.
+2. The IdP propagates logout to other SPs that share the same session (cross-SP propagation is the IdP's responsibility).
+3. The IdP redirects the browser back to AIFactory's Single Logout Service (`POST /api/auth/saml/sls`) with a `SAMLResponse`.
+4. AIFactory validates the response, clears the session cookies, and redirects to the login page.
+
+**IdP-initiated flow** (IdP pushes a `LogoutRequest`, e.g. admin console force-logout):
+
+1. The IdP POSTs a signed `LogoutRequest` to `POST /api/auth/saml/sls`.
+2. AIFactory validates the signature, audience, and replay cache.
+3. AIFactory clears the session cookies and returns a signed `LogoutResponse` to the IdP.
+4. If the SP has no live session for the NameID (session already expired), AIFactory returns a `LogoutResponse` with `NoSession` status — **not a 4xx** — so the IdP can continue propagating to other SPs.
+
+**IdP compatibility:**
+- Azure AD: full SLO support over HTTP-POST binding.
+- ADFS 3.0+: full SLO support; set `saml.slo.idpSloUrl` if the metadata URL differs.
+- Okta: full SLO support.
+- Keycloak: full SLO support.
+- Legacy ADFS 2.0 / old Shibboleth: may not support HTTP-POST SLO binding; these fall back to local-only logout even when `saml.slo.enabled=true` (the routes return 503 with a diagnostic message).
+
+**Helm setup:**
+
+```yaml
+saml:
+  enabled: true
+  # ... existing saml config ...
+  slo:
+    enabled: true             # opt-in
+    idpSloUrl: ""             # leave empty to derive from IdP metadata
+                              # set explicitly for ADFS overrides
+```
+
+After enabling, re-upload the SP metadata from `GET /api/auth/saml/metadata` at the IdP — the XML now includes a `<SingleLogoutService>` element.
+
+**Session-kill scope:** SLO kills the current browser session only (the access + refresh token cookies). Other open tabs or sessions for the same user are not affected. Operators requiring full-user revocation (e.g. incident response) use the IdP's admin revoke-all console or the AIFactory admin API.
+
+**Binding:** HTTP-POST only. HTTP-Redirect binding is not supported (see design doc `docs/plans/2026-05-29-saml-slo-design.md` decision D-3 for rationale).
 
 ## SCIM specifics (RFC 7644 deviations + caveats)
 

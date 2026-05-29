@@ -286,6 +286,50 @@ saml:
   # flows entirely (SP-init only).
   idpInitDefaultReturnTo: ""
 
+  # ---------------------------------------------------------------------------
+  # SAML Single Logout (SLO) (Epic #35 #209 v1.2).
+  #
+  # Opt-in; default OFF for backward compatibility. When enabled, adds:
+  #   POST /api/auth/saml/logout  — SP-initiated SLO entry point
+  #   POST /api/auth/saml/sls     — Single Logout Service callback
+  #
+  # Prerequisites:
+  #   1. ``saml.enabled: true`` (validator below enforces this).
+  #   2. IdP must support SAML SLO over HTTP-POST binding.
+  #      Azure AD, ADFS 3.0+, Okta, Keycloak, and PingFederate all do.
+  #      Legacy ADFS 2.0 and some older Shibboleth deployments may not.
+  #   3. After enabling, re-upload the SP metadata from
+  #      ``GET /api/auth/saml/metadata`` at the IdP — the metadata now
+  #      advertises the <SingleLogoutService> HTTP-POST binding.
+  #
+  # Operator workflow:
+  #   1. Set ``saml.slo.enabled: true``.
+  #   2. Optionally set ``saml.slo.idpSloUrl`` if the IdP SLO URL differs
+  #      from what the IdP metadata advertises (some ADFS deployments).
+  #   3. ``helm upgrade ...`` — SLO routes are live after pod restart.
+  #   4. Re-upload SP metadata at the IdP to complete the federation.
+  #
+  # Compliance note (ISO 27001 A.9.4.2 / A.9.4.4):
+  #   Enables IdP-side session termination when a user clicks "Sign out"
+  #   in AIFactory. Closes the "stale session after IdP-side disable" gap
+  #   documented in v1.1 decision #11.
+  slo:
+    # Master SLO toggle. Requires saml.enabled=true (validator in
+    # deployment.yaml enforces this at helm install/upgrade time).
+    enabled: false
+    # Explicit override for the IdP's SLO endpoint URL. When empty (default),
+    # the SP derives the URL from the IdP's federation metadata
+    # (<SingleLogoutService Binding="HTTP-POST"> element). Set this only when
+    # the IdP metadata does not advertise SLO or when the SLO URL in the
+    # metadata differs from the actual endpoint (some ADFS configurations).
+    # Example: https://adfs.example.com/adfs/ls/?wa=wsignout1.0
+    idpSloUrl: ""
+    # Override for the SP's own SLS callback URL. When empty (default), the
+    # deployment template derives this from saml.acsUrl (replaces /acs with
+    # /sls). Set explicitly only when the SLS URL has a different path or
+    # hostname than the ACS URL — unusual but supported.
+    slsUrl: ""
+
 # ---------------------------------------------------------------------------
 # SCIM 2.0 user + group provisioning endpoint (Epic #35 #41).
 #
