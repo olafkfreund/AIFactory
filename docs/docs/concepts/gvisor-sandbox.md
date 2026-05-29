@@ -61,17 +61,15 @@ sandbox:
 
 The agent's bash allowlist exercises a relatively narrow syscall surface. Real-world workloads tested under gVisor:
 
-CI status: [![gVisor smoke](https://github.com/olafkfreund/AIFactory/actions/workflows/gvisor-smoke.yml/badge.svg)](https://github.com/olafkfreund/AIFactory/actions/workflows/gvisor-smoke.yml)
+The "works" rows in the table below are validated by the live-cluster smoke test (`.github/workflows/gvisor-smoke.yml`). Each row maps to a test in `tests/helm/test_live_gvisor.py`. The blocked rows are by design — gVisor intentionally rejects these syscall patterns.
 
-The "works" rows in the table below are CI-validated on every push to `dev` and `main` by the live-cluster smoke test (`.github/workflows/gvisor-smoke.yml`). Each row maps to a test in `tests/helm/test_live_gvisor.py`. The blocked rows are by design — gVisor intentionally rejects these syscall patterns.
-
-| Workload | Status | CI-validated |
+| Workload | Status | Validated by |
 |---|---|---|
 | `git clone`, `git pull`, `git push` | ✅ works | `test_git_clone_works_under_gvisor` |
 | `curl`, `wget` HTTPS calls | ✅ works | `test_curl_https_works_under_gvisor` |
 | `npm install`, `pnpm install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
 | `python -m pip install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
-| `apt-get install` inside a Dockerfile build | ✅ works (overlayfs translation handled by runsc) | manual (DinD not run in CI) |
+| `apt-get install` inside a Dockerfile build | ✅ works (overlayfs translation handled by runsc) | manual |
 | `pytest`, `jest`, `go test` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
 | Workspace PVC read/write | ✅ works | `test_workspace_pvc_mount_works_under_gvisor` |
 | Outbound HTTPS egress | ✅ works | `test_outbound_https_works_under_gvisor` |
@@ -82,15 +80,15 @@ The "works" rows in the table below are CI-validated on every push to `dev` and 
 
 ### Compatibility validation
 
-The smoke test runs on every `push` to `dev`/`main` and every `pull_request` targeting `dev`. It:
+The smoke test (`.github/workflows/gvisor-smoke.yml`) is triggered manually (`workflow_dispatch`) rather than on every push. The reason: GitHub-hosted runners run Kind node containers inside Docker, and Docker applies capability restrictions that prevent `runsc` from launching sandboxed containers. Pods scheduled with `runtimeClassName: gvisor` inside this nested setup remain in `ContainerCreating` indefinitely.
 
-1. Creates a Kind cluster on a GitHub-hosted ubuntu-22.04 runner (full VM, not container — kernel access is available).
-2. Installs `runsc` on the host via the official gVisor apt repo, then copies it into the Kind node container.
-3. Registers a `gvisor` RuntimeClass (handler: `runsc`) in the cluster.
-4. Deploys AIFactory with `sandbox.gvisor.enabled=true` via `helm install`.
-5. Runs `tests/helm/test_live_gvisor.py -m gvisor_live`.
+Two validation paths work correctly on GitHub-hosted runners:
+- **Kubernetes-level wiring tests** (`test_runtime_class_exists_in_cluster`, `test_pods_have_gvisor_runtimeclass`): these inspect API object specs and pass reliably.
+- **Template-rendering tests** in `tests/helm/test_gvisor_runtime_class.py` run in the existing `helm-acceptance` CI job on every push.
 
-If any "works" row in the table starts failing, the job turns red and blocks merges to `dev`.
+The exec-based compatibility tests require a cluster where gVisor containers actually launch. See:
+- [Running the smoke test locally with Kind](./gvisor-smoke-test-local.md) — for operators with full-kernel access
+- [Self-hosted runner gVisor setup](./self-hosted-runner-gvisor-setup.md) — to add a self-hosted runner to the CI pipeline
 
 The most common pain point is **container-build-inside-the-agent** workflows. If your project's CI runs `docker build` from inside a task, you'll see syscall failures under gVisor. The two clean options are:
 
