@@ -1,13 +1,16 @@
-"""Tests for the LLM PII redactor (Epic #35 #38 PR-2b).
+"""Tests for the LLM PII redactor (Epic #35 #38 PR-2b; v1.2 #210).
 
 Covers:
 - Built-in SSN / email / phone pattern coverage.
 - Operator-supplied extra patterns are merged + applied.
 - Deep-redact on nested dict / list structures.
 - A regex failure on an operator pattern does NOT raise; passthrough.
-- Explicit negative test: CC pattern is INTENTIONALLY omitted from
-  the built-ins (design §4 reviewer finding #4) — a raw 13-16-digit
-  numeric string must NOT be redacted.
+- v1.2 #210: Luhn-validated credit-card pass redacts valid CC numbers
+  (hyphen / space / no-separator forms) and leaves Luhn-invalid digit
+  runs unchanged. The v1.1 negative test
+  ``test_cc_pattern_intentionally_omitted_from_builtins`` flipped to
+  ``test_luhn_invalid_left_unchanged`` to reflect the new contract.
+- v1.2 #210: ``redact_outbound`` alias + ``scrub_outbound`` flag.
 - Construction with a malformed (regex_str, replacement) tuple skips
   the bad entry + logs WARNING; the constructor never raises.
 """
@@ -23,7 +26,11 @@ _BACKEND = Path(__file__).resolve().parents[2] / 'apps' / 'backend'
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
-from services.llm_pii_redactor import BUILTIN_PATTERNS, PiiRedactor
+from services.llm_pii_redactor import (
+    BUILTIN_CC_REPLACEMENT,
+    BUILTIN_PATTERNS,
+    PiiRedactor,
+)
 
 # ---------------------------------------------------------------------------
 # Built-in patterns
@@ -89,24 +96,87 @@ def test_text_without_pii_passes_through():
 
 
 # ---------------------------------------------------------------------------
-# CC negative test — design §4 reviewer finding #4
+# Luhn-validated credit-card pattern — v1.2 #210
 # ---------------------------------------------------------------------------
 
 
-def test_cc_pattern_intentionally_omitted_from_builtins():
-    """CC pattern was dropped in v1.1 because the original
-    `\\b(?:\\d[ -]*?){13,16}\\b` matched IPv4 CIDRs + code IDs +
-    legitimate identifiers without Luhn validation. The built-ins
-    list MUST NOT contain a CC pattern."""
-    for pattern_str, _ in BUILTIN_PATTERNS:
-        # Heuristic: the original buggy CC pattern had {13,16}.
-        # The replacement label was [REDACTED_CC].
-        assert '13' not in pattern_str or 'd{3}' in pattern_str
-    # And the redactor itself doesn't touch a 16-digit string.
+def test_luhn_credit_card_redacted():
+    """A Luhn-valid Visa test number (hyphen separators) is redacted."""
     r = PiiRedactor()
-    out = r.redact('Test number: 4532015112830366')
-    assert '4532015112830366' in out
-    assert '[REDACTED_CC]' not in out
+    out = r.redact('Card on file: 4111-1111-1111-1111 expires soon.')
+    assert '4111-1111-1111-1111' not in out
+    assert BUILTIN_CC_REPLACEMENT in out
+
+
+def test_luhn_credit_card_with_spaces_redacted():
+    """Space-separated CC form is normalised + redacted on Luhn pass."""
+    r = PiiRedactor()
+    out = r.redact('Card on file: 4111 1111 1111 1111.')
+    assert '4111 1111 1111 1111' not in out
+    assert BUILTIN_CC_REPLACEMENT in out
+
+
+def test_luhn_credit_card_no_separator_redacted():
+    """Bare 16-digit Luhn-valid number is redacted (no separator form)."""
+    r = PiiRedactor()
+    out = r.redact('Raw PAN: 4111111111111111 end.')
+    assert '4111111111111111' not in out
+    assert BUILTIN_CC_REPLACEMENT in out
+
+
+def test_luhn_invalid_left_unchanged():
+    """v1.1 → v1.2 flip: this was previously
+    ``test_cc_pattern_intentionally_omitted_from_builtins``. The v1.2
+    Luhn-validated CC pass redacts valid numbers but a digit run that
+    fails Luhn is left UNCHANGED — closing the v1.1 false-positive
+    problem (IPv4 CIDRs, hashes, code IDs were corrupted by the
+    pre-Luhn naive pattern). ``4111-1111-1111-1112`` differs from
+    the canonical Visa test number by the last digit and fails Luhn."""
+    r = PiiRedactor()
+    out = r.redact('Not a card: 4111-1111-1111-1112 leave this alone.')
+    assert '4111-1111-1111-1112' in out
+    assert BUILTIN_CC_REPLACEMENT not in out
+
+
+def test_short_numeric_not_redacted_even_if_luhn():
+    """The CC regex requires 13-19 digits. A 4-digit number must not
+    be touched even if it happened to pass Luhn — the false-positive
+    rate on sub-13-digit runs is far too high."""
+    r = PiiRedactor()
+    # 4 digits, won't be matched by the CC regex regardless of Luhn.
+    out = r.redact('Code: 1230 next step.')
+    assert '1230' in out
+    assert BUILTIN_CC_REPLACEMENT not in out
+
+
+def test_long_numeric_not_redacted():
+    """A 24-digit run is outside the 13-19 CC window. Must not be
+    matched even if the leading 16 digits happen to be Luhn-valid."""
+    r = PiiRedactor()
+    out = r.redact('Hash: 123456789012345678901234 done.')
+    assert '123456789012345678901234' in out
+    assert BUILTIN_CC_REPLACEMENT not in out
+
+
+def test_negative_pattern_v11_compat():
+    """v1.1 false-positive case: a random 14-digit number (often
+    encountered as an internal id, request token, or partial hash)
+    that is Luhn-invalid stays unchanged. v1.1's behaviour
+    (CC pattern dropped) and v1.2's behaviour (Luhn-checked CC
+    pattern) converge on this input — the v1.1 contract holds."""
+    r = PiiRedactor()
+    out = r.redact('Request id: 12345678901234.')
+    assert '12345678901234' in out
+    assert BUILTIN_CC_REPLACEMENT not in out
+
+
+def test_cc_pattern_not_in_simple_builtin_list():
+    """``BUILTIN_PATTERNS`` lists only the simple regex.sub patterns.
+    The CC pass is a separate function (``_redact_credit_cards``) so
+    Luhn validation is in the loop. Tests that introspect
+    ``BUILTIN_PATTERNS`` should not see the CC replacement label."""
+    for _, replacement in BUILTIN_PATTERNS:
+        assert replacement != BUILTIN_CC_REPLACEMENT
 
 
 # ---------------------------------------------------------------------------
@@ -212,4 +282,34 @@ def test_redact_does_not_raise_on_internal_pattern_error(monkeypatch):
     # Should not raise.
     out = r.redact('alice@example.com')
     # Subsequent built-ins still applied after the bad one was skipped.
+    assert '[REDACTED_EMAIL]' in out
+
+
+# ---------------------------------------------------------------------------
+# scrubBeforeSend mode — v1.2 #210
+# ---------------------------------------------------------------------------
+
+
+def test_scrub_outbound_defaults_false():
+    """v1.1-compat: scrubBeforeSend is opt-in. Default constructor
+    leaves ``scrub_outbound`` False so existing callers see no change."""
+    r = PiiRedactor()
+    assert r.scrub_outbound is False
+
+
+def test_scrub_outbound_flag_persists():
+    """``scrub_outbound=True`` is exposed on the instance so the
+    provider call-site can branch on it without re-reading env vars."""
+    r = PiiRedactor(scrub_outbound=True)
+    assert r.scrub_outbound is True
+
+
+def test_redact_outbound_matches_redact():
+    """``redact_outbound`` is a documentation alias of ``redact``.
+    Same input → same output for both, including the v1.2 CC pass."""
+    r = PiiRedactor(scrub_outbound=True)
+    sample = 'Card 4111-1111-1111-1111 owner alice@example.com.'
+    assert r.redact_outbound(sample) == r.redact(sample)
+    out = r.redact_outbound(sample)
+    assert BUILTIN_CC_REPLACEMENT in out
     assert '[REDACTED_EMAIL]' in out

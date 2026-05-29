@@ -152,7 +152,11 @@ async def stream_csv(
 
 
 def _serialize_anchor(row: AuditAnchor) -> dict:
-    """Anchor row's wire shape inside the NDJSON stream."""
+    """Anchor row's wire shape inside the NDJSON stream.
+
+    v1.2 #208: includes ``org_id`` so verifiers can assert the anchor
+    belongs to the expected tenant (design finding #6).
+    """
     return {
         "_kind": "anchor",
         "id": row.id,
@@ -160,6 +164,7 @@ def _serialize_anchor(row: AuditAnchor) -> dict:
         "signature": row.signature,
         "signed_at": row.signed_at.isoformat(),
         "key_version": row.key_version,
+        "org_id": row.org_id,  # None for shared-chain anchors (v1.1)
     }
 
 
@@ -177,6 +182,7 @@ async def stream_json_with_anchors(
     org_id: str | None = None,
     from_ts: datetime | None = None,
     to_ts: datetime | None = None,
+    per_tenant_mode: bool = False,
 ) -> AsyncIterator[bytes]:
     """Yield NDJSON lines for matching audit rows + interleaved anchors.
 
@@ -184,11 +190,14 @@ async def stream_json_with_anchors(
     so verifiers can re-compute the chain in linear time. Trailing
     rows after the last anchor form a legitimate pending window.
 
-    Note: ``org_id`` filter applies to rows but NOT to anchors —
-    anchors are global, signed across all orgs' chain heads. A
-    multi-tenant export with per-org filtering loses the chain-
-    verification property for the same reason filtered classification
-    exports do; the route layer rejects that combination explicitly.
+    v1.2 #208: when ``per_tenant_mode=True`` AND ``org_id`` is given, the
+    anchor query is filtered to that org's per-tenant anchors. This lifts
+    the v1.1 restriction that blocked ``org_id + include_anchors=True``
+    combinations — see design recommendation #4 and CHANGELOG v1.2 entry.
+
+    When ``per_tenant_mode=False``: anchors are global (shared chain);
+    the route layer rejects ``org_id`` + ``include_anchors=True`` for
+    non-isolated tenants as before.
     """
     # Build the two queries.
     row_q = select(AuditLog).order_by(AuditLog.created_at.asc())
@@ -204,6 +213,12 @@ async def stream_json_with_anchors(
         anchor_q = anchor_q.where(AuditAnchor.signed_at >= from_ts)
     if to_ts is not None:
         anchor_q = anchor_q.where(AuditAnchor.signed_at <= to_ts)
+    # v1.2 #208: per-tenant mode scopes anchors to the org's chain only.
+    # Non-per-tenant mode: shared-chain anchors (org_id IS NULL).
+    if per_tenant_mode and org_id is not None:
+        anchor_q = anchor_q.where(AuditAnchor.org_id == org_id)
+    else:
+        anchor_q = anchor_q.where(AuditAnchor.org_id.is_(None))
 
     row_iter = iter((await db.execute(row_q)).scalars().all())
     anchor_iter = iter((await db.execute(anchor_q)).scalars().all())
@@ -363,6 +378,144 @@ def verify_anchored_export(
         # are pending.
         pending_window = 1  # at least one row sits in the pending window
 
+    return ExportVerificationResult(
+        rows_verified=rows_verified,
+        anchors_verified=anchors_verified,
+        failures=failures,
+        pending_window_rows=pending_window,
+    )
+
+
+# ---------------------------------------------------------------------------
+# v1.2 #208 — per-tenant verifier helper
+# ---------------------------------------------------------------------------
+
+
+def verify_tenant_anchored_export(
+    ndjson_bytes: bytes,
+    signing_keys: dict[int, bytes],
+    org_id: str,
+) -> ExportVerificationResult:
+    """Parse + verify a per-tenant NDJSON anchored export.
+
+    Thin wrapper over ``verify_anchored_export`` that:
+    1. Asserts every signing key in ``signing_keys`` belongs to ``org_id``
+       (design finding #6 — fail loudly on wrong-key mistake).
+    2. Uses the per-tenant genesis sentinel (``GENESIS-T-<org_id>``) for
+       the first row's expected ``prev_hash``.
+    3. Uses ``compute_tenant_hash`` for domain-separated chain re-computation.
+
+    ``signing_keys`` maps ``key_version → 32-byte raw HMAC key``. The caller
+    resolves these via ``load_key_by_version`` filtered to ``org_id``.
+
+    The caller MUST assert that the keys were loaded for the correct org
+    BEFORE calling this function (the assertion here is a defense-in-depth
+    check, not the primary guard).
+    """
+    from .audit_chain import compute_tenant_hash, tenant_genesis
+
+    genesis = tenant_genesis(org_id)
+    rows_verified = 0
+    anchors_verified = 0
+    failures: list[tuple[int, str]] = []
+    window_has_rows = False
+
+    # Running chain state.
+    prev_hash: str = genesis
+    cls_h = sha256()
+
+    text = ndjson_bytes.decode("utf-8") if ndjson_bytes else ""
+    for i, line in enumerate(text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError as exc:
+            failures.append((i, f"malformed JSON: {exc}"))
+            continue
+
+        kind = obj.get("_kind")
+
+        if kind == "row":
+            # Validate that this row belongs to the claimed org.
+            row_org = obj.get("org_id")
+            if row_org and row_org != org_id:
+                failures.append((
+                    i,
+                    f"cross-tenant row: row.org_id={row_org!r} != "
+                    f"expected org_id={org_id!r}",
+                ))
+                continue
+
+            # First row: expected prev_hash is the per-tenant genesis.
+            expected_prev = genesis if not window_has_rows and prev_hash == genesis else prev_hash
+            stored_prev = obj.get("prev_hash") or genesis
+            if stored_prev != expected_prev:
+                failures.append((
+                    i,
+                    f"chain break: row.prev_hash={stored_prev!r} != "
+                    f"expected {expected_prev!r}",
+                ))
+                continue
+
+            # Domain-separated hash for per-tenant chain.
+            prev_hash = compute_tenant_hash(stored_prev, obj, org_id)
+            rows_verified += 1
+            window_has_rows = True
+
+            cls_h.update(obj["id"].encode("utf-8"))
+            cls_h.update(b"\x1f")
+            cls_h.update((obj.get("classification") or "").encode("utf-8"))
+            cls_h.update(b"\x1e")
+
+        elif kind == "anchor":
+            # Verify that this anchor belongs to the claimed org.
+            anchor_org = obj.get("org_id")
+            if anchor_org and anchor_org != org_id:
+                failures.append((
+                    i,
+                    f"cross-tenant anchor: anchor.org_id={anchor_org!r} != "
+                    f"expected org_id={org_id!r} (design finding #6)",
+                ))
+                continue
+
+            expected_chain_head = prev_hash if window_has_rows else genesis
+            if obj["chain_head_hash"] != expected_chain_head:
+                failures.append((
+                    i,
+                    f"anchor chain_head_hash={obj['chain_head_hash']!r} "
+                    f"!= expected {expected_chain_head!r}",
+                ))
+                continue
+
+            key_bytes = signing_keys.get(obj["key_version"])
+            if key_bytes is None:
+                failures.append((
+                    i, f"no signing key for version {obj['key_version']}",
+                ))
+                continue
+
+            cls_hash_hex = (
+                cls_h.hexdigest() if window_has_rows else sha256(b"").hexdigest()
+            )
+            anchor_input = f"{obj['chain_head_hash']}|{cls_hash_hex}"
+            expected_sig = hmac.new(
+                key_bytes, anchor_input.encode("utf-8"), sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(expected_sig, obj["signature"]):
+                failures.append((
+                    i,
+                    f"anchor signature mismatch at signed_at={obj['signed_at']}",
+                ))
+                continue
+
+            anchors_verified += 1
+
+        else:
+            failures.append((i, f"unknown _kind={kind!r}"))
+
+    pending_window = 1 if window_has_rows else 0
     return ExportVerificationResult(
         rows_verified=rows_verified,
         anchors_verified=anchors_verified,

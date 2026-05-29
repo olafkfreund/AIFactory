@@ -1,4 +1,68 @@
-## 3.1.0 - 2026-05-29
+## 3.2.0 - 2026-05-29
+
+**v1.2 — close v1.1 deferrals + multi-tenant hardening + documentation polish**
+
+Epic #204 closed all 4 priority items shipped today (2026-05-29). The GitHub Pages site has also been re-themed to the skill_pool terminal aesthetic. All v1.2 features are opt-in via env / Helm values.
+
+### Added — v1.2 #207 Claude-on-LiteLLM enforcement wrapper
+
+- **`ClaudeEnforcementContext` + `_EnforcedClaudeSDKClient`** in `apps/backend/core/enforcement.py` — in-process wrapper for Claude Agent SDK calls (Option A; Option B LiteLLM Anthropic passthrough rejected due to 4 specific upstream bugs: BerriAI/litellm #28562 #28228 #26749 #27512).
+- **`LiteLLMBudgetProvider`** reads per-org budgets from existing `get_virtual_key_info()` (#38 PR-2b reuse). `_NoBudgetProvider` fallback for Claude-only deployments without LiteLLM.
+- **`_CLAUDE_PRICING`** table (6 models, four-way cache breakdown) feeds `cost_source='claude_sdk_estimate'` audit field. CI gate (`test_all_production_models_in_pricing_table`) prevents adding models without a pricing row.
+- **Opt-in via `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED=true`** + Helm `claude.enforcement:` block. `failureMode: closed` default (refuse calls on enforcement failure); `open` opt-in for availability over safety. Closes the v1.1 #38 gap where Claude calls bypassed LiteLLM enforcement.
+
+### Added — v1.2 #209 SAML Single Logout (SLO)
+
+- **`POST /api/auth/saml/logout`** (SP-init) — mints HMAC RelayState + LogoutRequest, redirects to IdP SLO URL.
+- **`POST /api/auth/saml/sls`** — Single Logout Service; handles SAMLResponse (SP-init confirmation) AND SAMLRequest (IdP-init). Unknown NameID returns `NoSession` success, not 4xx (preserves IdP propagation chain).
+- **Helm `saml.slo:` block** with `enabled` + `idpSloUrl` + `slsUrl`. Validator: `slo.enabled=true` requires `saml.enabled=true`.
+- Closes v1.1 #41 decision #11 deferral. Concept doc + ISO 27001 A.9.4 evidence updated.
+
+### Added — v1.2 #210 PII bundle (Luhn CC + scrubBeforeSend)
+
+- **Luhn-validated CC pattern** in `BUILTIN_PATTERNS` — closes v1.1 #38 §4 deferral. False-positive immunity via Luhn checksum gate. Test `test_credit_card_not_redacted` flipped: `4532015112830366` (canonical Visa test number, Luhn-valid) now redacts to `[REDACTED_CC]`.
+- **`scrubBeforeSend` mode** — `AIFACTORY_LITELLM_AUDIT_SCRUB_OUTBOUND=true` redacts PII from the outbound prompt BEFORE the LLM call (not just the audit row). Audit row records `prompt_outbound_scrubbed: bool` so operators can query for opt-in scrubbing.
+- Closes v1.1 #38 §4 "LLM still sees plaintext" caveat for orgs that opt in. ISO 27001 A.13.2 + A.14.2 evidence updated.
+
+### Added — Documentation backfill (#160)
+
+- 8 P0/P6/P7 doc deliverables from already-closed epics #27/#33/#34 (image-mirroring, SOC2 evidence, DPIA data-flow, threat model, deployment runbook, upgrade guide, Grafana dashboard JSON, `guides/README.md` index update). 9 xfail acceptance tests self-cleared.
+
+### Fixed — Husky pre-commit hooks + tenant-isolation deps (#215)
+
+- `.husky/pre-commit` IGNORE_TESTS extended to cover 2 documented flakes (`test_merge_orchestrator`, `tests/obs/test_p42_otel_e2e`). Removes the `--no-verify` requirement for future releases.
+- `apps/backend/requirements.txt` pins `kubernetes-asyncio>=32.0`, `boto3>=1.43.0`, `hvac>=2.3.0`. Closes the `ModuleNotFoundError` against fresh `apps/backend/.venv` for the #36 PR-2 tenant-isolation tests.
+
+### Documentation
+
+- Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines, vignette glow). Dark-mode-only; Prism `dracula`; `prefers-reduced-motion` respects accessibility.
+
+### Added — GCP MCP catalog entry (#168, Epic #100)
+
+### Added — GCP MCP catalog entry (#168, Epic #100)
+
+- **GCP catalog entry (`transport="http"`)** — closes the last gap in the default MCP server catalog (Epic #100). Google Cloud AI Companion MCP went GA in March 2026 and uses a remote-first HTTP transport rather than a local subprocess. The entry is auto-enabled when a project has GCP markers (`gcp/`, `app.yaml`, `cloudbuild.yaml`) and `GOOGLE_APPLICATION_CREDENTIALS` is set. See `apps/backend/agents/tools_pkg/mcp_catalog.py`.
+- **HTTP transport in `MCPCatalogEntry`** — the dataclass now supports `transport="http"` with `http_endpoint`. `build_server_config()` routes to `_build_http_config()` for HTTP entries, producing `{"type": "http", "url": "..."}` (the shape the Claude Agent SDK's HTTP MCP client expects). V1/V1.5 stdio entries are byte-for-byte unchanged.
+- **`GCP_MCP_ENDPOINT` env override** — the default GA endpoint (`https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp`) is overrideable at call time via `GCP_MCP_ENDPOINT`. Useful for VPC Service Controls perimeters, staging projects, and future GCP MCP servers (BigQuery, Cloud Run, etc.).
+- **Helm slot `mcpCredentials.gcp`** — new sub-block under `mcpCredentials` with `secretName` (GCP-dedicated Secret, overrides the shared `secretName` for the SA JSON mount) and `endpointOverride` (wires `GCP_MCP_ENDPOINT` into the pod). The existing `mcpCredentials.providers.gcp` file mount + env var is unchanged; the new block is additive.
+- **Docs** — GCP section added to `docs/docs/concepts/mcp-credentials.md` covering Workload Identity (preferred on GKE), service-account JSON setup, endpoint override, and troubleshooting.
+- **Tests** — `tests/test_mcp_catalog_gcp.py` (25 unit tests for catalog shape, marker detection, endpoint override, HTTP config shape, backward-compat) and `tests/helm/test_mcp_credentials_gcp.py` (8 Helm acceptance tests for secret mount, secretName override, and endpointOverride rendering).
+
+### Added — v1.2 per-tenant audit-chain anchor (#208)
+
+- **Per-tenant HMAC-SHA256 signing keys** — the tenant reconciler issues one 32-byte KMS-wrapped key per isolated org (Option A: one chain + one key per tenant, ISO 27001 A.12.4.2/A.12.4.3 compliant). Keys are stored in `audit_signing_keys` with `org_id` set and mirrored to the tenant's Vault path for auditor handover.
+- **Per-tenant chain genesis** — each isolated tenant's first `audit_logs` row uses `prev_hash='GENESIS-T-<org-uuid>'`, separating the per-tenant chain from the shared chain. `tenant_audit_state` table tracks the cutover boundary, current chain head, and lifecycle ('active'|'sealed').
+- **Per-tenant daily anchor** — the cron iterates over isolated orgs (in id order, batch-committed) and emits one `audit_anchors` row per org per day, signed with the org's key. One tenant's KMS failure does NOT block others (failure-safe per-tenant loop).
+- **Per-tenant verifier** — `verify_tenant_anchored_export(ndjson, signing_keys, org_id)` validates a per-tenant export's chain. Asserts cross-tenant replay is rejected (design finding #6). `compute_tenant_hash` and `verify_tenant_chain` in `audit_chain.py` provide the domain-separated chain helpers.
+- **Helm opt-in** — `audit.anchor.perTenant: false` (default). `perTenantOptions.keyCacheSize`, `batchSize`, `retentionDays`, `metrics.perOrgLabels` operator-tunable. Validator rejects `perTenant=true` without `tenant.isolationEnabled=true`.
+- **Export endpoint change (v1.2 behavior change)**: `?org_id=...&include_anchors=true` now accepted for isolated tenants when `perTenant=true` (was 400 in v1.1 — the per-tenant chain CAN verify a per-tenant export). Shared-chain deployments unchanged.
+- **ISO 27001 evidence** — A.12.4.2, A.12.4.3, A.18.1.3, A.18.2.2 entries updated with per-tenant chain contribution (v1.2+; v1.1 entries preserved). Closes the v1.1 gap where "protection of log information" was evidenced at deployment granularity only.
+- **Schema migration** (`c3d7e8f1a2b4`): `audit_anchors.org_id` (nullable FK, ON DELETE SET NULL), `audit_signing_keys.org_id` (nullable FK, ON DELETE CASCADE), `tenant_audit_state` table, composite index `audit_logs(org_id, created_at)`.
+- Refs: #208 / Epic #204. Design doc: `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md`.
+
+---
+
+## [1.1.0] - 2026-05-28
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
 

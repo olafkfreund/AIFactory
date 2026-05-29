@@ -37,6 +37,11 @@ def create_simple_client(
     cwd: Path | None = None,
     max_turns: int = 1,
     max_thinking_tokens: int | None = None,
+    # v1.2 / #207 — opt-in enforcement.  Same semantics as create_client():
+    # no enforcement when org_id is absent (system tasks / CLI callers).
+    org_id: str | None = None,
+    user_id: str | None = None,
+    allowed_models: list[str] | None = None,
 ) -> ClaudeSDKClient:
     """
     Create a minimal Claude SDK client for single-turn utility operations.
@@ -91,7 +96,7 @@ def create_simple_client(
         thinking_level = get_default_thinking_level(agent_type)
         max_thinking_tokens = get_thinking_budget(thinking_level)
 
-    return ClaudeSDKClient(
+    bare_client = ClaudeSDKClient(
         options=ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt,
@@ -103,3 +108,18 @@ def create_simple_client(
             permission_mode="bypassPermissions",  # Bypass prompts for headless execution
         )
     )
+
+    # v1.2 / #207 — reviewer finding #6: simple_client also needs enforcement
+    # wiring so web-server call sites can opt in by passing org_id.
+    # System tasks (no org_id) continue to receive the bare client.
+    from core.enforcement import build_enforcement_context, wrap_client_if_enforced
+
+    _effective_allowed_models = allowed_models if allowed_models is not None else ["*"]
+    enforcement = build_enforcement_context(
+        org_id=org_id,
+        user_id=user_id,
+        model=model,
+        allowed_models=_effective_allowed_models,
+    )
+    enforcement.enforce_allowlist()
+    return wrap_client_if_enforced(bare_client, enforcement)

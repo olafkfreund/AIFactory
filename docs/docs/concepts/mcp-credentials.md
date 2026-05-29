@@ -223,6 +223,102 @@ The task's agent log shows the MCP-side error verbatim.
 
 AIFactory pins `kubernetes-mcp-server@>=3.6.0` because **CVE-2026-46519** (CVSS 8.8) in earlier versions lets the `--read-only` flag be bypassed at the execution layer. If `mcp-doctor` warns about an older version, your npm cache may be serving a stale package — clear it (`rm -rf ~/.npm/_npx`) and let AIFactory's `npx` re-fetch.
 
+## GCP (Cloud AI Companion MCP)
+
+The GCP catalog entry (V2 — issue #168) uses **remote-first HTTP transport** rather than a local subprocess. It connects to Google's Cloud AI Companion MCP server, which went GA in March 2026 and provides code context, GCP resource enumeration, and IAM query tools.
+
+### When to use
+
+Use the GCP catalog entry when:
+- Your project deploys to GCP (the `has_gcp` marker fires on projects with `gcp/`, `app.yaml`, `cloudbuild.yaml`, etc.)
+- You want the agent to query GCP resource state (Cloud Run services, GKE clusters, IAM policies, etc.)
+- You are a Cloud AI Companion / Gemini Code Assist subscriber
+
+The GCP server is architecturally different from the stdio-based entries: it runs remotely on Google's infrastructure, so there is no local subprocess to spawn. The `GOOGLE_APPLICATION_CREDENTIALS` env var is the only credential the pod needs to pass; the Cloud AI Companion server performs its own Application Default Credentials exchange.
+
+### Operator setup — Workload Identity (preferred on GKE)
+
+Annotate the ServiceAccount and leave `mcpCredentials.providers.gcp = false`. No Secret mount is needed.
+
+```yaml
+# values.yaml
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: aifactory-readonly@PROJECT_ID.iam.gserviceaccount.com
+```
+
+Bind the K8s SA to the GCP SA:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  aifactory-readonly@PROJECT_ID.iam.gserviceaccount.com \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:PROJECT_ID.svc.id.goog[aifactory/aifactory]"
+```
+
+Grant `roles/viewer` (or a tighter custom role) on the GCP project / resource hierarchy the agent should see.
+
+### Operator setup — service-account JSON (bare-metal / on-prem)
+
+Create a GCP service account, download its JSON key, and upload it as a Kubernetes Secret:
+
+```bash
+kubectl create secret generic aifactory-gcp-mcp-creds \
+  --from-file=gcp-service-account.json=/path/to/sa-key.json \
+  -n aifactory
+```
+
+Enable in values.yaml:
+
+```yaml
+mcpCredentials:
+  enabled: true
+  secretName: aifactory-mcp-credentials   # shared Secret for other providers
+  providers:
+    gcp: true
+  gcp:
+    secretName: aifactory-gcp-mcp-creds   # GCP-only Secret (overrides shared secretName for the SA JSON mount)
+```
+
+The pod mounts the JSON at `/etc/aifactory/gcp-sa.json` (mode 0400) and sets `GOOGLE_APPLICATION_CREDENTIALS` to that path. The Cloud AI Companion server picks it up automatically via the standard ADC discovery chain.
+
+### Endpoint override
+
+The default endpoint is the Cloud AI Companion GA URL:
+
+```
+https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp
+```
+
+Override it for VPC Service Controls perimeters, staging projects, or when Google releases additional GCP MCP servers (BigQuery, Cloud Run, etc.) that you want to use before the catalog updates:
+
+```yaml
+mcpCredentials:
+  gcp:
+    endpointOverride: "https://cloudaicompanion-staging.googleapis.com/v1/extensions/default/mcp"
+```
+
+This injects `GCP_MCP_ENDPOINT` into the pod environment, which `mcp_catalog._get_gcp_mcp_endpoint()` reads at call time (after module import, so the env var can be set after the process starts).
+
+### GCP MCP server troubleshooting
+
+**"gcp not in required servers"** — check both conditions:
+- The project must have a GCP marker (`gcp/`, `app.yaml`, `cloudbuild.yaml`, or `cloudbuild.yml` in the project root).
+- Credentials must be detectable: either Workload Identity (automatic) or `GOOGLE_APPLICATION_CREDENTIALS` pointing at a readable file.
+
+**"403 Forbidden" from the endpoint** — the service account lacks the required Cloud AI Companion IAM role. Check:
+```bash
+gcloud projects get-iam-policy PROJECT_ID \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:SA_EMAIL"
+```
+
+The minimum required role is `roles/cloudaicompanion.user` (or `roles/viewer` which includes it).
+
+**"endpoint unreachable"** — VPC Service Controls may be blocking egress. Either add `cloudaicompanion.googleapis.com` to your VPC-SC perimeter or use `mcpCredentials.gcp.endpointOverride` to point at a Private Service Connect endpoint.
+
+See also [Google's Cloud AI Companion MCP documentation](https://cloud.google.com/gemini/docs/codeassist/mcp-overview).
+
 ## See also
 
 - [Default MCP servers](./mcp-servers) — user-facing concept page

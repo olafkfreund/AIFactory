@@ -602,6 +602,35 @@ async def _apply_create_or_update(
         # Lock the immutable namespace name on the org row (design §2).
         if org.tenant_namespace is None:
             org.tenant_namespace = namespace
+
+        # ----- Step 5: Per-tenant audit-anchor key issuance (v1.2 #208) -----
+        # Issue a per-tenant HMAC key when the feature flag is on. This runs
+        # AFTER K8s/IAM/Vault succeed so the tenant is functional even if key
+        # issuance fails (failure is non-fatal per design open-question #2:
+        # reconcile_error gets a warning string; the tenant falls back to the
+        # shared chain until the next tick retries issuance).
+        from .per_tenant_anchor_key import issue_tenant_anchor_key, per_tenant_enabled
+
+        if per_tenant_enabled():
+            try:
+                issued = await issue_tenant_anchor_key(
+                    db, vault_client, org.id,
+                )
+                if issued:
+                    logger.info(
+                        "tenant reconciler: per-tenant anchor key issued for org=%s",
+                        org.id,
+                    )
+            except Exception:
+                # Non-fatal: the tenant is operational on the shared chain;
+                # the next reconcile tick retries key issuance.
+                logger.warning(
+                    "tenant reconciler: per-tenant anchor key issuance failed "
+                    "for org=%s; falling back to shared chain until next tick",
+                    org.id, exc_info=True,
+                )
+                if not state.reconcile_error:
+                    state.reconcile_error = "anchor-key-issue failed; see logs"
     finally:
         await _release_lock(redis_client, org.id)
 

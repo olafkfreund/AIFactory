@@ -237,6 +237,26 @@ spec:
             - name: SAML_IDP_INIT_DEFAULT_RETURN_TO
               value: {{ .Values.saml.idpInitDefaultReturnTo | quote }}
             {{- end }}
+            {{- /* SLO validator: slo.enabled requires saml.enabled (Epic #35 #209). */ -}}
+            {{- if and .Values.saml.slo.enabled (not .Values.saml.enabled) }}
+            {{- fail "saml.slo.enabled=true requires saml.enabled=true. Enable SAML first. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            {{- if .Values.saml.slo.enabled }}
+            # SAML SLO (Epic #35 #209 v1.2). Opt-in; default off.
+            # When enabled, /api/auth/saml/logout and /api/auth/saml/sls
+            # are active. The SP's SLS callback URL is derived from
+            # saml.acsUrl (same base) with path /sls, or set explicitly.
+            - name: SAML_SLO_ENABLED
+              value: "true"
+            - name: SAML_SLO_URL
+              value: {{ .Values.saml.slo.slsUrl | default (print .Values.saml.acsUrl | replace "/acs" "/sls") | quote }}
+            {{- if .Values.saml.slo.idpSloUrl }}
+            # Explicit IdP SLO URL override. When empty, the SP derives
+            # the URL from the IdP metadata's <SingleLogoutService> element.
+            - name: SAML_IDP_SLO_URL
+              value: {{ .Values.saml.slo.idpSloUrl | quote }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- if .Values.scim.enabled }}
             # SCIM 2.0 provisioning (Epic #35 #41 PR-2). The Bearer
@@ -301,6 +321,40 @@ spec:
               value: "true"
             - name: AUDIT_ANCHOR_SCHEDULER
               value: {{ $scheduler | quote }}
+            {{- /* v1.2 #208 — per-tenant audit-chain anchor.
+                   Validator: perTenant=true requires tenant.isolationEnabled=true
+                   (per-tenant keys live in the Vault path provisioned only by
+                   isolation mode — design open-question #6 resolution). */ -}}
+            {{- if .Values.audit.anchor.perTenant }}
+            {{- if not .Values.tenant.isolationEnabled }}
+            {{- fail "audit.anchor.perTenant=true requires tenant.isolationEnabled=true — per-tenant anchor keys live in the tenant's Vault path which is provisioned only by tenant isolation. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            - name: AUDIT_ANCHOR_PER_TENANT
+              value: "true"
+            - name: AUDIT_ANCHOR_KEY_CACHE_SIZE
+              value: {{ .Values.audit.anchor.perTenantOptions.keyCacheSize | default 1000 | quote }}
+            - name: AUDIT_ANCHOR_BATCH_SIZE
+              value: {{ .Values.audit.anchor.perTenantOptions.batchSize | default 100 | quote }}
+            {{- end }}
+            {{- end }}
+            {{- /* Claude enforcement wrapper (Epic #35 v1.2 / #207).
+                   Opt-in per-tenant budget + allowlist + audit for the native
+                   Claude Agent SDK path.  When disabled (default), create_client()
+                   returns bare ClaudeSDKClient — v1.1 behaviour unchanged.
+                   Validate failureMode enum before rendering. */ -}}
+            {{- $claudeFail := .Values.claude.enforcement.failureMode | default "open" }}
+            {{- if not (has $claudeFail (list "closed" "open")) }}
+            {{- fail (printf "claude.enforcement.failureMode=%q is invalid — must be 'closed' or 'open'. See charts/aifactory/values.yaml." $claudeFail) }}
+            {{- end }}
+            {{- if .Values.claude.enforcement.enabled }}
+            # Claude enforcement wrapper env vars.  create_client() +
+            # create_simple_client() read these to decide whether to wrap
+            # the ClaudeSDKClient in _EnforcedClaudeSDKClient.
+            # See docs/docs/concepts/claude-enforcement.md.
+            - name: AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED
+              value: "true"
+            - name: AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE
+              value: {{ $claudeFail | quote }}
             {{- end }}
             {{- /* Validate: litellm.audit.fullTextCapture=true requires litellm.enabled.
                    Catches the operator who sets the audit knob on a deployment that
@@ -480,10 +534,24 @@ spec:
                   key: azure-client-secret
             {{- end }}
             {{- if .Values.mcpCredentials.providers.gcp }}
-            # GCP MCP reads the SA JSON via GOOGLE_APPLICATION_CREDENTIALS.
-            # The file mount happens below; this env points at it.
+            # GCP MCP (issue #168) — remote-first HTTP transport via Cloud AI
+            # Companion. Two env vars needed:
+            #   GOOGLE_APPLICATION_CREDENTIALS: path to the SA JSON file
+            #     (the volume mount below places it at /etc/aifactory/gcp-sa.json).
+            #     The Cloud AI Companion MCP server reads this env var directly
+            #     and performs its own ADC exchange — AIFactory does not mint
+            #     OAuth2 tokens.
+            #   GCP_MCP_ENDPOINT: optional endpoint override consumed by
+            #     mcp_catalog._get_gcp_mcp_endpoint(). When empty the Python
+            #     code falls through to the GA default endpoint. Set when the
+            #     deployment uses VPC Service Controls, staging projects, or
+            #     future GCP MCP servers (BigQuery, Cloud Run, etc.).
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "/etc/aifactory/gcp-sa.json"
+            {{- if and .Values.mcpCredentials.gcp .Values.mcpCredentials.gcp.endpointOverride }}
+            - name: GCP_MCP_ENDPOINT
+              value: {{ .Values.mcpCredentials.gcp.endpointOverride | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
           livenessProbe:
@@ -649,9 +717,18 @@ spec:
                 path: kubeconfig
         {{- end }}
         {{- if .Values.mcpCredentials.providers.gcp }}
+        # GCP service-account JSON for Cloud AI Companion MCP (issue #168).
+        # ``mcpCredentials.gcp.secretName`` takes priority over the shared
+        # ``mcpCredentials.secretName`` so operators who store the GCP SA JSON
+        # in a dedicated Secret (e.g. synced from GCP Secret Manager) don't
+        # have to merge it into the combined credential Secret.
+        {{- $gcpSecretName := $secretName }}
+        {{- if and .Values.mcpCredentials.gcp .Values.mcpCredentials.gcp.secretName }}
+        {{- $gcpSecretName = .Values.mcpCredentials.gcp.secretName }}
+        {{- end }}
         - name: mcp-gcp-sa
           secret:
-            secretName: {{ $secretName | quote }}
+            secretName: {{ $gcpSecretName | quote }}
             defaultMode: 0400
             items:
               - key: gcp-service-account.json

@@ -74,6 +74,15 @@ class SamlSpConfig:
     sp_cert_previous_pem: str | None    # rotation-overlap previous cert
     require_encrypted_assertion: bool = False
     idp_init_default_return_to: str | None = None
+    # v1.2 — SAML SLO (Epic #35 #209). Both fields default to OFF/None
+    # so pre-v1.2 deployments are byte-for-byte unchanged.
+    slo_enabled: bool = False
+    # The SP's own SLS callback URL; required when slo_enabled.
+    # Example: https://aifactory.example.com/api/auth/saml/sls
+    slo_url: str | None = None
+    # Override for the IdP's SLO endpoint. When empty, the endpoint is
+    # derived from the IdP metadata's <SingleLogoutService> element.
+    idp_slo_url: str | None = None
 
 
 class SamlClient:
@@ -142,6 +151,15 @@ class SamlClient:
                     _strip_pem(cfg.sp_cert_previous_pem),
                 ],
             }
+        # v1.2 SLO — advertise the SP's Single Logout Service endpoint
+        # in the settings dict only when the operator opted in. The SDK
+        # uses this to build the <SingleLogoutService> element in the
+        # SP metadata XML returned by /api/auth/saml/metadata.
+        if cfg.slo_enabled and cfg.slo_url:
+            sp["singleLogoutService"] = {
+                "url": cfg.slo_url,
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            }
 
         idp = self._build_idp_dict_from_metadata()
 
@@ -165,6 +183,12 @@ class SamlClient:
                 # Reject assertions whose subject was issued for a
                 # different audience than ours.
                 "requestedAttributes": [],
+                # v1.2 SLO — sign LogoutRequests and LogoutResponses when
+                # the SP cert is configured. Signing is conditional so that
+                # operators without a cert (testing only) still get working
+                # SLO flows; production deployments SHOULD have a cert.
+                "logoutRequestSigned": bool(cfg.sp_cert_pem and cfg.sp_key_pem),
+                "logoutResponseSigned": bool(cfg.sp_cert_pem and cfg.sp_key_pem),
             },
         }
 
@@ -284,7 +308,10 @@ def config_from_env() -> SamlSpConfig:
       SAML_SP_CERT_FILE, SAML_SP_KEY_FILE,
       SAML_SP_CERT_PREVIOUS_FILE,
       SAML_REQUIRE_ENCRYPTED_ASSERTION ("true" / "false"),
-      SAML_IDP_INIT_DEFAULT_RETURN_TO
+      SAML_IDP_INIT_DEFAULT_RETURN_TO,
+      SAML_SLO_ENABLED ("true" / "false") — v1.2,
+      SAML_SLO_URL (SP's own SLS callback URL) — v1.2,
+      SAML_IDP_SLO_URL (IdP SLO endpoint override) — v1.2
 
     Reads PEMs from file paths so they can be mounted from Secrets
     without leaking through `kubectl describe pod`.
@@ -315,6 +342,12 @@ def config_from_env() -> SamlSpConfig:
         idp_init_default_return_to=os.environ.get(
             "SAML_IDP_INIT_DEFAULT_RETURN_TO", "",
         ).strip() or None,
+        # v1.2 SLO fields (default OFF for backward compat).
+        slo_enabled=(
+            os.environ.get("SAML_SLO_ENABLED", "").lower() == "true"
+        ),
+        slo_url=os.environ.get("SAML_SLO_URL", "").strip() or None,
+        idp_slo_url=os.environ.get("SAML_IDP_SLO_URL", "").strip() or None,
     )
 
 

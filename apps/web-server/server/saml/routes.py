@@ -1,6 +1,6 @@
-"""SAML 2.0 SP routes (Epic #35 #41 PR-1b2).
+"""SAML 2.0 SP routes (Epic #35 #41 PR-1b2 + Epic #35 #209 v1.2 SLO).
 
-Three endpoints, mounted under ``/api/auth/saml``:
+Five endpoints, mounted under ``/api/auth/saml``:
 
 * ``GET  /login``     — SP-init: builds an AuthnRequest, signs an HMAC
                         RelayState, redirects to the IdP SSO URL.
@@ -9,6 +9,15 @@ Three endpoints, mounted under ``/api/auth/saml``:
                         (no RelayState; lands on ``idp_init_default_return_to``).
 * ``GET  /metadata``  — Public SP metadata XML for the operator to upload
                         at the IdP.
+* ``POST /logout``    — SP-initiated SLO: reads NameID from the access-token
+                        cookie, builds a signed LogoutRequest, mints an HMAC
+                        RelayState, redirects to the IdP SLO URL. Returns 404
+                        when ``SAML_SLO_ENABLED`` is false (v1.2).
+* ``POST /sls``       — Single Logout Service: handles BOTH the IdP's
+                        LogoutResponse (SP-init confirmation, RelayState present)
+                        and the IdP's LogoutRequest (IdP-init). Validates
+                        signature, replay cache, RelayState; clears session
+                        cookies. Returns 404 when ``SAML_SLO_ENABLED`` is false.
 
 What this module DOES NOT do
 ----------------------------
@@ -36,6 +45,9 @@ This file MUST refuse to:
 * Trust an unsigned RelayState on SP-init: ``relay_state.verify``
   raises and we treat the flow as IdP-init (which requires
   ``idp_init_default_return_to`` to be configured).
+* Trust a LogoutRequest without a valid IdP signature (v1.2 SLO).
+* Re-kill a session whose LogoutRequest ID was already seen (v1.2 SLO
+  replay defence via ``SamlReplayCache``).
 """
 
 from __future__ import annotations
@@ -46,8 +58,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from fastapi.responses import RedirectResponse, Response
-from jose import jwt
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -501,6 +513,10 @@ async def saml_metadata():
 
     Cacheable; idempotent; safe to expose without auth (the IdP fetches
     this from a public URL by design).
+
+    When ``SAML_SLO_ENABLED=true`` the metadata XML includes a
+    ``<SingleLogoutService>`` element advertising the HTTP-POST binding
+    for the ``/sls`` endpoint (v1.2 decision D-6).
     """
     if not is_saml_enabled():
         raise HTTPException(
@@ -533,3 +549,370 @@ async def saml_metadata():
         )
 
     return Response(content=metadata, media_type="text/xml")
+
+
+# ---------------------------------------------------------------------------
+# SLO helpers (v1.2 — Epic #35 #209)
+# ---------------------------------------------------------------------------
+
+
+def is_slo_enabled() -> bool:
+    """True when the operator has set ``SAML_SLO_ENABLED=true``."""
+    return os.environ.get("SAML_SLO_ENABLED", "").lower() == "true"
+
+
+def _read_nameid_from_cookie(request: Request) -> str | None:
+    """Extract the ``email`` claim (= SAML NameID) from the access-token cookie.
+
+    Returns None when the cookie is absent, expired, or malformed. The
+    caller decides whether None is acceptable (IdP-init can proceed without
+    a live cookie; SP-init requires one).
+    """
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+    try:
+        settings = get_settings()
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+        return payload.get("email")
+    except JWTError:
+        # Expired or invalid token — still let the logout proceed
+        # (the user may be trying to clean up an already-expired session).
+        return None
+
+
+def _clear_session_cookies(response: Response) -> None:
+    """Delete the access-token and refresh-token HTTP-only cookies.
+
+    Uses ``max_age=0`` which is compatible with all browsers; the
+    ``delete_cookie`` helper also sends the correct ``Set-Cookie`` header
+    with an epoch expiry. The path + domain must match what was set on
+    login or the browser will not delete them.
+    """
+    response.delete_cookie("access_token", httponly=True, samesite="lax")
+    response.delete_cookie("refresh_token", httponly=True, samesite="lax")
+
+
+# ---------------------------------------------------------------------------
+# SLO routes (v1.2)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/logout", summary="SP-initiated SAML SLO")
+async def saml_logout(request: Request):
+    """Begin a SP-initiated Single Logout.
+
+    1. Read the user's NameID (email) from the access-token cookie.
+       Returns 401 when no authenticated session is present — there is
+       nothing to log out from.
+    2. Mint an HMAC-signed RelayState carrying {nameid, nonce, exp}
+       so the SLS callback can detect tampering.
+    3. Build a signed SAML LogoutRequest via the OneLogin SDK
+       (``auth.logout()``).
+    4. Redirect the browser to the IdP's SLO URL.
+
+    Returns 404 when ``SAML_SLO_ENABLED`` is false (default; backward compat).
+    Returns 503 when SAML config is incomplete.
+    Returns 503 when the IdP metadata does not advertise a SLO endpoint and
+    no ``SAML_IDP_SLO_URL`` override is set.
+    """
+    if not is_saml_enabled() or not is_slo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="SAML SLO is not configured on this deployment",
+        )
+
+    try:
+        client = get_saml_client()
+    except SamlNotConfiguredError as exc:
+        logger.error("SAML /logout attempted with incomplete config: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SAML is enabled but server-side configuration is incomplete",
+        ) from exc
+
+    # Require an authenticated session — we need the NameID to build the
+    # LogoutRequest. Without it the IdP cannot match which session to kill.
+    nameid = _read_nameid_from_cookie(request)
+    if not nameid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No active SAML session",
+        )
+
+    settings = get_settings()
+    relay = relay_mint(
+        secret_key=settings.JWT_SECRET.encode("utf-8"),
+        idp=_idp_name(),
+        return_to="/",  # post-logout landing page; the SLS handler uses this
+    )
+
+    from onelogin.saml2.auth import OneLogin_Saml2_Auth
+
+    request_data = _build_request_data(request, form={})
+    auth = OneLogin_Saml2_Auth(
+        request_data, old_settings=client.build_settings_dict(),
+    )
+
+    try:
+        slo_redirect = auth.logout(
+            return_to=relay,
+            name_id=nameid,
+            name_id_format=(
+                "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+            ),
+        )
+    except Exception as exc:
+        # OneLogin raises when the IdP metadata has no SLO URL and
+        # SAML_IDP_SLO_URL override is also absent.
+        logger.error(
+            "SAML /logout: SDK could not build LogoutRequest (%s: %s)",
+            type(exc).__name__, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "SAML SLO is enabled but the IdP does not advertise a "
+                "SingleLogoutService URL. Check saml.slo.idpSloUrl in "
+                "Helm values or the IdP metadata."
+            ),
+        ) from exc
+
+    logger.info(
+        "SAML SP-init SLO: redirecting user nameid=%s to IdP SLO", nameid,
+    )
+    return RedirectResponse(url=slo_redirect, status_code=status.HTTP_302_FOUND)
+
+
+@router.post("/sls", summary="SAML Single Logout Service")
+async def saml_sls(
+    request: Request,
+    SAMLResponse: str | None = Form(default=None),
+    SAMLRequest: str | None = Form(default=None),
+    RelayState: str | None = Form(default=None),
+):
+    """Single Logout Service — handles both SP-init confirmation and IdP-init.
+
+    **SP-init confirmation** (browser returns from IdP after we initiated SLO):
+    - ``SAMLResponse`` is present, ``RelayState`` is our HMAC-signed token.
+    - Validate signature + status. Verify RelayState HMAC. Clear cookies.
+    - 302 to the login page.
+
+    **IdP-init** (IdP sends a ``LogoutRequest`` to terminate a session):
+    - ``SAMLRequest`` is present.
+    - Validate signature + audience + replay.
+    - Clear session cookies in the HTTP response.
+    - Return a signed ``LogoutResponse`` (auto-submit POST form or redirect).
+    - Uses ``NoSession`` status when the SP has no live session for the
+      NameID (per decision D-2 — never return 4xx for unknown NameID).
+
+    Returns 404 when ``SAML_SLO_ENABLED`` is false.
+    Returns 400 on any validation failure (tampered RelayState, bad signature,
+    replay, missing required fields).
+    """
+    if not is_saml_enabled() or not is_slo_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="SAML SLO is not configured on this deployment",
+        )
+
+    try:
+        client = get_saml_client()
+    except SamlNotConfiguredError as exc:
+        logger.error("SAML /sls attempted with incomplete config: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="SAML is enabled but server-side configuration is incomplete",
+        ) from exc
+
+    from onelogin.saml2.auth import OneLogin_Saml2_Auth
+
+    # The OneLogin SDK reads SAMLResponse / SAMLRequest from ``get_data``
+    # (query params) or ``post_data`` depending on binding. For HTTP-POST
+    # (our only supported binding) both arrive as form fields; we put them
+    # in ``post_data`` AND mirror them in ``get_data`` because process_slo()
+    # reads from ``get_data`` internally.
+    post_form: dict[str, str] = {}
+    if SAMLResponse is not None:
+        post_form["SAMLResponse"] = SAMLResponse
+    if SAMLRequest is not None:
+        post_form["SAMLRequest"] = SAMLRequest
+    if RelayState is not None:
+        post_form["RelayState"] = RelayState
+
+    # process_slo reads from get_data, not post_data, for the SAMLRequest/
+    # SAMLResponse fields even on HTTP-POST binding. Mirror them so the SDK
+    # finds them. See onelogin/saml2/auth.py:process_slo source.
+    request_data = _build_request_data(request, form=post_form)
+    request_data["get_data"] = dict(post_form)
+
+    auth = OneLogin_Saml2_Auth(
+        request_data, old_settings=client.build_settings_dict(),
+    )
+
+    # -------------------------------------------------------------------
+    # SP-init confirmation path: SAMLResponse present, no SAMLRequest
+    # -------------------------------------------------------------------
+    if SAMLResponse is not None and SAMLRequest is None:
+        # Validate RelayState HMAC BEFORE touching the SDK — a tampered
+        # RelayState means we can't trust where to redirect the user.
+        if not RelayState:
+            logger.warning("SAML SLS: SP-init SAMLResponse received without RelayState")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO response missing RelayState",
+            )
+
+        settings = get_settings()
+        try:
+            relay_payload = relay_verify(
+                secret_key=settings.JWT_SECRET.encode("utf-8"),
+                token=RelayState,
+            )
+        except RelayStateInvalid as exc:
+            logger.warning("SAML SLS: RelayState rejected (%s)", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO RelayState rejected",
+            ) from exc
+
+        if relay_payload.idp != _idp_name():
+            logger.warning(
+                "SAML SLS: RelayState idp=%s does not match configured %s",
+                relay_payload.idp, _idp_name(),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO RelayState rejected",
+            )
+
+        # SDK validates the LogoutResponse signature + status.
+        try:
+            redirect_url = auth.process_slo(
+                keep_local_session=False,
+                request_id=None,
+            )
+        except Exception as exc:
+            logger.warning(
+                "SAML SLS: SDK rejected LogoutResponse (%s)", type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO response rejected",
+            ) from exc
+
+        slo_errors = auth.get_errors()
+        if slo_errors:
+            logger.warning("SAML SLS: LogoutResponse errors: %s", slo_errors)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO response rejected",
+            )
+
+        # Session is confirmed cleared at IdP. Clear our cookies.
+        login_page = "/login"
+        response = RedirectResponse(
+            url=login_page, status_code=status.HTTP_302_FOUND,
+        )
+        _clear_session_cookies(response)
+        logger.info("SAML SLS: SP-init SLO complete; session cleared")
+        return response
+
+    # -------------------------------------------------------------------
+    # IdP-init path: SAMLRequest (LogoutRequest) present
+    # -------------------------------------------------------------------
+    if SAMLRequest is not None:
+        # The SDK validates the LogoutRequest signature, audience, and
+        # NotOnOrAfter inside process_slo(). Any failure appends to errors.
+        try:
+            idp_redirect_url = auth.process_slo(
+                keep_local_session=True,  # we handle session kill ourselves
+                request_id=None,
+            )
+        except Exception as exc:
+            logger.warning(
+                "SAML SLS: SDK rejected LogoutRequest (%s)", type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO request rejected",
+            ) from exc
+
+        slo_errors = auth.get_errors()
+        if slo_errors:
+            logger.warning("SAML SLS: LogoutRequest errors: %s", slo_errors)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO request rejected",
+            )
+
+        # Replay defence: reject if we've seen this LogoutRequest ID before.
+        logout_request_id = auth.get_last_message_id() or ""
+        if not logout_request_id:
+            logger.warning("SAML SLS: IdP-init LogoutRequest missing ID")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO request missing ID",
+            )
+
+        # Use a long-lived TTL for LogoutRequests since we don't know their
+        # NotOnOrAfter — 1 hour is generous and bounds the replay window.
+        _LOGOUT_REQUEST_REPLAY_TTL = 3600.0
+        import time as _time
+        exp_epoch = _time.time() + _LOGOUT_REQUEST_REPLAY_TTL
+        if not _replay_cache.check_and_add(logout_request_id, exp_epoch):
+            logger.warning(
+                "SAML SLS: replay rejected for LogoutRequest id=%s",
+                logout_request_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SAML SLO request rejected (replay)",
+            )
+
+        # Kill the SP session: clear cookies regardless of whether the
+        # NameID matches a live cookie. Per D-2: we use the HTTP response
+        # to clear the cookies and return the LogoutResponse body.
+        #
+        # ``idp_redirect_url`` is the auto-submit POST form HTML that the
+        # SDK built (containing the signed LogoutResponse). Return it as an
+        # HTML response so the browser auto-submits it back to the IdP,
+        # completing the SLO propagation chain.
+        #
+        # If the SDK did not produce a redirect URL (IdP metadata has no
+        # SLO response URL), fall back to a plain 200 with empty body — the
+        # IdP will interpret the response as a successful SLO acknowledgement.
+        logger.info(
+            "SAML SLS: IdP-init SLO complete for request id=%s", logout_request_id,
+        )
+
+        if idp_redirect_url:
+            # The SDK returned a redirect URL or an HTML auto-submit form.
+            # Detect which: a URL starts with "http"; an HTML form starts
+            # with "<" (or whitespace). Use HTMLResponse for the form case
+            # so the browser renders and auto-submits it.
+            if idp_redirect_url.strip().startswith("<"):
+                resp = HTMLResponse(content=idp_redirect_url)
+            else:
+                resp = RedirectResponse(
+                    url=idp_redirect_url,
+                    status_code=status.HTTP_302_FOUND,
+                )
+            _clear_session_cookies(resp)
+            return resp
+
+        # Fallback: no IdP SLO response URL in metadata. Cookies cleared,
+        # return 200 so the IdP sees a success signal (not a 4xx failure).
+        resp = Response(content="", status_code=status.HTTP_200_OK)
+        _clear_session_cookies(resp)
+        return resp
+
+    # Neither SAMLResponse nor SAMLRequest — malformed request.
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="SAML SLS requires SAMLResponse or SAMLRequest",
+    )
