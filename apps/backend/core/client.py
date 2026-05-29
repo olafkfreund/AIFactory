@@ -500,7 +500,14 @@ def create_client(
     fast_mode: bool = False,
     thinking_level: str | None = None,
     remote_control_session: str | None = None,
-) -> ClaudeSDKClient:
+    # v1.2 / #207 — opt-in per-call enforcement plane.
+    # When org_id is supplied AND AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED=true,
+    # returns _EnforcedClaudeSDKClient (allowlist + budget + audit).
+    # When either condition is absent, returns bare ClaudeSDKClient (v1.1 compat).
+    org_id: str | None = None,
+    user_id: str | None = None,
+    allowed_models: list[str] | None = None,
+) -> "ClaudeSDKClient":
     """
     Create a Claude Agent SDK client with multi-layered security.
 
@@ -574,9 +581,12 @@ def create_client(
     if fast_mode:
         try:
             from core.fast_mode import ensure_fast_mode_in_user_settings
+
             ensure_fast_mode_in_user_settings()
         except ImportError:
-            logger.warning("Fast mode requested but core.fast_mode module not available")
+            logger.warning(
+                "Fast mode requested but core.fast_mode module not available"
+            )
         logger.info("[Fast Mode] ACTIVE — will enable user setting source for fastMode")
         print(
             "[Fast Mode] ACTIVE — enabling user settings source for CLI to read fastMode"
@@ -790,8 +800,10 @@ def create_client(
             "args": [
                 "@playwright/mcp@latest",
                 "--headless",
-                "--browser", "chromium",
-                "--viewport-size", "1280x720",
+                "--browser",
+                "chromium",
+                "--viewport-size",
+                "1280x720",
             ],
         }
 
@@ -948,8 +960,10 @@ def create_client(
     from phase_config import interleaved_thinking_betas_for, thinking_config_for
 
     _level = thinking_level or (
-        "high" if (max_thinking_tokens or 0) >= 16384
-        else "medium" if max_thinking_tokens
+        "high"
+        if (max_thinking_tokens or 0) >= 16384
+        else "medium"
+        if max_thinking_tokens
         else "none"
     )
     _thinking_param = thinking_config_for(
@@ -989,4 +1003,22 @@ def create_client(
         existing_extra["remote-control"] = remote_control_session
         options_kwargs["extra_args"] = existing_extra  # type: ignore[typeddict-item]
 
-    return ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    # v1.2 / #207 — enforcement wrapper wiring.
+    # Allowlist defaults to ['*'] (backward compat) when the caller does
+    # not supply one.  The enforcement helper returns a noop context when
+    # org_id is None or enforcement is disabled via env.
+    from core.enforcement import build_enforcement_context, wrap_client_if_enforced
+
+    _effective_allowed_models = allowed_models if allowed_models is not None else ["*"]
+    enforcement = build_enforcement_context(
+        org_id=org_id,
+        user_id=user_id,
+        model=model,
+        allowed_models=_effective_allowed_models,
+    )
+    # enforce_allowlist() is synchronous; raises ModelNotAllowedError before
+    # the SDK subprocess is ever constructed (fail-fast, no orphaned process).
+    enforcement.enforce_allowlist()
+
+    bare_client = ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
+    return wrap_client_if_enforced(bare_client, enforcement)

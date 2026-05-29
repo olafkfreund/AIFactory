@@ -824,6 +824,41 @@ audit:
 # when the audit-write path fails — closed (reject the call) is the
 # compliance-safe default; open (let the call through with a logged
 # warning) is the operator escape hatch for during-incident triage.
+
+# -----------------------------------------------------------------------
+# Claude enforcement wrapper (Epic #35 v1.2 / #207)
+# -----------------------------------------------------------------------
+# The native Claude Agent SDK path (claude-* models via the claude CLI
+# subprocess) bypassed per-tenant budget / allowlist / audit in v1.1.
+# This block wires the v1.2 in-process enforcement wrapper described in
+# docs/plans/2026-05-29-claude-litellm-wrapper-design.md (Option A).
+#
+# When enabled, create_client() and create_simple_client() wrap the
+# ClaudeSDKClient in _EnforcedClaudeSDKClient which:
+#   1. Checks the org's model allowlist (from Organization.allowed_models).
+#   2. Reads the LiteLLM virtual-key budget (when litellm.enabled=true).
+#   3. Writes an audit row per call via write_llm_call_audit().
+#
+# Call sites without an org_id (spec_runner, run.py, insights_runner)
+# remain v1.1 behaviour — no enforcement, no audit row.  This is the
+# "system task escape hatch" documented in design §9.
+#
+# Default OFF for backward compat — flip to true for new multi-tenant
+# installs or after verifying your web-server call sites pass org_id.
+# See docs/docs/concepts/claude-enforcement.md for the full operator
+# walkthrough.
+claude:
+  enforcement:
+    enabled: false              # opt-in; default off for backward compat
+    # failure_mode governs what happens when the LiteLLM budget service
+    # is unreachable at budget-check time:
+    #   "open"   — log WARNING + proceed (default; matches non-Claude path).
+    #   "closed" — refuse the call with BudgetCheckUnavailableError.
+    # Compliance-focused operators set "closed" to guarantee every call
+    # is budget-checked. The trade-off: a LiteLLM gateway outage blocks
+    # Claude calls too.  See concept doc for the full discussion.
+    failureMode: "open"         # open | closed
+
 litellm:
   # Master toggle. False (default) means no sub-chart pulled, no
   # LITELLM_* env vars on the web pod, no Grafana ConfigMap rendered.

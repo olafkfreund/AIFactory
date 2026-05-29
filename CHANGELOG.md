@@ -1,3 +1,39 @@
+## [Unreleased]
+
+### Added — Epic #35 v1.2 (Claude enforcement wrapper — #207)
+
+- **`apps/backend/core/enforcement.py`** (new): `ClaudeEnforcementContext` —
+  in-process enforcement wrapper (Option A) that closes the v1.1 gap where
+  Claude Agent SDK calls bypassed per-tenant budget / allowlist / audit.
+  Design rationale + rejected Option B documented in
+  `docs/plans/2026-05-29-claude-litellm-wrapper-design.md`.
+- **`create_client()` + `create_simple_client()`**: new `org_id` / `user_id`
+  / `allowed_models` kwargs.  When `org_id` is supplied and
+  `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED=true`, returns
+  `_EnforcedClaudeSDKClient` (allowlist + budget + audit).  Callers without
+  `org_id` receive bare `ClaudeSDKClient` — v1.1 behaviour unchanged.
+- **Helm wiring** (`charts/aifactory/`): `claude.enforcement.enabled` toggle +
+  `failureMode` (`open` | `closed`) in `values.yaml` / `values.schema.json` /
+  `templates/deployment.yaml`.
+- **Concept doc** `docs/docs/concepts/claude-enforcement.md`: architecture
+  diagram, operator recipe, failure-mode trade-off, budget caveats, v1.3
+  re-evaluation trigger for Option B (tracks upstream LiteLLM bugs #28562
+  #28228 #26749 #27512).
+- **ISO 27001 evidence** (`guides/compliance/iso27001-evidence.md`): A.12.4.1
+  entry updated — v1.1 "Claude calls not fully audited" limitation closed.
+- **Tests** (`tests/claude_enforcement/`): 7 test files covering allowlist,
+  budget, audit hook, streaming usage, factory disabled, factory enabled, and
+  no-org-id escape hatch.
+
+### Closes v1.1 limitation
+
+Scope caveat from v1.1 CHANGELOG ("Claude calls bypass LiteLLM enforcement")
+is now closed by `claude.enforcement.enabled=true`.  All three enforcement
+guarantees — model allowlist, per-tenant budget, per-call audit row — now
+apply to the native Claude Agent SDK path when the wrapper is opted in.
+
+---
+
 ## [1.1.0] - 2026-05-28
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
