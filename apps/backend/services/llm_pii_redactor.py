@@ -1,19 +1,28 @@
-"""LLM PII redactor (Epic #35 #38 PR-2b).
+"""LLM PII redactor (Epic #35 #38 PR-2b; v1.2 #210 Luhn + scrubBeforeSend).
 
 Applies built-in regex patterns + operator-supplied custom patterns to
 prompt + response strings BEFORE they're written into the audit row.
+Optionally (v1.2 ``scrub_outbound=True``) the same redactor runs on
+the prompt BEFORE it's sent to the LLM provider — see the
+``scrubBeforeSend`` mode section below.
 
 Scope discipline (per design §4)
 --------------------------------
 
-Redaction is applied to the AUDIT ROW ONLY, never to the outbound LLM
-request body. A high-sensitivity tenant whose prompt contains PII
-still sends that PII to the LLM provider — this is intrinsic to LLM
-use. Documented as a known v1.1 limitation; v1.2 ships a
-``scrubBeforeSend`` mode that applies the same redactor pre-call.
+v1.1 (default behaviour): redaction is applied to the AUDIT ROW ONLY,
+never to the outbound LLM request body. A high-sensitivity tenant
+whose prompt contains PII still sends that PII to the LLM provider —
+this is intrinsic to LLM use. Documented as a known v1.1 limitation.
 
-Built-in patterns (per design §4)
----------------------------------
+v1.2 (opt-in via ``scrub_outbound=True``): the same redactor runs on
+the outbound prompt BEFORE the API call. This closes the
+"LLM still sees plaintext" caveat for orgs that opt in, at the cost
+of some prompt-quality degradation on heavy redaction. The audit row
+continues to capture both raw + redacted so operators can verify what
+was actually sent versus what was logged.
+
+Built-in patterns (per design §4 + v1.2 #210)
+---------------------------------------------
 
 - US SSN: ``\\d{3}-\\d{2}-\\d{4}`` (hyphenated only; bare 9-digit
   numbers are too false-positive-prone — they collide with order
@@ -21,12 +30,13 @@ Built-in patterns (per design §4)
 - Email: ``[\\w.+-]+@[\\w-]+\\.[\\w.-]+``.
 - US phone: ``(\\d{3})[ -]?\\d{3}-\\d{4}`` and ``\\d{3}-\\d{3}-\\d{4}``
   (parens or hyphen forms; bare 10-digit numbers excluded).
-- CC pattern explicitly omitted (reviewer finding #4): the original
-  pattern matched any 13-16 digit numeric string (IPv4 CIDRs, code
-  identifiers) and corrupted legitimate prompt content without Luhn
-  validation. Operators with PCI data add Luhn-checked patterns via
-  the operator extension hook. v1.2 ships a Luhn-validating CC
-  pattern as a built-in.
+- Credit card (v1.2): 13-19 digit sequences with optional spaces /
+  dashes, validated via Luhn checksum. A naked digit run that fails
+  Luhn is left UNCHANGED — this closes the v1.1 false-positive issue
+  (IPv4 CIDRs, code identifiers, random hashes) that caused the
+  pattern to be dropped from the v1.1 built-ins. Luhn check is heavy
+  compared to a simple regex, so the CC pass runs LAST in the chain
+  (cheap patterns short-circuit first).
 
 Failure-safe contract (per design §"Failure-safe contract")
 -----------------------------------------------------------
@@ -60,13 +70,70 @@ _BUILTIN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 
 
 # Exposed for tests: the built-in tuples in raw (pattern_str,
-# replacement) form. Tests assert that CC is NOT in this list.
+# replacement) form. The Luhn-CC pass is NOT a simple regex sub — it's
+# a callable applied separately by ``_redact_credit_cards``. See
+# ``BUILTIN_CC_REPLACEMENT`` for the constant test code asserts on.
 BUILTIN_PATTERNS: list[tuple[str, str]] = [
     (r"\b\d{3}-\d{2}-\d{4}\b", "[REDACTED_SSN]"),
     (r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b", "[REDACTED_EMAIL]"),
     (r"\(\d{3}\)[ -]?\d{3}-\d{4}", "[REDACTED_PHONE]"),
     (r"\b\d{3}-\d{3}-\d{4}\b", "[REDACTED_PHONE]"),
 ]
+
+# v1.2 CC pattern label. Exposed so tests + operator docs reference
+# the same string.
+BUILTIN_CC_REPLACEMENT: str = "[REDACTED_CC]"
+
+
+# Matches a digit-run of 13-19 numerals with optional spaces or dashes
+# between digits. The {12,18} count covers digit-separator-digit pairs
+# after the leading digit, totalling 13-19 digits before Luhn check.
+# Word boundary anchors prevent a 20-digit run from being partially
+# matched as a 16-digit CC.
+_CC_RAW_PATTERN: re.Pattern[str] = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
+
+
+def _luhn_check(digits: str) -> bool:
+    """Standard Luhn checksum. ``digits`` must be a bare digit string.
+
+    Doubles every second digit from the right, subtracts 9 from any
+    result > 9, and sums. Valid iff the total is divisible by 10.
+    Returns False for any non-digit input rather than raising — the
+    caller has already stripped separators.
+    """
+    if not digits.isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+def _redact_credit_cards(text: str) -> str:
+    """Replace Luhn-valid 13-19 digit sequences with ``[REDACTED_CC]``.
+
+    A digit run that matches the raw pattern but fails Luhn is left
+    UNCHANGED. This is the v1.2 fix for the v1.1 false-positive issue:
+    IPv4 CIDRs (``192.168.1.0/24``), code identifiers, random hashes,
+    and arbitrary digit blobs no longer trigger redaction.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        digits = re.sub(r"[ -]", "", raw)
+        # Belt-and-braces length re-check: the raw pattern can match a
+        # 13-19 digit span, but a future regex tweak shouldn't slip a
+        # 12- or 20-digit string into the Luhn path.
+        if 13 <= len(digits) <= 19 and _luhn_check(digits):
+            return BUILTIN_CC_REPLACEMENT
+        return raw
+
+    return _CC_RAW_PATTERN.sub(_replace, text)
 
 
 class PiiRedactor:
@@ -86,11 +153,20 @@ class PiiRedactor:
         regexes are skipped with a WARNING — the constructor never
         raises, so a typo in operator config can't crash the audit
         writer.
+    scrub_outbound:
+        v1.2 #210 opt-in flag. When True, ``redact_outbound()`` is a
+        functional alias of ``redact()`` and the call-site
+        (``OpenAICompatibleProvider`` etc.) applies the redactor to
+        the prompt BEFORE the LLM API call. When False (default), the
+        outbound prompt is sent verbatim and only the audit row is
+        redacted — the v1.1 behaviour. Stored as ``self.scrub_outbound``
+        so the call-site can branch on it without re-reading env vars.
     """
 
     def __init__(
         self,
         extra_patterns: list[tuple[str, str]] | None = None,
+        scrub_outbound: bool = False,
     ) -> None:
         # Start with the built-ins (already pre-compiled).
         self._patterns: list[tuple[re.Pattern[str], str]] = list(_BUILTIN_PATTERNS)
@@ -116,6 +192,11 @@ class PiiRedactor:
                 continue
             self._patterns.append((compiled, replacement))
 
+        # v1.2 #210: opt-in pre-send scrub. Stored on the instance so
+        # provider call-sites read the same flag they were configured
+        # with rather than re-resolving env vars per call.
+        self.scrub_outbound: bool = bool(scrub_outbound)
+
     def redact(self, text: str) -> str:
         """Apply every pattern. Returns the redacted string.
 
@@ -140,7 +221,28 @@ class PiiRedactor:
                     exc_info=True,
                 )
                 continue
+        # v1.2 #210: Luhn-checked CC pass runs LAST. The Luhn arithmetic
+        # is more expensive than a single regex.sub, so the cheap
+        # patterns above short-circuit first — text that's already lost
+        # its non-CC PII is the only input that reaches the CC scan.
+        try:
+            out = _redact_credit_cards(out)
+        except Exception:
+            logger.warning(
+                "PiiRedactor: CC/Luhn pass failed; leaving text unchanged",
+                exc_info=True,
+            )
         return out
+
+    def redact_outbound(self, text: str) -> str:
+        """v1.2 #210 alias of ``redact()`` for the pre-send call site.
+
+        Behaviour is identical to ``redact()``; the separate name
+        documents intent at the call-site: provider code reads
+        ``redactor.redact_outbound(prompt)`` and the reader knows
+        scrubBeforeSend mode is involved without chasing definitions.
+        """
+        return self.redact(text)
 
     def redact_dict(self, data: Any) -> Any:
         """Deep-redact a JSON-serializable value (dict / list / str / scalar).
@@ -159,4 +261,8 @@ class PiiRedactor:
         return data
 
 
-__all__ = ["BUILTIN_PATTERNS", "PiiRedactor"]
+__all__ = [
+    "BUILTIN_CC_REPLACEMENT",
+    "BUILTIN_PATTERNS",
+    "PiiRedactor",
+]

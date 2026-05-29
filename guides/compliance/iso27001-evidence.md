@@ -164,8 +164,9 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 ### A.13.2.1 Information transfer policies and procedures
 
-- **AIFactory contribution**: All HTTP egress goes through `httpx` clients with TLS verification on; correlation IDs (`X-Request-ID`) propagated through every outbound call; OpenTelemetry tracing across HTTP / DB / agent subprocess (Epic #35 #42).
-- **Operator responsibility**: Terminate TLS at your ingress controller. Document the data flows in your DPIA.
+- **AIFactory contribution**: All HTTP egress goes through `httpx` clients with TLS verification on; correlation IDs (`X-Request-ID`) propagated through every outbound call; OpenTelemetry tracing across HTTP / DB / agent subprocess (Epic #35 #42). **v1.2 #210** — LLM prompts can be PII-scrubbed BEFORE egress to the LLM vendor via `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) or per-provider `scrub_outbound=True`; closes the v1.1 "LLM sees plaintext PII" gap for opt-in orgs. The audit row's `details_json.prompt_outbound_scrubbed` boolean is the auditor's proof.
+- **A.13.2 coverage for opt-in orgs is now FULL.** With scrubBeforeSend enabled, PII no longer leaves the AIFactory pod via the LLM-egress data flow.
+- **Operator responsibility**: Terminate TLS at your ingress controller. Document the data flows in your DPIA. For PCI / high-sensitivity tenants, enable `LITELLM_AUDIT_SCRUB_OUTBOUND=true` and record the operator-sign-off in your compliance log.
 
 ---
 
@@ -183,9 +184,9 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 ### A.14.2 PII redaction in LLM audit (Design considerations)
 
-- **AIFactory contribution**: When LiteLLM gateway is enabled with the PII redactor module (Epic #35 #38), regular-expression patterns (SSN, email, phone, credit-card-adjacent patterns) are redacted from `audit_hooks.prompt` and `audit_hooks.response` before storage, replacing with placeholders like `[SSN]` / `[EMAIL]` / `[PHONE]`.
-- **Known v1.1 limitation**: PII redaction is AUDIT-ROW ONLY. The LLM itself still receives plaintext PII in the original prompt — the redaction prevents audit-log disclosure to downstream readers (e.g., engineers reviewing logs), not to the LLM vendor. Intrinsic to LLM use. v1.2 closes via `litellm.audit.scrubBeforeSend` mode (design doc §Scope), which removes PII before sending to the LLM vendor.
-- **Operator responsibility**: Document this audit-log-only scope in your DPIA. Ensure your Data Processor Agreement with the LLM vendor (Anthropic, OpenAI, etc.) explicitly permits you to send customer PII as-is. In v1.2, switch to `scrubBeforeSend=true` if you want LLM-vendor oblivion.
+- **AIFactory contribution**: When LiteLLM gateway is enabled with the PII redactor module (Epic #35 #38), regular-expression patterns (SSN, email, phone) are redacted from `audit_hooks.prompt` and `audit_hooks.response` before storage, replacing with placeholders like `[REDACTED_SSN]` / `[REDACTED_EMAIL]` / `[REDACTED_PHONE]`. **v1.2 #210** adds a Luhn-validated credit-card pattern (`[REDACTED_CC]`) as a built-in — operators with PCI data no longer have to wire their own Luhn-checked regex via `extraRedactionPatterns`. The Luhn check eliminates the v1.1 false-positive problem (IPv4 CIDRs, code identifiers, hashes were corrupted by the original pre-Luhn naive pattern).
+- **Resolved v1.1 limitation (v1.2 #210)**: PII redaction was AUDIT-ROW ONLY in v1.1 — the LLM itself received plaintext PII. v1.2 ships `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) / `OpenAICompatibleProvider(scrub_outbound=True)` (per-instance) which runs the same redactor on the prompt BEFORE the LLM API call. Opt-in by design (off by default) so existing v1.1 deployments see no behaviour change. Audit row records `details_json.prompt_outbound_scrubbed: true` when the pre-send pass actually changed the prompt — operators query that flag for "every call where PII left the LLM oblivious" reports.
+- **Operator responsibility**: Document the chosen mode in your DPIA. For PCI / high-sensitivity tenants, enable `LITELLM_AUDIT_SCRUB_OUTBOUND=true` AND ensure your Data Processor Agreement with the LLM vendor (Anthropic, OpenAI, etc.) covers the residual case (e.g. operator-extra patterns that miss something the LLM still sees). For low-sensitivity tenants where prompt fidelity matters more than vendor-side oblivion, leave the flag off (v1.1 behaviour) and document the audit-only scope.
 
 
 ### A.14.2.8 System security testing

@@ -171,6 +171,7 @@ async def write_llm_call_audit(
     action: str = ACTION_LLM_CALL,
     error: str | None = None,
     extra_details: dict[str, Any] | None = None,
+    prompt_outbound_scrubbed: bool = False,
 ) -> None:
     """Write an audit row for a single LLM call. Failure-safe.
 
@@ -210,6 +211,15 @@ async def write_llm_call_audit(
         Optional dict merged into ``details_json``. Goes through the
         redactor too (in case the caller passed user-controllable
         strings).
+    prompt_outbound_scrubbed:
+        v1.2 #210 — True iff the provider's scrubBeforeSend pass
+        actually changed the outbound prompt before the LLM call.
+        Surfaces in ``details_json.prompt_outbound_scrubbed`` so
+        operators can run "show me every call where PII was scrubbed
+        before send" reports
+        (``details_json->>'prompt_outbound_scrubbed' = 'true'``).
+        Default False preserves v1.1 row shape for callers that don't
+        opt in.
     """
     try:
         # Lazy import: keeps this module loadable in tests that
@@ -239,6 +249,11 @@ async def write_llm_call_audit(
             "prompt_truncated": prompt_truncated,
             "response_truncated": response_truncated,
             "litellm_request_id": litellm_request_id,
+            # v1.2 #210 — always emit the flag so JSON queries can rely
+            # on its presence. False (default) for callers that haven't
+            # opted into scrubBeforeSend; True iff the provider's
+            # pre-send pass actually changed the prompt.
+            "prompt_outbound_scrubbed": bool(prompt_outbound_scrubbed),
         }
 
         # Streaming-audit signalling (design §5 reviewer finding #3).
