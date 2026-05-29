@@ -1,0 +1,17 @@
+"""Sample Python module."""
+import os
+from pathlib import Path
+
+def hello():
+    """Say hello."""
+    print("Hello")
+
+def goodbye():
+    """Say goodbye."""
+    print("Goodbye")
+
+class Greeter:
+    """A greeter class."""
+
+    def greet(self, name: str) -> str:
+        return f"Hello, {name}"

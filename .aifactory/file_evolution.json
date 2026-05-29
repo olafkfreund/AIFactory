@@ -1,0 +1,21 @@
+{
+  "src/utils.py": {
+    "file_path": "src/utils.py",
+    "baseline_commit": "1b13c3b4d7cae014f7876d1808ae731d0474b8bb",
+    "baseline_captured_at": "2026-05-29T09:40:14.003145",
+    "baseline_content_hash": "85e719ac12ee6492",
+    "baseline_snapshot_path": "baselines/task-001/src_utils_py.baseline",
+    "task_snapshots": [
+      {
+        "task_id": "task-001",
+        "task_intent": "Add new function",
+        "started_at": "2026-05-29T09:40:14.003145",
+        "completed_at": null,
+        "content_hash_before": "85e719ac12ee6492",
+        "content_hash_after": "",
+        "semantic_changes": [],
+        "raw_diff": null
+      }
+    ]
+  }
+}
