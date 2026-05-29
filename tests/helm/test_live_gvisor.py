@@ -224,7 +224,7 @@ class TestGvisorRuntimeClassOnCluster:
         runtime_classes = raw.split()
         for rc in runtime_classes:
             assert rc == "gvisor", (
-                f"Expected runtimeClassName='gvisor' on all aifactory pods, "
+                "Expected runtimeClassName='gvisor' on all aifactory pods, "
                 f"got {rc!r}. Helm install used sandbox.gvisor.enabled=true?"
             )
 
@@ -266,7 +266,7 @@ class TestGvisorCompatibilityMatrix:
             stderr_tail = (result.stderr or "").strip()[-500:]
             assert False, (
                 f"git clone failed under gVisor (rc={result.returncode}). "
-                f"This would invalidate the compat-table row. "
+                "This would invalidate the compat-table row. "
                 f"stderr tail: {stderr_tail}"
             )
         # Confirm the clone directory exists.
@@ -326,7 +326,7 @@ class TestGvisorCompatibilityMatrix:
         # rc=22 = HTTP error (4xx/5xx) which is still a successful connection.
         assert result.returncode in (0, 22), (
             f"curl -I failed with rc={result.returncode} — "
-            f"gVisor may be blocking outbound TLS. "
+            "gVisor may be blocking outbound TLS. "
             f"stderr: {result.stderr.strip()[:300]}"
         )
 
@@ -381,14 +381,14 @@ class TestGvisorCompatibilityMatrix:
             timeout=10,
         )
         assert write_result.returncode == 0, (
-            f"Failed to write canary file to workspace PVC under gVisor. "
+            "Failed to write canary file to workspace PVC under gVisor. "
             f"rc={write_result.returncode}, stderr={write_result.stderr.strip()}"
         )
         read_result = _exec_in_pod(
             aifactory_pod_name, "cat", canary, timeout=10,
         )
         assert read_result.returncode == 0, (
-            f"Failed to read canary file from workspace PVC under gVisor."
+            "Failed to read canary file from workspace PVC under gVisor."
         )
         assert "gvisor-canary" in read_result.stdout
         _exec_in_pod(aifactory_pod_name, "rm", "-f", canary, timeout=10)
