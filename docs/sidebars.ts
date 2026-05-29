@@ -32,10 +32,10 @@ const sidebars: SidebarsConfig = {
         'concepts/workspace-storage',
         'concepts/observability-tracing',
         'concepts/audit-anchor',
-        'concepts/saml-scim',
-        'concepts/tenant-isolation',
         'concepts/cloud-llm-routing',
         'concepts/litellm-gateway',
+        'concepts/saml-scim',
+        'concepts/tenant-isolation',
       ],
     },
     {

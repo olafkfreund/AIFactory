@@ -1,5 +1,7 @@
 # Design — SAML 2.0 + SCIM 2.0 for legacy-IdP banks (Epic #35 #41)
 
+> **STATUS: shipped 2026-05-28** — closed by #41. Implementation PRs: #177, #178, #195, #196, #198, #199. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Locked from super-brainstorm 2026-05-28. Reviewer-style audit pass
 > next; implementation in 2 PRs after sign-off.
 

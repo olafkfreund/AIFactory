@@ -1,5 +1,7 @@
 # Design — Bedrock + Vertex provider routing (Epic #35 #39)
 
+> **STATUS: shipped 2026-05-28** — closed by #39. Implementation PRs: #197. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Locked from super-brainstorm 2026-05-28. Smallest-scope design in
 > Epic #35: 1-2 day Helm + docs PR after the #38 implementation
 > lands.
