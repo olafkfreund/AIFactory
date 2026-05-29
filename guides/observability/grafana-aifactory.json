@@ -1,0 +1,439 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "AIFactory — primary operational dashboard. Covers HTTP request rate, latency, error rate, audit-row write rate, OIDC/SAML auth, per-org LLM budget, agent pod counts per tenant, and OTel trace volume + p95. Metrics sourced from FastAPI prometheus-instrumentator (Epic #26 P6), LiteLLM exporter (Epic #35 #38), audit subsystem (Epic #35 #43), tenant reconciler (Epic #35 #36) and OTel collector (Epic #35 #42).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": false,
+      "tags": [],
+      "targetBlank": true,
+      "title": "AIFactory docs",
+      "tooltip": "docs.aifactory",
+      "type": "link",
+      "url": "https://olafkfreund.github.io/AIFactory/"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "HTTP request rate by route template (Epic #26 P6). Route templates avoid cardinality explosion from raw path-parameter values.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineInterpolation": "linear", "lineWidth": 2, "fillOpacity": 10},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+          "expr": "sum by (handler) (rate(http_requests_total[5m]))",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP request rate (by route template)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "P50 / P95 / P99 HTTP latency by route. Sourced from `http_request_duration_seconds` histogram.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (handler, le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p50 {{handler}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (handler, le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p95 {{handler}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (handler, le) (rate(http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "p99 {{handler}}",
+          "refId": "C"
+        }
+      ],
+      "title": "HTTP latency (p50 / p95 / p99)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "HTTP 5xx error rate. Page above 0.5% sustained for 5 minutes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.5},
+              {"color": "red", "value": 1.0}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 8},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 5xx error rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "HTTP 4xx error rate broken down by route. Surges may indicate broken clients or attack traffic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line"},
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum by (handler) (rate(http_requests_total{status=~\"4..\"}[5m]))",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 4xx error rate (by route)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "LLM call rate broken down by model (Epic #35 #38). Includes Claude (when wrapped via #207) + LiteLLM-routed providers (OpenAI, Bedrock, Vertex, Ollama, etc).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum by (model) (rate(litellm_requests_total[5m]))",
+          "legendFormat": "{{model}}",
+          "refId": "A"
+        }
+      ],
+      "title": "LLM call rate (by model)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Per-org LLM budget consumption over the last 24 hours (Epic #35 #38). Bar per org; sorted descending.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "continuous-GrYlRd"},
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum by (user) (increase(litellm_spend_total[24h]))",
+          "legendFormat": "{{user}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Per-org LLM budget consumption (last 24h)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Audit-row write rate (Epic #35 #43). Tracks the audit subsystem's throughput; sustained drops below baseline indicate the audit writers may be wedged.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+          "unit": "wps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(audit_rows_written_total[5m]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Audit-row write rate (by kind)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Audit-anchor success rate over 24h (Epic #35 #43). Expected: exactly 1 anchor per 24h period. Sustained < 1 → anchor job failing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.9},
+              {"color": "green", "value": 1.0}
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24},
+      "id": 8,
+      "targets": [
+        {
+          "expr": "increase(audit_anchors_signed_total[24h])",
+          "refId": "A"
+        }
+      ],
+      "title": "Audit anchors signed (last 24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "OIDC + SAML login success / failure rate (Epic #26 P3, Epic #35 #41). Sustained failure spike → IdP outage or misconfigured client.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 18, "x": 6, "y": 24},
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(oidc_logins_total[5m]))",
+          "legendFormat": "oidc {{outcome}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (outcome) (rate(saml_logins_total[5m]))",
+          "legendFormat": "saml {{outcome}}",
+          "refId": "B"
+        }
+      ],
+      "title": "OIDC + SAML login rate (by outcome)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Agent pod count per tenant namespace (Epic #35 #36). Sourced from kube-state-metrics; filtered to `aifactory-tenant-*` namespaces.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "stacking": {"mode": "normal", "group": "A"}},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 10,
+      "targets": [
+        {
+          "expr": "sum by (namespace) (kube_pod_status_phase{namespace=~\"aifactory-tenant-.*\", phase=\"Running\"})",
+          "legendFormat": "{{namespace}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Agent pod count per tenant",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "OTel trace volume + p95 span duration (Epic #35 #42). Drops indicate the collector pipeline may be wedged.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "sum(rate(otelcol_receiver_accepted_spans_total[5m]))",
+          "legendFormat": "spans/s accepted",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(otelcol_processor_batch_send_size_bucket[5m])))",
+          "legendFormat": "p95 batch size",
+          "refId": "B"
+        }
+      ],
+      "title": "OTel trace volume + p95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "PII-redaction pattern hit count (Epic #35 #38, v1.2 #210). Per-pattern counters; sudden surge in CC hits may indicate an unintended PII flow.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 80},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "id": 12,
+      "targets": [
+        {
+          "expr": "sum by (pattern) (rate(litellm_pii_redactions_total[5m]))",
+          "legendFormat": "{{pattern}}",
+          "refId": "A"
+        }
+      ],
+      "title": "PII-redaction pattern hit rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "description": "Database connection pool saturation. Above 80% sustained → bump `DB_POOL_SIZE`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 70},
+              {"color": "red", "value": 90}
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "id": 13,
+      "targets": [
+        {
+          "expr": "100 * (asyncpg_pool_used_connections / asyncpg_pool_max_connections)",
+          "refId": "A"
+        }
+      ],
+      "title": "Postgres pool saturation",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["aifactory", "operations"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "Prometheus"
+        },
+        "description": "Prometheus datasource for AIFactory metrics.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": ["All"],
+          "value": ["$__all"]
+        },
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "definition": "label_values(http_requests_total, handler)",
+        "description": "Filter timeseries to one or more route templates.",
+        "hide": 0,
+        "includeAll": true,
+        "label": "handler",
+        "multi": true,
+        "name": "handler",
+        "options": [],
+        "query": {
+          "query": "label_values(http_requests_total, handler)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+  },
+  "timezone": "",
+  "title": "AIFactory — operations",
+  "uid": "aifactory-operations",
+  "version": 1,
+  "weekStart": ""
+}
