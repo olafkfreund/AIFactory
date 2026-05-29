@@ -65,6 +65,7 @@ import asyncio
 import fnmatch
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
@@ -75,6 +76,19 @@ from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
+
+
+def _env_scrub_outbound_default() -> bool:
+    """Resolve the env-level default for ``scrub_outbound`` (v1.2 #210).
+
+    Operators opt into pre-send PII scrubbing via
+    ``LITELLM_AUDIT_SCRUB_OUTBOUND=true``. Default is False so the
+    behaviour stays backward-compatible with v1.1 (audit-row redaction
+    only). Read at provider construction so a single deployment-wide
+    toggle applies to every provider instance without per-call lookup.
+    """
+    raw = os.environ.get("LITELLM_AUDIT_SCRUB_OUTBOUND", "").strip().lower()
+    return raw in ("true", "1", "yes", "on")
 
 
 class ModelNotAllowedError(RuntimeError):
@@ -169,6 +183,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         allowed_models: list[str] | None = None,
         org_id: str | None = None,
         user_id: str | None = None,
+        # v1.2 #210 — opt-in pre-send PII scrub. None defers to env var
+        # (LITELLM_AUDIT_SCRUB_OUTBOUND) so a single deployment-wide
+        # toggle applies; explicit True/False overrides env (lets tests
+        # pin behaviour without poking environ).
+        scrub_outbound: bool | None = None,
     ) -> None:
         # Fail-fast allowlist check: raise BEFORE any HTTP setup so
         # the operator sees a clear ModelNotAllowedError, not a 400
@@ -199,6 +218,14 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self._allowed_models = allowed_models
         self._org_id = org_id
         self._user_id = user_id
+
+        # v1.2 #210 — resolve scrubBeforeSend mode once. Explicit ctor
+        # arg wins; otherwise inherit the deployment-wide env default.
+        self._scrub_outbound: bool = (
+            scrub_outbound
+            if scrub_outbound is not None
+            else _env_scrub_outbound_default()
+        )
 
         logger.debug(
             "OpenAICompatibleProvider created",
@@ -246,7 +273,36 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             )
             return
 
-        payload = self._build_payload(self._pending_prompt)
+        # v1.2 #210 scrubBeforeSend: when enabled, the OUTBOUND prompt
+        # is run through the redactor BEFORE the API call. The raw
+        # prompt is still captured for the audit row so operators can
+        # see what the user typed AND what we actually sent. The
+        # `prompt_outbound_scrubbed` flag is True only when redaction
+        # actually changed the text — operators query
+        # ``details_json->>'prompt_outbound_scrubbed' = true`` for
+        # "show me every call where PII was scrubbed before send".
+        prompt_text = self._pending_prompt
+        outbound_prompt = prompt_text
+        prompt_outbound_scrubbed = False
+        if self._scrub_outbound:
+            try:
+                scrubbed = self._build_outbound_redactor().redact_outbound(prompt_text)
+                if scrubbed != prompt_text:
+                    outbound_prompt = scrubbed
+                    prompt_outbound_scrubbed = True
+                else:
+                    outbound_prompt = scrubbed
+            except Exception:
+                # Failure-safe: a redactor crash MUST NOT block the
+                # call. Fall back to sending the raw prompt + leave
+                # the flag False; the audit hook will log the row.
+                logger.warning(
+                    "OpenAICompatibleProvider: scrub_outbound redaction "
+                    "raised; sending raw prompt",
+                    exc_info=True,
+                )
+
+        payload = self._build_payload(outbound_prompt)
         url = f"{self._base_url}{_PATH_CHAT}"
 
         logger.debug("OpenAICompatibleProvider: POST %s model=%r", url, self._model)
@@ -254,7 +310,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         # Track latency from request issue → response complete; this is
         # what an external observer (the agent) would measure.
         started = time.monotonic()
-        prompt_text = self._pending_prompt
         response_text = ""
         response_data: dict[str, Any] = {}
         audit_action = "llm.call"
@@ -305,6 +360,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     response_data=response_data,
                     latency_ms=latency_ms,
                     error=audit_error,
+                    prompt_outbound_scrubbed=prompt_outbound_scrubbed,
                 )
             except Exception:
                 logger.warning(
@@ -312,6 +368,20 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                     "unexpectedly; swallowed",
                     exc_info=True,
                 )
+
+    def _build_outbound_redactor(self) -> Any:
+        """Construct a PiiRedactor for the pre-send scrub (v1.2 #210).
+
+        Mirrors the audit-hook lazy import so CLI / agent contexts that
+        don't have the redactor on PYTHONPATH still get a clear
+        WARNING + raw-prompt fallback rather than a hard ImportError.
+        Cheap (regex compilation is microseconds); no caching keeps the
+        operator extra-pattern reload path simple — same posture as
+        the audit hook.
+        """
+        from services.llm_pii_redactor import PiiRedactor
+
+        return PiiRedactor(scrub_outbound=True)
 
     async def _write_audit(
         self,
@@ -322,6 +392,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         response_data: dict[str, Any],
         latency_ms: int,
         error: str | None,
+        prompt_outbound_scrubbed: bool = False,
     ) -> None:
         """Best-effort call into the web-server's LLM audit writer.
 
@@ -383,6 +454,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             litellm_request_id=str(litellm_request_id) if litellm_request_id else None,
             action=action,
             error=error,
+            prompt_outbound_scrubbed=prompt_outbound_scrubbed,
         )
 
     # ------------------------------------------------------------------
