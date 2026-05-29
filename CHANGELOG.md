@@ -1,3 +1,97 @@
+## [1.1.0] - 2026-05-28
+
+**Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
+
+AIFactory ships 7 major features for regulated deployments (banks, healthcare, fintech). Epic #35 closed all 9 child issues. All features opt-in via Helm values.
+
+### Added — Epic #35 (Enterprise v1.1)
+
+#### Identity & Access (SAML 2.0 + SCIM 2.0) — #41
+- **PR #177 (PR-1a)**: SAML security foundation — OneLogin SDK wrapper (`strict=True`, `wantAssertionsSigned=True`, RSA-SHA256), HMAC-signed RelayState (CSRF defence), SCIM Pydantic schemas (RFC 7643), min-viable filter parser (eq-only on `userName`/`externalId`/`active`), Bearer-token middleware with constant-time compare. 48 unit tests.
+- **PR #178 (PR-1b1)**: `external_identities` table (kind + subject + FK CASCADE) for multi-IdP linkage; auto-backfill of `users.oidc_sub` as `kind='oidc:legacy'`. 4 Postgres tests.
+- **PR #195 (PR-1b2)**: SAML SP routes (/login, /acs, /metadata) with HMAC-bound RelayState, per-assertion-TTL replay cache, XSW defence. Cross-IdP collision guard (same-email-different-IdP → 409).
+- **PR #198 (PR-1b3)**: SCIM 2.0 CRUD on Users + Groups with array-append PATCH (Azure AD compat), soft-delete + 404-on-GET.
+- **PR #199 (PR-2)**: Helm `saml:` + `scim:` blocks with required-when-enabled validators. E2E tests. Concept doc: [saml-scim](docs/docs/concepts/saml-scim.md).
+
+#### Tenant Isolation Mode — #36
+- **PR #192 (PR-1)**: Per-tenant K8s Namespace + ServiceAccount + NetworkPolicy + IAM (IRSA) + Vault path schema skeleton.
+- **PR #200 (PR-2)**: Full K8s/IAM/Vault writes. Redis SETNX leader election with Lua check-and-delete release. Agent spawner routing to per-tenant pods.
+- **PR #201 (PR-2 continued)**: Tenant dry-run reconciler. OPA Gatekeeper sample policies (namespace-prefix + RoleBinding-tenant-scope). Daily teardown CronJob with 24-hour dry-run window.
+- **PR #206 (PR-3)**: Helm pre-install CNI probe (Calico/Cilium hard-fail for FQDN policy support). Helm `tenant.isolationEnabled` block. Concept doc: [tenant-isolation](docs/docs/concepts/tenant-isolation.md).
+
+#### LiteLLM Gateway — #38
+- **PR #193 (PR-1)**: LiteLLM gateway env redirect for HTTP providers (OpenAI-compatible routing).
+- **PR #194 (PR-2a)**: `organizations.allowed_models` JSON column for per-org LLM allowlist.
+- **PR #202 (PR-3)**: LiteLLM sub-chart deployment. Per-org budget + rate-limit + PII-redacted audit hooks. Grafana dashboards (7 panels). Concept doc: [litellm-gateway](docs/docs/concepts/litellm-gateway.md).
+- **PR #203 (PR-2b)**: Audit hook + PII redactor (mask CC#, API keys). Per-org virtual-key lifecycle.
+- **Scope caveat:** Claude calls (via Agent SDK) bypass gateway in v1.1 — SDK speaks Anthropic-format `/v1/messages`, wire-incompatible with LiteLLM's OpenAI endpoint. Closes v3.0 limitation #6; v1.2 adds Claude enforcement wrapper.
+
+#### Cloud LLM Routing (Bedrock + Vertex) — #39
+- **PR #197**: Bedrock + Vertex AI routing via LiteLLM gateway. Concept doc: [cloud-llm-routing](docs/docs/concepts/cloud-llm-routing.md).
+
+#### OpenTelemetry Distributed Tracing — #42
+- **PR #175**: In-process tracer + auto-instrumentation (FastAPI, SQLAlchemy, asyncpg, httpx, Redis). Per-phase manual `task:phase:*` spans. W3C `traceparent` injected into Redis envelopes + subprocess env. CorrelationIdMiddleware sources `request_id` from active `trace_id`. 14 unit tests.
+- **PR #176**: Helm `otel:` block (samplingRatio, headersSecretName for vendor auth). Agent-subprocess `tracing_bootstrap.py`. 23 tests (12 helm + 8 bootstrap + 3 e2e). Concept doc: [observability-tracing](docs/docs/concepts/observability-tracing.md).
+- Closes v3.0 limitation #4.
+
+#### ISO 27001 Evidence + Signed Audit-Chain Anchor — #43
+- **PR #180**: Design doc with 8 brainstorm decisions + reviewer findings baked in.
+- **PR #181**: Schema migration adding `audit_anchors`, `audit_signing_keys`, `audit_logs.classification`, `users.last_login_at`. UTC-day unique index. 5 Postgres tests.
+- **PR #182**: `audit_anchor.py` signer/verifier. `_SigningKey` newtype, leak-safe `__repr__`, HMAC sign/verify, KMS-wrapped key versioning. 15 unit tests.
+- **PR #183**: `audit_anchor_cron.py` — daily 00:00 UTC tick, startup backfill, first-anchor semantics, idempotency. Classification-window hashing closes "flip confidential→public to leak" attack. 8 unit tests.
+- **PR #184**: `audit_export.py` interleaves anchors into NDJSON. `verify_anchored_export()` offline verifier for auditors. Fixed chain-head semantic bug. 7 unit tests.
+- **PR #185**: `GET /api/admin/access-review` endpoint (SOC2 CC6.2 + ISO A.9.2.5 quarterly reviews). 6 unit tests.
+- **PR #186**: Helm `audit.anchor:` block (Kubernetes CronJob or in-process scheduler). ISO 27001 Annex A evidence map at `guides/compliance/iso27001-evidence.md` (30 controls directly evidenced). Concept doc: [audit-anchor](docs/docs/concepts/audit-anchor.md). 10 helm tests.
+- Closes v3.0 limitation #1.
+
+#### gVisor RuntimeClass — #37
+- **PR #169**: Agent pods opt-in to `runtimeClassName: gvisor` for kernel-level isolation.
+
+#### Multi-Replica Support (S3 + Redis) — #40, #154
+- **PR #171**: Cross-replica event bus via Redis pub/sub.
+- **PR #172**: Helm Redis pub/sub chart wiring + multi-replica docs.
+- **PR #173**: WorkspaceStore module + fsspec-based S3 snapshots (AWS / MinIO / GCS / Azure).
+- **PR #174**: Helm storage block + agent snapshot hook + MinIO CI.
+- Closes v3.0 limitation #5.
+
+### Migration & Upgrade
+
+**All v1.1 features are off by default.** Enable in your Helm values:
+```yaml
+saml:
+  enabled: true
+scim:
+  enabled: true
+tenant:
+  isolationEnabled: true
+litellm:
+  enabled: true
+otel:
+  enabled: true
+audit:
+  anchor:
+    enabled: true
+workspaces:
+  storage:
+    enabled: true
+redis:
+  enabled: true
+```
+
+**Backwards-compatible:** No schema-breaking migrations. Operators upgrade by bumping chart version + applying `helm upgrade`. The `alembic upgrade head` migration runs automatically on web-pod start (auto-apply default).
+
+### Out of scope (v1.2 tracking issue #204)
+- Claude-on-LiteLLM enforcement wrapper (scope caveat above)
+- Per-tenant audit-chain anchor
+- SAML Single Logout
+- PII bundle: Luhn-checked CC pattern + scrubBeforeSend mode
+
+### Contributors
+
+Shipped across 32 merged PRs (#169–#199, #200–#206) in a single coordinated session. Epic #35 closed all 9 child issues.
+
+---
+
 ## Unreleased
 
 ### ⚖️ Licensing
