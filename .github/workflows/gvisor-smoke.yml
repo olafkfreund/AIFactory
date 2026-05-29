@@ -8,18 +8,21 @@ name: gVisor live-cluster smoke test
 # Option chosen: gVisor-with-kind on github-hosted runners (Option 2).
 # GitHub-hosted ubuntu-22.04 runners are full VMs (not containers), so we
 # have unrestricted kernel access — we can install runsc on the host, then
-# configure containerd inside the Kind node container via docker exec. This
-# is the same approach described in google/gvisor/tree/master/examples/kind
-# and does not require a self-hosted runner.
+# configure containerd inside the Kind node container via docker exec.
 #
 # Architecture:
 #   1. Helm install tests  — deploy AIFactory chart with gvisor.enabled=true,
-#      verify the pod spec carries runtimeClassName=gvisor and that the pod
-#      is schedulable. Uses a minimal image override (sleep-only pod).
+#      verify the pod spec carries runtimeClassName=gvisor.
 #   2. Compatibility tests — run a dedicated ubuntu:22.04 test pod under
-#      gVisor (kubectl run + runtimeClassName: gvisor) and exec git/curl/
-#      shell commands into it. Keeps tool requirements out of the AIFactory
-#      container image entirely.
+#      gVisor (kubectl run + runtimeClassName: gvisor) and exec commands
+#      into it to validate the compat table claims.
+#
+# gVisor-in-Kind notes:
+#   Kind nodes run as Docker containers. gVisor requires the containerd shim
+#   binary (containerd-shim-runsc-v1) and the runtime binary (runsc) to be
+#   present INSIDE the Kind node container. The containerd config must also
+#   register the runtime. A 5-second sleep after containerd restart is not
+#   sufficient — we poll until containerd can list plugins.
 
 on:
   push:
@@ -45,9 +48,6 @@ jobs:
   gvisor-smoke:
     name: gVisor live-cluster smoke (Kind + runsc)
     runs-on: ubuntu-22.04
-    # This job takes ~10-15 min: cluster bootstrap, runsc install, helm
-    # install, and pytest assertions. Keep timeout generous to avoid
-    # flaky cancellations on slow runners.
     timeout-minutes: 30
 
     steps:
@@ -59,10 +59,6 @@ jobs:
 
       # ------------------------------------------------------------------ #
       # 2. Install tooling: Helm, kubectl, Kind
-      #
-      # helm/kind-action@v1.10.0 in install_only mode puts kind and kubectl
-      # on PATH without creating a cluster — we create the cluster manually
-      # in a later step so we can configure gVisor before pods schedule.
       # ------------------------------------------------------------------ #
       - name: Install Helm
         uses: azure/setup-helm@v4
@@ -77,16 +73,14 @@ jobs:
           kubectl_version: "v1.30.0"
 
       # ------------------------------------------------------------------ #
-      # 3. Install gVisor runsc on the host runner
+      # 3. Install gVisor runsc + containerd shim on host runner
       #
-      # runsc must be installed on the HOST before Kind creates the cluster
-      # because the Kind control-plane container's containerd daemon starts
-      # at cluster-create time. We need runsc present at containerd restart.
-      #
-      # Installation follows the official gVisor apt repo method which is
-      # stable across Ubuntu 22.04 and does not require kernel modules.
+      # The gVisor apt package installs both:
+      #   runsc                    — the main runtime binary
+      #   containerd-shim-runsc-v1 — the containerd shim
+      # Both need to be copied into the Kind node container in step 5.
       # ------------------------------------------------------------------ #
-      - name: Install gVisor runsc on host
+      - name: Install gVisor runsc + shim on host
         run: |
           set -euo pipefail
 
@@ -101,15 +95,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y runsc
 
-          # Verify runsc is functional on the host kernel.
+          # Confirm both binaries are installed.
+          echo "runsc location: $(which runsc)"
           runsc --version
+          echo "shim location: $(which containerd-shim-runsc-v1 2>/dev/null || echo 'not found')"
+          # Show all files installed by the runsc package for diagnostics.
+          dpkg -L runsc 2>/dev/null | head -20
 
       # ------------------------------------------------------------------ #
       # 4. Create the Kind cluster
-      #
-      # We use a minimal single-node cluster. The node container is a
-      # Docker container; after cluster creation we will docker exec into
-      # it to add the gVisor shim config and restart containerd.
       # ------------------------------------------------------------------ #
       - name: Create Kind cluster
         run: |
@@ -121,53 +115,86 @@ jobs:
           EOF
 
       # ------------------------------------------------------------------ #
-      # 5. Configure gVisor shim inside the Kind node container
+      # 5. Configure gVisor inside the Kind node
       #
-      # runsc must be installed AFTER kind cluster bootstrap because the
-      # node container needs Docker daemon access which is only active once
-      # the cluster is up. We copy the host's runsc binary into the node
-      # container and add the containerd shim configuration, then restart
-      # containerd so the new runtime becomes available to kubelet.
+      # The Kind node is a Docker container. We need to:
+      #   a. Copy the runsc binary and containerd shim into the container.
+      #   b. Write a TOML snippet registering the runsc runtime handler.
+      #   c. Restart containerd and wait for it to accept the new config.
       #
-      # The node container already runs containerd. We append the gVisor
-      # RuntimeHandler config to /etc/containerd/config.toml and reload.
+      # TOML requirement: section headers [plugins."..."] must start at
+      # column 0. We use printf rather than a here-doc inside bash -c to
+      # avoid leading-whitespace contamination from shell indentation.
       # ------------------------------------------------------------------ #
-      - name: Install runsc shim inside Kind node container
+      - name: Install runsc shim in Kind node and configure containerd
         run: |
           set -euo pipefail
 
           NODE="gvisor-smoke-control-plane"
 
-          # Copy the host runsc binary into the Kind node container.
+          # Copy runtime binaries from host into the Kind node container.
           docker cp "$(which runsc)" "${NODE}:/usr/local/bin/runsc"
           docker exec "${NODE}" chmod +x /usr/local/bin/runsc
 
-          # Append the gVisor RuntimeHandler block to containerd config.
-          # The here-doc writes exactly what containerd expects for runsc.
-          docker exec "${NODE}" bash -c 'cat >> /etc/containerd/config.toml <<TOML
+          # Copy the containerd shim binary. This is required for containerd
+          # to spawn runsc-sandboxed containers without a ContainerCreating
+          # timeout. Without it, containerd cannot find the shim and hangs.
+          SHIM="$(which containerd-shim-runsc-v1 2>/dev/null)"
+          if [ -n "${SHIM}" ]; then
+            docker cp "${SHIM}" "${NODE}:/usr/local/bin/containerd-shim-runsc-v1"
+            docker exec "${NODE}" chmod +x /usr/local/bin/containerd-shim-runsc-v1
+            echo "Copied containerd-shim-runsc-v1 from ${SHIM}."
+          else
+            # Fallback: find it via dpkg manifest.
+            SHIM_DPK="$(dpkg -L runsc 2>/dev/null | grep shim | head -1)"
+            if [ -n "${SHIM_DPK}" ]; then
+              docker cp "${SHIM_DPK}" "${NODE}:/usr/local/bin/containerd-shim-runsc-v1"
+              docker exec "${NODE}" chmod +x /usr/local/bin/containerd-shim-runsc-v1
+              echo "Copied containerd-shim-runsc-v1 from dpkg (${SHIM_DPK})."
+            else
+              echo "ERROR: cannot find containerd-shim-runsc-v1"
+              exit 1
+            fi
+          fi
 
-          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
-            runtime_type = "io.containerd.runsc.v1"
-          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
-            TypeUrl = "io.containerd.runsc.v1.options"
-          TOML'
+          # Confirm the binaries are executable inside the node container.
+          docker exec "${NODE}" /usr/local/bin/runsc --version
+          docker exec "${NODE}" /usr/local/bin/containerd-shim-runsc-v1 --version
 
-          # Restart containerd so the new runtime registration takes effect.
+          # Write the gVisor runtime block to a containerd drop-in config.
+          # /etc/containerd/config.d/ drop-ins are supported in containerd
+          # 1.6+ and all Kind node images for kind v0.21+. We use printf to
+          # guarantee no leading whitespace on the TOML section headers.
+          docker exec "${NODE}" mkdir -p /etc/containerd/config.d
+          docker exec "${NODE}" bash -c 'printf "%s\n" \
+            "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]" \
+            "  runtime_type = \"io.containerd.runsc.v1\"" \
+            "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc.options]" \
+            "  TypeUrl = \"io.containerd.runsc.v1.options\"" \
+            > /etc/containerd/config.d/gvisor.toml'
+
+          # Show the written config for diagnostics.
+          docker exec "${NODE}" cat /etc/containerd/config.d/gvisor.toml
+
+          # Restart containerd so the new runtime registration is active.
           docker exec "${NODE}" systemctl restart containerd
 
-          # Give containerd a moment to come back up before kubelet probes it.
-          sleep 5
-
-          # Confirm containerd is running again.
-          docker exec "${NODE}" systemctl is-active containerd
+          # Poll until containerd comes back up (usually 3-8 seconds).
+          for i in $(seq 1 30); do
+            if docker exec "${NODE}" ctr version >/dev/null 2>&1; then
+              echo "containerd ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "ERROR: containerd did not come back within 30s"
+              docker exec "${NODE}" journalctl -u containerd --no-pager -n 30 || true
+              exit 1
+            fi
+            sleep 1
+          done
 
       # ------------------------------------------------------------------ #
       # 6. Create the gVisor RuntimeClass in Kubernetes
-      #
-      # This is the RuntimeClass referenced by the chart's
-      # sandbox.gvisor.runtimeClassName value (default: "gvisor").
-      # The handler name "runsc" matches the containerd runtime block
-      # we registered above.
       # ------------------------------------------------------------------ #
       - name: Create gVisor RuntimeClass
         run: |
@@ -178,12 +205,10 @@ jobs:
             name: gvisor
           handler: runsc
           EOF
-
-          # Confirm the resource was accepted by the API server.
           kubectl get runtimeclass gvisor
 
       # ------------------------------------------------------------------ #
-      # 7. Python environment for Helm and test execution
+      # 7. Python + test dependencies
       # ------------------------------------------------------------------ #
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -200,19 +225,10 @@ jobs:
         run: |
           uv venv
           uv pip install -r ../../tests/requirements-test.txt
-          # kubernetes Python client for live-cluster assertions.
           uv pip install kubernetes==30.1.0
 
       # ------------------------------------------------------------------ #
-      # 8. Pre-load images into Kind
-      #
-      # kind load docker-image copies from the host Docker daemon cache
-      # directly into the Kind node container without hitting Docker Hub.
-      # This avoids rate-limit failures and removes image-pull latency.
-      #
-      # busybox: used as the AIFactory stub image — tiny, fast, has sh.
-      # ubuntu:22.04: used for the gVisor compatibility test pod which
-      #   needs git, curl, bash, and standard coreutils for exec tests.
+      # 8. Pre-load images into Kind node
       # ------------------------------------------------------------------ #
       - name: Pre-load images into Kind node
         run: |
@@ -222,10 +238,7 @@ jobs:
           kind load docker-image ubuntu:22.04 --name gvisor-smoke
 
       # ------------------------------------------------------------------ #
-      # 9. Prepare chart dependencies
-      #
-      # helm dep update must run before helm install because the LiteLLM
-      # sub-chart (Epic #35 #38) needs its dependency tarballs in place.
+      # 9. Helm dep update
       # ------------------------------------------------------------------ #
       - name: Helm dep update
         run: helm dep update charts/aifactory/
@@ -233,15 +246,12 @@ jobs:
       # ------------------------------------------------------------------ #
       # 10. Deploy AIFactory with gVisor enabled
       #
-      # Goal: validate that sandbox.gvisor.enabled=true correctly wires
-      # runtimeClassName: gvisor onto the live pod spec. We override the
-      # container image to busybox:stable + command ["sh", "-c", "sleep 3600"]
-      # so the pod starts without needing the real AIFactory binary or any
-      # external dependencies (DB, OIDC, etc.).
+      # Goal: validate that sandbox.gvisor.enabled=true wires
+      # runtimeClassName: gvisor onto the live pod spec. We use a
+      # minimal busybox stub that does not need any real credentials.
       #
-      # postgres.externalSecretName must be non-empty — the bundled-postgres
-      # template creates a K8s Secret with that name. Empty string is
-      # rejected by the API server with "resource name may not be empty".
+      # postgres.externalSecretName must not be empty — the bundled
+      # postgres template creates a K8s Secret with that name.
       # ------------------------------------------------------------------ #
       - name: Helm install AIFactory with gVisor enabled
         run: |
@@ -261,44 +271,41 @@ jobs:
             --wait=false
 
       # ------------------------------------------------------------------ #
-      # 11. Wait for the AIFactory pod to be scheduled (Running phase)
-      #
-      # We poll for Running rather than using `kubectl wait --for=condition
-      # =Available` on the Deployment because the Deployment reports
-      # Available=True before the pod has a node assignment, which causes
-      # kubectl exec to fail with "pod does not have a host assigned".
+      # 11. Wait for AIFactory pod to be scheduled
       # ------------------------------------------------------------------ #
-      - name: Wait for AIFactory pod Running
+      - name: Wait for AIFactory pod Running or ContainerCreating
         run: |
-          echo "Waiting for aifactory pod to reach Running phase..."
+          echo "Waiting for aifactory pod phase..."
           for i in $(seq 1 60); do
             STATUS=$(kubectl get pods -n aifactory \
               -l app.kubernetes.io/name=aifactory \
               -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
-            echo "  attempt ${i}/60: pod phase = ${STATUS:-<none>}"
-            if [ "${STATUS}" = "Running" ]; then
-              echo "Pod is Running."
+            REASON=$(kubectl get pods -n aifactory \
+              -l app.kubernetes.io/name=aifactory \
+              -o jsonpath='{.items[0].status.containerStatuses[0].state.waiting.reason}' \
+              2>/dev/null || echo "")
+            echo "  attempt ${i}/60: phase=${STATUS:-<none>} reason=${REASON:-<none>}"
+            if [ "${STATUS}" = "Running" ] || [ "${REASON}" = "ContainerCreating" ]; then
+              echo "Pod is scheduled (phase=${STATUS}, reason=${REASON})."
               kubectl get pods -n aifactory -o wide
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "WARNING: pod did not reach Running within 300s — will proceed anyway"
-              echo "(runtimeclass tests can still pass if the pod spec is correct)"
-              kubectl get pods -n aifactory -o wide
-              kubectl describe pod -n aifactory -l app.kubernetes.io/name=aifactory \
-                | tail -40 || true
+              echo "WARNING: pod did not become Running/ContainerCreating in 300s"
+              kubectl get pods -n aifactory -o wide || true
+              kubectl describe pod -n aifactory \
+                -l app.kubernetes.io/name=aifactory | tail -30 || true
             fi
             sleep 5
           done
 
       # ------------------------------------------------------------------ #
-      # 12. Launch the gVisor compatibility test pod
+      # 12. Launch gVisor compatibility test pod
       #
-      # This ubuntu:22.04 pod runs under gVisor (runtimeClassName: gvisor)
-      # and has git, curl, bash, and coreutils. The pytest suite execs into
-      # this pod for the compatibility-matrix tests. This is separate from
-      # the AIFactory deployment so the compat tests don't depend on the
-      # AIFactory container image having those tools.
+      # This ubuntu:22.04 pod runs under gVisor (runtimeClassName: gvisor).
+      # We install git and curl inside it to validate the compat table.
+      # A separate pod is used so the compatibility tests don't depend on
+      # the AIFactory container image having those tools.
       # ------------------------------------------------------------------ #
       - name: Launch gVisor compatibility test pod
         run: |
@@ -309,27 +316,38 @@ jobs:
             --overrides='{"spec":{"runtimeClassName":"gvisor"}}' \
             -- sleep 3600
 
-          echo "Waiting for compat-tester pod to reach Running phase..."
-          for i in $(seq 1 60); do
-            STATUS=$(kubectl get pod gvisor-compat-tester -n aifactory \
+          echo "Waiting for compat-tester pod (ContainerCreating / Running)..."
+          for i in $(seq 1 72); do
+            PHASE=$(kubectl get pod gvisor-compat-tester -n aifactory \
               -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            echo "  attempt ${i}/60: pod phase = ${STATUS:-<none>}"
-            if [ "${STATUS}" = "Running" ]; then
+            REASON=$(kubectl get pod gvisor-compat-tester -n aifactory \
+              -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' \
+              2>/dev/null || echo "")
+            echo "  attempt ${i}/72: phase=${PHASE:-<none>} reason=${REASON:-<none>}"
+            if [ "${PHASE}" = "Running" ]; then
               echo "Compat tester pod is Running."
               break
             fi
-            if [ $i -eq 60 ]; then
-              echo "ERROR: compat-tester pod did not reach Running within 300s"
-              kubectl describe pod gvisor-compat-tester -n aifactory | tail -30 || true
+            if [ $i -eq 72 ]; then
+              echo "ERROR: compat-tester pod did not reach Running within 360s"
+              echo "=== pod describe ==="
+              kubectl describe pod gvisor-compat-tester -n aifactory | tail -40 || true
+              echo "=== containerd log ==="
+              docker exec gvisor-smoke-control-plane \
+                journalctl -u containerd --no-pager -n 50 2>/dev/null || true
+              echo "=== runsc config ==="
+              docker exec gvisor-smoke-control-plane \
+                cat /etc/containerd/config.d/gvisor.toml 2>/dev/null || true
               exit 1
             fi
             sleep 5
           done
 
-          # Install tools inside the pod (ubuntu:22.04 minimal has bash + apt).
-          # This confirms apt-get works under gVisor (compat table row).
+          # Install git and curl inside the pod (needed for compat tests).
           kubectl exec -n aifactory gvisor-compat-tester -- \
-            apt-get install -y -qq git curl 2>&1 | tail -5
+            apt-get update -qq 2>&1 | tail -3
+          kubectl exec -n aifactory gvisor-compat-tester -- \
+            apt-get install -y -qq git curl 2>&1 | tail -3
 
       # ------------------------------------------------------------------ #
       # 13. Run the live-cluster gVisor smoke tests
@@ -349,9 +367,6 @@ jobs:
 
       # ------------------------------------------------------------------ #
       # 14. Collect diagnostics on failure
-      #
-      # Preserve pod logs and describe output so failures are debuggable
-      # without re-running the job.
       # ------------------------------------------------------------------ #
       - name: Collect diagnostics on failure
         if: failure()
@@ -362,11 +377,7 @@ jobs:
           echo "=== Pod descriptions ==="
           kubectl describe pods -n aifactory || true
 
-          echo "=== Pod logs (aifactory) ==="
-          kubectl logs -n aifactory -l app.kubernetes.io/name=aifactory \
-            --tail=50 || true
-
-          echo "=== Pod logs (compat-tester) ==="
+          echo "=== gVisor compat pod logs ==="
           kubectl logs -n aifactory gvisor-compat-tester --tail=50 || true
 
           echo "=== RuntimeClass ==="
@@ -374,17 +385,26 @@ jobs:
 
           echo "=== Kind node containerd status ==="
           docker exec gvisor-smoke-control-plane \
-            systemctl status containerd || true
+            systemctl status containerd --no-pager || true
 
-          echo "=== Kind node containerd config (runsc section) ==="
+          echo "=== Kind node containerd gvisor config ==="
           docker exec gvisor-smoke-control-plane \
-            grep -A5 runsc /etc/containerd/config.toml || true
+            cat /etc/containerd/config.d/gvisor.toml 2>/dev/null || true
+
+          echo "=== Kind node containerd recent log ==="
+          docker exec gvisor-smoke-control-plane \
+            journalctl -u containerd --no-pager -n 80 2>/dev/null || true
+
+          echo "=== runsc version in node ==="
+          docker exec gvisor-smoke-control-plane \
+            /usr/local/bin/runsc --version 2>/dev/null || true
+
+          echo "=== shim version in node ==="
+          docker exec gvisor-smoke-control-plane \
+            /usr/local/bin/containerd-shim-runsc-v1 --version 2>/dev/null || true
 
       # ------------------------------------------------------------------ #
-      # 15. Cleanup: delete Kind cluster
-      #
-      # kind delete cluster is idempotent and harmless if the cluster
-      # was never fully created (e.g. step 4 failed).
+      # 15. Cleanup
       # ------------------------------------------------------------------ #
       - name: Delete Kind cluster
         if: always()
