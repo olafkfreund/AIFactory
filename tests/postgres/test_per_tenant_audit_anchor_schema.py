@@ -109,10 +109,11 @@ def test_per_tenant_anchor_unique_per_org_day(test_postgres_url: str) -> None:
             VALUES (:uid, 'tenant-anchor-test@example.com', 'x', 'user', TRUE)
             ON CONFLICT (id) DO NOTHING
         """), {"uid": user_id})
-        # Ensure org exists (FK).
+        # Ensure org exists (FK). Include all NOT NULL columns without
+        # server defaults: name, slug, owner_id, plan.
         conn.execute(text("""
-            INSERT INTO organizations (id, name, slug, owner_id)
-            VALUES (:id, 'test-org', 'tenant-anchor-test-slug', :uid)
+            INSERT INTO organizations (id, name, slug, owner_id, plan)
+            VALUES (:id, 'Tenant Anchor Test Org', 'tenant-anchor-test-slug', :uid, 'free')
             ON CONFLICT (id) DO NOTHING
         """), {"id": org_id, "uid": user_id})
 
