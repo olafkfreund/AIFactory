@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         'concepts/audit-anchor',
         'concepts/cloud-llm-routing',
         'concepts/litellm-gateway',
+        'concepts/claude-enforcement',
         'concepts/saml-scim',
         'concepts/tenant-isolation',
       ],
