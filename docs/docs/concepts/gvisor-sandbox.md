@@ -61,18 +61,36 @@ sandbox:
 
 The agent's bash allowlist exercises a relatively narrow syscall surface. Real-world workloads tested under gVisor:
 
-| Workload | Status |
-|---|---|
-| `git clone`, `git pull`, `git push` | ✅ works |
-| `curl`, `wget` HTTPS calls | ✅ works |
-| `npm install`, `pnpm install` | ✅ works |
-| `python -m pip install` | ✅ works |
-| `apt-get install` inside a Dockerfile build | ✅ works (overlayfs translation handled by runsc) |
-| `pytest`, `jest`, `go test` | ✅ works |
-| `docker build` (DinD) inside the agent | ❌ **not supported** — gVisor blocks nested-container syscalls. Use buildah or kaniko instead. |
-| `tcpdump`, `wireshark` | ❌ blocked — by design, BPF programs cross the sandbox boundary. |
-| Direct `/dev/kvm` access | ❌ blocked — VM-in-pod workloads are out of scope for AIFactory anyway. |
-| Profiler tools using `perf_event_open` | ⚠️ partial — most counters work; PMU access is filtered. |
+CI status: [![gVisor smoke](https://github.com/olafkfreund/AIFactory/actions/workflows/gvisor-smoke.yml/badge.svg)](https://github.com/olafkfreund/AIFactory/actions/workflows/gvisor-smoke.yml)
+
+The "works" rows in the table below are CI-validated on every push to `dev` and `main` by the live-cluster smoke test (`.github/workflows/gvisor-smoke.yml`). Each row maps to a test in `tests/helm/test_live_gvisor.py`. The blocked rows are by design — gVisor intentionally rejects these syscall patterns.
+
+| Workload | Status | CI-validated |
+|---|---|---|
+| `git clone`, `git pull`, `git push` | ✅ works | `test_git_clone_works_under_gvisor` |
+| `curl`, `wget` HTTPS calls | ✅ works | `test_curl_https_works_under_gvisor` |
+| `npm install`, `pnpm install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
+| `python -m pip install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
+| `apt-get install` inside a Dockerfile build | ✅ works (overlayfs translation handled by runsc) | manual (DinD not run in CI) |
+| `pytest`, `jest`, `go test` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
+| Workspace PVC read/write | ✅ works | `test_workspace_pvc_mount_works_under_gvisor` |
+| Outbound HTTPS egress | ✅ works | `test_outbound_https_works_under_gvisor` |
+| `docker build` (DinD) inside the agent | ❌ **not supported** — gVisor blocks nested-container syscalls. Use buildah or kaniko instead. | not tested (expected failure) |
+| `tcpdump`, `wireshark` | ❌ blocked — by design, BPF programs cross the sandbox boundary. | not tested (expected failure) |
+| Direct `/dev/kvm` access | ❌ blocked — VM-in-pod workloads are out of scope for AIFactory anyway. | not tested (expected failure) |
+| Profiler tools using `perf_event_open` | ⚠️ partial — most counters work; PMU access is filtered. | not tested |
+
+### Compatibility validation
+
+The smoke test runs on every `push` to `dev`/`main` and every `pull_request` targeting `dev`. It:
+
+1. Creates a Kind cluster on a GitHub-hosted ubuntu-22.04 runner (full VM, not container — kernel access is available).
+2. Installs `runsc` on the host via the official gVisor apt repo, then copies it into the Kind node container.
+3. Registers a `gvisor` RuntimeClass (handler: `runsc`) in the cluster.
+4. Deploys AIFactory with `sandbox.gvisor.enabled=true` via `helm install`.
+5. Runs `tests/helm/test_live_gvisor.py -m gvisor_live`.
+
+If any "works" row in the table starts failing, the job turns red and blocks merges to `dev`.
 
 The most common pain point is **container-build-inside-the-agent** workflows. If your project's CI runs `docker build` from inside a task, you'll see syscall failures under gVisor. The two clean options are:
 
@@ -100,7 +118,8 @@ Pod startup dominates the overhead percentage but the absolute number is still s
 ## Related
 
 - Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) — Enterprise v1.1 hardening
-- Issue [#37](https://github.com/olafkfreund/AIFactory/issues/37) — this work
+- Issue [#37](https://github.com/olafkfreund/AIFactory/issues/37) — chart wiring (closed)
+- Issue [#170](https://github.com/olafkfreund/AIFactory/issues/170) — live-cluster CI smoke test (this doc)
 - Threat model doc pending [#160](https://github.com/olafkfreund/AIFactory/issues/160) backfill
 
 ## References

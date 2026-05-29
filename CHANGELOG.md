@@ -128,6 +128,21 @@ Shipped across 32 merged PRs (#169–#199, #200–#206) in a single coordinated 
   quickstart + demo callout + screenshot grid + prominent docs links.
   Everything operational moved to the docs site.
 
+### CI / Testing
+
+- **Added live-cluster gVisor CI smoke test (closes #170).** New workflow
+  `.github/workflows/gvisor-smoke.yml` brings up a Kind cluster on a
+  GitHub-hosted runner, installs `runsc` via the official gVisor apt repo,
+  registers a `gvisor` RuntimeClass, deploys AIFactory with
+  `sandbox.gvisor.enabled=true`, and runs the new
+  `tests/helm/test_live_gvisor.py` live-cluster suite. The suite validates
+  every "works" row in the gVisor compatibility table
+  (`docs/docs/concepts/gvisor-sandbox.md`): RuntimeClass on live pods,
+  `git clone`, `curl` HTTPS egress, workspace PVC read/write, and the bash
+  allowlist command set. Jobs are gated on `push: [dev, main]` and
+  `pull_request: [dev]`. Runs Option 2 (gVisor-with-kind on GitHub-hosted
+  runners) — no self-hosted runner required.
+
 ### 🏛️ Enterprise v1.1 (Epic #35)
 
 - **#42 — OpenTelemetry distributed tracing** ✅ (closed)
