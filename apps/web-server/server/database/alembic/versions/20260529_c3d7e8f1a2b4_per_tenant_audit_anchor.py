@@ -49,18 +49,26 @@ def upgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
 
-    # 1. Add audit_anchors.org_id — nullable FK, ON DELETE SET NULL.
-    # Chain preservation on org delete is locked in the v1.2 design:
-    # the anchor stays so historical verification still works after the
-    # org row is gone.
+    # 1. Add audit_anchors.org_id — nullable column.
+    # We add the column without FK first (portable across SQLite + Postgres),
+    # then add the named FK constraint on Postgres only.
+    # SQLite does not enforce FK constraints in practice, and batch_alter_table
+    # requires all constraints to have explicit names, so we handle them
+    # dialect-specifically.
     with op.batch_alter_table("audit_anchors") as batch:
         batch.add_column(
-            sa.Column(
-                "org_id",
-                sa.String(36),
-                sa.ForeignKey("organizations.id", ondelete="SET NULL"),
-                nullable=True,
-            ),
+            sa.Column("org_id", sa.String(36), nullable=True),
+        )
+
+    # Add the FK constraint on Postgres only (named, so Alembic doesn't choke).
+    if dialect == "postgresql":
+        op.create_foreign_key(
+            "fk_audit_anchors_org_id",
+            "audit_anchors",
+            "organizations",
+            ["org_id"],
+            ["id"],
+            ondelete="SET NULL",
         )
 
     op.create_index(
@@ -85,29 +93,26 @@ def upgrade() -> None:
             ")"
         )
     # SQLite test paths: application-side guard (idempotency via
-    # _existing_anchor_for_day + unique constraint on (org_id, signed_at::date)
-    # is not expressible in portable SQL; the cron's try/except
-    # catches IntegrityError).
+    # _existing_anchor_for_day; the cron's try/except catches IntegrityError).
 
-    # 3. Add audit_signing_keys.org_id — nullable FK, ON DELETE CASCADE.
-    # Per-tenant key is CASCADE-deleted only when the org hard-deletes;
-    # this is the legal-hold boundary: the key stays while the org row
-    # stays, so all historical anchors remain verifiable.
+    # 3. Add audit_signing_keys.org_id — nullable column.
+    # Same pattern: column first, then named FK on Postgres.
     with op.batch_alter_table("audit_signing_keys") as batch:
         batch.add_column(
-            sa.Column(
-                "org_id",
-                sa.String(36),
-                sa.ForeignKey("organizations.id", ondelete="CASCADE"),
-                nullable=True,
-            ),
+            sa.Column("org_id", sa.String(36), nullable=True),
+        )
+
+    if dialect == "postgresql":
+        op.create_foreign_key(
+            "fk_audit_signing_keys_org_id",
+            "audit_signing_keys",
+            "organizations",
+            ["org_id"],
+            ["id"],
+            ondelete="CASCADE",
         )
 
     # Partial unique index: at most one active key per org (Postgres only).
-    # "active" = retired_at IS NULL. The deployment-wide key (org_id IS NULL)
-    # continues to have its own active-row uniqueness enforced application-side
-    # (unchanged from v1.1 — the cron calls ensure_active_key which selects
-    # MAX(version) WHERE retired_at IS NULL AND org_id IS NULL).
     if dialect == "postgresql":
         op.execute(
             "CREATE UNIQUE INDEX ux_audit_signing_keys_org_active "
@@ -134,7 +139,6 @@ def upgrade() -> None:
         sa.Column(
             "org_id",
             sa.String(36),
-            sa.ForeignKey("organizations.id", ondelete="CASCADE"),
             primary_key=True,
         ),
         # The created_at of the FIRST audit row written under the per-tenant
@@ -169,10 +173,28 @@ def upgrade() -> None:
         ),
     )
 
+    # Add FK on tenant_audit_state.org_id separately (Postgres only, named).
+    if dialect == "postgresql":
+        op.create_foreign_key(
+            "fk_tenant_audit_state_org_id",
+            "tenant_audit_state",
+            "organizations",
+            ["org_id"],
+            ["id"],
+            ondelete="CASCADE",
+        )
+
 
 def downgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
+
+    if dialect == "postgresql":
+        op.drop_constraint(
+            "fk_tenant_audit_state_org_id",
+            "tenant_audit_state",
+            type_="foreignkey",
+        )
 
     op.drop_table("tenant_audit_state")
 
@@ -180,6 +202,11 @@ def downgrade() -> None:
 
     if dialect == "postgresql":
         op.execute("DROP INDEX IF EXISTS ux_audit_signing_keys_org_active")
+        op.drop_constraint(
+            "fk_audit_signing_keys_org_id",
+            "audit_signing_keys",
+            type_="foreignkey",
+        )
 
     with op.batch_alter_table("audit_signing_keys") as batch:
         batch.drop_column("org_id")
@@ -190,6 +217,11 @@ def downgrade() -> None:
         op.execute(
             "CREATE UNIQUE INDEX uq_audit_anchors_date "
             "ON audit_anchors ((signed_at::date))"
+        )
+        op.drop_constraint(
+            "fk_audit_anchors_org_id",
+            "audit_anchors",
+            type_="foreignkey",
         )
 
     op.drop_index("ix_audit_anchors_org_signed_at", table_name="audit_anchors")
