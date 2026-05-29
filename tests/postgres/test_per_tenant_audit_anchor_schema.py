@@ -99,15 +99,21 @@ def test_per_tenant_anchor_unique_per_org_day(test_postgres_url: str) -> None:
 
     # Seed org + key.
     org_id = "00000000-0000-0000-0000-000000000042"
+    user_id = "00000000-0000-0000-0000-000000000001"
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM audit_anchors WHERE id LIKE 'tenant-day-%'"))
+        # Ensure a user exists (required by organizations.owner_id FK).
+        conn.execute(text("""
+            INSERT INTO users (id, email, password_hash)
+            VALUES (:uid, 'test@example.com', 'x')
+            ON CONFLICT (id) DO NOTHING
+        """), {"uid": user_id})
         # Ensure org exists (FK).
         conn.execute(text("""
             INSERT INTO organizations (id, name, slug, owner_id)
-            SELECT :id, 'test-org', 'test-org-slug', u.id
-            FROM users u LIMIT 1
+            VALUES (:id, 'test-org', 'tenant-anchor-test-slug', :uid)
             ON CONFLICT (id) DO NOTHING
-        """), {"id": org_id})
+        """), {"id": org_id, "uid": user_id})
 
         existing_key = conn.execute(text(
             "SELECT MIN(version) FROM audit_signing_keys WHERE org_id = :oid"
