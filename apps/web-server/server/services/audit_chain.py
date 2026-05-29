@@ -42,7 +42,39 @@ import json
 from typing import Iterable, Mapping
 
 GENESIS = "GENESIS"
+# Per-tenant chain genesis prefix (design §4). The org UUID is appended
+# without a separator so verifiers can split at the first non-GENESIS-T-
+# character and extract the org_id.
+GENESIS_TENANT_PREFIX = "GENESIS-T-"
 _SEP = b"\x1f"
+
+
+def tenant_genesis(org_id: str) -> str:
+    """Return the per-tenant genesis sentinel for ``org_id``.
+
+    Making this a function (not a constant) ensures the sentinel is
+    always derived from the org's UUID, which:
+    1. Makes the chain-mode discriminator visible in the row data.
+    2. Prevents cross-chain hash collisions (a per-tenant chain segment
+       cannot be spliced into the shared chain — the first row's
+       prev_hash wouldn't match GENESIS).
+    3. Makes log-grep trivial: ``SELECT id FROM audit_logs WHERE
+       prev_hash LIKE 'GENESIS-T-%'``.
+    """
+    return f"{GENESIS_TENANT_PREFIX}{org_id}"
+
+
+def expected_genesis_for(org_id: str | None, chain_mode: str = "shared") -> str:
+    """Return the expected genesis sentinel for a given org + chain mode.
+
+    ``chain_mode='tenant'`` returns the per-tenant sentinel (design §4).
+    Any other value (including ``'shared'``) returns the shared sentinel.
+    Used by verifiers that need to determine the first row's expected
+    ``prev_hash`` from the row's metadata.
+    """
+    if chain_mode == "tenant" and org_id:
+        return tenant_genesis(org_id)
+    return GENESIS
 
 
 def _canonical(row: Mapping) -> bytes:
@@ -127,6 +159,64 @@ def row_as_mapping(audit_row) -> dict:
         "details_json": audit_row.details_json,
         "prev_hash": audit_row.prev_hash,
     }
+
+
+# ---------------------------------------------------------------------------
+# Per-tenant chain helpers (v1.2 #208)
+# ---------------------------------------------------------------------------
+
+
+def compute_tenant_hash(prev_hash: str | None, row: Mapping, org_id: str) -> str:
+    """Return SHA-256 of this row chained to ``prev_hash``, domain-separated
+    by ``org_id``.
+
+    Domain separation prevents cross-tenant chain confusion: tenant A's
+    chain head cannot be fed into tenant B's chain as a valid ``prev_hash``.
+    The ``org_id`` is already part of ``_canonical(row)`` (the row's
+    ``org_id`` field is included), so the salt adds no new entropy — it is
+    a structural discriminator, not a secret.
+
+    Backward compat: callers without per-tenant mode continue using
+    ``compute_hash``; this function is only reached when the write path has
+    confirmed ``isolation_mode='isolated'`` for the row's org.
+    """
+    # The per-tenant sentinel uses the org_id prefix (design §4) so the
+    # genesis row's hash is discriminated by org even without explicit salt.
+    # We still include org_id in the domain separator for defense-in-depth.
+    prev = (prev_hash or tenant_genesis(org_id)).encode("utf-8")
+    domain = f"tenant:{org_id}".encode()
+    digest = hashlib.sha256(domain + _SEP + prev + _SEP + _canonical(row)).hexdigest()
+    return digest
+
+
+def verify_tenant_chain(
+    rows: Iterable[Mapping],
+    org_id: str,
+) -> tuple[bool, int | None, str | None]:
+    """Verify a per-tenant chain segment.
+
+    Same contract as ``verify_chain`` but uses the per-tenant genesis
+    sentinel and ``compute_tenant_hash`` for domain separation.
+
+    A cross-tenant replay attack (injecting tenant A's rows into tenant B's
+    chain) fails because the domain salt differs.
+
+    Rows must be ordered by ascending ``created_at``.
+    """
+    prev_hash: str | None = None
+    rows_list = list(rows)
+    genesis = tenant_genesis(org_id)
+    for i, row in enumerate(rows_list):
+        expected_prev = genesis if i == 0 else prev_hash
+        stored_prev = row.get("prev_hash") or genesis
+        if stored_prev != expected_prev:
+            return (
+                False,
+                i,
+                f"row[{i}].prev_hash={stored_prev!r} != expected {expected_prev!r}",
+            )
+        prev_hash = compute_tenant_hash(stored_prev, row, org_id)
+    return True, None, None
 
 
 # CLI-friendly export helper. Used by the export endpoint AND the

@@ -853,6 +853,11 @@ class AuditSigningKey(Base):
       - Set ``retired_at`` on the previous row at the same time.
       - The signer always uses ``MAX(version) WHERE retired_at IS NULL``.
       - Never DELETE a row — older anchors need their key forever.
+
+    v1.2 #208: ``org_id`` is NULL for the deployment-wide key (v1.1
+    backward compat) and non-NULL for per-tenant keys. ON DELETE CASCADE
+    so the key row is removed when the org hard-deletes (day-30 tear-down
+    per #36 PR-3); before that the row stays as a legal-hold artefact.
     """
 
     __tablename__ = "audit_signing_keys"
@@ -867,12 +872,27 @@ class AuditSigningKey(Base):
     retired_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True,
     )
+    # v1.2 #208 — per-tenant key scoping. NULL = deployment-wide (v1.1).
+    # ON DELETE CASCADE: key is removed when the org row is hard-deleted;
+    # the key stays during the 30-day grace period (org.deleted_at is set
+    # but the row is not yet deleted) so historical anchors stay verifiable.
+    org_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    # Relationship (read-only; no back_populates needed).
+    organization: Mapped["Organization | None"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
 
     def __repr__(self) -> str:
         # NEVER include wrapped_key here — it's encrypted but operational
         # discipline says we don't even render its length in logs.
         retired = self.retired_at.isoformat() if self.retired_at else "active"
-        return f"<AuditSigningKey v{self.version} {retired}>"
+        org = f" org={self.org_id}" if self.org_id else ""
+        return f"<AuditSigningKey v{self.version}{org} {retired}>"
 
 
 class AuditAnchor(Base):
@@ -884,21 +904,30 @@ class AuditAnchor(Base):
     the HMAC.
 
     Append-only at the application layer (no PATCH / DELETE routes).
+
+    v1.2 #208: ``org_id`` is NULL for the deployment-wide shared chain
+    anchor (v1.1 backward compat) and non-NULL for per-tenant anchors.
+    ON DELETE SET NULL: if the org row is deleted, the anchor row stays
+    (legal-hold — the chain remains verifiable from the archived wrapped
+    key in audit_signing_keys) but org_id is NULLed out.
     """
 
     __tablename__ = "audit_anchors"
     __table_args__ = (
         Index("ix_audit_anchors_signed_at", "signed_at"),
+        # Composite index for per-tenant anchor lookup (cron + verifier).
+        Index("ix_audit_anchors_org_signed_at", "org_id", "signed_at"),
     )
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=_generate_uuid,
     )
     # Hex SHA-256 of the canonical content of the last audit_logs row
-    # whose created_at < the anchor's day boundary. Empty (=GENESIS)
-    # for an anchor emitted before any rows exist.
+    # whose created_at < the anchor's day boundary. Empty (=GENESIS or
+    # GENESIS-T-<uuid> for per-tenant) for an anchor emitted before any
+    # rows exist.
     chain_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    # Hex HMAC-SHA256(signing_key, chain_head_hash).
+    # Hex HMAC-SHA256(signing_key, anchor_input).
     signature: Mapped[str] = mapped_column(String(64), nullable=False)
     signed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     key_version: Mapped[int] = mapped_column(
@@ -907,15 +936,85 @@ class AuditAnchor(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(),
     )
+    # v1.2 #208 — per-tenant anchor scoping. NULL = shared chain (v1.1).
+    # ON DELETE SET NULL: chain artefact is preserved when the org is deleted
+    # (legal-hold requirement from design finding #3).
+    org_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     signing_key: Mapped["AuditSigningKey"] = relationship(
         "AuditSigningKey", foreign_keys=[key_version],
     )
+    organization: Mapped["Organization | None"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
+
+    def __repr__(self) -> str:
+        org = f" org={self.org_id}" if self.org_id else ""
+        return (
+            f"<AuditAnchor signed_at={self.signed_at!r} "
+            f"v{self.key_version}{org}>"
+        )
+
+
+class TenantAuditState(Base):
+    """Per-tenant chain head + lifecycle state (Epic #35 v1.2 #208).
+
+    One row per isolated org (isolation_mode='isolated'). Tracks:
+    - The genesis boundary (chain_started_at) separating pre-cutover
+      (shared chain) from post-cutover (per-tenant chain) rows.
+    - The current chain head (current_head_hash), updated in the same
+      DB transaction as each audit_logs INSERT for this org (design §8).
+    - The last anchor timestamp for health-check queries.
+    - The lifecycle: 'active' (new rows allowed) or 'sealed' (org
+      soft-deleted, chain frozen for legal-hold).
+
+    Separate from TenantState to avoid coupling the high-cadence audit
+    write path with the lower-cadence reconciler sweep (design §2).
+    """
+
+    __tablename__ = "tenant_audit_state"
+
+    org_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # created_at of the first per-tenant-chained row, set when isolation_mode
+    # flips to 'isolated'. Verifiers use this to split shared vs tenant rows.
+    chain_started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Hex SHA-256 of the outgoing hash of the last row written to this
+    # tenant's chain. Updated atomically with each audit_logs INSERT.
+    current_head_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # NULL before the first daily anchor. Used by health-check queries to
+    # detect "key issued but no first anchor yet" (design rec #5).
+    last_anchor_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
+    )
+    # 'active': per-tenant chain is live.
+    # 'sealed': org soft-deleted; no new rows; chain stays for legal-hold.
+    lifecycle: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="active",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    organization: Mapped["Organization"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
 
     def __repr__(self) -> str:
         return (
-            f"<AuditAnchor signed_at={self.signed_at!r} "
-            f"v{self.key_version}>"
+            f"<TenantAuditState org_id={self.org_id!r} "
+            f"lifecycle={self.lifecycle!r}>"
         )
 
 

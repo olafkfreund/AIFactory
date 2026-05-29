@@ -1,36 +1,16 @@
 ## [Unreleased]
 
-### Added — Epic #35 v1.2 (Claude enforcement wrapper — #207)
+### Added — v1.2 per-tenant audit-chain anchor (#208)
 
-- **`apps/backend/core/enforcement.py`** (new): `ClaudeEnforcementContext` —
-  in-process enforcement wrapper (Option A) that closes the v1.1 gap where
-  Claude Agent SDK calls bypassed per-tenant budget / allowlist / audit.
-  Design rationale + rejected Option B documented in
-  `docs/plans/2026-05-29-claude-litellm-wrapper-design.md`.
-- **`create_client()` + `create_simple_client()`**: new `org_id` / `user_id`
-  / `allowed_models` kwargs.  When `org_id` is supplied and
-  `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED=true`, returns
-  `_EnforcedClaudeSDKClient` (allowlist + budget + audit).  Callers without
-  `org_id` receive bare `ClaudeSDKClient` — v1.1 behaviour unchanged.
-- **Helm wiring** (`charts/aifactory/`): `claude.enforcement.enabled` toggle +
-  `failureMode` (`open` | `closed`) in `values.yaml` / `values.schema.json` /
-  `templates/deployment.yaml`.
-- **Concept doc** `docs/docs/concepts/claude-enforcement.md`: architecture
-  diagram, operator recipe, failure-mode trade-off, budget caveats, v1.3
-  re-evaluation trigger for Option B (tracks upstream LiteLLM bugs #28562
-  #28228 #26749 #27512).
-- **ISO 27001 evidence** (`guides/compliance/iso27001-evidence.md`): A.12.4.1
-  entry updated — v1.1 "Claude calls not fully audited" limitation closed.
-- **Tests** (`tests/claude_enforcement/`): 7 test files covering allowlist,
-  budget, audit hook, streaming usage, factory disabled, factory enabled, and
-  no-org-id escape hatch.
-
-### Closes v1.1 limitation
-
-Scope caveat from v1.1 CHANGELOG ("Claude calls bypass LiteLLM enforcement")
-is now closed by `claude.enforcement.enabled=true`.  All three enforcement
-guarantees — model allowlist, per-tenant budget, per-call audit row — now
-apply to the native Claude Agent SDK path when the wrapper is opted in.
+- **Per-tenant HMAC-SHA256 signing keys** — the tenant reconciler issues one 32-byte KMS-wrapped key per isolated org (Option A: one chain + one key per tenant, ISO 27001 A.12.4.2/A.12.4.3 compliant). Keys are stored in `audit_signing_keys` with `org_id` set and mirrored to the tenant's Vault path for auditor handover.
+- **Per-tenant chain genesis** — each isolated tenant's first `audit_logs` row uses `prev_hash='GENESIS-T-<org-uuid>'`, separating the per-tenant chain from the shared chain. `tenant_audit_state` table tracks the cutover boundary, current chain head, and lifecycle ('active'|'sealed').
+- **Per-tenant daily anchor** — the cron iterates over isolated orgs (in id order, batch-committed) and emits one `audit_anchors` row per org per day, signed with the org's key. One tenant's KMS failure does NOT block others (failure-safe per-tenant loop).
+- **Per-tenant verifier** — `verify_tenant_anchored_export(ndjson, signing_keys, org_id)` validates a per-tenant export's chain. Asserts cross-tenant replay is rejected (design finding #6). `compute_tenant_hash` and `verify_tenant_chain` in `audit_chain.py` provide the domain-separated chain helpers.
+- **Helm opt-in** — `audit.anchor.perTenant: false` (default). `perTenantOptions.keyCacheSize`, `batchSize`, `retentionDays`, `metrics.perOrgLabels` operator-tunable. Validator rejects `perTenant=true` without `tenant.isolationEnabled=true`.
+- **Export endpoint change (v1.2 behavior change)**: `?org_id=...&include_anchors=true` now accepted for isolated tenants when `perTenant=true` (was 400 in v1.1 — the per-tenant chain CAN verify a per-tenant export). Shared-chain deployments unchanged.
+- **ISO 27001 evidence** — A.12.4.2, A.12.4.3, A.18.1.3, A.18.2.2 entries updated with per-tenant chain contribution (v1.2+; v1.1 entries preserved). Closes the v1.1 gap where "protection of log information" was evidenced at deployment granularity only.
+- **Schema migration** (`c3d7e8f1a2b4`): `audit_anchors.org_id` (nullable FK, ON DELETE SET NULL), `audit_signing_keys.org_id` (nullable FK, ON DELETE CASCADE), `tenant_audit_state` table, composite index `audit_logs(org_id, created_at)`.
+- Refs: #208 / Epic #204. Design doc: `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md`.
 
 ---
 

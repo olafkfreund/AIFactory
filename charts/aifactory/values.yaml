@@ -793,6 +793,57 @@ audit:
       successfulJobsHistoryLimit: 1
       failedJobsHistoryLimit: 3
 
+    # ---------------------------------------------------------------------------
+    # v1.2 #208 — per-tenant audit-chain anchor (Option A)
+    # ---------------------------------------------------------------------------
+    #
+    # When perTenant=true:
+    #   - Each isolated tenant gets its own HMAC-SHA256 signing key, generated
+    #     by the reconciler on first isolation flip and stored in
+    #     audit_signing_keys with org_id set.
+    #   - The daily cron emits one audit_anchors row per isolated tenant
+    #     (in addition to the shared-chain anchor for non-isolated tenants).
+    #   - Per-tenant exports with ?include_anchors=true are now verifiable.
+    #
+    # Prerequisites:
+    #   - audit.anchor.enabled must be true.
+    #   - tenant.isolationEnabled must be true (per-tenant keys live in the
+    #     tenant's Vault path provisioned only by isolation mode).
+    #
+    # Default off for backward compatibility. Pre-v1.2 deployments run
+    # unchanged; flip this to true to start per-tenant chains prospectively
+    # (existing rows stay in the shared chain per the cutover boundary
+    # recorded in tenant_audit_state.chain_started_at).
+    perTenant: false
+
+    perTenantOptions:
+      # LRU cache size for unwrapped per-tenant signing keys (design finding #1).
+      # Each entry is ~32 bytes raw + overhead. At default 1000 entries the
+      # cache consumes ~1 MB. Operators at 10k+ tenants set this to 10000
+      # and accept proportional memory cost (~10 MB).
+      # KMS rate-limit math: AWS KMS = 5,500 unwraps/sec per region;
+      # at 10k tenants a cold-start pass takes ~10k × KMS-RTT (20-50ms)
+      # = 200-500 seconds — acceptable for a daily job.
+      keyCacheSize: 1000
+
+      # Batch commit size for the per-tenant cron loop (design finding #2).
+      # Every batchSize tenants the cron commits + flushes. A failure within
+      # a batch rolls back only that batch; prior batches stay committed.
+      batchSize: 100
+
+      # Anchor rows older than retentionDays are eligible for operator-driven
+      # pruning (design finding #4). Pruning removes historical verification
+      # capability; operators MUST understand this trade-off. Default 5 years.
+      # Note: the retention job is NOT shipped in v1.2 — this value is
+      # documented for operators who run their own pruning scripts.
+      retentionDays: 1825
+
+      metrics:
+        # When true, expose audit_anchor_emit_total with per-org labels
+        # (design recommendation #1). High cardinality at 10k tenants;
+        # operators on a tight Prometheus budget can disable per-org labels.
+        perOrgLabels: true
+
 # ---------------------------------------------------------------------------
 # LiteLLM gateway (Epic #35 #38 PR-3).
 #

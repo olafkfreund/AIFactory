@@ -83,6 +83,15 @@ spec:
                   value: "true"
                 - name: AUDIT_ANCHOR_SCHEDULER
                   value: "cronjob"
+                {{- /* v1.2 #208 — per-tenant anchor env wiring. */ -}}
+                {{- if .Values.audit.anchor.perTenant }}
+                - name: AUDIT_ANCHOR_PER_TENANT
+                  value: "true"
+                - name: AUDIT_ANCHOR_KEY_CACHE_SIZE
+                  value: {{ .Values.audit.anchor.perTenantOptions.keyCacheSize | default 1000 | quote }}
+                - name: AUDIT_ANCHOR_BATCH_SIZE
+                  value: {{ .Values.audit.anchor.perTenantOptions.batchSize | default 100 | quote }}
+                {{- end }}
               resources:
                 # The cron is short-lived (seconds) and bounded by
                 # the DB scan cost. Conservative limits; bump if a

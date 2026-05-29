@@ -167,16 +167,95 @@ curl -H "Cookie: access_token=<admin-token>" \
 
 Returns one NDJSON line per current `OrgMember` with email, role, active, `joined_at`, `last_login_at`. Audit log queries on `org.member.add/remove` events provide the membership-change history.
 
+## Per-tenant chains (v1.2 #208)
+
+Available when `audit.anchor.enabled=true` **and** `audit.anchor.perTenant=true` **and** `tenant.isolationEnabled=true`.
+
+### Architecture
+
+```
+Organization A (isolation_mode='isolated')
+  audit_logs rows: prev_hash chains to GENESIS-T-<org-a-uuid>
+  audit_signing_keys: one row with org_id=<org-a-uuid>
+  audit_anchors: daily row with org_id=<org-a-uuid>
+       |
+       └── verifiable independently with org A's key only
+
+Organization B (isolation_mode='isolated')
+  audit_logs rows: prev_hash chains to GENESIS-T-<org-b-uuid>
+  audit_signing_keys: one row with org_id=<org-b-uuid>
+  audit_anchors: daily row with org_id=<org-b-uuid>
+       |
+       └── verifiable independently with org B's key only
+
+Non-isolated orgs / pre-cutover rows
+  audit_logs: shared chain (GENESIS sentinel, unchanged from v1.1)
+  audit_anchors: org_id=NULL (shared deployment anchor)
+```
+
+### Three-regime backward-compatibility table
+
+| Org status | Chain mode | Anchor |
+|---|---|---|
+| Pre-v1.2 (no `tenant_states` row OR `isolation_mode='shared'`) | Shared | Shared deployment anchor (v1.1 unchanged) |
+| Post-v1.2, `isolation_mode='isolated'`, cutover at time T | Pre-T rows: shared; post-T rows: per-tenant | Pre-T: shared anchor; post-T: per-tenant anchor |
+| `isolation_mode='deleted'` (org soft-deleted) | Per-tenant chain sealed; no new rows | Per-tenant anchor stops at seal time |
+
+### Operator opt-in
+
+```yaml
+# charts/aifactory/values.yaml
+audit:
+  anchor:
+    enabled: true       # must be true
+    perTenant: true     # enables per-tenant chains
+tenant:
+  isolationEnabled: true  # required (keys live in Vault paths provisioned by isolation)
+```
+
+### Auditor handover workflow
+
+```bash
+# 1. Export tenant's rows + anchors:
+aifactory audit export --org-id <uuid> --format ndjson --include-anchors > tenant-export.ndjson
+
+# 2. Retrieve wrapped key from Vault:
+vault kv get -format=json aifactory/orgs/<uuid>/anchor-key-wrapped > wrapped-key.json
+
+# 3. Unwrap via KMS (one-shot, KMS-audited):
+aifactory kms unwrap --backend aws-kms < wrapped-key.json > raw-key.bin
+
+# 4. Verify offline (no DB or KMS access required):
+python -m server.audit verify-anchor --org-id <uuid> --export tenant-export.ndjson --key raw-key.bin
+PASS: 12,438 rows + 31 anchors verified against tenant chain
+```
+
+The KMS unwrap step is the only one requiring operator credentials. Each unwrap is KMS-audited and logged as `audit.handover.tenant-key.unwrap` at `classification='confidential'`.
+
+### ISO 27001 controls enabled by per-tenant chains
+
+- **A.12.4.2** — Tenant-level log integrity protection (v1.1 covered deployment-level only).
+- **A.12.4.3** — Operator privilege scope is separated from tenant verification scope.
+- **A.18.1.3** — Each tenant holds their own evidence for their ISMS audit.
+- **A.18.2.2** — Tenant's auditor can independently attest compliance without seeing other tenants' data.
+
+### What's preserved on org delete
+
+When an org is soft-deleted (`Organization.deleted_at` set), the audit chain rows, `tenant_audit_state` row, and `audit_signing_keys` row all stay as legal-hold artefacts. The per-tenant chain is sealed (`lifecycle='sealed'`); no new rows are appended. The Vault copy of the wrapped key is removed at day-30 tear-down so no further handover is possible, but the DB-side key row stays so historical anchors remain verifiable.
+
 ## What's not yet supported
 
-- **External anchor publication.** v1.1 stores anchors in the same Postgres as the audit log. A DB admin with the HMAC key can rewrite both. v1.2 will publish anchors to S3 Object Lock / RFC 3161 TSA / Sigstore for genuine third-party untamperedness.
-- **Asymmetric signatures.** v1.1's HMAC means the verifier needs the secret. v1.2 with public verification needs RSA/ECDSA signatures via cloud KMS Sign APIs.
-- **Per-event signing.** Daily is sufficient for the v1.1 threat model and operator habits ("send me yesterday's audit roll"). Per-event signing adds per-write overhead with no operational benefit at our scale.
+- **External anchor publication.** v1.2 stores anchors in the same Postgres as the audit log. A DB admin with the tenant's HMAC key can rewrite that tenant's chain. v1.3 will publish per-tenant anchors to S3 Object Lock / RFC 3161 TSA / Sigstore for genuine third-party untamperedness.
+- **Asymmetric signatures.** v1.2's HMAC means the verifier needs the secret. v1.3 with public verification needs RSA/ECDSA signatures via cloud KMS Sign APIs.
+- **Per-event signing.** Daily is sufficient for the v1.2 threat model and operator habits. Per-event signing adds per-write overhead with no operational benefit at our scale.
+- **Migration of pre-v1.2 rows to per-tenant chains.** Pre-v1.2 rows participate in the shared chain. Rewriting them into per-tenant chains requires recomputing every `prev_hash` — a destructive one-time operation. Operators wanting a clean per-tenant chain from row 1 must provision a fresh deployment.
 
 ## See also
 
+- [Tenant isolation](./tenant-isolation.md) — per-tenant K8s namespaces + Vault paths. Per-tenant audit chains integrate here.
 - [Multi-replica deployment](./multi-replica.md) — Redis fan-out (Epic #35 #40).
 - [Distributed tracing](./observability-tracing.md) — OpenTelemetry (Epic #35 #42).
 - [ISO 27001 evidence](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md) — Annex A control mapping (lives outside the Docusaurus tree).
-- [GitHub issue #43](https://github.com/olafkfreund/AIFactory/issues/43) — original design.
-- Design doc in-repo: `docs/plans/2026-05-28-audit-anchor-design.md`.
+- [GitHub issue #43](https://github.com/olafkfreund/AIFactory/issues/43) — v1.1 design.
+- [GitHub issue #208](https://github.com/olafkfreund/AIFactory/issues/208) — v1.2 per-tenant design.
+- Design docs: `docs/plans/2026-05-28-audit-anchor-design.md` (v1.1), `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md` (v1.2).
