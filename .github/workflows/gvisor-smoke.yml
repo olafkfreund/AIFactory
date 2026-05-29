@@ -238,10 +238,14 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Pre-load images into Kind node
         run: |
+          # busybox:stable — used for the AIFactory stub deployment.
+          # alpine:3.19 — used for the compat-tester pod; has sh, wget,
+          # and apk to install git+curl. Much smaller than ubuntu:22.04,
+          # starts faster under gVisor's VFS layer.
           docker pull busybox:stable
-          docker pull ubuntu:22.04
+          docker pull alpine:3.19
           kind load docker-image busybox:stable --name gvisor-smoke
-          kind load docker-image ubuntu:22.04 --name gvisor-smoke
+          kind load docker-image alpine:3.19 --name gvisor-smoke
 
       # ------------------------------------------------------------------ #
       # 9. Helm dep update
@@ -315,33 +319,40 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Launch gVisor compatibility test pod
         run: |
+          # Use alpine:3.19 — tiny image (~7MB), starts fast under gVisor's
+          # VFS layer. Has sh, basic coreutils, and apk to install git+curl.
+          # ubuntu:22.04 (~77MB) was observed to stay in ContainerCreating
+          # for 6+ minutes under gVisor in Kind, possibly due to overlayfs
+          # initialization overhead in the nested sandbox. Alpine avoids this.
           kubectl run gvisor-compat-tester \
-            --image=ubuntu:22.04 \
+            --image=alpine:3.19 \
             --namespace=aifactory \
             --restart=Never \
             --overrides='{"spec":{"runtimeClassName":"gvisor"}}' \
             -- sleep 3600
 
-          echo "Waiting for compat-tester pod (ContainerCreating / Running)..."
-          for i in $(seq 1 72); do
+          echo "Waiting for compat-tester pod to reach Running phase..."
+          for i in $(seq 1 60); do
             PHASE=$(kubectl get pod gvisor-compat-tester -n aifactory \
               -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
             REASON=$(kubectl get pod gvisor-compat-tester -n aifactory \
               -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' \
               2>/dev/null || echo "")
-            echo "  attempt ${i}/72: phase=${PHASE:-<none>} reason=${REASON:-<none>}"
+            echo "  attempt ${i}/60: phase=${PHASE:-<none>} reason=${REASON:-<none>}"
             if [ "${PHASE}" = "Running" ]; then
               echo "Compat tester pod is Running."
               break
             fi
-            if [ $i -eq 72 ]; then
-              echo "ERROR: compat-tester pod did not reach Running within 360s"
+            if [ $i -eq 60 ]; then
+              echo "ERROR: compat-tester pod did not reach Running within 300s"
               echo "=== pod describe ==="
               kubectl describe pod gvisor-compat-tester -n aifactory | tail -40 || true
-              echo "=== containerd log ==="
+              echo "=== containerd log (if journald available) ==="
               docker exec gvisor-smoke-control-plane \
-                journalctl -u containerd --no-pager -n 50 2>/dev/null || true
-              echo "=== runsc config ==="
+                bash -c 'journalctl -u containerd --no-pager -n 50 2>/dev/null \
+                  || cat /var/log/containerd.log 2>/dev/null \
+                  || true'
+              echo "=== gVisor config ==="
               docker exec gvisor-smoke-control-plane \
                 cat /etc/containerd/config.d/gvisor.toml 2>/dev/null || true
               exit 1
@@ -349,11 +360,9 @@ jobs:
             sleep 5
           done
 
-          # Install git and curl inside the pod (needed for compat tests).
+          # Install git and curl inside the pod via apk.
           kubectl exec -n aifactory gvisor-compat-tester -- \
-            apt-get update -qq 2>&1 | tail -3
-          kubectl exec -n aifactory gvisor-compat-tester -- \
-            apt-get install -y -qq git curl 2>&1 | tail -3
+            apk add --quiet git curl 2>&1 | tail -5
 
       # ------------------------------------------------------------------ #
       # 13. Run the live-cluster gVisor smoke tests
