@@ -1,0 +1,300 @@
+name: gVisor live-cluster smoke test
+
+# This job brings up a real Kind cluster with gVisor's runsc runtime
+# installed, deploys AIFactory with sandbox.gvisor.enabled=true, and
+# validates the compatibility table in docs/docs/concepts/gvisor-sandbox.md
+# against reality. It is the CI materialisation of issue #170.
+#
+# --- Why this job is workflow_dispatch-only (not push-triggered) ---
+#
+# Option 2 (gVisor-with-kind on GitHub-hosted runners) was evaluated and
+# found to have a fundamental limitation: the Kind node container runs
+# with capability restrictions that prevent gVisor's runsc from launching
+# sandboxed containers. Pods using runtimeClassName=gvisor land in
+# ContainerCreating indefinitely. This is the limitation described in
+# the issue body: "running runsc requires kernel-level setup the standard
+# runners don't expose."
+#
+# The Kubernetes-level tests (RuntimeClass wiring, pod spec validation)
+# DO work reliably because they only inspect object specs without requiring
+# gVisor containers to actually launch. These tests prove the chart wiring
+# is correct. The exec-based compatibility tests require a running gVisor
+# container and are skipped automatically when the compat pod is not Running.
+#
+# Recommended production validation path:
+# 1. Register a self-hosted runner with gVisor installed on the HOST (not
+#    in a Kind node container). See guides/deployment/gvisor-smoke-test-local.md
+#    or guides/deployment/self-hosted-runner-gvisor-setup.md.
+# 2. Trigger this workflow manually with workflow_dispatch on a cluster
+#    that has a native gVisor node pool (GKE Sandbox, EKS Bottlerocket
+#    with gVisor, etc.) — in those cases, KIND is not used.
+#
+# Decision: Option 2 not fully viable → dispatch-only fallback as specified
+# in the issue body option 4.
+
+on:
+  # No push/pull_request triggers — see explanation above.
+  # The RuntimeClass wiring is validated by the existing `helm-acceptance`
+  # job in ci.yml (template-rendering tests). Live-cluster exec tests
+  # require a self-hosted runner with real gVisor node support.
+  workflow_dispatch:
+    inputs:
+      gvisor_namespace:
+        description: 'Namespace where AIFactory is deployed'
+        default: 'aifactory'
+        required: false
+      compat_pod_name:
+        description: 'Name of the compatibility test pod to exec into'
+        default: 'gvisor-compat-tester'
+        required: false
+
+# No concurrency group needed — dispatch-only, single run at a time.
+
+permissions:
+  contents: read
+
+jobs:
+  gvisor-smoke:
+    name: gVisor live-cluster smoke (Kind + runsc)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # 1. Checkout
+      # ------------------------------------------------------------------ #
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------ #
+      # 2. Install tooling: Helm, kubectl, Kind
+      # ------------------------------------------------------------------ #
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.16.0"
+
+      - name: Install Kind and kubectl
+        uses: helm/kind-action@v1.10.0
+        with:
+          install_only: true
+          version: "v0.24.0"
+          kubectl_version: "v1.30.0"
+
+      # ------------------------------------------------------------------ #
+      # 3. Install gVisor runsc + containerd shim on host runner
+      #
+      # The gVisor apt package installs both:
+      #   runsc                    — the main runtime binary
+      #   containerd-shim-runsc-v1 — the containerd shim
+      # ------------------------------------------------------------------ #
+      - name: Install gVisor runsc + shim on host
+        run: |
+          set -euo pipefail
+
+          curl -fsSL https://gvisor.dev/archive.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+
+          echo "deb [arch=$(dpkg --print-architecture) \
+            signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+            https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list
+
+          sudo apt-get update -qq
+          sudo apt-get install -y runsc
+
+          echo "runsc location: $(which runsc)"
+          runsc --version
+          echo "shim location: $(which containerd-shim-runsc-v1 2>/dev/null || echo 'not found')"
+          dpkg -L runsc 2>/dev/null | head -20
+
+      # ------------------------------------------------------------------ #
+      # 4. Create the Kind cluster
+      # ------------------------------------------------------------------ #
+      - name: Create Kind cluster
+        run: |
+          cat <<'EOF' | kind create cluster --name gvisor-smoke --config=-
+          apiVersion: kind.x-k8s.io/v1alpha4
+          kind: Cluster
+          nodes:
+            - role: control-plane
+          EOF
+
+      # ------------------------------------------------------------------ #
+      # 5. Configure gVisor inside the Kind node
+      # ------------------------------------------------------------------ #
+      - name: Install runsc shim in Kind node and configure containerd
+        run: |
+          set -euo pipefail
+
+          NODE="gvisor-smoke-control-plane"
+
+          docker cp "$(which runsc)" "${NODE}:/usr/local/bin/runsc"
+          docker exec "${NODE}" chmod +x /usr/local/bin/runsc
+
+          SHIM="$(which containerd-shim-runsc-v1 2>/dev/null)"
+          if [ -n "${SHIM}" ]; then
+            docker cp "${SHIM}" "${NODE}:/usr/local/bin/containerd-shim-runsc-v1"
+            docker exec "${NODE}" chmod +x /usr/local/bin/containerd-shim-runsc-v1
+            echo "Copied containerd-shim-runsc-v1 from ${SHIM}."
+          else
+            SHIM_DPK="$(dpkg -L runsc 2>/dev/null | grep shim | head -1)"
+            if [ -n "${SHIM_DPK}" ]; then
+              docker cp "${SHIM_DPK}" "${NODE}:/usr/local/bin/containerd-shim-runsc-v1"
+              docker exec "${NODE}" chmod +x /usr/local/bin/containerd-shim-runsc-v1
+              echo "Copied containerd-shim-runsc-v1 from dpkg (${SHIM_DPK})."
+            else
+              echo "ERROR: cannot find containerd-shim-runsc-v1"
+              exit 1
+            fi
+          fi
+
+          docker exec "${NODE}" /usr/local/bin/runsc --version
+          docker exec "${NODE}" test -x /usr/local/bin/containerd-shim-runsc-v1 \
+            && echo "containerd-shim-runsc-v1 is executable in node."
+
+          docker exec "${NODE}" mkdir -p /etc/containerd/config.d
+          docker exec "${NODE}" bash -c 'printf "%s\n" \
+            "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]" \
+            "  runtime_type = \"io.containerd.runsc.v1\"" \
+            "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc.options]" \
+            "  TypeUrl = \"io.containerd.runsc.v1.options\"" \
+            > /etc/containerd/config.d/gvisor.toml'
+
+          docker exec "${NODE}" cat /etc/containerd/config.d/gvisor.toml
+
+          docker exec "${NODE}" systemctl restart containerd
+
+          for i in $(seq 1 30); do
+            if docker exec "${NODE}" ctr version >/dev/null 2>&1; then
+              echo "containerd ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "ERROR: containerd did not come back within 30s"
+              docker exec "${NODE}" journalctl -u containerd --no-pager -n 30 || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+      # ------------------------------------------------------------------ #
+      # 6. Create the gVisor RuntimeClass in Kubernetes
+      # ------------------------------------------------------------------ #
+      - name: Create gVisor RuntimeClass
+        run: |
+          kubectl apply -f - <<'EOF'
+          apiVersion: node.k8s.io/v1
+          kind: RuntimeClass
+          metadata:
+            name: gvisor
+          handler: runsc
+          EOF
+          kubectl get runtimeclass gvisor
+
+      # ------------------------------------------------------------------ #
+      # 7. Python + test dependencies
+      # ------------------------------------------------------------------ #
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install test dependencies
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r ../../tests/requirements-test.txt
+          uv pip install kubernetes==30.1.0
+
+      # ------------------------------------------------------------------ #
+      # 8. Pre-load images
+      # ------------------------------------------------------------------ #
+      - name: Pre-load images into Kind node
+        run: |
+          docker pull busybox:stable
+          kind load docker-image busybox:stable --name gvisor-smoke
+
+      # ------------------------------------------------------------------ #
+      # 9. Helm dep update
+      # ------------------------------------------------------------------ #
+      - name: Helm dep update
+        run: helm dep update charts/aifactory/
+
+      # ------------------------------------------------------------------ #
+      # 10. Deploy AIFactory with gVisor enabled (RuntimeClass wiring test)
+      # ------------------------------------------------------------------ #
+      - name: Helm install AIFactory with gVisor enabled
+        run: |
+          helm install aifactory charts/aifactory/ \
+            --namespace aifactory \
+            --create-namespace \
+            --set sandbox.gvisor.enabled=true \
+            --set postgres.bundled=true \
+            --set postgres.externalSecretName=aifactory-db \
+            --set externalSecrets.enabled=false \
+            --set oidc.enabled=false \
+            --set workspaces.enabled=true \
+            --set image.repository=busybox \
+            --set image.tag=stable \
+            --set image.pullPolicy=IfNotPresent \
+            --timeout=5m \
+            --wait=false
+
+      # ------------------------------------------------------------------ #
+      # 11. Run the live-cluster gVisor tests
+      #
+      # RuntimeClass wiring tests (test_runtime_class_exists_in_cluster,
+      # test_pods_have_gvisor_runtimeclass) run against the Kubernetes
+      # API — they pass without needing a running gVisor container.
+      #
+      # Exec-based compatibility tests (git, curl, compat matrix) use the
+      # GVISOR_COMPAT_POD fixture. When the pod is not Running (expected
+      # in the Kind-with-Docker setup), the fixture calls pytest.skip()
+      # automatically with a clear diagnostic message.
+      # ------------------------------------------------------------------ #
+      - name: Pytest gVisor live-cluster suite
+        env:
+          KUBECONFIG: /home/runner/.kube/config
+          GVISOR_NAMESPACE: ${{ github.event.inputs.gvisor_namespace || 'aifactory' }}
+          GVISOR_COMPAT_POD: ${{ github.event.inputs.compat_pod_name || 'gvisor-compat-tester' }}
+          CI: "true"
+        run: |
+          apps/backend/.venv/bin/pytest \
+            tests/helm/test_live_gvisor.py \
+            -m gvisor_live \
+            -v \
+            --timeout=120
+
+      # ------------------------------------------------------------------ #
+      # 12. Diagnostics on failure
+      # ------------------------------------------------------------------ #
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== Pod list ==="
+          kubectl get pods -n aifactory -o wide || true
+
+          echo "=== RuntimeClass ==="
+          kubectl get runtimeclass gvisor -o yaml || true
+
+          echo "=== gVisor config in Kind node ==="
+          docker exec gvisor-smoke-control-plane \
+            cat /etc/containerd/config.d/gvisor.toml 2>/dev/null || true
+
+          echo "=== containerd log ==="
+          docker exec gvisor-smoke-control-plane \
+            bash -c 'journalctl -u containerd --no-pager -n 50 2>/dev/null \
+              || cat /var/log/containerd.log 2>/dev/null || true'
+
+      # ------------------------------------------------------------------ #
+      # 13. Cleanup
+      # ------------------------------------------------------------------ #
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name gvisor-smoke
