@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added — GCP MCP catalog entry (#168, Epic #100)
+
+- **GCP catalog entry (`transport="http"`)** — closes the last gap in the default MCP server catalog (Epic #100). Google Cloud AI Companion MCP went GA in March 2026 and uses a remote-first HTTP transport rather than a local subprocess. The entry is auto-enabled when a project has GCP markers (`gcp/`, `app.yaml`, `cloudbuild.yaml`) and `GOOGLE_APPLICATION_CREDENTIALS` is set. See `apps/backend/agents/tools_pkg/mcp_catalog.py`.
+- **HTTP transport in `MCPCatalogEntry`** — the dataclass now supports `transport="http"` with `http_endpoint`. `build_server_config()` routes to `_build_http_config()` for HTTP entries, producing `{"type": "http", "url": "..."}` (the shape the Claude Agent SDK's HTTP MCP client expects). V1/V1.5 stdio entries are byte-for-byte unchanged.
+- **`GCP_MCP_ENDPOINT` env override** — the default GA endpoint (`https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp`) is overrideable at call time via `GCP_MCP_ENDPOINT`. Useful for VPC Service Controls perimeters, staging projects, and future GCP MCP servers (BigQuery, Cloud Run, etc.).
+- **Helm slot `mcpCredentials.gcp`** — new sub-block under `mcpCredentials` with `secretName` (GCP-dedicated Secret, overrides the shared `secretName` for the SA JSON mount) and `endpointOverride` (wires `GCP_MCP_ENDPOINT` into the pod). The existing `mcpCredentials.providers.gcp` file mount + env var is unchanged; the new block is additive.
+- **Docs** — GCP section added to `docs/docs/concepts/mcp-credentials.md` covering Workload Identity (preferred on GKE), service-account JSON setup, endpoint override, and troubleshooting.
+- **Tests** — `tests/test_mcp_catalog_gcp.py` (25 unit tests for catalog shape, marker detection, endpoint override, HTTP config shape, backward-compat) and `tests/helm/test_mcp_credentials_gcp.py` (8 Helm acceptance tests for secret mount, secretName override, and endpointOverride rendering).
+
 ### Added — v1.2 per-tenant audit-chain anchor (#208)
 
 - **Per-tenant HMAC-SHA256 signing keys** — the tenant reconciler issues one 32-byte KMS-wrapped key per isolated org (Option A: one chain + one key per tenant, ISO 27001 A.12.4.2/A.12.4.3 compliant). Keys are stored in `audit_signing_keys` with `org_id` set and mirrored to the tenant's Vault path for auditor handover.

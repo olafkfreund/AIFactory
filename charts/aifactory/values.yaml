@@ -634,6 +634,26 @@ mcpCredentials:
     gitlab: false        # injects GITLAB_TOKEN + GITLAB_INSTANCE_URL env
     azureDevOps: false   # injects AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN + AZURE_DEVOPS_ORG_SERVICE_URL env
 
+  # GCP-specific settings (V2 — issue #168, remote-first HTTP transport).
+  #
+  # These are ADDITIONAL to ``providers.gcp`` which controls the SA JSON
+  # file mount. Use them when the default Cloud AI Companion endpoint or
+  # the shared ``secretName`` don't suit your deployment.
+  gcp:
+    # Override the K8s Secret that holds the GCP service-account JSON.
+    # When empty (default), falls back to ``mcpCredentials.secretName``
+    # with the key ``gcp-service-account.json``. Set a distinct name here
+    # for deployments where the GCP SA JSON lives in its own Secret.
+    secretName: ""
+    # Override the Cloud AI Companion MCP endpoint URL. Set this for:
+    #   • VPC Service Controls perimeters (private endpoint required)
+    #   • Staging / non-prod GCP projects using a different project ID
+    #   • Future GCP MCP servers (BigQuery, Cloud Run, etc.) once GA
+    # When empty (default), the app uses the GA endpoint:
+    #   https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp
+    # Mapped to the ``GCP_MCP_ENDPOINT`` env var in the deployment template.
+    endpointOverride: ""
+
 # Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
 #
 # Default OFF — single-replica deployments work unchanged with no
