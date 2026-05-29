@@ -1,5 +1,7 @@
 # Design — ISO 27001 evidence + signed audit-chain anchor (Epic #35 #43)
 
+> **STATUS: shipped 2026-05-28** — closed by #43. Implementation PRs: #181, #182, #183, #184, #185, #186. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Locked from super-brainstorm 2026-05-28. Implementation in 2 PRs
 > after sign-off.
 
