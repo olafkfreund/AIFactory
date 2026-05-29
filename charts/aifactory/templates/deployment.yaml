@@ -534,10 +534,24 @@ spec:
                   key: azure-client-secret
             {{- end }}
             {{- if .Values.mcpCredentials.providers.gcp }}
-            # GCP MCP reads the SA JSON via GOOGLE_APPLICATION_CREDENTIALS.
-            # The file mount happens below; this env points at it.
+            # GCP MCP (issue #168) — remote-first HTTP transport via Cloud AI
+            # Companion. Two env vars needed:
+            #   GOOGLE_APPLICATION_CREDENTIALS: path to the SA JSON file
+            #     (the volume mount below places it at /etc/aifactory/gcp-sa.json).
+            #     The Cloud AI Companion MCP server reads this env var directly
+            #     and performs its own ADC exchange — AIFactory does not mint
+            #     OAuth2 tokens.
+            #   GCP_MCP_ENDPOINT: optional endpoint override consumed by
+            #     mcp_catalog._get_gcp_mcp_endpoint(). When empty the Python
+            #     code falls through to the GA default endpoint. Set when the
+            #     deployment uses VPC Service Controls, staging projects, or
+            #     future GCP MCP servers (BigQuery, Cloud Run, etc.).
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "/etc/aifactory/gcp-sa.json"
+            {{- if and .Values.mcpCredentials.gcp .Values.mcpCredentials.gcp.endpointOverride }}
+            - name: GCP_MCP_ENDPOINT
+              value: {{ .Values.mcpCredentials.gcp.endpointOverride | quote }}
+            {{- end }}
             {{- end }}
             {{- end }}
           livenessProbe:
@@ -703,9 +717,18 @@ spec:
                 path: kubeconfig
         {{- end }}
         {{- if .Values.mcpCredentials.providers.gcp }}
+        # GCP service-account JSON for Cloud AI Companion MCP (issue #168).
+        # ``mcpCredentials.gcp.secretName`` takes priority over the shared
+        # ``mcpCredentials.secretName`` so operators who store the GCP SA JSON
+        # in a dedicated Secret (e.g. synced from GCP Secret Manager) don't
+        # have to merge it into the combined credential Secret.
+        {{- $gcpSecretName := $secretName }}
+        {{- if and .Values.mcpCredentials.gcp .Values.mcpCredentials.gcp.secretName }}
+        {{- $gcpSecretName = .Values.mcpCredentials.gcp.secretName }}
+        {{- end }}
         - name: mcp-gcp-sa
           secret:
-            secretName: {{ $secretName | quote }}
+            secretName: {{ $gcpSecretName | quote }}
             defaultMode: 0400
             items:
               - key: gcp-service-account.json
