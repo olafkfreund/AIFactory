@@ -103,9 +103,10 @@ def test_per_tenant_anchor_unique_per_org_day(test_postgres_url: str) -> None:
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM audit_anchors WHERE id LIKE 'tenant-day-%'"))
         # Ensure a user exists (required by organizations.owner_id FK).
+        # Include all NOT NULL columns: role, is_active, password_hash.
         conn.execute(text("""
-            INSERT INTO users (id, email, password_hash)
-            VALUES (:uid, 'test@example.com', 'x')
+            INSERT INTO users (id, email, password_hash, role, is_active)
+            VALUES (:uid, 'tenant-anchor-test@example.com', 'x', 'user', TRUE)
             ON CONFLICT (id) DO NOTHING
         """), {"uid": user_id})
         # Ensure org exists (FK).
