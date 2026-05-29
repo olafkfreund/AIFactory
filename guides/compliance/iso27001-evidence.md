@@ -15,7 +15,7 @@ Each control entry below has three parts:
 - **AIFactory contribution** — what code, feature, or default in AIFactory demonstrates this.
 - **Operator responsibility** — what you must add on top.
 
-Coverage as of v1.1: **~30 controls directly evidenced**. ~80 of the 114 Annex A controls are organizational (policies, training, physical security, supplier relationships) and are out of AIFactory's scope by design.
+Coverage as of v1.1: **~31 controls directly evidenced** (Epic #35 9/9 shipped). ~80 of the 114 Annex A controls are organizational (policies, training, physical security, supplier relationships) and are out of AIFactory's scope by design.
 
 ## Scope statement
 
@@ -136,6 +136,13 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 - **AIFactory contribution**: Every admin action (org member add/remove, role change, API key issuance, audit erasure) produces an `AuditLog` row tagged with `classification='confidential'`.
 - **Operator responsibility**: Include the admin log in your quarterly review. Investigate any `audit.erasure` events.
 
+### A.12.4.1 Audit of LLM calls (multi-provider deployments)
+
+- **AIFactory contribution**: When LiteLLM gateway is enabled (Epic #35 #38, opt-in via `litellm.enabled=true`), all non-Claude LLM calls (OpenAI, Codex, Gemini, Ollama) are audited via LiteLLM's admin API: prompt, response, tokens, cost routed to `audit_hooks` table. Claude calls via Claude Agent SDK are covered by the existing chain-anchor audit mechanism (Epic #35 #43), but do NOT receive per-tenant budget enforcement, rate-limiting, or model allowlist enforcement in v1.1.
+- **Known v1.1 limitation**: Claude calls bypass LiteLLM enforcement (scope revised after design review). Applies only to Claude; other providers fully gated. v1.2 closes via either (a) in-process Claude-SDK wrapper mirroring LiteLLM enforcement, or (b) LiteLLM Anthropic-format passthrough if upstream adds support (design doc §Scope).
+- **Operator responsibility**: When `litellm.enabled=true`, monitor the audit hooks table for LLM spend & usage. Schedule a quarterly audit of per-tenant token spend. Document your per-tenant budget caps in your DPIA. For Claude calls, rely on external Anthropic billing dashboards until v1.2 adds enforcement.
+
+
 ### A.12.6.1 Management of technical vulnerabilities
 
 - **AIFactory contribution**: CI (`.github/workflows/ci.yml`) runs Ruff lint, full test suite (~2400 tests), Helm lint + kubeconform, multi-arch container build with provenance attestations, dependency-update bot (Dependabot).
@@ -173,6 +180,13 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 - **AIFactory contribution**: Failure-safe contract everywhere — broken KMS / Redis / OTel / SAML never crashes the web pod (each integration wraps in try/except). Defense in depth: KMS + signed audit anchor + per-IdP collision guard.
 - **Operator responsibility**: Inherit AIFactory's failure-safe defaults; don't disable error handling in your forks.
+
+### A.14.2 PII redaction in LLM audit (Design considerations)
+
+- **AIFactory contribution**: When LiteLLM gateway is enabled with the PII redactor module (Epic #35 #38), regular-expression patterns (SSN, email, phone, credit-card-adjacent patterns) are redacted from `audit_hooks.prompt` and `audit_hooks.response` before storage, replacing with placeholders like `[SSN]` / `[EMAIL]` / `[PHONE]`.
+- **Known v1.1 limitation**: PII redaction is AUDIT-ROW ONLY. The LLM itself still receives plaintext PII in the original prompt — the redaction prevents audit-log disclosure to downstream readers (e.g., engineers reviewing logs), not to the LLM vendor. Intrinsic to LLM use. v1.2 closes via `litellm.audit.scrubBeforeSend` mode (design doc §Scope), which removes PII before sending to the LLM vendor.
+- **Operator responsibility**: Document this audit-log-only scope in your DPIA. Ensure your Data Processor Agreement with the LLM vendor (Anthropic, OpenAI, etc.) explicitly permits you to send customer PII as-is. In v1.2, switch to `scrubBeforeSend=true` if you want LLM-vendor oblivion.
+
 
 ### A.14.2.8 System security testing
 
