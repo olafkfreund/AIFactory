@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Documentation
+
+- Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines).
+
 ### Added — GCP MCP catalog entry (#168, Epic #100)
 
 - **GCP catalog entry (`transport="http"`)** — closes the last gap in the default MCP server catalog (Epic #100). Google Cloud AI Companion MCP went GA in March 2026 and uses a remote-first HTTP transport rather than a local subprocess. The entry is auto-enabled when a project has GCP markers (`gcp/`, `app.yaml`, `cloudbuild.yaml`) and `GOOGLE_APPLICATION_CREDENTIALS` is set. See `apps/backend/agents/tools_pkg/mcp_catalog.py`.

@@ -1,143 +1,866 @@
 /**
- * AIFactory landing-page styling.  Primary palette comes from the
- * AIFactory logo blue (#1a73e8).  All animations respect
- * prefers-reduced-motion so accessibility users see a still page.
+ * Theme ported from olafkfreund/skill_pool's terminal.css — see PR for the
+ * source reference: https://github.com/olafkfreund/skill_pool/blob/main/site/css/terminal.css
+ *
+ * Visual identity: pure black (#000000) background, phosphor-green (#d5ffd5)
+ * foreground, JetBrains Mono monospace font, CRT scanlines + vignette overlay.
+ *
+ * This file maps skill_pool's CSS variables into Docusaurus/Infima's expected
+ * variable shape.  The site is dark-only — colorMode.disableSwitch is true in
+ * docusaurus.config.ts so the light-mode overrides here are never used, but
+ * are kept for defensive completeness.
+ *
+ * Font loading: JetBrains Mono is loaded via Google Fonts @import below.
+ * If your deployment blocks external font CDNs, self-host the font woff2
+ * files in docs/static/fonts/ and replace the @import with @font-face rules.
  */
 
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ─── Source palette (from skill_pool terminal.css) ────────────────────── */
+/*
+  --bg:           #000000   pure black
+  --bg-elev:      #050805   slightly elevated surface
+  --bg-glass:     rgba(0, 18, 8, 0.55)
+  --fg:           #d5ffd5   phosphor green text
+  --fg-dim:       #6fa86f   dimmed green
+  --fg-muted:     #3d6a3d   muted / placeholder green
+  --accent:       #00ff88   bright accent
+  --accent-dim:   #00b860   dimmed accent
+  --accent-warn:  #ffd200   warning yellow
+  --accent-err:   #ff5577   error red
+  --border:       #144a14   dark border
+  --border-bright:#2a8a2a   bright border
+  --shadow-glow:  0 0 14px rgba(0, 255, 136, 0.35)
+  --shadow-glow-soft: 0 0 4px rgba(0, 255, 136, 0.15)
+  --max-w:        1180px
+*/
+
+/* ─── Infima / Docusaurus variable overrides ───────────────────────────── */
+
 :root {
-  --ifm-color-primary: #1a73e8;
-  --ifm-color-primary-dark: #1668d1;
-  --ifm-color-primary-darker: #1462c4;
-  --ifm-color-primary-darkest: #1051a2;
-  --ifm-color-primary-light: #2e80ea;
-  --ifm-color-primary-lighter: #3a87ec;
-  --ifm-color-primary-lightest: #5e9cf0;
-  --ifm-code-font-size: 92%;
-  --docusaurus-highlighted-code-line-bg: rgba(26, 115, 232, 0.08);
+  /* Primary color ramp — maps --accent / --accent-dim */
+  --ifm-color-primary:          #00ff88;
+  --ifm-color-primary-dark:     #00b860;
+  --ifm-color-primary-darker:   #008f4d;
+  --ifm-color-primary-darkest:  #006b3a;
+  --ifm-color-primary-light:    #33ffa0;
+  --ifm-color-primary-lighter:  #66ffb8;
+  --ifm-color-primary-lightest: #99ffd0;
 
-  /* AIFactory-brand accent for gradients + glows.  Slightly warmer than
-     the primary so the hero gradient reads with depth rather than flat. */
-  --aif-accent-warm: #7c3aed;
-  --aif-accent-cool: #06b6d4;
+  /* Surface colors */
+  --ifm-background-color:         #000000;
+  --ifm-background-surface-color: #050805;
+
+  /* Content / emphasis ramp */
+  --ifm-color-content:            #d5ffd5;
+  --ifm-color-content-secondary:  #6fa86f;
+  --ifm-color-emphasis-100:       #0a1a0a;
+  --ifm-color-emphasis-200:       #144a14;
+  --ifm-color-emphasis-300:       #1e6b1e;
+  --ifm-color-emphasis-400:       #2a8a2a;
+  --ifm-color-emphasis-500:       #3d6a3d;
+  --ifm-color-emphasis-600:       #4d804d;
+  --ifm-color-emphasis-700:       #6fa86f;
+  --ifm-color-emphasis-800:       #a0cca0;
+  --ifm-color-emphasis-900:       #d5ffd5;
+
+  /* Typography */
+  --ifm-font-family-base:       "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  --ifm-font-family-monospace:  "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  --ifm-font-size-base:         15px;
+  --ifm-line-height-base:       1.65;
+  --ifm-code-font-size:         95%;
+
+  /* Navbar */
+  --ifm-navbar-background-color:      #000000;
+  --ifm-navbar-shadow:                0 1px 0 #144a14;
+  --ifm-navbar-link-color:            #6fa86f;
+  --ifm-navbar-link-hover-color:      #00ff88;
+  --ifm-navbar-link-active-color:     #00ff88;
+  --ifm-navbar-height:                3.5rem;
+
+  /* Footer */
+  --ifm-footer-background-color: #050805;
+  --ifm-footer-color:            #3d6a3d;
+  --ifm-footer-link-color:       #6fa86f;
+  --ifm-footer-link-hover-color: #00ff88;
+  --ifm-footer-title-color:      #d5ffd5;
+  --ifm-footer-padding-vertical: 2.5rem;
+
+  /* Links */
+  --ifm-link-color:       #00ff88;
+  --ifm-link-hover-color: #ffffff;
+
+  /* Code blocks */
+  --ifm-code-background:   rgba(0, 18, 8, 0.55);
+  --ifm-code-color:        #00ff88;
+  --ifm-pre-background:    #050805;
+  --ifm-pre-color:         #d5ffd5;
+  --ifm-pre-border-radius: 0;
+  --ifm-pre-padding:       1rem 1.25rem;
+
+  /* Highlighted code line */
+  --docusaurus-highlighted-code-line-bg: rgba(0, 255, 136, 0.1);
+
+  /* Borders and dividers */
+  --ifm-color-gray-100:    #0a1a0a;
+  --ifm-color-gray-200:    #144a14;
+  --ifm-color-gray-300:    #2a8a2a;
+  --ifm-color-gray-400:    #3d6a3d;
+  --ifm-color-gray-500:    #4d804d;
+  --ifm-color-gray-600:    #6fa86f;
+  --ifm-color-gray-700:    #a0cca0;
+  --ifm-color-gray-800:    #c8eec8;
+  --ifm-color-gray-900:    #d5ffd5;
+
+  /* Sidebar */
+  --ifm-sidebar-background-color:   #000000;
+  --doc-sidebar-width:               260px;
+
+  /* Table of contents */
+  --ifm-toc-border-color:       #144a14;
+  --ifm-toc-link-color:         #6fa86f;
+
+  /* Alerts / callouts */
+  --ifm-alert-background-color:  rgba(0, 255, 136, 0.04);
+  --ifm-alert-border-color:      #00ff88;
+  --ifm-alert-color:             #d5ffd5;
+
+  /* Scrollbar — webkit only */
+  --aif-scrollbar-track: #050805;
+  --aif-scrollbar-thumb: #144a14;
+  --aif-scrollbar-thumb-hover: #2a8a2a;
+
+  /* Glow helpers from skill_pool */
+  --aif-glow:      0 0 14px rgba(0, 255, 136, 0.35);
+  --aif-glow-soft: 0 0 4px rgba(0, 255, 136, 0.15);
+  --aif-border:    #144a14;
+  --aif-border-bright: #2a8a2a;
+  --aif-fg:        #d5ffd5;
+  --aif-fg-dim:    #6fa86f;
+  --aif-fg-muted:  #3d6a3d;
+  --aif-accent:    #00ff88;
+  --aif-warn:      #ffd200;
+  --aif-err:       #ff5577;
 }
 
+/* Dark theme — duplicate for Docusaurus's data-theme selector (same values:
+   the site is dark-only, but Infima looks for [data-theme='dark'] for some
+   components). */
 [data-theme='dark'] {
-  --ifm-color-primary: #5e9cf0;
-  --ifm-color-primary-dark: #4790ee;
-  --ifm-color-primary-darker: #3a87ec;
-  --ifm-color-primary-darkest: #1a73e8;
-  --ifm-color-primary-light: #75a8f2;
-  --ifm-color-primary-lighter: #82b0f3;
-  --ifm-color-primary-lightest: #b1ccf8;
-  --docusaurus-highlighted-code-line-bg: rgba(94, 156, 240, 0.15);
+  --ifm-color-primary:          #00ff88;
+  --ifm-color-primary-dark:     #00b860;
+  --ifm-color-primary-darker:   #008f4d;
+  --ifm-color-primary-darkest:  #006b3a;
+  --ifm-color-primary-light:    #33ffa0;
+  --ifm-color-primary-lighter:  #66ffb8;
+  --ifm-color-primary-lightest: #99ffd0;
+
+  --ifm-background-color:         #000000;
+  --ifm-background-surface-color: #050805;
+
+  --ifm-color-content:           #d5ffd5;
+  --ifm-color-content-secondary: #6fa86f;
+  --ifm-color-emphasis-100:      #0a1a0a;
+  --ifm-color-emphasis-200:      #144a14;
+  --ifm-color-emphasis-300:      #1e6b1e;
+  --ifm-color-emphasis-400:      #2a8a2a;
+  --ifm-color-emphasis-500:      #3d6a3d;
+  --ifm-color-emphasis-600:      #4d804d;
+  --ifm-color-emphasis-700:      #6fa86f;
+  --ifm-color-emphasis-800:      #a0cca0;
+  --ifm-color-emphasis-900:      #d5ffd5;
+
+  --ifm-navbar-background-color:      #000000;
+  --ifm-navbar-shadow:                0 1px 0 #144a14;
+  --ifm-navbar-link-color:            #6fa86f;
+  --ifm-navbar-link-hover-color:      #00ff88;
+
+  --ifm-footer-background-color: #050805;
+  --ifm-footer-color:            #3d6a3d;
+  --ifm-footer-link-color:       #6fa86f;
+  --ifm-footer-link-hover-color: #00ff88;
+
+  --ifm-link-color:       #00ff88;
+  --ifm-link-hover-color: #ffffff;
+
+  --ifm-code-background:  rgba(0, 18, 8, 0.55);
+  --ifm-code-color:       #00ff88;
+  --ifm-pre-background:   #050805;
+  --ifm-pre-color:        #d5ffd5;
+
+  --docusaurus-highlighted-code-line-bg: rgba(0, 255, 136, 0.1);
+
+  --ifm-toc-border-color:  #144a14;
+  --ifm-toc-link-color:    #6fa86f;
+
+  --ifm-color-gray-100:    #0a1a0a;
+  --ifm-color-gray-200:    #144a14;
+  --ifm-color-gray-300:    #2a8a2a;
+  --ifm-color-gray-400:    #3d6a3d;
+  --ifm-color-gray-500:    #4d804d;
+  --ifm-color-gray-600:    #6fa86f;
+  --ifm-color-gray-700:    #a0cca0;
+  --ifm-color-gray-800:    #c8eec8;
+  --ifm-color-gray-900:    #d5ffd5;
 }
 
-/* ─── Hero ─────────────────────────────────────────────────────────── */
+/* ─── Base / global resets ──────────────────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #000000;
+  color: #d5ffd5;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ─── CRT scanlines (body::before from terminal.css) ───────────────────── */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 255, 136, 0.025) 0,
+      rgba(0, 255, 136, 0.025) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  mix-blend-mode: screen;
+}
+
+/* ─── Vignette glow (body::after from terminal.css) ────────────────────── */
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 0%,
+    transparent 55%,
+    rgba(0, 0, 0, 0.85) 100%
+  );
+}
+
+/* ─── Selection ─────────────────────────────────────────────────────────── */
+
+::selection {
+  background: #00ff88;
+  color: #000000;
+}
+
+/* ─── Links ─────────────────────────────────────────────────────────────── */
+
+a {
+  color: #00ff88;
+  text-decoration: none;
+  border-bottom: 1px dotted #00b860;
+  transition: all 120ms ease;
+}
+
+a:hover {
+  color: #ffffff;
+  border-bottom-color: #ffffff;
+  text-shadow: 0 0 14px rgba(0, 255, 136, 0.35);
+}
+
+/* Docusaurus overrides nav links specifically — restore terminal style */
+.navbar__link,
+.menu__link,
+.footer__link-item a {
+  border-bottom: none;
+  text-shadow: none;
+}
+
+/* ─── Scrollbar styling (WebKit) ─────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050805;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #144a14;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2a8a2a;
+}
+
+/* ─── Navbar ─────────────────────────────────────────────────────────────── */
+
+.navbar {
+  background: rgba(0, 0, 0, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid #144a14;
+  box-shadow: none;
+}
+
+.navbar__title {
+  color: #00ff88;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 4px rgba(0, 255, 136, 0.15);
+}
+
+.navbar__title::before {
+  content: "> ";
+  color: #6fa86f;
+}
+
+.navbar__link {
+  color: #6fa86f;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: color 120ms ease;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: #00ff88;
+  text-shadow: 0 0 4px rgba(0, 255, 136, 0.15);
+}
+
+.navbar__brand:hover {
+  text-decoration: none;
+}
+
+/* Navbar logo — keep AIFactory's own logo */
+.navbar__logo {
+  filter: none;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+
+.menu {
+  background: #000000;
+  font-size: 13px;
+}
+
+.menu__link {
+  color: #6fa86f;
+  border-radius: 0;
+  transition: all 100ms ease;
+  border-left: 2px solid transparent;
+  padding-left: 12px;
+}
+
+.menu__link:hover {
+  background: rgba(0, 255, 136, 0.04);
+  color: #00ff88;
+  border-left-color: #2a8a2a;
+}
+
+.menu__link--active,
+.menu__link--active:hover {
+  background: rgba(0, 255, 136, 0.06);
+  color: #00ff88;
+  border-left-color: #00ff88;
+}
+
+.menu__list-item-collapsible:hover,
+.menu__list-item-collapsible--active {
+  background: rgba(0, 255, 136, 0.04);
+}
+
+.menu__caret::before {
+  border-color: #6fa86f;
+}
+
+.menu__list-item-collapsible:hover .menu__caret::before {
+  border-color: #00ff88;
+}
+
+/* Sidebar category label */
+.menu__list-item > .menu__link--sublist {
+  color: #d5ffd5;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+}
+
+/* ─── Table of contents ──────────────────────────────────────────────────── */
+
+.table-of-contents {
+  border-left: 1px solid #144a14;
+  font-size: 13px;
+}
+
+.table-of-contents__link {
+  color: #6fa86f;
+  border-bottom: none;
+  transition: all 100ms ease;
+}
+
+.table-of-contents__link:hover,
+.table-of-contents__link--active {
+  color: #00ff88;
+  border-bottom: none;
+  text-shadow: none;
+}
+
+/* ─── Doc article ─────────────────────────────────────────────────────────── */
+
+.markdown {
+  color: #d5ffd5;
+}
+
+.markdown h1 {
+  color: #d5ffd5;
+  letter-spacing: -0.03em;
+  border-bottom: 1px solid #144a14;
+  padding-bottom: 0.5rem;
+}
+
+.markdown h2 {
+  color: #d5ffd5;
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid #144a14;
+  padding-bottom: 0.3rem;
+}
+
+.markdown h3 {
+  color: #00ff88;
+  font-weight: 600;
+}
+
+.markdown h3::before {
+  content: "▸ ";
+  color: #00ff88;
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  color: #d5ffd5;
+}
+
+.markdown p {
+  color: #d5ffd5;
+  line-height: 1.7;
+}
+
+.markdown strong {
+  color: #d5ffd5;
+}
+
+.markdown em {
+  color: #a0cca0;
+}
+
+/* ─── Lists ──────────────────────────────────────────────────────────────── */
+
+.markdown ul,
+.markdown ol {
+  color: #6fa86f;
+  padding-left: 1.5rem;
+}
+
+.markdown li {
+  margin-bottom: 6px;
+  color: #d5ffd5;
+}
+
+.markdown li::marker {
+  color: #00ff88;
+}
+
+/* ─── Inline code ────────────────────────────────────────────────────────── */
+
+.markdown code,
+code {
+  background: rgba(0, 18, 8, 0.55);
+  border: 1px solid #144a14;
+  border-radius: 0;
+  color: #00ff88;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 6px;
+}
+
+/* ─── Code blocks (pre) ──────────────────────────────────────────────────── */
+
+pre {
+  background: #050805 !important;
+  border: 1px solid #144a14;
+  border-left: 3px solid #00ff88;
+  border-radius: 0 !important;
+  color: #d5ffd5;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+  position: relative;
+}
+
+pre code {
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Prism token overrides — keep Dracula but tint to green palette */
+.theme-code-block {
+  background: #050805 !important;
+  border: 1px solid #144a14;
+  border-left: 3px solid #00ff88;
+  border-radius: 0;
+}
+
+.theme-code-block pre {
+  border: none;
+}
+
+/* Code block title bar */
+.theme-code-block-highlighted-line {
+  background: rgba(0, 255, 136, 0.1);
+  display: block;
+  margin: 0 -1.25rem;
+  padding: 0 1.25rem;
+}
+
+/* Code copy button */
+.clean-btn.copyButton_node_modules-\@docusaurus-theme-classic-lib-theme-CodeBlock-CopyButton-styles-module,
+button[class*="copyButton"] {
+  color: #6fa86f;
+  transition: color 120ms ease;
+}
+
+button[class*="copyButton"]:hover {
+  color: #00ff88;
+}
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+
+.markdown table {
+  border-collapse: collapse;
+  border: 1px solid #144a14;
+  font-size: 13px;
+  width: 100%;
+}
+
+.markdown th,
+.markdown td {
+  border-bottom: 1px solid #144a14;
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: #050805;
+  color: #00ff88;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.markdown td {
+  color: #6fa86f;
+}
+
+.markdown tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown tr:hover td {
+  background: rgba(0, 255, 136, 0.03);
+}
+
+/* ─── Blockquote ─────────────────────────────────────────────────────────── */
+
+.markdown blockquote {
+  background: rgba(0, 255, 136, 0.04);
+  border-left: 3px solid #00ff88;
+  color: #6fa86f;
+  padding: 14px 18px;
+  margin: 20px 0;
+}
+
+.markdown blockquote p {
+  color: #6fa86f;
+  margin: 0;
+}
+
+/* ─── Admonitions / callouts ─────────────────────────────────────────────── */
+
+.alert {
+  background: rgba(0, 18, 8, 0.55) !important;
+  border: 1px solid #144a14;
+  border-left: 3px solid #00ff88;
+  border-radius: 0;
+  color: #d5ffd5;
+}
+
+.alert--warning,
+.alert[class*="warning"] {
+  border-left-color: #ffd200;
+  background: rgba(255, 210, 0, 0.04) !important;
+}
+
+.alert--danger,
+.alert[class*="danger"] {
+  border-left-color: #ff5577;
+  background: rgba(255, 85, 119, 0.04) !important;
+}
+
+.alert--info,
+.alert[class*="info"] {
+  border-left-color: #00ff88;
+  background: rgba(0, 255, 136, 0.04) !important;
+}
+
+.alert--success,
+.alert[class*="success"] {
+  border-left-color: #00b860;
+  background: rgba(0, 184, 96, 0.04) !important;
+}
+
+.alert .alert__heading {
+  color: #00ff88;
+}
+
+.alert--warning .alert__heading {
+  color: #ffd200;
+}
+
+.alert--danger .alert__heading {
+  color: #ff5577;
+}
+
+.admonitionContent_node_modules-\@docusaurus-theme-classic-lib-theme-Admonition-Layout-styles-module p,
+.admonitionContent p {
+  color: #d5ffd5;
+}
+
+/* ─── Breadcrumbs ────────────────────────────────────────────────────────── */
+
+.breadcrumbs__link {
+  color: #6fa86f;
+  border-bottom: none;
+  transition: color 120ms ease;
+}
+
+.breadcrumbs__link:hover {
+  color: #00ff88;
+  background: transparent;
+}
+
+.breadcrumbs__item--active .breadcrumbs__link {
+  color: #d5ffd5;
+}
+
+/* ─── Pagination ─────────────────────────────────────────────────────────── */
+
+.pagination-nav__link {
+  background: #050805;
+  border: 1px solid #144a14;
+  border-radius: 0;
+  color: #6fa86f;
+  transition: all 150ms ease;
+}
+
+.pagination-nav__link:hover {
+  background: rgba(0, 255, 136, 0.04);
+  border-color: #2a8a2a;
+  color: #00ff88;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.35);
+  text-decoration: none;
+}
+
+.pagination-nav__sublabel {
+  color: #3d6a3d;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pagination-nav__label {
+  color: #d5ffd5;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+
+.footer {
+  background: #050805;
+  border-top: 1px solid #144a14;
+  color: #3d6a3d;
+  font-size: 12px;
+}
+
+.footer__title {
+  color: #d5ffd5;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.footer__link-item {
+  color: #6fa86f;
+  border-bottom: none;
+  transition: color 120ms ease;
+  font-size: 13px;
+}
+
+.footer__link-item:hover {
+  color: #00ff88;
+  text-decoration: none;
+}
+
+.footer__copyright {
+  color: #3d6a3d;
+  font-size: 11px;
+  margin-top: 1.5rem;
+}
+
+/* ─── Search / DocSearch ─────────────────────────────────────────────────── */
+
+.DocSearch-Button {
+  background: transparent;
+  border: 1px solid #144a14;
+  border-radius: 0;
+  color: #6fa86f;
+  transition: all 120ms ease;
+}
+
+.DocSearch-Button:hover {
+  background: transparent;
+  border-color: #00ff88;
+  box-shadow: 0 0 4px rgba(0, 255, 136, 0.15);
+  color: #00ff88;
+}
+
+.DocSearch-Button-Placeholder {
+  font-size: 12px;
+  color: #3d6a3d;
+}
+
+.DocSearch-Button-Key {
+  background: #050805;
+  border: 1px solid #144a14;
+  color: #3d6a3d;
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
+/* ─── Mermaid diagrams ───────────────────────────────────────────────────── */
+
+.docusaurus-mermaid-container {
+  background: #050805;
+  border: 1px solid #144a14;
+  overflow-x: auto;
+  padding: 24px;
+  margin: 24px 0;
+}
+
+.docusaurus-mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ─── Tags ───────────────────────────────────────────────────────────────── */
+
+.tag_node_modules-\@docusaurus-theme-classic-lib-theme-Tag-styles-module,
+.tag {
+  background: rgba(0, 18, 8, 0.55);
+  border: 1px solid #144a14;
+  border-radius: 0;
+  color: #6fa86f;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  transition: all 120ms ease;
+}
+
+.tag:hover {
+  background: rgba(0, 255, 136, 0.04);
+  border-color: #2a8a2a;
+  color: #00ff88;
+}
+
+/* ─── Hero / landing page ─────────────────────────────────────────────────── */
 
 .hero-banner {
-  position: relative;
-  overflow: hidden;
-  padding: 6rem 0 7rem;
-  text-align: center;
-  background: linear-gradient(
-    135deg,
-    var(--ifm-color-primary-darkest) 0%,
-    var(--ifm-color-primary) 60%,
-    var(--aif-accent-warm) 100%
-  );
-  color: white;
+  background: #000000;
+  border-bottom: 1px solid #144a14;
+  color: #d5ffd5;
   isolation: isolate;
+  overflow: hidden;
+  padding: 5rem 0 6rem;
+  position: relative;
+  text-align: center;
 }
 
-/* Background "orbs" that slowly drift across the hero.  Pure CSS; no JS
-   library involved.  Three orbs at different speeds creates depth. */
-.hero-orbs {
+/* Radial green glow behind the hero content */
+.hero-banner::before {
+  content: "";
   position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.55;
-  animation: orb-drift 22s ease-in-out infinite;
-}
-
-.orb-1 {
-  width: 480px;
-  height: 480px;
-  background: var(--aif-accent-cool);
-  top: -120px;
-  left: -100px;
-  animation-delay: 0s;
-}
-
-.orb-2 {
-  width: 380px;
-  height: 380px;
-  background: var(--aif-accent-warm);
-  top: 30%;
-  right: -100px;
-  animation-delay: -7s;
-  animation-duration: 27s;
-}
-
-.orb-3 {
-  width: 320px;
-  height: 320px;
-  background: #ffffff;
-  bottom: -100px;
+  top: 20%;
   left: 50%;
-  opacity: 0.3;
-  animation-delay: -14s;
-  animation-duration: 30s;
-}
-
-@keyframes orb-drift {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-  }
-  33% {
-    transform: translate(40px, -30px) scale(1.1);
-  }
-  66% {
-    transform: translate(-30px, 40px) scale(0.95);
-  }
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(0, 255, 136, 0.08), transparent 70%);
+  pointer-events: none;
+  filter: blur(40px);
+  z-index: 0;
 }
 
 .hero-content {
+  animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
   position: relative;
   z-index: 1;
-  animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .hero-logo {
-  width: 96px;
+  filter: drop-shadow(0 0 14px rgba(0, 255, 136, 0.35));
   height: 96px;
   margin-bottom: 1.5rem;
-  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25));
+  width: 96px;
 }
 
 .hero-title {
-  font-size: 3.5rem;
-  font-weight: 800;
+  color: #d5ffd5;
+  font-size: clamp(2.25rem, 6vw, 4rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
   margin-bottom: 0.75rem;
-  letter-spacing: -0.02em;
-  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.15);
+  text-shadow: none;
 }
 
 .hero-banner .tagline {
-  font-size: 1.3rem;
-  opacity: 0.95;
-  margin-bottom: 1.5rem;
+  color: #6fa86f;
+  font-size: 1.15rem;
   font-weight: 400;
+  margin-bottom: 1.5rem;
+  opacity: 1;
 }
 
-/* Compact pill row that shows what AIFactory is, at a glance.  Replaces
-   the "scroll down to read 6 features" friction. */
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
@@ -147,197 +870,280 @@
 }
 
 .hero-badge {
-  display: inline-block;
-  padding: 0.3rem 0.85rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  font-size: 0.85rem;
-  font-weight: 500;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: transparent;
+  border: 1px solid #144a14;
+  border-radius: 0;
+  color: #3d6a3d;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  padding: 3px 10px;
 }
 
 .hero-cta {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   justify-content: center;
   margin-top: 1.5rem;
-  flex-wrap: wrap;
+}
+
+.hero-cta .button {
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .hero-cta-secondary {
-  color: white !important;
-  border-color: rgba(255, 255, 255, 0.6) !important;
-}
-.hero-cta-secondary:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+  background: transparent !important;
+  border-color: #2a8a2a !important;
+  color: #6fa86f !important;
 }
 
-/* ─── Section headers ─────────────────────────────────────────────── */
+.hero-cta-secondary:hover {
+  background: transparent !important;
+  border-color: #00ff88 !important;
+  color: #00ff88 !important;
+}
+
+/* ─── Feature cards ───────────────────────────────────────────────────────── */
 
 .features-section,
 .recent-section {
-  padding: 5rem 1rem;
-  max-width: 1200px;
+  max-width: 1180px;
   margin: 0 auto;
+  padding: 4rem 1rem;
 }
 
 .features-header,
 .recent-header {
+  margin-bottom: 2.5rem;
   text-align: center;
-  margin-bottom: 3rem;
 }
 
 .features-header h2,
 .recent-header h2 {
-  font-size: 2.25rem;
+  color: #d5ffd5;
+  font-size: 2rem;
   font-weight: 700;
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
 }
 
 .features-subtitle {
-  font-size: 1.1rem;
-  color: var(--ifm-color-emphasis-700);
-  max-width: 600px;
+  color: #6fa86f;
+  font-size: 1rem;
   margin: 0 auto;
+  max-width: 600px;
 }
-
-/* ─── Feature cards ───────────────────────────────────────────────── */
 
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .feature-card {
-  padding: 1.75rem;
-  border-radius: 12px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-background-surface-color);
-  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  background: #050805;
+  border: 1px solid #144a14;
+  border-radius: 0;
+  padding: 1.5rem;
+  position: relative;
+  transition: all 180ms ease;
 }
 
 .feature-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 32px rgba(26, 115, 232, 0.12);
-  border-color: var(--ifm-color-primary-light);
+  border-color: #2a8a2a;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.35);
+  transform: translateY(-2px);
 }
 
 .feature-icon {
-  font-size: 2rem;
-  margin-bottom: 0.75rem;
   display: inline-block;
+  font-size: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .feature-card h3 {
-  color: var(--ifm-color-primary);
-  margin-top: 0;
+  color: #00ff88;
+  font-size: 14px;
+  letter-spacing: 0.05em;
   margin-bottom: 0.75rem;
-  font-size: 1.25rem;
+  margin-top: 0;
+  text-transform: uppercase;
+}
+
+.feature-card h3::before {
+  content: "[ ";
+  color: #3d6a3d;
+}
+
+.feature-card h3::after {
+  content: " ]";
+  color: #3d6a3d;
 }
 
 .feature-card p {
-  color: var(--ifm-color-emphasis-800);
+  color: #6fa86f;
+  font-size: 13px;
   line-height: 1.6;
   margin: 0;
 }
 
-/* ─── "Recently shipped" timeline ─────────────────────────────────── */
+/* ─── "Recently shipped" section ─────────────────────────────────────────── */
 
 .recent-section {
-  background: var(--ifm-color-emphasis-100);
-  border-radius: 16px;
-  margin: 2rem auto 5rem;
+  background: #050805;
+  border: 1px solid #144a14;
+  border-radius: 0;
+  margin: 1rem auto 4rem;
+  padding: 2.5rem;
 }
 
 [data-theme='dark'] .recent-section {
-  background: var(--ifm-color-emphasis-200);
+  background: #050805;
 }
 
 .recent-timeline {
   display: grid;
+  gap: 1.25rem;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
 }
 
 .recent-item {
-  padding: 1.5rem;
-  border-radius: 10px;
-  background: var(--ifm-background-color);
-  border-left: 3px solid var(--ifm-color-primary);
-  transition: transform 200ms ease, box-shadow 200ms ease;
+  background: #000000;
+  border: 1px solid #144a14;
+  border-left: 3px solid #00ff88;
+  border-radius: 0;
+  padding: 1.25rem;
+  transition: all 180ms ease;
 }
 
 .recent-item:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+  border-left-color: #00ff88;
+  box-shadow: 0 0 4px rgba(0, 255, 136, 0.15);
+  transform: translateY(-1px);
 }
 
 .recent-when {
+  color: #00ff88;
   display: inline-block;
-  font-size: 0.8rem;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ifm-color-primary);
-  margin-bottom: 0.5rem;
 }
 
 .recent-title {
-  font-size: 1.15rem;
-  margin: 0 0 0.5rem;
+  color: #d5ffd5;
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
 }
 
 .recent-item p {
-  color: var(--ifm-color-emphasis-700);
-  font-size: 0.95rem;
+  color: #6fa86f;
+  font-size: 13px;
   line-height: 1.55;
   margin: 0 0 0.75rem;
 }
 
 .recent-link {
-  font-size: 0.9rem;
+  color: #00ff88;
+  font-size: 13px;
   font-weight: 600;
 }
 
-/* ─── Bottom CTA strip ───────────────────────────────────────────── */
+/* ─── Bottom CTA strip ───────────────────────────────────────────────────── */
 
 .cta-strip {
+  background: #050805;
+  border-top: 1px solid #144a14;
+  color: #d5ffd5;
   padding: 4rem 1rem 5rem;
   text-align: center;
-  background: linear-gradient(
-    135deg,
-    var(--ifm-color-primary-darkest) 0%,
-    var(--ifm-color-primary-dark) 100%
-  );
-  color: white;
 }
 
 .cta-strip h2 {
-  font-size: 2.25rem;
+  color: #d5ffd5;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
 }
 
 .cta-strip p {
-  font-size: 1.1rem;
-  opacity: 0.95;
-  max-width: 600px;
+  color: #6fa86f;
+  font-size: 1rem;
   margin: 0 auto 2rem;
+  max-width: 600px;
+  opacity: 1;
 }
 
-/* ─── Scroll-reveal animation ─────────────────────────────────────── */
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
 
-/*  Pure-CSS scroll-reveal — cards fade + slide up on first paint.  No JS,
-    no IntersectionObserver, no Framer.  Works because Docusaurus renders
-    static HTML and the user scrolls into a viewport that already has the
-    cards in the DOM.  For a "wait until visible" effect we'd need JS — but
-    "all cards fade in once on load" is plenty for this scope. */
-
-.reveal-on-scroll {
-  animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+.button--primary {
+  background: transparent;
+  border: 1px solid #00ff88;
+  border-radius: 0;
+  color: #00ff88;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 150ms ease;
 }
+
+.button--primary:hover {
+  background: #00ff88;
+  border-color: #00ff88;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.35);
+  color: #000000;
+  transform: translateY(-1px);
+}
+
+.button--secondary {
+  background: transparent;
+  border: 1px solid #2a8a2a;
+  border-radius: 0;
+  color: #6fa86f;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 150ms ease;
+}
+
+.button--secondary:hover {
+  background: transparent;
+  border-color: #00ff88;
+  color: #00ff88;
+}
+
+.button--outline {
+  border-radius: 0;
+}
+
+/* ─── Docs wrapper ───────────────────────────────────────────────────────── */
+
+.docMainContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocPage-Layout-Main-styles-module,
+.docMainContainer {
+  background: #000000;
+}
+
+/* Doc sidebar wrapper */
+.docSidebarContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocPage-Layout-Sidebar-styles-module,
+aside[class*="docSidebar"] {
+  background: #000000;
+  border-right: 1px solid #144a14;
+}
+
+/* Thin separator between sidebar and content */
+.col.col--3 {
+  border-right: 1px solid #144a14;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
 
 @keyframes fade-up {
   from {
@@ -350,35 +1156,56 @@
   }
 }
 
-/* ─── Accessibility — kill all motion for users who asked us to. ──── */
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.reveal-on-scroll {
+  animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ─── Accessibility — no motion ──────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
-  .orb,
+  body::before,
+  body::after {
+    display: none;
+  }
+
   .hero-content,
   .reveal-on-scroll {
     animation: none !important;
   }
+
   .feature-card:hover,
-  .recent-item:hover {
+  .recent-item:hover,
+  .pagination-nav__link:hover {
     transform: none;
   }
 }
 
-/* ─── Responsive tweaks ──────────────────────────────────────────── */
+/* ─── Responsive tweaks ──────────────────────────────────────────────────── */
 
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .hero-banner {
-    padding: 4rem 0 5rem;
+    padding: 3.5rem 0 4rem;
   }
+
   .hero-title {
-    font-size: 2.5rem;
+    font-size: 2.25rem;
   }
+
   .hero-banner .tagline {
-    font-size: 1.1rem;
+    font-size: 1rem;
   }
+
   .features-header h2,
   .recent-header h2,
   .cta-strip h2 {
-    font-size: 1.75rem;
+    font-size: 1.6rem;
+  }
+
+  .recent-section {
+    padding: 1.5rem;
   }
 }

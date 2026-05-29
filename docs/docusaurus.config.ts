@@ -3,6 +3,7 @@ import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
 // AIFactory documentation site — served at https://olafkfreund.github.io/AIFactory/
+// Theme: terminal aesthetic ported from olafkfreund/skill_pool (phosphor green on black).
 
 const config: Config = {
   title: 'AIFactory',
@@ -12,6 +13,34 @@ const config: Config = {
   future: {
     v4: true,
   },
+
+  // Google Fonts — JetBrains Mono (matches skill_pool terminal aesthetic).
+  // Loaded here as a <link> in <head> so it applies before first paint.
+  headTags: [
+    {
+      tagName: 'link',
+      attributes: {rel: 'preconnect', href: 'https://fonts.googleapis.com'},
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'preconnect',
+        href: 'https://fonts.gstatic.com',
+        crossorigin: 'anonymous',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {name: 'theme-color', content: '#00ff88'},
+    },
+  ],
 
   url: 'https://olafkfreund.github.io',
   baseUrl: '/AIFactory/',
@@ -56,12 +85,17 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/aifactory-social-card.png',
+    // Dark-only: the terminal aesthetic has no light mode (matches skill_pool).
+    // disableSwitch removes the sun/moon toggle from the navbar so readers
+    // can't accidentally flip to a broken light palette.
     colorMode: {
       defaultMode: 'dark',
-      respectPrefersColorScheme: true,
+      disableSwitch: true,
+      respectPrefersColorScheme: false,
     },
+    // Mermaid dark theme to complement the phosphor-green palette.
     mermaid: {
-      theme: {light: 'neutral', dark: 'dark'},
+      theme: {light: 'dark', dark: 'dark'},
     },
     navbar: {
       title: 'AIFactory',
@@ -121,8 +155,10 @@ const config: Config = {
       ],
       copyright: `Copyright © ${new Date().getFullYear()} AIFactory contributors. Dual-licensed MIT OR GPL-3.0. Built with Docusaurus.`,
     },
+    // Dracula for both light+dark — its dark palette (purple tones) contrasts
+    // cleanly with the phosphor-green body text without competing for attention.
     prism: {
-      theme: prismThemes.github,
+      theme: prismThemes.dracula,
       darkTheme: prismThemes.dracula,
       additionalLanguages: ['bash', 'json', 'python', 'yaml', 'toml', 'docker'],
     },
