@@ -42,8 +42,8 @@ const config: Config = {
     },
   ],
 
-  url: 'https://olafkfreund.github.io',
-  baseUrl: '/AIFactory/',
+  url: 'https://aifactory.freundcloud.com',
+  baseUrl: '/',
 
   organizationName: 'olafkfreund',
   projectName: 'AIFactory',
