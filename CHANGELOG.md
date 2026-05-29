@@ -1,4 +1,4 @@
-## [1.1.0] - 2026-05-28
+## 3.1.0 - 2026-05-29
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
 
