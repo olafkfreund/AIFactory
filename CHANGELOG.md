@@ -1,8 +1,43 @@
-## [Unreleased]
+## 3.2.0 - 2026-05-29
+
+**v1.2 — close v1.1 deferrals + multi-tenant hardening + documentation polish**
+
+Epic #204 closed all 4 priority items shipped today (2026-05-29). The GitHub Pages site has also been re-themed to the skill_pool terminal aesthetic. All v1.2 features are opt-in via env / Helm values.
+
+### Added — v1.2 #207 Claude-on-LiteLLM enforcement wrapper
+
+- **`ClaudeEnforcementContext` + `_EnforcedClaudeSDKClient`** in `apps/backend/core/enforcement.py` — in-process wrapper for Claude Agent SDK calls (Option A; Option B LiteLLM Anthropic passthrough rejected due to 4 specific upstream bugs: BerriAI/litellm #28562 #28228 #26749 #27512).
+- **`LiteLLMBudgetProvider`** reads per-org budgets from existing `get_virtual_key_info()` (#38 PR-2b reuse). `_NoBudgetProvider` fallback for Claude-only deployments without LiteLLM.
+- **`_CLAUDE_PRICING`** table (6 models, four-way cache breakdown) feeds `cost_source='claude_sdk_estimate'` audit field. CI gate (`test_all_production_models_in_pricing_table`) prevents adding models without a pricing row.
+- **Opt-in via `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED=true`** + Helm `claude.enforcement:` block. `failureMode: closed` default (refuse calls on enforcement failure); `open` opt-in for availability over safety. Closes the v1.1 #38 gap where Claude calls bypassed LiteLLM enforcement.
+
+### Added — v1.2 #209 SAML Single Logout (SLO)
+
+- **`POST /api/auth/saml/logout`** (SP-init) — mints HMAC RelayState + LogoutRequest, redirects to IdP SLO URL.
+- **`POST /api/auth/saml/sls`** — Single Logout Service; handles SAMLResponse (SP-init confirmation) AND SAMLRequest (IdP-init). Unknown NameID returns `NoSession` success, not 4xx (preserves IdP propagation chain).
+- **Helm `saml.slo:` block** with `enabled` + `idpSloUrl` + `slsUrl`. Validator: `slo.enabled=true` requires `saml.enabled=true`.
+- Closes v1.1 #41 decision #11 deferral. Concept doc + ISO 27001 A.9.4 evidence updated.
+
+### Added — v1.2 #210 PII bundle (Luhn CC + scrubBeforeSend)
+
+- **Luhn-validated CC pattern** in `BUILTIN_PATTERNS` — closes v1.1 #38 §4 deferral. False-positive immunity via Luhn checksum gate. Test `test_credit_card_not_redacted` flipped: `4532015112830366` (canonical Visa test number, Luhn-valid) now redacts to `[REDACTED_CC]`.
+- **`scrubBeforeSend` mode** — `AIFACTORY_LITELLM_AUDIT_SCRUB_OUTBOUND=true` redacts PII from the outbound prompt BEFORE the LLM call (not just the audit row). Audit row records `prompt_outbound_scrubbed: bool` so operators can query for opt-in scrubbing.
+- Closes v1.1 #38 §4 "LLM still sees plaintext" caveat for orgs that opt in. ISO 27001 A.13.2 + A.14.2 evidence updated.
+
+### Added — Documentation backfill (#160)
+
+- 8 P0/P6/P7 doc deliverables from already-closed epics #27/#33/#34 (image-mirroring, SOC2 evidence, DPIA data-flow, threat model, deployment runbook, upgrade guide, Grafana dashboard JSON, `guides/README.md` index update). 9 xfail acceptance tests self-cleared.
+
+### Fixed — Husky pre-commit hooks + tenant-isolation deps (#215)
+
+- `.husky/pre-commit` IGNORE_TESTS extended to cover 2 documented flakes (`test_merge_orchestrator`, `tests/obs/test_p42_otel_e2e`). Removes the `--no-verify` requirement for future releases.
+- `apps/backend/requirements.txt` pins `kubernetes-asyncio>=32.0`, `boto3>=1.43.0`, `hvac>=2.3.0`. Closes the `ModuleNotFoundError` against fresh `apps/backend/.venv` for the #36 PR-2 tenant-isolation tests.
 
 ### Documentation
 
-- Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines).
+- Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines, vignette glow). Dark-mode-only; Prism `dracula`; `prefers-reduced-motion` respects accessibility.
+
+### Added — GCP MCP catalog entry (#168, Epic #100)
 
 ### Added — GCP MCP catalog entry (#168, Epic #100)
 
