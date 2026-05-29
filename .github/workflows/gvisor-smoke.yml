@@ -216,12 +216,15 @@ jobs:
       # ------------------------------------------------------------------ #
       - name: Helm install AIFactory with gVisor enabled
         run: |
+          # postgres.externalSecretName must be non-empty even in bundled mode —
+          # the bundled-postgres template creates a K8s Secret with that name
+          # and an empty name is rejected by the API server.
           helm install aifactory charts/aifactory/ \
             --namespace aifactory \
             --create-namespace \
             --set sandbox.gvisor.enabled=true \
             --set postgres.bundled=true \
-            --set postgres.externalSecretName="" \
+            --set postgres.externalSecretName=aifactory-db \
             --set externalSecrets.enabled=false \
             --set oidc.enabled=false \
             --set workspaces.enabled=true \
