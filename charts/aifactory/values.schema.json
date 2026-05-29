@@ -141,6 +141,18 @@
         }
       }
     },
+    "claude": {
+      "type": "object",
+      "properties": {
+        "enforcement": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "failureMode": {"enum": ["open", "closed"]}
+          }
+        }
+      }
+    },
     "litellm": {
       "type": "object",
       "properties": {

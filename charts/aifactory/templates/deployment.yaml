@@ -337,6 +337,25 @@ spec:
               value: {{ .Values.audit.anchor.perTenantOptions.batchSize | default 100 | quote }}
             {{- end }}
             {{- end }}
+            {{- /* Claude enforcement wrapper (Epic #35 v1.2 / #207).
+                   Opt-in per-tenant budget + allowlist + audit for the native
+                   Claude Agent SDK path.  When disabled (default), create_client()
+                   returns bare ClaudeSDKClient — v1.1 behaviour unchanged.
+                   Validate failureMode enum before rendering. */ -}}
+            {{- $claudeFail := .Values.claude.enforcement.failureMode | default "open" }}
+            {{- if not (has $claudeFail (list "closed" "open")) }}
+            {{- fail (printf "claude.enforcement.failureMode=%q is invalid — must be 'closed' or 'open'. See charts/aifactory/values.yaml." $claudeFail) }}
+            {{- end }}
+            {{- if .Values.claude.enforcement.enabled }}
+            # Claude enforcement wrapper env vars.  create_client() +
+            # create_simple_client() read these to decide whether to wrap
+            # the ClaudeSDKClient in _EnforcedClaudeSDKClient.
+            # See docs/docs/concepts/claude-enforcement.md.
+            - name: AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED
+              value: "true"
+            - name: AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE
+              value: {{ $claudeFail | quote }}
+            {{- end }}
             {{- /* Validate: litellm.audit.fullTextCapture=true requires litellm.enabled.
                    Catches the operator who sets the audit knob on a deployment that
                    doesn't run the gateway — silent no-op otherwise. */ -}}
