@@ -1,3 +1,19 @@
+## [Unreleased]
+
+### Added — v1.2 per-tenant audit-chain anchor (#208)
+
+- **Per-tenant HMAC-SHA256 signing keys** — the tenant reconciler issues one 32-byte KMS-wrapped key per isolated org (Option A: one chain + one key per tenant, ISO 27001 A.12.4.2/A.12.4.3 compliant). Keys are stored in `audit_signing_keys` with `org_id` set and mirrored to the tenant's Vault path for auditor handover.
+- **Per-tenant chain genesis** — each isolated tenant's first `audit_logs` row uses `prev_hash='GENESIS-T-<org-uuid>'`, separating the per-tenant chain from the shared chain. `tenant_audit_state` table tracks the cutover boundary, current chain head, and lifecycle ('active'|'sealed').
+- **Per-tenant daily anchor** — the cron iterates over isolated orgs (in id order, batch-committed) and emits one `audit_anchors` row per org per day, signed with the org's key. One tenant's KMS failure does NOT block others (failure-safe per-tenant loop).
+- **Per-tenant verifier** — `verify_tenant_anchored_export(ndjson, signing_keys, org_id)` validates a per-tenant export's chain. Asserts cross-tenant replay is rejected (design finding #6). `compute_tenant_hash` and `verify_tenant_chain` in `audit_chain.py` provide the domain-separated chain helpers.
+- **Helm opt-in** — `audit.anchor.perTenant: false` (default). `perTenantOptions.keyCacheSize`, `batchSize`, `retentionDays`, `metrics.perOrgLabels` operator-tunable. Validator rejects `perTenant=true` without `tenant.isolationEnabled=true`.
+- **Export endpoint change (v1.2 behavior change)**: `?org_id=...&include_anchors=true` now accepted for isolated tenants when `perTenant=true` (was 400 in v1.1 — the per-tenant chain CAN verify a per-tenant export). Shared-chain deployments unchanged.
+- **ISO 27001 evidence** — A.12.4.2, A.12.4.3, A.18.1.3, A.18.2.2 entries updated with per-tenant chain contribution (v1.2+; v1.1 entries preserved). Closes the v1.1 gap where "protection of log information" was evidenced at deployment granularity only.
+- **Schema migration** (`c3d7e8f1a2b4`): `audit_anchors.org_id` (nullable FK, ON DELETE SET NULL), `audit_signing_keys.org_id` (nullable FK, ON DELETE CASCADE), `tenant_audit_state` table, composite index `audit_logs(org_id, created_at)`.
+- Refs: #208 / Epic #204. Design doc: `docs/plans/2026-05-29-per-tenant-audit-anchor-design.md`.
+
+---
+
 ## [1.1.0] - 2026-05-28
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**

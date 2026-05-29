@@ -140,12 +140,14 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
   - `AuditLog.prev_hash` chains every row to its predecessor — chain break = tampering detected (Epic #26 P5.2).
   - `audit_anchors` daily HMAC sign of the chain head detects tampering even when DB admin re-computes the chain (Epic #35 #43).
   - The export interleaves anchors with rows; `verify_anchored_export()` provides an offline verifier helper.
-- **Operator responsibility**: Run the access-review export + audit-anchor verification quarterly as part of your audit-log integrity SOP. Keep the KMS-wrapped audit-signing key separate from DB admin access.
+  - **v1.2+** (`audit.anchor.perTenant=true` + `tenant.isolationEnabled=true`): each isolated tenant gets an independent per-tenant chain anchored by a per-tenant HMAC key. Tenant A's auditor can verify tenant A's chain without seeing tenant B's data. Log integrity is now evidenced at *tenant granularity*, satisfying the control for MSP / multi-client deployments where the "log information" in scope is per-tenant. Available in v1.2+; v1.1 deployments evidence deployment-wide chain only.
+- **Operator responsibility**: Run the access-review export + audit-anchor verification quarterly as part of your audit-log integrity SOP. Keep the KMS-wrapped audit-signing key (shared or per-tenant) separate from DB admin access. For per-tenant mode, follow the auditor handover runbook in `guides/compliance/per-tenant-audit-handover.md`.
 
 ### A.12.4.3 Administrator and operator logs
 
 - **AIFactory contribution**: Every admin action (org member add/remove, role change, API key issuance, audit erasure) produces an `AuditLog` row tagged with `classification='confidential'`.
-- **Operator responsibility**: Include the admin log in your quarterly review. Investigate any `audit.erasure` events.
+  - **v1.2+**: per-tenant chains separate the operator's privilege scope from the tenant's verification scope. Rewriting tenant A's chain requires tenant A's specific HMAC key, not the deployment-wide key. Each KMS unwrap of a per-tenant key is audited and produces an `audit.handover.tenant-key.unwrap` log entry at `classification='confidential'`, visible to the tenant via the operator's disclosure obligation. Available in v1.2+; v1.1 deployments use the shared key (single forgery point for all tenants).
+- **Operator responsibility**: Include the admin log in your quarterly review. Investigate any `audit.erasure` events. For per-tenant deployments, disclose to tenants that KMS unwrap of their key is logged and auditable.
 
 ### A.12.4.1 Audit of LLM calls (multi-provider deployments)
 
@@ -230,7 +232,14 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 ### A.18.1.3 Protection of records
 
 - **AIFactory contribution**: Audit-chain anchor closes the v1.0 limitation where a DB admin could rewrite the audit log without detection (Epic #35 #43 — see [audit-anchor concept doc](../../docs/docs/concepts/audit-anchor.md)).
-- **Operator responsibility**: Keep the KMS-wrapped audit-signing key Secret separate from DB admin access. v1.2's external publication (S3 WORM / RFC 3161 / Sigstore) will remove this trust assumption.
+  - **v1.2+** (`audit.anchor.perTenant=true`): each isolated tenant holds their own cryptographic evidence for their ISMS audit. The tenant's auditor receives the tenant's rows + the tenant's per-tenant anchors + (via operator handover runbook) the tenant's HMAC key. Independent verification does NOT require trusting the operator's shared infrastructure or seeing other tenants' records. Available in v1.2+; v1.1 deployments evidence deployment-wide chain only.
+- **Operator responsibility**: Keep the KMS-wrapped audit-signing key Secret (shared or per-tenant) separate from DB admin access. For per-tenant mode, follow the `guides/compliance/per-tenant-audit-handover.md` runbook when tenants request audit evidence. v1.3's external publication (S3 WORM / RFC 3161 / Sigstore) will remove the operator-as-trust-intermediary assumption.
+
+### A.18.2.2 Compliance with security policies and standards
+
+- **AIFactory contribution**:
+  - **v1.2+**: per-tenant verification path lets the tenant's auditor independently attest to the operator's policy compliance, satisfying the "independent review" expectation of A.18.2.2. The operator cannot silently rewrite tenant A's chain without tenant A's specific HMAC key; any KMS unwrap is audited and traceable. Available in v1.2+; v1.1 deployments have no per-tenant independent review capability.
+- **Operator responsibility**: Schedule annual per-tenant compliance attestation sessions where tenant auditors run the `aifactory audit verify-anchor --org-id` check. Document the attestation outcomes in your ISMS records.
 
 ### A.18.1.4 Privacy and protection of personally identifiable information
 

@@ -335,3 +335,5 @@ Alert when this returns >0 rows — the operator needs to intervene (typically a
 - Design doc: `docs/plans/2026-05-28-tenant-isolation-design.md` (locked design with 6 reviewer-audited refinements).
 - ISO 27001 evidence: see `guides/compliance/iso27001-evidence.md` A.13.1 (network segmentation), A.9.2 (privileged access), A.18.1 (legal compliance).
 - Companion concepts: [Audit anchor](./audit-anchor.md), [gVisor sandbox](./gvisor-sandbox.md), [Multi-replica deployments](./multi-replica.md).
+
+> **Per-tenant audit chain (v1.2 #208):** when `audit.anchor.perTenant=true` is set alongside `tenant.isolationEnabled=true`, each isolated tenant gets its own HMAC-SHA256 signing key and its own daily audit-chain anchor — verifiable independently without seeing other tenants' data. This is recommended but not required for isolated-mode tenants. See [Signed audit-chain anchor — Per-tenant chains](./audit-anchor.md).

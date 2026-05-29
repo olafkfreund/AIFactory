@@ -321,6 +321,21 @@ spec:
               value: "true"
             - name: AUDIT_ANCHOR_SCHEDULER
               value: {{ $scheduler | quote }}
+            {{- /* v1.2 #208 — per-tenant audit-chain anchor.
+                   Validator: perTenant=true requires tenant.isolationEnabled=true
+                   (per-tenant keys live in the Vault path provisioned only by
+                   isolation mode — design open-question #6 resolution). */ -}}
+            {{- if .Values.audit.anchor.perTenant }}
+            {{- if not .Values.tenant.isolationEnabled }}
+            {{- fail "audit.anchor.perTenant=true requires tenant.isolationEnabled=true — per-tenant anchor keys live in the tenant's Vault path which is provisioned only by tenant isolation. See charts/aifactory/values.yaml." }}
+            {{- end }}
+            - name: AUDIT_ANCHOR_PER_TENANT
+              value: "true"
+            - name: AUDIT_ANCHOR_KEY_CACHE_SIZE
+              value: {{ .Values.audit.anchor.perTenantOptions.keyCacheSize | default 1000 | quote }}
+            - name: AUDIT_ANCHOR_BATCH_SIZE
+              value: {{ .Values.audit.anchor.perTenantOptions.batchSize | default 100 | quote }}
+            {{- end }}
             {{- end }}
             {{- /* Validate: litellm.audit.fullTextCapture=true requires litellm.enabled.
                    Catches the operator who sets the audit knob on a deployment that
