@@ -110,7 +110,10 @@ def kubectl_ok() -> bool:
     """Skip the entire module if kubectl is not on PATH or not reachable."""
     if not shutil.which("kubectl"):
         pytest.skip("kubectl not on PATH — live-cluster tests skipped")
-    result = _kubectl_global("cluster-info", check=False, timeout=10)
+    try:
+        result = _kubectl_global("cluster-info", check=False, timeout=10)
+    except subprocess.TimeoutExpired:
+        pytest.skip("kubectl cluster-info timed out — no live cluster available")
     if result.returncode != 0:
         pytest.skip(
             f"kubectl cluster-info failed (rc={result.returncode}): "
