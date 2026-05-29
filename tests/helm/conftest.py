@@ -70,9 +70,44 @@ def kubectl_available() -> bool:
     return True
 
 
+@pytest.fixture(scope="session")
+def _chart_deps_pulled() -> bool:
+    """Run `helm dep update` once per session.
+
+    Required since Epic #35 #38 PR-3 added the LiteLLM sub-chart
+    dependency — `helm template` fails immediately on a chart with
+    unfilled dependencies, regardless of whether the test toggles
+    that sub-chart on. Skips when helm itself isn't on PATH so the
+    suite still passes on workstations without a Kubernetes setup.
+    """
+    if not _binary_available("helm"):
+        return False
+    if not CHART_DIR.is_dir():
+        return False
+    result = subprocess.run(
+        ["helm", "dep", "update", str(CHART_DIR)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    # Don't pytest.fail here — let individual tests skip via
+    # helm_available if their environment is incomplete. We just
+    # log a warning to the captured output so debugging is easier.
+    if result.returncode != 0:
+        print(
+            f"[conftest] helm dep update failed (rc={result.returncode}):"
+            f" {result.stderr[-500:]}"
+        )
+    return result.returncode == 0
+
+
 @pytest.fixture
-def chart_dir() -> Path:
-    """Absolute path to the aifactory Helm chart directory."""
+def chart_dir(_chart_deps_pulled) -> Path:
+    """Absolute path to the aifactory Helm chart directory.
+
+    Depends on _chart_deps_pulled so sub-chart deps are present before
+    any test renders the chart.
+    """
     if not CHART_DIR.is_dir():
         pytest.skip(f"chart not present at {CHART_DIR} (pre-P4.1 state)")
     return CHART_DIR

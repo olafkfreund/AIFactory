@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -141,6 +142,26 @@ class Organization(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    # Epic #35 #36 PR-1 — immutable per-tenant K8s namespace name.
+    # NULL until isolation is enabled + first reconcile pass runs;
+    # locked once set (slug renames do NOT change this).
+    tenant_namespace: Mapped[str | None] = mapped_column(
+        String(63), nullable=True,
+    )
+    # Epic #35 #36 PR-1 — soft-delete timestamp. Stage-1 sets this
+    # (immediate PII scrub); stage-2 (day 30) tears down infra.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
+    )
+    # Epic #35 #38 PR-2a — per-org LLM model allowlist. JSON array of
+    # model name patterns the org may use. ``["*"]`` (default) means
+    # all models allowed (backward compat). Concrete examples:
+    # ``["claude-*"]``, ``["gpt-4o-mini", "gpt-4o"]``,
+    # ``["bedrock/anthropic.*"]``. The reconciler (PR-2b) syncs this
+    # into LiteLLM's per-tenant virtual-key model list via admin API.
+    allowed_models: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, server_default='["*"]', default=list,
     )
 
     # Relationships
@@ -722,6 +743,98 @@ class ExternalIdentity(Base):
 
 
 # ---------------------------------------------------------------------------
+# SCIM Groups (Epic #35 #41 PR-1b3)
+# ---------------------------------------------------------------------------
+
+
+class ScimGroup(Base):
+    """Parallel SCIM Group resource — design decision #5 locks this as
+    a standalone table for v1.1. Integration with the orgs/roles model
+    is deferred to Epic #36 (tenant isolation).
+
+    ``external_id`` is the IdP-side group identifier (Azure AD group
+    object ID, Okta group ID, etc.). Nullable — not all IdPs send it.
+
+    ``active`` mirrors the SCIM User active flag pattern: soft-deletes
+    set it to False. DELETE on /scim/v2/Groups soft-deletes; GET on a
+    soft-deleted group returns 404 so Azure AD's sync sees it as gone.
+    """
+
+    __tablename__ = "scim_groups"
+    __table_args__ = (
+        Index("ix_scim_groups_external_id", "external_id"),
+        Index("ix_scim_groups_active", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    external_id: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, unique=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    members: Mapped[list["ScimGroupMember"]] = relationship(
+        "ScimGroupMember",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScimGroup id={self.id!r} display_name={self.display_name!r}>"
+
+
+class ScimGroupMember(Base):
+    """Many-to-many join between ScimGroup and User (by User.id).
+
+    Storing User.id here means deleting a user silently orphans these
+    rows; the CASCADE on FK handles cleanup. The ``display`` field is
+    informational (the user's display name at the time the IdP sent it)
+    — we don't keep it in sync with User.name on purpose: SCIM member
+    payloads typically include it, and dropping it would lose the IdP's
+    original labelling.
+    """
+
+    __tablename__ = "scim_group_members"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id", "user_id", name="uq_scim_group_members_group_user"
+        ),
+        Index("ix_scim_group_members_user_id", "user_id"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=_generate_uuid
+    )
+    group_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("scim_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    display: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    group: Mapped["ScimGroup"] = relationship(
+        "ScimGroup", back_populates="members"
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ScimGroupMember group_id={self.group_id!r} "
+            f"user_id={self.user_id!r}>"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Audit anchor + signing key (Epic #35 #43 PR-1)
 # ---------------------------------------------------------------------------
 
@@ -803,4 +916,78 @@ class AuditAnchor(Base):
         return (
             f"<AuditAnchor signed_at={self.signed_at!r} "
             f"v{self.key_version}>"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Tenant isolation state (Epic #35 #36 PR-1)
+# ---------------------------------------------------------------------------
+
+
+class TenantState(Base):
+    """Reconciler's view of per-tenant K8s + cloud resource state.
+
+    One row per Organization. The TenantReconciler (in
+    ``services/tenant_reconciler.py``) reads this on every reconcile
+    pass to decide what to create/update/teardown.
+
+    ``isolation_mode`` enum:
+      - ``shared`` — org uses the deployment-default namespace (legacy
+        v1.0 mode, byte-for-byte unchanged from pre-#36 deployments)
+      - ``isolated`` — org has its own namespace + SA + NetPol + S3
+        prefix + Vault path
+      - ``deleted`` — org soft-deleted; agent spawner refuses new tasks;
+        reconciler tears down resources at day-30 (per
+        ``tenant.deletionGraceDays``)
+
+    Operators query ``reconcile_error`` for the health-check pattern:
+    ``SELECT org_id, reconcile_error FROM tenant_states WHERE
+    reconcile_error IS NOT NULL``.
+    """
+
+    __tablename__ = "tenant_states"
+    __table_args__ = (
+        Index("ix_tenant_states_isolation_mode", "isolation_mode"),
+    )
+
+    org_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    isolation_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="shared",
+    )
+    namespace_name: Mapped[str | None] = mapped_column(
+        String(63), nullable=True,
+    )
+    service_account: Mapped[str | None] = mapped_column(
+        String(63), nullable=True,
+    )
+    iam_role_arn: Mapped[str | None] = mapped_column(
+        String(2048), nullable=True,
+    )
+    vault_policy_name: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+    )
+    reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True,
+    )
+    reconcile_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    organization: Mapped["Organization"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TenantState org_id={self.org_id!r} "
+            f"mode={self.isolation_mode!r}>"
         )

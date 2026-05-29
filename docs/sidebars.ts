@@ -32,6 +32,10 @@ const sidebars: SidebarsConfig = {
         'concepts/workspace-storage',
         'concepts/observability-tracing',
         'concepts/audit-anchor',
+        'concepts/cloud-llm-routing',
+        'concepts/litellm-gateway',
+        'concepts/saml-scim',
+        'concepts/tenant-isolation',
       ],
     },
     {
@@ -48,7 +52,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Showcase',
       collapsed: true,
-      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo'],
+      items: ['showcase/index', 'showcase/demo-walkthrough'],
     },
     {
       type: 'category',

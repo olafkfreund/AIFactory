@@ -117,3 +117,10 @@ prometheus-fastapi-instrumentator>=7.0.0
 # the Dockerfile must install libxmlsec1 / libxmlsec1-openssl when
 # building for distros without the wheel).
 python3-saml>=1.16
+
+# Epic #35 #36 PR-2 — Tenant Isolation Mode K8s/IAM/Vault writes.
+# Only exercised when ``tenant.isolationEnabled=true`` (Helm) and a
+# real cluster + IAM + Vault are reachable. Lazy-imported by
+# server.services.k8s_client so non-isolated deployments never pay
+# the import cost. boto3 + hvac are already declared above for KMS.
+kubernetes-asyncio>=32.0

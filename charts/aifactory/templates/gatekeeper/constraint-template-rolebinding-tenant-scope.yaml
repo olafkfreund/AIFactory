@@ -1,0 +1,75 @@
+{{- /*
+  OPA Gatekeeper ConstraintTemplate — RoleBinding tenant scoping
+  (Epic #35 #36 PR-3).
+
+  Companion policy to ``constraint-template-namespace-prefix.yaml``.
+  Denies any RoleBinding whose ``subjects`` include the web pod's
+  ServiceAccount in a non-tenant namespace.
+
+  Threat closed: a process running as the web pod attempts to bind
+  itself into a privileged namespace (e.g. kube-system) by creating
+  a RoleBinding there. Without this policy, the ClusterRoleBinding
+  granted in tenant-reconciler-rbac.yaml is enough RBAC to do this.
+
+  Sample policy — operators with their own RoleBinding governance
+  may want to merge with their existing rules.
+*/}}
+{{- if and .Values.tenant.isolationEnabled .Values.tenant.gatekeeperEnabled }}
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: aifactorytenantrolebindingscope
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-gatekeeper-sample
+spec:
+  crd:
+    spec:
+      names:
+        kind: AIFactoryTenantRoleBindingScope
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            reconcilerServiceAccount:
+              type: string
+              description: Name of the web pod's ServiceAccount (e.g. test-aifactory).
+            reconcilerNamespace:
+              type: string
+              description: Namespace the web pod runs in (the Helm release namespace).
+            tenantNamespacePrefix:
+              type: string
+              description: Prefix that marks a namespace as a tenant namespace.
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package aifactorytenantrolebindingscope
+
+        # The web pod's SA as it appears in RoleBinding subjects.
+        is_reconciler_subject(subject) {
+          subject.kind == "ServiceAccount"
+          subject.name == input.parameters.reconcilerServiceAccount
+          subject.namespace == input.parameters.reconcilerNamespace
+        }
+
+        # Tenant namespace = starts with the configured prefix.
+        is_tenant_namespace(ns) {
+          startswith(ns, input.parameters.tenantNamespacePrefix)
+        }
+
+        # Deny when a RoleBinding in a non-tenant namespace lists
+        # the reconciler SA as a subject. Tenant namespaces are
+        # ALLOWED — that's the whole point of the reconciler.
+        violation[{"msg": msg}] {
+          input.review.kind.kind == "RoleBinding"
+          input.review.operation == "CREATE"
+          subject := input.review.object.subjects[_]
+          is_reconciler_subject(subject)
+          ns := input.review.object.metadata.namespace
+          not is_tenant_namespace(ns)
+          msg := sprintf(
+            "RoleBinding in namespace %q references the AIFactory reconciler SA %q — only tenant namespaces (prefix %q) may bind this SA (Epic #35 #36)",
+            [ns, subject.name, input.parameters.tenantNamespacePrefix],
+          )
+        }
+{{- end }}

@@ -48,7 +48,11 @@ EFFORT_LEVEL_MAP: dict[str, str] = {
 
 # Models that support adaptive thinking via effort level (env var)
 # These models get both max_thinking_tokens AND effort_level
-ADAPTIVE_THINKING_MODELS: set[str] = {"claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"}
+ADAPTIVE_THINKING_MODELS: set[str] = {
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+}
 
 # Spec runner phase-specific thinking levels
 # Heavy phases use max for deep analysis
@@ -331,7 +335,9 @@ def load_task_metadata(spec_dir: Path) -> TaskMetadataConfig | None:
         try:
             with open(requirements_path) as f:
                 requirements = json.load(f)
-                if "metadata" in requirements and isinstance(requirements["metadata"], dict):
+                if "metadata" in requirements and isinstance(
+                    requirements["metadata"], dict
+                ):
                     return requirements["metadata"]
         except (json.JSONDecodeError, OSError):
             pass
@@ -568,10 +574,22 @@ def infer_provider_from_model(model: str) -> str:
     studio:* prefix -> 'openai-compatible' (Google AI Studio OpenAI-compatible endpoint)
     ollama:* prefix -> 'ollama'
     openai:* or openai-compatible:* prefix -> 'openai-compatible'
+    bedrock/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
+    vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
     gpt-* or *codex* IDs -> 'codex'
     gemini-* IDs -> 'gemini'
     Otherwise -> check QA_LLM_PROVIDER env var, then default 'claude'
+
+    Note on bedrock/* and vertex_ai/* prefixes:
+        These are LiteLLM-native model prefixes. AIFactory does not talk to
+        Bedrock or Vertex directly; instead it routes through the LiteLLM
+        gateway (``LITELLM_GATEWAY_URL``), which translates the OpenAI-format
+        request into the appropriate cloud API call. The
+        ``openai_compatible`` provider handles the HTTP leg from AIFactory to
+        LiteLLM. ``get_provider_extra_kwargs`` enforces that
+        ``LITELLM_GATEWAY_URL`` is configured before these prefixes are used.
+        See docs/docs/concepts/cloud-llm-routing.md.
 
     Args:
         model: Model shorthand or full model ID
@@ -595,6 +613,15 @@ def infer_provider_from_model(model: str) -> str:
     # from env vars OPENAI_COMPATIBLE_BASE_URL / OPENAI_COMPATIBLE_API_KEY
     # or, in a later integration, from the user's saved llm_endpoints config.
     if m.startswith("openai:") or m.startswith("openai-compatible:"):
+        return "openai-compatible"
+
+    # LiteLLM-routed cloud backends.  Both prefixes use LiteLLM's native
+    # model-name convention (forward-slash separator).  The openai_compatible
+    # provider sends the full model string (including prefix) to the LiteLLM
+    # gateway, which resolves the backend.  A validation guard in
+    # get_provider_extra_kwargs raises a clear error when LITELLM_GATEWAY_URL
+    # is not set, preventing a cryptic 404 from api.openai.com.
+    if m.startswith("bedrock/") or m.startswith("vertex_ai/"):
         return "openai-compatible"
 
     # Claude models: known shorthands or full claude-* IDs
@@ -626,7 +653,7 @@ def strip_provider_prefix(model: str) -> str:
     """
     for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:"):
         if model.lower().startswith(prefix):
-            return model[len(prefix):]
+            return model[len(prefix) :]
     return model
 
 
@@ -636,6 +663,7 @@ _LLM_ENDPOINTS_DB_PATH = Path.home() / ".aifactory" / "data.db"
 def _load_openai_endpoint_by_label(label: str) -> dict | None:
     """Look up an llm_endpoint row by label.  Returns None if not found."""
     import sqlite3
+
     if not _LLM_ENDPOINTS_DB_PATH.exists():
         return None
     try:
@@ -656,6 +684,7 @@ def _load_openai_endpoint_by_label(label: str) -> dict | None:
 def _load_first_openai_endpoint() -> dict | None:
     """Return the oldest configured llm_endpoint — for single-endpoint users."""
     import sqlite3
+
     if not _LLM_ENDPOINTS_DB_PATH.exists():
         return None
     try:
@@ -678,12 +707,16 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
     For ``openai-compatible`` the provider needs ``base_url`` and ``api_key``
     on top of the model name.  Resolution order:
 
-    1. ``studio:<model>`` — Google AI Studio native OpenAI-compatible endpoint.
-    2. ``openai:<label>:<model>`` — look up endpoint by label, use that model
+    1. ``bedrock/<model>`` or ``vertex_ai/<model>`` — LiteLLM-routed cloud
+       backends.  LITELLM_GATEWAY_URL MUST be set; raises ``ValueError`` with
+       an operator-actionable message if not.  The full model string (including
+       prefix) is forwarded to the gateway so LiteLLM can resolve the backend.
+    2. ``studio:<model>`` — Google AI Studio native OpenAI-compatible endpoint.
+    3. ``openai:<label>:<model>`` — look up endpoint by label, use that model
        (or the endpoint's default_model if no model specified).
-    3. ``openai:<model>`` (single colon) — use the first/only configured
+    4. ``openai:<model>`` (single colon) — use the first/only configured
        endpoint with the given model name.
-    4. No DB row at all — fall back to env vars
+    5. No DB row at all — fall back to env vars
        (``OPENAI_COMPATIBLE_BASE_URL`` / ``OPENAI_COMPATIBLE_API_KEY`` /
        ``OPENAI_API_KEY``) for power users without the UI.
 
@@ -693,9 +726,34 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
 
     Returns:
         Dict of extra kwargs to spread into the ``get_provider`` call.
+
+    Raises:
+        ValueError: When a ``bedrock/*`` or ``vertex_ai/*`` model is requested
+            but ``LITELLM_GATEWAY_URL`` is not configured.
     """
     if provider_name != "openai-compatible":
         return {}
+
+    m_lower = model.strip().lower()
+
+    # LiteLLM-routed cloud backends require the gateway — raise early with a
+    # clear message rather than producing a cryptic 404 from api.openai.com.
+    if m_lower.startswith("bedrock/") or m_lower.startswith("vertex_ai/"):
+        from providers._gateway import is_gateway_enabled
+
+        if not is_gateway_enabled():
+            raise ValueError(
+                "Bedrock / Vertex models require LITELLM_GATEWAY_URL to be "
+                "configured (LiteLLM is the routing layer for cloud-provider "
+                "models). Set LITELLM_GATEWAY_URL to your LiteLLM proxy "
+                "address (e.g. http://litellm:4000). "
+                "See docs/concepts/cloud-llm-routing.md."
+            )
+        # Forward the full model string (including cloud prefix) so LiteLLM
+        # can route to the correct backend.  base_url is resolved by the
+        # openai_compatible provider via _gateway.resolve_base_url().
+        gateway_url = os.environ.get("LITELLM_GATEWAY_URL", "").strip()
+        return {"model": model.strip(), "base_url": gateway_url}
 
     stripped = strip_provider_prefix(model).strip()
 
@@ -728,8 +786,9 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
     endpoint = _load_first_openai_endpoint()
     if endpoint:
         return {
-            "model": stripped if stripped and stripped != "default"
-                                else endpoint["default_model"],
+            "model": stripped
+            if stripped and stripped != "default"
+            else endpoint["default_model"],
             "base_url": endpoint["base_url"],
             "api_key": endpoint["api_key"],
         }
@@ -753,7 +812,11 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
 
 # Provider capabilities: which providers support agentic phases (file ops, code execution)
 PROVIDER_AGENTIC_SUPPORT = {
-    "claude", "codex", "gemini", "ollama", "openai-compatible",
+    "claude",
+    "codex",
+    "gemini",
+    "ollama",
+    "openai-compatible",
 }
 
 

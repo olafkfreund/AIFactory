@@ -30,6 +30,24 @@
       "matchManagers": ["github-actions"],
       "pinDigests": true,
       "labels": ["dependencies", "ci"]
+    },
+    {
+      "description": "LiteLLM Helm sub-chart (Epic #35 #38). PATCH bumps (1.86.x → 1.86.y) are auto-mergeable; MINOR bumps (1.86.x → 1.87.x) require manual review because upstream sometimes ships breaking values.yaml schema changes inside minors. MAJOR bumps need a full design re-evaluation — admin API shape may shift. See docs/docs/concepts/litellm-gateway.md §Version pin + bump cadence.",
+      "matchManagers": ["helmv3"],
+      "matchPackageNames": ["litellm-helm"],
+      "labels": ["dependencies", "helm", "litellm"],
+      "commitMessageTopic": "litellm-helm",
+      "packageRules": [
+        {
+          "matchUpdateTypes": ["patch"],
+          "automerge": true
+        },
+        {
+          "matchUpdateTypes": ["minor", "major"],
+          "automerge": false,
+          "reviewers": ["team:aifactory-platform"]
+        }
+      ]
     }
   ],
 

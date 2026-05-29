@@ -62,8 +62,10 @@ Response::
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import logging
+import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -73,6 +75,52 @@ from providers import BaseLLMProvider
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
+
+
+class ModelNotAllowedError(RuntimeError):
+    """The requested model is not in the org's allowlist (Epic #35 #38 PR-2b).
+
+    Raised at provider construction (fail-fast — easier to debug than
+    a 400 from LiteLLM mid-call). Carries the org-level allowlist +
+    the rejected model name so the operator log line is self-contained.
+
+    A wildcard ``["*"]`` allowlist (the schema default from PR-2a)
+    bypasses enforcement. ``None`` (caller passed no allowlist)
+    also bypasses — the enforcement plane is opt-in per provider call.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        allowed_models: list[str],
+        org_id: str | None = None,
+    ) -> None:
+        org_label = f"org={org_id}" if org_id else "org (unspecified)"
+        super().__init__(
+            f"Model {model!r} is not in the allowlist for {org_label}. "
+            f"Permitted patterns: {allowed_models!r}. "
+            f"Update organizations.allowed_models to grant access "
+            f"(takes effect on next reconcile)."
+        )
+        self.model = model
+        self.allowed_models = allowed_models
+        self.org_id = org_id
+
+
+def _model_allowed(model: str, allowed_models: list[str] | None) -> bool:
+    """True when ``model`` matches any pattern in ``allowed_models``.
+
+    - ``None`` (no allowlist supplied) → True (caller opted out).
+    - ``["*"]`` → True (schema default from PR-2a; backward compat).
+    - Otherwise: fnmatch.fnmatchcase per pattern. ``"claude-*"`` matches
+      ``"claude-opus-4-7"``; ``"gpt-4o"`` exact-matches that only.
+    """
+    if allowed_models is None:
+        return True
+    if "*" in allowed_models:
+        return True
+    return any(fnmatch.fnmatchcase(model, pattern) for pattern in allowed_models)
+
 
 # ---------------------------------------------------------------------------
 # Module-level defaults
@@ -117,14 +165,40 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         timeout: int = _DEFAULT_TIMEOUT,
         extra_headers: dict[str, str] | None = None,
         extra_options: dict[str, Any] | None = None,
+        # Epic #35 #38 PR-2b — per-org enforcement plane.
+        allowed_models: list[str] | None = None,
+        org_id: str | None = None,
+        user_id: str | None = None,
     ) -> None:
+        # Fail-fast allowlist check: raise BEFORE any HTTP setup so
+        # the operator sees a clear ModelNotAllowedError, not a 400
+        # bouncing off LiteLLM mid-call.
+        if not _model_allowed(model, allowed_models):
+            raise ModelNotAllowedError(
+                model=model,
+                allowed_models=allowed_models or [],
+                org_id=org_id,
+            )
+
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # Epic #35 #38 PR-1 — when LITELLM_GATEWAY_URL is set, all
+        # provider HTTP calls route through the gateway for per-tenant
+        # budget / rate-limit / allowlist / audit. Zero behavior change
+        # when the env var is unset (operator hasn't opted in via Helm).
+        from ._gateway import resolve_base_url
+
+        self._base_url = resolve_base_url(base_url).rstrip("/")
         self._api_key = api_key or None  # treat empty string as None
         self._timeout = timeout
         self._extra_headers: dict[str, str] = extra_headers or {}
         self._extra_options: dict[str, Any] = extra_options or {}
         self._pending_prompt: str | None = None
+
+        # Audit-hook context (Epic #35 #38 PR-2b). Stored for the
+        # success / cancellation / failure paths in _run_request().
+        self._allowed_models = allowed_models
+        self._org_id = org_id
+        self._user_id = user_id
 
         logger.debug(
             "OpenAICompatibleProvider created",
@@ -133,6 +207,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 "base_url": self._base_url,
                 "timeout": timeout,
                 "has_api_key": bool(self._api_key),
+                "org_id": org_id,
             },
         )
 
@@ -143,9 +218,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     async def query(self, prompt: str) -> None:
         """Store the prompt for execution when ``receive_response()`` is called."""
         self._pending_prompt = prompt
-        logger.debug(
-            "OpenAICompatibleProvider: prompt stored (length=%d)", len(prompt)
-        )
+        logger.debug("OpenAICompatibleProvider: prompt stored (length=%d)", len(prompt))
 
     def receive_response(self) -> AsyncIterator[Any]:
         """Return an async generator that calls ``/v1/chat/completions``."""
@@ -156,6 +229,15 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
         Yields:
             ``AssistantMessage(content=[TextBlock(text=<response>)])``
+
+        Audit (Epic #35 #38 PR-2b): every call produces exactly one
+        audit row via ``llm_audit_hook.write_llm_call_audit``:
+        - success → ``action="llm.call"`` with token counts + cost.
+        - cancellation (``asyncio.CancelledError``) → ``action="llm.call.abandoned"``.
+        - HTTP / runtime failure → ``action="llm.call.failed"`` with the
+          error message.
+        The hook is itself failure-safe so a broken audit pipeline
+        cannot fail the user's task.
         """
         if not self._pending_prompt:
             logger.warning(
@@ -167,29 +249,141 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         payload = self._build_payload(self._pending_prompt)
         url = f"{self._base_url}{_PATH_CHAT}"
 
-        logger.debug(
-            "OpenAICompatibleProvider: POST %s model=%r", url, self._model
-        )
+        logger.debug("OpenAICompatibleProvider: POST %s model=%r", url, self._model)
+
+        # Track latency from request issue → response complete; this is
+        # what an external observer (the agent) would measure.
+        started = time.monotonic()
+        prompt_text = self._pending_prompt
+        response_text = ""
+        response_data: dict[str, Any] = {}
+        audit_action = "llm.call"
+        audit_error: str | None = None
 
         try:
-            response_data = await asyncio.wait_for(
-                asyncio.to_thread(self._http_post, url, payload),
-                timeout=float(self._timeout),
-            )
-        except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(
-                f"OpenAI-compatible API request timed out after {self._timeout}s. "
-                "Increase timeout= or reduce prompt size."
+            try:
+                response_data = await asyncio.wait_for(
+                    asyncio.to_thread(self._http_post, url, payload),
+                    timeout=float(self._timeout),
+                )
+            except asyncio.TimeoutError:
+                audit_action = "llm.call.failed"
+                audit_error = f"timeout after {self._timeout}s"
+                raise asyncio.TimeoutError(
+                    f"OpenAI-compatible API request timed out after {self._timeout}s. "
+                    "Increase timeout= or reduce prompt size."
+                )
+            except RuntimeError as exc:
+                # _http_post raises RuntimeError on HTTP / URL / JSON errors.
+                audit_action = "llm.call.failed"
+                audit_error = str(exc)
+                raise
+
+            response_text = self._extract_content(response_data)
+
+            logger.debug(
+                "OpenAICompatibleProvider: response received content_len=%d",
+                len(response_text),
             )
 
-        response_text = self._extract_content(response_data)
+            yield AssistantMessage(content=[TextBlock(text=response_text)])
+        except asyncio.CancelledError:
+            # Client disconnected / task cancelled mid-stream.
+            # Per design §5 audit variant #2.
+            audit_action = "llm.call.abandoned"
+            audit_error = "asyncio.CancelledError"
+            raise
+        finally:
+            latency_ms = int((time.monotonic() - started) * 1000)
+            # Hook is itself failure-safe; we still wrap to defend
+            # against the import failing in odd test contexts.
+            try:
+                await self._write_audit(
+                    action=audit_action,
+                    prompt_text=prompt_text,
+                    response_text=response_text,
+                    response_data=response_data,
+                    latency_ms=latency_ms,
+                    error=audit_error,
+                )
+            except Exception:
+                logger.warning(
+                    "OpenAICompatibleProvider: audit hook raised "
+                    "unexpectedly; swallowed",
+                    exc_info=True,
+                )
 
-        logger.debug(
-            "OpenAICompatibleProvider: response received content_len=%d",
-            len(response_text),
+    async def _write_audit(
+        self,
+        *,
+        action: str,
+        prompt_text: str,
+        response_text: str,
+        response_data: dict[str, Any],
+        latency_ms: int,
+        error: str | None,
+    ) -> None:
+        """Best-effort call into the web-server's LLM audit writer.
+
+        The audit writer lives in the web-server package and uses the
+        web-server's SQLAlchemy engine. In CLI / agent contexts where
+        the web-server isn't importable, the ImportError is caught
+        and logged at DEBUG — the audit is the web-server's
+        responsibility for HTTP-mode calls, and CLI-mode operators
+        get the existing local logging.
+        """
+        try:
+            from server.services.llm_audit_hook import write_llm_call_audit
+        except ImportError:
+            logger.debug(
+                "OpenAICompatibleProvider: web-server audit hook not "
+                "importable (CLI mode?); skipping audit row",
+            )
+            return
+
+        usage = (
+            response_data.get("usage") or {}
+            if isinstance(
+                response_data,
+                dict,
+            )
+            else {}
+        )
+        input_tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+        output_tokens = (
+            usage.get("completion_tokens") if isinstance(usage, dict) else None
         )
 
-        yield AssistantMessage(content=[TextBlock(text=response_text)])
+        # LiteLLM adds these to the response when the gateway is in
+        # the path. Both fields are optional — present on success
+        # paths through the gateway, absent for direct-provider
+        # mode or abandoned/failed paths.
+        cost_usd = None
+        litellm_request_id = None
+        if isinstance(response_data, dict):
+            cost_usd = response_data.get("response_cost") or response_data.get(
+                "_response_cost",
+            )
+            # LiteLLM exposes its internal request id either at the
+            # top level or under a `_litellm` envelope.
+            litellm_request_id = response_data.get("id") or response_data.get(
+                "litellm_request_id"
+            )
+
+        await write_llm_call_audit(
+            org_id=self._org_id,
+            user_id=self._user_id,
+            model=self._model,
+            input_tokens=int(input_tokens) if input_tokens is not None else None,
+            output_tokens=int(output_tokens) if output_tokens is not None else None,
+            cost_usd=float(cost_usd) if cost_usd is not None else None,
+            latency_ms=latency_ms,
+            prompt_text=prompt_text,
+            response_text=response_text,
+            litellm_request_id=str(litellm_request_id) if litellm_request_id else None,
+            action=action,
+            error=error,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -359,4 +553,4 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         self._pending_prompt = None
 
 
-__all__ = ["OpenAICompatibleProvider"]
+__all__ = ["ModelNotAllowedError", "OpenAICompatibleProvider"]

@@ -203,6 +203,123 @@ oidc:
   groupToRole: {}  # e.g. {"aifactory-admin": "admin"}
   defaultRole: "member"
 
+# ---------------------------------------------------------------------------
+# SAML 2.0 Web SSO (Epic #35 #41).
+#
+# When ``saml.enabled: true``, the web-server mounts ``/api/auth/saml/login``,
+# ``/api/auth/saml/acs``, ``/api/auth/saml/metadata`` and surfaces the
+# IdP in the login-page dropdown next to any configured OIDC IdP.
+#
+# When ``saml.enabled: false`` (default), no SAML routes are mounted and
+# the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+#
+# IdP metadata source — pick exactly ONE of:
+#   • ``idpMetadataUrl`` — the operator's IdP publishes federation
+#     metadata at a stable URL. The web-server fetches it on startup
+#     and refreshes every 4 hours in the background (48-hour stale-
+#     warn, never crashes the pod).
+#   • ``idpMetadataSecretName`` — operator-supplied K8s Secret with
+#     key ``idp-metadata.xml`` mounted at /etc/saml/idp-metadata.xml.
+#     Rotation = recreate Secret + restart pod.
+#
+# SP cert (signing AuthnRequests + decrypting EncryptedAssertions):
+#   • Optional in plain-vanilla flows; REQUIRED when
+#     ``requireEncryptedAssertion: true``.
+#   • Provide via ``spCertSecretName`` — K8s Secret with keys
+#     ``cert.pem`` + ``key.pem`` (and optional ``cert.pem.previous`` for
+#     the rotation overlap window — see docs/docs/concepts/saml-scim.md).
+#
+# Identity-key contract (locked in design decision #6 + v1.1 hard
+# constraint): ``scim.userName == saml.NameID == users.email``. SCIM
+# provisions the User row first; SAML's NameID matches by case-
+# insensitive email lookup. SAML alone never creates users (no JIT).
+#
+# Cross-IdP linkage (decision #4): if a User already has an OIDC
+# identity, the first SAML login for that email is rejected with 409
+# until an admin runs the linkage via DB. v1.2 ships the admin UI.
+#
+# Logout is LOCAL only (decision #11): we clear our session cookie and
+# do NOT issue a SAML LogoutRequest to the IdP. Operators wanting
+# IdP-side session kill use short session TTLs or the IdP admin console.
+saml:
+  # Master toggle. When false (default), no SAML wiring is added and
+  # ``/api/auth/saml/*`` routes 404.
+  enabled: false
+  # Service Provider EntityID — the stable identifier the IdP knows
+  # us by. Typically the public ACS URL's origin + ``/saml``, e.g.
+  # ``https://aifactory.example.com/saml``. Must match the EntityID
+  # the operator registered at the IdP.
+  spEntityId: ""
+  # Assertion Consumer Service URL — where the IdP POSTs the signed
+  # assertion. Must be the absolute URL the browser can reach, e.g.
+  # ``https://aifactory.example.com/api/auth/saml/acs``.
+  acsUrl: ""
+  # IdP federation-metadata URL (pick this OR idpMetadataSecretName).
+  # The web-server fetches on startup + refreshes every 4 hours; the
+  # last-known-good XML stays cached through transient IdP outages.
+  idpMetadataUrl: ""
+  # K8s Secret name with key ``idp-metadata.xml`` (pick this OR
+  # idpMetadataUrl). Operator rotates by recreating the Secret +
+  # restarting the pod. Mounted at /etc/saml/idp-metadata.xml.
+  idpMetadataSecretName: ""
+  # Machine-readable IdP key — matches the ``identityProviders[].name``
+  # entry the login page renders. Default ``saml`` is fine for the
+  # single-SAML-IdP v1.1 shape. Must NOT contain spaces.
+  idpName: ""
+  # Human-readable label for the login-page dropdown, e.g.
+  # ``Corp SSO (SAML)``. Falls back to ``idpName`` when empty.
+  idpDisplayName: ""
+  # K8s Secret name with keys ``cert.pem`` + ``key.pem`` for the SP
+  # signing cert + private key. Optional unless
+  # ``requireEncryptedAssertion: true``. May also include
+  # ``cert.pem.previous`` for the rotation overlap window — see the
+  # SP cert rotation runbook in docs/docs/concepts/saml-scim.md.
+  spCertSecretName: ""
+  # When true, the SP rejects any assertion whose ``<Assertion>`` is
+  # not encrypted. ``spCertSecretName`` is then mandatory (the SDK
+  # uses the SP private key to decrypt). When false, assertions may
+  # be plain XML — signature still required.
+  requireEncryptedAssertion: false
+  # Absolute URL to land on after an IdP-init flow (no RelayState).
+  # Validator: scheme + host MUST match ``spEntityId`` to prevent open-
+  # redirect via crafted IdP-init URLs. Leave empty to reject IdP-init
+  # flows entirely (SP-init only).
+  idpInitDefaultReturnTo: ""
+
+# ---------------------------------------------------------------------------
+# SCIM 2.0 user + group provisioning endpoint (Epic #35 #41).
+#
+# When ``scim.enabled: true``, the web-server mounts
+# ``/api/scim/v2/Users`` + ``/api/scim/v2/Groups`` per RFC 7644. The
+# operator's IdP (Okta / Azure AD / Keycloak) POSTs to these as users
+# join, change roles, or leave the org. Soft-deleted users return 404
+# on subsequent GET — matches Azure AD's deprovision-then-GET sync.
+#
+# Auth is a single static Bearer token from a K8s Secret (decision #3):
+# every request to ``/api/scim/v2/*`` must carry
+# ``Authorization: Bearer <token>``. Constant-time compare; rotation =
+# recreate Secret + restart pod (the SDK reads at startup).
+#
+# Rate-limiting: NOT in-process (decision #12). Operators who want it
+# set an ingress annotation, e.g.
+#   nginx.ingress.kubernetes.io/limit-rps: "100"
+#
+# Filter grammar subset (decision #5): eq-only on
+# ``userName`` / ``externalId`` / ``active``. Covers 100% of what
+# Okta + Azure AD send during sync. Other operators return 400 with
+# ``scimType: invalidFilter``.
+scim:
+  # Master toggle. When false (default), no SCIM routes are mounted —
+  # the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+  enabled: false
+  # K8s Secret name with key ``SCIM_BEARER_TOKEN`` — the static Bearer
+  # the IdP sends in the Authorization header. Required when
+  # ``enabled: true``. Generate via: ``openssl rand -base64 48 |
+  # tr -d '\n=' | head -c 48`` then ``kubectl create secret generic
+  # aifactory-scim --from-literal=SCIM_BEARER_TOKEN=<the-value>``.
+  # Operator paste the same token into the IdP's SCIM connector.
+  tokenSecretName: ""
+
 kms:
   # One of: fernet (local key, POC only), aws_kms, vault_transit,
   # azure_kv, gcp_kms.
@@ -631,6 +748,294 @@ audit:
       # recent).
       successfulJobsHistoryLimit: 1
       failedJobsHistoryLimit: 3
+
+# ---------------------------------------------------------------------------
+# LiteLLM gateway (Epic #35 #38 PR-3).
+#
+# Optional sub-chart from upstream berriai/litellm-helm. When enabled,
+# a single in-cluster LiteLLM Service mediates every OpenAI-compatible
+# LLM call AIFactory makes (OpenAI, Codex CLI, Gemini, Ollama,
+# Bedrock, Vertex). Claude calls stay direct via the Claude Agent SDK
+# because the SDK speaks Anthropic-format `/v1/messages` which is
+# wire-incompatible with LiteLLM's OpenAI-format `/v1/chat/completions`
+# — closing that gap is a v1.2 work item.
+#
+# What LiteLLM gives operators:
+#   • Per-tenant token budget                ($500/month per org)
+#   • Per-tenant rate limit                  (60 req/min per org)
+#   • Per-tenant model allowlist             (gpt-4o yes, gpt-5 no)
+#   • Audit hook (PII-redacted prompt + response in audit_logs)
+#   • Prometheus metrics → Grafana dashboards (dashboards/litellm.json)
+#
+# Default OFF — single-developer pilots and laptop installs run with
+# the existing direct-provider path. Pre-#38 deployments are
+# byte-for-byte unchanged until the operator flips
+# ``litellm.enabled: true``. See the concept doc at
+# docs/docs/concepts/litellm-gateway.md for the full operator
+# walkthrough — failure modes, master-key rotation, allowlist
+# discipline, virtual-key lifecycle, and dashboard import recipe.
+#
+# Multi-tenant operators MUST also configure the audit + redactor
+# block below. The audit.failureMode setting decides what happens
+# when the audit-write path fails — closed (reject the call) is the
+# compliance-safe default; open (let the call through with a logged
+# warning) is the operator escape hatch for during-incident triage.
+litellm:
+  # Master toggle. False (default) means no sub-chart pulled, no
+  # LITELLM_* env vars on the web pod, no Grafana ConfigMap rendered.
+  enabled: false
+
+  # Name of a Kubernetes Secret containing the KMS-wrapped master
+  # key (design §3). REQUIRED when enabled=true. The Secret must
+  # have a key named ``LITELLM_MASTER_KEY`` whose value is the
+  # KMS-wrapped key (NOT plaintext — the reconciler unwraps via the
+  # configured KMS backend before calling LiteLLM admin APIs).
+  #
+  # Anti-pattern (forbidden): putting the plaintext master key in
+  # the generic ``aifactory-config`` Secret. The startup validator
+  # refuses to call admin APIs without a successful KMS unwrap.
+  # Rotation runbook: same cadence as the audit-anchor signing key
+  # documented in #43 — see concept doc.
+  masterKeySecretName: ""
+
+  # When set, this overrides the in-cluster Service URL. Use for
+  # operator-managed external LiteLLM deployments (e.g. a shared
+  # gateway running in a neighbour namespace, or a multi-deployment
+  # gateway-as-a-service). Leave empty to use the in-cluster
+  # sub-chart Service.
+  gatewayUrl: ""
+
+  # AIFactory-specific audit + PII redaction options. These are
+  # AIFactory's, NOT the upstream chart's — wired into the audit
+  # hook the web pod runs against every LLM response.
+  audit:
+    # Master toggle for AIFactory's audit hook. When true, the
+    # provider classes wrap each LLM response in an audit_logs
+    # writer with classification='confidential' (design §5).
+    # When litellm.enabled=true, default this to true for
+    # SOC2/ISO compliance. Operators can opt out only for the
+    # short, well-bounded reasons documented in the concept doc.
+    enabled: true
+
+    # Opt-in encrypted full-text capture of prompt + response.
+    # OFF by default: the audit row stores the first 4KB only
+    # (design §5). Operators with strict full-prompt retention
+    # mandates flip this to true; the bytes go through the
+    # EncryptedString column type from Epic #26 P2.
+    fullTextCapture: false
+
+    # Operator extensions to the built-in PII redaction patterns
+    # (design §4). Built-in patterns cover US SSN, email, US phone
+    # in the hyphenated forms; CC pattern is INTENTIONALLY OMITTED
+    # in v1.1 due to false-positive rate (Luhn-validated CC pattern
+    # ships in v1.2). Operators with PCI data add their own here:
+    #
+    #   extraRedactionPatterns:
+    #     - pattern: 'ACC-\d{8}'
+    #       replacement: '[REDACTED_ACCT]'
+    #     - pattern: '\b4\d{15}\b'          # Visa, no spaces (Luhn-check yourself)
+    #       replacement: '[REDACTED_CC]'
+    #
+    # Patterns are Python `re` syntax. Compile failures log
+    # WARNING + skip the bad pattern (fail-safe; one bad regex
+    # doesn't disable all redaction).
+    extraRedactionPatterns: []
+
+    # What to do when the audit-write path fails (KMS down,
+    # DB unreachable, PII regex compile error, etc):
+    #   "closed" — reject the LLM call with a clear operator-
+    #              visible error. Compliance-safe default; the
+    #              whole point of the gateway is the audit
+    #              evidence, so bypassing on failure defeats
+    #              the purpose.
+    #   "open"   — let the call through with a logged WARNING.
+    #              Operator escape hatch for during-incident
+    #              triage (e.g. KMS outage where you'd rather
+    #              continue serving than block all LLM traffic).
+    #              Documented as a compliance regression; the
+    #              concept doc walks through the trade-off.
+    failureMode: "closed"
+
+  # ---------------------------------------------------------------
+  # Upstream berriai/litellm-helm chart values pass through here.
+  # See https://github.com/BerriAI/litellm/tree/main/deploy/charts/litellm-helm
+  # for the full list. Operators configure backend providers (OpenAI,
+  # Bedrock, Vertex, Ollama), per-tenant accounting, and pod resource
+  # limits via the standard upstream value paths under this same
+  # ``litellm:`` block (Helm sub-chart values are nested under the
+  # parent chart's dependency name / alias).
+  #
+  # Example (operator override in their own values.yaml):
+  #
+  #   litellm:
+  #     enabled: true
+  #     masterKeySecretName: "aifactory-litellm-master-key"
+  #     proxy_config:
+  #       model_list:
+  #         - model_name: gpt-4o-mini
+  #           litellm_params:
+  #             model: openai/gpt-4o-mini
+  #             api_key: os.environ/OPENAI_API_KEY
+  #         - model_name: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+  #           litellm_params:
+  #             model: bedrock/anthropic.claude-sonnet-4-20250514-v1:0
+  #             aws_region_name: us-east-1
+  #     environmentSecrets:
+  #       - aifactory-llm-backend-keys
+
+# ---------------------------------------------------------------------------
+# Monitoring add-ons that wrap Grafana dashboards and other observability
+# resources. Each toggle is independent — operators can ship the Grafana
+# ConfigMaps without the Prometheus ServiceMonitor and vice versa.
+monitoring:
+  grafanaDashboards:
+    # When true, the LiteLLM Grafana dashboard JSON in
+    # dashboards/litellm.json is wrapped in a ConfigMap with the
+    # ``grafana_dashboard: "1"`` label that the Grafana operator
+    # auto-discovers and imports. When false (default), no ConfigMap
+    # is rendered — operators using a non-operator Grafana install
+    # import the JSON manually via the Grafana UI.
+    enabled: false
+    # Namespace label that scopes the dashboard discovery. Override
+    # only when running multiple Grafana operators on one cluster.
+    namespaceLabel: "monitoring"
+    # Folder name in Grafana. Operators with multiple AIFactory
+    # deployments override per-env (e.g. "AIFactory (staging)").
+    folder: "AIFactory"
+
+# ---------------------------------------------------------------------------
+# Tenant Isolation Mode (Epic #35 #36).
+#
+# When enabled, every Organization gets its own Kubernetes namespace,
+# ServiceAccount, NetworkPolicy (default-deny + explicit egress allow-
+# list), ResourceQuota, LimitRange, S3 prefix + IAM role (AWS) or
+# operator-supplied per-tenant credentials (other clouds), and Vault
+# path. Agent pods spawn into the tenant's namespace and inherit the
+# isolation by construction.
+#
+# Default: OFF. Pre-#36 deployments are byte-for-byte unchanged until
+# the operator flips ``tenant.isolationEnabled=true``. See the concept
+# doc at docs/docs/concepts/tenant-isolation.md for the full operator
+# walkthrough — threat model, prerequisites, tear-down lifecycle,
+# OPA Gatekeeper recommendation, failure modes.
+#
+# Prerequisites (operator MUST satisfy BEFORE enabling):
+#   1. CNI plugin with FQDN-policy support — Calico (FQDN beta) OR
+#      Cilium (CiliumNetworkPolicy CRD). The Helm pre-install hook
+#      below (pre-install-cni-probe.yaml) probes for these CRDs and
+#      fails the install loudly if neither is present.
+#   2. Redis enabled (``redis.enabled=true``) — multi-replica
+#      deployments need the reconciler's distributed mutex. Single-
+#      replica deployments may run without Redis but the reconciler
+#      refuses to write if Redis is unavailable mid-tick.
+#   3. Vault `aifactory-reconciler` AppRole pre-created with the
+#      minimum-needed sys/policies/acl/aifactory-tenant-* +
+#      auth/kubernetes/role/aifactory-tenant-* capabilities (see
+#      concept doc §5 — never use a root token).
+#   4. (AWS only) IRSA enabled on the cluster so per-tenant IAM roles
+#      can be assumed by per-tenant ServiceAccounts.
+#
+# Security caveat (honest acknowledgement, design §1):
+#   The web pod's ClusterRole grants cluster-wide create on Namespace
+#   + RoleBinding so the reconciler can provision tenant namespaces
+#   at run time. This is a privilege concentration: a compromised web
+#   pod can create arbitrary namespaces + bindings. Production
+#   deployments SHOULD enable both:
+#     - sandbox.gvisor.enabled=true   (syscall-level isolation)
+#     - tenant.gatekeeperEnabled=true (OPA samples that deny non-
+#                                      aifactory-tenant-* namespaces)
+#   See the tenant-reconciler-rbac.yaml template comment for the full
+#   threat-model link.
+tenant:
+  # Master toggle. When false (default), the reconciler does NOT run;
+  # all orgs map to the deployment-default namespace (legacy v1.0
+  # behaviour). Setting true requires the prerequisites above; the
+  # pre-install hook hard-fails if the CNI probe doesn't find Calico
+  # or Cilium CRDs.
+  isolationEnabled: false
+
+  # Days between Organization soft-delete (Stage 1 — PII scrubbed
+  # immediately per GDPR Art. 17) and infrastructure tear-down
+  # (Stage 2 — namespace + S3 prefix + Vault path deleted). 30 days
+  # is the recommended default — long enough for mistaken-delete
+  # recovery + legal-hold negotiation, short enough that abandoned
+  # tenants don't accumulate quota. Day 0 is allowed but produces a
+  # WARNING log on every reconcile pass reminding the operator of
+  # the recovery-window loss.
+  deletionGraceDays: 30
+
+  # Prefix for the per-tenant K8s namespace name. The reconciler
+  # computes ``<namespacePrefix>-<org.slug>`` once on first reconcile
+  # under isolation; the result is stored in
+  # ``organizations.tenant_namespace`` and locked for the org's
+  # lifetime (slug renames do NOT change the namespace name). Override
+  # only if your cluster has a naming convention that conflicts with
+  # the default — must satisfy ^[a-z][a-z0-9-]{0,40}[a-z0-9]$ so the
+  # final namespace stays under the 63-char DNS label limit.
+  namespacePrefix: "aifactory-tenant"
+
+  networkPolicy:
+    # CNI backend hint for FQDN-policy emission. The reconciler emits
+    # either ``CiliumNetworkPolicy`` (Cilium) or a Calico
+    # ``GlobalNetworkPolicy`` (Calico) depending on this value:
+    #   auto    — detect at reconcile time (probes both CRDs)
+    #   calico  — emit Calico CRDs only
+    #   cilium  — emit Cilium CRDs only
+    # The pre-install hook validates BEFORE chart install that the
+    # selected backend's CRDs are present; ``auto`` accepts either.
+    cniBackend: "auto"
+
+  limitRange:
+    # Per-pod CPU/memory defaults injected into each tenant namespace's
+    # LimitRange. Prevents noisy-neighbour between tenants: a tenant
+    # spawning an unbounded agent pod can't starve other tenants.
+    # Operators with high-performance workloads (large-context coding
+    # tasks) may need to raise these; the LimitRange is a DEFAULT, not
+    # a hard cap (the ResourceQuota below sets the hard cap).
+    defaultCpu: "500m"
+    defaultMemory: "512Mi"
+
+  resourceQuota:
+    # Hard cap on resource creation per tenant namespace. Prevents
+    # one tenant's runaway from exhausting cluster quota. Tune to
+    # match your largest expected tenant's footprint — exceeded quota
+    # blocks new pod / PVC creation with a clear K8s error that the
+    # frontend surfaces.
+    maxPods: 50
+    maxPvcs: 20
+
+  # Opt-in OPA Gatekeeper constraint samples. When true, ships two
+  # ConstraintTemplates + Constraints that defence-in-depth the
+  # privilege-concentration acknowledged in the security caveat above:
+  #   1. namespace-prefix — denies any Namespace create whose name
+  #      doesn't start with ``<namespacePrefix>-``. A compromised web
+  #      pod cannot create arbitrary namespaces.
+  #   2. rolebinding-tenant-scope — denies any RoleBinding that
+  #      references the web pod's ServiceAccount in a non-tenant
+  #      namespace.
+  # Requires the Gatekeeper CRDs (templates.gatekeeper.sh) to already
+  # be installed on the cluster. The chart does NOT install Gatekeeper
+  # itself — operators install it once cluster-wide. False (default)
+  # ships nothing; the operator who has not adopted Gatekeeper sees
+  # no behaviour change.
+  gatekeeperEnabled: false
+
+  teardown:
+    # Cron schedule for the daily Stage-2 tear-down sweep. The cron
+    # pod scans for orgs with deleted_at older than
+    # ``tenant.deletionGraceDays`` and tears down their resources via
+    # the reconciler's ``tear_down_org()`` path. Default = 03:00 UTC
+    # (low traffic window for most operators). Operators with multiple
+    # AIFactory deployments writing into a shared cluster MUST stagger
+    # schedules to avoid colliding on the same tear-down window.
+    cronSchedule: "0 3 * * *"
+
+    # Hours the reconciler logs intended deletions BEFORE actually
+    # running them. Per design §4a, a 24-hour dry-run pass gives the
+    # operator a window to intervene if a tear-down was triggered in
+    # error. Setting 0 disables the dry-run pass (deletions execute
+    # immediately at the next cron tick); setting >24 extends it.
+    dryRunHours: 24
 
 # Cross-cutting platform-team settings.
 global:
