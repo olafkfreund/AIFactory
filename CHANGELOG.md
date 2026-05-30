@@ -1,8 +1,13 @@
 ## [Unreleased]
 
+## 3.3.0 - 2026-05-30
+
 ### Documentation
 
 - Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines).
+- Repositioned the docs site on the open-source, self-hostable, auditable message — new tagline, hero, feature cards, intro, and a new "Why AIFactory" page; roadmap "Direction" preamble; GTM strategy memo under `docs/plans/`.
+- Enabled the built-in Docusaurus blog at `/blog` (RSS/Atom feeds, tags, reading time) with an authors file and the first post, "Why we can't use Cursor at a bank".
+- Added an additive retro CRT layer (a sweeping refresh beam + scanline flicker) on the terminal theme; both disabled under `prefers-reduced-motion`.
 
 ### Added — GCP MCP catalog entry (#168, Epic #100)
 
