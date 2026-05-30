@@ -174,12 +174,9 @@ function AuthenticatedApp() {
     return () => clearTimeout(timeout);
   }, [isSwitchingProject]);
 
-  // Apply theme (light/dark mode + Ocean color theme)
+  // Apply theme (light/dark mode — Gruvbox palette is the default in index.css)
   useEffect(() => {
     const root = document.documentElement;
-
-    // Always use Ocean color theme
-    root.setAttribute('data-theme', 'ocean');
 
     const applyTheme = () => {
       if (settings.theme === 'dark') {

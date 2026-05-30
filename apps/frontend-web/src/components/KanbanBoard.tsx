@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy
 } from '@dnd-kit/sortable';
-import { Plus, Inbox, Loader2, Eye, CheckCircle2, Archive, RefreshCw } from 'lucide-react';
+import { Plus, Inbox, Loader2, Eye, CheckCircle2, UserCheck, Archive, RefreshCw } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { ScrollArea } from './ui/scroll-area';
 import { Button } from './ui/button';
@@ -210,6 +210,28 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
     }
   };
 
+  // Status icon shown beside the column label, tinted to match the column border
+  const ColumnIcon = (() => {
+    switch (status) {
+      case 'backlog': return Inbox;
+      case 'in_progress': return Loader2;
+      case 'ai_review': return Eye;
+      case 'human_review': return UserCheck;
+      case 'done': return CheckCircle2;
+      default: return Inbox;
+    }
+  })();
+  const columnIconColor = (() => {
+    switch (status) {
+      case 'backlog': return 'text-gray-400';
+      case 'in_progress': return 'text-orange-400';
+      case 'ai_review': return 'text-violet-400';
+      case 'human_review': return 'text-fuchsia-400';
+      case 'done': return 'text-emerald-400';
+      default: return 'text-muted-foreground';
+    }
+  })();
+
   const emptyState = getEmptyStateContent(status, t);
 
   return (
@@ -224,11 +246,18 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
     >
       {/* Column header - enhanced styling with colorful border */}
       <div className={cn("flex items-center justify-between p-4 border-b-2", getHeaderBorderColor())}>
-        <div className="flex items-center gap-2.5">
-          <h2 className="font-semibold text-sm text-foreground">
+        <div className="flex items-center gap-2">
+          <ColumnIcon
+            className={cn(
+              'h-4 w-4 shrink-0',
+              columnIconColor,
+              status === 'in_progress' && tasks.length > 0 && 'animate-spin'
+            )}
+          />
+          <h2 className="font-semibold text-sm text-foreground tracking-tight">
             {TASK_STATUS_LABELS[status]}
           </h2>
-          <span className="column-count-badge">
+          <span className="column-count-badge font-mono">
             {tasks.length}
           </span>
         </div>
