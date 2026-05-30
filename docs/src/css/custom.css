@@ -1,35 +1,157 @@
 /**
- * AIFactory landing-page styling.  Primary palette comes from the
- * AIFactory logo blue (#1a73e8).  All animations respect
- * prefers-reduced-motion so accessibility users see a still page.
+ * AIFactory landing-page styling — GREEN-PHOSPHOR CRT THEME.
+ *
+ * Black screen, phosphor-green text, monospace everywhere, with for-show
+ * CRT effects: full-viewport scanlines + flicker, a vignette / screen
+ * curvature, and a slow refresh beam. No blue anywhere. The CRT look is
+ * forced in both light and dark mode (a terminal has no "light mode").
+ * All motion respects prefers-reduced-motion.
  */
 
-:root {
-  --ifm-color-primary: #1a73e8;
-  --ifm-color-primary-dark: #1668d1;
-  --ifm-color-primary-darker: #1462c4;
-  --ifm-color-primary-darkest: #1051a2;
-  --ifm-color-primary-light: #2e80ea;
-  --ifm-color-primary-lighter: #3a87ec;
-  --ifm-color-primary-lightest: #5e9cf0;
-  --ifm-code-font-size: 92%;
-  --docusaurus-highlighted-code-line-bg: rgba(26, 115, 232, 0.08);
+/* ─── Palette (forced identical in light + dark) ──────────────────────── */
 
-  /* AIFactory-brand accent for gradients + glows.  Slightly warmer than
-     the primary so the hero gradient reads with depth rather than flat. */
-  --aif-accent-warm: #7c3aed;
-  --aif-accent-cool: #06b6d4;
+:root,
+[data-theme='light'],
+[data-theme='dark'] {
+  /* Phosphor greens */
+  --aif-green: #33ff66;          /* bright P1 phosphor — headings, accents */
+  --aif-green-dim: #1fbf4d;      /* dimmer green — borders, muted accents */
+  --aif-green-text: #b9ffc9;     /* readable body green */
+  --aif-white: #eafff0;          /* phosphor "white" for emphasis */
+  --aif-bg: #050805;             /* near-black, faintly green */
+  --aif-bg-soft: #0a0f0a;        /* slightly raised surface */
+  --aif-glow: rgba(51, 255, 102, 0.55);
+  --aif-glow-soft: rgba(51, 255, 102, 0.18);
+
+  /* Monospace everywhere */
+  --aif-mono: 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', ui-monospace,
+    'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+  --ifm-font-family-base: var(--aif-mono);
+  --ifm-font-family-monospace: var(--aif-mono);
+  --ifm-heading-font-family: var(--aif-mono);
+
+  /* Map Infima primary onto phosphor green */
+  --ifm-color-primary: #33ff66;
+  --ifm-color-primary-dark: #1fbf4d;
+  --ifm-color-primary-darker: #19a843;
+  --ifm-color-primary-darkest: #128235;
+  --ifm-color-primary-light: #5cff85;
+  --ifm-color-primary-lighter: #7dffa0;
+  --ifm-color-primary-lightest: #a9ffc1;
+
+  /* Surfaces + text */
+  --ifm-background-color: var(--aif-bg);
+  --ifm-background-surface-color: var(--aif-bg-soft);
+  --ifm-font-color-base: var(--aif-green-text);
+  --ifm-heading-color: var(--aif-white);
+  --ifm-link-color: var(--aif-green);
+  --ifm-link-hover-color: var(--aif-white);
+
+  /* Navbar + footer */
+  --ifm-navbar-background-color: #030503;
+  --ifm-navbar-link-color: var(--aif-green-text);
+  --ifm-navbar-link-hover-color: var(--aif-green);
+  --ifm-footer-background-color: #030503;
+
+  --ifm-code-font-size: 92%;
+  --ifm-code-background: #0c150c;
+  --docusaurus-highlighted-code-line-bg: rgba(51, 255, 102, 0.12);
+
+  /* Emphasis ramp tuned for a dark screen */
+  --ifm-color-emphasis-100: #0c120c;
+  --ifm-color-emphasis-200: #14201a;
+  --ifm-color-emphasis-700: #8fdca3;
+  --ifm-color-emphasis-800: #b9ffc9;
 }
 
-[data-theme='dark'] {
-  --ifm-color-primary: #5e9cf0;
-  --ifm-color-primary-dark: #4790ee;
-  --ifm-color-primary-darker: #3a87ec;
-  --ifm-color-primary-darkest: #1a73e8;
-  --ifm-color-primary-light: #75a8f2;
-  --ifm-color-primary-lighter: #82b0f3;
-  --ifm-color-primary-lightest: #b1ccf8;
-  --docusaurus-highlighted-code-line-bg: rgba(94, 156, 240, 0.15);
+html,
+body {
+  background: var(--aif-bg);
+  color: var(--aif-green-text);
+}
+
+/* A faint global text glow sells the phosphor look. */
+body {
+  text-shadow: 0 0 1px rgba(51, 255, 102, 0.25);
+}
+
+a {
+  text-shadow: 0 0 6px var(--aif-glow-soft);
+}
+
+.navbar {
+  border-bottom: 1px solid var(--aif-green-dim);
+  box-shadow: 0 0 18px rgba(51, 255, 102, 0.08);
+}
+
+/* ─── Full-viewport CRT effects (for show) ────────────────────────────
+   Three fixed, non-interactive overlays on top of everything:
+   body::before  → scanlines + flicker
+   body::after   → vignette / screen curvature darkening
+   html::after   → a slow refresh beam sweeping down the screen           */
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.16) 0px,
+    rgba(0, 0, 0, 0.16) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.7;
+  animation: crt-flicker 4.5s steps(60) infinite;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    rgba(0, 0, 0, 0.35) 88%,
+    rgba(0, 0, 0, 0.7) 100%
+  );
+}
+
+html::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 28vh;
+  z-index: 9999;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(51, 255, 102, 0.05) 45%,
+    rgba(51, 255, 102, 0.08) 50%,
+    rgba(51, 255, 102, 0.05) 55%,
+    transparent
+  );
+  animation: crt-beam 7s linear infinite;
+}
+
+@keyframes crt-flicker {
+  0%, 96%, 100% { opacity: 0.7; }
+  97% { opacity: 0.55; }
+  98% { opacity: 0.82; }
+  99% { opacity: 0.6; }
+}
+
+@keyframes crt-beam {
+  0% { transform: translateY(-30vh); }
+  100% { transform: translateY(130vh); }
 }
 
 /* ─── Hero ─────────────────────────────────────────────────────────── */
@@ -39,18 +161,15 @@
   overflow: hidden;
   padding: 6rem 0 7rem;
   text-align: center;
-  background: linear-gradient(
-    135deg,
-    var(--ifm-color-primary-darkest) 0%,
-    var(--ifm-color-primary) 60%,
-    var(--aif-accent-warm) 100%
-  );
-  color: white;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(51, 255, 102, 0.12), transparent 60%),
+    var(--aif-bg);
+  color: var(--aif-green);
   isolation: isolate;
+  border-bottom: 1px solid var(--aif-green-dim);
 }
 
-/* Background "orbs" that slowly drift across the hero.  Pure CSS; no JS
-   library involved.  Three orbs at different speeds creates depth. */
+/* Drifting "orbs" recoloured to green phosphor glows. */
 .hero-orbs {
   position: absolute;
   inset: 0;
@@ -61,56 +180,25 @@
 .orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.55;
+  filter: blur(90px);
+  opacity: 0.28;
   animation: orb-drift 22s ease-in-out infinite;
+  background: var(--aif-green);
 }
 
-.orb-1 {
-  width: 480px;
-  height: 480px;
-  background: var(--aif-accent-cool);
-  top: -120px;
-  left: -100px;
-  animation-delay: 0s;
-}
-
-.orb-2 {
-  width: 380px;
-  height: 380px;
-  background: var(--aif-accent-warm);
-  top: 30%;
-  right: -100px;
-  animation-delay: -7s;
-  animation-duration: 27s;
-}
-
-.orb-3 {
-  width: 320px;
-  height: 320px;
-  background: #ffffff;
-  bottom: -100px;
-  left: 50%;
-  opacity: 0.3;
-  animation-delay: -14s;
-  animation-duration: 30s;
-}
+.orb-1 { width: 480px; height: 480px; top: -120px; left: -100px; animation-delay: 0s; }
+.orb-2 { width: 380px; height: 380px; top: 30%; right: -100px; animation-delay: -7s; animation-duration: 27s; opacity: 0.2; }
+.orb-3 { width: 320px; height: 320px; bottom: -100px; left: 50%; opacity: 0.16; animation-delay: -14s; animation-duration: 30s; }
 
 @keyframes orb-drift {
-  0%, 100% {
-    transform: translate(0, 0) scale(1);
-  }
-  33% {
-    transform: translate(40px, -30px) scale(1.1);
-  }
-  66% {
-    transform: translate(-30px, 40px) scale(0.95);
-  }
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -30px) scale(1.1); }
+  66% { transform: translate(-30px, 40px) scale(0.95); }
 }
 
 .hero-content {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
@@ -118,26 +206,61 @@
   width: 96px;
   height: 96px;
   margin-bottom: 1.5rem;
-  filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25));
+  /* Tint the logo green and make it glow like everything else. */
+  filter: drop-shadow(0 0 14px var(--aif-glow)) grayscale(1) brightness(1.4)
+    sepia(1) hue-rotate(70deg) saturate(4);
 }
 
 .hero-title {
+  font-family: var(--aif-mono);
   font-size: 3.5rem;
   font-weight: 800;
   margin-bottom: 0.75rem;
-  letter-spacing: -0.02em;
-  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.15);
+  letter-spacing: 0.08em;
+  color: var(--aif-green);
+  text-shadow: 0 0 6px var(--aif-glow), 0 0 22px var(--aif-glow),
+    0 0 40px rgba(51, 255, 102, 0.35);
 }
 
 .hero-banner .tagline {
+  font-family: var(--aif-mono);
   font-size: 1.3rem;
-  opacity: 0.95;
+  color: var(--aif-green-text);
   margin-bottom: 1.5rem;
   font-weight: 400;
+  text-shadow: 0 0 8px var(--aif-glow-soft);
 }
 
-/* Compact pill row that shows what AIFactory is, at a glance.  Replaces
-   the "scroll down to read 6 features" friction. */
+/* Blinking terminal cursor after the tagline. */
+.hero-banner .tagline::after {
+  content: '_';
+  margin-left: 3px;
+  color: var(--aif-green);
+  font-weight: 700;
+  animation: crt-cursor 1.1s steps(1) infinite;
+}
+@keyframes crt-cursor {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* CRT scanlines local to the hero, layered above its glow. */
+.hero-banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.12) 0px,
+    rgba(0, 0, 0, 0.12) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: multiply;
+}
+
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
@@ -146,16 +269,24 @@
   margin-bottom: 2rem;
 }
 
+/* Terminal-prompt badges: green outline, lowercase, "> " prefix. */
 .hero-badge {
   display: inline-block;
+  font-family: var(--aif-mono);
   padding: 0.3rem 0.85rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(51, 255, 102, 0.06);
+  border: 1px solid var(--aif-green-dim);
+  color: var(--aif-green);
   font-size: 0.85rem;
   font-weight: 500;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  text-shadow: 0 0 6px var(--aif-glow-soft);
+}
+.hero-badge::before {
+  content: '> ';
+  opacity: 0.8;
 }
 
 .hero-cta {
@@ -166,12 +297,25 @@
   flex-wrap: wrap;
 }
 
-.hero-cta-secondary {
-  color: white !important;
-  border-color: rgba(255, 255, 255, 0.6) !important;
+/* Terminal buttons: green outline, transparent; invert on hover. */
+.hero-cta .button,
+.cta-strip .button {
+  font-family: var(--aif-mono);
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  border: 1px solid var(--aif-green) !important;
+  background: transparent !important;
+  color: var(--aif-green) !important;
+  text-shadow: 0 0 6px var(--aif-glow-soft);
+  box-shadow: 0 0 10px rgba(51, 255, 102, 0.2),
+    inset 0 0 10px rgba(51, 255, 102, 0.06);
+  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
-.hero-cta-secondary:hover {
-  background: rgba(255, 255, 255, 0.12) !important;
+.hero-cta .button:hover,
+.cta-strip .button:hover {
+  background: var(--aif-green) !important;
+  color: #021006 !important;
+  box-shadow: 0 0 18px var(--aif-glow);
 }
 
 /* ─── Section headers ─────────────────────────────────────────────── */
@@ -191,14 +335,17 @@
 
 .features-header h2,
 .recent-header h2 {
+  font-family: var(--aif-mono);
   font-size: 2.25rem;
   font-weight: 700;
   margin-bottom: 0.5rem;
+  color: var(--aif-green);
+  text-shadow: 0 0 10px var(--aif-glow-soft);
 }
 
 .features-subtitle {
   font-size: 1.1rem;
-  color: var(--ifm-color-emphasis-700);
+  color: var(--aif-green-text);
   max-width: 600px;
   margin: 0 auto;
 }
@@ -213,33 +360,36 @@
 
 .feature-card {
   padding: 1.75rem;
-  border-radius: 12px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-background-surface-color);
+  border-radius: 6px;
+  border: 1px solid var(--aif-green-dim);
+  background: var(--aif-bg-soft);
   transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
 }
 
 .feature-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 32px rgba(26, 115, 232, 0.12);
-  border-color: var(--ifm-color-primary-light);
+  box-shadow: 0 0 24px rgba(51, 255, 102, 0.18);
+  border-color: var(--aif-green);
 }
 
 .feature-icon {
   font-size: 2rem;
   margin-bottom: 0.75rem;
   display: inline-block;
+  filter: drop-shadow(0 0 8px var(--aif-glow-soft));
 }
 
 .feature-card h3 {
-  color: var(--ifm-color-primary);
+  font-family: var(--aif-mono);
+  color: var(--aif-green);
   margin-top: 0;
   margin-bottom: 0.75rem;
   font-size: 1.25rem;
+  text-shadow: 0 0 8px var(--aif-glow-soft);
 }
 
 .feature-card p {
-  color: var(--ifm-color-emphasis-800);
+  color: var(--aif-green-text);
   line-height: 1.6;
   margin: 0;
 }
@@ -247,13 +397,10 @@
 /* ─── "Recently shipped" timeline ─────────────────────────────────── */
 
 .recent-section {
-  background: var(--ifm-color-emphasis-100);
-  border-radius: 16px;
+  background: var(--aif-bg-soft);
+  border: 1px solid var(--aif-green-dim);
+  border-radius: 10px;
   margin: 2rem auto 5rem;
-}
-
-[data-theme='dark'] .recent-section {
-  background: var(--ifm-color-emphasis-200);
 }
 
 .recent-timeline {
@@ -264,34 +411,37 @@
 
 .recent-item {
   padding: 1.5rem;
-  border-radius: 10px;
-  background: var(--ifm-background-color);
-  border-left: 3px solid var(--ifm-color-primary);
+  border-radius: 6px;
+  background: var(--aif-bg);
+  border-left: 3px solid var(--aif-green);
   transition: transform 200ms ease, box-shadow 200ms ease;
 }
 
 .recent-item:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 0 18px rgba(51, 255, 102, 0.12);
 }
 
 .recent-when {
   display: inline-block;
+  font-family: var(--aif-mono);
   font-size: 0.8rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--ifm-color-primary);
+  color: var(--aif-green);
   margin-bottom: 0.5rem;
 }
 
 .recent-title {
+  font-family: var(--aif-mono);
   font-size: 1.15rem;
   margin: 0 0 0.5rem;
+  color: var(--aif-white);
 }
 
 .recent-item p {
-  color: var(--ifm-color-emphasis-700);
+  color: var(--aif-green-text);
   font-size: 0.95rem;
   line-height: 1.55;
   margin: 0 0 0.75rem;
@@ -300,6 +450,7 @@
 .recent-link {
   font-size: 0.9rem;
   font-weight: 600;
+  color: var(--aif-green);
 }
 
 /* ─── Bottom CTA strip ───────────────────────────────────────────── */
@@ -307,47 +458,37 @@
 .cta-strip {
   padding: 4rem 1rem 5rem;
   text-align: center;
-  background: linear-gradient(
-    135deg,
-    var(--ifm-color-primary-darkest) 0%,
-    var(--ifm-color-primary-dark) 100%
-  );
-  color: white;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(51, 255, 102, 0.1), transparent 60%),
+    var(--aif-bg);
+  color: var(--aif-green);
+  border-top: 1px solid var(--aif-green-dim);
 }
 
 .cta-strip h2 {
+  font-family: var(--aif-mono);
   font-size: 2.25rem;
   margin-bottom: 0.5rem;
+  color: var(--aif-green);
+  text-shadow: 0 0 12px var(--aif-glow-soft);
 }
 
 .cta-strip p {
   font-size: 1.1rem;
-  opacity: 0.95;
+  color: var(--aif-green-text);
   max-width: 600px;
   margin: 0 auto 2rem;
 }
 
 /* ─── Scroll-reveal animation ─────────────────────────────────────── */
 
-/*  Pure-CSS scroll-reveal — cards fade + slide up on first paint.  No JS,
-    no IntersectionObserver, no Framer.  Works because Docusaurus renders
-    static HTML and the user scrolls into a viewport that already has the
-    cards in the DOM.  For a "wait until visible" effect we'd need JS — but
-    "all cards fade in once on load" is plenty for this scope. */
-
 .reveal-on-scroll {
   animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ─── Accessibility — kill all motion for users who asked us to. ──── */
@@ -355,8 +496,14 @@
 @media (prefers-reduced-motion: reduce) {
   .orb,
   .hero-content,
-  .reveal-on-scroll {
+  .reveal-on-scroll,
+  body::before,
+  html::after {
     animation: none !important;
+  }
+  .hero-banner .tagline::after {
+    animation: none;
+    opacity: 1;
   }
   .feature-card:hover,
   .recent-item:hover {
@@ -367,18 +514,10 @@
 /* ─── Responsive tweaks ──────────────────────────────────────────── */
 
 @media (max-width: 720px) {
-  .hero-banner {
-    padding: 4rem 0 5rem;
-  }
-  .hero-title {
-    font-size: 2.5rem;
-  }
-  .hero-banner .tagline {
-    font-size: 1.1rem;
-  }
+  .hero-banner { padding: 4rem 0 5rem; }
+  .hero-title { font-size: 2.5rem; }
+  .hero-banner .tagline { font-size: 1.1rem; }
   .features-header h2,
   .recent-header h2,
-  .cta-strip h2 {
-    font-size: 1.75rem;
-  }
+  .cta-strip h2 { font-size: 1.75rem; }
 }
