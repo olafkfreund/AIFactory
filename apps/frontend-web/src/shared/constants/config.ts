@@ -18,7 +18,7 @@ export const UI_SCALE_STEP = 5;
 
 export const DEFAULT_APP_SETTINGS = {
   theme: 'system' as const,
-  colorTheme: 'ocean' as const,
+  colorTheme: 'gruvbox' as const,
   defaultModel: 'opus',
   agentFramework: 'aifactory',
   autoBuildPath: undefined as string | undefined,
