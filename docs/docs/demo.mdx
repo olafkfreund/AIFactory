@@ -41,6 +41,38 @@ seen from the operator's seat.
   style={{borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)'}}
 />
 
+### Hand it off — the `/handover` command
+
+The whole loop starts with one command. In a Claude Code session in your repo,
+type `/handover` with a one-line task. The skill matches your AIFactory project,
+creates the task, and hands it to the autonomous pipeline — then you go do
+something else.
+
+<AsciinemaCast src="/recordings/handover-command.cast" />
+
+### Finish it — open the PR when AIFactory is done
+
+When the build lands at **Human Review**, you have a merge-ready diff. Click
+**Create PR** and AIFactory pushes the worktree branch and opens a GitHub pull
+request — the developer's one-click finish.
+
+<video
+  controls
+  width="100%"
+  src="/recordings/finish-pr.mp4"
+  style={{borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)'}}
+/>
+
+<table>
+  <tr>
+    <td><img src="/img/screenshots/finish-pr-gate.png" alt="Human Review gate — Build Ready for Review" /></td>
+    <td><img src="/img/screenshots/finish-pr-created.png" alt="Pull Request Created — PR #19" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><em>Left: the review gate — 2 files, 3 commits, +33, branch → main, with Merge to main / Create PR / Request Changes.<br/>Right: one click later — the PR is open on GitHub.</em></td>
+  </tr>
+</table>
+
 ## Key views you'll see
 
 <table>
