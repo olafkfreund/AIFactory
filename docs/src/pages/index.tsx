@@ -24,9 +24,9 @@ function HeroBanner() {
         <p className="tagline">{siteConfig.tagline}</p>
         <div className="hero-meta">
           <span className="hero-badge">Self-hosted</span>
-          <span className="hero-badge">27 MCP tools</span>
-          <span className="hero-badge">Claude Agent SDK</span>
-          <span className="hero-badge">Multi-cloud aware</span>
+          <span className="hero-badge">Review-gated</span>
+          <span className="hero-badge">Fully auditable</span>
+          <span className="hero-badge">No lock-in</span>
         </div>
         <div className="hero-cta">
           <Link
@@ -49,50 +49,52 @@ function HeroBanner() {
 
 const FEATURES = [
   {
-    icon: '🧭',
-    title: 'Spec-first autonomy',
+    icon: '🔒',
+    title: 'Runs in your perimeter',
     body:
-      'A planner → coder → QA → human-review pipeline driven by the Claude Agent SDK. ' +
-      'Plans are reviewed before code, code is reviewed before merge. Every gate is auditable.',
+      'Self-hosted on your own Kubernetes via the Helm chart (or docker-compose on a laptop). ' +
+      'Your source never has to leave your network — the answer for teams that legally can\'t ' +
+      'ship code to a third-party cloud.',
+  },
+  {
+    icon: '📝',
+    title: 'Spec-first, review-gated',
+    body:
+      'Every run starts from a written spec with acceptance criteria. You approve the plan ' +
+      'before code is written and the diff before it merges; a QA agent checks the work. ' +
+      'No unsupervised black box, no vibe-code to clean up.',
+  },
+  {
+    icon: '🧾',
+    title: 'Auditable by design',
+    body:
+      'Every action is journaled in a hash-chained audit log; every spec, plan, and QA report ' +
+      'lives on disk and in version control. The provenance trail your security team and your ' +
+      'auditor actually ask for — SOC2 / ISO evidence in the enterprise build.',
   },
   {
     icon: '🔀',
-    title: 'Multi-provider routing',
+    title: 'No vendor lock-in',
     body:
-      'Route each phase to the right model — Claude Opus for planning, Sonnet for QA, ' +
-      'Ollama / Codex / Gemini / OpenAI-compatible for coding. Provider abstraction means ' +
-      'no vendor lock-in.',
+      'Route each phase to the right model — Claude, OpenAI, Gemini, Codex, or a local Ollama / ' +
+      'OpenAI-compatible endpoint. Provider abstraction means you own your model bill and never ' +
+      'depend on a single vendor.',
   },
   {
     icon: '🖥️',
-    title: 'Live agent console',
+    title: 'Isolated + observable',
     body:
-      'Watch the agent work in real time via the rmux-backed Live Console — read-only by ' +
-      'default, one-click Attach when you want the keyboard. Per-task git-worktree isolation.',
+      'Each task runs in its own git worktree — nothing touches your tree until you merge. ' +
+      'Watch the agent work in real time via the Live Console (read-only by default, one-click ' +
+      'Attach), with OpenTelemetry tracing across every boundary.',
   },
   {
     icon: '🛰️',
     title: 'MCP control plane',
     body:
       '27 MCP tools across stdio + HTTP+SSE transports. Drive AIFactory from Claude Code, ' +
-      'Cursor, Continue.dev, or any MCP-aware client. /handover skill turns "this is bigger ' +
-      'than I thought" into an autonomous overnight run.',
-  },
-  {
-    icon: '☁️',
-    title: 'Infra-aware by default',
-    body:
-      'A catalog of default MCP servers (Kubernetes, AWS, Azure, GCP, GitHub, GitLab, ADO) ' +
-      'auto-enables per project when the right markers AND credentials are detected. Read-only ' +
-      'by default, audit-logged, cloud-native identity preferred (IRSA / WIF / Pod Identity).',
-  },
-  {
-    icon: '🔐',
-    title: 'Enterprise-ready foundation',
-    body:
-      'Self-hosted on K8s via the Helm chart. JWT auth, audit log, scope-gated MCP API keys, ' +
-      'opt-in Remote Control via Claude Code\'s native --remote-control flag. OIDC, SAML+SCIM, ' +
-      'and ISO 27001 evidence on the v1.1 roadmap.',
+      'Cursor, Continue.dev, or any MCP-aware client — and hand a task off to an autonomous ' +
+      'background run with the /handover skill.',
   },
 ];
 
@@ -100,9 +102,10 @@ function FeatureGrid() {
   return (
     <section className="features-section">
       <div className="features-header">
-        <Heading as="h2">Built for teams that ship</Heading>
+        <Heading as="h2">Autonomy you can actually defend</Heading>
         <p className="features-subtitle">
-          Six pillars. One pipeline. Your infra, your model bill, your audit trail.
+          For teams that can't send their code to the cloud and won't merge what they can't review.
+          Your infra, your model bill, your audit trail.
         </p>
       </div>
       <div className="features">
@@ -220,8 +223,8 @@ function CTAStrip() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="AIFactory — Spec-Driven Development for AI agents"
-      description="Self-hosted platform that turns ideas into shipping code via a planner/coder/QA agent pipeline. 27 MCP tools, multi-provider routing, infra-aware, enterprise-ready.">
+      title="AIFactory — the open-source AI software engineer you can self-host and audit"
+      description="Open-source, self-hostable autonomous coding platform. Spec-first, review-gated, fully auditable, multi-model. Runs in your own cluster — your code never leaves your perimeter.">
       <HeroBanner />
       <main>
         <FeatureGrid />

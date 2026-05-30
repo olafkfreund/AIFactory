@@ -7,6 +7,25 @@ sidebar_position: 5
 
 What we're working on, in priority order.
 
+## Direction
+
+AIFactory is an **open-source, open-core** project. The strategic priority is **adoption** — getting
+the self-hostable, review-gated, auditable core into the hands of the engineers who need it most:
+platform and security teams at organizations that can't send their code to a cloud agent. See
+[Why AIFactory](./why-aifactory) for the positioning, and the
+[GTM strategy memo](https://github.com/olafkfreund/AIFactory/blob/dev/docs/plans/2026-05-30-oss-gtm-strategy.md)
+for the full reasoning.
+
+What that means for the roadmap, concretely:
+
+- **The core stays free and open.** The pipeline, web UI, multi-provider routing, worktree
+  isolation, and single-tenant self-hosting are the project — and they stay MIT.
+- **Near-term focus is the adoption path**, not more enterprise depth: a frictionless first-run
+  (one-command self-host, local-model support), a verifiable end-to-end demo, and docs that lead
+  with the problem. Enterprise features deepen as real demand pulls them.
+- **The enterprise edition** (multi-tenant, SAML/SCIM, signed audit anchors + evidence export,
+  support) is how the open-source core stays funded — added when organizations ask for it.
+
 ## Recently shipped
 
 - **Epic #35 #43 — Signed audit-chain anchor + ISO 27001 evidence** ✅ — daily HMAC-SHA256 anchor signed with a KMS-wrapped key; versioned signing keys so KMS rotation doesn't invalidate prior anchors; classification-window hashing detects `confidential → public` flipping; `/api/admin/access-review` endpoint for SOC2 CC6.2 / ISO 27001 A.9.2.5 quarterly reviews; offline verifier helper for external auditors. Closes v3.0 limitation #1. See [Signed audit-chain anchor](./concepts/audit-anchor) + the [ISO 27001 evidence map](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md).
