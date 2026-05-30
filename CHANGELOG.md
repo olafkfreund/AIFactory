@@ -32,7 +32,13 @@
 
 ---
 
-## [1.1.0] - 2026-05-28
+## 3.2.0 - 2026-05-29
+
+- Interim release on the Enterprise v1.1 line. See the [v3.2.0 release](https://github.com/olafkfreund/AIFactory/releases/tag/v3.2.0) and git history for the full commit list.
+
+---
+
+## 3.1.0 - 2026-05-29
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
 
@@ -123,10 +129,6 @@ redis:
 ### Contributors
 
 Shipped across 32 merged PRs (#169–#199, #200–#206) in a single coordinated session. Epic #35 closed all 9 child issues.
-
----
-
-## Unreleased
 
 ### ⚖️ Licensing
 

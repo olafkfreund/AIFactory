@@ -2,6 +2,27 @@
 
 This document describes how releases are created for AIFactory.
 
+## Versioning policy (canonical — do not drift)
+
+There is **one** version scheme: **semantic versioning `MAJOR.MINOR.PATCH` (3.x)**.
+The same number must appear, in lockstep, in:
+
+- `package.json`, `apps/frontend-web/package.json`, `apps/backend/__init__.py`
+- the git tag `vMAJOR.MINOR.PATCH`
+- the `CHANGELOG.md` heading — **unbracketed**: `## MAJOR.MINOR.PATCH - YYYY-MM-DD`
+
+Rules that keep the release pipeline green (`.github/workflows/release.yml`):
+
+- The CHANGELOG uses Keep-a-Changelog style with a single `## [Unreleased]`
+  section at the top. **Only `[Unreleased]` is bracketed; released versions are not.**
+  (The release job greps for `^## <version>`, so a bracketed `## [3.4.0]` would NOT match.)
+- Do **not** use product-milestone numbers (e.g. "Enterprise v1.1") as CHANGELOG
+  headings — that caused the 1.x-vs-3.x drift that was reconciled on 2026-05-30.
+  Refer to milestones in the body text, not the version heading.
+- A release only fires when `package.json`'s version **changes** on `main` **and** a
+  matching `## <version>` CHANGELOG entry exists. Land both in the same promotion.
+- The docs site deploys **only from `main`** (dev pushes just build).
+
 ## Overview
 
 AIFactory uses a simplified release process with version bumping and changelog management.
