@@ -2,6 +2,7 @@ import { Sparkles, Zap, Brain, FileCode } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
+import { AIFactoryLogo } from '../AIFactoryLogo';
 
 interface WelcomeStepProps {
   onGetStarted: () => void;
@@ -68,7 +69,7 @@ export function WelcomeStep({ onGetStarted, onSkip }: WelcomeStepProps) {
         {/* Hero Section */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
-            <img src="/logo.png" alt="AIFactory" className="h-16 w-16 rounded-xl" />
+            <AIFactoryLogo className="h-16 w-16 rounded-xl" />
           </div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">
             {t('welcome.title')}
