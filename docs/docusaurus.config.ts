@@ -74,8 +74,26 @@ const config: Config = {
           routeBasePath: '/',
           editUrl: 'https://github.com/olafkfreund/AIFactory/edit/dev/docs/',
         },
-        // Blog is disabled — we don't ship one. Pages + Docs only.
-        blog: false,
+        blog: {
+          routeBasePath: 'blog',
+          blogTitle: 'AIFactory Blog',
+          blogDescription:
+            'Notes on governed, auditable, self-hostable autonomous coding.',
+          showReadingTime: true,
+          blogSidebarTitle: 'Recent posts',
+          blogSidebarCount: 'ALL',
+          postsPerPage: 10,
+          feedOptions: {
+            type: ['rss', 'atom'],
+            title: 'AIFactory Blog',
+            description:
+              'Governed, auditable, self-hostable autonomous coding.',
+            copyright: `Copyright © ${new Date().getFullYear()} AIFactory contributors.`,
+          },
+          // Keep builds green: don't fail on inline authors or untruncated posts.
+          onInlineAuthors: 'ignore',
+          onUntruncatedBlogPosts: 'ignore',
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -118,6 +136,7 @@ const config: Config = {
         },
         {to: '/architecture/overview', label: 'Architecture', position: 'left'},
         {to: '/showcase/', label: 'Showcase', position: 'left'},
+        {to: '/blog', label: 'Blog', position: 'left'},
         {
           href: 'https://github.com/olafkfreund/AIFactory',
           label: 'GitHub',
