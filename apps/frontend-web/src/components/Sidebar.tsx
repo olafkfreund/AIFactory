@@ -46,6 +46,7 @@ import {
 import { useSettingsStore } from '../stores/settings-store';
 import { useAuthStore } from '../stores/auth-store';
 import { AddProjectModal } from './AddProjectModal';
+import { AIFactoryLogo } from './AIFactoryLogo';
 import { GitSetupModal } from './GitSetupModal';
 import { RateLimitIndicator } from './RateLimitIndicator';
 import type { Project, AutoBuildVersionInfo, GitStatus, ProjectEnvConfig } from '../shared/types';
@@ -327,8 +328,10 @@ export function Sidebar({
       <div className="flex h-full w-64 flex-col bg-sidebar border-r border-border">
         {/* Header with drag area - extra top padding for macOS traffic lights */}
         <div className="electron-drag flex h-14 items-center gap-2.5 px-4 pt-6">
-          <img src="/logo.png" alt="AIFactory" className="electron-no-drag h-7 w-7 rounded" />
-          <span className="electron-no-drag text-lg font-bold" style={{ color: '#61CE70' }}>AI<span style={{ color: '#FFFFFF' }}>Factory</span></span>
+          <AIFactoryLogo className="electron-no-drag h-7 w-7" />
+          <span className="electron-no-drag text-lg font-bold tracking-tight text-foreground">
+            <span className="text-primary">AI</span>Factory
+          </span>
         </div>
 
         <Separator className="mt-2" />
