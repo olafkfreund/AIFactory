@@ -612,6 +612,12 @@ def infer_provider_from_model(model: str) -> str:
     if m.startswith("ollama:"):
         return "ollama"
 
+    # Explicit prefix: "copilot:model-name" — GitHub Copilot CLI.  Checked
+    # before the claude-*/gpt-* rules below because Copilot's own backend
+    # names (claude-sonnet-4.5, gpt-5) would otherwise route to claude/codex.
+    if m.startswith("copilot:"):
+        return "copilot"
+
     # Explicit prefix for OpenAI-compatible endpoints (LM Studio, vLLM,
     # OpenRouter, Together, Groq, LocalAI, ...).  Connection details come
     # from env vars OPENAI_COMPATIBLE_BASE_URL / OPENAI_COMPATIBLE_API_KEY
@@ -655,7 +661,7 @@ def strip_provider_prefix(model: str) -> str:
     The factory and providers expect a bare model name.  When a user picks
     ``openai-compatible:gpt-4o-mini``, the provider only needs ``gpt-4o-mini``.
     """
-    for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:"):
+    for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:", "copilot:"):
         if model.lower().startswith(prefix):
             return model[len(prefix) :]
     return model
