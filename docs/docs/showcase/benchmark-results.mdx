@@ -37,7 +37,7 @@ Every managed provider produced a working, independently-tested feature from the
 | **Claude** | `claude-sonnet-4-6` | 9m 29s | 3 / 3 | 254 lines | ✅ **9 / 9 pass** |
 | **Gemini** | `gemini-3.1-pro-preview` | 19m 37s | 13 / 13 | 291 lines | ✅ **16 / 16 pass** (incl. async API tests) |
 | **Copilot** | `copilot:claude-sonnet-4.5` | ~25m¹ | 10 / 10 | 144 lines | ✅ **4 / 4 pass** |
-| Ollama (local) | `qwen2.5-coder:14b` | 5m 36s | 0 / 11 | none | — |
+| Ollama (local) | `qwen2.5-coder:14b` | 2m 32s² | 1 / 10 | partial | — (feature incomplete) |
 
 Times are wall-clock from task-create to the Human Review gate. Tests were re-run
 independently on each provider's branch in a clean virtualenv — these are not the agent's
@@ -46,6 +46,12 @@ self-reported numbers.
 ¹ Copilot completed all 10 subtasks and its tests pass, but it's the slowest: the GitHub
 Copilot CLI adds a per-tool routing/approval layer, and the run reached the gate right as
 the benchmark's 25-minute poll window closed.
+
+² Ollama's number is *after* a provider fix (see below): the local `qwen2.5-coder:14b`
+went from writing **0 files** to writing real code (a partial `TicTacToe` module), but a
+14B model isn't large enough to finish the whole multi-file feature — it stopped after the
+first subtask. Completing the full task needs a larger local model (≈27B-class); that's a
+hardware question, not an AIFactory one.
 
 ### Cost, honestly
 
@@ -66,13 +72,14 @@ tokens. Persisting exact per-build usage is a tracked follow-up.
   async tests.
 - **Convenient via an existing subscription → Copilot (`copilot:claude-sonnet-4.5`).** Works
   with your GitHub Copilot plan and no extra API key; slowest, but correct.
-- **Cheapest → Ollama, in principle.** $0 on local hardware — but the 14B model couldn't
-  drive the multi-step agentic loop. A larger local model is needed before "free" also means
-  "working."
+- **Cheapest → Ollama.** $0 on local hardware. After the provider fix below, a small local
+  model (`qwen2.5-coder:14b`) now produces real code instead of nothing — but finishing a
+  full multi-file feature still needs a larger local model (≈27B-class). "Free" works; "free
+  *and* complete" depends on the GPU you can spare.
 
 ## What the failures taught us — and what we fixed
 
-The benchmark surfaced three real, fixable issues. That's the point of running it.
+The benchmark surfaced four real, fixable issues. That's the point of running it.
 
 - **Codex produced nothing on the first run** (0 files). Root cause: the agentic Codex
   provider drained only stdout while the Codex MCP server filled its stderr pipe buffer
@@ -90,6 +97,14 @@ The benchmark surfaced three real, fixable issues. That's the point of running i
   ([PR #244](https://github.com/olafkfreund/AIFactory/pull/244)): a `CopilotAgenticProvider`
   that drives `copilot -p … --allow-all-tools`, selectable with a `copilot:<backend>` model
   string. Copilot is a router over `claude-sonnet-4.5` / `claude-sonnet-4` / `gpt-5`.
+- **Ollama wrote nothing** (0 files). Root cause: small local models (qwen, llama) often emit
+  a tool call as a ```` ```json {"name","arguments"}``` ```` *text* block instead of the native
+  `tool_calls` field, so the agent's `Write` never executed; they also tend to loop on `Read`
+  and never reach the final write. Fixed by parsing text-emitted tool calls and adding a
+  read-loop convergence nudge — ported from the sister
+  [TFactory](https://github.com/olafkfreund/TFactory) project, which had already solved it
+  ([PR #247](https://github.com/olafkfreund/AIFactory/pull/247)). With the fix the 14B now
+  produces real code; finishing the full feature is then just a question of local model size.
 
 ## Reproduce it
 
