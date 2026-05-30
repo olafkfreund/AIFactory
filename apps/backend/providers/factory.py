@@ -54,6 +54,7 @@ _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
     "codex":              ("providers.codex_agentic",                "CodexAgenticProvider"),
     "gemini":             ("providers.gemini_agentic",               "GeminiAgenticProvider"),
     "ollama":             ("providers.ollama_agentic",               "OllamaAgenticProvider"),
+    "copilot":            ("providers.copilot_agentic",              "CopilotAgenticProvider"),
     "openai-compatible":  ("providers.openai_compatible_agentic",    "OpenAICompatibleAgenticProvider"),
 }
 
@@ -62,6 +63,8 @@ _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
     "codex":              ("providers.codex",                "CodexCLIProvider"),
     "gemini":             ("providers.gemini",               "GeminiCLIProvider"),
     "ollama":             ("providers.ollama",               "OllamaProvider"),
+    # Copilot has no text-only variant; the agentic CLI returns text fine.
+    "copilot":            ("providers.copilot_agentic",      "CopilotAgenticProvider"),
     "openai-compatible":  ("providers.openai_compatible",    "OpenAICompatibleProvider"),
 }
 
@@ -84,6 +87,10 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "ollama": "ollama",
     "local": "ollama",
     "local-ollama": "ollama",
+    # GitHub Copilot CLI (routes to claude-sonnet-4.5 / gpt-5 under the hood)
+    "copilot": "copilot",
+    "github-copilot": "copilot",
+    "gh-copilot": "copilot",
     # OpenAI-compatible endpoints (LM Studio, vLLM, OpenRouter, Together, Groq, ...)
     "openai": "openai-compatible",
     "openai-api": "openai-compatible",
