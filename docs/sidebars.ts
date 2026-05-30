@@ -54,7 +54,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Showcase',
       collapsed: true,
-      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo'],
+      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo', 'showcase/benchmark-results'],
     },
     {
       type: 'category',
