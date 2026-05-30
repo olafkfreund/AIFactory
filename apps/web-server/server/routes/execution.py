@@ -5,6 +5,7 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
 from .projects import load_projects
-from .tasks import sync_worktree_to_main_spec
+from .tasks import get_next_spec_id, sync_worktree_to_main_spec
 
 router = APIRouter()
 
@@ -642,13 +643,33 @@ async def create_and_run_task(
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()
 
-    # Generate a temporary task ID for spec creation
-    import uuid
-    temp_task_id = f"{project_id}:pending-{uuid.uuid4().hex[:8]}"
+    # Create the spec up front with a deterministic, board-trackable id (NNN-slug)
+    # and seed requirements.json — mirroring the create-task path. Previously this
+    # used a temporary "pending-<uuid>" id; the spec orchestrator renames any
+    # "pending" directory once requirements are gathered
+    # (rename_spec_dir_from_requirements), which orphaned the tracked task as
+    # "stuck" and produced a doubled-slug skeleton. A non-pending id is never
+    # renamed, so the board task id and the spec dir stay in sync. (#232)
+    specs_dir = project_path / ".aifactory" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    spec_id = get_next_spec_id(project_path, title)
+    spec_dir = specs_dir / spec_id
+    spec_dir.mkdir(exist_ok=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps(
+            {
+                "title": title,
+                "description": description,
+                "created_at": datetime.now().isoformat(),
+            },
+            indent=2,
+        )
+    )
+    task_id = f"{project_id}:{spec_id}"
 
     try:
         await agent_service.start_spec_creation(
-            task_id=temp_task_id,
+            task_id=task_id,
             project_path=project_path,
             title=title,
             description=description,
@@ -663,6 +684,6 @@ async def create_and_run_task(
 
     return {
         "success": True,
-        "task_id": temp_task_id,
+        "task_id": task_id,
         "message": "Task creation started. Connect to WebSocket for progress updates.",
     }
