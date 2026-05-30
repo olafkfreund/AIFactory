@@ -354,6 +354,101 @@ class TestAgenticProviderLoop:
         assert type(last).__name__ == "AssistantMessage"
         assert any("maximum" in b.text.lower() for b in last.content if type(b).__name__ == "TextBlock")
 
+    def test_text_block_tool_call_is_executed(self, tmp_path):
+        """Small/local models emit a tool call as a ```json``` TEXT block instead
+        of the native tool_calls field. The loop must parse and execute it so a
+        file actually gets written (the root cause of Ollama producing 0 code)."""
+        target = tmp_path / "made.py"
+        p = OllamaAgenticProvider(model="mock", working_dir=tmp_path, max_turns=5)
+
+        write_as_text = {
+            "message": {
+                "role": "assistant",
+                "content": (
+                    "I'll create the file now.\n"
+                    "```json\n"
+                    + json.dumps({
+                        "name": "Write",
+                        "arguments": {"file_path": str(target), "content": "print('hi')\n"},
+                    })
+                    + "\n```"
+                ),
+                "tool_calls": None,  # NOT in the native field
+            }
+        }
+        final = {"message": {"role": "assistant", "content": "Done.", "tool_calls": None}}
+
+        calls = {"n": 0}
+
+        def mock_post(url, payload):
+            calls["n"] += 1
+            return write_as_text if calls["n"] == 1 else final
+
+        with patch.object(p, "_http_post", side_effect=mock_post):
+            _run(p.query("create made.py"))
+            messages = _run(_collect(p.receive_response()))
+
+        # The Write must have been executed → file exists on disk.
+        assert target.exists(), "text-block tool call was not executed (no file written)"
+        assert "print('hi')" in target.read_text()
+        # And a ToolUseBlock(Write) should have been surfaced.
+        tool_uses = [
+            b for m in messages if type(m).__name__ == "AssistantMessage"
+            for b in m.content if type(b).__name__ == "ToolUseBlock"
+        ]
+        assert any(b.name == "Write" for b in tool_uses)
+
+    def test_convergence_nudge_after_readonly_turns(self, tmp_path):
+        """After enough read-only turns without producing output, the loop injects
+        a one-time nudge telling the model to Write now — preventing the read-forever
+        stall that left small models producing nothing."""
+        (tmp_path / "a.py").write_text("x = 1\n")
+        p = OllamaAgenticProvider(model="mock", working_dir=tmp_path, max_turns=8)
+
+        readonly = {
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"function": {"name": "Read", "arguments": {"file_path": str(tmp_path / "a.py")}}}],
+            }
+        }
+
+        seen_payloads: list[dict] = []
+
+        def mock_post(url, payload):
+            seen_payloads.append(payload)
+            return readonly  # always read-only → triggers the nudge
+
+        with patch.object(p, "_http_post", side_effect=mock_post):
+            _run(p.query("read things"))
+            _run(_collect(p.receive_response()))
+
+        # A later request payload must contain the injected nudge instruction.
+        nudged = any(
+            any("Write tool exactly once" in str(m.get("content", "")) for m in pl.get("messages", []))
+            for pl in seen_payloads
+        )
+        assert nudged, "expected a convergence nudge after repeated read-only turns"
+
+
+class TestExtractTextToolCalls:
+    """Direct tests for the text-emitted tool-call parser."""
+
+    def test_fenced_json_block(self):
+        from providers.ollama_agentic import _extract_text_tool_calls
+        text = 'do it\n```json\n{"name": "Write", "arguments": {"file_path": "a.py", "content": "x"}}\n```'
+        out = _extract_text_tool_calls(text)
+        assert out == [{"function": {"name": "Write", "arguments": {"file_path": "a.py", "content": "x"}}}]
+
+    def test_bare_json_object(self):
+        from providers.ollama_agentic import _extract_text_tool_calls
+        out = _extract_text_tool_calls('{"name": "Read", "arguments": {"file_path": "b.py"}}')
+        assert out == [{"function": {"name": "Read", "arguments": {"file_path": "b.py"}}}]
+
+    def test_prose_returns_nothing(self):
+        from providers.ollama_agentic import _extract_text_tool_calls
+        assert _extract_text_tool_calls("I will now write the file.") == []
+
 
 # ===================================================================
 # Section 2: Live integration tests (requires Ollama)
