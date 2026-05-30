@@ -82,6 +82,33 @@ _PATH_TAGS: str = "/api/tags"
 _MAX_TOOL_ARGS_LEN: int = 50_000  # 50 KB safety limit for tool argument strings
 
 
+def _extract_text_tool_calls(text: str) -> list[dict]:
+    """Parse tool calls a model emitted as TEXT (a ```json {"name","arguments"}```
+    block, or a bare top-level JSON object with those keys) into the native
+    ``tool_calls`` shape ``[{"function": {"name", "arguments"}}]``.
+
+    Small/local models (qwen, llama, etc.) often describe a tool call in prose
+    instead of using the structured tool_calls field; this lets the agentic
+    loop execute them anyway.
+    """
+    import re
+
+    out: list[dict] = []
+    candidates: list[str] = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
+    if not candidates:
+        stripped = text.strip()
+        if stripped.startswith("{") and '"name"' in stripped and '"arguments"' in stripped:
+            candidates = [stripped]
+    for raw in candidates:
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("name") and "arguments" in obj:
+            out.append({"function": {"name": obj["name"], "arguments": obj["arguments"]}})
+    return out
+
+
 class OllamaAgenticProvider(BaseLLMProvider):
     """Agentic Ollama provider with native tool calling.
 
@@ -183,6 +210,18 @@ class OllamaAgenticProvider(BaseLLMProvider):
             {"role": "user", "content": self._pending_prompt},
         ]
 
+        # Convergence guard for small/local models: they tend to loop on Read
+        # and never emit the final Write. Track signatures of executed calls and
+        # how many read-only turns have passed without producing output, then
+        # nudge the model to write once a threshold is crossed.
+        _seen_calls: set[tuple[str, str]] = set()
+        _readonly_turns = 0
+        _produced_output = False
+        _nudged = False
+        _READONLY = {"Read", "Glob", "Grep"}
+        _WRITERS = {"Write", "Edit", "MultiEdit"}
+        _NUDGE_AFTER = 5
+
         for turn in range(self._max_turns):
             logger.debug(
                 "OllamaAgenticProvider: turn %d/%d", turn + 1, self._max_turns
@@ -207,6 +246,16 @@ class OllamaAgenticProvider(BaseLLMProvider):
             message = response_data.get("message", {})
             content_text = (message.get("content") or "").strip()
             tool_calls = message.get("tool_calls")
+
+            # Fallback for small/local models (e.g. qwen2.5-coder) that emit a
+            # tool call as a ```json {"name","arguments"}``` TEXT block instead
+            # of the native tool_calls field — parse them so the agentic loop
+            # still progresses (otherwise the agent stalls and writes nothing).
+            if not tool_calls and content_text:
+                parsed = _extract_text_tool_calls(content_text)
+                if parsed:
+                    tool_calls = parsed
+                    content_text = ""  # don't surface the raw JSON block as text
 
             # Build the AssistantMessage content blocks
             assistant_blocks: list[Any] = []
@@ -288,6 +337,47 @@ class OllamaAgenticProvider(BaseLLMProvider):
                 # Append assistant message and tool results to conversation
                 messages.append(message)
                 messages.extend(tool_results_for_api)
+
+                # ── Convergence guard ──────────────────────────────────────
+                turn_names = [
+                    (tc.get("function", {}) or {}).get("name", "") for tc in tool_calls
+                ]
+                turn_sigs = [
+                    (
+                        (tc.get("function", {}) or {}).get("name", ""),
+                        json.dumps(
+                            (tc.get("function", {}) or {}).get("arguments", {}),
+                            sort_keys=True,
+                            default=str,
+                        ),
+                    )
+                    for tc in tool_calls
+                ]
+                if any(n in _WRITERS for n in turn_names):
+                    _produced_output = True
+                repeated = any(s in _seen_calls for s in turn_sigs)
+                _seen_calls.update(turn_sigs)
+                if turn_names and all(n in _READONLY for n in turn_names):
+                    _readonly_turns += 1
+                else:
+                    _readonly_turns = 0
+                # Once the model has read enough (or is re-reading the same
+                # thing) without producing output, push it to write — once.
+                if (
+                    not _produced_output
+                    and not _nudged
+                    and (_readonly_turns >= _NUDGE_AFTER or repeated)
+                ):
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "You have gathered enough context. Do NOT read or "
+                            "search again. Produce the final required file NOW "
+                            "by calling the Write tool exactly once with the "
+                            "complete file content."
+                        ),
+                    })
+                    _nudged = True
 
             else:
                 # No tool calls — final response
