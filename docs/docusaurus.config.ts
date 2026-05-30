@@ -7,7 +7,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'AIFactory',
-  tagline: 'Spec-Driven Development for AI agents — plan, code, ship.',
+  tagline: 'The open-source AI software engineer you can self-host and audit.',
   favicon: 'img/favicon.ico',
 
   future: {
