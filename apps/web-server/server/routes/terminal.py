@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..config import get_settings
 from ..pty.manager import get_pty_manager
 from ..services.terminal_worktree_service import TerminalWorktreeService
-from .projects import load_projects
+from .projects import get_projects_file, load_projects
 
 router = APIRouter()
 
@@ -274,8 +274,7 @@ async def clear_terminal_sessions(project: str | None = None):
             dirs_to_clear.append(default_sessions_dir)
 
         # Also try to find project sessions
-        from ..paths import get_data_file
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if projects_file.exists():
             try:
                 projects_data = json.loads(projects_file.read_text())
