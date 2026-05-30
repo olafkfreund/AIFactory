@@ -1,8 +1,13 @@
 ## [Unreleased]
 
+## 3.3.0 - 2026-05-30
+
 ### Documentation
 
 - Themed the documentation site to match the skill_pool terminal aesthetic (phosphor green on black, JetBrains Mono, CRT scanlines).
+- Repositioned the docs site on the open-source, self-hostable, auditable message — new tagline, hero, feature cards, intro, and a new "Why AIFactory" page; roadmap "Direction" preamble; GTM strategy memo under `docs/plans/`.
+- Enabled the built-in Docusaurus blog at `/blog` (RSS/Atom feeds, tags, reading time) with an authors file and the first post, "Why we can't use Cursor at a bank".
+- Added an additive retro CRT layer (a sweeping refresh beam + scanline flicker) on the terminal theme; both disabled under `prefers-reduced-motion`.
 
 ### Added — GCP MCP catalog entry (#168, Epic #100)
 
@@ -27,7 +32,13 @@
 
 ---
 
-## [1.1.0] - 2026-05-28
+## 3.2.0 - 2026-05-29
+
+- Interim release on the Enterprise v1.1 line. See the [v3.2.0 release](https://github.com/olafkfreund/AIFactory/releases/tag/v3.2.0) and git history for the full commit list.
+
+---
+
+## 3.1.0 - 2026-05-29
 
 **Enterprise v1.1: Multi-tenant isolation, observability, audit hardening, and legacy-IdP federation**
 
@@ -118,10 +129,6 @@ redis:
 ### Contributors
 
 Shipped across 32 merged PRs (#169–#199, #200–#206) in a single coordinated session. Epic #35 closed all 9 child issues.
-
----
-
-## Unreleased
 
 ### ⚖️ Licensing
 
