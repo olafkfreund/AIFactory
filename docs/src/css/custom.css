@@ -1209,3 +1209,57 @@ aside[class*="docSidebar"] {
     padding: 1.5rem;
   }
 }
+
+/* ─── Extra retro CRT effects (additive — on top of the skill_pool theme) ──
+   "A bit more retro for show": a slow refresh beam sweeping down the screen,
+   and a gentle flicker on the existing scanline overlay. Uses the theme's
+   own #00ff88 phosphor. The beam rides a free pseudo-element (html::after)
+   so the theme's body::before / body::after are untouched. */
+
+html::after {
+  content: "";
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 30vh;
+  pointer-events: none;
+  z-index: 10000;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(0, 255, 136, 0.04) 45%,
+    rgba(0, 255, 136, 0.07) 50%,
+    rgba(0, 255, 136, 0.04) 55%,
+    transparent
+  );
+  mix-blend-mode: screen;
+  animation: aif-crt-beam 7s linear infinite;
+}
+
+@keyframes aif-crt-beam {
+  0% { transform: translateY(-30vh); }
+  100% { transform: translateY(130vh); }
+}
+
+/* Gentle flicker on the theme's existing scanline overlay. */
+body::before {
+  animation: aif-crt-flicker 4.5s steps(60) infinite;
+}
+
+@keyframes aif-crt-flicker {
+  0%, 96%, 100% { opacity: 1; }
+  97% { opacity: 0.82; }
+  98% { opacity: 1; }
+  99% { opacity: 0.9; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html::after {
+    animation: none;
+    opacity: 0;
+  }
+  body::before {
+    animation: none;
+  }
+}

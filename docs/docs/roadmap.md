@@ -7,6 +7,25 @@ sidebar_position: 5
 
 What we're working on, in priority order.
 
+## Direction
+
+AIFactory is an **open-source, open-core** project. The strategic priority is **adoption** — getting
+the self-hostable, review-gated, auditable core into the hands of the engineers who need it most:
+platform and security teams at organizations that can't send their code to a cloud agent. See
+[Why AIFactory](./why-aifactory) for the positioning, and the
+[GTM strategy memo](https://github.com/olafkfreund/AIFactory/blob/dev/docs/plans/2026-05-30-oss-gtm-strategy.md)
+for the full reasoning.
+
+What that means for the roadmap, concretely:
+
+- **The core stays free and open.** The pipeline, web UI, multi-provider routing, worktree
+  isolation, and single-tenant self-hosting are the project — and they stay MIT.
+- **Near-term focus is the adoption path**, not more enterprise depth: a frictionless first-run
+  (one-command self-host, local-model support), a verifiable end-to-end demo, and docs that lead
+  with the problem. Enterprise features deepen as real demand pulls them.
+- **The enterprise edition** (multi-tenant, SAML/SCIM, signed audit anchors + evidence export,
+  support) is how the open-source core stays funded — added when organizations ask for it.
+
 ## Recently shipped
 
 - **Epic #35 — Enterprise v1.1** ✅ **9/9 children shipped (2026-05-28)**:
