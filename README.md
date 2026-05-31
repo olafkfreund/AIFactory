@@ -6,16 +6,18 @@
 **Spec-Driven Development for AI agents — plan, code, ship.**
 
 [![CI](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/olafkfreund/AIFactory/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-olafkfreund.github.io%2FAIFactory-blue)](https://olafkfreund.github.io/AIFactory/)
+[![Docs](https://img.shields.io/badge/docs-aifactory.freundcloud.com-fabd2f)](https://aifactory.freundcloud.com/)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20GPL--3.0-blue.svg)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-green)](https://nodejs.org/)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/)
 
-[Docs](https://olafkfreund.github.io/AIFactory/) ·
-[Demo](https://olafkfreund.github.io/AIFactory/demo) ·
-[Architecture](https://olafkfreund.github.io/AIFactory/architecture/overview) ·
-[Roadmap](https://olafkfreund.github.io/AIFactory/roadmap) ·
-[Contributing](https://olafkfreund.github.io/AIFactory/contributing)
+[Docs](https://aifactory.freundcloud.com/) ·
+[Demo](https://aifactory.freundcloud.com/demo) ·
+[Architecture](https://aifactory.freundcloud.com/architecture/overview) ·
+[Roadmap](https://aifactory.freundcloud.com/roadmap) ·
+[Contributing](https://aifactory.freundcloud.com/contributing)
+
+**📖 New here? Start at the docs → [aifactory.freundcloud.com](https://aifactory.freundcloud.com)** — guided demo, screenshots, architecture, and the full getting-started guide.
 
 </div>
 
@@ -84,7 +86,7 @@ cd apps/frontend-web && npm run dev                  # :3100
 
 Open <http://localhost:3100> and create your first project.
 
-Full installation guide: **[Getting Started →](https://olafkfreund.github.io/AIFactory/getting-started)**
+Full installation guide: **[Getting Started →](https://aifactory.freundcloud.com/getting-started)**
 
 ## See it work
 
@@ -102,7 +104,7 @@ The repo also ships a scripted end-to-end demo that exercises the whole pipeline
 
 It seeds 3 GitHub issues, registers the demo repo with your portal, imports the issues as backlog tasks, prompts you to drive Claude Code from the terminal, then kicks off an autonomous build — all in about 90 seconds. Pass `--yolo` to skip the Enter-prompts between steps.
 
-Walkthrough with screenshots + browser-side video: **[Demo →](https://olafkfreund.github.io/AIFactory/demo)**
+Walkthrough with screenshots + browser-side video: **[Demo →](https://aifactory.freundcloud.com/demo)**
 
 ## Screenshots
 
@@ -124,14 +126,14 @@ Walkthrough with screenshots + browser-side video: **[Demo →](https://olafkfre
 
 ## Documentation
 
-The full documentation lives at **<https://olafkfreund.github.io/AIFactory/>**:
+The full documentation lives at **<https://aifactory.freundcloud.com/>**:
 
-- **[Getting Started](https://olafkfreund.github.io/AIFactory/getting-started)** — install + first task
-- **[Demo](https://olafkfreund.github.io/AIFactory/demo)** — guided end-to-end walkthrough
-- **[Concepts](https://olafkfreund.github.io/AIFactory/concepts/spec-driven-development)** — spec-driven development, multi-provider routing, the rmux Live Console
-- **[Architecture](https://olafkfreund.github.io/AIFactory/architecture/overview)** — agents, data flow, security model, Mermaid diagrams
-- **[Wiki](https://olafkfreund.github.io/AIFactory/wiki/faq)** — FAQ, troubleshooting, glossary
-- **[Compliance](https://olafkfreund.github.io/AIFactory/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
+- **[Getting Started](https://aifactory.freundcloud.com/getting-started)** — install + first task
+- **[Demo](https://aifactory.freundcloud.com/demo)** — guided end-to-end walkthrough
+- **[Concepts](https://aifactory.freundcloud.com/concepts/spec-driven-development)** — spec-driven development, multi-provider routing, the rmux Live Console
+- **[Architecture](https://aifactory.freundcloud.com/architecture/overview)** — agents, data flow, security model, Mermaid diagrams
+- **[Wiki](https://aifactory.freundcloud.com/wiki/faq)** — FAQ, troubleshooting, glossary
+- **[Compliance](https://aifactory.freundcloud.com/compliance/soc2)** — SOC 2 evidence, GDPR, encryption-at-rest
 
 Legacy guides (pre-2026-05-26 rewrite) are archived under [`docs-archive/2026-05-26/`](docs-archive/2026-05-26/) and remain searchable in git history.
 
@@ -153,7 +155,7 @@ git push -u origin feat/my-feature
 gh pr create --base dev
 ```
 
-CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple compliance gates on every PR. Full guide: **[Contributing →](https://olafkfreund.github.io/AIFactory/contributing)**
+CI runs ruff + pytest + frontend typecheck + Postgres acceptance + multiple compliance gates on every PR. Full guide: **[Contributing →](https://aifactory.freundcloud.com/contributing)**
 
 ## License
 

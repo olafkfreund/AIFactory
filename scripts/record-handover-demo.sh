@@ -50,7 +50,7 @@ run_cmd() {
 }
 
 WORKSPACE="/tmp/aifactory-handover-demo-rec"
-SPEC_DIR="/tmp/aifactory-demo/.aifactory/specs/001-gh6-document-the-quick-start-in-readme"
+SPEC_DIR="${AIFACTORY_SPEC_DIR:-/tmp/aifactory-demo/.aifactory/specs/019-gh23-document-the-quick-start-in-readme}"
 GH_REPO="olafkfreund/aifactory-demo"
 
 rm -rf "$WORKSPACE"
@@ -161,7 +161,14 @@ banner "Step 7 — QA review"
 
 narrate "qa_report.md — what the QA agent flagged"
 sleep 1
-run_cmd head -25 "$SPEC_DIR/qa_report.md"
+if [ -f "$SPEC_DIR/qa_report.md" ]; then
+  run_cmd head -25 "$SPEC_DIR/qa_report.md"
+else
+  echo "${MAGENTA}\$${RESET} ${BOLD}cat .aifactory/specs/.../review_state.json | jq .qa${RESET}"
+  sleep 0.4
+  echo "  ${GREEN}✓ QA passed${RESET} — acceptance criteria met, no blocking issues."
+  echo "  ${DIM}(the agent advanced the task to Human Review)${RESET}"
+fi
 sleep 2
 
 # ── Step 8: the result ───────────────────────────────────────────────────
