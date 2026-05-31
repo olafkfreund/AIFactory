@@ -38,7 +38,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 from server.routes import execution as execution_routes  # noqa: E402
 from server.routes import tasks as tasks_routes  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Bug (b): /api/tasks/running must not be shadowed by the catch-all route
 # ---------------------------------------------------------------------------
