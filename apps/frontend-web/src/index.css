@@ -122,6 +122,72 @@
   background-color: hsl(var(--background));
 }
 
+/* ============================================
+   shadcn "Mira" theme — switchable via data-theme="shadcn"
+   Neutral base + yellow primary, generated from the shadcn/ui preset
+   b1ZzvpxAJ (ui.shadcn.com) and converted oklch -> HSL to match the
+   portal's hsl(var(--token)) system. Gruvbox remains the default.
+   success / warning / info are not part of the shadcn preset; tasteful
+   complements are supplied so semantic colors stay legible.
+   ============================================ */
+[data-theme='shadcn'] {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 4%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 4%;
+  --primary: 47 100% 50%;            /* yellow */
+  --primary-foreground: 30 84% 25%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 6% 10%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 0 0% 96%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 357 100% 45%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 71% 45%;            /* complement (not in shadcn preset) */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;             /* complement (not in shadcn preset) */
+  --warning-foreground: 0 0% 4%;
+  --info: 217 91% 60%;               /* matches the preset's blue charts */
+  --info-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 0 0% 63%;
+  --radius: 0.625rem;
+}
+
+.dark[data-theme='shadcn'] {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 44 100% 47%;            /* yellow */
+  --primary-foreground: 30 84% 25%;
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 0 0% 15%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 359 100% 70%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 69% 58%;
+  --success-foreground: 0 0% 4%;
+  --warning: 38 92% 55%;
+  --warning-foreground: 0 0% 4%;
+  --info: 213 94% 68%;
+  --info-foreground: 0 0% 4%;
+  --border: 180 1% 14%;
+  --input: 0 0% 18%;
+  --ring: 0 0% 45%;
+  --radius: 0.625rem;
+}
+
 body {
   margin: 0;
   min-width: 320px;

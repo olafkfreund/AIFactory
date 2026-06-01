@@ -193,16 +193,18 @@ class CodexAgenticProvider(BaseLLMProvider):
 
         # Send initialize
         init_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": init_id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": _MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": _CLIENT_INFO,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": init_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": _MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": _CLIENT_INFO,
+                },
+            }
+        )
 
         response = await self._read_response(init_id)
         server_info = response.get("result", {}).get("serverInfo", {})
@@ -249,11 +251,15 @@ class CodexAgenticProvider(BaseLLMProvider):
     async def _run_codex_mcp(self) -> AsyncGenerator[Any, None]:
         """Call the 'codex' tool via MCP and yield the response."""
         if not self._pending_prompt:
-            logger.warning("CodexAgenticProvider.receive_response() called before query()")
+            logger.warning(
+                "CodexAgenticProvider.receive_response() called before query()"
+            )
             return
 
         if not self._proc:
-            raise RuntimeError("MCP server not running — use 'async with' context manager")
+            raise RuntimeError(
+                "MCP server not running — use 'async with' context manager"
+            )
 
         # Build tool call arguments
         arguments: dict[str, Any] = {
@@ -275,15 +281,17 @@ class CodexAgenticProvider(BaseLLMProvider):
             arguments["threadId"] = self._thread_id
 
         call_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": call_id,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            }
+        )
 
         logger.info(
             "CodexAgenticProvider: sent %s call (id=%d, model=%s, cwd=%s)",
