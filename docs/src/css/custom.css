@@ -1,264 +1,829 @@
 /**
- * AIFactory landing-page styling — GREEN-PHOSPHOR CRT THEME.
+ * Gruvbox theme — matches the product portal (apps/frontend-web/src/index.css)
+ * for a consistent AIFactory look & feel across portal + docs.
  *
- * Black screen, phosphor-green text, monospace everywhere, with for-show
- * CRT effects: full-viewport scanlines + flicker, a vignette / screen
- * curvature, and a slow refresh beam. No blue anywhere. The CRT look is
- * forced in both light and dark mode (a terminal has no "light mode").
- * All motion respects prefers-reduced-motion.
+ * Visual identity: Gruvbox dark (#282828 bg, #ebdbb2 fg, #fabd2f yellow accent),
+ * JetBrains Mono monospace — unified with the AIFactory product portal.
+ *
+ * This file maps skill_pool's CSS variables into Docusaurus/Infima's expected
+ * variable shape.  The site is dark-only — colorMode.disableSwitch is true in
+ * docusaurus.config.ts so the light-mode overrides here are never used, but
+ * are kept for defensive completeness.
+ *
+ * Font loading: JetBrains Mono is loaded via Google Fonts @import below.
+ * If your deployment blocks external font CDNs, self-host the font woff2
+ * files in docs/static/fonts/ and replace the @import with @font-face rules.
  */
 
-/* ─── Palette (forced identical in light + dark) ──────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
-:root,
-[data-theme='light'],
+/* ─── Source palette (from skill_pool terminal.css) ────────────────────── */
+/*
+  --bg:           #282828   pure black
+  --bg-elev:      #32302f   slightly elevated surface
+  --bg-glass:     rgba(29, 32, 33, 0.6)
+  --fg:           #ebdbb2   phosphor green text
+  --fg-dim:       #a89984   dimmed green
+  --fg-muted:     #928374   muted / placeholder green
+  --accent:       #fabd2f   bright accent
+  --accent-dim:   #d79921   dimmed accent
+  --accent-warn:  #fe8019   warning yellow
+  --accent-err:   #fb4934   error red
+  --border:       #504945   dark border
+  --border-bright:#665c54   bright border
+  --shadow-glow:  0 6px 20px rgba(0, 0, 0, 0.45)
+  --shadow-glow-soft: 0 2px 8px rgba(0, 0, 0, 0.35)
+  --max-w:        1180px
+*/
+
+/* ─── Infima / Docusaurus variable overrides ───────────────────────────── */
+
+:root {
+  /* Primary color ramp — maps --accent / --accent-dim */
+  --ifm-color-primary:          #fabd2f;
+  --ifm-color-primary-dark:     #d79921;
+  --ifm-color-primary-darker:   #b57614;
+  --ifm-color-primary-darkest:  #9d6f12;
+  --ifm-color-primary-light:    #ffd152;
+  --ifm-color-primary-lighter:  #ffe09a;
+  --ifm-color-primary-lightest: #fff0c4;
+
+  /* Surface colors */
+  --ifm-background-color:         #282828;
+  --ifm-background-surface-color: #32302f;
+
+  /* Content / emphasis ramp */
+  --ifm-color-content:            #ebdbb2;
+  --ifm-color-content-secondary:  #a89984;
+  --ifm-color-emphasis-100:       #1d2021;
+  --ifm-color-emphasis-200:       #504945;
+  --ifm-color-emphasis-300:       #665c54;
+  --ifm-color-emphasis-400:       #665c54;
+  --ifm-color-emphasis-500:       #928374;
+  --ifm-color-emphasis-600:       #7c6f64;
+  --ifm-color-emphasis-700:       #a89984;
+  --ifm-color-emphasis-800:       #d5c4a1;
+  --ifm-color-emphasis-900:       #ebdbb2;
+
+  /* Typography */
+  --ifm-font-family-base:       "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  --ifm-font-family-monospace:  "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  --ifm-font-size-base:         15px;
+  --ifm-line-height-base:       1.65;
+  --ifm-code-font-size:         95%;
+
+  /* Navbar */
+  --ifm-navbar-background-color:      #282828;
+  --ifm-navbar-shadow:                0 1px 0 #504945;
+  --ifm-navbar-link-color:            #a89984;
+  --ifm-navbar-link-hover-color:      #fabd2f;
+  --ifm-navbar-link-active-color:     #fabd2f;
+  --ifm-navbar-height:                3.5rem;
+
+  /* Footer */
+  --ifm-footer-background-color: #32302f;
+  --ifm-footer-color:            #928374;
+  --ifm-footer-link-color:       #a89984;
+  --ifm-footer-link-hover-color: #fabd2f;
+  --ifm-footer-title-color:      #ebdbb2;
+  --ifm-footer-padding-vertical: 2.5rem;
+
+  /* Links */
+  --ifm-link-color:       #fabd2f;
+  --ifm-link-hover-color: #fbf1c7;
+
+  /* Code blocks */
+  --ifm-code-background:   rgba(29, 32, 33, 0.6);
+  --ifm-code-color:        #fabd2f;
+  --ifm-pre-background:    #32302f;
+  --ifm-pre-color:         #ebdbb2;
+  --ifm-pre-border-radius: 0;
+  --ifm-pre-padding:       1rem 1.25rem;
+
+  /* Highlighted code line */
+  --docusaurus-highlighted-code-line-bg: rgba(250, 189, 47, 0.1);
+
+  /* Borders and dividers */
+  --ifm-color-gray-100:    #1d2021;
+  --ifm-color-gray-200:    #504945;
+  --ifm-color-gray-300:    #665c54;
+  --ifm-color-gray-400:    #928374;
+  --ifm-color-gray-500:    #7c6f64;
+  --ifm-color-gray-600:    #a89984;
+  --ifm-color-gray-700:    #d5c4a1;
+  --ifm-color-gray-800:    #bdae93;
+  --ifm-color-gray-900:    #ebdbb2;
+
+  /* Sidebar */
+  --ifm-sidebar-background-color:   #282828;
+  --doc-sidebar-width:               260px;
+
+  /* Table of contents */
+  --ifm-toc-border-color:       #504945;
+  --ifm-toc-link-color:         #a89984;
+
+  /* Alerts / callouts */
+  --ifm-alert-background-color:  rgba(250, 189, 47, 0.04);
+  --ifm-alert-border-color:      #fabd2f;
+  --ifm-alert-color:             #ebdbb2;
+
+  /* Scrollbar — webkit only */
+  --aif-scrollbar-track: #32302f;
+  --aif-scrollbar-thumb: #504945;
+  --aif-scrollbar-thumb-hover: #665c54;
+
+  /* Glow helpers from skill_pool */
+  --aif-glow:      0 6px 20px rgba(0, 0, 0, 0.45);
+  --aif-glow-soft: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --aif-border:    #504945;
+  --aif-border-bright: #665c54;
+  --aif-fg:        #ebdbb2;
+  --aif-fg-dim:    #a89984;
+  --aif-fg-muted:  #928374;
+  --aif-accent:    #fabd2f;
+  --aif-warn:      #fe8019;
+  --aif-err:       #fb4934;
+}
+
+/* Dark theme — duplicate for Docusaurus's data-theme selector (same values:
+   the site is dark-only, but Infima looks for [data-theme='dark'] for some
+   components). */
 [data-theme='dark'] {
-  /* Phosphor greens */
-  --aif-green: #33ff66;          /* bright P1 phosphor — headings, accents */
-  --aif-green-dim: #1fbf4d;      /* dimmer green — borders, muted accents */
-  --aif-green-text: #b9ffc9;     /* readable body green */
-  --aif-white: #eafff0;          /* phosphor "white" for emphasis */
-  --aif-bg: #050805;             /* near-black, faintly green */
-  --aif-bg-soft: #0a0f0a;        /* slightly raised surface */
-  --aif-glow: rgba(51, 255, 102, 0.55);
-  --aif-glow-soft: rgba(51, 255, 102, 0.18);
+  --ifm-color-primary:          #fabd2f;
+  --ifm-color-primary-dark:     #d79921;
+  --ifm-color-primary-darker:   #b57614;
+  --ifm-color-primary-darkest:  #9d6f12;
+  --ifm-color-primary-light:    #ffd152;
+  --ifm-color-primary-lighter:  #ffe09a;
+  --ifm-color-primary-lightest: #fff0c4;
 
-  /* Monospace everywhere */
-  --aif-mono: 'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', ui-monospace,
-    'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-  --ifm-font-family-base: var(--aif-mono);
-  --ifm-font-family-monospace: var(--aif-mono);
-  --ifm-heading-font-family: var(--aif-mono);
+  --ifm-background-color:         #282828;
+  --ifm-background-surface-color: #32302f;
 
-  /* Map Infima primary onto phosphor green */
-  --ifm-color-primary: #33ff66;
-  --ifm-color-primary-dark: #1fbf4d;
-  --ifm-color-primary-darker: #19a843;
-  --ifm-color-primary-darkest: #128235;
-  --ifm-color-primary-light: #5cff85;
-  --ifm-color-primary-lighter: #7dffa0;
-  --ifm-color-primary-lightest: #a9ffc1;
+  --ifm-color-content:           #ebdbb2;
+  --ifm-color-content-secondary: #a89984;
+  --ifm-color-emphasis-100:      #1d2021;
+  --ifm-color-emphasis-200:      #504945;
+  --ifm-color-emphasis-300:      #665c54;
+  --ifm-color-emphasis-400:      #665c54;
+  --ifm-color-emphasis-500:      #928374;
+  --ifm-color-emphasis-600:      #7c6f64;
+  --ifm-color-emphasis-700:      #a89984;
+  --ifm-color-emphasis-800:      #d5c4a1;
+  --ifm-color-emphasis-900:      #ebdbb2;
 
-  /* Surfaces + text */
-  --ifm-background-color: var(--aif-bg);
-  --ifm-background-surface-color: var(--aif-bg-soft);
-  --ifm-font-color-base: var(--aif-green-text);
-  --ifm-heading-color: var(--aif-white);
-  --ifm-link-color: var(--aif-green);
-  --ifm-link-hover-color: var(--aif-white);
+  --ifm-navbar-background-color:      #282828;
+  --ifm-navbar-shadow:                0 1px 0 #504945;
+  --ifm-navbar-link-color:            #a89984;
+  --ifm-navbar-link-hover-color:      #fabd2f;
 
-  /* Navbar + footer */
-  --ifm-navbar-background-color: #030503;
-  --ifm-navbar-link-color: var(--aif-green-text);
-  --ifm-navbar-link-hover-color: var(--aif-green);
-  --ifm-footer-background-color: #030503;
+  --ifm-footer-background-color: #32302f;
+  --ifm-footer-color:            #928374;
+  --ifm-footer-link-color:       #a89984;
+  --ifm-footer-link-hover-color: #fabd2f;
 
-  --ifm-code-font-size: 92%;
-  --ifm-code-background: #0c150c;
-  --docusaurus-highlighted-code-line-bg: rgba(51, 255, 102, 0.12);
+  --ifm-link-color:       #fabd2f;
+  --ifm-link-hover-color: #fbf1c7;
 
-  /* Emphasis ramp tuned for a dark screen */
-  --ifm-color-emphasis-100: #0c120c;
-  --ifm-color-emphasis-200: #14201a;
-  --ifm-color-emphasis-700: #8fdca3;
-  --ifm-color-emphasis-800: #b9ffc9;
+  --ifm-code-background:  rgba(29, 32, 33, 0.6);
+  --ifm-code-color:       #fabd2f;
+  --ifm-pre-background:   #32302f;
+  --ifm-pre-color:        #ebdbb2;
+
+  --docusaurus-highlighted-code-line-bg: rgba(250, 189, 47, 0.1);
+
+  --ifm-toc-border-color:  #504945;
+  --ifm-toc-link-color:    #a89984;
+
+  --ifm-color-gray-100:    #1d2021;
+  --ifm-color-gray-200:    #504945;
+  --ifm-color-gray-300:    #665c54;
+  --ifm-color-gray-400:    #928374;
+  --ifm-color-gray-500:    #7c6f64;
+  --ifm-color-gray-600:    #a89984;
+  --ifm-color-gray-700:    #d5c4a1;
+  --ifm-color-gray-800:    #bdae93;
+  --ifm-color-gray-900:    #ebdbb2;
 }
 
-html,
+/* ─── Base / global resets ──────────────────────────────────────────────── */
+
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background: var(--aif-bg);
-  color: var(--aif-green-text);
+  background: #282828;
+  color: #ebdbb2;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
-/* A faint global text glow sells the phosphor look. */
-body {
-  text-shadow: 0 0 1px rgba(51, 255, 102, 0.25);
+/* ─── Selection ─────────────────────────────────────────────────────────── */
+
+::selection {
+  background: #fabd2f;
+  color: #282828;
 }
+
+/* ─── Links ─────────────────────────────────────────────────────────────── */
 
 a {
-  text-shadow: 0 0 6px var(--aif-glow-soft);
+  color: #fabd2f;
+  text-decoration: none;
+  border-bottom: 1px dotted #d79921;
+  transition: all 120ms ease;
 }
+
+a:hover {
+  color: #fbf1c7;
+  border-bottom-color: #fbf1c7;
+  text-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Docusaurus overrides nav links specifically — restore terminal style */
+.navbar__link,
+.menu__link,
+.footer__link-item a {
+  border-bottom: none;
+  text-shadow: none;
+}
+
+/* ─── Scrollbar styling (WebKit) ─────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #32302f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #504945;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #665c54;
+}
+
+/* ─── Navbar ─────────────────────────────────────────────────────────────── */
 
 .navbar {
-  border-bottom: 1px solid var(--aif-green-dim);
-  box-shadow: 0 0 18px rgba(51, 255, 102, 0.08);
+  background: rgba(40, 40, 40, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid #504945;
+  box-shadow: none;
 }
 
-/* ─── Full-viewport CRT effects (for show) ────────────────────────────
-   Three fixed, non-interactive overlays on top of everything:
-   body::before  → scanlines + flicker
-   body::after   → vignette / screen curvature darkening
-   html::after   → a slow refresh beam sweeping down the screen           */
-
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 9998;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.16) 0px,
-    rgba(0, 0, 0, 0.16) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  mix-blend-mode: multiply;
-  opacity: 0.7;
-  animation: crt-flicker 4.5s steps(60) infinite;
+.navbar__title {
+  color: #fabd2f;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 9997;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at center,
-    transparent 55%,
-    rgba(0, 0, 0, 0.35) 88%,
-    rgba(0, 0, 0, 0.7) 100%
-  );
+.navbar__title::before {
+  content: "> ";
+  color: #a89984;
 }
 
-html::after {
-  content: '';
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 28vh;
-  z-index: 9999;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    rgba(51, 255, 102, 0.05) 45%,
-    rgba(51, 255, 102, 0.08) 50%,
-    rgba(51, 255, 102, 0.05) 55%,
-    transparent
-  );
-  animation: crt-beam 7s linear infinite;
+.navbar__link {
+  color: #a89984;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: color 120ms ease;
 }
 
-@keyframes crt-flicker {
-  0%, 96%, 100% { opacity: 0.7; }
-  97% { opacity: 0.55; }
-  98% { opacity: 0.82; }
-  99% { opacity: 0.6; }
+.navbar__link:hover,
+.navbar__link--active {
+  color: #fabd2f;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
-@keyframes crt-beam {
-  0% { transform: translateY(-30vh); }
-  100% { transform: translateY(130vh); }
+.navbar__brand:hover {
+  text-decoration: none;
 }
 
-/* ─── Hero ─────────────────────────────────────────────────────────── */
+/* Navbar logo — keep AIFactory's own logo */
+.navbar__logo {
+  filter: none;
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────────────────────── */
+
+.menu {
+  background: #282828;
+  font-size: 13px;
+}
+
+.menu__link {
+  color: #a89984;
+  border-radius: 0;
+  transition: all 100ms ease;
+  border-left: 2px solid transparent;
+  padding-left: 12px;
+}
+
+.menu__link:hover {
+  background: rgba(250, 189, 47, 0.04);
+  color: #fabd2f;
+  border-left-color: #665c54;
+}
+
+.menu__link--active,
+.menu__link--active:hover {
+  background: rgba(250, 189, 47, 0.06);
+  color: #fabd2f;
+  border-left-color: #fabd2f;
+}
+
+.menu__list-item-collapsible:hover,
+.menu__list-item-collapsible--active {
+  background: rgba(250, 189, 47, 0.04);
+}
+
+.menu__caret::before {
+  border-color: #a89984;
+}
+
+.menu__list-item-collapsible:hover .menu__caret::before {
+  border-color: #fabd2f;
+}
+
+/* Sidebar category label */
+.menu__list-item > .menu__link--sublist {
+  color: #ebdbb2;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+}
+
+/* ─── Table of contents ──────────────────────────────────────────────────── */
+
+.table-of-contents {
+  border-left: 1px solid #504945;
+  font-size: 13px;
+}
+
+.table-of-contents__link {
+  color: #a89984;
+  border-bottom: none;
+  transition: all 100ms ease;
+}
+
+.table-of-contents__link:hover,
+.table-of-contents__link--active {
+  color: #fabd2f;
+  border-bottom: none;
+  text-shadow: none;
+}
+
+/* ─── Doc article ─────────────────────────────────────────────────────────── */
+
+.markdown {
+  color: #ebdbb2;
+}
+
+.markdown h1 {
+  color: #ebdbb2;
+  letter-spacing: -0.03em;
+  border-bottom: 1px solid #504945;
+  padding-bottom: 0.5rem;
+}
+
+.markdown h2 {
+  color: #ebdbb2;
+  letter-spacing: -0.02em;
+  border-bottom: 1px solid #504945;
+  padding-bottom: 0.3rem;
+}
+
+.markdown h3 {
+  color: #fabd2f;
+  font-weight: 600;
+}
+
+.markdown h3::before {
+  content: "▸ ";
+  color: #fabd2f;
+}
+
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  color: #ebdbb2;
+}
+
+.markdown p {
+  color: #ebdbb2;
+  line-height: 1.7;
+}
+
+.markdown strong {
+  color: #ebdbb2;
+}
+
+.markdown em {
+  color: #d5c4a1;
+}
+
+/* ─── Lists ──────────────────────────────────────────────────────────────── */
+
+.markdown ul,
+.markdown ol {
+  color: #a89984;
+  padding-left: 1.5rem;
+}
+
+.markdown li {
+  margin-bottom: 6px;
+  color: #ebdbb2;
+}
+
+.markdown li::marker {
+  color: #fabd2f;
+}
+
+/* ─── Inline code ────────────────────────────────────────────────────────── */
+
+.markdown code,
+code {
+  background: rgba(29, 32, 33, 0.6);
+  border: 1px solid #504945;
+  border-radius: 0;
+  color: #fabd2f;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 1px 6px;
+}
+
+/* ─── Code blocks (pre) ──────────────────────────────────────────────────── */
+
+pre {
+  background: #32302f !important;
+  border: 1px solid #504945;
+  border-left: 3px solid #fabd2f;
+  border-radius: 0 !important;
+  color: #ebdbb2;
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+  position: relative;
+}
+
+pre code {
+  background: transparent;
+  border: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Prism token overrides — keep Dracula but tint to green palette */
+.theme-code-block {
+  background: #32302f !important;
+  border: 1px solid #504945;
+  border-left: 3px solid #fabd2f;
+  border-radius: 0;
+}
+
+.theme-code-block pre {
+  border: none;
+}
+
+/* Code block title bar */
+.theme-code-block-highlighted-line {
+  background: rgba(250, 189, 47, 0.1);
+  display: block;
+  margin: 0 -1.25rem;
+  padding: 0 1.25rem;
+}
+
+/* Code copy button */
+.clean-btn.copyButton_node_modules-\@docusaurus-theme-classic-lib-theme-CodeBlock-CopyButton-styles-module,
+button[class*="copyButton"] {
+  color: #a89984;
+  transition: color 120ms ease;
+}
+
+button[class*="copyButton"]:hover {
+  color: #fabd2f;
+}
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+
+.markdown table {
+  border-collapse: collapse;
+  border: 1px solid #504945;
+  font-size: 13px;
+  width: 100%;
+}
+
+.markdown th,
+.markdown td {
+  border-bottom: 1px solid #504945;
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  background: #32302f;
+  color: #fabd2f;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.markdown td {
+  color: #a89984;
+}
+
+.markdown tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown tr:hover td {
+  background: rgba(250, 189, 47, 0.03);
+}
+
+/* ─── Blockquote ─────────────────────────────────────────────────────────── */
+
+.markdown blockquote {
+  background: rgba(250, 189, 47, 0.04);
+  border-left: 3px solid #fabd2f;
+  color: #a89984;
+  padding: 14px 18px;
+  margin: 20px 0;
+}
+
+.markdown blockquote p {
+  color: #a89984;
+  margin: 0;
+}
+
+/* ─── Admonitions / callouts ─────────────────────────────────────────────── */
+
+.alert {
+  background: rgba(29, 32, 33, 0.6) !important;
+  border: 1px solid #504945;
+  border-left: 3px solid #fabd2f;
+  border-radius: 0;
+  color: #ebdbb2;
+}
+
+.alert--warning,
+.alert[class*="warning"] {
+  border-left-color: #fe8019;
+  background: rgba(255, 210, 0, 0.04) !important;
+}
+
+.alert--danger,
+.alert[class*="danger"] {
+  border-left-color: #fb4934;
+  background: rgba(255, 85, 119, 0.04) !important;
+}
+
+.alert--info,
+.alert[class*="info"] {
+  border-left-color: #fabd2f;
+  background: rgba(250, 189, 47, 0.04) !important;
+}
+
+.alert--success,
+.alert[class*="success"] {
+  border-left-color: #d79921;
+  background: rgba(0, 184, 96, 0.04) !important;
+}
+
+.alert .alert__heading {
+  color: #fabd2f;
+}
+
+.alert--warning .alert__heading {
+  color: #fe8019;
+}
+
+.alert--danger .alert__heading {
+  color: #fb4934;
+}
+
+.admonitionContent_node_modules-\@docusaurus-theme-classic-lib-theme-Admonition-Layout-styles-module p,
+.admonitionContent p {
+  color: #ebdbb2;
+}
+
+/* ─── Breadcrumbs ────────────────────────────────────────────────────────── */
+
+.breadcrumbs__link {
+  color: #a89984;
+  border-bottom: none;
+  transition: color 120ms ease;
+}
+
+.breadcrumbs__link:hover {
+  color: #fabd2f;
+  background: transparent;
+}
+
+.breadcrumbs__item--active .breadcrumbs__link {
+  color: #ebdbb2;
+}
+
+/* ─── Pagination ─────────────────────────────────────────────────────────── */
+
+.pagination-nav__link {
+  background: #32302f;
+  border: 1px solid #504945;
+  border-radius: 0;
+  color: #a89984;
+  transition: all 150ms ease;
+}
+
+.pagination-nav__link:hover {
+  background: rgba(250, 189, 47, 0.04);
+  border-color: #665c54;
+  color: #fabd2f;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  text-decoration: none;
+}
+
+.pagination-nav__sublabel {
+  color: #928374;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pagination-nav__label {
+  color: #ebdbb2;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+
+.footer {
+  background: #32302f;
+  border-top: 1px solid #504945;
+  color: #928374;
+  font-size: 12px;
+}
+
+.footer__title {
+  color: #ebdbb2;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.footer__link-item {
+  color: #a89984;
+  border-bottom: none;
+  transition: color 120ms ease;
+  font-size: 13px;
+}
+
+.footer__link-item:hover {
+  color: #fabd2f;
+  text-decoration: none;
+}
+
+.footer__copyright {
+  color: #928374;
+  font-size: 11px;
+  margin-top: 1.5rem;
+}
+
+/* ─── Search / DocSearch ─────────────────────────────────────────────────── */
+
+.DocSearch-Button {
+  background: transparent;
+  border: 1px solid #504945;
+  border-radius: 0;
+  color: #a89984;
+  transition: all 120ms ease;
+}
+
+.DocSearch-Button:hover {
+  background: transparent;
+  border-color: #fabd2f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  color: #fabd2f;
+}
+
+.DocSearch-Button-Placeholder {
+  font-size: 12px;
+  color: #928374;
+}
+
+.DocSearch-Button-Key {
+  background: #32302f;
+  border: 1px solid #504945;
+  color: #928374;
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
+/* ─── Mermaid diagrams ───────────────────────────────────────────────────── */
+
+.docusaurus-mermaid-container {
+  background: #32302f;
+  border: 1px solid #504945;
+  overflow-x: auto;
+  padding: 24px;
+  margin: 24px 0;
+}
+
+.docusaurus-mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ─── Tags ───────────────────────────────────────────────────────────────── */
+
+.tag_node_modules-\@docusaurus-theme-classic-lib-theme-Tag-styles-module,
+.tag {
+  background: rgba(29, 32, 33, 0.6);
+  border: 1px solid #504945;
+  border-radius: 0;
+  color: #a89984;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  text-transform: uppercase;
+  transition: all 120ms ease;
+}
+
+.tag:hover {
+  background: rgba(250, 189, 47, 0.04);
+  border-color: #665c54;
+  color: #fabd2f;
+}
+
+/* ─── Hero / landing page ─────────────────────────────────────────────────── */
 
 .hero-banner {
-  position: relative;
-  overflow: hidden;
-  padding: 6rem 0 7rem;
-  text-align: center;
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(51, 255, 102, 0.12), transparent 60%),
-    var(--aif-bg);
-  color: var(--aif-green);
+  background: #282828;
+  border-bottom: 1px solid #504945;
+  color: #ebdbb2;
   isolation: isolate;
-  border-bottom: 1px solid var(--aif-green-dim);
+  overflow: hidden;
+  padding: 5rem 0 6rem;
+  position: relative;
+  text-align: center;
 }
 
-/* Drifting "orbs" recoloured to green phosphor glows. */
-.hero-orbs {
+/* Radial green glow behind the hero content */
+.hero-banner::before {
+  content: "";
   position: absolute;
-  inset: 0;
-  z-index: 0;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(250, 189, 47, 0.08), transparent 70%);
   pointer-events: none;
-}
-
-.orb {
-  position: absolute;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.28;
-  animation: orb-drift 22s ease-in-out infinite;
-  background: var(--aif-green);
-}
-
-.orb-1 { width: 480px; height: 480px; top: -120px; left: -100px; animation-delay: 0s; }
-.orb-2 { width: 380px; height: 380px; top: 30%; right: -100px; animation-delay: -7s; animation-duration: 27s; opacity: 0.2; }
-.orb-3 { width: 320px; height: 320px; bottom: -100px; left: 50%; opacity: 0.16; animation-delay: -14s; animation-duration: 30s; }
-
-@keyframes orb-drift {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(40px, -30px) scale(1.1); }
-  66% { transform: translate(-30px, 40px) scale(0.95); }
+  filter: blur(40px);
+  z-index: 0;
 }
 
 .hero-content {
-  position: relative;
-  z-index: 3;
   animation: fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  position: relative;
+  z-index: 1;
 }
 
 .hero-logo {
-  width: 96px;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.45));
   height: 96px;
   margin-bottom: 1.5rem;
-  /* Tint the logo green and make it glow like everything else. */
-  filter: drop-shadow(0 0 14px var(--aif-glow)) grayscale(1) brightness(1.4)
-    sepia(1) hue-rotate(70deg) saturate(4);
+  width: 96px;
 }
 
 .hero-title {
-  font-family: var(--aif-mono);
-  font-size: 3.5rem;
-  font-weight: 800;
+  color: #ebdbb2;
+  font-size: clamp(2.25rem, 6vw, 4rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
   margin-bottom: 0.75rem;
-  letter-spacing: 0.08em;
-  color: var(--aif-green);
-  text-shadow: 0 0 6px var(--aif-glow), 0 0 22px var(--aif-glow),
-    0 0 40px rgba(51, 255, 102, 0.35);
+  text-shadow: none;
 }
 
 .hero-banner .tagline {
-  font-family: var(--aif-mono);
-  font-size: 1.3rem;
-  color: var(--aif-green-text);
-  margin-bottom: 1.5rem;
+  color: #a89984;
+  font-size: 1.15rem;
   font-weight: 400;
-  text-shadow: 0 0 8px var(--aif-glow-soft);
-}
-
-/* Blinking terminal cursor after the tagline. */
-.hero-banner .tagline::after {
-  content: '_';
-  margin-left: 3px;
-  color: var(--aif-green);
-  font-weight: 700;
-  animation: crt-cursor 1.1s steps(1) infinite;
-}
-@keyframes crt-cursor {
-  0%, 50% { opacity: 1; }
-  50.01%, 100% { opacity: 0; }
-}
-
-/* CRT scanlines local to the hero, layered above its glow. */
-.hero-banner::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.12) 0px,
-    rgba(0, 0, 0, 0.12) 1px,
-    transparent 1px,
-    transparent 3px
-  );
-  mix-blend-mode: multiply;
+  margin-bottom: 1.5rem;
+  opacity: 1;
 }
 
 .hero-meta {
@@ -269,255 +834,343 @@ html::after {
   margin-bottom: 2rem;
 }
 
-/* Terminal-prompt badges: green outline, lowercase, "> " prefix. */
 .hero-badge {
-  display: inline-block;
-  font-family: var(--aif-mono);
-  padding: 0.3rem 0.85rem;
-  border-radius: 3px;
-  background: rgba(51, 255, 102, 0.06);
-  border: 1px solid var(--aif-green-dim);
-  color: var(--aif-green);
-  font-size: 0.85rem;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-transform: lowercase;
-  text-shadow: 0 0 6px var(--aif-glow-soft);
-}
-.hero-badge::before {
-  content: '> ';
-  opacity: 0.8;
+  background: transparent;
+  border: 1px solid #504945;
+  border-radius: 0;
+  color: #928374;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  padding: 3px 10px;
 }
 
 .hero-cta {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
   justify-content: center;
   margin-top: 1.5rem;
-  flex-wrap: wrap;
 }
 
-/* Terminal buttons: green outline, transparent; invert on hover. */
-.hero-cta .button,
-.cta-strip .button {
-  font-family: var(--aif-mono);
-  letter-spacing: 0.02em;
-  border-radius: 3px;
-  border: 1px solid var(--aif-green) !important;
+.hero-cta .button {
+  border-radius: 0;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-cta-secondary {
   background: transparent !important;
-  color: var(--aif-green) !important;
-  text-shadow: 0 0 6px var(--aif-glow-soft);
-  box-shadow: 0 0 10px rgba(51, 255, 102, 0.2),
-    inset 0 0 10px rgba(51, 255, 102, 0.06);
-  transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
-}
-.hero-cta .button:hover,
-.cta-strip .button:hover {
-  background: var(--aif-green) !important;
-  color: #021006 !important;
-  box-shadow: 0 0 18px var(--aif-glow);
+  border-color: #665c54 !important;
+  color: #a89984 !important;
 }
 
-/* ─── Section headers ─────────────────────────────────────────────── */
+.hero-cta-secondary:hover {
+  background: transparent !important;
+  border-color: #fabd2f !important;
+  color: #fabd2f !important;
+}
+
+/* ─── Feature cards ───────────────────────────────────────────────────────── */
 
 .features-section,
 .recent-section {
-  padding: 5rem 1rem;
-  max-width: 1200px;
+  max-width: 1180px;
   margin: 0 auto;
+  padding: 4rem 1rem;
 }
 
 .features-header,
 .recent-header {
+  margin-bottom: 2.5rem;
   text-align: center;
-  margin-bottom: 3rem;
 }
 
 .features-header h2,
 .recent-header h2 {
-  font-family: var(--aif-mono);
-  font-size: 2.25rem;
+  color: #ebdbb2;
+  font-size: 2rem;
   font-weight: 700;
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
-  color: var(--aif-green);
-  text-shadow: 0 0 10px var(--aif-glow-soft);
 }
 
 .features-subtitle {
-  font-size: 1.1rem;
-  color: var(--aif-green-text);
-  max-width: 600px;
+  color: #a89984;
+  font-size: 1rem;
   margin: 0 auto;
+  max-width: 600px;
 }
-
-/* ─── Feature cards ───────────────────────────────────────────────── */
 
 .features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .feature-card {
-  padding: 1.75rem;
-  border-radius: 6px;
-  border: 1px solid var(--aif-green-dim);
-  background: var(--aif-bg-soft);
-  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  background: #32302f;
+  border: 1px solid #504945;
+  border-radius: 0;
+  padding: 1.5rem;
+  position: relative;
+  transition: all 180ms ease;
 }
 
 .feature-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 0 24px rgba(51, 255, 102, 0.18);
-  border-color: var(--aif-green);
+  border-color: #665c54;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  transform: translateY(-2px);
 }
 
 .feature-icon {
-  font-size: 2rem;
-  margin-bottom: 0.75rem;
   display: inline-block;
-  filter: drop-shadow(0 0 8px var(--aif-glow-soft));
+  font-size: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .feature-card h3 {
-  font-family: var(--aif-mono);
-  color: var(--aif-green);
-  margin-top: 0;
+  color: #fabd2f;
+  font-size: 14px;
+  letter-spacing: 0.05em;
   margin-bottom: 0.75rem;
-  font-size: 1.25rem;
-  text-shadow: 0 0 8px var(--aif-glow-soft);
+  margin-top: 0;
+  text-transform: uppercase;
+}
+
+.feature-card h3::before {
+  content: "[ ";
+  color: #928374;
+}
+
+.feature-card h3::after {
+  content: " ]";
+  color: #928374;
 }
 
 .feature-card p {
-  color: var(--aif-green-text);
+  color: #a89984;
+  font-size: 13px;
   line-height: 1.6;
   margin: 0;
 }
 
-/* ─── "Recently shipped" timeline ─────────────────────────────────── */
+/* ─── "Recently shipped" section ─────────────────────────────────────────── */
 
 .recent-section {
-  background: var(--aif-bg-soft);
-  border: 1px solid var(--aif-green-dim);
-  border-radius: 10px;
-  margin: 2rem auto 5rem;
+  background: #32302f;
+  border: 1px solid #504945;
+  border-radius: 0;
+  margin: 1rem auto 4rem;
+  padding: 2.5rem;
+}
+
+[data-theme='dark'] .recent-section {
+  background: #32302f;
 }
 
 .recent-timeline {
   display: grid;
+  gap: 1.25rem;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1.5rem;
 }
 
 .recent-item {
-  padding: 1.5rem;
-  border-radius: 6px;
-  background: var(--aif-bg);
-  border-left: 3px solid var(--aif-green);
-  transition: transform 200ms ease, box-shadow 200ms ease;
+  background: #282828;
+  border: 1px solid #504945;
+  border-left: 3px solid #fabd2f;
+  border-radius: 0;
+  padding: 1.25rem;
+  transition: all 180ms ease;
 }
 
 .recent-item:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 18px rgba(51, 255, 102, 0.12);
+  border-left-color: #fabd2f;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transform: translateY(-1px);
 }
 
 .recent-when {
+  color: #fabd2f;
   display: inline-block;
-  font-family: var(--aif-mono);
-  font-size: 0.8rem;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.4rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--aif-green);
-  margin-bottom: 0.5rem;
 }
 
 .recent-title {
-  font-family: var(--aif-mono);
-  font-size: 1.15rem;
-  margin: 0 0 0.5rem;
-  color: var(--aif-white);
+  color: #ebdbb2;
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
 }
 
 .recent-item p {
-  color: var(--aif-green-text);
-  font-size: 0.95rem;
+  color: #a89984;
+  font-size: 13px;
   line-height: 1.55;
   margin: 0 0 0.75rem;
 }
 
 .recent-link {
-  font-size: 0.9rem;
+  color: #fabd2f;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--aif-green);
 }
 
-/* ─── Bottom CTA strip ───────────────────────────────────────────── */
+/* ─── Bottom CTA strip ───────────────────────────────────────────────────── */
 
 .cta-strip {
+  background: #32302f;
+  border-top: 1px solid #504945;
+  color: #ebdbb2;
   padding: 4rem 1rem 5rem;
   text-align: center;
-  background:
-    radial-gradient(ellipse at 50% 100%, rgba(51, 255, 102, 0.1), transparent 60%),
-    var(--aif-bg);
-  color: var(--aif-green);
-  border-top: 1px solid var(--aif-green-dim);
 }
 
 .cta-strip h2 {
-  font-family: var(--aif-mono);
-  font-size: 2.25rem;
+  color: #ebdbb2;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
-  color: var(--aif-green);
-  text-shadow: 0 0 12px var(--aif-glow-soft);
 }
 
 .cta-strip p {
-  font-size: 1.1rem;
-  color: var(--aif-green-text);
-  max-width: 600px;
+  color: #a89984;
+  font-size: 1rem;
   margin: 0 auto 2rem;
+  max-width: 600px;
+  opacity: 1;
 }
 
-/* ─── Scroll-reveal animation ─────────────────────────────────────── */
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+
+.button--primary {
+  background: transparent;
+  border: 1px solid #fabd2f;
+  border-radius: 0;
+  color: #fabd2f;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 150ms ease;
+}
+
+.button--primary:hover {
+  background: #fabd2f;
+  border-color: #fabd2f;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color: #282828;
+  transform: translateY(-1px);
+}
+
+.button--secondary {
+  background: transparent;
+  border: 1px solid #665c54;
+  border-radius: 0;
+  color: #a89984;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 150ms ease;
+}
+
+.button--secondary:hover {
+  background: transparent;
+  border-color: #fabd2f;
+  color: #fabd2f;
+}
+
+.button--outline {
+  border-radius: 0;
+}
+
+/* ─── Docs wrapper ───────────────────────────────────────────────────────── */
+
+.docMainContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocPage-Layout-Main-styles-module,
+.docMainContainer {
+  background: #282828;
+}
+
+/* Doc sidebar wrapper */
+.docSidebarContainer_node_modules-\@docusaurus-theme-classic-lib-theme-DocPage-Layout-Sidebar-styles-module,
+aside[class*="docSidebar"] {
+  background: #282828;
+  border-right: 1px solid #504945;
+}
+
+/* Thin separator between sidebar and content */
+.col.col--3 {
+  border-right: 1px solid #504945;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
 
 .reveal-on-scroll {
   animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-@keyframes fade-up {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* ─── Accessibility — kill all motion for users who asked us to. ──── */
+/* ─── Accessibility — no motion ──────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
-  .orb,
-  .hero-content,
-  .reveal-on-scroll,
   body::before,
-  html::after {
+  body::after {
+    display: none;
+  }
+
+  .hero-content,
+  .reveal-on-scroll {
     animation: none !important;
   }
-  .hero-banner .tagline::after {
-    animation: none;
-    opacity: 1;
-  }
+
   .feature-card:hover,
-  .recent-item:hover {
+  .recent-item:hover,
+  .pagination-nav__link:hover {
     transform: none;
   }
 }
 
-/* ─── Responsive tweaks ──────────────────────────────────────────── */
+/* ─── Responsive tweaks ──────────────────────────────────────────────────── */
 
-@media (max-width: 720px) {
-  .hero-banner { padding: 4rem 0 5rem; }
-  .hero-title { font-size: 2.5rem; }
-  .hero-banner .tagline { font-size: 1.1rem; }
+@media (max-width: 768px) {
+  .hero-banner {
+    padding: 3.5rem 0 4rem;
+  }
+
+  .hero-title {
+    font-size: 2.25rem;
+  }
+
+  .hero-banner .tagline {
+    font-size: 1rem;
+  }
+
   .features-header h2,
   .recent-header h2,
-  .cta-strip h2 { font-size: 1.75rem; }
+  .cta-strip h2 {
+    font-size: 1.6rem;
+  }
+
+  .recent-section {
+    padding: 1.5rem;
+  }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { AIFactoryLogo } from './AIFactoryLogo';
 
 interface LoadingScreenProps {
   duration?: number;
@@ -29,9 +30,7 @@ export function LoadingScreen({ duration = 5000, onComplete }: LoadingScreenProp
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
       {/* Logo and branding */}
       <div className="mb-8 flex flex-col items-center">
-        <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-2xl">
-          <img src="/logo.png" alt="AIFactory" className="h-20 w-20 rounded-2xl" />
-        </div>
+        <AIFactoryLogo className="mb-4 h-20 w-20 rounded-2xl" />
         <h1 className="text-2xl font-bold text-foreground">AIFactory</h1>
         <p className="mt-2 text-sm text-muted-foreground">Preparing your workspace...</p>
       </div>

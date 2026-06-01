@@ -7,6 +7,10 @@
    Tailwind Theme Configuration (v4)
    ============================================ */
 @theme {
+  /* Type — warm humanist UI sans + terminal/retro mono (drops generic Inter) */
+  --font-sans: 'Hanken Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
+
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
   --color-card: hsl(var(--card));
@@ -44,7 +48,7 @@
 
 /* Default Theme - Light Mode */
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Hanken Grotesk', system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
@@ -52,32 +56,32 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Light mode colors */
-  --background: 240 10% 96%;
-  --foreground: 240 10% 4%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 4%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 4%;
-  --primary: 211 76% 35%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 5% 90%;
-  --secondary-foreground: 240 10% 4%;
-  --muted: 240 5% 90%;
-  --muted-foreground: 240 5% 40%;
-  --accent: 128 53% 59%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --success: 142 71% 45%;
-  --success-foreground: 0 0% 100%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 0 0% 100%;
-  --info: 199 89% 48%;
-  --info-foreground: 0 0% 100%;
-  --border: 240 6% 85%;
-  --input: 240 6% 85%;
-  --ring: 211 76% 35%;
+  /* Gruvbox Light — warm, retro-groove, earthy */
+  --background: 48 85% 88%;        /* bg0   #fbf1c7 */
+  --foreground: 20 5% 22%;         /* fg1   #3c3836 */
+  --card: 48 60% 92%;             /* bg0_h #f9f5d7 */
+  --card-foreground: 20 5% 22%;
+  --popover: 48 60% 92%;
+  --popover-foreground: 20 5% 22%;
+  --primary: 24 88% 45%;          /* orange #d65d0e */
+  --primary-foreground: 48 87% 96%;
+  --secondary: 45 38% 82%;        /* bg1   #ebdbb2 */
+  --secondary-foreground: 20 5% 22%;
+  --muted: 45 30% 84%;
+  --muted-foreground: 30 8% 42%;   /* gray  #7c6f64 */
+  --accent: 28 99% 47%;           /* bright orange #fe8019-ish */
+  --accent-foreground: 48 87% 96%;
+  --destructive: 2 75% 46%;       /* red   #cc241d */
+  --destructive-foreground: 48 87% 96%;
+  --success: 60 60% 35%;          /* green #98971a */
+  --success-foreground: 48 87% 96%;
+  --warning: 38 88% 42%;          /* yellow #b57614 */
+  --warning-foreground: 48 87% 96%;
+  --info: 146 30% 37%;            /* aqua  #427b58 */
+  --info-foreground: 48 87% 96%;
+  --border: 45 28% 78%;
+  --input: 45 28% 78%;
+  --ring: 24 88% 45%;
   --radius: 0.5rem;
 
   color-scheme: light;
@@ -85,33 +89,33 @@
   background-color: hsl(var(--background));
 }
 
-/* Default Theme - Dark Mode */
+/* Gruvbox Dark — warm, retro-groove, earthy */
 .dark {
-  --background: 240 10% 4%;
-  --foreground: 0 0% 95%;
-  --card: 240 10% 6%;
-  --card-foreground: 0 0% 95%;
-  --popover: 240 10% 8%;
-  --popover-foreground: 0 0% 95%;
-  --primary: 211 76% 50%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 5% 15%;
-  --secondary-foreground: 0 0% 95%;
-  --muted: 240 5% 15%;
-  --muted-foreground: 240 5% 60%;
-  --accent: 128 53% 65%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 62% 50%;
-  --destructive-foreground: 0 0% 100%;
-  --success: 142 71% 45%;
-  --success-foreground: 0 0% 100%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 0 0% 100%;
-  --info: 199 89% 48%;
-  --info-foreground: 0 0% 100%;
-  --border: 240 5% 18%;
-  --input: 240 5% 18%;
-  --ring: 211 76% 50%;
+  --background: 0 0% 16%;          /* bg0   #282828 */
+  --foreground: 43 49% 81%;        /* fg1   #ebdbb2 */
+  --card: 24 6% 19%;              /* bg0_s #32302f */
+  --card-foreground: 43 49% 81%;
+  --popover: 195 7% 13%;          /* bg0_h #1d2021 */
+  --popover-foreground: 43 49% 81%;
+  --primary: 42 95% 58%;          /* yellow #fabd2f */
+  --primary-foreground: 0 0% 16%;
+  --secondary: 24 7% 26%;         /* bg2   #504945 */
+  --secondary-foreground: 43 49% 81%;
+  --muted: 24 6% 26%;
+  --muted-foreground: 40 18% 62%;  /* fg4   #a89984 */
+  --accent: 27 99% 55%;           /* orange #fe8019 */
+  --accent-foreground: 0 0% 16%;
+  --destructive: 6 96% 59%;       /* red   #fb4934 */
+  --destructive-foreground: 0 0% 16%;
+  --success: 61 66% 44%;          /* green #b8bb26 */
+  --success-foreground: 0 0% 16%;
+  --warning: 42 95% 58%;          /* yellow #fabd2f */
+  --warning-foreground: 0 0% 16%;
+  --info: 104 35% 62%;            /* aqua  #8ec07c */
+  --info-foreground: 0 0% 16%;
+  --border: 24 6% 26%;            /* bg2 */
+  --input: 24 6% 26%;
+  --ring: 42 95% 58%;
 
   color-scheme: dark;
   color: hsl(var(--foreground));
@@ -119,23 +123,69 @@
 }
 
 /* ============================================
-   Ocean Color Theme
+   shadcn "Mira" theme — switchable via data-theme="shadcn"
+   Neutral base + yellow primary, generated from the shadcn/ui preset
+   b1ZzvpxAJ (ui.shadcn.com) and converted oklch -> HSL to match the
+   portal's hsl(var(--token)) system. Gruvbox remains the default.
+   success / warning / info are not part of the shadcn preset; tasteful
+   complements are supplied so semantic colors stay legible.
    ============================================ */
-
-[data-theme="ocean"] {
-  --primary: 199 89% 40%;
-  --primary-foreground: 0 0% 100%;
-  --accent: 199 89% 40%;
-  --accent-foreground: 0 0% 100%;
-  --ring: 199 89% 40%;
+[data-theme='shadcn'] {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 4%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 4%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 4%;
+  --primary: 47 100% 50%;            /* yellow */
+  --primary-foreground: 30 84% 25%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 6% 10%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 45%;
+  --accent: 0 0% 96%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 357 100% 45%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 71% 45%;            /* complement (not in shadcn preset) */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;             /* complement (not in shadcn preset) */
+  --warning-foreground: 0 0% 4%;
+  --info: 217 91% 60%;               /* matches the preset's blue charts */
+  --info-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 0 0% 63%;
+  --radius: 0.625rem;
 }
-[data-theme="ocean"].dark, .dark[data-theme="ocean"] {
-  --background: 204 80% 16%;
-  --card: 204 70% 12%;
-  --popover: 204 70% 14%;
-  --border: 204 50% 25%;
-  --primary: 199 89% 50%;
-  --accent: 199 89% 50%;
+
+.dark[data-theme='shadcn'] {
+  --background: 0 0% 4%;
+  --foreground: 0 0% 98%;
+  --card: 0 0% 9%;
+  --card-foreground: 0 0% 98%;
+  --popover: 0 0% 9%;
+  --popover-foreground: 0 0% 98%;
+  --primary: 44 100% 47%;            /* yellow */
+  --primary-foreground: 30 84% 25%;
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 0 0% 98%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 0 0% 15%;
+  --accent-foreground: 0 0% 98%;
+  --destructive: 359 100% 70%;
+  --destructive-foreground: 0 0% 98%;
+  --success: 142 69% 58%;
+  --success-foreground: 0 0% 4%;
+  --warning: 38 92% 55%;
+  --warning-foreground: 0 0% 4%;
+  --info: 213 94% 68%;
+  --info-foreground: 0 0% 4%;
+  --border: 180 1% 14%;
+  --input: 0 0% 18%;
+  --ring: 0 0% 45%;
+  --radius: 0.625rem;
 }
 
 body {
@@ -189,4 +239,48 @@ body {
 .xterm-viewport,
 .xterm-screen {
   width: 100% !important;
+}
+
+/* ============================================
+   Task card polish (Gruvbox depth + motion)
+   ============================================ */
+
+/* Subtle surface depth: a faint top highlight + warm shadow */
+.card-surface {
+  background-image: linear-gradient(
+    180deg,
+    hsl(var(--foreground) / 0.025) 0%,
+    transparent 22%
+  );
+}
+
+/* Cards lift gently on hover and animate in on first mount */
+.task-card-enhanced {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms ease-out, border-color 180ms ease-out;
+  animation: card-rise 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.task-card-enhanced:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 10px 22px -10px hsl(0 0% 0% / 0.45),
+    0 2px 6px -2px hsl(0 0% 0% / 0.3);
+  border-color: hsl(var(--primary) / 0.4);
+}
+
+/* Staggered board reveal: a brief cascade for the first cards in a column */
+.task-card-enhanced:nth-child(1) { animation-delay: 0ms; }
+.task-card-enhanced:nth-child(2) { animation-delay: 45ms; }
+.task-card-enhanced:nth-child(3) { animation-delay: 90ms; }
+.task-card-enhanced:nth-child(4) { animation-delay: 135ms; }
+.task-card-enhanced:nth-child(5) { animation-delay: 180ms; }
+
+@keyframes card-rise {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-card-enhanced { animation: none; }
+  .task-card-enhanced:hover { transform: none; }
 }

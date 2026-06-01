@@ -7,6 +7,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { cn, formatRelativeTime, sanitizeMarkdownForDisplay, extractTaskNumber, formatTaskTitleWithNumber } from '../lib/utils';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
+import { CodingRobot } from './CodingRobot';
 import {
   TASK_CATEGORY_LABELS,
   TASK_CATEGORY_COLORS,
@@ -312,7 +313,7 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
         >
           {task.title}
           {taskNumber && (
-            <span className="text-muted-foreground whitespace-nowrap"> ({taskNumber})</span>
+            <span className="font-mono text-muted-foreground whitespace-nowrap"> ({taskNumber})</span>
           )}
         </h3>
 
@@ -366,6 +367,8 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
                 {t('status.archived')}
               </Badge>
             )}
+            {/* Coding robot — pops in while the coding phase runs, waves goodbye at the end */}
+            <CodingRobot active={executionPhase === 'coding' && !isStuck} />
             {/* Execution phase badge - shown when actively running */}
             {hasActiveExecution && executionPhase && !isStuck && !isIncomplete && (
               <Badge

@@ -198,3 +198,6 @@ charts/aifactory/charts/
 OPUS_ANALYSIS_AND_IDEAS.md
 /.github/agents
 .gitfilter-replacements.txt
+
+# local devenv generated cache
+.devenv/

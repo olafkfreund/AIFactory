@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..paths import get_data_dir, get_data_file
-from .projects import load_projects
+from .projects import get_projects_file, load_projects
 
 router = APIRouter()
 
@@ -2363,7 +2363,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
         # Look up project path
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 
@@ -3178,7 +3178,7 @@ async def abort_worktree_merge(task_id: str):
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
         # Look up project path
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 
@@ -3302,7 +3302,7 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
         # Look up project path
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 
@@ -3585,7 +3585,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
         # Look up project path
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 
@@ -4118,7 +4118,7 @@ async def discard_worktree(task_id: str):
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
         # Look up project path
-        projects_file = get_data_file("projects.json")
+        projects_file = get_projects_file()
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 

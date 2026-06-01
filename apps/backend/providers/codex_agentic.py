@@ -150,11 +150,14 @@ class CodexAgenticProvider(BaseLLMProvider):
 
     async def __aenter__(self) -> CodexAgenticProvider:
         """Start the MCP server and send initialize handshake."""
-        resolved_path = shutil.which(self._codex_path)
+        # "codex" is often a shell alias (e.g. -> codex-cli), which shutil.which
+        # cannot resolve for create_subprocess_exec. Fall back to the real
+        # binary name so agentic Codex works in those environments.
+        resolved_path = shutil.which(self._codex_path) or shutil.which("codex-cli")
         if resolved_path is None:
             raise RuntimeError(
-                f"Codex CLI executable not found: '{self._codex_path}'. "
-                "Install the Codex CLI or pass the correct path."
+                f"Codex CLI executable not found: '{self._codex_path}' "
+                "(also tried 'codex-cli'). Install the Codex CLI or pass the correct path."
             )
 
         cmd = [resolved_path, "mcp-server"]
@@ -167,18 +170,41 @@ class CodexAgenticProvider(BaseLLMProvider):
             stderr=asyncio.subprocess.PIPE,
         )
 
+        # Drain stderr concurrently. The response read loop only consumes
+        # stdout; during a long agentic coding session codex emits enough
+        # stderr to fill the OS pipe buffer (~64 KB), at which point codex
+        # BLOCKS on its stderr write and never returns a result on stdout —
+        # the build then sees "(no output from Codex MCP)" and writes no
+        # files. Keep a small tail for error reporting.
+        self._stderr_tail: list[str] = []
+
+        async def _drain_stderr() -> None:
+            if not self._proc or not self._proc.stderr:
+                return
+            try:
+                async for raw in self._proc.stderr:
+                    self._stderr_tail.append(raw.decode("utf-8", "replace"))
+                    if len(self._stderr_tail) > 50:
+                        del self._stderr_tail[0]
+            except Exception:  # pragma: no cover — best-effort drain
+                pass
+
+        self._stderr_task = asyncio.create_task(_drain_stderr())
+
         # Send initialize
         init_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": init_id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": _MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": _CLIENT_INFO,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": init_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": _MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": _CLIENT_INFO,
+                },
+            }
+        )
 
         response = await self._read_response(init_id)
         server_info = response.get("result", {}).get("serverInfo", {})
@@ -194,6 +220,10 @@ class CodexAgenticProvider(BaseLLMProvider):
         """Shut down the MCP server subprocess."""
         self._pending_prompt = None
         self._thread_id = None
+
+        stderr_task = getattr(self, "_stderr_task", None)
+        if stderr_task is not None:
+            stderr_task.cancel()
 
         if self._proc:
             try:
@@ -221,11 +251,15 @@ class CodexAgenticProvider(BaseLLMProvider):
     async def _run_codex_mcp(self) -> AsyncGenerator[Any, None]:
         """Call the 'codex' tool via MCP and yield the response."""
         if not self._pending_prompt:
-            logger.warning("CodexAgenticProvider.receive_response() called before query()")
+            logger.warning(
+                "CodexAgenticProvider.receive_response() called before query()"
+            )
             return
 
         if not self._proc:
-            raise RuntimeError("MCP server not running — use 'async with' context manager")
+            raise RuntimeError(
+                "MCP server not running — use 'async with' context manager"
+            )
 
         # Build tool call arguments
         arguments: dict[str, Any] = {
@@ -247,15 +281,17 @@ class CodexAgenticProvider(BaseLLMProvider):
             arguments["threadId"] = self._thread_id
 
         call_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": call_id,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            }
+        )
 
         logger.info(
             "CodexAgenticProvider: sent %s call (id=%d, model=%s, cwd=%s)",

@@ -13,6 +13,37 @@ pipeline. No cuts.
 
 ## Watch the demo
 
+### Full lifecycle — task added → built → review gate (one continuous run)
+
+A single, unedited run captured straight from the portal: a developer adds a
+task, AIFactory's planner / coder / QA pipeline builds it across the kanban
+columns, and it lands at the **Human Review** gate with a merge-ready diff and
+a one-click **Merge to main**. Along the way it opens the in-browser terminal
+and runs real `git` commands in the agent's workspace. The build itself takes
+~9 minutes — the intro and review gate play at real speed; the build middle is
+time-compressed.
+
+<video
+  controls
+  width="100%"
+  src="/AIFactory/recordings/lifecycle.mp4"
+  style={{borderRadius: '8px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)'}}
+/>
+
+<table>
+  <tr>
+    <td><img src="/AIFactory/img/screenshots/lifecycle-01-added.png" alt="Task added and started — In Progress" /></td>
+    <td><img src="/AIFactory/img/screenshots/lifecycle-02-terminal.png" alt="In-browser terminal running real commands" /></td>
+  </tr>
+  <tr>
+    <td><img src="/AIFactory/img/screenshots/lifecycle-03-human-review.png" alt="Card at the Human Review gate, 100%" /></td>
+    <td><img src="/AIFactory/img/screenshots/lifecycle-04-review-gate.png" alt="Review gate — Merge to main / Create PR / Request Changes" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><em>1. Task added & started · 2. The in-browser terminal · 3. The card at the Human Review gate · 4. The review gate with the merge-ready diff (2 files, +21).</em></td>
+  </tr>
+</table>
+
 ### Terminal — clone → `/handover` → PR (45 seconds)
 
 A 60-second walkthrough of the handover workflow narrated over a real

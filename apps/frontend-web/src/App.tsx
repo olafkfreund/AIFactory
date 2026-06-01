@@ -174,12 +174,9 @@ function AuthenticatedApp() {
     return () => clearTimeout(timeout);
   }, [isSwitchingProject]);
 
-  // Apply theme (light/dark mode + Ocean color theme)
+  // Apply theme (light/dark mode — Gruvbox palette is the default in index.css)
   useEffect(() => {
     const root = document.documentElement;
-
-    // Always use Ocean color theme
-    root.setAttribute('data-theme', 'ocean');
 
     const applyTheme = () => {
       if (settings.theme === 'dark') {
@@ -217,6 +214,27 @@ function AuthenticatedApp() {
       mediaQuery.removeEventListener('change', handleChange);
     };
   }, [settings.theme]);
+
+  // Apply color theme via data-theme attribute (Gruvbox is the default palette
+  // baked into :root/.dark in index.css, so it needs no attribute).
+  useEffect(() => {
+    const root = document.documentElement;
+    const colorTheme = settings.colorTheme ?? 'gruvbox';
+
+    if (colorTheme === 'gruvbox') {
+      root.removeAttribute('data-theme');
+    } else {
+      root.setAttribute('data-theme', colorTheme);
+    }
+
+    // Persist so the inline script in index.html can apply it synchronously on
+    // next load, preventing a flash of the default palette.
+    try {
+      localStorage.setItem('aifactory-color-theme', colorTheme);
+    } catch {
+      // localStorage may be unavailable
+    }
+  }, [settings.colorTheme]);
 
   // Apply UI scale
   useEffect(() => {

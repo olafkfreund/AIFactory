@@ -257,9 +257,11 @@ def create_app() -> FastAPI:
 
     # Include API routers
     app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
-    app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
-    # Execution routes also under /api/tasks for frontend compatibility
+    # Execution routes also live under /api/tasks. They MUST be registered
+    # before tasks.router, whose catch-all GET /{task_id} would otherwise
+    # shadow specific paths like GET /api/tasks/running (Issue: 400 on /running).
     app.include_router(execution.router, prefix="/api/tasks", tags=["Task Execution"])
+    app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
     app.include_router(cli_accounts_routes.router, prefix="/api/settings", tags=["CLI Accounts"])
     app.include_router(llm_endpoints_routes.router)

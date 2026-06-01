@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 
   console.log(`Launching Chrome from ${CHROME_PATH}`);
   const browser: Browser = await chromium.launch({
-    headless: false,
+    headless: true,
     executablePath: CHROME_PATH,
   });
 
@@ -211,7 +211,7 @@ async function main(): Promise<void> {
   // ── Beat 6: open the completed Quick-Start task ───────────────────────
   const completedCard = page
     .locator('.task-card-enhanced')
-    .filter({hasText: /Quick Start in README/i})
+    .filter({hasText: /Tic-Tac-Toe/i})
     .first();
   await completedCard.click();
   await pause(page, 4_500, 'Beat 6 — completed task detail open');
