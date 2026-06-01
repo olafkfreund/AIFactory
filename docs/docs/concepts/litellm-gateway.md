@@ -165,19 +165,20 @@ kubectl create secret generic aifactory-litellm-master-key \
 
 Blast radius of a master-key leak: an attacker can rotate / delete / create LiteLLM virtual keys (full budget + allowlist control). They cannot read prompts / responses (LiteLLM does not store those by default in v1.1; `litellm.audit.fullTextCapture=true` writes encrypted full-text rows to AIFactory's own audit_logs, NOT to LiteLLM's Postgres).
 
-## PII redaction (audit-only)
+## PII redaction
 
-AIFactory's audit hook redacts PII from prompt + response BEFORE writing the audit row. The built-in pattern set:
+AIFactory's audit hook redacts PII from prompt + response BEFORE writing the audit row. In v1.2 the same redactor can also run on the prompt BEFORE it's sent to the LLM (see [scrubBeforeSend mode](#scrubbeforesend-mode-v12) below). The built-in pattern set:
 
 | Pattern | Replacement | Notes |
 |---------|-------------|-------|
 | US SSN hyphenated `XXX-XX-XXXX` | `[REDACTED_SSN]` | Bare 9-digit numbers excluded — too many false positives (zip + phone concatenations, code identifiers) |
 | Email `user@host.tld` | `[REDACTED_EMAIL]` | |
 | US phone `(XXX) XXX-XXXX` or `XXX-XXX-XXXX` | `[REDACTED_PHONE]` | Bare 10-digit numbers excluded for the same reason as SSN |
+| Credit card 13-19 digits, Luhn-validated (v1.2) | `[REDACTED_CC]` | Accepts hyphen / space / no-separator forms. A digit run that fails Luhn is left UNCHANGED — closes the v1.1 false-positive problem (IPv4 CIDRs, hashes, code identifiers). Luhn arithmetic runs LAST in the chain so cheap patterns short-circuit first |
 
-**The credit-card pattern is intentionally omitted in v1.1.** The naive `\b(?:\d[ -]*?){13,16}\b` matches any 13-16 digit numeric string (IPv4 CIDRs, code identifiers, hashes, etc.) and corrupts legitimate prompt content without Luhn validation. v1.1 omits CC redaction by default; operators with PCI data add Luhn-checked patterns via `litellm.audit.extraRedactionPatterns`. A built-in Luhn-validated CC pattern ships in v1.2.
+**Credit-card history (v1.1 → v1.2).** The v1.1 release dropped the CC built-in entirely: the naive `\b(?:\d[ -]*?){13,16}\b` matched any 13-16 digit numeric string (IPv4 CIDRs, code identifiers, hashes, etc.) and corrupted legitimate prompt content without Luhn validation. Operators with PCI data had to add their own Luhn-checked patterns via `litellm.audit.extraRedactionPatterns`. **v1.2 ships a Luhn-validated CC pattern as a built-in** — no extra-pattern configuration required for PCI tenants.
 
-Operator additions:
+Operator additions still apply for non-built-in cases:
 
 ```yaml
 litellm:
@@ -185,13 +186,21 @@ litellm:
     extraRedactionPatterns:
       - pattern: 'ACC-\d{8}'         # internal account number
         replacement: '[REDACTED_ACCT]'
-      - pattern: '\b4\d{15}\b'       # Visa, no spaces — Luhn-check yourself
-        replacement: '[REDACTED_CC]'
 ```
 
 Patterns are Python `re` syntax. Compile failures log WARNING + skip the bad pattern (fail-safe; one bad regex does not disable all redaction).
 
-**Scope discipline: redaction applies to the audit row ONLY, NOT to what the LLM sees.** A high-sensitivity tenant whose prompt contains PII still sends that PII to the LLM provider — this is intrinsic to LLM use today. The threat-model entry in the design doc makes this explicit. v1.2 ships a `litellm.audit.scrubBeforeSend` mode that applies the same redactor to the prompt BEFORE the LLM call, at the cost of some prompt-quality degradation. Get compliance sign-off on the v1.1 scope (audit-only) before enabling.
+### scrubBeforeSend mode (v1.2)
+
+In v1.1, redaction applied to the audit row ONLY, NOT to what the LLM saw. A high-sensitivity tenant whose prompt contained PII still sent that PII to the LLM provider — intrinsic to LLM use. **v1.2 closes this gap for orgs that opt in** via `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) or `OpenAICompatibleProvider(scrub_outbound=True)` (per-instance):
+
+- The same redactor (built-ins + operator extras + Luhn-CC) runs on the prompt BEFORE the LLM API call.
+- The audit row captures BOTH the raw prompt (for operator forensics — what did the user actually type) AND the new `prompt_outbound_scrubbed: true` flag (so operators can query "show me every call where PII was scrubbed before send": `details_json->>'prompt_outbound_scrubbed' = 'true'`).
+- Default remains `false` — backward-compatible with v1.1 callers; no opt-out needed for existing deployments.
+
+**Trade-off.** Heavy redaction can degrade prompt quality (the LLM loses context that may have mattered to the answer). A prompt like *"please summarise the customer call from alice@example.com about her invoice"* becomes *"please summarise the customer call from [REDACTED_EMAIL] about her invoice"* — the LLM still answers, but loses the (sometimes useful) identity signal. Compliance teams should sign off on the scope: enable scrubBeforeSend for tenants where LLM-vendor PII oblivion is mandatory; leave it off for low-sensitivity deployments where prompt fidelity matters more.
+
+**The v1.1 "LLM still sees plaintext" caveat is CLOSED for orgs that opt in to scrubBeforeSend.** The audit row's `prompt_outbound_scrubbed` flag is the auditor's proof.
 
 ## Audit shape
 

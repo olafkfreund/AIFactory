@@ -1,5 +1,7 @@
 # Design — Tenant Isolation Mode (Epic #35 #36)
 
+> **STATUS: shipped 2026-05-28** — closed by #36. Implementation PRs: #192, #200, #201. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Locked from super-brainstorm 2026-05-28. Reviewer-style audit pass
 > next; implementation in 3 PRs after sign-off.
 

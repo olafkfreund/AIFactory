@@ -21,23 +21,71 @@ Azure) all follow the same shape — launcher + markers + creds — and the next
 batch (GitLab, ADO, GCP) will too. A data structure beats six more
 copy-pasted if-blocks in client.py.
 
-V1 entries (this file): github, kubernetes, aws, azure — the four mature,
-ship-today options as of 2026-05.
+Transport types
+---------------
+``transport = "stdio"``  (default)
+    Spawns a local subprocess. ``launcher_command`` + ``launcher_args`` are
+    the argv. The Claude Agent SDK config dict looks like::
 
-Deferred:
-- gitlab     → V1.5, awaiting decision between official (immature) and the
-               @zereight community fork.
-- azure_devops → V1.5, the local server is being sunset for Remote MCP.
-- gcp        → V2, requires HTTP transport rather than stdio subprocess
-               (Google's design is remote-first).
+        {"command": "npx", "args": [...], "env": {...}}
+
+``transport = "http"``
+    Connects to a remote MCP endpoint over HTTP/SSE. ``http_endpoint`` is
+    the base URL resolved at build time (so env-var overrides apply). The
+    SDK config dict::
+
+        {"type": "http", "url": "..."}
+
+V1 entries: github, kubernetes, aws, azure — the four mature, ship-today
+options as of 2026-05.
+
+V1.5 entries: gitlab, azure_devops — shipped behind V1 in the same file.
+
+V2 entries: gcp — remote-first HTTP transport (Google's design). Added in
+PR for issue #168. Google Cloud AI Companion MCP went GA in March 2026.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.mcp_credentials import CredentialStatus
+
+# ---------------------------------------------------------------------------
+# Default GCP MCP endpoint (GA, March 2026).
+#
+# Google publishes the Cloud AI Companion MCP server at the endpoint below.
+# This is the canonical GA URL documented at
+# https://cloud.google.com/gemini/docs/codeassist/mcp-overview
+#
+# Operators running against a staging project, VPC Service Controls
+# perimeter, or a private endpoint MUST override this via the
+# ``GCP_MCP_ENDPOINT`` env var (or ``mcpCredentials.gcp.endpointOverride``
+# Helm value which maps to the same env var).
+#
+# Why this endpoint and not one of the 50+ other Google MCP servers?
+# Cloud AI Companion (formerly Gemini Code Assist) is the closest analogue
+# to what GitHub Copilot / Azure AI / AWS Bedrock Agents expose for
+# developer workflows: code context, GCP resource enumeration, and IAM
+# query. It is the only one Google formally published an MCP URL for in
+# the March 2026 GA announcement. Other GCP-specific servers (e.g. BigQuery
+# Explorer, Cloud Run Deployer) remain in private preview as of 2026-05;
+# operators can override the endpoint to use them when they GA.
+_GCP_MCP_DEFAULT_ENDPOINT = (
+    "https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp"
+)
+
+
+def _get_gcp_mcp_endpoint() -> str:
+    """Return the effective GCP MCP endpoint.
+
+    Operator override via ``GCP_MCP_ENDPOINT`` wins; falls back to the GA
+    default. Evaluated at call time (not import time) so tests and runtime
+    operators can set the env var after module load.
+    """
+    return os.environ.get("GCP_MCP_ENDPOINT", "").strip() or _GCP_MCP_DEFAULT_ENDPOINT
 
 
 @dataclass(frozen=True)
@@ -53,11 +101,35 @@ class MCPCatalogEntry:
     id: str
     """Stable identifier. Also the dict key the Claude SDK sees."""
 
-    launcher_command: str
-    """First element of the subprocess argv (e.g. "npx", "uvx", "/usr/bin/something")."""
+    # --- stdio transport (default) ---
+
+    launcher_command: str = ""
+    """First element of the subprocess argv (e.g. "npx", "uvx"). Empty for
+    HTTP-transport entries."""
 
     launcher_args: list[str] = field(default_factory=list)
     """Remaining argv. ``readonly_args`` are appended when read-only mode is on."""
+
+    readonly_args: list[str] = field(default_factory=list)
+    """Extra argv appended in read-only mode. Empty if the server doesn't have
+    a flag (then we rely on IAM-side read-only roles documented in the docs
+    page)."""
+
+    # --- http transport ---
+
+    transport: str = "stdio"
+    """Transport mechanism: "stdio" (subprocess) or "http" (remote MCP endpoint)."""
+
+    http_endpoint: str = ""
+    """Base URL for HTTP-transport entries. Ignored for stdio entries.
+
+    For GCP, leave empty — ``_build_http_config`` calls
+    ``_get_gcp_mcp_endpoint()`` to honour the ``GCP_MCP_ENDPOINT`` env
+    override at call time rather than at import time. Static endpoints
+    (future non-GCP HTTP servers) can set this directly.
+    """
+
+    # --- shared fields ---
 
     marker_capability_keys: list[str] = field(default_factory=list)
     """Capability flags from ``detect_infra_markers()`` — ANY match enables the
@@ -68,11 +140,6 @@ class MCPCatalogEntry:
     """Key passed to ``mcp_credentials.get_credential_status()``. Empty = no
     credentials required (none of the V1 entries hit this path; reserved for
     future no-auth servers)."""
-
-    readonly_args: list[str] = field(default_factory=list)
-    """Extra argv appended in read-only mode. Empty if the server doesn't have
-    a flag (then we rely on IAM-side read-only roles documented in the docs
-    page)."""
 
     default_for_agents: list[str] = field(default_factory=list)
     """Agent types that get this server by default. Other agents need an
@@ -88,14 +155,46 @@ class MCPCatalogEntry:
 
         Caller is responsible for having already checked credentials (and that
         the agent should get this server). This function is pure — it just
-        translates the entry's launcher + creds into the SDK's config schema.
+        translates the entry's transport + creds into the SDK's config schema.
+
+        stdio entries produce::
+
+            {"command": "npx", "args": [...], "env": {...}}
+
+        http entries produce::
+
+            {"type": "http", "url": "..."}
+
+        The GCP HTTP entry relies on ``GOOGLE_APPLICATION_CREDENTIALS`` being
+        set in the pod's environment (the Helm template does this when
+        ``mcpCredentials.providers.gcp=true``). The Cloud AI Companion server
+        performs its own ADC exchange — AIFactory does not mint tokens.
         """
+        if self.transport == "http":
+            return self._build_http_config(creds)
+        return self._build_stdio_config(creds, read_only)
+
+    def _build_stdio_config(
+        self, creds: CredentialStatus | None, read_only: bool
+    ) -> dict[str, Any]:
         args = list(self.launcher_args)
         if read_only:
             args = args + list(self.readonly_args)
         config: dict[str, Any] = {"command": self.launcher_command, "args": args}
         if creds and creds.env_vars:
             config["env"] = dict(creds.env_vars)
+        return config
+
+    def _build_http_config(self, creds: CredentialStatus | None) -> dict[str, Any]:
+        # Resolve endpoint — falls back to _get_gcp_mcp_endpoint() which
+        # honours the GCP_MCP_ENDPOINT env override at call time. Future
+        # non-GCP HTTP entries that set http_endpoint directly bypass this.
+        endpoint = self.http_endpoint or _get_gcp_mcp_endpoint()
+        config: dict[str, Any] = {"type": "http", "url": endpoint}
+        # creds accepted for signature uniformity with _build_stdio_config.
+        # The GCP entry does not embed tokens in the config dict — Cloud AI
+        # Companion reads GOOGLE_APPLICATION_CREDENTIALS from the environment
+        # directly and performs the ADC exchange internally.
         return config
 
 
@@ -193,6 +292,35 @@ CATALOG: list[MCPCatalogEntry] = [
         readonly_args=[],  # rely on PAT scope (read-only)
         default_for_agents=["coder", "qa_reviewer"],
         docs_url="https://github.com/microsoft/azure-devops-mcp",
+    ),
+    # ---- V2: GCP -------------------------------------------------------
+    #
+    # GCP uses a remote-first HTTP transport (Google's design) rather than
+    # a local subprocess. Cloud AI Companion MCP went GA in March 2026 and
+    # is the canonical developer-workflow server — code context, GCP
+    # resource enumeration, IAM query. Closes issue #168 / Epic #100.
+    #
+    # Endpoint: the default is _GCP_MCP_DEFAULT_ENDPOINT (Cloud AI Companion
+    # GA URL). Operator override via ``GCP_MCP_ENDPOINT`` env var (set by
+    # the Helm template when ``mcpCredentials.gcp.endpointOverride`` is
+    # non-empty). ``_get_gcp_mcp_endpoint()`` is evaluated at build time.
+    #
+    # Auth: Application Default Credentials. ``GOOGLE_APPLICATION_CREDENTIALS``
+    # must be set in the pod environment — either by the Helm template
+    # (providers.gcp=true mounts the SA JSON and sets the env var) or by
+    # Workload Identity Federation (which sets it via the projected token
+    # path automatically). The Cloud AI Companion server performs its own ADC
+    # exchange; AIFactory does not mint OAuth2 tokens.
+    MCPCatalogEntry(
+        id="gcp",
+        transport="http",
+        # http_endpoint left empty — _build_http_config falls through to
+        # _get_gcp_mcp_endpoint() which reads GCP_MCP_ENDPOINT at call time.
+        http_endpoint="",
+        marker_capability_keys=["has_gcp"],
+        credential_provider="gcp",
+        default_for_agents=["coder", "qa_reviewer"],
+        docs_url="https://cloud.google.com/gemini/docs/codeassist/mcp-overview",
     ),
 ]
 

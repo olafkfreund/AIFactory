@@ -1,5 +1,7 @@
 # Design: OpenTelemetry distributed tracing
 
+> **STATUS: shipped 2026-05-28** — closed by #42. Implementation PRs: #175, #176. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Epic [#35](https://github.com/olafkfreund/AIFactory/issues/35) child [#42](https://github.com/olafkfreund/AIFactory/issues/42). ~1 week effort. Smallest tractable Enterprise v1.1 child.
 
 ## Summary

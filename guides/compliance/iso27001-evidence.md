@@ -15,7 +15,7 @@ Each control entry below has three parts:
 - **AIFactory contribution** — what code, feature, or default in AIFactory demonstrates this.
 - **Operator responsibility** — what you must add on top.
 
-Coverage as of v1.1: **~30 controls directly evidenced**. ~80 of the 114 Annex A controls are organizational (policies, training, physical security, supplier relationships) and are out of AIFactory's scope by design.
+Coverage as of v1.1: **~31 controls directly evidenced** (Epic #35 9/9 shipped). ~80 of the 114 Annex A controls are organizational (policies, training, physical security, supplier relationships) and are out of AIFactory's scope by design.
 
 ## Scope statement
 
@@ -79,6 +79,17 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 - **AIFactory contribution**: Scoped MCP API keys (Epic #35 #154) replace the host-wide admin token with per-developer `acw_` keys; mutating MCP routes are scope-gated.
 - **Operator responsibility**: Document who has `acw_*` keys with admin scopes. Rotate quarterly.
 
+### A.9.4 (supplementary) — SAML SLO: session termination propagation (v1.2)
+
+- **AIFactory contribution**: SAML Single Logout (SLO) is supported in v1.2 (Epic #35 #209), opt-in via `saml.slo.enabled=true`. This closes the "stale SP session after IdP-side disable" gap documented in v1.1 design decision #11. Implementation:
+  - **SP-initiated SLO** (`POST /api/auth/saml/logout`): user clicks "Sign out" → AIFactory builds a signed `LogoutRequest` → IdP propagates to other SPs → IdP confirms back to AIFactory's SLS endpoint → session cookies cleared.
+  - **IdP-initiated SLO** (`POST /api/auth/saml/sls`): IdP administrator disables a user → IdP pushes a signed `LogoutRequest` to AIFactory → AIFactory validates signature + replay cache → clears cookies → returns signed `LogoutResponse`. When the SP has no live session for the NameID (already expired), returns `NoSession` status rather than a 4xx, preserving the IdP's propagation chain to other SPs.
+  - Replay defence: `LogoutRequest` IDs tracked in `SamlReplayCache` with per-request TTL (same mechanism as assertion replay from v1.1).
+  - RelayState HMAC protects the SP-init round-trip from open-redirect injection.
+  - Default (local-only logout) is unchanged when `saml.slo.enabled=false` — backward compatible.
+  - Source: `apps/web-server/server/saml/routes.py` (`saml_logout`, `saml_sls` endpoints). Design rationale: `docs/plans/2026-05-29-saml-slo-design.md`.
+- **Operator responsibility**: Enable SLO with `saml.slo.enabled=true` and re-upload SP metadata at the IdP. Configure MFA at the IdP. Even with SLO enabled, a stolen access-token JWT remains valid for up to 15 minutes (standard JWT stateless property) — configure short TTLs for high-security deployments.
+
 ### A.9.2 Privileged access management (tenant reconciler)
 
 - **AIFactory contribution**: When Tenant Isolation Mode (Epic #35 #36) is enabled, the reconciler authenticates to Vault via a dedicated `aifactory-reconciler` AppRole with the minimum-needed `sys/policies/acl/aifactory-tenant-*` + `auth/kubernetes/role/aifactory-tenant-*` capabilities (it can MANAGE tenant policies but cannot READ tenant secrets). Per-tenant ServiceAccounts use IRSA (AWS) / Workload Identity (GCP/Azure) — never a shared cluster-wide cloud credential. See [tenant-isolation concept doc](../../docs/docs/concepts/tenant-isolation.md).
@@ -129,12 +140,21 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
   - `AuditLog.prev_hash` chains every row to its predecessor — chain break = tampering detected (Epic #26 P5.2).
   - `audit_anchors` daily HMAC sign of the chain head detects tampering even when DB admin re-computes the chain (Epic #35 #43).
   - The export interleaves anchors with rows; `verify_anchored_export()` provides an offline verifier helper.
-- **Operator responsibility**: Run the access-review export + audit-anchor verification quarterly as part of your audit-log integrity SOP. Keep the KMS-wrapped audit-signing key separate from DB admin access.
+  - **v1.2+** (`audit.anchor.perTenant=true` + `tenant.isolationEnabled=true`): each isolated tenant gets an independent per-tenant chain anchored by a per-tenant HMAC key. Tenant A's auditor can verify tenant A's chain without seeing tenant B's data. Log integrity is now evidenced at *tenant granularity*, satisfying the control for MSP / multi-client deployments where the "log information" in scope is per-tenant. Available in v1.2+; v1.1 deployments evidence deployment-wide chain only.
+- **Operator responsibility**: Run the access-review export + audit-anchor verification quarterly as part of your audit-log integrity SOP. Keep the KMS-wrapped audit-signing key (shared or per-tenant) separate from DB admin access. For per-tenant mode, follow the auditor handover runbook in `guides/compliance/per-tenant-audit-handover.md`.
 
 ### A.12.4.3 Administrator and operator logs
 
 - **AIFactory contribution**: Every admin action (org member add/remove, role change, API key issuance, audit erasure) produces an `AuditLog` row tagged with `classification='confidential'`.
-- **Operator responsibility**: Include the admin log in your quarterly review. Investigate any `audit.erasure` events.
+  - **v1.2+**: per-tenant chains separate the operator's privilege scope from the tenant's verification scope. Rewriting tenant A's chain requires tenant A's specific HMAC key, not the deployment-wide key. Each KMS unwrap of a per-tenant key is audited and produces an `audit.handover.tenant-key.unwrap` log entry at `classification='confidential'`, visible to the tenant via the operator's disclosure obligation. Available in v1.2+; v1.1 deployments use the shared key (single forgery point for all tenants).
+- **Operator responsibility**: Include the admin log in your quarterly review. Investigate any `audit.erasure` events. For per-tenant deployments, disclose to tenants that KMS unwrap of their key is logged and auditable.
+
+### A.12.4.1 Audit of LLM calls (multi-provider deployments)
+
+- **AIFactory contribution**: When LiteLLM gateway is enabled (Epic #35 #38, opt-in via `litellm.enabled=true`), all non-Claude LLM calls (OpenAI, Codex, Gemini, Ollama) are audited via LiteLLM's admin API: prompt, response, tokens, cost routed to `audit_hooks` table. Claude calls via Claude Agent SDK are now fully audited via the in-process enforcement wrapper (Epic #35 v1.2 #207, opt-in via `claude.enforcement.enabled=true`): per-call audit row (`llm.call` / `.abandoned` / `.failed`), PII-redacted prompt + response, token counts, cost estimate, model allowlist check, and LiteLLM-backed budget enforcement (when LiteLLM is also deployed). The audit row carries `provider="claude_sdk"` for clean chargeback queries.
+- **v1.1 limitation CLOSED in v1.2**: Claude calls previously bypassed LiteLLM enforcement. v1.2 closes this via Option A (in-process enforcement wrapper) — see `docs/plans/2026-05-29-claude-litellm-wrapper-design.md` for the full decision audit trail. Option B (LiteLLM Anthropic passthrough) was evaluated and rejected due to four open upstream bugs (#28562, #28228, #26749, #27512) that corrupt audit-row integrity.
+- **Operator responsibility**: Enable `claude.enforcement.enabled=true` in Helm values and ensure web-server call sites pass `org_id` to `create_client()` for tenant-bound sessions. Set `failureMode: "closed"` for strict deployments. Monitor `audit_logs WHERE details_json->>'provider'='claude_sdk'` for Claude spend. Reconcile against Anthropic invoice monthly (deployment-wide billing; per-tenant chargeback via audit rows only). See concept doc at `docs/docs/concepts/claude-enforcement.md`.
+
 
 ### A.12.6.1 Management of technical vulnerabilities
 
@@ -157,8 +177,9 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 ### A.13.2.1 Information transfer policies and procedures
 
-- **AIFactory contribution**: All HTTP egress goes through `httpx` clients with TLS verification on; correlation IDs (`X-Request-ID`) propagated through every outbound call; OpenTelemetry tracing across HTTP / DB / agent subprocess (Epic #35 #42).
-- **Operator responsibility**: Terminate TLS at your ingress controller. Document the data flows in your DPIA.
+- **AIFactory contribution**: All HTTP egress goes through `httpx` clients with TLS verification on; correlation IDs (`X-Request-ID`) propagated through every outbound call; OpenTelemetry tracing across HTTP / DB / agent subprocess (Epic #35 #42). **v1.2 #210** — LLM prompts can be PII-scrubbed BEFORE egress to the LLM vendor via `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) or per-provider `scrub_outbound=True`; closes the v1.1 "LLM sees plaintext PII" gap for opt-in orgs. The audit row's `details_json.prompt_outbound_scrubbed` boolean is the auditor's proof.
+- **A.13.2 coverage for opt-in orgs is now FULL.** With scrubBeforeSend enabled, PII no longer leaves the AIFactory pod via the LLM-egress data flow.
+- **Operator responsibility**: Terminate TLS at your ingress controller. Document the data flows in your DPIA. For PCI / high-sensitivity tenants, enable `LITELLM_AUDIT_SCRUB_OUTBOUND=true` and record the operator-sign-off in your compliance log.
 
 ---
 
@@ -173,6 +194,13 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 
 - **AIFactory contribution**: Failure-safe contract everywhere — broken KMS / Redis / OTel / SAML never crashes the web pod (each integration wraps in try/except). Defense in depth: KMS + signed audit anchor + per-IdP collision guard.
 - **Operator responsibility**: Inherit AIFactory's failure-safe defaults; don't disable error handling in your forks.
+
+### A.14.2 PII redaction in LLM audit (Design considerations)
+
+- **AIFactory contribution**: When LiteLLM gateway is enabled with the PII redactor module (Epic #35 #38), regular-expression patterns (SSN, email, phone) are redacted from `audit_hooks.prompt` and `audit_hooks.response` before storage, replacing with placeholders like `[REDACTED_SSN]` / `[REDACTED_EMAIL]` / `[REDACTED_PHONE]`. **v1.2 #210** adds a Luhn-validated credit-card pattern (`[REDACTED_CC]`) as a built-in — operators with PCI data no longer have to wire their own Luhn-checked regex via `extraRedactionPatterns`. The Luhn check eliminates the v1.1 false-positive problem (IPv4 CIDRs, code identifiers, hashes were corrupted by the original pre-Luhn naive pattern).
+- **Resolved v1.1 limitation (v1.2 #210)**: PII redaction was AUDIT-ROW ONLY in v1.1 — the LLM itself received plaintext PII. v1.2 ships `LITELLM_AUDIT_SCRUB_OUTBOUND=true` (deployment-wide) / `OpenAICompatibleProvider(scrub_outbound=True)` (per-instance) which runs the same redactor on the prompt BEFORE the LLM API call. Opt-in by design (off by default) so existing v1.1 deployments see no behaviour change. Audit row records `details_json.prompt_outbound_scrubbed: true` when the pre-send pass actually changed the prompt — operators query that flag for "every call where PII left the LLM oblivious" reports.
+- **Operator responsibility**: Document the chosen mode in your DPIA. For PCI / high-sensitivity tenants, enable `LITELLM_AUDIT_SCRUB_OUTBOUND=true` AND ensure your Data Processor Agreement with the LLM vendor (Anthropic, OpenAI, etc.) covers the residual case (e.g. operator-extra patterns that miss something the LLM still sees). For low-sensitivity tenants where prompt fidelity matters more than vendor-side oblivion, leave the flag off (v1.1 behaviour) and document the audit-only scope.
+
 
 ### A.14.2.8 System security testing
 
@@ -204,7 +232,14 @@ This document covers AIFactory as a self-hosted Kubernetes deployment using the 
 ### A.18.1.3 Protection of records
 
 - **AIFactory contribution**: Audit-chain anchor closes the v1.0 limitation where a DB admin could rewrite the audit log without detection (Epic #35 #43 — see [audit-anchor concept doc](../../docs/docs/concepts/audit-anchor.md)).
-- **Operator responsibility**: Keep the KMS-wrapped audit-signing key Secret separate from DB admin access. v1.2's external publication (S3 WORM / RFC 3161 / Sigstore) will remove this trust assumption.
+  - **v1.2+** (`audit.anchor.perTenant=true`): each isolated tenant holds their own cryptographic evidence for their ISMS audit. The tenant's auditor receives the tenant's rows + the tenant's per-tenant anchors + (via operator handover runbook) the tenant's HMAC key. Independent verification does NOT require trusting the operator's shared infrastructure or seeing other tenants' records. Available in v1.2+; v1.1 deployments evidence deployment-wide chain only.
+- **Operator responsibility**: Keep the KMS-wrapped audit-signing key Secret (shared or per-tenant) separate from DB admin access. For per-tenant mode, follow the `guides/compliance/per-tenant-audit-handover.md` runbook when tenants request audit evidence. v1.3's external publication (S3 WORM / RFC 3161 / Sigstore) will remove the operator-as-trust-intermediary assumption.
+
+### A.18.2.2 Compliance with security policies and standards
+
+- **AIFactory contribution**:
+  - **v1.2+**: per-tenant verification path lets the tenant's auditor independently attest to the operator's policy compliance, satisfying the "independent review" expectation of A.18.2.2. The operator cannot silently rewrite tenant A's chain without tenant A's specific HMAC key; any KMS unwrap is audited and traceable. Available in v1.2+; v1.1 deployments have no per-tenant independent review capability.
+- **Operator responsibility**: Schedule annual per-tenant compliance attestation sessions where tenant auditors run the `aifactory audit verify-anchor --org-id` check. Document the attestation outcomes in your ISMS records.
 
 ### A.18.1.4 Privacy and protection of personally identifiable information
 

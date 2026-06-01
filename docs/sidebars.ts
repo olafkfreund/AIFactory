@@ -36,6 +36,9 @@ const sidebars: SidebarsConfig = {
         'concepts/tenant-isolation',
         'concepts/cloud-llm-routing',
         'concepts/litellm-gateway',
+        'concepts/claude-enforcement',
+        'concepts/saml-scim',
+        'concepts/tenant-isolation',
       ],
     },
     {
@@ -52,7 +55,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Showcase',
       collapsed: true,
-      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo'],
+      items: ['showcase/index', 'showcase/demo-walkthrough', 'showcase/enterprise-demo', 'showcase/benchmark-results'],
     },
     {
       type: 'category',

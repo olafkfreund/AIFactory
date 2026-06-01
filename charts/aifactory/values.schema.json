@@ -72,6 +72,36 @@
         "provider": {"enum": ["keycloak", "okta", "azure_ad"]}
       }
     },
+    "saml": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "spEntityId": {"type": "string"},
+        "acsUrl": {"type": "string"},
+        "idpMetadataUrl": {"type": "string"},
+        "idpMetadataSecretName": {"type": "string"},
+        "idpName": {"type": "string"},
+        "idpDisplayName": {"type": "string"},
+        "spCertSecretName": {"type": "string"},
+        "requireEncryptedAssertion": {"type": "boolean"},
+        "idpInitDefaultReturnTo": {"type": "string"},
+        "slo": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "idpSloUrl": {"type": "string"},
+            "slsUrl": {"type": "string"}
+          }
+        }
+      }
+    },
+    "scim": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "tokenSecretName": {"type": "string"}
+      }
+    },
     "kms": {
       "type": "object",
       "properties": {
@@ -107,6 +137,18 @@
                 "failedJobsHistoryLimit": {"type": "integer", "minimum": 0}
               }
             }
+          }
+        }
+      }
+    },
+    "claude": {
+      "type": "object",
+      "properties": {
+        "enforcement": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "failureMode": {"enum": ["open", "closed"]}
           }
         }
       }

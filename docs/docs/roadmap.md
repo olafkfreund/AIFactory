@@ -28,13 +28,20 @@ What that means for the roadmap, concretely:
 
 ## Recently shipped
 
-- **Epic #35 #43 — Signed audit-chain anchor + ISO 27001 evidence** ✅ — daily HMAC-SHA256 anchor signed with a KMS-wrapped key; versioned signing keys so KMS rotation doesn't invalidate prior anchors; classification-window hashing detects `confidential → public` flipping; `/api/admin/access-review` endpoint for SOC2 CC6.2 / ISO 27001 A.9.2.5 quarterly reviews; offline verifier helper for external auditors. Closes v3.0 limitation #1. See [Signed audit-chain anchor](./concepts/audit-anchor) + the [ISO 27001 evidence map](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md).
-- **Epic #35 #42 — OpenTelemetry distributed tracing** ✅ — end-to-end traces across HTTP / DB / agent subprocess / Redis fan-out, with W3C `traceparent` propagation through every boundary. Trace ID flows into request-id headers + log lines so operators can stitch logs to traces with one query. Optional-by-default, failure-safe (broken collector never crashes the app). See [Distributed tracing](./concepts/observability-tracing).
-- **Epic #35 #40 — S3 workspace storage + Redis pub/sub fan-out** ✅ — multi-replica deployments now fan out WebSocket events across pods via Redis; workspaces snapshot to S3-compatible storage (AWS / MinIO / GCS / Azure via fsspec) so a pod can die without losing in-flight task state. See [Multi-replica](./concepts/multi-replica) + [Workspace storage](./concepts/workspace-storage).
-- **Epic #35 #37 — gVisor sandbox opt-in** ✅ — agent pods can now run under `runtimeClassName: gvisor` for kernel-level isolation on supported clusters. See [gVisor sandbox](./concepts/gvisor-sandbox).
+- **Epic #35 — Enterprise v1.1** ✅ **9/9 children shipped (2026-05-28)**:
+  - #36 Tenant Isolation Mode (per-org K8s namespace + IRSA + gatekeeper samples)
+  - #37 gVisor sandbox opt-in
+  - #38 LiteLLM gateway + audit hook + PII redactor
+  - #39 Bedrock + Vertex provider support
+  - #40 S3 workspace storage + Redis pub/sub fan-out
+  - #41 SAML 2.0 + SCIM 2.0 (security-foundation + routes + helm blocks)
+  - #42 OpenTelemetry distributed tracing
+  - #43 Signed audit-chain anchor + ISO 27001 evidence map
+  - #154 Scoped MCP API keys
+  See the [ISO 27001 evidence map](https://github.com/olafkfreund/AIFactory/blob/dev/guides/compliance/iso27001-evidence.md) + linked concept docs.
+
 - **Epic #92 — Delegation (Copilot + Duo)** ✅ — hand the coder phase off to GitHub Copilot or GitLab Duo Workflow while AIFactory keeps the planning + governance. See the [Delegation concept page](./concepts/delegation).
 - **Epic #82 — Portal-managed Git clones** ✅ — clone repos into the portal's workspace root (env-aware on laptop vs Helm PVC), with encrypted-at-rest stored credentials for private repos. See [Portal-managed clones](./concepts/portal-clones).
-- **Issue #154 — Scoped MCP API keys** ✅ — replace the host-wide admin token with per-developer scope-gated `acw_` keys for the stdio MCP. See [MCP API keys](./concepts/mcp-stdio-keys).
 
 ## Shipping now (stacked PRs)
 
@@ -55,8 +62,14 @@ When the rmux stack lands on `dev`, the [Live Agent Console](./concepts/rmux-liv
 
 ## Next quarter
 
+- **Epic #204 — Enterprise v1.2** (planned improvements to v1.1):
+  - Per-tenant LLM budget enforcement + rate-limiting (Claude SDK wrapper)
+  - `litellm.audit.scrubBeforeSend` mode (PII removal before LLM vendor)
+  - Per-tenant audit-chain anchor + external publication (S3 WORM / RFC 3161)
+  - Streaming response audit coverage
+  - See tracking issue #204 for full scope.
+
 - **Epic #50 — MCP Control-Plane Tools**: expose AIFactory itself as an MCP server so Claude Code can create projects, kick off builds, and read QA reports without leaving the terminal.
-- **Epic #35 — Enterprise v1.1** (5 of 9 children shipped): #37 (gVisor), #40 (S3 + Redis fan-out), #42 (OpenTelemetry), #43 (ISO 27001 + audit anchor), #154 (MCP RBAC) ✅ shipped. #41 (SAML/SCIM) ~60% in flight. Remaining: #36 (tenant isolation), #38 (LiteLLM gateway), #39 (Bedrock/Vertex providers).
 - **First-class Linear integration**: bidirectional sync (today is one-way GitHub import only).
 - **Algolia DocSearch** on this docs site.
 - **Browser-side runtime config** so the frontend can talk to a portal at a custom origin without a rebuild.

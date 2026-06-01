@@ -1,5 +1,7 @@
 # Design — LiteLLM gateway (Epic #35 #38)
 
+> **STATUS: shipped 2026-05-28** — closed by #38. Implementation PRs: #193, #194, #202, #203. See [CHANGELOG.md](../../CHANGELOG.md) for the v1.1 release notes.
+
 > Locked from super-brainstorm 2026-05-28 + reviewer audit. Implementation
 > in 3 PRs after sign-off.
 

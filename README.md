@@ -37,6 +37,24 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 >
 > See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
 
+## Enterprise v1.1 (May 28, 2026 — Epic #35)
+
+AIFactory ships **7 major enterprise features** — multi-tenant isolation, observability, audit hardening, and IdP integration for regulated deployments. All features are opt-in via Helm values; default deployments remain unchanged.
+
+| Capability | Issue | Concept doc |
+|-----------|-------|-------------|
+| **SAML 2.0 + SCIM 2.0** — Legacy IdP federation (ADFS-era banks, Azure AD provisioning) | #41 | [saml-scim](docs/docs/concepts/saml-scim.md) |
+| **Tenant Isolation Mode** — Per-tenant K8s namespace + NetPol + S3 + Vault + leader election | #36 | [tenant-isolation](docs/docs/concepts/tenant-isolation.md) |
+| **LiteLLM Gateway** — Per-org budget + rate-limit + allowlist + PII-redacted audit log | #38 | [litellm-gateway](docs/docs/concepts/litellm-gateway.md) |
+| **Bedrock + Vertex Routing** — Cloud-provider LLMs (AWS, Google) via LiteLLM | #39 | [cloud-llm-routing](docs/docs/concepts/cloud-llm-routing.md) |
+| **Signed Audit-Chain Anchor** — Daily HMAC-anchored chain for ISO 27001 A.12 compliance | #43 | [audit-anchor](docs/docs/concepts/audit-anchor.md) |
+| **OpenTelemetry Distributed Tracing** — W3C `traceparent` across web + agent + subprocess | #42 | [observability-tracing](docs/docs/concepts/observability-tracing.md) |
+| **gVisor Sandbox** — Agent pods opt-in to gVisor RuntimeClass for kernel-level isolation | #37 | — |
+
+**Multi-replica support:** S3 workspace storage + Redis pub/sub (#40) enable horizontally scaled deployments.
+
+**What's next:** v1.2 roadmap includes Claude-on-LiteLLM enforcement wrapper, per-tenant audit anchors, and SAML Single Logout — tracked in Epic #204.
+
 ## Why it's different
 
 - **Spec-first, not vibe-first.** Every agent run starts from a written, reviewable spec with acceptance criteria. Plans are editable before code is written.

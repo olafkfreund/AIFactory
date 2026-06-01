@@ -22,7 +22,17 @@ WORKDIR /build
 COPY package.json package-lock.json ./
 COPY apps/frontend-web/package.json apps/frontend-web/
 
-RUN npm ci --workspace=apps/frontend-web
+# npm ci leaves out Rollup's per-platform optional-dep native binaries when the
+# build target's arch differs from the lockfile-generation host (npm/cli #4828),
+# breaking multi-arch Docker builds with:
+#   Error: Cannot find module @rollup/rollup-linux-arm64-gnu
+# Workaround: install with `npm ci`, then explicitly install both Linux
+# rollup native binaries with --no-save so the lockfile stays canonical.
+RUN npm ci --workspace=apps/frontend-web \
+ && cd apps/frontend-web \
+ && npm install --no-save --force \
+      @rollup/rollup-linux-x64-gnu \
+      @rollup/rollup-linux-arm64-gnu
 
 COPY apps/frontend-web/ apps/frontend-web/
 

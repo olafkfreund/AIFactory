@@ -311,3 +311,207 @@ def test_audit_write_failure_does_not_raise(fresh_db, monkeypatch):
         _run(_go())
     finally:
         engine_module.async_session_factory = original
+
+
+# ---------------------------------------------------------------------------
+# v1.2 #210 — scrubBeforeSend audit-row signalling + provider integration
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_outbound_scrubbed_default_false(fresh_db):
+    """v1.1 compat: when the caller doesn't pass
+    ``prompt_outbound_scrubbed``, the audit row records False.
+    Operators querying ``details_json->>'prompt_outbound_scrubbed'``
+    always see a concrete bool, never null."""
+    _engine, SessionLocal = fresh_db
+    restore = _bind_audit_hook_to_session(SessionLocal)
+    try:
+        from server.database.models import AuditLog
+        from server.services.llm_audit_hook import write_llm_call_audit
+
+        async def _go():
+            await write_llm_call_audit(
+                org_id='org-acme',
+                user_id='user-alice',
+                model='gpt-4o-mini',
+                prompt_text='hello',
+                response_text='hi',
+            )
+            from sqlalchemy import select
+            async with SessionLocal() as db:
+                return (await db.execute(select(AuditLog))).scalars().one()
+
+        row = _run(_go())
+        details = json.loads(row.details_json)
+        assert details['prompt_outbound_scrubbed'] is False
+    finally:
+        restore()
+
+
+def test_prompt_outbound_scrubbed_true_when_provider_scrubbed(fresh_db):
+    """v1.2 #210: when the provider scrubbed the prompt pre-send, the
+    flag arrives at the audit hook + lands in details_json as True."""
+    _engine, SessionLocal = fresh_db
+    restore = _bind_audit_hook_to_session(SessionLocal)
+    try:
+        from server.database.models import AuditLog
+        from server.services.llm_audit_hook import write_llm_call_audit
+
+        async def _go():
+            await write_llm_call_audit(
+                org_id='org-acme',
+                user_id='user-alice',
+                model='gpt-4o-mini',
+                prompt_text='User SSN: 123-45-6789',
+                response_text='ack',
+                prompt_outbound_scrubbed=True,
+            )
+            from sqlalchemy import select
+            async with SessionLocal() as db:
+                return (await db.execute(select(AuditLog))).scalars().one()
+
+        row = _run(_go())
+        details = json.loads(row.details_json)
+        assert details['prompt_outbound_scrubbed'] is True
+        # Audit-row redaction still applies regardless of scrub-before-send.
+        assert '[REDACTED_SSN]' in details['prompt_truncated']
+    finally:
+        restore()
+
+
+def test_scrub_before_send_when_enabled(monkeypatch):
+    """Provider constructed with ``scrub_outbound=True`` sends the
+    redacted prompt to the LLM. The HTTP body that hits the server
+    contains ``[REDACTED_SSN]`` rather than the raw SSN."""
+    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
+    monkeypatch.delenv('LITELLM_AUDIT_SCRUB_OUTBOUND', raising=False)
+
+    from providers.openai_compatible import OpenAICompatibleProvider
+
+    captured: dict[str, dict] = {}
+
+    def _fake_http_post(self, url, payload):
+        captured['payload'] = payload
+        return {
+            'choices': [{'message': {'role': 'assistant', 'content': 'ack'}}],
+            'usage': {'prompt_tokens': 5, 'completion_tokens': 1},
+        }
+
+    monkeypatch.setattr(
+        OpenAICompatibleProvider, '_http_post', _fake_http_post,
+    )
+
+    # Skip the real audit-row write — we're testing the outbound body.
+    async def _noop_audit(self, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        OpenAICompatibleProvider, '_write_audit', _noop_audit,
+    )
+
+    async def _go():
+        provider = OpenAICompatibleProvider(
+            model='gpt-4o-mini',
+            base_url='http://fake.invalid',
+            api_key='sk-test',
+            scrub_outbound=True,
+        )
+        await provider.query('User SSN: 123-45-6789, email alice@example.com')
+        async for _ in provider.receive_response():
+            pass
+
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_go())
+    finally:
+        loop.close()
+
+    sent = captured['payload']['messages'][0]['content']
+    assert '123-45-6789' not in sent
+    assert '[REDACTED_SSN]' in sent
+    assert 'alice@example.com' not in sent
+    assert '[REDACTED_EMAIL]' in sent
+
+
+def test_no_scrub_when_disabled(monkeypatch):
+    """Default (``scrub_outbound=False``) → outbound HTTP body is the
+    raw prompt. v1.1 behaviour preserved for callers that haven't
+    opted in."""
+    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
+    monkeypatch.delenv('LITELLM_AUDIT_SCRUB_OUTBOUND', raising=False)
+
+    from providers.openai_compatible import OpenAICompatibleProvider
+
+    captured: dict[str, dict] = {}
+
+    def _fake_http_post(self, url, payload):
+        captured['payload'] = payload
+        return {
+            'choices': [{'message': {'role': 'assistant', 'content': 'ack'}}],
+        }
+
+    monkeypatch.setattr(
+        OpenAICompatibleProvider, '_http_post', _fake_http_post,
+    )
+
+    async def _noop_audit(self, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        OpenAICompatibleProvider, '_write_audit', _noop_audit,
+    )
+
+    async def _go():
+        provider = OpenAICompatibleProvider(
+            model='gpt-4o-mini',
+            base_url='http://fake.invalid',
+            api_key='sk-test',
+            # scrub_outbound omitted; env unset → default False.
+        )
+        assert provider._scrub_outbound is False
+        await provider.query('User SSN: 123-45-6789')
+        async for _ in provider.receive_response():
+            pass
+
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_go())
+    finally:
+        loop.close()
+
+    sent = captured['payload']['messages'][0]['content']
+    # v1.1 contract: raw PII hits the wire.
+    assert '123-45-6789' in sent
+
+
+def test_env_var_enables_scrub_outbound(monkeypatch):
+    """``LITELLM_AUDIT_SCRUB_OUTBOUND=true`` enables scrubBeforeSend
+    deployment-wide without per-provider plumbing."""
+    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
+    monkeypatch.setenv('LITELLM_AUDIT_SCRUB_OUTBOUND', 'true')
+
+    from providers.openai_compatible import OpenAICompatibleProvider
+
+    p = OpenAICompatibleProvider(
+        model='gpt-4o-mini',
+        base_url='http://fake.invalid',
+    )
+    assert p._scrub_outbound is True
+
+
+def test_explicit_false_overrides_env(monkeypatch):
+    """Explicit ctor ``scrub_outbound=False`` beats env=true (lets
+    tests + per-tenant overrides pin behaviour deterministically)."""
+    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
+    monkeypatch.setenv('LITELLM_AUDIT_SCRUB_OUTBOUND', 'true')
+
+    from providers.openai_compatible import OpenAICompatibleProvider
+
+    p = OpenAICompatibleProvider(
+        model='gpt-4o-mini',
+        base_url='http://fake.invalid',
+        scrub_outbound=False,
+    )
+    assert p._scrub_outbound is False

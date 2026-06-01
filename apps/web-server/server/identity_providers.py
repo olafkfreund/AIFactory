@@ -113,3 +113,4 @@ def list_configured_identity_providers() -> list[IdpDescriptor]:
         providers.append(oidc)
 
     return providers
+

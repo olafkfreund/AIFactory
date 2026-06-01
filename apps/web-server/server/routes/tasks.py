@@ -15,7 +15,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from ..paths import get_data_dir, get_data_file
+from ..paths import get_data_dir
 from .projects import get_projects_file, load_projects
 
 router = APIRouter()

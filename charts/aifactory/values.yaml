@@ -203,6 +203,167 @@ oidc:
   groupToRole: {}  # e.g. {"aifactory-admin": "admin"}
   defaultRole: "member"
 
+# ---------------------------------------------------------------------------
+# SAML 2.0 Web SSO (Epic #35 #41).
+#
+# When ``saml.enabled: true``, the web-server mounts ``/api/auth/saml/login``,
+# ``/api/auth/saml/acs``, ``/api/auth/saml/metadata`` and surfaces the
+# IdP in the login-page dropdown next to any configured OIDC IdP.
+#
+# When ``saml.enabled: false`` (default), no SAML routes are mounted and
+# the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+#
+# IdP metadata source — pick exactly ONE of:
+#   • ``idpMetadataUrl`` — the operator's IdP publishes federation
+#     metadata at a stable URL. The web-server fetches it on startup
+#     and refreshes every 4 hours in the background (48-hour stale-
+#     warn, never crashes the pod).
+#   • ``idpMetadataSecretName`` — operator-supplied K8s Secret with
+#     key ``idp-metadata.xml`` mounted at /etc/saml/idp-metadata.xml.
+#     Rotation = recreate Secret + restart pod.
+#
+# SP cert (signing AuthnRequests + decrypting EncryptedAssertions):
+#   • Optional in plain-vanilla flows; REQUIRED when
+#     ``requireEncryptedAssertion: true``.
+#   • Provide via ``spCertSecretName`` — K8s Secret with keys
+#     ``cert.pem`` + ``key.pem`` (and optional ``cert.pem.previous`` for
+#     the rotation overlap window — see docs/docs/concepts/saml-scim.md).
+#
+# Identity-key contract (locked in design decision #6 + v1.1 hard
+# constraint): ``scim.userName == saml.NameID == users.email``. SCIM
+# provisions the User row first; SAML's NameID matches by case-
+# insensitive email lookup. SAML alone never creates users (no JIT).
+#
+# Cross-IdP linkage (decision #4): if a User already has an OIDC
+# identity, the first SAML login for that email is rejected with 409
+# until an admin runs the linkage via DB. v1.2 ships the admin UI.
+#
+# Logout is LOCAL only (decision #11): we clear our session cookie and
+# do NOT issue a SAML LogoutRequest to the IdP. Operators wanting
+# IdP-side session kill use short session TTLs or the IdP admin console.
+saml:
+  # Master toggle. When false (default), no SAML wiring is added and
+  # ``/api/auth/saml/*`` routes 404.
+  enabled: false
+  # Service Provider EntityID — the stable identifier the IdP knows
+  # us by. Typically the public ACS URL's origin + ``/saml``, e.g.
+  # ``https://aifactory.example.com/saml``. Must match the EntityID
+  # the operator registered at the IdP.
+  spEntityId: ""
+  # Assertion Consumer Service URL — where the IdP POSTs the signed
+  # assertion. Must be the absolute URL the browser can reach, e.g.
+  # ``https://aifactory.example.com/api/auth/saml/acs``.
+  acsUrl: ""
+  # IdP federation-metadata URL (pick this OR idpMetadataSecretName).
+  # The web-server fetches on startup + refreshes every 4 hours; the
+  # last-known-good XML stays cached through transient IdP outages.
+  idpMetadataUrl: ""
+  # K8s Secret name with key ``idp-metadata.xml`` (pick this OR
+  # idpMetadataUrl). Operator rotates by recreating the Secret +
+  # restarting the pod. Mounted at /etc/saml/idp-metadata.xml.
+  idpMetadataSecretName: ""
+  # Machine-readable IdP key — matches the ``identityProviders[].name``
+  # entry the login page renders. Default ``saml`` is fine for the
+  # single-SAML-IdP v1.1 shape. Must NOT contain spaces.
+  idpName: ""
+  # Human-readable label for the login-page dropdown, e.g.
+  # ``Corp SSO (SAML)``. Falls back to ``idpName`` when empty.
+  idpDisplayName: ""
+  # K8s Secret name with keys ``cert.pem`` + ``key.pem`` for the SP
+  # signing cert + private key. Optional unless
+  # ``requireEncryptedAssertion: true``. May also include
+  # ``cert.pem.previous`` for the rotation overlap window — see the
+  # SP cert rotation runbook in docs/docs/concepts/saml-scim.md.
+  spCertSecretName: ""
+  # When true, the SP rejects any assertion whose ``<Assertion>`` is
+  # not encrypted. ``spCertSecretName`` is then mandatory (the SDK
+  # uses the SP private key to decrypt). When false, assertions may
+  # be plain XML — signature still required.
+  requireEncryptedAssertion: false
+  # Absolute URL to land on after an IdP-init flow (no RelayState).
+  # Validator: scheme + host MUST match ``spEntityId`` to prevent open-
+  # redirect via crafted IdP-init URLs. Leave empty to reject IdP-init
+  # flows entirely (SP-init only).
+  idpInitDefaultReturnTo: ""
+
+  # ---------------------------------------------------------------------------
+  # SAML Single Logout (SLO) (Epic #35 #209 v1.2).
+  #
+  # Opt-in; default OFF for backward compatibility. When enabled, adds:
+  #   POST /api/auth/saml/logout  — SP-initiated SLO entry point
+  #   POST /api/auth/saml/sls     — Single Logout Service callback
+  #
+  # Prerequisites:
+  #   1. ``saml.enabled: true`` (validator below enforces this).
+  #   2. IdP must support SAML SLO over HTTP-POST binding.
+  #      Azure AD, ADFS 3.0+, Okta, Keycloak, and PingFederate all do.
+  #      Legacy ADFS 2.0 and some older Shibboleth deployments may not.
+  #   3. After enabling, re-upload the SP metadata from
+  #      ``GET /api/auth/saml/metadata`` at the IdP — the metadata now
+  #      advertises the <SingleLogoutService> HTTP-POST binding.
+  #
+  # Operator workflow:
+  #   1. Set ``saml.slo.enabled: true``.
+  #   2. Optionally set ``saml.slo.idpSloUrl`` if the IdP SLO URL differs
+  #      from what the IdP metadata advertises (some ADFS deployments).
+  #   3. ``helm upgrade ...`` — SLO routes are live after pod restart.
+  #   4. Re-upload SP metadata at the IdP to complete the federation.
+  #
+  # Compliance note (ISO 27001 A.9.4.2 / A.9.4.4):
+  #   Enables IdP-side session termination when a user clicks "Sign out"
+  #   in AIFactory. Closes the "stale session after IdP-side disable" gap
+  #   documented in v1.1 decision #11.
+  slo:
+    # Master SLO toggle. Requires saml.enabled=true (validator in
+    # deployment.yaml enforces this at helm install/upgrade time).
+    enabled: false
+    # Explicit override for the IdP's SLO endpoint URL. When empty (default),
+    # the SP derives the URL from the IdP's federation metadata
+    # (<SingleLogoutService Binding="HTTP-POST"> element). Set this only when
+    # the IdP metadata does not advertise SLO or when the SLO URL in the
+    # metadata differs from the actual endpoint (some ADFS configurations).
+    # Example: https://adfs.example.com/adfs/ls/?wa=wsignout1.0
+    idpSloUrl: ""
+    # Override for the SP's own SLS callback URL. When empty (default), the
+    # deployment template derives this from saml.acsUrl (replaces /acs with
+    # /sls). Set explicitly only when the SLS URL has a different path or
+    # hostname than the ACS URL — unusual but supported.
+    slsUrl: ""
+
+# ---------------------------------------------------------------------------
+# SCIM 2.0 user + group provisioning endpoint (Epic #35 #41).
+#
+# When ``scim.enabled: true``, the web-server mounts
+# ``/api/scim/v2/Users`` + ``/api/scim/v2/Groups`` per RFC 7644. The
+# operator's IdP (Okta / Azure AD / Keycloak) POSTs to these as users
+# join, change roles, or leave the org. Soft-deleted users return 404
+# on subsequent GET — matches Azure AD's deprovision-then-GET sync.
+#
+# Auth is a single static Bearer token from a K8s Secret (decision #3):
+# every request to ``/api/scim/v2/*`` must carry
+# ``Authorization: Bearer <token>``. Constant-time compare; rotation =
+# recreate Secret + restart pod (the SDK reads at startup).
+#
+# Rate-limiting: NOT in-process (decision #12). Operators who want it
+# set an ingress annotation, e.g.
+#   nginx.ingress.kubernetes.io/limit-rps: "100"
+#
+# Filter grammar subset (decision #5): eq-only on
+# ``userName`` / ``externalId`` / ``active``. Covers 100% of what
+# Okta + Azure AD send during sync. Other operators return 400 with
+# ``scimType: invalidFilter``.
+scim:
+  # Master toggle. When false (default), no SCIM routes are mounted —
+  # the deployment is byte-for-byte unchanged from pre-#41 behaviour.
+  enabled: false
+  # K8s Secret name with key ``SCIM_BEARER_TOKEN`` — the static Bearer
+  # the IdP sends in the Authorization header. Required when
+  # ``enabled: true``. Generate via: ``openssl rand -base64 48 |
+  # tr -d '\n=' | head -c 48`` then ``kubectl create secret generic
+  # aifactory-scim --from-literal=SCIM_BEARER_TOKEN=<the-value>``.
+  # Operator paste the same token into the IdP's SCIM connector.
+  tokenSecretName: ""
+
 kms:
   # One of: fernet (local key, POC only), aws_kms, vault_transit,
   # azure_kv, gcp_kms.
@@ -473,6 +634,26 @@ mcpCredentials:
     gitlab: false        # injects GITLAB_TOKEN + GITLAB_INSTANCE_URL env
     azureDevOps: false   # injects AZURE_DEVOPS_PERSONAL_ACCESS_TOKEN + AZURE_DEVOPS_ORG_SERVICE_URL env
 
+  # GCP-specific settings (V2 — issue #168, remote-first HTTP transport).
+  #
+  # These are ADDITIONAL to ``providers.gcp`` which controls the SA JSON
+  # file mount. Use them when the default Cloud AI Companion endpoint or
+  # the shared ``secretName`` don't suit your deployment.
+  gcp:
+    # Override the K8s Secret that holds the GCP service-account JSON.
+    # When empty (default), falls back to ``mcpCredentials.secretName``
+    # with the key ``gcp-service-account.json``. Set a distinct name here
+    # for deployments where the GCP SA JSON lives in its own Secret.
+    secretName: ""
+    # Override the Cloud AI Companion MCP endpoint URL. Set this for:
+    #   • VPC Service Controls perimeters (private endpoint required)
+    #   • Staging / non-prod GCP projects using a different project ID
+    #   • Future GCP MCP servers (BigQuery, Cloud Run, etc.) once GA
+    # When empty (default), the app uses the GA endpoint:
+    #   https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp
+    # Mapped to the ``GCP_MCP_ENDPOINT`` env var in the deployment template.
+    endpointOverride: ""
+
 # Redis pub/sub for cross-replica WebSocket fan-out (Epic #35 #40).
 #
 # Default OFF — single-replica deployments work unchanged with no
@@ -632,6 +813,57 @@ audit:
       successfulJobsHistoryLimit: 1
       failedJobsHistoryLimit: 3
 
+    # ---------------------------------------------------------------------------
+    # v1.2 #208 — per-tenant audit-chain anchor (Option A)
+    # ---------------------------------------------------------------------------
+    #
+    # When perTenant=true:
+    #   - Each isolated tenant gets its own HMAC-SHA256 signing key, generated
+    #     by the reconciler on first isolation flip and stored in
+    #     audit_signing_keys with org_id set.
+    #   - The daily cron emits one audit_anchors row per isolated tenant
+    #     (in addition to the shared-chain anchor for non-isolated tenants).
+    #   - Per-tenant exports with ?include_anchors=true are now verifiable.
+    #
+    # Prerequisites:
+    #   - audit.anchor.enabled must be true.
+    #   - tenant.isolationEnabled must be true (per-tenant keys live in the
+    #     tenant's Vault path provisioned only by isolation mode).
+    #
+    # Default off for backward compatibility. Pre-v1.2 deployments run
+    # unchanged; flip this to true to start per-tenant chains prospectively
+    # (existing rows stay in the shared chain per the cutover boundary
+    # recorded in tenant_audit_state.chain_started_at).
+    perTenant: false
+
+    perTenantOptions:
+      # LRU cache size for unwrapped per-tenant signing keys (design finding #1).
+      # Each entry is ~32 bytes raw + overhead. At default 1000 entries the
+      # cache consumes ~1 MB. Operators at 10k+ tenants set this to 10000
+      # and accept proportional memory cost (~10 MB).
+      # KMS rate-limit math: AWS KMS = 5,500 unwraps/sec per region;
+      # at 10k tenants a cold-start pass takes ~10k × KMS-RTT (20-50ms)
+      # = 200-500 seconds — acceptable for a daily job.
+      keyCacheSize: 1000
+
+      # Batch commit size for the per-tenant cron loop (design finding #2).
+      # Every batchSize tenants the cron commits + flushes. A failure within
+      # a batch rolls back only that batch; prior batches stay committed.
+      batchSize: 100
+
+      # Anchor rows older than retentionDays are eligible for operator-driven
+      # pruning (design finding #4). Pruning removes historical verification
+      # capability; operators MUST understand this trade-off. Default 5 years.
+      # Note: the retention job is NOT shipped in v1.2 — this value is
+      # documented for operators who run their own pruning scripts.
+      retentionDays: 1825
+
+      metrics:
+        # When true, expose audit_anchor_emit_total with per-org labels
+        # (design recommendation #1). High cardinality at 10k tenants;
+        # operators on a tight Prometheus budget can disable per-org labels.
+        perOrgLabels: true
+
 # ---------------------------------------------------------------------------
 # LiteLLM gateway (Epic #35 #38 PR-3).
 #
@@ -663,6 +895,41 @@ audit:
 # when the audit-write path fails — closed (reject the call) is the
 # compliance-safe default; open (let the call through with a logged
 # warning) is the operator escape hatch for during-incident triage.
+
+# -----------------------------------------------------------------------
+# Claude enforcement wrapper (Epic #35 v1.2 / #207)
+# -----------------------------------------------------------------------
+# The native Claude Agent SDK path (claude-* models via the claude CLI
+# subprocess) bypassed per-tenant budget / allowlist / audit in v1.1.
+# This block wires the v1.2 in-process enforcement wrapper described in
+# docs/plans/2026-05-29-claude-litellm-wrapper-design.md (Option A).
+#
+# When enabled, create_client() and create_simple_client() wrap the
+# ClaudeSDKClient in _EnforcedClaudeSDKClient which:
+#   1. Checks the org's model allowlist (from Organization.allowed_models).
+#   2. Reads the LiteLLM virtual-key budget (when litellm.enabled=true).
+#   3. Writes an audit row per call via write_llm_call_audit().
+#
+# Call sites without an org_id (spec_runner, run.py, insights_runner)
+# remain v1.1 behaviour — no enforcement, no audit row.  This is the
+# "system task escape hatch" documented in design §9.
+#
+# Default OFF for backward compat — flip to true for new multi-tenant
+# installs or after verifying your web-server call sites pass org_id.
+# See docs/docs/concepts/claude-enforcement.md for the full operator
+# walkthrough.
+claude:
+  enforcement:
+    enabled: false              # opt-in; default off for backward compat
+    # failure_mode governs what happens when the LiteLLM budget service
+    # is unreachable at budget-check time:
+    #   "open"   — log WARNING + proceed (default; matches non-Claude path).
+    #   "closed" — refuse the call with BudgetCheckUnavailableError.
+    # Compliance-focused operators set "closed" to guarantee every call
+    # is budget-checked. The trade-off: a LiteLLM gateway outage blocks
+    # Claude calls too.  See concept doc for the full discussion.
+    failureMode: "open"         # open | closed
+
 litellm:
   # Master toggle. False (default) means no sub-chart pulled, no
   # LITELLM_* env vars on the web pod, no Grafana ConfigMap rendered.

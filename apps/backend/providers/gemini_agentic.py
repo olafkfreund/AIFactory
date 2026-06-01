@@ -47,7 +47,7 @@ from providers.types import AssistantMessage, TextBlock
 logger = logging.getLogger(__name__)
 
 _DEFAULT_GEMINI_PATH: str = "gemini"
-_DEFAULT_MODEL: str = "gemini-2.5-pro"
+_DEFAULT_MODEL: str = "gemini-3.1-pro-preview"
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 
@@ -154,10 +154,10 @@ class GeminiAgenticProvider(BaseLLMProvider):
 
         proc: asyncio.subprocess.Process | None = None
         try:
-            # Gemini CLI refuses tool calls in an "untrusted" workspace — which our
-            # isolated git worktrees always are — silently failing every coding
-            # subtask (no files written). Trust the workspace so --yolo can
-            # actually edit files. See the CLI's trusted-folders guidance.
+            # Gemini CLI refuses tool calls in an "untrusted" workspace — which
+            # our isolated git worktrees always are — silently failing every
+            # coding subtask (no files written). Trust the workspace so --yolo
+            # can actually edit files. See the CLI's trusted-folders guidance.
             env = {**os.environ, "GEMINI_CLI_TRUST_WORKSPACE": "true"}
             proc = await asyncio.create_subprocess_exec(
                 *cmd,

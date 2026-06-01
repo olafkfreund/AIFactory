@@ -66,6 +66,7 @@ _MIN_CACHE_TOKENS: dict[str, int] = {
     "claude-sonnet-4-6": 1024,
     "claude-opus-4-6": 4096,
     "claude-opus-4-7": 4096,
+    "claude-opus-4-8": 4096,
 }
 
 # Conservative fallback for unknown models — chosen low so the warning is

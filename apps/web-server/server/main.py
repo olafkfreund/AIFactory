@@ -43,6 +43,7 @@ from .routes import (
 )
 from .routes import cli_accounts as cli_accounts_routes
 from .routes import llm_endpoints as llm_endpoints_routes
+from .routes import login_discovery as login_discovery_routes
 from .routes import logs as logs_routes
 from .routes import settings as settings_routes
 from .services.skills_service import init_skills_service
@@ -230,6 +231,27 @@ def create_app() -> FastAPI:
     from .routes import oidc_routes
     app.include_router(oidc_routes.router)
 
+    # Epic #35 #41 PR-1b4 — IdP discovery endpoint.  Always mounted (no
+    # feature flag) because the login page must be able to call it even
+    # before knowing which protocols are configured.  Returns [] when
+    # nothing is enabled — the login page falls back to local-password form.
+    app.include_router(login_discovery_routes.router)
+
+    # Epic #35 #41 — SAML 2.0 SP + SCIM 2.0 routers, only mounted when
+    # operator-enabled. Earlier draft of PR-1b4 mounted these unconditionally,
+    # which dragged python3-saml + scim models into every test-suite app
+    # construction via TestClient's lifespan, causing cross-test contamination
+    # of the engine + SAML singletons. Gating on env vars keeps the default
+    # deployment + test runs unaffected; production deployments that enable
+    # SAML or SCIM via Helm get the routers mounted at pod start.
+    import os
+    if os.environ.get("SAML_ENABLED", "").lower() == "true":
+        from .saml import routes as saml_routes
+        app.include_router(saml_routes.router)
+    if os.environ.get("SCIM_ENABLED", "").lower() == "true":
+        from .scim import routes as scim_routes
+        app.include_router(scim_routes.router)
+
     # Organization routes (prefix defined in router: /api/orgs)
     app.include_router(organizations.router)
 
@@ -259,7 +281,7 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
     # Execution routes also live under /api/tasks. They MUST be registered
     # before tasks.router, whose catch-all GET /{task_id} would otherwise
-    # shadow specific paths like GET /api/tasks/running (Issue: 400 on /running).
+    # shadow specific paths like GET /api/tasks/running (returned 400 on /running).
     app.include_router(execution.router, prefix="/api/tasks", tags=["Task Execution"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])

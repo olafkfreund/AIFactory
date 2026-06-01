@@ -114,7 +114,7 @@ export async function fetchOpenAICompatibleModels(baseUrl?: string): Promise<{ v
 
 // Maps model shorthand to actual Claude model IDs
 export const MODEL_ID_MAP: Record<string, string> = {
-  opus: 'claude-opus-4-7',
+  opus: 'claude-opus-4-8',
   sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-haiku-4-5-20251001'
 } as const;

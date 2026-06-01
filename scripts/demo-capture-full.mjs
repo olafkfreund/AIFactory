@@ -19,9 +19,6 @@ const PID = process.env.AIFACTORY_PROJECT_ID || 'f7ac8d99-b913-4c6f-afce-f8376e2
 const TOKEN = fs.readFileSync(path.join(os.homedir(), '.aifactory', '.token'), 'utf8').trim();
 const TITLE = process.env.DEMO_TITLE || 'Add /status endpoint';
 const DESC = process.env.DEMO_DESC || 'Add a GET /status endpoint to the FastAPI app that returns {"uptime_seconds": <float>} measured from process start, plus a pytest test using TestClient.';
-// DEMO_MODEL routes the whole pipeline to one provider via task_metadata.json
-// (e.g. "sonnet" -> Claude, "ollama:qwen2.5-coder:14b" -> Ollama, "gemini-2.5-pro" -> Gemini).
-const MODEL = process.env.DEMO_MODEL || null;
 
 fs.mkdirSync(OUT, { recursive: true });
 const VIDDIR = path.join(OUT, 'video');
@@ -29,19 +26,12 @@ fs.mkdirSync(VIDDIR, { recursive: true });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 function findChrome() {
-  if (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE) return process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
   const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '';
   for (const v of ['chromium-1217', 'chromium-1223', 'chromium-1208']) {
     const p = path.join(root, v, 'chrome-linux64', 'chrome');
     if (fs.existsSync(p)) return p;
   }
-  try {
-    const found = execSync(`find -L ${root} -maxdepth 3 -type f -name chrome 2>/dev/null | head -1`).toString().trim();
-    if (found) return found;
-  } catch { /* fall through */ }
-  // NixOS: Playwright-bundled chromium isn't provided — use system Chrome.
-  const sys = '/etc/profiles/per-user/olafkfreund/bin/google-chrome-stable';
-  return fs.existsSync(sys) ? sys : undefined;
+  try { return execSync(`find -L ${root} -maxdepth 3 -type f -name chrome 2>/dev/null | head -1`).toString().trim(); } catch { return undefined; }
 }
 
 function ffmpegBin() {
@@ -157,8 +147,6 @@ async function terminalDemo(page) {
     extraHTTPHeaders: { Authorization: `Bearer ${TOKEN}` },
     recordVideo: { dir: VIDDIR, size: { width: 1600, height: 900 } },
   });
-  // Force the dark Gruvbox theme so the recording matches the screenshots.
-  await context.addInitScript(() => { try { localStorage.setItem('aifactory-theme', 'dark'); } catch {} });
   const tStart = Date.now();           // recording timeline origin (context created)
   let introEnd = 0, gateStart = 0;     // seconds-from-start of the two cut points
   const page = await context.newPage();
@@ -177,10 +165,8 @@ async function terminalDemo(page) {
 
   // --- FULL lifecycle ---
   // 1. Create + start the task via API; the board updates live over WS.
-  log('creating task', MODEL ? `(model: ${MODEL})` : '(default model)');
-  const createBody = { title: TITLE, description: DESC };
-  if (MODEL) createBody.metadata = { model: MODEL, requireReviewBeforeCoding: false };
-  const created = await api(`/api/projects/${PID}/tasks`, 'POST', createBody);
+  log('creating task');
+  const created = await api(`/api/projects/${PID}/tasks`, 'POST', { title: TITLE, description: DESC });
   const taskId = created.json?.id;
   log('created', taskId, 'status', created.status);
   await api(`/api/tasks/${taskId}/start`, 'POST', {});
@@ -200,7 +186,7 @@ async function terminalDemo(page) {
   await page.waitForTimeout(1500);
   introEnd = (Date.now() - tStart) / 1000; // end of the readable intro/terminal segment
   const seen = new Set();
-  const deadline = Date.now() + (+(process.env.DEMO_DEADLINE_MIN || 13)) * 60 * 1000;
+  const deadline = Date.now() + 13 * 60 * 1000;
   let last = '';
   while (Date.now() < deadline) {
     const d = (await api(`/api/tasks/${taskId}`)).json || {};

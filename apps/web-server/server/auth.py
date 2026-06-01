@@ -6,6 +6,27 @@ Supports dual authentication:
 2. Legacy bearer token (fallback) - simple string comparison for API key access
 
 Public paths (no auth required): /api/auth/*, /api/health, static assets, etc.
+
+SAML sessions (Epic #35 #41)
+-----------------------------
+SAML-minted access tokens are identical in shape to locally-minted and
+OIDC-minted tokens: ``{"sub": ..., "email": ..., "role": ..., "type":
+"access", "exp": ..., "iat": ...}``.  No changes to the JWT decoder are
+needed — ``_try_decode_jwt`` already handles them.
+
+The SAML flow endpoints (``/api/auth/saml/login``, ``/api/auth/saml/acs``,
+``/api/auth/saml/metadata``) and the IdP discovery endpoint
+(``/api/auth/identity-providers``) are covered by the existing
+``/api/auth/`` prefix in ``PUBLIC_PREFIXES``, so they bypass JWT validation
+before the routes module runs — consistent with how the OIDC endpoints are
+handled.
+
+SCIM (Epic #35 #41)
+--------------------
+``/scim/v2/*`` uses its own Bearer-token middleware (``scim/auth.py``) —
+the portal JWT is not valid there.  Adding the prefix to ``PUBLIC_PREFIXES``
+lets the SCIM Bearer middleware run without the JWT middleware rejecting the
+request first.
 """
 
 import logging
@@ -73,7 +94,13 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         "/assets/",
         "/static/",
         "/api/auth/",  # Auth endpoints (register, login, refresh, logout)
+                       # Includes /api/auth/saml/* and /api/auth/identity-providers
         "/api/email/auth/",  # OAuth callbacks (redirect from Microsoft/Google)
+        # SCIM 2.0 (Epic #35 #41) — uses its own static Bearer-token auth
+        # (``scim/auth.py``).  Bypassing the JWT middleware here lets the
+        # SCIM Bearer middleware validate the request instead of getting a
+        # JWT-middleware 401 first.
+        "/scim/v2/",
         # Remote MCP control plane (Epic #50 / Issue #83). The legacy
         # TokenAuthMiddleware validates JWT + the legacy API_TOKEN;
         # MCP clients send their ``acw_<key>`` instead, validated by

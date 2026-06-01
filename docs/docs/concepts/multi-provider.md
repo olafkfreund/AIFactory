@@ -12,10 +12,11 @@ AIFactory routes each pipeline phase to its own model. You can plan with Claude 
 | Provider | Models | Use case |
 |---|---|---|
 | **Anthropic** (via Claude Agent SDK) | Opus 4.x, Sonnet 4.x, Haiku 4.x | Default for planning + QA — highest quality, integrated with MCP servers |
-| **Ollama** | `qwen3:*`, `llama3.x:*`, `deepseek-coder:*`, any local model | Cheap coding for routine tasks; runs offline |
-| **OpenAI** | `gpt-4o`, `gpt-4.1`, `o3-mini` | Drop-in alternative to Anthropic where licensing or compliance prefers it |
-| **Codex CLI** | OpenAI Codex via local CLI | Code-specialist phase |
-| **Gemini CLI** | Google Gemini Pro 2.x | Sunsetting 2026-06-18 — see [migration notes](../wiki/troubleshooting#gemini-sunset) |
+| **Codex CLI** | `gpt-5.3-codex` and other OpenAI Codex models via the local CLI | Fastest reliable agentic coding (see the [provider benchmark](../showcase/benchmark-results)) |
+| **GitHub Copilot CLI** | `copilot:claude-sonnet-4.5`, `copilot:claude-sonnet-4`, `copilot:gpt-5` | Run builds on your existing GitHub Copilot subscription — no extra API key. Copilot is a router over Claude/GPT-5 backends |
+| **Gemini CLI** | Google Gemini 3.x Pro | Capable agentic coding; the isolated worktree is trusted automatically so it can edit files |
+| **Ollama** | `qwen2.5-coder:*`, `qwen3-coder:*`, `llama3.x:*`, `deepseek-coder:*`, any local model | Free, offline, air-gapped coding. Needs an adequately-sized model + GPU — see [Local models: sizing & hardware](#local-models-sizing--hardware) |
+| **OpenAI** | `gpt-4o`, `gpt-4.1`, `o3-mini` | Drop-in alternative where licensing or compliance prefers it |
 | **OpenAI-compatible** | LM Studio, vLLM, OpenRouter, Together, Groq, LocalAI | Any endpoint that speaks the OpenAI `/v1/chat/completions` shape |
 
 ## How routing works
@@ -36,11 +37,11 @@ Each task has a **phase profile** — a mapping from phase name to model string.
 
 The backend's `phase_config.infer_provider_from_model()` parses the model string and picks the right provider:
 
-- `sonnet`, `opus`, `haiku` → Claude Agent SDK
+- `sonnet`, `opus`, `haiku`, `claude-*` → Claude Agent SDK
 - `ollama:<model>` → Ollama
-- `codex:<model>` → Codex CLI
-- `gemini:<model>` → Gemini CLI
-- `gpt-*`, `o3*` → OpenAI
+- `copilot:<backend>` → GitHub Copilot CLI (checked before the `claude-*`/`gpt-*` rules, since Copilot's own backend names are `claude-sonnet-4.5` / `gpt-5`)
+- `gpt-*`, `*codex*` → Codex CLI
+- `gemini-*` → Gemini CLI
 - `<endpoint>:<model>` (with custom endpoint registered in Settings → LLM Providers) → OpenAI-compatible
 
 ## Where to configure
@@ -48,6 +49,37 @@ The backend's `phase_config.infer_provider_from_model()` parses the model string
 - **Per task** — Task Creation Wizard → Agent Profile dropdown
 - **Per profile** — Settings → Agent Profile (create reusable profiles)
 - **Per endpoint** — Settings → LLM Providers (register your endpoints, API keys are encrypted at rest)
+
+## Local models: sizing & hardware
+
+Local (Ollama) coding is **free and offline**, but unlike a one-shot chat it has to drive a
+multi-step *agentic loop*: read files, call tools, write code, react to results. That asks far
+more of a model than autocomplete, and model size matters a lot. From our
+[provider benchmark](../showcase/benchmark-results):
+
+| Model class | What to expect on a real multi-file task |
+|---|---|
+| **≤ 7B** | Not recommended — rarely sustains the tool-calling loop. |
+| **14B** (e.g. `qwen2.5-coder:14b`) | Now *produces real code* (after the small-model fix below), but typically can't finish a whole multi-file feature — good for single-file edits and smoke tests. |
+| **27–32B** (e.g. `qwen3-coder`, `qwen2.5-coder:32b`, `deepseek-coder-v2`) | The realistic floor for completing full tasks locally. Slower than cloud, review more. |
+| **70B+** | Best local quality, but needs serious hardware. |
+
+**The small-model fix.** Small local models often emit a tool call as a ```` ```json {…}``` ````
+*text* block instead of the native `tool_calls` field, and tend to loop on `Read` without ever
+writing. AIFactory now parses those text-emitted tool calls and nudges the model to write once it
+has read enough — so a 14B goes from *writing nothing* to *writing real code*. (Ported from the
+sister [TFactory](https://github.com/olafkfreund/TFactory) project.)
+
+**Hardware, rough guide** (4-bit quantized, with a 32K context window):
+
+| Model size | VRAM (approx) | Example GPU |
+|---|---|---|
+| 14B | ~10–12 GB | RTX 4070/4080, or a 16 GB card |
+| 27–32B | ~24–32 GB | RTX 3090/4090 (24 GB), or better |
+| 70B | ~48 GB+ | A6000 / dual-24 GB / data-center cards |
+
+Run Ollama on a **dedicated GPU box**, not your daily-driver desktop — a 27B model will pin the
+GPU and can take down a desktop session. Keep some VRAM headroom for the context window.
 
 ## The rule we never break
 
