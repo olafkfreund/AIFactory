@@ -52,8 +52,10 @@ Reliability properties
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import sys
 import tempfile
 import time
 import uuid
@@ -90,6 +92,48 @@ DEFAULT_RECIPIENT = "agent"
 
 # Lock acquisition timeout for inbox mutations.
 _LOCK_TIMEOUT_SECONDS = 5.0
+
+
+# ---------------------------------------------------------------------------
+# Mention parsing (#273) — load the backend's pure parser by file path.
+#
+# The parser (apps/backend/agents/mentions.py) is dependency-free stdlib code,
+# but the web-server does not import the backend package wholesale (the backend
+# runs as a subprocess). We load just that single module file, mirroring the
+# inbox reader contract: the shared thing is the parser's behaviour, not a
+# package dependency. If it cannot be loaded, enqueue degrades gracefully to
+# its pre-#273 behaviour (no mention routing, no attached refs).
+# ---------------------------------------------------------------------------
+
+_MENTIONS_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "backend"
+    / "agents"
+    / "mentions.py"
+)
+
+
+def _load_mentions() -> Any | None:
+    """Best-effort load of the backend mentions parser module (or None)."""
+    try:
+        if not _MENTIONS_PATH.exists():
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "aifactory_mentions", _MENTIONS_PATH
+        )
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        # Register before exec so the module's @dataclass body can resolve its
+        # own globals (dataclasses looks the class module up in sys.modules).
+        sys.modules["aifactory_mentions"] = module
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # pragma: no cover - defensive; never block enqueue
+        return None
+
+
+_mentions = _load_mentions()
 
 
 class InboxError(Exception):
@@ -252,6 +296,35 @@ def build_message(
     }
 
 
+def _apply_mentions(
+    text: str, recipient: str
+) -> tuple[str, list[dict[str, Any]]]:
+    """Resolve mention-based routing + task refs for an enqueue (#273).
+
+    Returns ``(effective_recipient, task_refs)``. Pure and side-effect free;
+    when the parser is unavailable it returns the inputs unchanged so enqueue
+    behaves exactly as before #273.
+
+    Routing only triggers when ``recipient`` is still the default — an explicit
+    recipient argument is authoritative and never overridden by an ``@mention``.
+    """
+    if _mentions is None:
+        return recipient, []
+
+    effective = recipient
+    if recipient == DEFAULT_RECIPIENT:
+        leading = _mentions.leading_recipient(text)
+        if leading:
+            effective = _sanitize_recipient(leading)
+
+    task_refs = [
+        {"value": ref.value, "start": ref.start, "end": ref.end}
+        for ref in _mentions.parse_mentions(text or "")
+        if ref.kind == "task"
+    ]
+    return effective, task_refs
+
+
 def enqueue(
     spec_dir: Path,
     text: str,
@@ -264,6 +337,17 @@ def enqueue(
     Performs an atomic, locked read-modify-write, then re-reads the file from
     disk and confirms the new messageId is present (delivery proof).
 
+    Mention handling (#273), backward-compatible:
+
+    * If the caller did NOT override ``recipient`` (it is still the default
+      ``"agent"``) and ``text`` begins with an ``@name`` directive, the message
+      is routed to that recipient (``@coder do X`` → recipient ``"coder"``). An
+      explicit ``recipient`` argument always wins, and text with no leading
+      ``@`` keeps the default recipient — so existing callers are unaffected.
+    * Any ``#task`` references found in ``text`` are attached to the stored
+      message under ``taskRefs`` (a list of ``{value, start, end}``). Absent any
+      ``#`` refs the key is omitted, leaving the legacy payload shape intact.
+
     Returns a dict::
 
         {
@@ -273,8 +357,11 @@ def enqueue(
             "message": {...},     # the stored message object
         }
     """
+    recipient, task_refs = _apply_mentions(text, recipient)
     inbox_path = get_inbox_path(spec_dir, recipient)
     message = build_message(text=text, sender=sender, summary=summary)
+    if task_refs:
+        message["taskRefs"] = task_refs
 
     with _InboxLock(inbox_path):
         messages = _read_messages(inbox_path)
