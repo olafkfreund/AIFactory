@@ -75,6 +75,53 @@ The project root is the parent of aifactory/. Implement code in the project root
     return spec_context + prompt
 
 
+def get_solo_prompt(spec_dir: Path) -> str:
+    """
+    Load the solo-mode agent prompt with spec path injected (issue #276).
+
+    The solo agent self-directs the whole job in a single streamlined flow:
+    it writes its own ``implementation_plan.json``, implements the subtasks,
+    and verifies its own work — there is no separate planner or QA agent.
+
+    Args:
+        spec_dir: Directory containing the spec.md file
+
+    Returns:
+        The solo prompt content with spec path injected
+    """
+    prompt_file = PROMPTS_DIR / "solo.md"
+    if not prompt_file.exists():
+        raise FileNotFoundError(
+            f"Solo prompt not found at {prompt_file}\n"
+            "Make sure the aifactory/prompts/solo.md file exists."
+        )
+
+    prompt = prompt_file.read_text()
+
+    # Inject spec directory information at the beginning.
+    spec_context = f"""## SPEC LOCATION
+
+Your spec file is located at: `{spec_dir}/spec.md`
+
+🚨 CRITICAL FILE CREATION INSTRUCTIONS 🚨
+
+You MUST use the Write tool to create these files in the spec directory:
+- `{spec_dir}/implementation_plan.json` - Your self-authored subtask plan (USE WRITE TOOL!)
+- `{spec_dir}/build-progress.txt` - Progress notes (USE WRITE TOOL!)
+
+You MUST keep subtask statuses current via the `update_subtask_status` tool as
+you work. The orchestrator reads `implementation_plan.json` to know when the
+build is complete.
+
+The project root is the parent of aifactory/. Implement code in the project
+root, not in the spec directory.
+
+---
+
+"""
+    return spec_context + prompt
+
+
 def get_coding_prompt(spec_dir: Path) -> str:
     """
     Load the coding agent prompt with spec path injected.

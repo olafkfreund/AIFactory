@@ -95,8 +95,16 @@ def handle_build_command(
     from phase_config import get_phase_model
     from phase_event import ExecutionPhase, emit_phase
     from qa_loop import is_qa_approved, run_qa_validation_loop, should_run_qa
+    from solo_mode import is_solo_mode_enabled_for_spec
 
     from .utils import print_banner, validate_environment
+
+    # Solo mode (#276): the single self-directed agent is its own QA, so the
+    # separate QA validation loop is skipped. This is the token-saving path.
+    # Default OFF — when disabled the full planner -> coder -> QA flow runs
+    # exactly as before.
+    if is_solo_mode_enabled_for_spec(spec_dir):
+        skip_qa = True
 
     # Get the resolved model for the planning phase (first phase of build)
     # This respects task_metadata.json phase configuration from the UI
