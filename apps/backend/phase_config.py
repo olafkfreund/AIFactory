@@ -583,7 +583,9 @@ def infer_provider_from_model(model: str) -> str:
     vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
     gpt-* or *codex* IDs -> 'codex'
-    gemini-* IDs -> 'gemini'
+    antigravity / antigravity-* / gemini-* IDs -> 'antigravity'
+        (gemini-* is kept for back-compat — the Antigravity CLI still serves
+        Google's gemini-* model strings)
     Otherwise -> check QA_LLM_PROVIDER env var, then default 'claude'
 
     Note on bedrock/* and vertex_ai/* prefixes:
@@ -600,8 +602,8 @@ def infer_provider_from_model(model: str) -> str:
         model: Model shorthand or full model ID
 
     Returns:
-        Provider name string (e.g., "claude", "codex", "gemini", "ollama",
-        "openai-compatible")
+        Provider name string (e.g., "claude", "codex", "antigravity",
+        "ollama", "openai-compatible")
     """
     m = model.strip().lower()
 
@@ -653,9 +655,15 @@ def infer_provider_from_model(model: str) -> str:
     if m.startswith("gpt-") or "codex" in m:
         return "codex"
 
-    # Google Gemini models
+    # Antigravity CLI (Google).  Canonical IDs are "antigravity" /
+    # "antigravity-*".  Legacy "gemini-*" model strings still route here
+    # (back-compat) — the Antigravity CLI serves Google's gemini-* models.
+    if m == "antigravity" or m.startswith("antigravity-") or m.startswith(
+        "antigravity:"
+    ):
+        return "antigravity"
     if m.startswith("gemini"):
-        return "gemini"
+        return "antigravity"
 
     # Env fallback for unknown models (e.g., ollama custom models)
     env_provider = os.environ.get("QA_LLM_PROVIDER", "").strip()
@@ -866,7 +874,7 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
 PROVIDER_AGENTIC_SUPPORT = {
     "claude",
     "codex",
-    "gemini",
+    "antigravity",
     "ollama",
     "openai-compatible",
 }

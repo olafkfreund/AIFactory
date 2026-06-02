@@ -72,8 +72,9 @@ def _create_qa_reviewer_provider(
     callers don't need to know about each provider's constructor signature.
 
     Args:
-        provider_name: Provider identifier (e.g., "claude", "gemini", "codex",
-            "ollama").  Aliases accepted by the factory are also valid.
+        provider_name: Provider identifier (e.g., "claude", "antigravity",
+            "codex", "ollama").  Aliases accepted by the factory (including
+            the legacy "gemini") are also valid.
         project_dir: Project root directory (passed to Claude and CLI providers
             as the working directory).
         spec_dir: Spec directory (required by ClaudeProvider for config lookup).
@@ -101,7 +102,7 @@ def _create_qa_reviewer_provider(
     if normalised in {"codex", "codex-cli", "openai-codex"}:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
-    if normalised in {"gemini", "gemini-cli", "google"}:
+    if normalised in {"antigravity", "antigravity-cli", "gemini", "gemini-cli", "google"}:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
     # openai-compatible needs base_url + api_key from the saved llm_endpoint row.

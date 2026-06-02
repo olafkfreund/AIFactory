@@ -104,7 +104,12 @@ def test_gpt_model_unaffected(monkeypatch):
 def test_gemini_model_unaffected(monkeypatch):
     from phase_config import infer_provider_from_model
 
-    assert infer_provider_from_model("gemini-2.5-pro") == "gemini"
+    # gemini-* models now route to the canonical "antigravity" provider
+    # (the Antigravity CLI serves Google's gemini-* models). Back-compat for
+    # the legacy provider name is via the factory aliases, not this function.
+    assert infer_provider_from_model("gemini-2.5-pro") == "antigravity"
+    assert infer_provider_from_model("antigravity") == "antigravity"
+    assert infer_provider_from_model("antigravity-pro") == "antigravity"
 
 
 # ---------------------------------------------------------------------------

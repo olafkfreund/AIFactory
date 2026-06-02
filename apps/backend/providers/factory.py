@@ -24,8 +24,9 @@ Usage::
     provider = get_provider("codex", phase="coding",
                             model="gpt-5.3-codex", working_dir=project_dir)
 
-    # Text-only: QA review phase with Gemini → GeminiCLIProvider
-    provider = get_provider("gemini", phase="qa",
+    # Text-only: QA review phase with Antigravity → AntigravityCLIProvider
+    # ("gemini" still works as a back-compat alias)
+    provider = get_provider("antigravity", phase="qa",
                             model="gemini-2.5-pro", working_dir=project_dir)
 
     async with provider:
@@ -52,7 +53,7 @@ logger = logging.getLogger(__name__)
 _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
     "claude":             ("providers.claude",                       "ClaudeProvider"),
     "codex":              ("providers.codex_agentic",                "CodexAgenticProvider"),
-    "gemini":             ("providers.gemini_agentic",               "GeminiAgenticProvider"),
+    "antigravity":        ("providers.antigravity_agentic",          "AntigravityAgenticProvider"),
     "ollama":             ("providers.ollama_agentic",               "OllamaAgenticProvider"),
     "copilot":            ("providers.copilot_agentic",              "CopilotAgenticProvider"),
     "opencode":           ("providers.opencode_agentic",             "OpenCodeAgenticProvider"),
@@ -62,7 +63,7 @@ _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
 _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
     "claude":             ("providers.claude",               "ClaudeProvider"),
     "codex":              ("providers.codex",                "CodexCLIProvider"),
-    "gemini":             ("providers.gemini",               "GeminiCLIProvider"),
+    "antigravity":        ("providers.antigravity",          "AntigravityCLIProvider"),
     "ollama":             ("providers.ollama",               "OllamaProvider"),
     # Copilot has no text-only variant; the agentic CLI returns text fine.
     "copilot":            ("providers.copilot_agentic",      "CopilotAgenticProvider"),
@@ -84,9 +85,14 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "codex": "codex",
     "codex-cli": "codex",
     "openai-codex": "codex",
-    "gemini": "gemini",
-    "gemini-cli": "gemini",
-    "google": "gemini",
+    # Antigravity CLI (post-Gemini-CLI successor). Canonical name is
+    # "antigravity"; the legacy "gemini" / "gemini-cli" / "google" aliases
+    # remain so old configs and gemini-* model strings still resolve.
+    "antigravity": "antigravity",
+    "antigravity-cli": "antigravity",
+    "gemini": "antigravity",
+    "gemini-cli": "antigravity",
+    "google": "antigravity",
     "ollama": "ollama",
     "local": "ollama",
     "local-ollama": "ollama",
@@ -257,7 +263,7 @@ def list_provider_aliases() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 # Preferred order for tool-capable fallback providers
-_TOOL_FALLBACK_ORDER: list[str] = ["claude", "codex", "gemini"]
+_TOOL_FALLBACK_ORDER: list[str] = ["claude", "codex", "antigravity"]
 
 
 def get_tool_fallback_provider(
@@ -271,8 +277,8 @@ def get_tool_fallback_provider(
     tool operations (updating files, running commands), this function returns
     a fallback provider that CAN do tool use.
 
-    Checks availability in order: Claude → Codex → Gemini.  Returns the first
-    one whose CLI is installed, skipping the ``exclude`` provider.
+    Checks availability in order: Claude → Codex → Antigravity.  Returns the
+    first one whose CLI is installed, skipping the ``exclude`` provider.
 
     Args:
         phase: Execution phase (determines agentic vs text-only routing).
@@ -289,7 +295,7 @@ def get_tool_fallback_provider(
     _CLI_NAMES: dict[str, str] = {
         "claude": "claude",
         "codex": "codex",
-        "gemini": "gemini",
+        "antigravity": "antigravity",
     }
 
     for provider_name in _TOOL_FALLBACK_ORDER:

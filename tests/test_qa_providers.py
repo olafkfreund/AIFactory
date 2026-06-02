@@ -50,6 +50,7 @@ if str(_BACKEND) not in sys.path:
 # Imports under test
 # ---------------------------------------------------------------------------
 
+from providers.antigravity import AntigravityCLIProvider  # noqa: E402
 from qa.providers import BaseLLMProvider  # noqa: E402
 from qa.providers.codex import CodexCLIProvider  # noqa: E402
 from qa.providers.factory import (  # noqa: E402
@@ -59,7 +60,7 @@ from qa.providers.factory import (  # noqa: E402
     list_provider_aliases,
     list_providers,
 )
-from qa.providers.gemini import GeminiCLIProvider  # noqa: E402
+from qa.providers.gemini import GeminiCLIProvider  # noqa: E402  (back-compat alias)
 from qa.providers.ollama import OllamaProvider  # noqa: E402
 from qa.providers.types import (  # noqa: E402
     AssistantMessage,
@@ -338,9 +339,9 @@ class TestListProviders:
         assert providers == sorted(providers)
 
     def test_has_expected_providers(self):
-        """All canonical providers are registered."""
+        """All canonical providers are registered (gemini -> antigravity)."""
         assert set(list_providers()) == {
-            "claude", "codex", "gemini", "ollama", "copilot", "opencode",
+            "claude", "codex", "antigravity", "ollama", "copilot", "opencode",
             "openai-compatible",
         }
 
@@ -397,17 +398,23 @@ class TestGetQaLlmProviderAliases:
         """'openai-codex' alias resolves to CodexCLIProvider."""
         assert isinstance(get_qa_llm_provider("openai-codex"), CodexCLIProvider)
 
-    def test_gemini_canonical(self):
-        """'gemini' resolves to GeminiCLIProvider."""
+    def test_antigravity_canonical(self):
+        """'antigravity' resolves to AntigravityCLIProvider."""
+        assert isinstance(get_qa_llm_provider("antigravity"), AntigravityCLIProvider)
+
+    def test_gemini_alias_resolves_to_antigravity(self):
+        """Back-compat: legacy 'gemini' resolves to AntigravityCLIProvider."""
+        assert isinstance(get_qa_llm_provider("gemini"), AntigravityCLIProvider)
+        # GeminiCLIProvider is now an alias of AntigravityCLIProvider.
         assert isinstance(get_qa_llm_provider("gemini"), GeminiCLIProvider)
 
     def test_gemini_cli_alias(self):
-        """'gemini-cli' alias resolves to GeminiCLIProvider."""
-        assert isinstance(get_qa_llm_provider("gemini-cli"), GeminiCLIProvider)
+        """'gemini-cli' alias resolves to AntigravityCLIProvider."""
+        assert isinstance(get_qa_llm_provider("gemini-cli"), AntigravityCLIProvider)
 
     def test_google_alias(self):
-        """'google' alias resolves to GeminiCLIProvider."""
-        assert isinstance(get_qa_llm_provider("google"), GeminiCLIProvider)
+        """'google' alias resolves to AntigravityCLIProvider."""
+        assert isinstance(get_qa_llm_provider("google"), AntigravityCLIProvider)
 
     def test_ollama_canonical(self):
         """'ollama' resolves to OllamaProvider."""
@@ -792,10 +799,12 @@ class TestGeminiCLIProviderInit:
     """Tests for GeminiCLIProvider initialisation."""
 
     def test_default_values(self):
-        """Default model, path, and timeout are set."""
+        """Default model, path, and timeout are set (now Antigravity defaults)."""
         provider = GeminiCLIProvider()
-        assert provider._model == "gemini-2.0-flash"
-        assert provider._gemini_path == "gemini"
+        assert provider._model == "gemini-3.1-pro-preview"
+        # Canonical path is now "antigravity"; legacy _gemini_path alias mirrors it.
+        assert provider._antigravity_path == "antigravity"
+        assert provider._gemini_path == "antigravity"
         assert provider._timeout == 300
         assert provider._working_dir is None
         assert provider._extra_args == []
@@ -805,16 +814,22 @@ class TestGeminiCLIProviderInit:
         """Custom constructor values are stored."""
         provider = GeminiCLIProvider(
             model="gemini-2.5-pro",
-            gemini_path="/usr/local/bin/gemini",
+            antigravity_path="/usr/local/bin/antigravity",
             timeout=120,
             working_dir=Path("/workspace"),
             extra_args=["--no-cache"],
         )
         assert provider._model == "gemini-2.5-pro"
-        assert provider._gemini_path == "/usr/local/bin/gemini"
+        assert provider._antigravity_path == "/usr/local/bin/antigravity"
         assert provider._timeout == 120
         assert provider._working_dir == Path("/workspace")
         assert provider._extra_args == ["--no-cache"]
+
+    def test_legacy_gemini_path_kwarg_still_works(self):
+        """Back-compat: the old gemini_path kwarg maps to antigravity_path."""
+        provider = GeminiCLIProvider(gemini_path="/usr/local/bin/gemini")
+        assert provider._antigravity_path == "/usr/local/bin/gemini"
+        assert provider._gemini_path == "/usr/local/bin/gemini"
 
     def test_is_base_provider_subclass(self):
         """GeminiCLIProvider is a subclass of BaseLLMProvider."""
@@ -911,14 +926,19 @@ class TestGeminiCLIProviderReceiveResponse:
         _run(_test())
 
     def test_gemini_not_found_raises_runtime_error(self):
-        """RuntimeError is raised when gemini executable is not on PATH."""
+        """RuntimeError is raised when antigravity executable is not on PATH."""
 
         async def _test():
             provider = GeminiCLIProvider()
             await provider.query("prompt")
             with patch("shutil.which", return_value=None):
-                with patch("providers.gemini.get_gemini_binary", return_value="gemini"):
-                    with pytest.raises(RuntimeError, match="Gemini CLI executable not found"):
+                with patch(
+                    "providers.antigravity.get_antigravity_binary",
+                    return_value="antigravity",
+                ):
+                    with pytest.raises(
+                        RuntimeError, match="Antigravity CLI executable not found"
+                    ):
                         await _collect(provider.receive_response())
 
         _run(_test())
@@ -965,7 +985,7 @@ class TestGeminiCLIProviderReceiveResponse:
                     "asyncio.create_subprocess_exec",
                     AsyncMock(return_value=mock_proc),
                 ):
-                    with pytest.raises(RuntimeError, match="Gemini CLI exited with an error"):
+                    with pytest.raises(RuntimeError, match="Antigravity CLI exited with an error"):
                         await _collect(provider.receive_response())
 
         _run(_test())
@@ -1009,7 +1029,7 @@ class TestGeminiCLIProviderReceiveResponse:
                 ):
                     msgs = await _collect(provider.receive_response())
 
-            assert "(no output from Gemini CLI)" in msgs[0].content[0].text
+            assert "(no output from Antigravity CLI)" in msgs[0].content[0].text
 
         _run(_test())
 

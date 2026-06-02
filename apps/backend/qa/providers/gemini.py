@@ -1,4 +1,11 @@
-"""Backward compatibility shim — re-exports from providers.gemini."""
-from providers.gemini import GeminiCLIProvider  # noqa: F401
+"""Backward compatibility shim — re-exports from providers.antigravity.
 
-__all__ = ["GeminiCLIProvider"]
+``GeminiCLIProvider`` was renamed to ``AntigravityCLIProvider``; this legacy
+path keeps working via the alias.
+"""
+from providers.antigravity import (  # noqa: F401
+    AntigravityCLIProvider,
+    GeminiCLIProvider,
+)
+
+__all__ = ["GeminiCLIProvider", "AntigravityCLIProvider"]
