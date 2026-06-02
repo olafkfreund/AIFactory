@@ -20,6 +20,7 @@ from typing import Any
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
+from . import task_control
 from ..websockets.events import (
     emit_subtask_update,
     emit_task_logs_stream,
@@ -1413,16 +1414,21 @@ class AgentService:
             dst = main_spec / filename
             if src.exists():
                 try:
-                    # For implementation_plan.json, preserve status and reviewReason from main spec
-                    # These fields are set by _update_plan_status and shouldn't be overwritten
+                    # For implementation_plan.json we still merge SUBTASK status
+                    # forward-only (a legitimate agent-artifact concern), but we
+                    # NO LONGER preserve control-plane status/reviewReason here.
+                    #
+                    # Issue #259: control-plane state (board column / task status
+                    # / reviewReason) now lives in the dedicated, agent-immutable
+                    # task_control.json store. We STRIP those fields from the
+                    # worktree copy so an agent sync can never reset the
+                    # human/system control decision — replacing the brittle
+                    # "preserve-then-fall-back-to-raw-copy" workaround that, on
+                    # any merge error, used to clobber the control state.
                     if filename == "implementation_plan.json" and dst.exists():
                         try:
                             main_plan = json.loads(dst.read_text())
                             worktree_plan = json.loads(src.read_text())
-
-                            # Preserve top-level fields from main spec
-                            preserved_status = main_plan.get("status")
-                            preserved_reason = main_plan.get("reviewReason")
 
                             # Build map of main spec subtask statuses
                             STATUS_ORDER = {"pending": 0, "in_progress": 1, "completed": 2, "failed": 2}
@@ -1436,11 +1442,10 @@ class AgentService:
                             # Start from worktree plan (has latest structure)
                             merged_plan = worktree_plan
 
-                            # Restore preserved top-level fields
-                            if preserved_status:
-                                merged_plan["status"] = preserved_status
-                            if preserved_reason:
-                                merged_plan["reviewReason"] = preserved_reason
+                            # Control-plane fields never belong in the plan file
+                            # anymore — drop them so the reader can't pick a stale
+                            # agent value over the dedicated control store.
+                            task_control.strip_control_fields(merged_plan)
 
                             # Prevent subtask status regressions
                             for phase in merged_plan.get("phases", []):
@@ -1454,8 +1459,19 @@ class AgentService:
 
                             dst.write_text(json.dumps(merged_plan, indent=2))
                         except (json.JSONDecodeError, OSError) as merge_err:
-                            logger.warning(f"[AgentService] Failed to merge implementation_plan.json, falling back to copy: {merge_err}")
-                            shutil.copy2(src, dst)
+                            # Even the error path must not reintroduce control
+                            # fields: strip them before copying the raw worktree
+                            # plan in.
+                            logger.warning(f"[AgentService] Failed to merge implementation_plan.json, falling back to stripped copy: {merge_err}")
+                            try:
+                                raw = json.loads(src.read_text())
+                                task_control.strip_control_fields(raw)
+                                dst.write_text(json.dumps(raw, indent=2))
+                            except (json.JSONDecodeError, OSError):
+                                # Last resort: a raw copy. Control state is still
+                                # safe because the reader trusts task_control.json
+                                # over the plan file.
+                                shutil.copy2(src, dst)
                     else:
                         shutil.copy2(src, dst)
                     synced_count += 1
@@ -2261,9 +2277,13 @@ class AgentService:
         try:
             plan = json.loads(plan_file.read_text())
 
-            # Don't overwrite if user explicitly marked task as done via kanban
-            if plan.get("status") == "done":
-                logger.info(f"[AgentService._update_plan_status] Plan status is 'done' (user-set), skipping overwrite for {spec_id}")
+            # Don't overwrite if user explicitly marked task as done via kanban.
+            # Issue #259: the control store is the source of truth for this; fall
+            # back to the plan file for pre-#259 specs (read_control migrates it).
+            spec_dir = plan_file.parent
+            control_status = task_control.read_control(spec_dir).get("status")
+            if control_status == "done" or plan.get("status") == "done":
+                logger.info(f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {spec_id}")
                 return
 
             # Fix 2: Validate that the plan is not just a minimal status object
@@ -2273,17 +2293,36 @@ class AgentService:
                 if emit_events:
                     await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
                 return
+
+            # Compute the control-plane status/reviewReason this checkpoint sets.
+            new_review_reason: str | None = None
             if phase_enum:
-                plan["status"] = phase_to_status(phase_enum)
-                review_reason = phase_to_review_reason(phase_enum)
-                if review_reason:
-                    plan["reviewReason"] = review_reason
+                new_status = phase_to_status(phase_enum)
+                new_review_reason = phase_to_review_reason(phase_enum)
             else:
-                plan["status"] = status
+                new_status = status
+
+            # Keep writing status/reviewReason into the plan file for backward
+            # compatibility with any reader that hasn't migrated, but the
+            # authoritative copy is task_control.json below.
+            plan["status"] = new_status
+            if new_review_reason:
+                plan["reviewReason"] = new_review_reason
 
             logger.info(f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}")
             plan_file.write_text(json.dumps(plan, indent=2))
             logger.info("[AgentService._update_plan_status] Successfully wrote plan_file")
+
+            # Issue #259: persist the authoritative control-plane state. This is
+            # the web-server's OWN orchestration writing a terminal/checkpoint
+            # status — it is control-plane, not an agent artifact.
+            task_control.write_control(
+                spec_dir,
+                status=new_status,
+                review_reason=new_review_reason,
+                clear_review_reason=new_review_reason is None,
+                updated_by="web_server",
+            )
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
             # Extract subtasks for WebSocket broadcast
