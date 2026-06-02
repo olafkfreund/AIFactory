@@ -340,7 +340,8 @@ class TestListProviders:
     def test_has_expected_providers(self):
         """All canonical providers are registered."""
         assert set(list_providers()) == {
-            "claude", "codex", "gemini", "ollama", "copilot", "openai-compatible",
+            "claude", "codex", "gemini", "ollama", "copilot", "opencode",
+            "openai-compatible",
         }
 
 
