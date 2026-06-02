@@ -13,27 +13,42 @@ in the working directory without an interactive approval loop, so there is no
 separate ``--yolo`` / ``--allow-all-tools`` flag to pass (unlike Gemini /
 Copilot).
 
+Support tier
+------------
+OpenCode is a **community / self-host tier** provider.  It is NOT
+enterprise-certified: the model catalogue is resolved from the remote
+``models.dev`` registry, so individual models (including any "free" ones) can
+change or disappear without notice, and there is no compliance/SLA guarantee.
+Enterprise deployments should use Claude (Agent SDK), Codex, AWS Bedrock, or
+Azure OpenAI instead.  See ``docs/docs/concepts/multi-provider.md``.
+
 Model routing
 -------------
 OpenCode's native ``--model`` flag expects a ``provider/model`` string
-(e.g. ``anthropic/claude-sonnet-4-5``, ``opencode/sonic``).  AIFactory selects
-this runtime with an ``opencode:`` model prefix, e.g.::
+(e.g. ``anthropic/claude-sonnet-4-5``).  AIFactory selects this runtime with an
+``opencode:`` model prefix, e.g.::
 
-    opencode:opencode/sonic
     opencode:anthropic/claude-sonnet-4-5
+    opencode:openai/gpt-4o
 
 The ``opencode:`` prefix selects the *provider* (this class); it is stripped
 before the remaining ``provider/model`` string is handed to the CLI's
-``--model`` flag.  When no model is given, AIFactory defaults to
-``opencode/sonic`` — OpenCode's free, no-auth "zen" model — so the runtime
-works out of the box without configuring any external API key.
+``--model`` flag.
+
+When no model is supplied, the default is resolved from the
+``OPENCODE_DEFAULT_MODEL`` environment variable.  AIFactory deliberately does
+**not** hardcode a free model: OpenCode's catalogue lives in the remote
+``models.dev`` registry and free "zen" models (e.g. the former
+``opencode/sonic``) are not guaranteed to exist.  When no usable model can be
+resolved, the provider fails with a clear, actionable error asking you to pass
+``opencode:<provider/model>`` (or set ``OPENCODE_DEFAULT_MODEL``).
 
 Usage::
 
     from providers.opencode_agentic import OpenCodeAgenticProvider
 
     provider = OpenCodeAgenticProvider(
-        model="opencode:opencode/sonic",
+        model="opencode:anthropic/claude-sonnet-4-5",
         working_dir=project_dir,
         timeout=600,
     )
@@ -47,6 +62,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import shutil
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -58,9 +74,20 @@ from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
 
+#: OpenCode is a community / self-host tier provider — NOT enterprise-certified.
+#: Its model catalogue is fetched from the remote ``models.dev`` registry, so
+#: individual models can change/disappear and there is no compliance/SLA
+#: guarantee.  Enterprise deployments should use Claude/Codex/Bedrock/Azure.
+ENTERPRISE_CERTIFIED: bool = False
+SUPPORT_TIER: str = "community"
+
 _DEFAULT_OPENCODE_PATH: str = "opencode"
-# Free, no-auth "zen" model bundled with OpenCode — works without any API key.
-_DEFAULT_MODEL: str = "opencode/sonic"
+#: Environment variable that supplies the default OpenCode model when AIFactory
+#: routes a build to OpenCode without an explicit ``opencode:<provider/model>``.
+#: We do NOT hardcode a model: OpenCode's catalogue lives in the remote
+#: ``models.dev`` registry and free "zen" models (e.g. the former
+#: ``opencode/sonic``) are not guaranteed to exist.
+_DEFAULT_MODEL_ENV_VAR: str = "OPENCODE_DEFAULT_MODEL"
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 # OpenCode model IDs are "provider/model" — allow alphanumerics plus . _ : / -
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
@@ -71,8 +98,8 @@ def _strip_opencode_prefix(model: str) -> str:
 
     AIFactory routes the OpenCode runtime with ``opencode:<provider/model>`` so
     the prefix selects the provider; the CLI's ``--model`` flag itself wants the
-    bare ``provider/model`` form (e.g. ``opencode/sonic``,
-    ``anthropic/claude-sonnet-4-5``).
+    bare ``provider/model`` form (e.g. ``anthropic/claude-sonnet-4-5``,
+    ``openai/gpt-4o``).
     """
     if model.lower().startswith("opencode:"):
         return model[len("opencode:") :]
@@ -91,9 +118,12 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
 
     Args:
         model: OpenCode model string, optionally ``opencode:``-prefixed
-            (e.g. ``"opencode:opencode/sonic"``).  The bare ``provider/model``
-            form is passed to the CLI's ``--model`` flag.  Defaults to
-            ``opencode/sonic`` (free, no-auth).
+            (e.g. ``"opencode:anthropic/claude-sonnet-4-5"``).  The bare
+            ``provider/model`` form is passed to the CLI's ``--model`` flag.
+            When empty/omitted, the default is read from the
+            ``OPENCODE_DEFAULT_MODEL`` environment variable; if neither is
+            set, the provider raises a clear error at run time telling you to
+            pass ``opencode:<provider/model>``.
         opencode_path: Path or command name for the ``opencode`` executable.
         timeout: Maximum seconds to wait for the subprocess.
         working_dir: Working directory for the subprocess (OpenCode operates on
@@ -103,7 +133,7 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
 
     def __init__(
         self,
-        model: str = _DEFAULT_MODEL,
+        model: str = "",
         opencode_path: str = _DEFAULT_OPENCODE_PATH,
         timeout: int = _DEFAULT_TIMEOUT,
         working_dir: Path | None = None,
@@ -113,8 +143,15 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
             raise ValueError(
                 f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
             )
+        # Resolution order: explicit (prefix-stripped) model -> OPENCODE_DEFAULT_MODEL
+        # env override.  We intentionally do NOT fall back to a hardcoded free
+        # model, since OpenCode's remote ``models.dev`` catalogue can drop it.
+        # A missing model is surfaced as a clear error at run time (see
+        # ``_build_command``), not papered over with a dead default.
         resolved_model = _strip_opencode_prefix(model).strip() if model else ""
-        self._model = resolved_model or _DEFAULT_MODEL
+        if not resolved_model:
+            resolved_model = os.environ.get(_DEFAULT_MODEL_ENV_VAR, "").strip()
+        self._model = resolved_model
         self._opencode_path = opencode_path
         self._timeout = timeout
         self._working_dir = working_dir
@@ -148,10 +185,23 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
 
         The prompt is passed via ``-p`` (rather than stdin / positional message)
         to avoid shell-quoting issues with multi-kilobyte prompt strings.
+
+        Raises:
+            RuntimeError: If no usable model could be resolved (no explicit
+                ``opencode:<provider/model>`` and no ``OPENCODE_DEFAULT_MODEL``).
+                We refuse to guess a model, since OpenCode's free models are not
+                guaranteed to exist in the remote ``models.dev`` registry.
         """
-        cmd: list[str] = [self._opencode_path, "run"]
-        if self._model:
-            cmd += ["--model", self._model]
+        if not self._model:
+            raise RuntimeError(
+                "No OpenCode model resolved. OpenCode does not have a guaranteed "
+                "free default model (its catalogue comes from the remote "
+                "models.dev registry, which can drop models). Pass an explicit "
+                "model as 'opencode:<provider/model>' "
+                "(e.g. 'opencode:anthropic/claude-sonnet-4-5') or set the "
+                f"{_DEFAULT_MODEL_ENV_VAR} environment variable."
+            )
+        cmd: list[str] = [self._opencode_path, "run", "--model", self._model]
         cmd += ["-p", self._pending_prompt or ""]
         if self._extra_args:
             cmd.extend(self._extra_args)
@@ -236,4 +286,8 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
         self._pending_prompt = None
 
 
-__all__ = ["OpenCodeAgenticProvider"]
+__all__ = [
+    "ENTERPRISE_CERTIFIED",
+    "SUPPORT_TIER",
+    "OpenCodeAgenticProvider",
+]

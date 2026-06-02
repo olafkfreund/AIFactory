@@ -621,7 +621,7 @@ def infer_provider_from_model(model: str) -> str:
 
     # Explicit prefix: "opencode:provider/model" — OpenCode CLI runtime.
     # Checked before the claude-*/gpt-*/codex rules below because OpenCode's
-    # native model strings ("opencode/sonic", "anthropic/claude-...") and the
+    # native model strings ("anthropic/claude-...", "openai/gpt-4o") and the
     # literal substring "opencode" (contains "codex"? no, but "code") could
     # otherwise be mis-routed.  The "codex" substring rule in particular would
     # never match "opencode", but routing the explicit prefix first keeps the
