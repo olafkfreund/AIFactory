@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## 3.4.1 - 2026-06-02
+
+### Fixed
+
+- Worktree management now heals a stray `core.bare=true` on the primary checkout (self-heal on `WorktreeManager` init + per-invocation guard), so a bare-marked repo no longer breaks worktree creation, status checks, and host-side git.
+- Project-context state reconciled on load: the kanban board, sidebar, and project dropdown no longer diverge when the persisted active tab and last-selected project disagree (the dropdown could previously get stuck on the wrong project).
+
 ## 3.4.0 - 2026-06-02
 
 ### Added
