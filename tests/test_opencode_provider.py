@@ -90,7 +90,6 @@ def test_opencode_command_is_non_interactive_run():
 
 def test_opencode_invalid_model_rejected():
     import pytest
-
     from providers.opencode_agentic import OpenCodeAgenticProvider
 
     with pytest.raises(ValueError):
@@ -136,7 +135,6 @@ def test_opencode_run_wraps_stdout_in_assistant_message(monkeypatch):
 
 def test_opencode_run_errors_when_cli_missing(monkeypatch):
     import pytest
-
     from providers import opencode_agentic
     from providers.opencode_agentic import OpenCodeAgenticProvider
 
