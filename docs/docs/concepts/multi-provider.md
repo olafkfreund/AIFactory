@@ -27,6 +27,14 @@ Not every provider carries the same support guarantees:
 - **Enterprise-certified** — Claude (Agent SDK), Codex, AWS Bedrock, and Azure OpenAI. Stable model catalogues, compliance posture, and the integrations enterprise deployments depend on. **Use one of these for production / regulated workloads.**
 - **Community / self-host tier** — OpenCode and other self-hosted/OpenAI-compatible runtimes. Fully supported for self-hosting and evaluation, but **not enterprise-certified**: OpenCode in particular resolves its model list from the remote `models.dev` registry, so individual models (including "free" ones such as the former `opencode/sonic`) can be removed without notice. There is no hardcoded default — you must pass an explicit `opencode:<provider/model>` or set `OPENCODE_DEFAULT_MODEL`; otherwise the build fails fast with an actionable error rather than silently using a dead model.
 
+### OpenCode in the build sandbox — model catalogue caveat (#291)
+
+OpenCode reads its model catalogue from `$XDG_CACHE_HOME/opencode/models.json` (falling back to `~/.cache/opencode/models.json`) and refreshes it from the remote `models.dev` registry at startup. AIFactory builds run inside an **OS sandbox that blocks that egress**, so a build cannot fetch the catalogue itself; with no usable catalogue OpenCode falls back to a small list compiled into the binary that omits newer models (e.g. `claude-sonnet-4-5`), and **every model fails with a fatal `ProviderModelNotFoundError`**.
+
+AIFactory works around this automatically: before launching `opencode run`, the provider copies a previously-warmed catalogue into the cache path OpenCode reads — **plus** the `version` sentinel next to it, because OpenCode `rm -rf`'s its entire cache directory on startup whenever that sentinel does not match its baked-in cache version (which would otherwise wipe the catalogue we just injected).
+
+**Limitation:** the workaround needs a warm catalogue to copy *from*. That file is populated by **any prior interactive `opencode` run on the host**. If OpenCode has never been run interactively on the build host (so no `~/.cache/opencode/models.json` exists), there is nothing to pre-warm and builds for models outside OpenCode's embedded fallback will still fail. To prime it once, run any `opencode run --model <provider/model> ...` interactively (with network access) on the build host before relying on OpenCode for sandboxed builds. This is one more reason OpenCode is **self-host / OSS tier only** — prefer Claude, Codex, Bedrock, or Azure OpenAI for production.
+
 ## How routing works
 
 Each task has a **phase profile** — a mapping from phase name to model string. Example:
