@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## 3.4.2 - 2026-06-02
+
+### Fixed
+
+- Release pipeline now publishes again: the multi-arch container image build failed on the `linux/arm64` leg (the frontend `vite build` dies under QEMU emulation), which blocked image/SBOM publishing for v3.4.0 and v3.4.1. The release image is built `linux/amd64`-only for now; native arm64 builds will be restored via a dedicated runner.
+
 ## 3.4.1 - 2026-06-02
 
 ### Fixed
