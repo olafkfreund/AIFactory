@@ -10,6 +10,7 @@ select = [
     "B",      # flake8-bugbear
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
+    "TID251", # flake8-tidy-imports: banned-api (architecture import boundary, #261)
 ]
 
 ignore = [
@@ -27,8 +28,54 @@ ignore = [
     "UP035",  # deprecated typing imports (legacy modules use typing.List/Dict)
 ]
 
+# ---------------------------------------------------------------------------
+# Feature Architecture Standard — enforced import boundary (issue #261)
+# ---------------------------------------------------------------------------
+# Domain/application logic must stay free of heavy transport/runtime deps so it
+# can be loaded by other processes (e.g. the FastAPI web-server) WITHOUT pulling
+# in the Claude Agent SDK. See guides/architecture/feature-architecture-standard.md.
+#
+# Mechanism: the agent SDK (`claude_agent_sdk`) is a banned import (TID251).
+# The ban is then exempted everywhere EXCEPT the pure-logic leaf modules in
+# `apps/backend/qa/`, which are the codified boundary (see #260: the web-server
+# loads qa/review_cycle.py + qa/review_redrive.py by file path precisely because
+# importing the qa package would drag in the SDK). Adding a new SDK import to a
+# qa leaf module will fail CI until it is either moved to an adapter module or
+# added to the documented exception list below.
+[lint.flake8-tidy-imports.banned-api]
+"claude_agent_sdk".msg = "Pure-logic modules (apps/backend/qa leaf modules) must not import the Claude Agent SDK; keep SDK usage in adapter modules (reviewer/fixer/loop). See guides/architecture/feature-architecture-standard.md."
+
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports in __init__.py
+
+# --- SDK-ban exemptions (TID251) -------------------------------------------
+# Adapter / transport / agent-bearing trees that LEGITIMATELY use the SDK.
+# The ban is only meant to protect the qa pure-logic leaf modules, so the rest
+# of the codebase is exempt. Keep these globs broad: the boundary under test is
+# apps/backend/qa, not these areas.
+"apps/backend/agents/*" = ["TID251"]
+"apps/backend/core/*" = ["TID251"]
+"apps/backend/providers/*" = ["TID251"]
+"apps/backend/runners/*" = ["TID251"]
+"apps/backend/mcp_server/*" = ["TID251"]
+"apps/backend/analysis/*" = ["TID251"]
+"apps/backend/spec_agents/*" = ["TID251"]
+"apps/backend/spec/*" = ["TID251"]
+"apps/backend/ideation/*" = ["TID251"]
+"apps/backend/prediction/*" = ["TID251"]
+"apps/backend/review/*" = ["TID251"]
+"apps/backend/services/*" = ["TID251"]
+"apps/backend/integrations/*" = ["TID251"]
+"apps/web-server/*" = ["TID251"]
+# Documented exceptions WITHIN the qa boundary: these are the agent-bearing
+# adapter modules of the qa package (they run live agent sessions and so must
+# import the SDK). The pure-logic leaf modules — review_cycle.py and
+# review_redrive.py — are intentionally NOT listed and stay SDK-free.
+"apps/backend/qa/fixer.py" = ["TID251"]
+"apps/backend/qa/reviewer.py" = ["TID251"]
+"apps/backend/qa/loop.py" = ["TID251"]
+"apps/backend/qa/qa_loop.py" = ["TID251"]
+
 "tests/*" = [
     "B011",   # assert false in tests
     "B017",   # assert raises bare Exception (acceptable in tests)
@@ -36,6 +83,7 @@ ignore = [
     "E722",   # bare except (acceptable in test cleanup)
     "F401",   # unused imports (availability checks)
     "F811",   # redefined-while-unused (pytest fixture argument shadowing)
+    "TID251", # tests may import the agent SDK directly
 ]
 "test_*.py" = ["F401", "F811"]
 
