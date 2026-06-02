@@ -781,7 +781,31 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
         # can route to the correct backend.  base_url is resolved by the
         # openai_compatible provider via _gateway.resolve_base_url().
         gateway_url = os.environ.get("LITELLM_GATEWAY_URL", "").strip()
-        return {"model": model.strip(), "base_url": gateway_url}
+        # Data-plane auth: a production LiteLLM proxy is started with a master
+        # key and/or per-tenant virtual keys, so it rejects unauthenticated
+        # /v1/chat/completions calls with 401.  Without a Bearer token here the
+        # provider sends no Authorization header and the whole Bedrock/Vertex
+        # path 401s — this was the broken LiteLLM-routed path.  Read the
+        # deployment-wide gateway key from env (LITELLM_API_KEY, matching the
+        # verify-routing curl in docs/concepts/cloud-llm-routing.md), falling
+        # back to the generic OpenAI-compatible key env vars so existing
+        # single-key deployments keep working.
+        # TODO(Epic #35 #38 PR-2b): inject the caller's *per-org* LiteLLM
+        # virtual key (sk-... minted via POST /key/generate) instead of a
+        # deployment-wide key once org context is plumbed through this call —
+        # that enables per-tenant budget/allowlist enforcement.  Requires a
+        # live LiteLLM proxy + minted virtual key to validate end-to-end.
+        gateway_key = (
+            os.environ.get("LITELLM_API_KEY", "").strip()
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+            or None
+        )
+        return {
+            "model": model.strip(),
+            "base_url": gateway_url,
+            "api_key": gateway_key,
+        }
 
     stripped = strip_provider_prefix(model).strip()
 

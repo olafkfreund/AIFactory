@@ -108,7 +108,18 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         extra_options: dict[str, Any] | None = None,
     ) -> None:
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # Epic #35 #38 PR-1 — when LITELLM_GATEWAY_URL is set, all provider
+        # HTTP calls route through the gateway for per-tenant budget /
+        # rate-limit / allowlist / audit.  The text-only OpenAICompatibleProvider
+        # already does this; the agentic variant MUST too, otherwise the entire
+        # build pipeline (spec/planning/coding/qa — all agentic phases) bypasses
+        # the gateway and hits the native endpoint (e.g. api.openai.com or the
+        # studio/Bedrock-prefixed default) directly.  Env wins over the explicit
+        # base_url arg — the enforcement contract is that flipping the gateway on
+        # cannot be bypassed by per-call config.
+        from ._gateway import resolve_base_url
+
+        self._base_url = resolve_base_url(base_url).rstrip("/")
         self._api_key = api_key or None
         self._timeout = timeout
         self._working_dir = Path(working_dir).resolve()
