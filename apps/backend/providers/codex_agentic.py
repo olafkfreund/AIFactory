@@ -328,6 +328,42 @@ class CodexAgenticProvider(BaseLLMProvider):
             thread_id or "none",
         )
 
+        # Detect error JSON returned as content text by the Codex MCP server.
+        # When the model is not available for the authenticated account (e.g.
+        # "gpt-5.3-codex" requires an OpenAI API key, not a ChatGPT account),
+        # the MCP tool returns a JSON payload with "type":"error" as the sole
+        # content block instead of raising an MCP-level error response.  If we
+        # yield this as an AssistantMessage the coder loop treats the turn as a
+        # successful text exchange, the subtask stays "pending" or "in_progress",
+        # no files are written, and every subtask is eventually marked failed
+        # after 3 silent retries.
+        #
+        # Raise a RuntimeError here so the coder loop surfaces the real error
+        # message to the operator and counts the turn as an "error" status —
+        # not a silent no-op retry.  (#286)
+        #
+        # NOTE: do not use string-contains to pre-check for '"type":"error"' —
+        # JSON serialisers vary in whether they emit spaces after colons, so
+        # both '"type":"error"' and '"type": "error"' can appear.  Just parse
+        # any response that starts with '{' and check the decoded value.
+        _stripped = response_text.strip()
+        if _stripped.startswith("{"):
+            try:
+                _err_payload = json.loads(_stripped)
+            except json.JSONDecodeError:
+                _err_payload = {}
+            if _err_payload.get("type") == "error":
+                _err_obj = _err_payload.get("error", {})
+                _err_msg = (
+                    _err_obj.get("message")
+                    if isinstance(_err_obj, dict)
+                    else str(_err_obj)
+                ) or str(_err_payload)
+                _http_status = _err_payload.get("status", "?")
+                raise RuntimeError(
+                    f"Codex MCP returned an error (HTTP {_http_status}): {_err_msg}"
+                )
+
         yield AssistantMessage(content=[TextBlock(text=response_text)])
 
 

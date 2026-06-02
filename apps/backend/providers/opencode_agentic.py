@@ -4,7 +4,7 @@ OpenCodeAgenticProvider — OpenCode CLI runtime adapter for coding/planning pha
 
 Runs the OpenCode CLI (``opencode``) in its non-interactive ``run`` mode::
 
-    opencode run --model <provider/model> -p <prompt>
+    opencode run --model <provider/model> <prompt>
 
 OpenCode is a CLI coding-agent runtime (similar in shape to the Codex and
 Gemini CLI agentic providers).  The ``run`` subcommand is already
@@ -181,10 +181,19 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
 
         Shape::
 
-            opencode run --model <provider/model> -p <prompt> [extra_args...]
+            opencode run --model <provider/model> <prompt> [extra_args...]
 
-        The prompt is passed via ``-p`` (rather than stdin / positional message)
-        to avoid shell-quoting issues with multi-kilobyte prompt strings.
+        The prompt is passed as a **positional argument** to the ``run``
+        subcommand.  The global ``-p`` / ``--prompt`` flag is NOT inherited by
+        the ``run`` subcommand — passing ``-p <prompt>`` to ``opencode run``
+        causes it to print the subcommand help and exit with code 1 without
+        executing anything.  This was the root cause of issue #286 where every
+        opencode subtask produced only the help text instead of real code.
+
+        Note: the positional ``message`` form does not support multi-word
+        prompts natively across shells without quoting, but when passed as a
+        single Python list element to ``create_subprocess_exec`` no shell
+        quoting is needed — Python passes it verbatim as argv[N].
 
         Raises:
             RuntimeError: If no usable model could be resolved (no explicit
@@ -202,7 +211,11 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
                 f"{_DEFAULT_MODEL_ENV_VAR} environment variable."
             )
         cmd: list[str] = [self._opencode_path, "run", "--model", self._model]
-        cmd += ["-p", self._pending_prompt or ""]
+        # Pass prompt as a positional argument, not -p.  The `run` subcommand
+        # accepts `message..` as positional args; the global `-p/--prompt` flag
+        # is not valid inside the `run` subcommand and causes it to print help
+        # and exit 1 without doing any work.  (#286)
+        cmd.append(self._pending_prompt or "")
         if self._extra_args:
             cmd.extend(self._extra_args)
         return cmd
@@ -269,9 +282,26 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
             len(stderr_text),
         )
 
-        if proc.returncode != 0 and not stdout_text:
-            error_detail = stderr_text or f"exit code {proc.returncode}"
-            raise RuntimeError(f"OpenCode CLI error: {error_detail}")
+        if proc.returncode != 0:
+            # Guard against the "help text printed instead of running" scenario:
+            # if the process failed AND the output looks like the CLI help page,
+            # raise a descriptive error rather than yielding the help text as if
+            # it were agent output.  This can happen when an unknown flag is
+            # passed (the previous bug where -p was used instead of a positional
+            # argument) or when the subcommand arguments are malformed.
+            # We detect the help page by its stable opening line.  (#286)
+            _looks_like_help = "run opencode with a message" in stdout_text or (
+                "opencode run [" in stdout_text
+            )
+            if _looks_like_help:
+                raise RuntimeError(
+                    "OpenCode CLI printed its help page instead of running — "
+                    "the command was likely malformed.  "
+                    f"Command: {' '.join(cmd)}"
+                )
+            if not stdout_text:
+                error_detail = stderr_text or f"exit code {proc.returncode}"
+                raise RuntimeError(f"OpenCode CLI error: {error_detail}")
 
         if stderr_text:
             logger.warning("OpenCode CLI stderr (first 500 chars): %s", stderr_text[:500])

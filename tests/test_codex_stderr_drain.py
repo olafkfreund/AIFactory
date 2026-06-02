@@ -1,12 +1,26 @@
-"""Regression guard for the Codex agentic provider (#codex):
+"""Regression guard for the Codex agentic provider (#codex, #286):
 
 1. It must resolve the binary even when 'codex' is only a shell alias
    (fall back to 'codex-cli').
 2. It must drain stderr concurrently — otherwise a long coding session fills
    the 64 KB stderr pipe, codex deadlocks, and the build sees
    "(no output from Codex MCP)" with no files written.
+3. It must detect error-JSON responses from the Codex MCP tool and raise
+   RuntimeError instead of yielding them as agent output.  When the model is
+   not available for the authenticated account (e.g. "gpt-5.3-codex" with a
+   ChatGPT account), the MCP tool returns {"type":"error","status":400,...} as
+   content text.  Without this guard every subtask fails silently after 3
+   retries with no files written.  (#286)
 """
+import asyncio
+import sys
 from pathlib import Path
+
+import pytest
+
+BACKEND = Path(__file__).resolve().parents[1] / "apps" / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 SRC = (Path(__file__).resolve().parents[1] / "apps" / "backend"
        / "providers" / "codex_agentic.py").read_text()
@@ -19,3 +33,89 @@ def test_codex_binary_falls_back_to_codex_cli():
 def test_codex_drains_stderr_concurrently():
     assert "_drain_stderr" in SRC and "create_task" in SRC, \
         "stderr must be drained concurrently to avoid the 64KB pipe deadlock"
+
+
+def test_codex_error_json_in_content_raises_runtime_error(monkeypatch):
+    """Error JSON from Codex MCP must raise RuntimeError, not yield as text.
+
+    When the Codex MCP returns {"type":"error","status":400,"error":{...}} as
+    the content-block text (e.g. unsupported model for ChatGPT accounts), the
+    provider must raise RuntimeError so the coder loop reports an actual error
+    and does not silently exhaust retries.  (#286)
+    """
+    from providers import codex_agentic
+    from providers.codex_agentic import CodexAgenticProvider
+
+    _ERROR_RESPONSE = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        '{"type":"error","status":400,'
+                        '"error":{"type":"invalid_request_error",'
+                        '"message":"The \'gpt-5.3-codex\' model is not supported '
+                        'when using Codex with a ChatGPT account."}}'
+                    ),
+                }
+            ],
+            "structuredContent": {},
+        },
+    }
+
+    async def _fake_send(self, msg):  # noqa: ARG001
+        pass
+
+    async def _fake_read(self, expected_id):  # noqa: ARG001
+        return _ERROR_RESPONSE
+
+    monkeypatch.setattr(CodexAgenticProvider, "_send_message", _fake_send)
+    monkeypatch.setattr(CodexAgenticProvider, "_read_response", _fake_read)
+
+    async def _run():
+        p = CodexAgenticProvider(model="gpt-5.3-codex", working_dir=Path("/tmp"))
+        # Bypass __aenter__ / MCP startup — just set proc to a truthy sentinel.
+        p._proc = object()  # type: ignore[assignment]
+        await p.query("implement tictactoe")
+        async for _ in p.receive_response():
+            pass
+
+    with pytest.raises(RuntimeError, match="ChatGPT account"):
+        asyncio.run(_run())
+
+
+def test_codex_valid_response_does_not_raise(monkeypatch):
+    """A normal text response from Codex MCP must be yielded without error."""
+    from providers.codex_agentic import CodexAgenticProvider
+    from providers.types import AssistantMessage
+
+    _OK_RESPONSE = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+            "content": [{"type": "text", "text": "hello world"}],
+            "structuredContent": {"threadId": "abc-123", "content": "hello world"},
+        },
+    }
+
+    async def _fake_send(self, msg):  # noqa: ARG001
+        pass
+
+    async def _fake_read(self, expected_id):  # noqa: ARG001
+        return _OK_RESPONSE
+
+    monkeypatch.setattr(CodexAgenticProvider, "_send_message", _fake_send)
+    monkeypatch.setattr(CodexAgenticProvider, "_read_response", _fake_read)
+
+    async def _run():
+        p = CodexAgenticProvider(model="gpt-5.3-codex", working_dir=Path("/tmp"))
+        p._proc = object()  # type: ignore[assignment]
+        await p.query("say hello")
+        return [m async for m in p.receive_response()]
+
+    msgs = asyncio.run(_run())
+    assert len(msgs) == 1
+    assert isinstance(msgs[0], AssistantMessage)
+    assert msgs[0].content[0].text == "hello world"

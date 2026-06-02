@@ -129,7 +129,11 @@ def test_opencode_command_is_non_interactive_run():
     cmd = p._build_command()
     assert cmd[0:2] == ["opencode", "run"]  # non-interactive run subcommand
     assert "--model" in cmd and "anthropic/claude-sonnet-4-5" in cmd
-    assert "-p" in cmd and "do the thing" in cmd
+    # Prompt must be a positional argument, NOT passed via -p.
+    # The `run` subcommand does not accept -p; passing it causes opencode to
+    # print help and exit 1 without doing any work.  (#286)
+    assert "-p" not in cmd
+    assert "do the thing" in cmd
 
 
 def test_opencode_invalid_model_rejected():
@@ -193,4 +197,51 @@ def test_opencode_run_errors_when_cli_missing(monkeypatch):
             pass
 
     with pytest.raises(RuntimeError, match="OpenCode CLI executable not found"):
+        asyncio.run(_run())
+
+
+def test_opencode_help_page_output_raises_error(monkeypatch):
+    """If opencode prints its help page (returncode=1), raise RuntimeError.
+
+    This guards the regression from issue #286 where the provider was passing
+    ``-p <prompt>`` to the ``run`` subcommand.  The ``run`` subcommand does not
+    accept ``-p``; it prints the help page to stdout and exits with code 1.
+    The provider must detect this and raise rather than yielding help text as
+    agent output.
+    """
+    import pytest
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    _HELP_TEXT = (
+        b"opencode run [message..]\n\nrun opencode with a message\n"
+        b"\nPositionals:\n  message  message to send\n"
+    )
+
+    class _FakeProc:
+        returncode = 1
+
+        async def communicate(self):
+            return (_HELP_TEXT, b"")
+
+    async def _fake_create_subprocess_exec(*args, **kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(opencode_agentic.shutil, "which", lambda _: "/usr/bin/opencode")
+    monkeypatch.setattr(
+        opencode_agentic.asyncio,
+        "create_subprocess_exec",
+        _fake_create_subprocess_exec,
+    )
+
+    async def _run():
+        p = OpenCodeAgenticProvider(
+            model="opencode:anthropic/claude-sonnet-4-5", working_dir=Path("/tmp")
+        )
+        async with p:
+            await p.query("implement tictactoe")
+            async for _ in p.receive_response():
+                pass
+
+    with pytest.raises(RuntimeError, match="help page"):
         asyncio.run(_run())
