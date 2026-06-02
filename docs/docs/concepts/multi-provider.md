@@ -14,7 +14,7 @@ AIFactory routes each pipeline phase to its own model. You can plan with Claude 
 | **Anthropic** (via Claude Agent SDK) | Opus 4.x, Sonnet 4.x, Haiku 4.x | Default for planning + QA — highest quality, integrated with MCP servers |
 | **Codex CLI** | `gpt-5.3-codex` and other OpenAI Codex models via the local CLI | Fastest reliable agentic coding (see the [provider benchmark](../showcase/benchmark-results)) |
 | **GitHub Copilot CLI** | `copilot:claude-sonnet-4.5`, `copilot:claude-sonnet-4`, `copilot:gpt-5` | Run builds on your existing GitHub Copilot subscription — no extra API key. Copilot is a router over Claude/GPT-5 backends |
-| **Gemini CLI** | Google Gemini 3.x Pro | Capable agentic coding; the isolated worktree is trusted automatically so it can edit files |
+| **Antigravity CLI** | Google Gemini 3.x Pro (via the Antigravity CLI) | Capable agentic coding; the isolated worktree is trusted automatically (`GEMINI_CLI_TRUST_WORKSPACE`) so it can edit files. Install/update from the portal — Settings → CLI Tools |
 | **Ollama** | `qwen2.5-coder:*`, `qwen3-coder:*`, `llama3.x:*`, `deepseek-coder:*`, any local model | Free, offline, air-gapped coding. Needs an adequately-sized model + GPU — see [Local models: sizing & hardware](#local-models-sizing--hardware) |
 | **OpenAI** | `gpt-4o`, `gpt-4.1`, `o3-mini` | Drop-in alternative where licensing or compliance prefers it |
 | **OpenAI-compatible** | LM Studio, vLLM, OpenRouter, Together, Groq, LocalAI | Any endpoint that speaks the OpenAI `/v1/chat/completions` shape |
@@ -57,7 +57,7 @@ The backend's `phase_config.infer_provider_from_model()` parses the model string
 - `ollama:<model>` → Ollama
 - `copilot:<backend>` → GitHub Copilot CLI (checked before the `claude-*`/`gpt-*` rules, since Copilot's own backend names are `claude-sonnet-4.5` / `gpt-5`)
 - `gpt-*`, `*codex*` → Codex CLI
-- `gemini-*` → Gemini CLI
+- `gemini-*`, `antigravity` → Antigravity CLI (the renamed Gemini provider; binary resolves to `antigravity`, falling back to `gemini`)
 - `<endpoint>:<model>` (with custom endpoint registered in Settings → LLM Providers) → OpenAI-compatible
 
 ## Where to configure
