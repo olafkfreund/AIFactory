@@ -171,6 +171,12 @@ class ReviewCycle:
     proof: EngagementProof | None = None
     # Append-only audit of terminal resolutions, one entry per resolved cycle.
     resolutions: list[dict[str, Any]] = field(default_factory=list)
+    # Re-drive (nudge/escalation) bookkeeping for an untouched request. Persisted
+    # so a poller restart can't replay strikes and so "no double-nudge within a
+    # window" survives a crash. ``redrive_attempts`` counts strikes already taken
+    # against THIS cycle; ``last_redrive_at`` gates the next window.
+    redrive_attempts: int = 0
+    last_redrive_at: str | None = None
     updated_at: str = field(default_factory=_now_iso)
 
     # ------------------------------------------------------------------ #
@@ -185,6 +191,8 @@ class ReviewCycle:
             "resolved_at": self.resolved_at,
             "proof": self.proof.to_dict() if self.proof else None,
             "resolutions": self.resolutions,
+            "redrive_attempts": self.redrive_attempts,
+            "last_redrive_at": self.last_redrive_at,
             "updated_at": self.updated_at,
         }
 
@@ -199,6 +207,8 @@ class ReviewCycle:
             resolved_at=data.get("resolved_at"),
             proof=EngagementProof.from_dict(proof_data) if proof_data else None,
             resolutions=list(data.get("resolutions", [])),
+            redrive_attempts=int(data.get("redrive_attempts", 0)),
+            last_redrive_at=data.get("last_redrive_at"),
             updated_at=str(data.get("updated_at", _now_iso())),
         )
 
@@ -236,6 +246,25 @@ class ReviewCycle:
         if requested.tzinfo is None:
             requested = requested.replace(tzinfo=timezone.utc)
         return (now - requested).total_seconds() >= timeout_seconds
+
+    def redrive_window_elapsed(
+        self, *, window_seconds: float, now: datetime | None = None
+    ) -> bool:
+        """True when at least ``window_seconds`` have passed since the last
+        re-drive (or since the request, if no re-drive has happened yet).
+
+        This is the "no double-nudge within a window" gate: a strike is only
+        eligible once a full window has elapsed since the previous one.
+        """
+        now = now or datetime.now(timezone.utc)
+        anchor_iso = self.last_redrive_at or self.requested_at
+        try:
+            anchor = datetime.fromisoformat(anchor_iso)
+        except (TypeError, ValueError):
+            return False
+        if anchor.tzinfo is None:
+            anchor = anchor.replace(tzinfo=timezone.utc)
+        return (now - anchor).total_seconds() >= window_seconds
 
 
 # ====================================================================== #
@@ -408,6 +437,35 @@ def resolve_review(
     return cycle
 
 
+def record_redrive(
+    spec_dir: Path,
+    *,
+    cycle_id: int,
+    at: datetime | None = None,
+) -> ReviewCycle:
+    """Record a re-drive strike (nudge or escalation) against the current cycle.
+
+    Increments ``redrive_attempts`` and stamps ``last_redrive_at`` atomically, so
+    the strike count and window gate are persisted in the single source of truth
+    and survive a poller restart (no replayed strikes).
+
+    Rejects a stale ``cycle_id`` (cross-cycle guard) just like the other ops, so
+    a strike can never be attributed to a superseded cycle.
+    """
+    cycle = load_cycle(spec_dir)
+    if cycle is None:
+        raise ReviewCycleError("No review cycle exists; call request_review first")
+    if cycle_id != cycle.cycle_id:
+        raise StaleCycleError(
+            f"Re-drive for cycle {cycle_id} rejected: current cycle is "
+            f"{cycle.cycle_id}"
+        )
+    cycle.redrive_attempts += 1
+    cycle.last_redrive_at = (at or datetime.now(timezone.utc)).isoformat()
+    _atomic_write_cycle(spec_dir, cycle)
+    return cycle
+
+
 def _ensure_transition(current: CycleState, target: CycleState) -> None:
     """Validate ``current → target`` against the strict lifecycle."""
     if target not in _ALLOWED_TRANSITIONS.get(current, set()):
@@ -452,10 +510,10 @@ def redrive_untouched_review(
 
     Returns a structured signal dict when a stalled review is found (so the
     caller can nudge the reviewer or escalate), or ``None`` when nothing is
-    stalled. This is the hook *point*: it computes the decision and the payload
-    deterministically; the actual nudge *delivery* (writing to the running
-    reviewer's inbox) is left to the caller because it needs the live session /
-    recipient, which this state-only module must not assume.
+    stalled. This is the pure detection/decision payload; the actual *delivery*
+    (inbox nudge + human escalation, with strike tracking) is orchestrated by
+    :func:`qa.review_redrive.process_untouched_review`, which injects the inbox
+    and control-plane writers so this state-only module stays dependency-free.
     """
     cycle = detect_untouched_review(
         spec_dir, timeout_seconds=timeout_seconds, now=now
@@ -469,18 +527,12 @@ def redrive_untouched_review(
         "state": cycle.state.value,
         "requested_at": cycle.requested_at,
         "timeout_seconds": timeout_seconds,
+        "redrive_attempts": cycle.redrive_attempts,
         "reason": (
             f"Review cycle {cycle.cycle_id} was requested at {cycle.requested_at} "
             f"but never reached review_started within {timeout_seconds:.0f}s."
         ),
     }
-
-    # TODO(#260): Deliver the nudge to the running reviewer session via the #264
-    # inbox primitive (inbox_service.enqueue / agents.inbox) using the spec's
-    # reviewer recipient, then escalate to human review if a second untouched
-    # detection fires for the SAME cycle_id. Delivery is intentionally deferred
-    # here because it requires the live session's recipient, which this
-    # state-only module must not assume.
     return signal
 
 
@@ -498,6 +550,7 @@ __all__ = [
     "request_review",
     "record_started",
     "resolve_review",
+    "record_redrive",
     "detect_untouched_review",
     "redrive_untouched_review",
 ]

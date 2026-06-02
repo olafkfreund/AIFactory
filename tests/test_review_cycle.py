@@ -26,6 +26,7 @@ from qa.review_cycle import (
     cycle_file_path,
     detect_untouched_review,
     load_cycle,
+    record_redrive,
     record_started,
     redrive_untouched_review,
     request_review,
@@ -265,3 +266,57 @@ class TestPersistence:
         loaded = load_cycle(spec_dir)
         assert loaded.proof.detail == {"k": "v"}
         assert loaded.state is CycleState.APPROVED
+
+
+# =============================================================================
+# RE-DRIVE STRIKE BOOKKEEPING (#260 delivery slice)
+# =============================================================================
+
+
+class TestRedriveBookkeeping:
+    def test_record_redrive_increments_and_stamps(self, spec_dir):
+        c1 = request_review(spec_dir)
+        now = datetime.now(timezone.utc)
+        updated = record_redrive(spec_dir, cycle_id=c1.cycle_id, at=now)
+        assert updated.redrive_attempts == 1
+        assert updated.last_redrive_at == now.isoformat()
+        # Persisted to disk (single source of truth).
+        assert load_cycle(spec_dir).redrive_attempts == 1
+
+    def test_record_redrive_rejects_stale_cycle(self, spec_dir):
+        c1 = request_review(spec_dir)
+        request_review(spec_dir)  # supersedes c1 with cycle 2
+        with pytest.raises(StaleCycleError):
+            record_redrive(spec_dir, cycle_id=c1.cycle_id)
+
+    def test_record_redrive_without_cycle_errors(self, spec_dir):
+        with pytest.raises(ReviewCycleError):
+            record_redrive(spec_dir, cycle_id=1)
+
+    def test_window_elapsed_uses_request_time_before_first_strike(self, spec_dir):
+        request_review(spec_dir)
+        cycle = load_cycle(spec_dir)
+        soon = datetime.now(timezone.utc) + timedelta(seconds=10)
+        later = datetime.now(timezone.utc) + timedelta(seconds=301)
+        assert cycle.redrive_window_elapsed(window_seconds=300, now=soon) is False
+        assert cycle.redrive_window_elapsed(window_seconds=300, now=later) is True
+
+    def test_window_elapsed_uses_last_redrive_after_strike(self, spec_dir):
+        c1 = request_review(spec_dir)
+        strike_at = datetime.now(timezone.utc) + timedelta(seconds=400)
+        record_redrive(spec_dir, cycle_id=c1.cycle_id, at=strike_at)
+        cycle = load_cycle(spec_dir)
+        # Just after the strike: window not yet elapsed from last_redrive_at.
+        assert (
+            cycle.redrive_window_elapsed(
+                window_seconds=300, now=strike_at + timedelta(seconds=10)
+            )
+            is False
+        )
+        # A full window after the strike: elapsed.
+        assert (
+            cycle.redrive_window_elapsed(
+                window_seconds=300, now=strike_at + timedelta(seconds=301)
+            )
+            is True
+        )
