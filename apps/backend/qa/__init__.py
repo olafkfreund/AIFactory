@@ -59,6 +59,22 @@ from .report import (
     record_iteration,
 )
 
+# Review-cycle obligation tracking (#260)
+from .review_cycle import (
+    CycleState,
+    EngagementProof,
+    InvalidTransitionError,
+    ReviewCycle,
+    ReviewCycleError,
+    StaleCycleError,
+    detect_untouched_review,
+    load_cycle,
+    record_started,
+    redrive_untouched_review,
+    request_review,
+    resolve_review,
+)
+
 # Agent sessions
 from .reviewer import run_qa_agent_session
 
@@ -92,6 +108,19 @@ __all__ = [
     "is_no_test_project",
     "_normalize_issue_key",
     "_issue_similarity",
+    # Review-cycle obligation tracking (#260)
+    "CycleState",
+    "EngagementProof",
+    "ReviewCycle",
+    "ReviewCycleError",
+    "InvalidTransitionError",
+    "StaleCycleError",
+    "request_review",
+    "record_started",
+    "resolve_review",
+    "load_cycle",
+    "detect_untouched_review",
+    "redrive_untouched_review",
     # Agent sessions
     "run_qa_agent_session",
     "load_qa_fixer_prompt",

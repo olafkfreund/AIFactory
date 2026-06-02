@@ -1403,6 +1403,11 @@ class AgentService:
             "requirements.json",
         ]
 
+        # NOTE: task_control.json and qa_review_cycle.json are deliberately
+        # ABSENT from files_to_sync. Both are authoritative state owned outside
+        # the agent's worktree (control-plane #259, QA review-cycle #260) and a
+        # worktree copy must never reset or replay them.
+
         # Directories to sync (will copy entire directory tree)
         dirs_to_sync = [
             "memory",  # Session insights and memory data
