@@ -4579,3 +4579,119 @@ async def detect_worktree_tools():
             "terminals": terminals
         }
     }
+
+
+# --------------------------------------------------------------------------
+# Inbox / inter-agent messaging (#264)
+# --------------------------------------------------------------------------
+
+
+class InboxMessageCreate(BaseModel):
+    """Request to deliver a directed message to a running task's agent."""
+
+    text: str = Field(..., min_length=1, description="Message body for the agent")
+    recipient: str = Field(
+        "agent",
+        description="Logical agent recipient (e.g. 'agent', 'coder', 'planner')",
+    )
+    sender: str = Field("user", description="Sender identity")
+    summary: str | None = Field(
+        None, description="Optional short summary (auto-derived if omitted)"
+    )
+
+
+class InboxMessage(BaseModel):
+    """A stored inbox message."""
+
+    from_: str = Field(..., alias="from")
+    text: str
+    summary: str
+    timestamp: str
+    messageId: str
+    read: bool
+
+    model_config = {"populate_by_name": True}
+
+
+class InboxEnqueueResponse(BaseModel):
+    """Response after enqueuing an inbox message."""
+
+    messageId: str
+    delivered: bool
+    recipient: str
+
+
+def _inbox_target_spec_dir(project_path: Path, spec_id: str, spec_dir: Path) -> Path:
+    """Resolve where to write the inbox so a RUNNING agent will see it.
+
+    A running build executes inside its isolated worktree, reading from the
+    worktree spec dir. If that worktree exists we target it; otherwise we fall
+    back to the main spec dir (message will be picked up when a build starts).
+    """
+    worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
+    return worktree_spec_dir if worktree_spec_dir else spec_dir
+
+
+@router.post(
+    "/{task_id}/inbox",
+    response_model=InboxEnqueueResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def enqueue_inbox_message(task_id: str, message: InboxMessageCreate):
+    """Deliver a directed message to a task's agent inbox (#264).
+
+    The message is written atomically and verified on disk. The returned
+    `delivered` flag is the read-back proof that the message persisted.
+    """
+    from ..services import inbox_service
+
+    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
+
+    try:
+        result = inbox_service.enqueue(
+            target_dir,
+            text=message.text,
+            recipient=message.recipient,
+            sender=message.sender,
+            summary=message.summary,
+        )
+    except inbox_service.DeliveryVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Message could not be verified after write: {exc}",
+        ) from exc
+    except inbox_service.InboxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return InboxEnqueueResponse(
+        messageId=result["messageId"],
+        delivered=result["delivered"],
+        recipient=result["recipient"],
+    )
+
+
+@router.get("/{task_id}/inbox", response_model=list[InboxMessage])
+async def list_inbox_messages(
+    task_id: str,
+    recipient: str = Query("agent", description="Recipient inbox to read"),
+    unread_only: bool = Query(False, description="Only return unread messages"),
+):
+    """List messages in a task's agent inbox."""
+    from ..services import inbox_service
+
+    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
+
+    try:
+        messages = inbox_service.list_messages(
+            target_dir, recipient=recipient, unread_only=unread_only
+        )
+    except inbox_service.InboxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+    return [InboxMessage(**m) for m in messages]

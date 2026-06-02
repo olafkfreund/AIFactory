@@ -54,6 +54,8 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .inbox import drain_unread as drain_inbox
+from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .session import post_session_processing, run_agent_session
 from .utils import (
@@ -423,6 +425,18 @@ async def run_autonomous_agent(
         if task_logger and subtask_id:
             task_logger.set_subtask(subtask_id)
             task_logger.set_session(iteration)
+
+        # Between-turn inbox check (#264): deliver any user messages that
+        # arrived while the previous turn was running. Drained exactly-once
+        # and folded into this turn's prompt as high-priority directives.
+        inbox_messages = drain_inbox(spec_dir)
+        if inbox_messages:
+            prompt += "\n\n" + format_inbox_for_prompt(inbox_messages)
+            for _msg in inbox_messages:
+                print_status(
+                    f"Inbox message delivered to agent: {_msg.get('summary', '')}",
+                    "info",
+                )
 
         # Run session with async context manager
         async with client:
