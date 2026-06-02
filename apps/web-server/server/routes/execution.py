@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
 from .projects import load_projects
@@ -380,6 +381,14 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                     plan["reviewReason"] = "plan_review"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
                     logger.info(f"[StartTask] Plan requires approval for {task_id}, set human_review")
+                # Issue #259: control-plane state is authoritative in the
+                # agent-immutable store.
+                task_control.write_control(
+                    spec_dir,
+                    status="human_review",
+                    review_reason="plan_review",
+                    updated_by="web_server",
+                )
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"[StartTask] Failed to persist human_review status: {e}")
 
@@ -575,11 +584,20 @@ async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRe
     auto_restart_error = None
 
     # Reset any reviewReason when moving out of human review states
-    if reset_status in ("backlog", "in_progress", "ai_review", "done"):
+    clears_review = reset_status in ("backlog", "in_progress", "ai_review", "done")
+    if clears_review:
         plan.pop("reviewReason", None)
 
     plan["status"] = reset_status
     plan_file.write_text(json.dumps(plan, indent=2))
+
+    # Issue #259: control-plane state is authoritative in the agent-immutable store.
+    task_control.write_control(
+        spec_dir,
+        status=reset_status,
+        clear_review_reason=clears_review,
+        updated_by="web_user",
+    )
 
     # Auto-restart if requested
     if auto_restart:
@@ -597,6 +615,12 @@ async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRe
             plan["status"] = reset_status
             plan.pop("reviewReason", None)
             plan_file.write_text(json.dumps(plan, indent=2))
+            task_control.write_control(
+                spec_dir,
+                status=reset_status,
+                clear_review_reason=True,
+                updated_by="web_server",
+            )
         except Exception as e:
             # If auto-restart fails, still return success for recovery
             import logging

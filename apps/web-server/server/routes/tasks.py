@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..paths import get_data_dir
+from ..services import task_control
 from .projects import get_projects_file, load_projects
 
 router = APIRouter()
@@ -335,6 +336,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
                 f"[WorktreeSync] Syncing plan for {spec_id}: "
                 f"worktree has {worktree_completed} completed vs main {main_completed}"
             )
+            # Issue #259: control-plane state lives in task_control.json, NOT in
+            # the agent-written plan. Strip status/reviewReason from the worktree
+            # copy so a sync can never reset the human/system control decision.
+            task_control.strip_control_fields(worktree_plan)
             main_plan_file.write_text(json.dumps(worktree_plan, indent=2))
             return True
 
@@ -680,6 +685,22 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                 metadata["status"] = "ai_review"  # QA still in progress
         elif metadata["phase"]:
             metadata["status"] = "in_progress"
+
+    # Control-plane override (Issue #259): the dedicated control store is the
+    # authoritative source for board column / status and reviewReason. It is
+    # written ONLY by the web-server and is never touched by worktree sync, so
+    # a human/system control decision here wins over anything derived above
+    # from the agent-written implementation_plan.json / task_logs.json.
+    #
+    # When the store is absent it falls back (read-time) to any status/
+    # reviewReason still living in implementation_plan.json, so pre-#259 specs
+    # behave exactly as before.
+    control = task_control.read_control(spec_dir)
+    if control.get("status"):
+        metadata["status"] = control["status"]
+        # reviewReason is owned alongside status: take the store's value
+        # (which may be absent, meaning "no review reason").
+        metadata["reviewReason"] = control.get("reviewReason")
 
     return metadata
 
@@ -1255,6 +1276,16 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
     plan["status"] = update.status
     plan_file.write_text(json.dumps(plan, indent=2))
 
+    # Issue #259: control-plane state (board column / status) is authoritative
+    # in the dedicated, agent-immutable store. Moving out of a human-review
+    # column clears the reviewReason.
+    task_control.write_control(
+        spec_dir,
+        status=update.status,
+        clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+        updated_by="web_user",
+    )
+
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
         _try_close_github_issue(project_path, spec_dir)
@@ -1331,6 +1362,14 @@ async def update_task(task_id: str, update: TaskUpdate):
 
         plan["status"] = update.status
         plan_file.write_text(json.dumps(plan, indent=2))
+
+        # Issue #259: mirror to the agent-immutable control store.
+        task_control.write_control(
+            spec_dir,
+            status=update.status,
+            clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+            updated_by="web_user",
+        )
 
     # Update requirements.json with title, description, and metadata
     requirements_file = spec_dir / "requirements.json"
@@ -1509,6 +1548,16 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
             plan_file.write_text(json.dumps(plan, indent=2))
             plan_updated = True
             logger.info("[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress")
+
+            # Issue #259: approving the plan moves the task out of human_review;
+            # record that in the agent-immutable control store and clear the
+            # plan_review reason.
+            task_control.write_control(
+                spec_dir,
+                status="in_progress",
+                clear_review_reason=True,
+                updated_by="web_user",
+            )
         except (json.JSONDecodeError, OSError) as e:
             import logging
             logging.getLogger(__name__).error(f"[ApprovePlan] Failed to update plan file: {e}")
