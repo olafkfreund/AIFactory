@@ -1403,6 +1403,11 @@ class AgentService:
             "requirements.json",
         ]
 
+        # NOTE: task_control.json and qa_review_cycle.json are deliberately
+        # ABSENT from files_to_sync. Both are authoritative state owned outside
+        # the agent's worktree (control-plane #259, QA review-cycle #260) and a
+        # worktree copy must never reset or replay them.
+
         # Directories to sync (will copy entire directory tree)
         dirs_to_sync = [
             "memory",  # Session insights and memory data
@@ -1662,6 +1667,23 @@ class AgentService:
                     # Process still running, sync files
                     if project_path and spec_id:
                         await self._sync_worktree_files(project_path, spec_id, task_id)
+
+                        # #260: re-drive a peer review that was requested but
+                        # never started — first an inbox nudge to the running
+                        # reviewer, then escalation to human_review. Idempotent
+                        # within its back-off window; never raises.
+                        try:
+                            from . import review_redrive_service
+
+                            await asyncio.to_thread(
+                                review_redrive_service.check_review_obligation,
+                                project_path,
+                                spec_id,
+                            )
+                        except Exception as redrive_exc:  # noqa: BLE001
+                            logger.debug(
+                                f"[AgentService] review re-drive check skipped: {redrive_exc}"
+                            )
 
                     # Fix Bug #3: For spec creation, check if review checkpoint reached while process is running
                     if project_path and not spec_id:
