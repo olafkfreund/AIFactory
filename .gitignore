@@ -201,3 +201,7 @@ OPUS_ANALYSIS_AND_IDEAS.md
 
 # local devenv generated cache
 .devenv/
+
+# local direnv env (holds secrets — never commit)
+.envrc
+.direnv/
