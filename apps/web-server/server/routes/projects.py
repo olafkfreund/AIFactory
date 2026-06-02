@@ -1060,8 +1060,8 @@ Created via Magestic AI Web UI
 
     # Create task_metadata.json for phase_config.py to read model/thinking settings
     # This file is read by the backend to determine per-phase model and thinking levels
+    task_metadata = {}
     if task_data.metadata:
-        task_metadata = {}
         # Copy model-related fields that phase_config.py expects
         # Also include 'mode' for Quick Mode prompt selection and 'requireReviewBeforeCoding' for approval gate
         # Also include selectedSkills so agent_service.py can inject skill context
@@ -1070,8 +1070,26 @@ Created via Magestic AI Web UI
             if field in task_data.metadata:
                 task_metadata[field] = task_data.metadata[field]
 
-        if task_metadata:
-            (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata, indent=2))
+    # Stamp the soloMode flag so the backend solo-mode resolver picks it up (#281).
+    # solo_mode.is_solo_mode_enabled_for_spec() reads task_metadata.json["soloMode"];
+    # a per-task override in metadata wins, otherwise fall back to the saved global
+    # app setting. Falsy/absent on both -> nothing written -> unchanged (non-solo)
+    # behavior. The AIFACTORY_SOLO_MODE env var still overrides this in the resolver.
+    solo_mode_enabled = None
+    if task_data.metadata and "soloMode" in task_data.metadata:
+        solo_mode_enabled = bool(task_data.metadata["soloMode"])
+    else:
+        try:
+            from .settings import load_app_settings
+
+            solo_mode_enabled = bool(load_app_settings().soloMode)
+        except Exception:
+            solo_mode_enabled = None
+    if solo_mode_enabled:
+        task_metadata["soloMode"] = True
+
+    if task_metadata:
+        (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata, indent=2))
 
     task = tasks_module.spec_to_task(project_id, spec_dir)
     return tasks_module.task_to_dict(task)

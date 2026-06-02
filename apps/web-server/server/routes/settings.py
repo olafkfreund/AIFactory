@@ -174,6 +174,18 @@ class AppSettings(BaseModel):
     # BMad Method
     bmadSessionSegmentation: bool | None = Field(False, description="Enable session segmentation")
 
+    # Solo mode (#276): single self-directed agent (plan + build + verify in one
+    # streamlined flow, skipping the separate planner/QA phases). Default OFF.
+    # The backend reads the effective value from AIFACTORY_SOLO_MODE, the
+    # per-task task_metadata.json "soloMode" flag, or ~/.aifactory/config.json
+    # solo.enabled (see apps/backend/solo_mode.py). This field surfaces the
+    # preference in the natural settings location.
+    # Wired (#281): saving settings mirrors this into the global
+    # ~/.aifactory/config.json solo.enabled key (_mirror_solo_mode_to_global_config),
+    # and task creation stamps it into the new spec's task_metadata.json soloMode
+    # (projects.py create_project_task). The AIFACTORY_SOLO_MODE env var still wins.
+    soloMode: bool | None = Field(False, description="Enable solo mode (single self-directed agent)")
+
     # Email Notification OAuth Credentials (app-level, not per-user)
     emailMicrosoftClientId: str | None = Field(None, description="Microsoft OAuth Client ID for email notifications")
     emailMicrosoftClientSecret: str | None = Field(None, description="Microsoft OAuth Client Secret for email notifications")
@@ -303,6 +315,7 @@ class SettingsUpdate(BaseModel):
     onboardingCompleted: bool | None = None
     betaUpdates: bool | None = None
     bmadSessionSegmentation: bool | None = None
+    soloMode: bool | None = None
     emailMicrosoftClientId: str | None = None
     emailMicrosoftClientSecret: str | None = None
     llmProvider: str | None = None
@@ -349,6 +362,36 @@ def save_app_settings(settings: AppSettings) -> None:
     settings_file = get_settings_file()
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings_file.write_text(settings.model_dump_json(indent=2))
+    _mirror_solo_mode_to_global_config(bool(settings.soloMode))
+
+
+def _mirror_solo_mode_to_global_config(enabled: bool) -> None:
+    """Mirror the soloMode preference into ~/.aifactory/config.json (#281).
+
+    apps/backend/solo_mode.py falls back to the global config's ``solo.enabled``
+    key when neither AIFACTORY_SOLO_MODE nor a per-spec task_metadata.json flag is
+    present. Mirroring the saved UI preference here makes solo mode apply as a
+    global default for code paths that don't go through web task creation (e.g.
+    CLI builds). The env var still overrides this in the resolver. Other keys in
+    the config file are preserved; failures are best-effort and never block save.
+    """
+    config_file = Path.home() / ".aifactory" / "config.json"
+    try:
+        config: dict = {}
+        if config_file.exists():
+            try:
+                config = json.loads(config_file.read_text()) or {}
+            except (json.JSONDecodeError, OSError):
+                config = {}
+        solo = config.get("solo")
+        if not isinstance(solo, dict):
+            solo = {}
+        solo["enabled"] = enabled
+        config["solo"] = solo
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps(config, indent=2))
+    except OSError as exc:
+        logger.warning("Failed to mirror soloMode to global config: %s", exc)
 
 
 # --------------------------------------------------------------------------

@@ -6,8 +6,8 @@ import type { NotificationSettings, GraphitiEmbeddingProvider } from './project'
 import type { ChangelogFormat, ChangelogAudience, ChangelogEmojiLevel } from './changelog';
 import type { SupportedLanguage } from '../constants/i18n';
 
-// Color theme type — Gruvbox is the sole color theme
-export type ColorTheme = 'gruvbox';
+// Color theme type — Gruvbox is the default; additional palettes are opt-in
+export type ColorTheme = 'gruvbox' | 'shadcn';
 
 // Developer tools preferences - IDE and terminal selection
 // Comprehensive list based on Stack Overflow Developer Survey 2024, JetBrains Survey, and market research
@@ -281,6 +281,8 @@ export interface AppSettings {
   customTerminalPath?: string; // For 'custom' terminal
   // BMad Method session segmentation (per-story sessions with minimal context)
   bmadSessionSegmentation?: boolean;
+  // Solo mode — single-agent focused execution, no parallel sub-agents
+  soloMode?: boolean;
   // Email Notification OAuth Credentials (app-level)
   emailMicrosoftClientId?: string;
   emailMicrosoftClientSecret?: string;

@@ -39,6 +39,12 @@ opentelemetry-instrumentation-redis>=0.48b0
 # PTY (Terminal)
 ptyprocess>=0.7.0
 
+# Per-task agent resource sampling (#277).
+# Used by GET /api/tasks/{task_id}/resource-usage to read CPU/RAM of the
+# running agent subprocess (and its children). Sampling is failure-safe:
+# a dead/missing PID degrades to the not-running shape rather than raising.
+psutil>=5.9.0
+
 # Data Validation
 pydantic>=2.0.0
 pydantic-settings>=2.0.0

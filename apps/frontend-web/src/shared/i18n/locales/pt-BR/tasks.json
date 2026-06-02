@@ -171,5 +171,61 @@
         "unknown": "Alternado automaticamente para {{profileName}}"
       }
     }
+  },
+  "agentConsole": {
+    "tab": "Console ao Vivo",
+    "noSession": "Nenhum console ao vivo disponível ainda. Inicie a tarefa para ver o painel do agente.",
+    "connecting": "Conectando ao console ao vivo…",
+    "connected": "Conectado (somente leitura)",
+    "connectionLost": "Conexão com o console ao vivo perdida",
+    "attachButton": "Assumir controle",
+    "detachButton": "Liberar",
+    "attachConfirmTitle": "Assumir o controle do shell do agente?",
+    "attachConfirmBody": "Você poderá digitar no terminal do agente em execução. Tudo que você fizer será registrado no log de auditoria. Isso não pode ser desfeito para uma tarefa em andamento.",
+    "attachConfirmConfirm": "Assumir agora",
+    "attachConfirmCancel": "Cancelar",
+    "attachedBadge": "Controle ativo — entrada habilitada",
+    "raceLostTitle": "Outra sessão tem o controle",
+    "raceLostBody": "Outro usuário já está conectado ao console ao vivo desta tarefa. Tente novamente após a desconexão.",
+    "raceLostDismiss": "OK",
+    "headerHint": "Espelho somente leitura do terminal do agente. Clique em Assumir controle para interagir."
+  },
+  "delegation": {
+    "enableLabel": "Delegar codificação ao agente autônomo do projeto",
+    "enableHelp": "AIFactory ainda planeja o spec e repassa a issue ao GitHub Copilot Coding Agent (projetos GitHub) ou GitLab Duo Workflow (projetos GitLab). Usa seu assento Copilot/Duo — sem tokens Claude extras para codificação.",
+    "githubOnlyTooltip": "A delegação requer um projeto GitHub. Suporte ao GitLab Duo Workflow está planejado para uma versão futura.",
+    "githubOrGitlabTooltip": "A delegação requer um projeto GitHub ou GitLab. O Azure DevOps não possui agente de codificação autônomo equivalente.",
+    "projectDefaultLabel": "Delegar codificação ao Copilot por padrão para novas tarefas",
+    "projectDefaultHelp": "Cada nova tarefa neste projeto GitHub começa com delegação habilitada. O botão por tarefa no assistente ainda pode ser substituído caso a caso.",
+    "badgeLabel": "Delegado ao Copilot ↗",
+    "badgeTooltipPending": "AIFactory entregou esta issue ao GitHub Copilot Coding Agent. Aguardando o PR resultante — atualize em alguns minutos.",
+    "badgeTooltipInReview": "Copilot abriu um PR para esta issue. Clique para abrir o PR.",
+    "declinedNotice": "Copilot pode ter recusado esta tarefa — nenhum PR correspondente aberto em 24 horas. Você pode re-executar com o agente local do AIFactory."
+  },
+  "observability": {
+    "tab": "Observabilidade"
+  },
+  "tokenUsage": {
+    "title": "Uso de Tokens",
+    "empty": "Nenhum dado de uso de tokens ainda. Inicie a tarefa para começar a rastrear."
+  },
+  "resourceUsage": {
+    "title": "Uso de Recursos",
+    "notRunning": "O processo não está em execução.",
+    "cpu": "CPU",
+    "memory": "Memória",
+    "pid": "PID {{pid}}",
+    "sampledAt": "Coletado às {{time}}"
+  },
+  "agentInbox": {
+    "title": "Enviar ao Agente",
+    "empty": "Nenhuma mensagem enviada ainda.",
+    "placeholder": "Digite uma mensagem… use @agent ou #task para mencionar",
+    "inputLabel": "Mensagem para o agente",
+    "mentionHint": "Dica: use @agent ou #task para menções",
+    "sendButton": "Enviar",
+    "sending": "Enviando…",
+    "delivered": "Entregue",
+    "queued": "Na fila"
   }
 }

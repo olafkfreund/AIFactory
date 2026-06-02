@@ -1,12 +1,15 @@
 """
-Gemini CLI (Google) provider for insights chat.
+Antigravity CLI (Google) provider for insights chat.
 
-Runs `gemini --prompt "<message>"` as a subprocess.
+Runs `antigravity --prompt "<message>"` as a subprocess (the Antigravity CLI
+is the post-Gemini-CLI successor; legacy `gemini-*` models still work).
+
+Back-compat: the provider id / icon are kept as ``"gemini"`` because the
+frontend (InsightsProvider type + icon map) still keys on that value.
 """
 
 import asyncio
 import logging
-import os
 import shlex
 import shutil
 import time
@@ -27,15 +30,18 @@ GEMINI_MODELS = [
 ]
 
 
-class GeminiProvider(ProviderStrategy):
-    """Provider that shells out to the Gemini CLI."""
+class AntigravityProvider(ProviderStrategy):
+    """Provider that shells out to the Antigravity CLI (formerly Gemini CLI)."""
 
     async def detect(self) -> ProviderInfo:
-        from ...routes.cli_accounts import _detect_gemini_credentials, get_gemini_binary
+        from ...routes.cli_accounts import (
+            _detect_gemini_credentials,
+            get_antigravity_binary,
+        )
 
-        # Fast path: just check if gemini/antigravity binary exists on PATH
-        # (running `gemini --version` takes ~3s due to Node.js startup)
-        binary = get_gemini_binary()
+        # Fast path: just check if antigravity/gemini binary exists on PATH
+        # (running `--version` takes ~3s due to Node.js startup)
+        binary = get_antigravity_binary()
         installed = (shutil.which(binary) is not None) if not binary.startswith("/") else Path(binary).exists()
 
         authenticated, auth_method, _ = (False, None, None)
@@ -43,9 +49,10 @@ class GeminiProvider(ProviderStrategy):
             authenticated, auth_method, _ = _detect_gemini_credentials()
 
         return ProviderInfo(
+            # provider/icon kept as "gemini" for frontend back-compat.
             provider="gemini",
             available=installed and authenticated,
-            display_name="Gemini (Google)",
+            display_name="Antigravity (Google)",
             icon="gemini",
             auth_method=auth_method,
             models=GEMINI_MODELS if installed and authenticated else [],
@@ -60,7 +67,7 @@ class GeminiProvider(ProviderStrategy):
         model_config: dict | None,
         conversation_history: list[dict] | None,
     ) -> str:
-        from ...routes.cli_accounts import get_gemini_binary
+        from ...routes.cli_accounts import get_antigravity_binary
         cmd = ["bash", "-l", "-c"]
 
         effective_model = model or (model_config or {}).get("model", "gemini-2.5-flash")
@@ -76,17 +83,17 @@ class GeminiProvider(ProviderStrategy):
             if context_parts:
                 full_prompt = "\n".join(context_parts) + f"\n[user]: {message}"
 
-        binary = get_gemini_binary()
-        gemini_cmd = f"{shlex.quote(binary)} --model {shlex.quote(effective_model)} --prompt {shlex.quote(full_prompt)}"
+        binary = get_antigravity_binary()
+        antigravity_cmd = f"{shlex.quote(binary)} --model {shlex.quote(effective_model)} --prompt {shlex.quote(full_prompt)}"
 
-        cmd.append(gemini_cmd)
+        cmd.append(antigravity_cmd)
 
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         from ...utils.subprocess_env import make_subprocess_env
         env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
 
-        logger.info(f"[GeminiProvider] Starting: gemini --model {effective_model}")
+        logger.info(f"[AntigravityProvider] Starting: {binary} --model {effective_model}")
 
         try:
             await broadcast_event("insights:chunk", {
@@ -121,7 +128,7 @@ class GeminiProvider(ProviderStrategy):
             stderr_output = await proc.stderr.read()
             if proc.returncode != 0 and not accumulated.strip():
                 stderr_text = stderr_output.decode("utf-8", errors="replace").strip() if stderr_output else ""
-                error_msg = stderr_text or f"Gemini CLI exited with code {proc.returncode}"
+                error_msg = stderr_text or f"Antigravity CLI exited with code {proc.returncode}"
                 await broadcast_event("insights:chunk", {
                     "projectId": project_id,
                     "type": "error",
@@ -147,7 +154,7 @@ class GeminiProvider(ProviderStrategy):
             return accumulated
 
         except Exception as e:
-            logger.error(f"[GeminiProvider] Error: {e}", exc_info=True)
+            logger.error(f"[AntigravityProvider] Error: {e}", exc_info=True)
             await broadcast_event("insights:chunk", {
                 "projectId": project_id,
                 "type": "error",

@@ -8,7 +8,7 @@ import json
 import re
 import shutil
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from ..paths import get_data_dir
+from ..services import task_control
 from .projects import get_projects_file, load_projects
 
 router = APIRouter()
@@ -335,6 +336,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
                 f"[WorktreeSync] Syncing plan for {spec_id}: "
                 f"worktree has {worktree_completed} completed vs main {main_completed}"
             )
+            # Issue #259: control-plane state lives in task_control.json, NOT in
+            # the agent-written plan. Strip status/reviewReason from the worktree
+            # copy so a sync can never reset the human/system control decision.
+            task_control.strip_control_fields(worktree_plan)
             main_plan_file.write_text(json.dumps(worktree_plan, indent=2))
             return True
 
@@ -680,6 +685,22 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                 metadata["status"] = "ai_review"  # QA still in progress
         elif metadata["phase"]:
             metadata["status"] = "in_progress"
+
+    # Control-plane override (Issue #259): the dedicated control store is the
+    # authoritative source for board column / status and reviewReason. It is
+    # written ONLY by the web-server and is never touched by worktree sync, so
+    # a human/system control decision here wins over anything derived above
+    # from the agent-written implementation_plan.json / task_logs.json.
+    #
+    # When the store is absent it falls back (read-time) to any status/
+    # reviewReason still living in implementation_plan.json, so pre-#259 specs
+    # behave exactly as before.
+    control = task_control.read_control(spec_dir)
+    if control.get("status"):
+        metadata["status"] = control["status"]
+        # reviewReason is owned alongside status: take the store's value
+        # (which may be absent, meaning "no review reason").
+        metadata["reviewReason"] = control.get("reviewReason")
 
     return metadata
 
@@ -1109,6 +1130,177 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
     return project_id, spec_id, project_path, spec_dir
 
 
+@router.get("/{task_id}/token-usage")
+async def get_task_token_usage(task_id: str):
+    """Per-category token / cost breakdown for a task's session(s) (#262).
+
+    Returns the structured breakdown produced by the backend token-attribution
+    module: each source category (system/CLAUDE.md instructions, user messages,
+    team/coordination context, tool outputs, thinking+output) with its token
+    count, %-of-context-window and apportioned $ cost, plus session totals.
+
+    Reads the agent-written ``token_usage.json`` from the main spec dir (the
+    agent loop syncs it back from the worktree). Returns an empty (all-zero)
+    breakdown when no session has run yet — never 404 on a valid task, so the
+    UI can render a stable empty state.
+    """
+    project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+
+    # Prefer the main spec dir (synced from worktree). Fall back to the live
+    # worktree spec dir if the sync hasn't landed yet.
+    candidate = spec_dir / "token_usage.json"
+    if not candidate.exists():
+        worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
+        if worktree_spec_dir and (worktree_spec_dir / "token_usage.json").exists():
+            spec_dir = worktree_spec_dir
+
+    # Import the backend attribution reader (sys.path shim, same approach as
+    # reject_plan above — web-server doesn't always have backend on PYTHONPATH).
+    import sys
+
+    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+
+    try:
+        from agents.token_attribution import read_breakdown
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Token attribution module unavailable: {exc}",
+        ) from exc
+
+    return read_breakdown(spec_dir)
+
+
+def _not_running_resource_usage() -> dict:
+    """The point-in-time resource shape when no agent process is active.
+
+    Used both when the task has no live subprocess and as the degraded
+    fallback whenever sampling fails (dead/missing PID, psutil error, etc.).
+    """
+    return {
+        "running": False,
+        "pid": None,
+        "cpuPercent": 0.0,
+        "memoryMb": 0.0,
+        "memoryPercent": 0.0,
+        "sampledAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _sample_process_resources(pid: int) -> dict:
+    """Sample CPU%/RAM for ``pid`` (and its children) using psutil.
+
+    Returns the populated resource shape, or the not-running shape if the
+    PID is gone or sampling raises for any reason. Never propagates an
+    exception — the endpoint must degrade gracefully, not 500.
+
+    CPU% is measured with a short blocking ``interval`` so a single
+    point-in-time poll yields a meaningful number (psutil's non-blocking
+    mode returns 0.0 on the first call for a process it hasn't seen). The
+    parent's and children's percentages are summed so multi-process agent
+    runs (e.g. a CLI that spawns workers) report aggregate load.
+    """
+    try:
+        import psutil
+    except ImportError:
+        # psutil not installed — degrade rather than crash the endpoint.
+        return _not_running_resource_usage()
+
+    try:
+        proc = psutil.Process(pid)
+
+        # Gather parent + children once so we can sum CPU and RSS.
+        procs = [proc]
+        try:
+            procs.extend(proc.children(recursive=True))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+        # Prime CPU counters, then sample over a short interval. Priming on
+        # the parent is enough for it; children are primed implicitly by the
+        # first read and summed best-effort (0.0 on their first read is
+        # acceptable for a point-in-time poll the frontend repeats).
+        cpu_percent = 0.0
+        memory_mb = 0.0
+        for p in procs:
+            try:
+                if p.pid == pid:
+                    cpu_percent += p.cpu_percent(interval=0.1)
+                else:
+                    cpu_percent += p.cpu_percent(interval=None)
+                memory_mb += p.memory_info().rss / (1024 * 1024)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                # A child died mid-sample; skip it.
+                continue
+
+        # System RAM percentage from the aggregate RSS.
+        try:
+            total_ram = psutil.virtual_memory().total
+            memory_percent = (memory_mb * 1024 * 1024 / total_ram) * 100 if total_ram else 0.0
+        except Exception:
+            memory_percent = 0.0
+
+        return {
+            "running": True,
+            "pid": pid,
+            "cpuPercent": round(cpu_percent, 1),
+            "memoryMb": round(memory_mb, 1),
+            "memoryPercent": round(memory_percent, 2),
+            "sampledAt": datetime.now(timezone.utc).isoformat(),
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        # PID gone or inaccessible between the running-check and the sample.
+        return _not_running_resource_usage()
+    except Exception:
+        # Belt-and-braces: any unexpected psutil/OS error degrades cleanly.
+        return _not_running_resource_usage()
+
+
+@router.get("/{task_id}/resource-usage")
+async def get_task_resource_usage(task_id: str):
+    """Point-in-time CPU/RAM of the running agent subprocess for a task (#277).
+
+    The frontend polls this to drive a live per-agent resource panel. Returns
+    raw JSON (the api-client wraps it):
+
+        {
+          "running": bool,        # is an agent process active for this task
+          "pid": int | null,
+          "cpuPercent": number,   # process CPU% (parent + children), 0.0 when idle
+          "memoryMb": number,     # aggregate RSS in MB
+          "memoryPercent": number,# % of system RAM
+          "sampledAt": str        # ISO-8601 UTC
+        }
+
+    Behaviour:
+      - Unknown task → 404 (via ``_resolve_task``).
+      - Valid task with no live process → the not-running shape (never 404).
+      - Sampling is failure-safe: a dead/missing PID or psutil error degrades
+        to the not-running shape rather than raising.
+    """
+    # 404 only for an unknown task (bad format / missing project / missing spec).
+    _resolve_task(task_id)
+
+    from ..services.agent_service import get_agent_service
+
+    agent_service = get_agent_service()
+
+    # running_tasks maps task_id -> asyncio.subprocess.Process; .pid is the
+    # OS pid of the spawned agent CLI. Absence means no live agent process.
+    proc = agent_service.running_tasks.get(task_id)
+    if proc is None or proc.pid is None:
+        return _not_running_resource_usage()
+
+    # If the process object exists but has already exited, returncode is set —
+    # treat that as not-running too rather than sampling a reaped pid.
+    if getattr(proc, "returncode", None) is not None:
+        return _not_running_resource_usage()
+
+    return _sample_process_resources(proc.pid)
+
+
 @router.post("/{task_id}/clarifications", response_model=ClarificationResponse)
 async def generate_clarifications(task_id: str):
     """Generate clarification questions for a task using an LLM."""
@@ -1255,6 +1447,16 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
     plan["status"] = update.status
     plan_file.write_text(json.dumps(plan, indent=2))
 
+    # Issue #259: control-plane state (board column / status) is authoritative
+    # in the dedicated, agent-immutable store. Moving out of a human-review
+    # column clears the reviewReason.
+    task_control.write_control(
+        spec_dir,
+        status=update.status,
+        clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+        updated_by="web_user",
+    )
+
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
         _try_close_github_issue(project_path, spec_dir)
@@ -1331,6 +1533,14 @@ async def update_task(task_id: str, update: TaskUpdate):
 
         plan["status"] = update.status
         plan_file.write_text(json.dumps(plan, indent=2))
+
+        # Issue #259: mirror to the agent-immutable control store.
+        task_control.write_control(
+            spec_dir,
+            status=update.status,
+            clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+            updated_by="web_user",
+        )
 
     # Update requirements.json with title, description, and metadata
     requirements_file = spec_dir / "requirements.json"
@@ -1509,6 +1719,16 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
             plan_file.write_text(json.dumps(plan, indent=2))
             plan_updated = True
             logger.info("[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress")
+
+            # Issue #259: approving the plan moves the task out of human_review;
+            # record that in the agent-immutable control store and clear the
+            # plan_review reason.
+            task_control.write_control(
+                spec_dir,
+                status="in_progress",
+                clear_review_reason=True,
+                updated_by="web_user",
+            )
         except (json.JSONDecodeError, OSError) as e:
             import logging
             logging.getLogger(__name__).error(f"[ApprovePlan] Failed to update plan file: {e}")
@@ -4579,3 +4799,119 @@ async def detect_worktree_tools():
             "terminals": terminals
         }
     }
+
+
+# --------------------------------------------------------------------------
+# Inbox / inter-agent messaging (#264)
+# --------------------------------------------------------------------------
+
+
+class InboxMessageCreate(BaseModel):
+    """Request to deliver a directed message to a running task's agent."""
+
+    text: str = Field(..., min_length=1, description="Message body for the agent")
+    recipient: str = Field(
+        "agent",
+        description="Logical agent recipient (e.g. 'agent', 'coder', 'planner')",
+    )
+    sender: str = Field("user", description="Sender identity")
+    summary: str | None = Field(
+        None, description="Optional short summary (auto-derived if omitted)"
+    )
+
+
+class InboxMessage(BaseModel):
+    """A stored inbox message."""
+
+    from_: str = Field(..., alias="from")
+    text: str
+    summary: str
+    timestamp: str
+    messageId: str
+    read: bool
+
+    model_config = {"populate_by_name": True}
+
+
+class InboxEnqueueResponse(BaseModel):
+    """Response after enqueuing an inbox message."""
+
+    messageId: str
+    delivered: bool
+    recipient: str
+
+
+def _inbox_target_spec_dir(project_path: Path, spec_id: str, spec_dir: Path) -> Path:
+    """Resolve where to write the inbox so a RUNNING agent will see it.
+
+    A running build executes inside its isolated worktree, reading from the
+    worktree spec dir. If that worktree exists we target it; otherwise we fall
+    back to the main spec dir (message will be picked up when a build starts).
+    """
+    worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
+    return worktree_spec_dir if worktree_spec_dir else spec_dir
+
+
+@router.post(
+    "/{task_id}/inbox",
+    response_model=InboxEnqueueResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def enqueue_inbox_message(task_id: str, message: InboxMessageCreate):
+    """Deliver a directed message to a task's agent inbox (#264).
+
+    The message is written atomically and verified on disk. The returned
+    `delivered` flag is the read-back proof that the message persisted.
+    """
+    from ..services import inbox_service
+
+    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
+
+    try:
+        result = inbox_service.enqueue(
+            target_dir,
+            text=message.text,
+            recipient=message.recipient,
+            sender=message.sender,
+            summary=message.summary,
+        )
+    except inbox_service.DeliveryVerificationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Message could not be verified after write: {exc}",
+        ) from exc
+    except inbox_service.InboxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    return InboxEnqueueResponse(
+        messageId=result["messageId"],
+        delivered=result["delivered"],
+        recipient=result["recipient"],
+    )
+
+
+@router.get("/{task_id}/inbox", response_model=list[InboxMessage])
+async def list_inbox_messages(
+    task_id: str,
+    recipient: str = Query("agent", description="Recipient inbox to read"),
+    unread_only: bool = Query(False, description="Only return unread messages"),
+):
+    """List messages in a task's agent inbox."""
+    from ..services import inbox_service
+
+    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
+
+    try:
+        messages = inbox_service.list_messages(
+            target_dir, recipient=recipient, unread_only=unread_only
+        )
+    except inbox_service.InboxError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+    return [InboxMessage(**m) for m in messages]

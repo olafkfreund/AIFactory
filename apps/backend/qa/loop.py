@@ -41,6 +41,11 @@ from .report import (
     is_no_test_project,
     record_iteration,
 )
+from .review_cycle import (
+    record_started,
+    request_review,
+    resolve_review,
+)
 from .reviewer import run_qa_agent_session
 
 # Configuration
@@ -67,8 +72,9 @@ def _create_qa_reviewer_provider(
     callers don't need to know about each provider's constructor signature.
 
     Args:
-        provider_name: Provider identifier (e.g., "claude", "gemini", "codex",
-            "ollama").  Aliases accepted by the factory are also valid.
+        provider_name: Provider identifier (e.g., "claude", "antigravity",
+            "codex", "ollama").  Aliases accepted by the factory (including
+            the legacy "gemini") are also valid.
         project_dir: Project root directory (passed to Claude and CLI providers
             as the working directory).
         spec_dir: Spec directory (required by ClaudeProvider for config lookup).
@@ -96,7 +102,7 @@ def _create_qa_reviewer_provider(
     if normalised in {"codex", "codex-cli", "openai-codex"}:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
-    if normalised in {"gemini", "gemini-cli", "google"}:
+    if normalised in {"antigravity", "antigravity-cli", "gemini", "gemini-cli", "google"}:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
     # openai-compatible needs base_url + api_key from the saved llm_endpoint row.
@@ -301,6 +307,17 @@ async def run_qa_validation_loop(
             qa_thinking_budget,
         )
 
+        # Open a new, monotonically-numbered review cycle for THIS iteration.
+        # A fresh cycle id means engagement proof / resolutions from any prior
+        # iteration can never be mistaken for this request (see review_cycle).
+        review_cycle = request_review(spec_dir)
+        debug(
+            "qa_loop",
+            "Opened review cycle",
+            cycle_id=review_cycle.cycle_id,
+            state=review_cycle.state.value,
+        )
+
         async with reviewer_provider:
             debug("qa_loop", "Running QA reviewer agent session...")
             status, response = await run_qa_agent_session(
@@ -322,11 +339,42 @@ async def run_qa_validation_loop(
             response_length=len(response),
         )
 
+        # Engagement proof: a reviewer that returned a real verdict
+        # (approved/rejected) or produced any output has provably STARTED this
+        # cycle. A bare request with no session output records NO proof and so
+        # stays detectable as untouched. Guard the write so review-cycle
+        # bookkeeping never breaks the QA loop itself.
+        if status in ("approved", "rejected") or response:
+            try:
+                record_started(
+                    spec_dir,
+                    cycle_id=review_cycle.cycle_id,
+                    marker="reviewer_verdict"
+                    if status in ("approved", "rejected")
+                    else "reviewer_output",
+                    detail={"status": status, "qa_iteration": qa_iteration},
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                debug_warning(
+                    "qa_loop",
+                    f"Failed to record review engagement proof: {exc}",
+                )
+
         if status == "approved":
             emit_phase(ExecutionPhase.COMPLETE, "QA validation passed")
             # Reset error tracking on success
             consecutive_errors = 0
             last_error_context = None
+
+            # Resolve this review cycle exactly once (approved). resolve_review
+            # rejects an un-started or already-terminal cycle, so this can only
+            # succeed when the reviewer provably engaged.
+            try:
+                resolve_review(
+                    spec_dir, cycle_id=review_cycle.cycle_id, approved=True
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                debug_warning("qa_loop", f"Review-cycle resolve (approved) skipped: {exc}")
 
             # Record successful iteration
             debug_success(
@@ -360,6 +408,16 @@ async def run_qa_validation_loop(
             # Reset error tracking on valid response (rejected is a valid response)
             consecutive_errors = 0
             last_error_context = None
+
+            # Resolve this review cycle exactly once (changes_requested).
+            try:
+                resolve_review(
+                    spec_dir, cycle_id=review_cycle.cycle_id, approved=False
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                debug_warning(
+                    "qa_loop", f"Review-cycle resolve (changes_requested) skipped: {exc}"
+                )
 
             debug_warning(
                 "qa_loop",

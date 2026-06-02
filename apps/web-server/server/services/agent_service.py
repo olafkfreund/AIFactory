@@ -20,6 +20,7 @@ from typing import Any
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
+from . import task_control
 from ..websockets.events import (
     emit_subtask_update,
     emit_task_logs_stream,
@@ -152,6 +153,46 @@ def phase_to_review_reason(phase: TaskPhase) -> str | None:
         TaskPhase.FAILED: "errors",
     }
     return mapping.get(phase)
+
+
+# Subtask statuses that count as "did not succeed" when deciding whether a
+# build that exited cleanly actually produced anything (Issue #287).
+_FAILED_SUBTASK_STATUSES = frozenset({"failed", "stuck", "error", "blocked"})
+
+
+def is_failed_build(plan: dict) -> bool:
+    """Return True when a finished build did NOT actually succeed.
+
+    Issue #287: a build whose process exits 0 but where NO subtask completed
+    and at least one subtask failed/stuck still got mapped to the COMPLETED
+    phase → ``human_review`` + reviewReason ``"completed"``, masking total
+    failure as review-ready success (empty diff, "0 done / N failed").
+
+    Conservative by design — only flips to failure when there was genuinely
+    no progress:
+
+    - At least one subtask exists (an empty/invalid plan is handled elsewhere).
+    - ZERO subtasks reached ``completed``.
+    - At least one subtask is in a failed/stuck state.
+
+    A build with SOME completed subtasks (even alongside failures) is a real
+    partial-review case and returns False, preserving the genuine human-review
+    path. An all-pending plan (e.g. nothing ran) also returns False so we don't
+    mislabel other flows.
+    """
+    completed = 0
+    failed = 0
+    total = 0
+    for phase in plan.get("phases", []):
+        for subtask in phase.get("subtasks", []):
+            total += 1
+            status = subtask.get("status", "pending")
+            if status == "completed":
+                completed += 1
+            elif status in _FAILED_SUBTASK_STATUSES:
+                failed += 1
+
+    return total > 0 and completed == 0 and failed >= 1
 
 
 # Phase ranges for overall progress scaling (start%, end%)
@@ -1402,6 +1443,11 @@ class AgentService:
             "requirements.json",
         ]
 
+        # NOTE: task_control.json and qa_review_cycle.json are deliberately
+        # ABSENT from files_to_sync. Both are authoritative state owned outside
+        # the agent's worktree (control-plane #259, QA review-cycle #260) and a
+        # worktree copy must never reset or replay them.
+
         # Directories to sync (will copy entire directory tree)
         dirs_to_sync = [
             "memory",  # Session insights and memory data
@@ -1413,16 +1459,21 @@ class AgentService:
             dst = main_spec / filename
             if src.exists():
                 try:
-                    # For implementation_plan.json, preserve status and reviewReason from main spec
-                    # These fields are set by _update_plan_status and shouldn't be overwritten
+                    # For implementation_plan.json we still merge SUBTASK status
+                    # forward-only (a legitimate agent-artifact concern), but we
+                    # NO LONGER preserve control-plane status/reviewReason here.
+                    #
+                    # Issue #259: control-plane state (board column / task status
+                    # / reviewReason) now lives in the dedicated, agent-immutable
+                    # task_control.json store. We STRIP those fields from the
+                    # worktree copy so an agent sync can never reset the
+                    # human/system control decision — replacing the brittle
+                    # "preserve-then-fall-back-to-raw-copy" workaround that, on
+                    # any merge error, used to clobber the control state.
                     if filename == "implementation_plan.json" and dst.exists():
                         try:
                             main_plan = json.loads(dst.read_text())
                             worktree_plan = json.loads(src.read_text())
-
-                            # Preserve top-level fields from main spec
-                            preserved_status = main_plan.get("status")
-                            preserved_reason = main_plan.get("reviewReason")
 
                             # Build map of main spec subtask statuses
                             STATUS_ORDER = {"pending": 0, "in_progress": 1, "completed": 2, "failed": 2}
@@ -1436,11 +1487,10 @@ class AgentService:
                             # Start from worktree plan (has latest structure)
                             merged_plan = worktree_plan
 
-                            # Restore preserved top-level fields
-                            if preserved_status:
-                                merged_plan["status"] = preserved_status
-                            if preserved_reason:
-                                merged_plan["reviewReason"] = preserved_reason
+                            # Control-plane fields never belong in the plan file
+                            # anymore — drop them so the reader can't pick a stale
+                            # agent value over the dedicated control store.
+                            task_control.strip_control_fields(merged_plan)
 
                             # Prevent subtask status regressions
                             for phase in merged_plan.get("phases", []):
@@ -1454,8 +1504,19 @@ class AgentService:
 
                             dst.write_text(json.dumps(merged_plan, indent=2))
                         except (json.JSONDecodeError, OSError) as merge_err:
-                            logger.warning(f"[AgentService] Failed to merge implementation_plan.json, falling back to copy: {merge_err}")
-                            shutil.copy2(src, dst)
+                            # Even the error path must not reintroduce control
+                            # fields: strip them before copying the raw worktree
+                            # plan in.
+                            logger.warning(f"[AgentService] Failed to merge implementation_plan.json, falling back to stripped copy: {merge_err}")
+                            try:
+                                raw = json.loads(src.read_text())
+                                task_control.strip_control_fields(raw)
+                                dst.write_text(json.dumps(raw, indent=2))
+                            except (json.JSONDecodeError, OSError):
+                                # Last resort: a raw copy. Control state is still
+                                # safe because the reader trusts task_control.json
+                                # over the plan file.
+                                shutil.copy2(src, dst)
                     else:
                         shutil.copy2(src, dst)
                     synced_count += 1
@@ -1646,6 +1707,23 @@ class AgentService:
                     # Process still running, sync files
                     if project_path and spec_id:
                         await self._sync_worktree_files(project_path, spec_id, task_id)
+
+                        # #260: re-drive a peer review that was requested but
+                        # never started — first an inbox nudge to the running
+                        # reviewer, then escalation to human_review. Idempotent
+                        # within its back-off window; never raises.
+                        try:
+                            from . import review_redrive_service
+
+                            await asyncio.to_thread(
+                                review_redrive_service.check_review_obligation,
+                                project_path,
+                                spec_id,
+                            )
+                        except Exception as redrive_exc:  # noqa: BLE001
+                            logger.debug(
+                                f"[AgentService] review re-drive check skipped: {redrive_exc}"
+                            )
 
                     # Fix Bug #3: For spec creation, check if review checkpoint reached while process is running
                     if project_path and not spec_id:
@@ -2016,7 +2094,31 @@ class AgentService:
 
             # Get actual phase BEFORE cleanup (needed for proper status emission)
             actual_phase = self._get_current_phase(task_id)
-            final_status = "completed" if return_code == 0 else "failed"
+
+            # Issue #287: a clean process exit (return_code == 0) does NOT mean
+            # the build succeeded. The coder loop exits 0 even when every
+            # subtask failed/stuck and no code was produced. Treat a finished
+            # build that made zero progress (0 completed + >=1 failed/stuck) as
+            # a FAILED build so it lands in human_review + reviewReason
+            # "errors" (needs attention) instead of being masked as
+            # "completed". Builds with at least one completed subtask keep the
+            # genuine success / partial-review path untouched.
+            build_succeeded = return_code == 0
+            if build_succeeded and spec_id and project_path:
+                plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
+                if plan_file.exists():
+                    try:
+                        if is_failed_build(json.loads(plan_file.read_text())):
+                            build_succeeded = False
+                            logger.warning(
+                                f"[AgentService] Build {spec_id} exited cleanly but no "
+                                f"subtask completed and at least one failed — marking "
+                                f"the build as FAILED (needs attention), not completed."
+                            )
+                    except (json.JSONDecodeError, OSError) as e:
+                        logger.warning(f"[AgentService] Could not evaluate build success for {spec_id}: {e}")
+
+            final_status = "completed" if build_succeeded else "failed"
 
             # Finalize and clean up log writers
             if task_id in self._task_log_writers:
@@ -2114,7 +2216,7 @@ class AgentService:
             # 5-event flurry + phase:N/A blip — kept the file write here,
             # moved the WebSocket events to the explicit _emit_progress.
             if spec_id and project_path:
-                status = "completed" if return_code == 0 else "failed"
+                status = "completed" if build_succeeded else "failed"
                 logger.info(f"[AgentService._monitor_process] About to call _update_plan_status: spec_id={spec_id}, status={status}, task_id={task_id}, project_path={project_path}")
                 await self._update_plan_status(
                     project_path, spec_id, status, task_id, emit_events=False
@@ -2127,7 +2229,11 @@ class AgentService:
             # Emit completion/failure progress with previous_phase to trigger status event
             # NOTE: Cleanup is deferred until AFTER these emissions so _emit_progress
             # can still read _spec_dirs (for plan file), _task_sequence_numbers, and _task_start_times
-            if return_code == 0:
+            # Use build_succeeded (not raw return_code): a clean exit with no
+            # successful subtask (Issue #287) is emitted as FAILED so the
+            # frontend lands in human_review + "errors" (needs attention)
+            # rather than human_review + "completed".
+            if build_succeeded:
                 await self._emit_progress(
                     TaskProgress(
                         task_id=task_id,
@@ -2153,12 +2259,20 @@ class AgentService:
                     except Exception:
                         logger.debug("Failed to send task completion notification", exc_info=True)
             else:
-                logger.error(f"[AgentService] Task {task_id} failed with exit code {return_code}")
+                if return_code == 0:
+                    fail_message = "Build finished but no subtask completed — needs attention"
+                    logger.error(
+                        f"[AgentService] Task {task_id} exited cleanly but produced no "
+                        f"completed subtasks — treating as failed build (#287)"
+                    )
+                else:
+                    fail_message = f"Task failed with exit code {return_code}"
+                    logger.error(f"[AgentService] Task {task_id} failed with exit code {return_code}")
                 await self._emit_progress(
                     TaskProgress(
                         task_id=task_id,
                         phase=TaskPhase.FAILED,
-                        message=f"Task failed with exit code {return_code}",
+                        message=fail_message,
                     ),
                     previous_phase=actual_phase,  # Enable status event emission
                 )
@@ -2171,7 +2285,7 @@ class AgentService:
                             user_id=_notif_user_id,
                             type="task_failed",
                             title=f"Task failed: {spec_id}",
-                            message=f"Task {spec_id} in project {_proj_name} failed with exit code {return_code}.",
+                            message=f"Task {spec_id} in project {_proj_name} failed: {fail_message}.",
                             data={"task_id": task_id, "project_id": _proj_id},
                         )
                     except Exception:
@@ -2261,9 +2375,13 @@ class AgentService:
         try:
             plan = json.loads(plan_file.read_text())
 
-            # Don't overwrite if user explicitly marked task as done via kanban
-            if plan.get("status") == "done":
-                logger.info(f"[AgentService._update_plan_status] Plan status is 'done' (user-set), skipping overwrite for {spec_id}")
+            # Don't overwrite if user explicitly marked task as done via kanban.
+            # Issue #259: the control store is the source of truth for this; fall
+            # back to the plan file for pre-#259 specs (read_control migrates it).
+            spec_dir = plan_file.parent
+            control_status = task_control.read_control(spec_dir).get("status")
+            if control_status == "done" or plan.get("status") == "done":
+                logger.info(f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {spec_id}")
                 return
 
             # Fix 2: Validate that the plan is not just a minimal status object
@@ -2273,17 +2391,36 @@ class AgentService:
                 if emit_events:
                     await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
                 return
+
+            # Compute the control-plane status/reviewReason this checkpoint sets.
+            new_review_reason: str | None = None
             if phase_enum:
-                plan["status"] = phase_to_status(phase_enum)
-                review_reason = phase_to_review_reason(phase_enum)
-                if review_reason:
-                    plan["reviewReason"] = review_reason
+                new_status = phase_to_status(phase_enum)
+                new_review_reason = phase_to_review_reason(phase_enum)
             else:
-                plan["status"] = status
+                new_status = status
+
+            # Keep writing status/reviewReason into the plan file for backward
+            # compatibility with any reader that hasn't migrated, but the
+            # authoritative copy is task_control.json below.
+            plan["status"] = new_status
+            if new_review_reason:
+                plan["reviewReason"] = new_review_reason
 
             logger.info(f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}")
             plan_file.write_text(json.dumps(plan, indent=2))
             logger.info("[AgentService._update_plan_status] Successfully wrote plan_file")
+
+            # Issue #259: persist the authoritative control-plane state. This is
+            # the web-server's OWN orchestration writing a terminal/checkpoint
+            # status — it is control-plane, not an agent artifact.
+            task_control.write_control(
+                spec_dir,
+                status=new_status,
+                review_reason=new_review_reason,
+                clear_review_reason=new_review_reason is None,
+                updated_by="web_server",
+            )
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
             # Extract subtasks for WebSocket broadcast

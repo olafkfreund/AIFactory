@@ -41,10 +41,37 @@ from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
 
+# Default to the codex account default (no explicit model) rather than a
+# concrete model id.  A ChatGPT-account codex login rejects ANY explicit
+# `--model` ("...not supported when using Codex with a ChatGPT account",
+# HTTP 400) — only codex's implicit default works for those accounts.  An
+# API-key account can still pass a real model id explicitly (e.g.
+# "gpt-5.3-codex"), which is forwarded unchanged.  (#293)
 _DEFAULT_CODEX_PATH: str = "codex"
-_DEFAULT_MODEL: str = "gpt-5.3-codex"
+_DEFAULT_MODEL: str = ""  # empty => use codex's account default (no model sent)
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+
+# Model strings that mean "let codex use the authenticated account's default
+# model" — i.e. do NOT send a `model` field in the MCP tool call.  These are
+# the values a ChatGPT-account user should select so codex picks its own
+# implicit default.  Matched case-insensitively after stripping whitespace.
+_ACCOUNT_DEFAULT_MODELS: frozenset[str] = frozenset(
+    {"", "codex", "codex:default", "codex-default", "default"}
+)
+
+
+def _is_account_default(model: str | None) -> bool:
+    """True when ``model`` means "use codex's account default" (omit model).
+
+    A ChatGPT-account codex login rejects every explicit model, so the codex
+    provider must send NO ``model`` field for these sentinel values.  An
+    explicit model id (e.g. ``gpt-5.3-codex``) returns False and is forwarded
+    unchanged so API-key accounts keep working.  (#293)
+    """
+    if model is None:
+        return True
+    return model.strip().lower() in _ACCOUNT_DEFAULT_MODELS
 
 # MCP protocol constants
 _MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -75,11 +102,19 @@ class CodexAgenticProvider(BaseLLMProvider):
         working_dir: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
-        if model and not _MODEL_NAME_RE.match(model):
-            raise ValueError(
-                f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
-            )
-        self._model = model
+        # Normalise the "account default" sentinels ("", "codex",
+        # "codex:default", ...) to an empty string so the model field is never
+        # sent in the MCP request — required for ChatGPT-account codex logins
+        # which reject any explicit model.  Concrete model ids are validated and
+        # kept verbatim so API-key accounts still get their chosen model.  (#293)
+        if _is_account_default(model):
+            self._model = ""
+        else:
+            if not _MODEL_NAME_RE.match(model):
+                raise ValueError(
+                    f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
+                )
+            self._model = model
         self._codex_path = codex_path
         self._timeout = timeout
         self._working_dir = working_dir
@@ -193,16 +228,18 @@ class CodexAgenticProvider(BaseLLMProvider):
 
         # Send initialize
         init_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": init_id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": _MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": _CLIENT_INFO,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": init_id,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": _MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": _CLIENT_INFO,
+                },
+            }
+        )
 
         response = await self._read_response(init_id)
         server_info = response.get("result", {}).get("serverInfo", {})
@@ -249,11 +286,15 @@ class CodexAgenticProvider(BaseLLMProvider):
     async def _run_codex_mcp(self) -> AsyncGenerator[Any, None]:
         """Call the 'codex' tool via MCP and yield the response."""
         if not self._pending_prompt:
-            logger.warning("CodexAgenticProvider.receive_response() called before query()")
+            logger.warning(
+                "CodexAgenticProvider.receive_response() called before query()"
+            )
             return
 
         if not self._proc:
-            raise RuntimeError("MCP server not running — use 'async with' context manager")
+            raise RuntimeError(
+                "MCP server not running — use 'async with' context manager"
+            )
 
         # Build tool call arguments
         arguments: dict[str, Any] = {
@@ -275,15 +316,17 @@ class CodexAgenticProvider(BaseLLMProvider):
             arguments["threadId"] = self._thread_id
 
         call_id = self._next_id()
-        await self._send_message({
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": arguments,
-            },
-        })
+        await self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": call_id,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            }
+        )
 
         logger.info(
             "CodexAgenticProvider: sent %s call (id=%d, model=%s, cwd=%s)",
@@ -319,6 +362,42 @@ class CodexAgenticProvider(BaseLLMProvider):
             len(response_text),
             thread_id or "none",
         )
+
+        # Detect error JSON returned as content text by the Codex MCP server.
+        # When the model is not available for the authenticated account (e.g.
+        # "gpt-5.3-codex" requires an OpenAI API key, not a ChatGPT account),
+        # the MCP tool returns a JSON payload with "type":"error" as the sole
+        # content block instead of raising an MCP-level error response.  If we
+        # yield this as an AssistantMessage the coder loop treats the turn as a
+        # successful text exchange, the subtask stays "pending" or "in_progress",
+        # no files are written, and every subtask is eventually marked failed
+        # after 3 silent retries.
+        #
+        # Raise a RuntimeError here so the coder loop surfaces the real error
+        # message to the operator and counts the turn as an "error" status —
+        # not a silent no-op retry.  (#286)
+        #
+        # NOTE: do not use string-contains to pre-check for '"type":"error"' —
+        # JSON serialisers vary in whether they emit spaces after colons, so
+        # both '"type":"error"' and '"type": "error"' can appear.  Just parse
+        # any response that starts with '{' and check the decoded value.
+        _stripped = response_text.strip()
+        if _stripped.startswith("{"):
+            try:
+                _err_payload = json.loads(_stripped)
+            except json.JSONDecodeError:
+                _err_payload = {}
+            if _err_payload.get("type") == "error":
+                _err_obj = _err_payload.get("error", {})
+                _err_msg = (
+                    _err_obj.get("message")
+                    if isinstance(_err_obj, dict)
+                    else str(_err_obj)
+                ) or str(_err_payload)
+                _http_status = _err_payload.get("status", "?")
+                raise RuntimeError(
+                    f"Codex MCP returned an error (HTTP {_http_status}): {_err_msg}"
+                )
 
         yield AssistantMessage(content=[TextBlock(text=response_text)])
 

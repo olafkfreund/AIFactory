@@ -577,12 +577,16 @@ def infer_provider_from_model(model: str) -> str:
 
     studio:* prefix -> 'openai-compatible' (Google AI Studio OpenAI-compatible endpoint)
     ollama:* prefix -> 'ollama'
+    opencode:* prefix -> 'opencode' (OpenCode CLI runtime; model form opencode:<provider/model>)
     openai:* or openai-compatible:* prefix -> 'openai-compatible'
     bedrock/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
-    gpt-* or *codex* IDs -> 'codex'
-    gemini-* IDs -> 'gemini'
+    gpt-* or *codex* IDs (incl. bare 'codex' / 'codex:default' = account
+        default, no explicit model) or bare 'default' -> 'codex'
+    antigravity / antigravity-* / gemini-* IDs -> 'antigravity'
+        (gemini-* is kept for back-compat — the Antigravity CLI still serves
+        Google's gemini-* model strings)
     Otherwise -> check QA_LLM_PROVIDER env var, then default 'claude'
 
     Note on bedrock/* and vertex_ai/* prefixes:
@@ -599,8 +603,8 @@ def infer_provider_from_model(model: str) -> str:
         model: Model shorthand or full model ID
 
     Returns:
-        Provider name string (e.g., "claude", "codex", "gemini", "ollama",
-        "openai-compatible")
+        Provider name string (e.g., "claude", "codex", "antigravity",
+        "ollama", "openai-compatible")
     """
     m = model.strip().lower()
 
@@ -617,6 +621,16 @@ def infer_provider_from_model(model: str) -> str:
     # names (claude-sonnet-4.5, gpt-5) would otherwise route to claude/codex.
     if m.startswith("copilot:"):
         return "copilot"
+
+    # Explicit prefix: "opencode:provider/model" — OpenCode CLI runtime.
+    # Checked before the claude-*/gpt-*/codex rules below because OpenCode's
+    # native model strings ("anthropic/claude-...", "openai/gpt-4o") and the
+    # literal substring "opencode" (contains "codex"? no, but "code") could
+    # otherwise be mis-routed.  The "codex" substring rule in particular would
+    # never match "opencode", but routing the explicit prefix first keeps the
+    # provider selection unambiguous.
+    if m.startswith("opencode:"):
+        return "opencode"
 
     # Explicit prefix for OpenAI-compatible endpoints (LM Studio, vLLM,
     # OpenRouter, Together, Groq, LocalAI, ...).  Connection details come
@@ -638,13 +652,25 @@ def infer_provider_from_model(model: str) -> str:
     if m in MODEL_ID_MAP or m.startswith("claude-"):
         return "claude"
 
-    # OpenAI Codex models
-    if m.startswith("gpt-") or "codex" in m:
+    # OpenAI Codex models.  A bare "codex" (or "codex:default" / "codex-default"
+    # / "default") routes here with NO concrete model id — the provider then
+    # sends no `model` field to the MCP request and codex uses its account
+    # default.  This is the model string ChatGPT-account users should pick,
+    # since a ChatGPT-account login rejects every explicit model.  Concrete ids
+    # ("gpt-5.3-codex", "o4-mini", ...) also route here and are forwarded as-is
+    # for API-key accounts.  (#293)
+    if m == "default" or m.startswith("gpt-") or "codex" in m:
         return "codex"
 
-    # Google Gemini models
+    # Antigravity CLI (Google).  Canonical IDs are "antigravity" /
+    # "antigravity-*".  Legacy "gemini-*" model strings still route here
+    # (back-compat) — the Antigravity CLI serves Google's gemini-* models.
+    if m == "antigravity" or m.startswith("antigravity-") or m.startswith(
+        "antigravity:"
+    ):
+        return "antigravity"
     if m.startswith("gemini"):
-        return "gemini"
+        return "antigravity"
 
     # Env fallback for unknown models (e.g., ollama custom models)
     env_provider = os.environ.get("QA_LLM_PROVIDER", "").strip()
@@ -661,7 +687,14 @@ def strip_provider_prefix(model: str) -> str:
     The factory and providers expect a bare model name.  When a user picks
     ``openai-compatible:gpt-4o-mini``, the provider only needs ``gpt-4o-mini``.
     """
-    for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:", "copilot:"):
+    for prefix in (
+        "openai-compatible:",
+        "openai:",
+        "ollama:",
+        "studio:",
+        "copilot:",
+        "opencode:",
+    ):
         if model.lower().startswith(prefix):
             return model[len(prefix) :]
     return model
@@ -763,7 +796,31 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
         # can route to the correct backend.  base_url is resolved by the
         # openai_compatible provider via _gateway.resolve_base_url().
         gateway_url = os.environ.get("LITELLM_GATEWAY_URL", "").strip()
-        return {"model": model.strip(), "base_url": gateway_url}
+        # Data-plane auth: a production LiteLLM proxy is started with a master
+        # key and/or per-tenant virtual keys, so it rejects unauthenticated
+        # /v1/chat/completions calls with 401.  Without a Bearer token here the
+        # provider sends no Authorization header and the whole Bedrock/Vertex
+        # path 401s — this was the broken LiteLLM-routed path.  Read the
+        # deployment-wide gateway key from env (LITELLM_API_KEY, matching the
+        # verify-routing curl in docs/concepts/cloud-llm-routing.md), falling
+        # back to the generic OpenAI-compatible key env vars so existing
+        # single-key deployments keep working.
+        # TODO(Epic #35 #38 PR-2b): inject the caller's *per-org* LiteLLM
+        # virtual key (sk-... minted via POST /key/generate) instead of a
+        # deployment-wide key once org context is plumbed through this call —
+        # that enables per-tenant budget/allowlist enforcement.  Requires a
+        # live LiteLLM proxy + minted virtual key to validate end-to-end.
+        gateway_key = (
+            os.environ.get("LITELLM_API_KEY", "").strip()
+            or os.environ.get("OPENAI_COMPATIBLE_API_KEY", "").strip()
+            or os.environ.get("OPENAI_API_KEY", "").strip()
+            or None
+        )
+        return {
+            "model": model.strip(),
+            "base_url": gateway_url,
+            "api_key": gateway_key,
+        }
 
     stripped = strip_provider_prefix(model).strip()
 
@@ -824,7 +881,7 @@ def get_provider_extra_kwargs(provider_name: str, model: str) -> dict:
 PROVIDER_AGENTIC_SUPPORT = {
     "claude",
     "codex",
-    "gemini",
+    "antigravity",
     "ollama",
     "openai-compatible",
 }

@@ -343,6 +343,14 @@ async def run_agent_session(
             - "type": "tool_concurrency", "rate_limit", "authentication", or "other"
             - "message": Sanitized error message string
             - "exception_type": Exception class name string
+
+        On a non-error session ``error_info`` carries a ``"usage"`` key with the
+        aggregated real SDK usage for the session, used by per-category token
+        attribution (#262):
+            - "input_tokens", "output_tokens", "cache_read_tokens",
+              "cache_creation_tokens": summed across the session's turns
+            - "cost_usd": summed ``ResultMessage.total_cost_usd``
+            - "tool_output_chars": observed tool-result character volume
     """
     debug_section("session", f"Agent Session - {phase.value}")
     debug(
@@ -374,6 +382,11 @@ async def run_agent_session(
         _cache_read_total = 0
         _cache_write_total = 0
         _last_session_id: str | None = None
+        # Real SDK usage accumulators for per-category token attribution (#262).
+        _input_tokens_total = 0
+        _output_tokens_total = 0
+        _cost_usd_total = 0.0
+        _tool_output_chars = 0
         debug("session", "Starting to receive response stream...")
         async for msg in safe_receive_messages(client, caller="session"):
             msg_type = type(msg).__name__
@@ -459,6 +472,9 @@ async def run_agent_session(
                     if block_type == "ToolResultBlock":
                         result_content = getattr(block, "content", "")
                         is_error = getattr(block, "is_error", False)
+                        # Track tool-result volume for token attribution (#262):
+                        # these results become input on the next turn.
+                        _tool_output_chars += len(str(result_content))
 
                         # Check if command was blocked by security hook
                         if "blocked" in str(result_content).lower():
@@ -565,6 +581,12 @@ async def run_agent_session(
                 _cache_read_total += _cache_read
                 _cache_write_total += _cache_write
                 _last_session_id = getattr(msg, "session_id", _last_session_id)
+                # Accumulate real usage for per-category token attribution (#262).
+                _input_tokens_total += _input_tokens
+                _output_tokens_total += int(_usage.get("output_tokens", 0) or 0)
+                _cost = getattr(msg, "total_cost_usd", None)
+                if _cost:
+                    _cost_usd_total += float(_cost)
 
         # Aggregated cache totals — one line per agent session so operators
         # can confirm the static prefix is being reused across turns.
@@ -578,6 +600,18 @@ async def run_agent_session(
 
         print("\n" + "-" * 70 + "\n")
 
+        # Per-category token attribution payload (#262). Carried on the
+        # otherwise-empty success ``error_info`` so the agent loop can
+        # attribute these real numbers across prompt-segment categories.
+        usage_payload = {
+            "input_tokens": _input_tokens_total,
+            "output_tokens": _output_tokens_total,
+            "cache_read_tokens": _cache_read_total,
+            "cache_creation_tokens": _cache_write_total,
+            "cost_usd": _cost_usd_total,
+            "tool_output_chars": _tool_output_chars,
+        }
+
         # Check if build is complete
         if is_build_complete(spec_dir):
             debug_success(
@@ -587,7 +621,7 @@ async def run_agent_session(
                 tool_count=tool_count,
                 response_length=len(response_text),
             )
-            return "complete", response_text, {}
+            return "complete", response_text, {"usage": usage_payload}
 
         debug_success(
             "session",
@@ -596,7 +630,7 @@ async def run_agent_session(
             tool_count=tool_count,
             response_length=len(response_text),
         )
-        return "continue", response_text, {}
+        return "continue", response_text, {"usage": usage_payload}
 
     except Exception as e:
         # Detect specific error types for better retry handling

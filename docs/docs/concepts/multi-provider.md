@@ -18,6 +18,14 @@ AIFactory routes each pipeline phase to its own model. You can plan with Claude 
 | **Ollama** | `qwen2.5-coder:*`, `qwen3-coder:*`, `llama3.x:*`, `deepseek-coder:*`, any local model | Free, offline, air-gapped coding. Needs an adequately-sized model + GPU — see [Local models: sizing & hardware](#local-models-sizing--hardware) |
 | **OpenAI** | `gpt-4o`, `gpt-4.1`, `o3-mini` | Drop-in alternative where licensing or compliance prefers it |
 | **OpenAI-compatible** | LM Studio, vLLM, OpenRouter, Together, Groq, LocalAI | Any endpoint that speaks the OpenAI `/v1/chat/completions` shape |
+| **OpenCode CLI** *(community / self-host tier)* | `opencode:<provider/model>`, e.g. `opencode:anthropic/claude-sonnet-4-5` | Run builds through the [OpenCode](https://opencode.ai) CLI runtime. **Not enterprise-certified** — its model catalogue comes from the remote `models.dev` registry, so models can change/disappear (there is no guaranteed free default). See the [tier note](#provider-tiers) below |
+
+## Provider tiers
+
+Not every provider carries the same support guarantees:
+
+- **Enterprise-certified** — Claude (Agent SDK), Codex, AWS Bedrock, and Azure OpenAI. Stable model catalogues, compliance posture, and the integrations enterprise deployments depend on. **Use one of these for production / regulated workloads.**
+- **Community / self-host tier** — OpenCode and other self-hosted/OpenAI-compatible runtimes. Fully supported for self-hosting and evaluation, but **not enterprise-certified**: OpenCode in particular resolves its model list from the remote `models.dev` registry, so individual models (including "free" ones such as the former `opencode/sonic`) can be removed without notice. There is no hardcoded default — you must pass an explicit `opencode:<provider/model>` or set `OPENCODE_DEFAULT_MODEL`; otherwise the build fails fast with an actionable error rather than silently using a dead model.
 
 ## How routing works
 

@@ -215,6 +215,27 @@ function AuthenticatedApp() {
     };
   }, [settings.theme]);
 
+  // Apply color theme via data-theme attribute (Gruvbox is the default palette
+  // baked into :root/.dark in index.css, so it needs no attribute).
+  useEffect(() => {
+    const root = document.documentElement;
+    const colorTheme = settings.colorTheme ?? 'gruvbox';
+
+    if (colorTheme === 'gruvbox') {
+      root.removeAttribute('data-theme');
+    } else {
+      root.setAttribute('data-theme', colorTheme);
+    }
+
+    // Persist so the inline script in index.html can apply it synchronously on
+    // next load, preventing a flash of the default palette.
+    try {
+      localStorage.setItem('aifactory-color-theme', colorTheme);
+    } catch {
+      // localStorage may be unavailable
+    }
+  }, [settings.colorTheme]);
+
   // Apply UI scale
   useEffect(() => {
     const root = document.documentElement;

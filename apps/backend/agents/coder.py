@@ -11,6 +11,10 @@ import logging
 from pathlib import Path
 
 from core.client import create_client
+from core.error_utils import (
+    decide_rate_limit_resume,
+    extract_rate_limit_cooldown,
+)
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -34,9 +38,10 @@ from prompt_generator import (
     generate_subtask_prompt,
     load_subtask_context,
 )
-from prompts import is_first_run
+from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
+from solo_mode import is_solo_mode_enabled_for_spec
 from task_logger import (
     LogPhase,
     get_task_logger,
@@ -54,8 +59,12 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .compaction_recovery import CompactionDetector, build_operational_context
+from .inbox import drain_unread as drain_inbox
+from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .session import post_session_processing, run_agent_session
+from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import (
     find_phase_for_subtask,
     get_commit_count,
@@ -119,20 +128,46 @@ async def run_autonomous_agent(
     # Check if this is a fresh start or continuation
     first_run = is_first_run(spec_dir)
 
+    # Solo mode (#276): a single self-directed agent plans + implements +
+    # verifies in one streamlined flow. When enabled, the first session uses
+    # the solo prompt (and coder tools, which include update_subtask_status)
+    # instead of a dedicated planner session, and the plan-review gate is
+    # skipped. Default OFF — the full pipeline is unchanged when disabled.
+    solo = is_solo_mode_enabled_for_spec(spec_dir)
+
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
 
     if first_run:
-        print_status(
-            "Fresh start - will use Planner Agent to create implementation plan", "info"
-        )
-        content = [
-            bold(f"{icon(Icons.GEAR)} PLANNER SESSION"),
-            "",
-            f"Spec: {highlight(spec_dir.name)}",
-            muted("The agent will analyze your spec and create a subtask-based plan."),
-        ]
+        if solo:
+            print_status(
+                "Solo mode - a single self-directed agent will plan and build",
+                "info",
+            )
+            content = [
+                bold(f"{icon(Icons.GEAR)} SOLO SESSION"),
+                "",
+                f"Spec: {highlight(spec_dir.name)}",
+                muted(
+                    "One agent will author its own plan, implement it, and "
+                    "verify its own work (no separate planner or QA)."
+                ),
+            ]
+        else:
+            print_status(
+                "Fresh start - will use Planner Agent to create implementation plan",
+                "info",
+            )
+            content = [
+                bold(f"{icon(Icons.GEAR)} PLANNER SESSION"),
+                "",
+                f"Spec: {highlight(spec_dir.name)}",
+                muted(
+                    "The agent will analyze your spec and create a "
+                    "subtask-based plan."
+                ),
+            ]
         print()
         print(box(content, width=70, style="heavy"))
         print()
@@ -175,6 +210,19 @@ async def run_autonomous_agent(
     ]
     print(box(content, width=70, style="light"))
     print()
+
+    # Per-session compaction detector (#262). One detector per autonomous run;
+    # observes each turn's real input-token total to spot a context compaction.
+    compaction_detector = CompactionDetector()
+    # When a compaction is detected, re-anchor the NEXT turn's prompt with a
+    # small operational-context block. Carried across iterations.
+    pending_recovery_block: str | None = None
+
+    # Rate-limit auto-resume state (#272): track how many times we've resumed
+    # after a provider rate limit and how long we've cumulatively waited, so the
+    # resume policy can enforce its max-retries / max-total-wait caps.
+    rate_limit_attempt = 0
+    rate_limit_total_wait = 0.0
 
     # Main loop
     iteration = 0
@@ -253,7 +301,11 @@ async def run_autonomous_agent(
                 project_dir,
                 spec_dir,
                 phase_model,
-                agent_type="planner" if first_run else "coder",
+                # Solo mode always uses the coder toolset (Write/Edit/Bash +
+                # update_subtask_status) so the single agent can both author
+                # and track its own plan. The planner toolset lacks
+                # update_subtask_status.
+                agent_type=("coder" if solo else "planner") if first_run else "coder",
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -270,9 +322,22 @@ async def run_autonomous_agent(
                 **provider_kwargs,
             )
 
+        # Token-attribution segments (#262): track the named prompt pieces as
+        # we assemble them so per-category token usage can be attributed.
+        seg_user_prompt = ""
+        seg_file_context = ""
+        seg_coordination = ""
+
         # Generate appropriate prompt
         if first_run:
-            prompt = generate_planner_prompt(spec_dir, project_dir)
+            # Solo mode (#276): the single agent gets a self-directing prompt
+            # that has it author its own plan AND implement it. Otherwise use
+            # the dedicated planner prompt.
+            if solo:
+                prompt = get_solo_prompt(spec_dir)
+            else:
+                prompt = generate_planner_prompt(spec_dir, project_dir)
+            seg_user_prompt = prompt
 
             # Retrieve Graphiti memory context for planning phase
             # This gives the planner knowledge of previous patterns, gotchas, and insights
@@ -286,6 +351,7 @@ async def run_autonomous_agent(
             )
             if planner_context:
                 prompt += "\n\n" + planner_context
+                seg_coordination += planner_context
                 print_status("Graphiti memory context loaded for planner", "success")
 
             first_run = False
@@ -314,8 +380,11 @@ async def run_autonomous_agent(
                         sync_plan_to_source(spec_dir, source_spec_dir)
                     return
 
-                # Check if human review is required before coding
-                require_review = _should_require_human_review(spec_dir)
+                # Check if human review is required before coding.
+                # Solo mode (#276) is the streamlined single-agent path and
+                # never gates on plan review — the agent self-directs straight
+                # from plan to implementation.
+                require_review = not solo and _should_require_human_review(spec_dir)
                 if require_review:
                     # Check if already approved
                     from review import ReviewState
@@ -398,11 +467,14 @@ async def run_autonomous_agent(
                 attempt_count=attempt_count,
                 recovery_hints=recovery_hints,
             )
+            seg_user_prompt = prompt
 
             # Load and append relevant file context
             context = load_subtask_context(spec_dir, project_dir, next_subtask)
             if context.get("patterns") or context.get("files_to_modify"):
-                prompt += "\n\n" + format_context_for_prompt(context)
+                _file_ctx = format_context_for_prompt(context)
+                prompt += "\n\n" + _file_ctx
+                seg_file_context += _file_ctx
 
             # Retrieve and append Graphiti memory context (if enabled)
             graphiti_context = await get_graphiti_context(
@@ -410,6 +482,7 @@ async def run_autonomous_agent(
             )
             if graphiti_context:
                 prompt += "\n\n" + graphiti_context
+                seg_coordination += graphiti_context
                 print_status("Graphiti memory context loaded", "success")
 
             # Show what we're working on
@@ -424,11 +497,86 @@ async def run_autonomous_agent(
             task_logger.set_subtask(subtask_id)
             task_logger.set_session(iteration)
 
+        # Between-turn inbox check (#264): deliver any user messages that
+        # arrived while the previous turn was running. Drained exactly-once
+        # and folded into this turn's prompt as high-priority directives.
+        inbox_messages = drain_inbox(spec_dir)
+        if inbox_messages:
+            _inbox_block = format_inbox_for_prompt(inbox_messages)
+            prompt += "\n\n" + _inbox_block
+            seg_coordination += _inbox_block
+            for _msg in inbox_messages:
+                print_status(
+                    f"Inbox message delivered to agent: {_msg.get('summary', '')}",
+                    "info",
+                )
+
+        # Post-compact recovery (#262): if the previous turn looked compacted,
+        # re-anchor this turn with a small operational-context block so the
+        # agent doesn't lose grounding mid-build.
+        if pending_recovery_block:
+            prompt = pending_recovery_block + "\n\n" + prompt
+            seg_coordination += pending_recovery_block
+            print_status(
+                "Context compaction detected - re-injected operational context",
+                "info",
+            )
+            pending_recovery_block = None
+
         # Run session with async context manager
         async with client:
             status, response, error_info = await run_agent_session(
                 client, prompt, spec_dir, verbose, phase=current_log_phase
             )
+
+        # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
+        # Attribute the session's real SDK usage across source categories and
+        # fold into the per-task aggregate. Also run best-effort compaction
+        # detection so the NEXT turn can re-anchor. Never break a build on a
+        # bookkeeping error.
+        usage_payload = error_info.get("usage") if error_info else None
+        if usage_payload:
+            try:
+                turn_usage = TurnUsage.from_sdk_usage(
+                    {
+                        "input_tokens": usage_payload.get("input_tokens", 0),
+                        "output_tokens": usage_payload.get("output_tokens", 0),
+                        "cache_read_input_tokens": usage_payload.get(
+                            "cache_read_tokens", 0
+                        ),
+                        "cache_creation_input_tokens": usage_payload.get(
+                            "cache_creation_tokens", 0
+                        ),
+                    },
+                    cost_usd=usage_payload.get("cost_usd", 0.0),
+                )
+                segments = PromptSegments(
+                    user_prompt=seg_user_prompt,
+                    coordination_context=seg_coordination,
+                    file_context=seg_file_context,
+                    tool_output_chars=usage_payload.get("tool_output_chars", 0),
+                )
+                record_turn(spec_dir, segments, turn_usage, model=phase_model)
+                # Sync the usage file back to the source spec dir (worktree mode)
+                # so the web-server reader sees it.
+                if source_spec_dir:
+                    try:
+                        from .token_attribution import usage_file_path
+                        src = usage_file_path(spec_dir)
+                        if src.exists():
+                            (source_spec_dir / src.name).write_text(
+                                src.read_text(encoding="utf-8"), encoding="utf-8"
+                            )
+                    except OSError:
+                        pass
+
+                # Best-effort compaction detection on the real input total.
+                if compaction_detector.observe(turn_usage.total_input_tokens):
+                    pending_recovery_block = build_operational_context(
+                        spec_dir, current_subtask=subtask_id
+                    )
+            except Exception as e:  # noqa: BLE001 - bookkeeping must not crash a build
+                logger.debug(f"Token attribution skipped: {e}")
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:
@@ -478,6 +626,11 @@ async def run_autonomous_agent(
             break
 
         elif status == "continue":
+            # A clean turn means we've recovered from any prior rate limit;
+            # reset the resume budget so a later, unrelated rate limit gets a
+            # fresh set of retries instead of inheriting an exhausted cap (#272).
+            rate_limit_attempt = 0
+            rate_limit_total_wait = 0.0
             print(
                 muted(
                     f"\nAgent will auto-continue in {AUTO_CONTINUE_DELAY_SECONDS}s..."
@@ -505,6 +658,41 @@ async def run_autonomous_agent(
             await asyncio.sleep(AUTO_CONTINUE_DELAY_SECONDS)
 
         elif status == "error":
+            # Rate-limit auto-resume (#272): if the provider rate-limited us and
+            # exposed (or we can default) a cooldown, wait it out and continue
+            # rather than burning a retry immediately. Bounded by the resume
+            # policy's max-retries / max-total-wait caps.
+            if error_info.get("type") == "rate_limit":
+                cooldown = extract_rate_limit_cooldown(error_info.get("message", ""))
+                rate_limit_attempt += 1
+                decision = decide_rate_limit_resume(
+                    cooldown_seconds=cooldown,
+                    attempt=rate_limit_attempt,
+                    elapsed_wait_seconds=rate_limit_total_wait,
+                )
+                if decision.should_resume:
+                    logger.warning(
+                        "Rate limit hit — auto-resuming: %s", decision.reason
+                    )
+                    print_status(
+                        f"Rate limited — auto-resuming in "
+                        f"{decision.wait_seconds:.0f}s ({decision.reason})",
+                        "warning",
+                    )
+                    status_manager.update(state=BuildState.ERROR)
+                    rate_limit_total_wait += decision.wait_seconds
+                    await asyncio.sleep(decision.wait_seconds)
+                    # The while-loop re-invokes a fresh session next iteration,
+                    # which is the "resume" — no extra orchestration needed.
+                    continue
+                # Caps exhausted — fall through to the normal error path.
+                logger.warning(
+                    "Rate limit auto-resume giving up: %s", decision.reason
+                )
+                print_status(
+                    f"Rate limit auto-resume stopped: {decision.reason}", "error"
+                )
+
             emit_phase(ExecutionPhase.FAILED, "Session encountered an error")
             print_status("Session encountered an error", "error")
             print(muted("Will retry with a fresh session..."))
