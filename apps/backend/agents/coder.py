@@ -11,6 +11,10 @@ import logging
 from pathlib import Path
 
 from core.client import create_client
+from core.error_utils import (
+    decide_rate_limit_resume,
+    extract_rate_limit_cooldown,
+)
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -186,6 +190,12 @@ async def run_autonomous_agent(
     # When a compaction is detected, re-anchor the NEXT turn's prompt with a
     # small operational-context block. Carried across iterations.
     pending_recovery_block: str | None = None
+
+    # Rate-limit auto-resume state (#272): track how many times we've resumed
+    # after a provider rate limit and how long we've cumulatively waited, so the
+    # resume policy can enforce its max-retries / max-total-wait caps.
+    rate_limit_attempt = 0
+    rate_limit_total_wait = 0.0
 
     # Main loop
     iteration = 0
@@ -576,6 +586,11 @@ async def run_autonomous_agent(
             break
 
         elif status == "continue":
+            # A clean turn means we've recovered from any prior rate limit;
+            # reset the resume budget so a later, unrelated rate limit gets a
+            # fresh set of retries instead of inheriting an exhausted cap (#272).
+            rate_limit_attempt = 0
+            rate_limit_total_wait = 0.0
             print(
                 muted(
                     f"\nAgent will auto-continue in {AUTO_CONTINUE_DELAY_SECONDS}s..."
@@ -603,6 +618,41 @@ async def run_autonomous_agent(
             await asyncio.sleep(AUTO_CONTINUE_DELAY_SECONDS)
 
         elif status == "error":
+            # Rate-limit auto-resume (#272): if the provider rate-limited us and
+            # exposed (or we can default) a cooldown, wait it out and continue
+            # rather than burning a retry immediately. Bounded by the resume
+            # policy's max-retries / max-total-wait caps.
+            if error_info.get("type") == "rate_limit":
+                cooldown = extract_rate_limit_cooldown(error_info.get("message", ""))
+                rate_limit_attempt += 1
+                decision = decide_rate_limit_resume(
+                    cooldown_seconds=cooldown,
+                    attempt=rate_limit_attempt,
+                    elapsed_wait_seconds=rate_limit_total_wait,
+                )
+                if decision.should_resume:
+                    logger.warning(
+                        "Rate limit hit — auto-resuming: %s", decision.reason
+                    )
+                    print_status(
+                        f"Rate limited — auto-resuming in "
+                        f"{decision.wait_seconds:.0f}s ({decision.reason})",
+                        "warning",
+                    )
+                    status_manager.update(state=BuildState.ERROR)
+                    rate_limit_total_wait += decision.wait_seconds
+                    await asyncio.sleep(decision.wait_seconds)
+                    # The while-loop re-invokes a fresh session next iteration,
+                    # which is the "resume" — no extra orchestration needed.
+                    continue
+                # Caps exhausted — fall through to the normal error path.
+                logger.warning(
+                    "Rate limit auto-resume giving up: %s", decision.reason
+                )
+                print_status(
+                    f"Rate limit auto-resume stopped: {decision.reason}", "error"
+                )
+
             emit_phase(ExecutionPhase.FAILED, "Session encountered an error")
             print_status("Session encountered an error", "error")
             print(muted("Will retry with a fresh session..."))
