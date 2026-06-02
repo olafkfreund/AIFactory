@@ -70,6 +70,45 @@ class TestWorktreeManagerInitialization:
         assert manager.worktrees_dir.is_dir()
 
 
+class TestCoreBareSelfHeal:
+    """Regression tests for #299: stray core.bare=true breaks all git ops."""
+
+    @staticmethod
+    def _core_bare(repo: Path) -> str:
+        return subprocess.run(
+            ["git", "config", "--local", "core.bare"],
+            cwd=repo, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def test_init_resets_bare_flag(self, temp_git_repo: Path):
+        """A checkout left with core.bare=true is healed back to false on init."""
+        subprocess.run(
+            ["git", "config", "--local", "core.bare", "true"],
+            cwd=temp_git_repo, capture_output=True,
+        )
+        assert self._core_bare(temp_git_repo) == "true"
+
+        WorktreeManager(temp_git_repo)
+
+        assert self._core_bare(temp_git_repo) == "false"
+
+    def test_create_worktree_survives_flipped_bare_flag(self, temp_git_repo: Path):
+        """Worktree creation works even if core.bare flips to true after init."""
+        manager = WorktreeManager(temp_git_repo)
+        manager.setup()
+
+        # Simulate the external gremlin re-setting the flag post-construction.
+        subprocess.run(
+            ["git", "config", "--local", "core.bare", "true"],
+            cwd=temp_git_repo, capture_output=True,
+        )
+
+        # _run_git injects -c core.bare=false, so this must still succeed.
+        info = manager.create_worktree("bare-probe")
+        assert info.path.exists()
+        assert info.branch == "aifactory/bare-probe"
+
+
 class TestWorktreeCreation:
     """Tests for creating worktrees."""
 
