@@ -57,9 +57,51 @@ class WorktreeManager:
 
     def __init__(self, project_dir: Path, base_branch: str | None = None):
         self.project_dir = project_dir
+        # Self-heal a stray core.bare=true on the primary checkout BEFORE any
+        # other git command runs (base-branch detection, worktree ops, ...).
+        # See _ensure_not_bare for why this is needed.
+        self._ensure_not_bare()
         self.base_branch = base_branch or self._detect_base_branch()
         self.worktrees_dir = project_dir / ".aifactory" / "worktrees" / "tasks"
         self._merge_lock = asyncio.Lock()
+
+    def _ensure_not_bare(self) -> None:
+        """Guarantee the primary checkout is not marked as a bare repository.
+
+        A normal checkout that hosts linked worktrees must have
+        ``core.bare=false``. Certain external tools and git operations can leave
+        ``core.bare=true`` on the primary repo, after which every plain git
+        command fails with ``fatal: this operation must be run in a work tree``
+        — breaking worktree creation, status checks, and merges. Because a
+        WorktreeManager is constructed on every build/worktree action, healing
+        it here keeps the repo healthy for AIFactory *and* any other git user
+        (CI scripts, the host shell). Best-effort: never raise.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "config", "--local", "core.bare"],
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if result.stdout.strip() == "true":
+                subprocess.run(
+                    ["git", "config", "--local", "core.bare", "false"],
+                    cwd=self.project_dir,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                logger.warning(
+                    "Reset core.bare=true -> false on primary checkout %s "
+                    "(a bare-marked checkout breaks all worktree git ops)",
+                    self.project_dir,
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("core.bare self-heal skipped: %s", exc)
 
     def _detect_base_branch(self) -> str:
         """
@@ -91,7 +133,9 @@ class WorktreeManager:
                 print(
                     f"Warning: DEFAULT_BRANCH '{env_branch}' not found, auto-detecting..."
                 )
-                logger.warning(f"DEFAULT_BRANCH '{env_branch}' not found, auto-detecting base branch")
+                logger.warning(
+                    f"DEFAULT_BRANCH '{env_branch}' not found, auto-detecting base branch"
+                )
 
         # 2. Auto-detect main/master
         for branch in ["main", "master"]:
@@ -111,10 +155,13 @@ class WorktreeManager:
         print("Warning: Could not find 'main' or 'master' branch.")
         print(f"Warning: Using current branch '{current}' as base for worktree.")
         print("Tip: Set DEFAULT_BRANCH=your-branch in .env to avoid this.")
-        logger.warning(f"Could not find 'main' or 'master' branch. Using current branch '{current}' as base for worktree.", extra={
-            "project_dir": str(self.project_dir),
-            "current_branch": current,
-        })
+        logger.warning(
+            f"Could not find 'main' or 'master' branch. Using current branch '{current}' as base for worktree.",
+            extra={
+                "project_dir": str(self.project_dir),
+                "current_branch": current,
+            },
+        )
         return current
 
     def _get_current_branch(self) -> str:
@@ -134,9 +181,14 @@ class WorktreeManager:
     def _run_git(
         self, args: list[str], cwd: Path | None = None
     ) -> subprocess.CompletedProcess:
-        """Run a git command and return the result."""
+        """Run a git command and return the result.
+
+        ``-c core.bare=false`` makes every worktree operation immune to a stray
+        bare flag on the repo config, even if something re-set it between
+        construction and this call (see _ensure_not_bare).
+        """
         return subprocess.run(
-            ["git"] + args,
+            ["git", "-c", "core.bare=false"] + args,
             cwd=cwd or self.project_dir,
             capture_output=True,
             text=True,
@@ -198,13 +250,14 @@ class WorktreeManager:
                     break
 
         if files_to_unstage:
-            print(
-                f"Unstaging {len(files_to_unstage)} aifactory/gitignored file(s)..."
+            print(f"Unstaging {len(files_to_unstage)} aifactory/gitignored file(s)...")
+            logger.info(
+                f"Unstaging {len(files_to_unstage)} aifactory/gitignored files",
+                extra={
+                    "files": list(files_to_unstage)[:10],  # Log first 10 files
+                    "total_count": len(files_to_unstage),
+                },
             )
-            logger.info(f"Unstaging {len(files_to_unstage)} aifactory/gitignored files", extra={
-                "files": list(files_to_unstage)[:10],  # Log first 10 files
-                "total_count": len(files_to_unstage),
-            })
             # Unstage each file
             for file in files_to_unstage:
                 self._run_git(["reset", "HEAD", "--", file])
@@ -371,11 +424,14 @@ class WorktreeManager:
             )
 
         print(f"Created worktree: {worktree_path.name} on branch {branch_name}")
-        logger.info(f"Created worktree for spec '{spec_name}'", extra={
-            "worktree_path": str(worktree_path),
-            "branch_name": branch_name,
-            "base_branch": self.base_branch,
-        })
+        logger.info(
+            f"Created worktree for spec '{spec_name}'",
+            extra={
+                "worktree_path": str(worktree_path),
+                "branch_name": branch_name,
+                "base_branch": self.base_branch,
+            },
+        )
 
         return WorktreeInfo(
             path=worktree_path,
@@ -398,10 +454,13 @@ class WorktreeManager:
         existing = self.get_worktree_info(spec_name)
         if existing:
             print(f"Using existing worktree: {existing.path}")
-            logger.info(f"Using existing worktree for spec '{spec_name}'", extra={
-                "worktree_path": str(existing.path),
-                "branch": existing.branch,
-            })
+            logger.info(
+                f"Using existing worktree for spec '{spec_name}'",
+                extra={
+                    "worktree_path": str(existing.path),
+                    "branch": existing.branch,
+                },
+            )
             return existing
 
         return self.create_worktree(spec_name)
@@ -423,15 +482,21 @@ class WorktreeManager:
             )
             if result.returncode == 0:
                 print(f"Removed worktree: {worktree_path.name}")
-                logger.info(f"Removed worktree for spec '{spec_name}'", extra={
-                    "worktree_path": str(worktree_path),
-                })
+                logger.info(
+                    f"Removed worktree for spec '{spec_name}'",
+                    extra={
+                        "worktree_path": str(worktree_path),
+                    },
+                )
             else:
                 print(f"Warning: Could not remove worktree: {result.stderr}")
-                logger.warning("Could not remove worktree via git, falling back to rmtree", extra={
-                    "worktree_path": str(worktree_path),
-                    "error": result.stderr,
-                })
+                logger.warning(
+                    "Could not remove worktree via git, falling back to rmtree",
+                    extra={
+                        "worktree_path": str(worktree_path),
+                        "error": result.stderr,
+                    },
+                )
                 shutil.rmtree(worktree_path, ignore_errors=True)
 
         if delete_branch:
@@ -458,23 +523,31 @@ class WorktreeManager:
         info = self.get_worktree_info(spec_name)
         if not info:
             print(f"No worktree found for spec: {spec_name}")
-            logger.warning(f"Merge attempted but no worktree found for spec '{spec_name}'")
+            logger.warning(
+                f"Merge attempted but no worktree found for spec '{spec_name}'"
+            )
             return False
 
         if no_commit:
             print(
                 f"Merging {info.branch} into {self.base_branch} (staged, not committed)..."
             )
-            logger.info(f"Starting staged merge (no-commit) for spec '{spec_name}'", extra={
-                "branch": info.branch,
-                "base_branch": self.base_branch,
-            })
+            logger.info(
+                f"Starting staged merge (no-commit) for spec '{spec_name}'",
+                extra={
+                    "branch": info.branch,
+                    "base_branch": self.base_branch,
+                },
+            )
         else:
             print(f"Merging {info.branch} into {self.base_branch}...")
-            logger.info(f"Starting merge for spec '{spec_name}'", extra={
-                "branch": info.branch,
-                "base_branch": self.base_branch,
-            })
+            logger.info(
+                f"Starting merge for spec '{spec_name}'",
+                extra={
+                    "branch": info.branch,
+                    "base_branch": self.base_branch,
+                },
+            )
 
         # Clean up internal auto-generated files that can block merge/checkout.
         # These are untracked files created by agents that would collide with
@@ -496,10 +569,13 @@ class WorktreeManager:
         result = self._run_git(["checkout", self.base_branch])
         if result.returncode != 0:
             print(f"Error: Could not checkout base branch: {result.stderr}")
-            logger.error(f"Could not checkout base branch '{self.base_branch}' for merge", extra={
-                "spec_name": spec_name,
-                "error": result.stderr,
-            })
+            logger.error(
+                f"Could not checkout base branch '{self.base_branch}' for merge",
+                extra={
+                    "spec_name": spec_name,
+                    "error": result.stderr,
+                },
+            )
             return False
 
         # Merge the spec branch
@@ -514,11 +590,14 @@ class WorktreeManager:
 
         if result.returncode != 0:
             print("Merge conflict! Aborting merge...")
-            logger.error(f"Merge conflict detected for spec '{spec_name}', aborting", extra={
-                "branch": info.branch,
-                "base_branch": self.base_branch,
-                "error": result.stderr,
-            })
+            logger.error(
+                f"Merge conflict detected for spec '{spec_name}', aborting",
+                extra={
+                    "branch": info.branch,
+                    "base_branch": self.base_branch,
+                    "error": result.stderr,
+                },
+            )
             self._run_git(["merge", "--abort"])
             return False
 
@@ -531,16 +610,22 @@ class WorktreeManager:
             )
             print("Review the changes, then commit when ready:")
             print("  git commit -m 'your commit message'")
-            logger.info(f"Staged merge completed for spec '{spec_name}' (no-commit mode)", extra={
-                "branch": info.branch,
-                "base_branch": self.base_branch,
-            })
+            logger.info(
+                f"Staged merge completed for spec '{spec_name}' (no-commit mode)",
+                extra={
+                    "branch": info.branch,
+                    "base_branch": self.base_branch,
+                },
+            )
         else:
             print(f"Successfully merged {info.branch}")
-            logger.info(f"Successfully merged spec '{spec_name}'", extra={
-                "branch": info.branch,
-                "base_branch": self.base_branch,
-            })
+            logger.info(
+                f"Successfully merged spec '{spec_name}'",
+                extra={
+                    "branch": info.branch,
+                    "base_branch": self.base_branch,
+                },
+            )
 
         if delete_after:
             self.remove_worktree(spec_name, delete_branch=True)
@@ -562,11 +647,14 @@ class WorktreeManager:
             return True
         else:
             print(f"Commit failed: {result.stderr}")
-            logger.error(f"Commit failed in worktree for spec '{spec_name}'", extra={
-                "worktree_path": str(worktree_path),
-                "error": result.stderr,
-                "message": message,
-            })
+            logger.error(
+                f"Commit failed in worktree for spec '{spec_name}'",
+                extra={
+                    "worktree_path": str(worktree_path),
+                    "error": result.stderr,
+                    "message": message,
+                },
+            )
             return False
 
     # ==================== Listing & Discovery ====================
