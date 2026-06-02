@@ -167,7 +167,9 @@
     "autoNameTerminals": "Nommer automatiquement les terminaux",
     "autoNameTerminalsDescription": "Utiliser l'IA pour générer des noms descriptifs pour les onglets de terminal en fonction de leur activité",
     "bmadSessionSegmentation": "Segmentation de session BMad",
-    "bmadSessionSegmentationDescription": "Activer les sessions par histoire avec contexte minimal pour une réduction de 50-90% des tokens (expérimental)"
+    "bmadSessionSegmentationDescription": "Activer les sessions par histoire avec contexte minimal pour une réduction de 50-90% des tokens (expérimental)",
+    "soloMode": "Mode Solo",
+    "soloModeDescription": "Exécuter les tâches avec un seul agent concentré — désactive la création parallèle de sous-agents"
   },
   "theme": {
     "title": "Apparence",

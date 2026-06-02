@@ -92,6 +92,24 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
           <div className="space-y-3">
             <div className="flex items-center justify-between max-w-md">
               <div className="space-y-1">
+                <Label htmlFor="soloMode" className="text-sm font-medium text-foreground">
+                  {t('general.soloMode')}
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('general.soloModeDescription')}
+                </p>
+              </div>
+              <Switch
+                id="soloMode"
+                checked={settings.soloMode ?? false}
+                onCheckedChange={(checked) => onSettingsChange({ ...settings, soloMode: checked })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between max-w-md">
+              <div className="space-y-1">
                 <Label htmlFor="bmadSessionSegmentation" className="text-sm font-medium text-foreground">
                   {t('general.bmadSessionSegmentation')}
                 </Label>

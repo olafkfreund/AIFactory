@@ -281,6 +281,8 @@ export interface AppSettings {
   customTerminalPath?: string; // For 'custom' terminal
   // BMad Method session segmentation (per-story sessions with minimal context)
   bmadSessionSegmentation?: boolean;
+  // Solo mode — single-agent focused execution, no parallel sub-agents
+  soloMode?: boolean;
   // Email Notification OAuth Credentials (app-level)
   emailMicrosoftClientId?: string;
   emailMicrosoftClientSecret?: string;

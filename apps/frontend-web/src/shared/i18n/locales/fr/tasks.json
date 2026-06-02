@@ -201,5 +201,31 @@
     "badgeTooltipPending": "AIFactory a transmis ce ticket à l'agent Copilot Coding de GitHub. En attente de la PR résultante — rafraîchissez dans quelques minutes.",
     "badgeTooltipInReview": "Copilot a ouvert une PR pour ce ticket. Cliquez pour l'ouvrir.",
     "declinedNotice": "Copilot a peut-être refusé cette tâche — aucune PR correspondante ouverte dans les 24 heures. Vous pouvez réessayer avec l'agent local d'AIFactory."
+  },
+  "observability": {
+    "tab": "Observabilité"
+  },
+  "tokenUsage": {
+    "title": "Utilisation des tokens",
+    "empty": "Aucune donnée de tokens disponible. Démarrez la tâche pour commencer le suivi."
+  },
+  "resourceUsage": {
+    "title": "Utilisation des ressources",
+    "notRunning": "Le processus n'est pas en cours d'exécution.",
+    "cpu": "CPU",
+    "memory": "Mémoire",
+    "pid": "PID {{pid}}",
+    "sampledAt": "Mesuré à {{time}}"
+  },
+  "agentInbox": {
+    "title": "Envoyer à l'agent",
+    "empty": "Aucun message envoyé pour l'instant.",
+    "placeholder": "Tapez un message… utilisez @agent ou #task pour mentionner",
+    "inputLabel": "Message à l'agent",
+    "mentionHint": "Astuce : utilisez @agent ou #task pour les mentions",
+    "sendButton": "Envoyer",
+    "sending": "Envoi…",
+    "delivered": "Délivré",
+    "queued": "En attente"
   }
 }
