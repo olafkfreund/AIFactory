@@ -319,20 +319,33 @@ export async function loadProjects(): Promise<void> {
         console.log('[ProjectStore] Tab state is valid, no cleanup needed');
       }
 
-      // Restore last selected project from localStorage for backward compatibility,
-      // or fall back to active project, or first project
+      // Reconcile the "selected" project with the actual active tab so the
+      // sidebar, kanban board, and project dropdown never diverge.
+      //
+      // selectedProjectId (restored from localStorage) and activeProjectId
+      // (restored from the reliable tab-state persistence) come from two
+      // different sources and can disagree. When they do, the board follows
+      // activeProjectId while the sidebar/dropdown follow selectedProjectId —
+      // and because the Radix <Select> won't re-fire onValueChange for the
+      // already-"selected" value, the user gets stuck on the wrong board.
+      //
+      // The active tab is the source of truth for what is displayed, so
+      // selectedProjectId must always equal it when any tab is open.
       const updatedState = useProjectStore.getState();
-      if (!updatedState.selectedProjectId && result.data.length > 0) {
+      if (updatedState.activeProjectId) {
+        // Tabs are open — force selected to match the active tab.
+        if (updatedState.selectedProjectId !== updatedState.activeProjectId) {
+          store.selectProject(updatedState.activeProjectId);
+        }
+      } else if (result.data.length > 0) {
+        // No active tab — restore last-selected (or first) project AND open
+        // it as a tab so it becomes active, keeping selected/active/open
+        // consistent from the very first render.
         const lastSelectedId = localStorage.getItem(LAST_SELECTED_PROJECT_KEY);
         const projectExists = lastSelectedId && result.data.some((p) => p.id === lastSelectedId);
-
-        if (projectExists) {
-          store.selectProject(lastSelectedId);
-        } else if (updatedState.activeProjectId) {
-          store.selectProject(updatedState.activeProjectId);
-        } else {
-          store.selectProject(result.data[0].id);
-        }
+        const targetId = projectExists ? lastSelectedId! : result.data[0].id;
+        store.selectProject(targetId);
+        store.openProjectTab(targetId); // also sets activeProjectId
       }
     } else {
       store.setError(result.error || 'Failed to load projects');
