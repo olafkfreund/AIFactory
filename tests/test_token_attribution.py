@@ -187,6 +187,59 @@ def test_record_turn_persists_and_aggregates(tmp_path: Path):
     assert read_breakdown(spec_dir)["turns"] == 2
 
 
+def test_total_tokens_present_and_equals_input_plus_output(tmp_path: Path):
+    """#288: ``totalTokens`` must be persisted to ``token_usage.json`` and the
+    rendered breakdown, equal to ``totalInputTokens + outputTokens`` — so the
+    #277 panel and raw-file consumers read a real value, not 0/missing."""
+    spec_dir = tmp_path / "288-total-tokens"
+    spec_dir.mkdir()
+
+    # Known turn set: 200 fresh + 1000 cache read = 1200 input; 50 output.
+    seg = PromptSegments(user_prompt="u" * 400)
+    usage = TurnUsage(
+        input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
+    )
+
+    rendered = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+
+    # Rendered breakdown exposes the sum.
+    assert rendered["totalInputTokens"] == 1200
+    assert rendered["outputTokens"] == 50
+    assert "totalTokens" in rendered
+    assert rendered["totalTokens"] == 1200 + 50
+    assert (
+        rendered["totalTokens"]
+        == rendered["totalInputTokens"] + rendered["outputTokens"]
+    )
+
+    # The persisted file carries the key (raw-file consumers don't go through
+    # render_breakdown), and it reconciles to input + output.
+    on_disk = json.loads(usage_file_path(spec_dir).read_text())
+    assert "totalTokens" in on_disk
+    assert (
+        on_disk["totalTokens"]
+        == on_disk["totalInputTokens"] + on_disk["outputTokens"]
+    )
+    assert on_disk["totalTokens"] == 1250
+
+    # Aggregation keeps the invariant across turns.
+    rendered2 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    on_disk2 = json.loads(usage_file_path(spec_dir).read_text())
+    assert rendered2["totalTokens"] == 2 * 1250
+    assert (
+        on_disk2["totalTokens"]
+        == on_disk2["totalInputTokens"] + on_disk2["outputTokens"]
+    )
+
+
+def test_empty_breakdown_exposes_total_tokens(tmp_path: Path):
+    """An absent file still renders ``totalTokens`` (zero), never a missing key."""
+    spec_dir = tmp_path / "288-empty"
+    spec_dir.mkdir()
+    b = read_breakdown(spec_dir)
+    assert b["totalTokens"] == 0
+
+
 def test_read_breakdown_empty_when_absent(tmp_path: Path):
     spec_dir = tmp_path / "002-empty"
     spec_dir.mkdir()

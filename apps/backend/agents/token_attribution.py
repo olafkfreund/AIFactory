@@ -291,6 +291,7 @@ def _empty_aggregate() -> dict[str, Any]:
         "turns": 0,
         "totalInputTokens": 0,
         "outputTokens": 0,
+        "totalTokens": 0,
         "totalCostUsd": 0.0,
         "categories": {
             k: {"tokens": 0, "costUsd": 0.0} for k in CATEGORY_LABELS
@@ -367,6 +368,12 @@ def record_turn(
         agg["outputTokens"] = (
             int(agg.get("outputTokens", 0)) + attribution.output_tokens
         )
+        # Persist the combined input+output total so raw-file consumers (the
+        # #277 token-usage panel and any reader that doesn't go through
+        # ``render_breakdown``) see a real value instead of a missing key (#288).
+        agg["totalTokens"] = (
+            int(agg.get("totalInputTokens", 0)) + int(agg.get("outputTokens", 0))
+        )
         agg["totalCostUsd"] = round(
             float(agg.get("totalCostUsd", 0.0)) + attribution.cost_usd, 6
         )
@@ -389,6 +396,9 @@ def record_turn(
         single["turns"] = 1
         single["totalInputTokens"] = attribution.total_input_tokens
         single["outputTokens"] = attribution.output_tokens
+        single["totalTokens"] = (
+            attribution.total_input_tokens + attribution.output_tokens
+        )
         single["totalCostUsd"] = round(attribution.cost_usd, 6)
         single["model"] = model
         single["maxTokens"] = window
