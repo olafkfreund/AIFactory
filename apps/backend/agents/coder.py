@@ -54,10 +54,12 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .compaction_recovery import CompactionDetector, build_operational_context
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
 from .session import post_session_processing, run_agent_session
+from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import (
     find_phase_for_subtask,
     get_commit_count,
@@ -178,6 +180,13 @@ async def run_autonomous_agent(
     print(box(content, width=70, style="light"))
     print()
 
+    # Per-session compaction detector (#262). One detector per autonomous run;
+    # observes each turn's real input-token total to spot a context compaction.
+    compaction_detector = CompactionDetector()
+    # When a compaction is detected, re-anchor the NEXT turn's prompt with a
+    # small operational-context block. Carried across iterations.
+    pending_recovery_block: str | None = None
+
     # Main loop
     iteration = 0
 
@@ -272,9 +281,16 @@ async def run_autonomous_agent(
                 **provider_kwargs,
             )
 
+        # Token-attribution segments (#262): track the named prompt pieces as
+        # we assemble them so per-category token usage can be attributed.
+        seg_user_prompt = ""
+        seg_file_context = ""
+        seg_coordination = ""
+
         # Generate appropriate prompt
         if first_run:
             prompt = generate_planner_prompt(spec_dir, project_dir)
+            seg_user_prompt = prompt
 
             # Retrieve Graphiti memory context for planning phase
             # This gives the planner knowledge of previous patterns, gotchas, and insights
@@ -288,6 +304,7 @@ async def run_autonomous_agent(
             )
             if planner_context:
                 prompt += "\n\n" + planner_context
+                seg_coordination += planner_context
                 print_status("Graphiti memory context loaded for planner", "success")
 
             first_run = False
@@ -400,11 +417,14 @@ async def run_autonomous_agent(
                 attempt_count=attempt_count,
                 recovery_hints=recovery_hints,
             )
+            seg_user_prompt = prompt
 
             # Load and append relevant file context
             context = load_subtask_context(spec_dir, project_dir, next_subtask)
             if context.get("patterns") or context.get("files_to_modify"):
-                prompt += "\n\n" + format_context_for_prompt(context)
+                _file_ctx = format_context_for_prompt(context)
+                prompt += "\n\n" + _file_ctx
+                seg_file_context += _file_ctx
 
             # Retrieve and append Graphiti memory context (if enabled)
             graphiti_context = await get_graphiti_context(
@@ -412,6 +432,7 @@ async def run_autonomous_agent(
             )
             if graphiti_context:
                 prompt += "\n\n" + graphiti_context
+                seg_coordination += graphiti_context
                 print_status("Graphiti memory context loaded", "success")
 
             # Show what we're working on
@@ -431,18 +452,81 @@ async def run_autonomous_agent(
         # and folded into this turn's prompt as high-priority directives.
         inbox_messages = drain_inbox(spec_dir)
         if inbox_messages:
-            prompt += "\n\n" + format_inbox_for_prompt(inbox_messages)
+            _inbox_block = format_inbox_for_prompt(inbox_messages)
+            prompt += "\n\n" + _inbox_block
+            seg_coordination += _inbox_block
             for _msg in inbox_messages:
                 print_status(
                     f"Inbox message delivered to agent: {_msg.get('summary', '')}",
                     "info",
                 )
 
+        # Post-compact recovery (#262): if the previous turn looked compacted,
+        # re-anchor this turn with a small operational-context block so the
+        # agent doesn't lose grounding mid-build.
+        if pending_recovery_block:
+            prompt = pending_recovery_block + "\n\n" + prompt
+            seg_coordination += pending_recovery_block
+            print_status(
+                "Context compaction detected - re-injected operational context",
+                "info",
+            )
+            pending_recovery_block = None
+
         # Run session with async context manager
         async with client:
             status, response, error_info = await run_agent_session(
                 client, prompt, spec_dir, verbose, phase=current_log_phase
             )
+
+        # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
+        # Attribute the session's real SDK usage across source categories and
+        # fold into the per-task aggregate. Also run best-effort compaction
+        # detection so the NEXT turn can re-anchor. Never break a build on a
+        # bookkeeping error.
+        usage_payload = error_info.get("usage") if error_info else None
+        if usage_payload:
+            try:
+                turn_usage = TurnUsage.from_sdk_usage(
+                    {
+                        "input_tokens": usage_payload.get("input_tokens", 0),
+                        "output_tokens": usage_payload.get("output_tokens", 0),
+                        "cache_read_input_tokens": usage_payload.get(
+                            "cache_read_tokens", 0
+                        ),
+                        "cache_creation_input_tokens": usage_payload.get(
+                            "cache_creation_tokens", 0
+                        ),
+                    },
+                    cost_usd=usage_payload.get("cost_usd", 0.0),
+                )
+                segments = PromptSegments(
+                    user_prompt=seg_user_prompt,
+                    coordination_context=seg_coordination,
+                    file_context=seg_file_context,
+                    tool_output_chars=usage_payload.get("tool_output_chars", 0),
+                )
+                record_turn(spec_dir, segments, turn_usage, model=phase_model)
+                # Sync the usage file back to the source spec dir (worktree mode)
+                # so the web-server reader sees it.
+                if source_spec_dir:
+                    try:
+                        from .token_attribution import usage_file_path
+                        src = usage_file_path(spec_dir)
+                        if src.exists():
+                            (source_spec_dir / src.name).write_text(
+                                src.read_text(encoding="utf-8"), encoding="utf-8"
+                            )
+                    except OSError:
+                        pass
+
+                # Best-effort compaction detection on the real input total.
+                if compaction_detector.observe(turn_usage.total_input_tokens):
+                    pending_recovery_block = build_operational_context(
+                        spec_dir, current_subtask=subtask_id
+                    )
+            except Exception as e:  # noqa: BLE001 - bookkeeping must not crash a build
+                logger.debug(f"Token attribution skipped: {e}")
 
         # === POST-SESSION PROCESSING (100% reliable) ===
         if subtask_id and not first_run:

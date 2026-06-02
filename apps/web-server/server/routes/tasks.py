@@ -1130,6 +1130,49 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
     return project_id, spec_id, project_path, spec_dir
 
 
+@router.get("/{task_id}/token-usage")
+async def get_task_token_usage(task_id: str):
+    """Per-category token / cost breakdown for a task's session(s) (#262).
+
+    Returns the structured breakdown produced by the backend token-attribution
+    module: each source category (system/CLAUDE.md instructions, user messages,
+    team/coordination context, tool outputs, thinking+output) with its token
+    count, %-of-context-window and apportioned $ cost, plus session totals.
+
+    Reads the agent-written ``token_usage.json`` from the main spec dir (the
+    agent loop syncs it back from the worktree). Returns an empty (all-zero)
+    breakdown when no session has run yet — never 404 on a valid task, so the
+    UI can render a stable empty state.
+    """
+    project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+
+    # Prefer the main spec dir (synced from worktree). Fall back to the live
+    # worktree spec dir if the sync hasn't landed yet.
+    candidate = spec_dir / "token_usage.json"
+    if not candidate.exists():
+        worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
+        if worktree_spec_dir and (worktree_spec_dir / "token_usage.json").exists():
+            spec_dir = worktree_spec_dir
+
+    # Import the backend attribution reader (sys.path shim, same approach as
+    # reject_plan above — web-server doesn't always have backend on PYTHONPATH).
+    import sys
+
+    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+
+    try:
+        from agents.token_attribution import read_breakdown
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Token attribution module unavailable: {exc}",
+        ) from exc
+
+    return read_breakdown(spec_dir)
+
+
 @router.post("/{task_id}/clarifications", response_model=ClarificationResponse)
 async def generate_clarifications(task_id: str):
     """Generate clarification questions for a task using an LLM."""
