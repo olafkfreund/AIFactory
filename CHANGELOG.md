@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+## 3.4.0 - 2026-06-02
+
+### Added
+
+- Inter-agent inbox messaging with between-turn delivery, plus `#task` / `@agent` mention parsing and inbox routing.
+- Solo mode — a single self-directed agent that writes and works its own plan (token-saving for small jobs; default off).
+- Per-task observability panels in the task detail (token usage by category, live CPU/RAM, send-to-agent box) and per-category token monitoring with post-compact context recovery.
+- OpenCode CLI runtime provider; Antigravity CLI provider (renamed from Gemini) with portal-driven install/update.
+- Rate-limit auto-resume after cooldown; ports-and-adapters Feature Architecture Standard enforced by lint.
+
+### Fixed
+
+- Control-plane / task state isolated from agent worktree sync (no longer clobbered by builds).
+- Peer-review obligations enforced with delivery proof + strict review cycles.
+- Codex builds on ChatGPT-account logins via an account-default model (no forced `--model`).
+- openai-compatible Bedrock/Azure/Vertex routing through the LiteLLM gateway (the agentic provider now honors the gateway + auth).
+- All-failed builds now surface as failed instead of being masked as `human_review`/"completed".
+- Token usage `totalTokens` emitted and the token panel aligned to the API response.
+
+### Security
+
+- `.envrc` untracked and gitignored so local API keys can't be committed.
+
 ## 3.3.0 - 2026-05-30
 
 ### Documentation
