@@ -582,7 +582,8 @@ def infer_provider_from_model(model: str) -> str:
     bedrock/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     Claude shorthands (opus, sonnet, haiku) or claude-* IDs -> 'claude'
-    gpt-* or *codex* IDs -> 'codex'
+    gpt-* or *codex* IDs (incl. bare 'codex' / 'codex:default' = account
+        default, no explicit model) or bare 'default' -> 'codex'
     antigravity / antigravity-* / gemini-* IDs -> 'antigravity'
         (gemini-* is kept for back-compat — the Antigravity CLI still serves
         Google's gemini-* model strings)
@@ -651,8 +652,14 @@ def infer_provider_from_model(model: str) -> str:
     if m in MODEL_ID_MAP or m.startswith("claude-"):
         return "claude"
 
-    # OpenAI Codex models
-    if m.startswith("gpt-") or "codex" in m:
+    # OpenAI Codex models.  A bare "codex" (or "codex:default" / "codex-default"
+    # / "default") routes here with NO concrete model id — the provider then
+    # sends no `model` field to the MCP request and codex uses its account
+    # default.  This is the model string ChatGPT-account users should pick,
+    # since a ChatGPT-account login rejects every explicit model.  Concrete ids
+    # ("gpt-5.3-codex", "o4-mini", ...) also route here and are forwarded as-is
+    # for API-key accounts.  (#293)
+    if m == "default" or m.startswith("gpt-") or "codex" in m:
         return "codex"
 
     # Antigravity CLI (Google).  Canonical IDs are "antigravity" /

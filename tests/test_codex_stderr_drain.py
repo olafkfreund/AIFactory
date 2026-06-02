@@ -119,3 +119,93 @@ def test_codex_valid_response_does_not_raise(monkeypatch):
     assert len(msgs) == 1
     assert isinstance(msgs[0], AssistantMessage)
     assert msgs[0].content[0].text == "hello world"
+
+
+# ---------------------------------------------------------------------------
+# Account-default model handling (#293)
+#
+# A ChatGPT-account codex login rejects ANY explicit model with HTTP 400
+# ("not supported when using Codex with a ChatGPT account").  Only codex's
+# implicit default (no model sent) works.  The provider must therefore send
+# NO `model` field in the MCP tool call when the model string is the
+# account-default sentinel ("codex" / "codex:default" / "" / ...), while still
+# forwarding a concrete model id for API-key accounts.
+# ---------------------------------------------------------------------------
+
+_OK_RESPONSE = {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+        "content": [{"type": "text", "text": "ok"}],
+        "structuredContent": {},
+    },
+}
+
+
+def _capture_mcp_arguments(monkeypatch, model):
+    """Run the provider with the given model and return the MCP call arguments.
+
+    Mocks the stdio MCP layer (no subprocess, no network): captures the
+    tools/call params sent to the codex MCP server and feeds back a canned
+    successful response.  Returns the ``arguments`` dict of the tools/call.
+    """
+    from providers.codex_agentic import CodexAgenticProvider
+
+    captured: dict = {}
+
+    async def _fake_send(self, msg):  # noqa: ARG001
+        if msg.get("method") == "tools/call":
+            captured["params"] = msg["params"]
+
+    async def _fake_read(self, expected_id):  # noqa: ARG001
+        return _OK_RESPONSE
+
+    monkeypatch.setattr(CodexAgenticProvider, "_send_message", _fake_send)
+    monkeypatch.setattr(CodexAgenticProvider, "_read_response", _fake_read)
+
+    async def _run():
+        p = CodexAgenticProvider(model=model, working_dir=Path("/tmp"))
+        p._proc = object()  # type: ignore[assignment]
+        await p.query("do something")
+        async for _ in p.receive_response():
+            pass
+
+    asyncio.run(_run())
+    return captured["params"]["arguments"]
+
+
+@pytest.mark.parametrize("model", ["codex", "codex:default", "default", "", "CODEX"])
+def test_codex_account_default_omits_model(monkeypatch, model):
+    """Account-default sentinels must NOT send a `model` field (#293)."""
+    args = _capture_mcp_arguments(monkeypatch, model)
+    assert "model" not in args, (
+        f"model {model!r} must resolve to codex account default "
+        f"(no `model` in MCP request), got {args!r}"
+    )
+    # Still a well-formed codex tool call.
+    assert args["prompt"] == "do something"
+    assert args["sandbox"] == "danger-full-access"
+
+
+@pytest.mark.parametrize("model", ["gpt-5.3-codex", "gpt-5-codex", "o4-mini"])
+def test_codex_explicit_model_is_passed(monkeypatch, model):
+    """Explicit model ids must still be sent (API-key-account path) (#293)."""
+    args = _capture_mcp_arguments(monkeypatch, model)
+    assert args.get("model") == model
+
+
+def test_codex_default_constant_is_account_default():
+    """The provider's default model must now be the account default (#293)."""
+    from providers.codex_agentic import _DEFAULT_MODEL, _is_account_default
+
+    assert _is_account_default(_DEFAULT_MODEL)
+    assert _is_account_default(None)
+    assert not _is_account_default("gpt-5.3-codex")
+
+
+def test_bare_codex_routes_to_codex_provider():
+    """`infer_provider_from_model` routes account-default strings to codex (#293)."""
+    from phase_config import infer_provider_from_model
+
+    for m in ("codex", "codex:default", "default", "gpt-5.3-codex"):
+        assert infer_provider_from_model(m) == "codex", m

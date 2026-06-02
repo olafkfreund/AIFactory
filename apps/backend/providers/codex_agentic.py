@@ -41,10 +41,37 @@ from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
 
+# Default to the codex account default (no explicit model) rather than a
+# concrete model id.  A ChatGPT-account codex login rejects ANY explicit
+# `--model` ("...not supported when using Codex with a ChatGPT account",
+# HTTP 400) — only codex's implicit default works for those accounts.  An
+# API-key account can still pass a real model id explicitly (e.g.
+# "gpt-5.3-codex"), which is forwarded unchanged.  (#293)
 _DEFAULT_CODEX_PATH: str = "codex"
-_DEFAULT_MODEL: str = "gpt-5.3-codex"
+_DEFAULT_MODEL: str = ""  # empty => use codex's account default (no model sent)
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+
+# Model strings that mean "let codex use the authenticated account's default
+# model" — i.e. do NOT send a `model` field in the MCP tool call.  These are
+# the values a ChatGPT-account user should select so codex picks its own
+# implicit default.  Matched case-insensitively after stripping whitespace.
+_ACCOUNT_DEFAULT_MODELS: frozenset[str] = frozenset(
+    {"", "codex", "codex:default", "codex-default", "default"}
+)
+
+
+def _is_account_default(model: str | None) -> bool:
+    """True when ``model`` means "use codex's account default" (omit model).
+
+    A ChatGPT-account codex login rejects every explicit model, so the codex
+    provider must send NO ``model`` field for these sentinel values.  An
+    explicit model id (e.g. ``gpt-5.3-codex``) returns False and is forwarded
+    unchanged so API-key accounts keep working.  (#293)
+    """
+    if model is None:
+        return True
+    return model.strip().lower() in _ACCOUNT_DEFAULT_MODELS
 
 # MCP protocol constants
 _MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -75,11 +102,19 @@ class CodexAgenticProvider(BaseLLMProvider):
         working_dir: Path | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
-        if model and not _MODEL_NAME_RE.match(model):
-            raise ValueError(
-                f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
-            )
-        self._model = model
+        # Normalise the "account default" sentinels ("", "codex",
+        # "codex:default", ...) to an empty string so the model field is never
+        # sent in the MCP request — required for ChatGPT-account codex logins
+        # which reject any explicit model.  Concrete model ids are validated and
+        # kept verbatim so API-key accounts still get their chosen model.  (#293)
+        if _is_account_default(model):
+            self._model = ""
+        else:
+            if not _MODEL_NAME_RE.match(model):
+                raise ValueError(
+                    f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
+                )
+            self._model = model
         self._codex_path = codex_path
         self._timeout = timeout
         self._working_dir = working_dir
