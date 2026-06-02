@@ -577,6 +577,7 @@ def infer_provider_from_model(model: str) -> str:
 
     studio:* prefix -> 'openai-compatible' (Google AI Studio OpenAI-compatible endpoint)
     ollama:* prefix -> 'ollama'
+    opencode:* prefix -> 'opencode' (OpenCode CLI runtime; model form opencode:<provider/model>)
     openai:* or openai-compatible:* prefix -> 'openai-compatible'
     bedrock/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
     vertex_ai/* prefix -> 'openai-compatible' (LiteLLM-routed; see note below)
@@ -617,6 +618,16 @@ def infer_provider_from_model(model: str) -> str:
     # names (claude-sonnet-4.5, gpt-5) would otherwise route to claude/codex.
     if m.startswith("copilot:"):
         return "copilot"
+
+    # Explicit prefix: "opencode:provider/model" — OpenCode CLI runtime.
+    # Checked before the claude-*/gpt-*/codex rules below because OpenCode's
+    # native model strings ("opencode/sonic", "anthropic/claude-...") and the
+    # literal substring "opencode" (contains "codex"? no, but "code") could
+    # otherwise be mis-routed.  The "codex" substring rule in particular would
+    # never match "opencode", but routing the explicit prefix first keeps the
+    # provider selection unambiguous.
+    if m.startswith("opencode:"):
+        return "opencode"
 
     # Explicit prefix for OpenAI-compatible endpoints (LM Studio, vLLM,
     # OpenRouter, Together, Groq, LocalAI, ...).  Connection details come
@@ -661,7 +672,14 @@ def strip_provider_prefix(model: str) -> str:
     The factory and providers expect a bare model name.  When a user picks
     ``openai-compatible:gpt-4o-mini``, the provider only needs ``gpt-4o-mini``.
     """
-    for prefix in ("openai-compatible:", "openai:", "ollama:", "studio:", "copilot:"):
+    for prefix in (
+        "openai-compatible:",
+        "openai:",
+        "ollama:",
+        "studio:",
+        "copilot:",
+        "opencode:",
+    ):
         if model.lower().startswith(prefix):
             return model[len(prefix) :]
     return model

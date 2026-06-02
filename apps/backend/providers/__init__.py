@@ -41,6 +41,8 @@ Package layout
         gemini_agentic.py   — GeminiAgenticProvider (Gemini CLI sandbox)
         ollama.py           — OllamaProvider   (local Ollama text-only adapter)
         ollama_agentic.py   — OllamaAgenticProvider (native tool calling)
+        opencode.py         — OpenCodeProvider (OpenCode CLI runtime, text entry)
+        opencode_agentic.py — OpenCodeAgenticProvider (OpenCode CLI ``run`` mode)
         factory.py          — Unified get_provider() + legacy get_qa_llm_provider()
 
 Usage::

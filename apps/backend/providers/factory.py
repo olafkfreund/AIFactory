@@ -55,6 +55,7 @@ _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
     "gemini":             ("providers.gemini_agentic",               "GeminiAgenticProvider"),
     "ollama":             ("providers.ollama_agentic",               "OllamaAgenticProvider"),
     "copilot":            ("providers.copilot_agentic",              "CopilotAgenticProvider"),
+    "opencode":           ("providers.opencode_agentic",             "OpenCodeAgenticProvider"),
     "openai-compatible":  ("providers.openai_compatible_agentic",    "OpenAICompatibleAgenticProvider"),
 }
 
@@ -65,6 +66,8 @@ _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
     "ollama":             ("providers.ollama",               "OllamaProvider"),
     # Copilot has no text-only variant; the agentic CLI returns text fine.
     "copilot":            ("providers.copilot_agentic",      "CopilotAgenticProvider"),
+    # OpenCode has no text-only variant; ``opencode run`` returns text fine.
+    "opencode":           ("providers.opencode",             "OpenCodeProvider"),
     "openai-compatible":  ("providers.openai_compatible",    "OpenAICompatibleProvider"),
 }
 
@@ -91,6 +94,9 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "copilot": "copilot",
     "github-copilot": "copilot",
     "gh-copilot": "copilot",
+    # OpenCode CLI coding-agent runtime (model form: opencode:<provider/model>)
+    "opencode": "opencode",
+    "open-code": "opencode",
     # OpenAI-compatible endpoints (LM Studio, vLLM, OpenRouter, Together, Groq, ...)
     "openai": "openai-compatible",
     "openai-api": "openai-compatible",
