@@ -38,9 +38,10 @@ from prompt_generator import (
     generate_subtask_prompt,
     load_subtask_context,
 )
-from prompts import is_first_run
+from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
+from solo_mode import is_solo_mode_enabled_for_spec
 from task_logger import (
     LogPhase,
     get_task_logger,
@@ -127,20 +128,46 @@ async def run_autonomous_agent(
     # Check if this is a fresh start or continuation
     first_run = is_first_run(spec_dir)
 
+    # Solo mode (#276): a single self-directed agent plans + implements +
+    # verifies in one streamlined flow. When enabled, the first session uses
+    # the solo prompt (and coder tools, which include update_subtask_status)
+    # instead of a dedicated planner session, and the plan-review gate is
+    # skipped. Default OFF — the full pipeline is unchanged when disabled.
+    solo = is_solo_mode_enabled_for_spec(spec_dir)
+
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
 
     if first_run:
-        print_status(
-            "Fresh start - will use Planner Agent to create implementation plan", "info"
-        )
-        content = [
-            bold(f"{icon(Icons.GEAR)} PLANNER SESSION"),
-            "",
-            f"Spec: {highlight(spec_dir.name)}",
-            muted("The agent will analyze your spec and create a subtask-based plan."),
-        ]
+        if solo:
+            print_status(
+                "Solo mode - a single self-directed agent will plan and build",
+                "info",
+            )
+            content = [
+                bold(f"{icon(Icons.GEAR)} SOLO SESSION"),
+                "",
+                f"Spec: {highlight(spec_dir.name)}",
+                muted(
+                    "One agent will author its own plan, implement it, and "
+                    "verify its own work (no separate planner or QA)."
+                ),
+            ]
+        else:
+            print_status(
+                "Fresh start - will use Planner Agent to create implementation plan",
+                "info",
+            )
+            content = [
+                bold(f"{icon(Icons.GEAR)} PLANNER SESSION"),
+                "",
+                f"Spec: {highlight(spec_dir.name)}",
+                muted(
+                    "The agent will analyze your spec and create a "
+                    "subtask-based plan."
+                ),
+            ]
         print()
         print(box(content, width=70, style="heavy"))
         print()
@@ -274,7 +301,11 @@ async def run_autonomous_agent(
                 project_dir,
                 spec_dir,
                 phase_model,
-                agent_type="planner" if first_run else "coder",
+                # Solo mode always uses the coder toolset (Write/Edit/Bash +
+                # update_subtask_status) so the single agent can both author
+                # and track its own plan. The planner toolset lacks
+                # update_subtask_status.
+                agent_type=("coder" if solo else "planner") if first_run else "coder",
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -299,7 +330,13 @@ async def run_autonomous_agent(
 
         # Generate appropriate prompt
         if first_run:
-            prompt = generate_planner_prompt(spec_dir, project_dir)
+            # Solo mode (#276): the single agent gets a self-directing prompt
+            # that has it author its own plan AND implement it. Otherwise use
+            # the dedicated planner prompt.
+            if solo:
+                prompt = get_solo_prompt(spec_dir)
+            else:
+                prompt = generate_planner_prompt(spec_dir, project_dir)
             seg_user_prompt = prompt
 
             # Retrieve Graphiti memory context for planning phase
@@ -343,8 +380,11 @@ async def run_autonomous_agent(
                         sync_plan_to_source(spec_dir, source_spec_dir)
                     return
 
-                # Check if human review is required before coding
-                require_review = _should_require_human_review(spec_dir)
+                # Check if human review is required before coding.
+                # Solo mode (#276) is the streamlined single-agent path and
+                # never gates on plan review — the agent self-directs straight
+                # from plan to implementation.
+                require_review = not solo and _should_require_human_review(spec_dir)
                 if require_review:
                     # Check if already approved
                     from review import ReviewState

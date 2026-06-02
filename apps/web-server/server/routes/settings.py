@@ -174,6 +174,17 @@ class AppSettings(BaseModel):
     # BMad Method
     bmadSessionSegmentation: bool | None = Field(False, description="Enable session segmentation")
 
+    # Solo mode (#276): single self-directed agent (plan + build + verify in one
+    # streamlined flow, skipping the separate planner/QA phases). Default OFF.
+    # The backend reads the effective value from AIFACTORY_SOLO_MODE, the
+    # per-task task_metadata.json "soloMode" flag, or ~/.aifactory/config.json
+    # solo.enabled (see apps/backend/solo_mode.py). This field surfaces the
+    # preference in the natural settings location.
+    # TODO(#276): wire this UI preference into the global ~/.aifactory/config.json
+    #   solo.enabled key and into task creation (task_metadata.json soloMode), and
+    #   add the frontend toggle + i18n keys.
+    soloMode: bool | None = Field(False, description="Enable solo mode (single self-directed agent)")
+
     # Email Notification OAuth Credentials (app-level, not per-user)
     emailMicrosoftClientId: str | None = Field(None, description="Microsoft OAuth Client ID for email notifications")
     emailMicrosoftClientSecret: str | None = Field(None, description="Microsoft OAuth Client Secret for email notifications")
@@ -303,6 +314,7 @@ class SettingsUpdate(BaseModel):
     onboardingCompleted: bool | None = None
     betaUpdates: bool | None = None
     bmadSessionSegmentation: bool | None = None
+    soloMode: bool | None = None
     emailMicrosoftClientId: str | None = None
     emailMicrosoftClientSecret: str | None = None
     llmProvider: str | None = None
