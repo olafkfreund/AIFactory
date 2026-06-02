@@ -2,8 +2,10 @@
  * TokenUsagePanel — Per-category token breakdown for a running / completed task.
  *
  * Consumes:  GET /api/tasks/{id}/token-usage
- * Response:  { categories: Array<{ name: string; tokens: number; cost: number }>;
- *              totalTokens: number; contextWindow: number; totalCost: number }
+ * Response:  { version, turns, model, maxTokens, totalInputTokens, outputTokens,
+ *              totalTokens, totalCostUsd, pctOfWindow,
+ *              categories: Array<{ key, label, color, tokens, pctOfWindow, costUsd }>,
+ *              updatedAt }
  *
  * Empty-state is shown when the endpoint returns no data yet.
  */
@@ -15,16 +17,20 @@ import { get } from '../../lib/api-client';
 import { cn } from '../../lib/utils';
 
 interface TokenCategory {
-  name: string;
+  key: string;
+  label: string;
+  color: string;
   tokens: number;
-  cost: number;
+  pctOfWindow: number;
+  costUsd: number;
 }
 
 interface TokenUsageData {
   categories: TokenCategory[];
   totalTokens: number;
-  contextWindow: number;
-  totalCost: number;
+  maxTokens: number;
+  totalCostUsd: number;
+  pctOfWindow: number;
 }
 
 interface TokenUsagePanelProps {
@@ -92,8 +98,8 @@ export function TokenUsagePanel({ taskId }: TokenUsagePanelProps) {
     );
   }
 
-  const windowPct = data.contextWindow > 0
-    ? Math.min(100, Math.round((data.totalTokens / data.contextWindow) * 100))
+  const windowPct = data.maxTokens > 0
+    ? Math.min(100, Math.round((data.totalTokens / data.maxTokens) * 100))
     : 0;
 
   return (
@@ -103,19 +109,19 @@ export function TokenUsagePanel({ taskId }: TokenUsagePanelProps) {
         <span className="text-muted-foreground flex items-center gap-1.5">
           <TrendingUp className="h-4 w-4" />
           {formatTokens(data.totalTokens)}
-          {data.contextWindow > 0 && (
+          {data.maxTokens > 0 && (
             <span className="text-xs text-muted-foreground/70">
-              {' '}/ {formatTokens(data.contextWindow)} ({windowPct}%)
+              {' '}/ {formatTokens(data.maxTokens)} ({windowPct}%)
             </span>
           )}
         </span>
         <span className="font-mono text-xs text-muted-foreground">
-          {formatCost(data.totalCost)}
+          {formatCost(data.totalCostUsd)}
         </span>
       </div>
 
       {/* Context window bar */}
-      {data.contextWindow > 0 && (
+      {data.maxTokens > 0 && (
         <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
           <div
             className={cn(
@@ -136,17 +142,17 @@ export function TokenUsagePanel({ taskId }: TokenUsagePanelProps) {
             ? Math.round((cat.tokens / data.totalTokens) * 100)
             : 0;
           return (
-            <div key={cat.name} className="space-y-1">
+            <div key={cat.key} className="space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-foreground capitalize">{cat.name}</span>
+                <span className="text-foreground">{cat.label}</span>
                 <span className="font-mono text-muted-foreground">
-                  {formatTokens(cat.tokens)} &middot; {catPct}% &middot; {formatCost(cat.cost)}
+                  {formatTokens(cat.tokens)} &middot; {catPct}% &middot; {formatCost(cat.costUsd)}
                 </span>
               </div>
               <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-primary/60 transition-all"
-                  style={{ width: `${catPct}%` }}
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${catPct}%`, backgroundColor: cat.color }}
                 />
               </div>
             </div>
