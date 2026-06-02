@@ -8,7 +8,9 @@ model string.  These tests pin:
   * the factory returns ``OpenCodeAgenticProvider`` for an opencode-prefixed model
     in both agentic and text phases,
   * the ``opencode:`` prefix is stripped before reaching the CLI ``--model`` flag,
-  * the default model is the free, no-auth ``opencode/sonic``,
+  * the default model is resolved from ``OPENCODE_DEFAULT_MODEL`` (NO hardcoded
+    free model), and a missing model fails with a clear, actionable error,
+  * OpenCode is marked community / self-host tier (NOT enterprise-certified),
   * the non-interactive ``opencode run`` command shape.
 """
 
@@ -24,7 +26,7 @@ if str(BACKEND) not in sys.path:
 def test_opencode_prefix_routes_to_opencode_not_codex():
     from phase_config import infer_provider_from_model as infer
 
-    assert infer("opencode:opencode/sonic") == "opencode"
+    assert infer("opencode:openai/gpt-4o") == "opencode"
     assert infer("opencode:anthropic/claude-sonnet-4-5") == "opencode"
     # The substring "code"/"codex" rule must not hijack the opencode prefix.
     assert infer("gpt-5.3-codex") == "codex"
@@ -34,13 +36,13 @@ def test_opencode_prefix_routes_to_opencode_not_codex():
 def test_strip_provider_prefix_handles_opencode():
     from phase_config import strip_provider_prefix
 
-    assert strip_provider_prefix("opencode:opencode/sonic") == "opencode/sonic"
+    assert strip_provider_prefix("opencode:openai/gpt-4o") == "openai/gpt-4o"
     assert (
         strip_provider_prefix("opencode:anthropic/claude-sonnet-4-5")
         == "anthropic/claude-sonnet-4-5"
     )
     # Non-opencode strings pass through untouched.
-    assert strip_provider_prefix("opencode/sonic") == "opencode/sonic"
+    assert strip_provider_prefix("anthropic/claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
 
 
 def test_opencode_alias_and_registry():
@@ -50,29 +52,71 @@ def test_opencode_alias_and_registry():
     assert _resolve_canonical("open-code") == "opencode"
 
     provider = get_provider(
-        "opencode", phase="coding", model="opencode:opencode/sonic", working_dir="/tmp"
+        "opencode",
+        phase="coding",
+        model="opencode:anthropic/claude-sonnet-4-5",
+        working_dir="/tmp",
     )
     assert type(provider).__name__ == "OpenCodeAgenticProvider"
     # The opencode: prefix is stripped before reaching the CLI's --model.
-    assert provider._model == "opencode/sonic"
+    assert provider._model == "anthropic/claude-sonnet-4-5"
 
 
 def test_opencode_text_phase_reuses_agentic_provider():
     from providers.factory import get_provider
 
     provider = get_provider(
-        "opencode", phase="qa", model="opencode:opencode/sonic", working_dir="/tmp"
+        "opencode",
+        phase="qa",
+        model="opencode:anthropic/claude-sonnet-4-5",
+        working_dir="/tmp",
     )
     # No separate text-only variant; opencode run returns text fine.
     assert type(provider).__name__ == "OpenCodeAgenticProvider"
 
 
-def test_opencode_default_model_is_free_zen():
+def test_opencode_default_model_from_env(monkeypatch):
+    """No explicit model -> default resolved from OPENCODE_DEFAULT_MODEL."""
     from providers.opencode_agentic import OpenCodeAgenticProvider
 
-    # No model given -> free, no-auth default.
+    monkeypatch.setenv("OPENCODE_DEFAULT_MODEL", "anthropic/claude-sonnet-4-5")
     p = OpenCodeAgenticProvider(model="", working_dir=Path("/tmp"))
-    assert p._model == "opencode/sonic"
+    assert p._model == "anthropic/claude-sonnet-4-5"
+
+
+def test_opencode_no_model_raises_clear_error(monkeypatch):
+    """No explicit model and no env override -> clear, actionable run-time error.
+
+    We deliberately do NOT silently fall back to a (possibly dead) free model.
+    """
+    import pytest
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    monkeypatch.delenv("OPENCODE_DEFAULT_MODEL", raising=False)
+    p = OpenCodeAgenticProvider(model="", working_dir=Path("/tmp"))
+    assert p._model == ""  # nothing resolvable
+    p._pending_prompt = "do the thing"
+    with pytest.raises(RuntimeError, match=r"opencode:<provider/model>"):
+        p._build_command()
+
+
+def test_opencode_explicit_model_overrides_env(monkeypatch):
+    """An explicit opencode:<provider/model> wins over the env default."""
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    monkeypatch.setenv("OPENCODE_DEFAULT_MODEL", "openai/gpt-4o")
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=Path("/tmp")
+    )
+    assert p._model == "anthropic/claude-sonnet-4-5"
+
+
+def test_opencode_is_not_enterprise_certified():
+    """OpenCode is community / self-host tier, NOT enterprise-certified."""
+    from providers import opencode_agentic
+
+    assert opencode_agentic.ENTERPRISE_CERTIFIED is False
+    assert opencode_agentic.SUPPORT_TIER == "community"
 
 
 def test_opencode_command_is_non_interactive_run():
@@ -119,7 +163,9 @@ def test_opencode_run_wraps_stdout_in_assistant_message(monkeypatch):
     )
 
     async def _run():
-        p = OpenCodeAgenticProvider(model="opencode:opencode/sonic", working_dir=Path("/tmp"))
+        p = OpenCodeAgenticProvider(
+            model="opencode:anthropic/claude-sonnet-4-5", working_dir=Path("/tmp")
+        )
         async with p:
             await p.query("hello")
             msgs = [m async for m in p.receive_response()]
@@ -141,7 +187,7 @@ def test_opencode_run_errors_when_cli_missing(monkeypatch):
     monkeypatch.setattr(opencode_agentic.shutil, "which", lambda _: None)
 
     async def _run():
-        p = OpenCodeAgenticProvider(model="opencode:opencode/sonic")
+        p = OpenCodeAgenticProvider(model="opencode:anthropic/claude-sonnet-4-5")
         await p.query("hello")
         async for _ in p.receive_response():
             pass
