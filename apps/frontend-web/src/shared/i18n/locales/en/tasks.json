@@ -206,5 +206,31 @@
     "badgeTooltipPending": "AIFactory handed this issue to GitHub Copilot Coding Agent. Watching for the resulting PR — refresh in a few minutes.",
     "badgeTooltipInReview": "Copilot opened a PR for this issue. Click to open the PR.",
     "declinedNotice": "Copilot may have declined this task — no matching PR opened within 24 hours. You can re-run with the local AIFactory agent."
+  },
+  "observability": {
+    "tab": "Observability"
+  },
+  "tokenUsage": {
+    "title": "Token Usage",
+    "empty": "No token usage data yet. Start the task to begin tracking."
+  },
+  "resourceUsage": {
+    "title": "Resource Usage",
+    "notRunning": "Process is not running.",
+    "cpu": "CPU",
+    "memory": "Memory",
+    "pid": "PID {{pid}}",
+    "sampledAt": "Sampled at {{time}}"
+  },
+  "agentInbox": {
+    "title": "Send to Agent",
+    "empty": "No messages sent yet.",
+    "placeholder": "Type a message… use @agent or #task to mention",
+    "inputLabel": "Message to agent",
+    "mentionHint": "Tip: use @agent or #task for mentions",
+    "sendButton": "Send",
+    "sending": "Sending…",
+    "delivered": "Delivered",
+    "queued": "Queued"
   }
 }
