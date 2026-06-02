@@ -65,7 +65,7 @@ import logging
 import os
 import re
 import shutil
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,81 @@ _DEFAULT_MODEL_ENV_VAR: str = "OPENCODE_DEFAULT_MODEL"
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 # OpenCode model IDs are "provider/model" — allow alphanumerics plus . _ : / -
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+
+#: Relative path of OpenCode's model catalogue inside its XDG cache dir.
+#: At runtime OpenCode reads ``<XDG_CACHE_HOME or $HOME/.cache>/opencode/models.json``
+#: (see ``src/provider/models.ts`` -> ``ModelsDev.get()`` / ``Global.Path.cache``
+#: in the bundled CLI).  When that file is missing/empty it falls back to a small
+#: catalogue compiled into the binary that omits newer models — see #291.
+_CATALOGUE_REL_PATH: str = "opencode/models.json"
+#: Relative path of OpenCode's cache-version sentinel.  On startup OpenCode reads
+#: ``<cache>/opencode/version`` and, if it does not equal the binary's baked-in
+#: ``CACHE_VERSION``, **recursively deletes the entire cache directory** before
+#: recreating it (``src/global/index.ts``).  That wipe destroys any catalogue we
+#: pre-inject — so to make pre-warming survive we must also write a matching
+#: version sentinel (copied from the warm source) so the wipe is skipped.  See
+#: the analysis in #291.
+_VERSION_REL_PATH: str = "opencode/version"
+#: Env var that disables OpenCode's background self-update check.  Set in the
+#: build subprocess so a sandbox with blocked egress doesn't waste time/log noise
+#: attempting an upgrade fetch it can never complete.
+_DISABLE_AUTOUPDATE_ENV_VAR: str = "OPENCODE_DISABLE_AUTOUPDATE"
+
+
+def _xdg_cache_home(env: Mapping[str, str]) -> Path | None:
+    """Resolve OpenCode's XDG cache root from an environment mapping.
+
+    Mirrors the ``xdg-basedir`` logic baked into the OpenCode CLI:
+    ``XDG_CACHE_HOME`` if set, else ``$HOME/.cache``.  Returns ``None`` when
+    neither is resolvable (no ``HOME``), in which case we cannot pre-warm.
+    """
+    xdg = env.get("XDG_CACHE_HOME", "").strip()
+    if xdg:
+        return Path(xdg)
+    home = env.get("HOME", "").strip()
+    if home:
+        return Path(home) / ".cache"
+    return None
+
+
+def _find_warm_catalogue(env: Mapping[str, str]) -> Path | None:
+    """Locate an existing, populated OpenCode model catalogue to pre-warm from.
+
+    OpenCode caches the full ``models.dev`` registry at
+    ``<cache>/opencode/models.json`` after any successful (interactive) run.  In
+    AIFactory's build sandbox the network refresh of ``models.dev`` is blocked,
+    so a build never repopulates this file; if the catalogue the subprocess
+    reads is missing/empty, OpenCode silently falls back to a small catalogue
+    compiled into the binary that omits newer models (e.g. ``claude-sonnet-4-5``),
+    producing a fatal ``ProviderModelNotFoundError`` for every model (#291).
+
+    We search known cache locations and return the first non-empty catalogue:
+      1. The resolved XDG cache for the subprocess env.
+      2. The real user ``$HOME/.cache`` (warmed by interactive use).
+
+    Returns ``None`` if no usable catalogue exists anywhere.
+    """
+    candidates: list[Path] = []
+    cache_root = _xdg_cache_home(env)
+    if cache_root is not None:
+        candidates.append(cache_root / _CATALOGUE_REL_PATH)
+    # Fall back to the real user cache (interactive runs warm this even when the
+    # subprocess env points XDG_CACHE_HOME elsewhere).
+    try:
+        home_cache = Path.home() / ".cache" / _CATALOGUE_REL_PATH
+        if home_cache not in candidates:
+            candidates.append(home_cache)
+    except (RuntimeError, OSError):
+        pass
+
+    for path in candidates:
+        try:
+            # A real models.dev dump is megabytes; ``> 2`` rejects ``{}``/empty.
+            if path.is_file() and path.stat().st_size > 2:
+                return path
+        except OSError:
+            continue
+    return None
 
 
 def _strip_opencode_prefix(model: str) -> str:
@@ -220,6 +295,87 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
             cmd.extend(self._extra_args)
         return cmd
 
+    def _build_subprocess_env(self) -> dict[str, str]:
+        """Build the env for the OpenCode subprocess with a usable catalogue.
+
+        OpenCode resolves its model catalogue at runtime from
+        ``<XDG_CACHE_HOME or $HOME/.cache>/opencode/models.json`` and refreshes
+        it from the remote ``models.dev`` registry.  AIFactory builds run in an
+        OS sandbox where that egress is blocked, so the catalogue at the path
+        OpenCode reads can be missing/empty — OpenCode then falls back to a
+        small catalogue compiled into the binary that omits newer models (e.g.
+        ``claude-sonnet-4-5``), and every such model fails with a fatal
+        ``ProviderModelNotFoundError`` (#291).
+
+        Naively copying a warm ``models.json`` into the cache is **not enough**:
+        on startup OpenCode compares ``<cache>/opencode/version`` against its
+        baked-in ``CACHE_VERSION`` and, on mismatch, ``rm -rf``'s the whole
+        cache directory before reading the catalogue — wiping anything we
+        injected.  So to make builds work offline we, when a warm source exists:
+
+          * copy the warm ``models.json`` into the path OpenCode will read, and
+          * copy the warm ``version`` sentinel alongside it so OpenCode's
+            cache-version check passes and the destructive wipe is skipped, and
+          * disable the background self-update fetch (pointless under blocked
+            egress).
+
+        This is best-effort: if no warm catalogue can be found we leave the env
+        untouched and let OpenCode behave as before (the build may still fail
+        for models absent from the embedded fallback — see the #291 docs note).
+        """
+        env = os.environ.copy()
+        env.setdefault(_DISABLE_AUTOUPDATE_ENV_VAR, "1")
+
+        target_root = _xdg_cache_home(env)
+        if target_root is None:
+            # No HOME/XDG to anchor a cache path — nothing we can pre-warm.
+            return env
+        target = target_root / _CATALOGUE_REL_PATH
+
+        source = _find_warm_catalogue(env)
+        if source is None or source == target:
+            # Either no warm catalogue to copy from, or the target IS the warm
+            # source (the real user cache) — in which case OpenCode reads it
+            # directly and we must not clobber it.
+            #
+            # TODO(#291): when no warm catalogue exists anywhere (OpenCode has
+            # never been run interactively on this host) we have nothing to
+            # pre-warm from, so a sandboxed build for a model outside OpenCode's
+            # embedded fallback will still fail. A fully self-contained fix would
+            # bundle/fetch a pinned models.dev snapshot at install time. For now
+            # this is documented as an OSS-tier limitation in
+            # docs/docs/concepts/multi-provider.md.
+            return env
+
+        # Copy the warm catalogue AND its version sentinel.  The version file is
+        # what stops OpenCode from wiping the cache dir on startup (see #291); if
+        # the warm source has no sibling version file we skip it (OpenCode will
+        # then wipe, but that is no worse than the un-warmed status quo).
+        source_version = source.with_name("version")
+        target_version = target.with_name("version")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            if source_version.is_file():
+                shutil.copyfile(source_version, target_version)
+            logger.debug(
+                "OpenCodeAgenticProvider: pre-warmed catalogue %s -> %s "
+                "(version sentinel: %s) (#291)",
+                source,
+                target,
+                "copied" if source_version.is_file() else "missing-at-source",
+            )
+        except OSError as exc:
+            # Pre-warming is a convenience, never fatal: log and continue.
+            logger.warning(
+                "OpenCodeAgenticProvider: could not pre-warm models.dev "
+                "catalogue %s -> %s: %s",
+                source,
+                target,
+                exc,
+            )
+        return env
+
     async def _run_opencode(self) -> AsyncGenerator[Any, None]:
         """Spawn the OpenCode CLI, return its final output as a message block."""
         if not self._pending_prompt:
@@ -245,6 +401,9 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
 
         cmd = self._build_command()
         cwd = str(self._working_dir) if self._working_dir else None
+        # Pre-warm OpenCode's models.dev catalogue so the model resolves even
+        # when the build sandbox blocks egress to models.dev (#291).
+        env = self._build_subprocess_env()
         logger.debug(
             "OpenCodeAgenticProvider: spawning model=%s cwd=%r", self._model, cwd
         )
@@ -257,6 +416,7 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                env=env,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(),

@@ -245,3 +245,220 @@ def test_opencode_help_page_output_raises_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="help page"):
         asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# #291: models.dev catalogue pre-warming for the build sandbox.
+#
+# OpenCode reads its model catalogue from
+# ``<XDG_CACHE_HOME or $HOME/.cache>/opencode/models.json`` and refreshes it
+# from the remote models.dev registry.  In AIFactory's build sandbox that
+# egress is blocked; if the catalogue at the read path is missing/empty,
+# OpenCode falls back to a small embedded catalogue that omits newer models and
+# fails with ProviderModelNotFoundError for every model.  The provider now
+# pre-warms the catalogue from a discoverable warm cache before spawning.
+# ---------------------------------------------------------------------------
+
+_BIG_CATALOGUE = '{"anthropic":{"id":"anthropic","models":{}}}' + (" " * 100)
+
+
+def test_xdg_cache_home_prefers_xdg_cache_home_env():
+    from providers.opencode_agentic import _xdg_cache_home
+
+    assert _xdg_cache_home({"XDG_CACHE_HOME": "/x/cache"}) == Path("/x/cache")
+
+
+def test_xdg_cache_home_falls_back_to_home_dot_cache():
+    from providers.opencode_agentic import _xdg_cache_home
+
+    assert _xdg_cache_home({"HOME": "/home/u"}) == Path("/home/u/.cache")
+
+
+def test_xdg_cache_home_returns_none_without_home_or_xdg():
+    from providers.opencode_agentic import _xdg_cache_home
+
+    assert _xdg_cache_home({}) is None
+
+
+def test_find_warm_catalogue_picks_xdg_cache_when_populated(tmp_path):
+    from providers.opencode_agentic import _find_warm_catalogue
+
+    cat = tmp_path / "opencode" / "models.json"
+    cat.parent.mkdir(parents=True)
+    cat.write_text(_BIG_CATALOGUE, encoding="utf-8")
+
+    found = _find_warm_catalogue({"XDG_CACHE_HOME": str(tmp_path)})
+    assert found == cat
+
+
+def test_find_warm_catalogue_ignores_empty_object(tmp_path, monkeypatch):
+    """An empty ``{}`` catalogue must NOT be treated as a warm source."""
+    from providers import opencode_agentic
+    from providers.opencode_agentic import _find_warm_catalogue
+
+    cat = tmp_path / "opencode" / "models.json"
+    cat.parent.mkdir(parents=True)
+    cat.write_text("{}", encoding="utf-8")  # 2 bytes -> not "warm"
+
+    # Point Path.home() at an empty dir so the $HOME/.cache fallback finds nothing.
+    empty_home = tmp_path / "emptyhome"
+    empty_home.mkdir()
+    monkeypatch.setattr(opencode_agentic.Path, "home", lambda: empty_home)
+
+    assert _find_warm_catalogue({"XDG_CACHE_HOME": str(tmp_path)}) is None
+
+
+def test_build_subprocess_env_sets_disable_autoupdate(tmp_path, monkeypatch):
+    from providers.opencode_agentic import (
+        _DISABLE_AUTOUPDATE_ENV_VAR,
+        OpenCodeAgenticProvider,
+    )
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+    )
+    env = p._build_subprocess_env()
+    assert env[_DISABLE_AUTOUPDATE_ENV_VAR] == "1"
+
+
+def test_build_subprocess_env_prewarms_from_home_cache(tmp_path, monkeypatch):
+    """When the target XDG cache is empty, copy a warm catalogue from $HOME/.cache."""
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    # Warm source lives under a fake $HOME/.cache.
+    fake_home = tmp_path / "home"
+    src = fake_home / ".cache" / "opencode" / "models.json"
+    src.parent.mkdir(parents=True)
+    src.write_text(_BIG_CATALOGUE, encoding="utf-8")
+    monkeypatch.setattr(opencode_agentic.Path, "home", lambda: fake_home)
+
+    # Subprocess XDG cache points somewhere empty.
+    target_cache = tmp_path / "xdgcache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(target_cache))
+
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+    )
+    env = p._build_subprocess_env()
+
+    target = target_cache / "opencode" / "models.json"
+    assert env["XDG_CACHE_HOME"] == str(target_cache)
+    assert target.is_file()
+    assert target.read_text(encoding="utf-8") == _BIG_CATALOGUE
+
+
+def test_build_subprocess_env_copies_version_sentinel(tmp_path, monkeypatch):
+    """The ``version`` sentinel must be copied so OpenCode skips its cache wipe.
+
+    OpenCode ``rm -rf``'s its whole cache dir on startup if
+    ``<cache>/opencode/version`` != its baked-in CACHE_VERSION — which would
+    destroy the catalogue we just injected (#291).  Copying the warm source's
+    version sentinel makes that check pass.
+    """
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    fake_home = tmp_path / "home"
+    src = fake_home / ".cache" / "opencode" / "models.json"
+    src.parent.mkdir(parents=True)
+    src.write_text(_BIG_CATALOGUE, encoding="utf-8")
+    (src.parent / "version").write_text("9", encoding="utf-8")  # warm version sentinel
+    monkeypatch.setattr(opencode_agentic.Path, "home", lambda: fake_home)
+
+    target_cache = tmp_path / "xdgcache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(target_cache))
+
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+    )
+    p._build_subprocess_env()
+
+    target_version = target_cache / "opencode" / "version"
+    assert target_version.is_file()
+    assert target_version.read_text(encoding="utf-8") == "9"
+
+
+def test_build_subprocess_env_does_not_clobber_real_user_cache(tmp_path, monkeypatch):
+    """When the target IS the warm source (real user cache), don't rewrite it."""
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    # XDG cache points directly at the warm cache (target == source).
+    cache = tmp_path / "xdgcache"
+    cat = cache / "opencode" / "models.json"
+    cat.parent.mkdir(parents=True)
+    cat.write_text(_BIG_CATALOGUE, encoding="utf-8")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    # No separate $HOME/.cache source.
+    empty_home = tmp_path / "emptyhome"
+    empty_home.mkdir()
+    monkeypatch.setattr(opencode_agentic.Path, "home", lambda: empty_home)
+
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+    )
+    # Should early-return (source == target) without raising or rewriting.
+    env = p._build_subprocess_env()
+    assert cat.read_text(encoding="utf-8") == _BIG_CATALOGUE
+    assert env["XDG_CACHE_HOME"] == str(cache)
+
+
+def test_build_subprocess_env_no_warm_cache_is_best_effort(tmp_path, monkeypatch):
+    """With no warm catalogue anywhere, env is returned without raising."""
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    target_cache = tmp_path / "xdgcache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(target_cache))
+    empty_home = tmp_path / "emptyhome"
+    empty_home.mkdir()
+    monkeypatch.setattr(opencode_agentic.Path, "home", lambda: empty_home)
+
+    p = OpenCodeAgenticProvider(
+        model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+    )
+    env = p._build_subprocess_env()  # must not raise
+    # No catalogue was created (nothing to copy from).
+    assert not (target_cache / "opencode" / "models.json").exists()
+    assert "XDG_CACHE_HOME" in env
+
+
+def test_run_opencode_passes_env_to_subprocess(monkeypatch, tmp_path):
+    """The spawn must receive our pre-warmed env (env= kwarg)."""
+    from providers import opencode_agentic
+    from providers.opencode_agentic import OpenCodeAgenticProvider
+
+    captured = {}
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"done\n", b"")
+
+    async def _fake_create_subprocess_exec(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        return _FakeProc()
+
+    monkeypatch.setattr(opencode_agentic.shutil, "which", lambda _: "/usr/bin/opencode")
+    monkeypatch.setattr(
+        opencode_agentic.asyncio,
+        "create_subprocess_exec",
+        _fake_create_subprocess_exec,
+    )
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+
+    async def _run():
+        p = OpenCodeAgenticProvider(
+            model="opencode:anthropic/claude-sonnet-4-5", working_dir=tmp_path
+        )
+        async with p:
+            await p.query("hello")
+            async for _ in p.receive_response():
+                pass
+
+    asyncio.run(_run())
+    assert captured["env"] is not None
+    assert captured["env"][opencode_agentic._DISABLE_AUTOUPDATE_ENV_VAR] == "1"
