@@ -325,3 +325,152 @@ class TestSoloSkipsQA:
             "solo mode must skip QA: should_run_qa was consulted, meaning "
             "skip_qa was not forced True"
         )
+
+
+# ---------------------------------------------------------------------------
+# Web-server wiring (#281): the saved soloMode setting must actually drive
+# solo_mode.py. The seam is task creation in projects.create_project_task,
+# which stamps soloMode into the new spec's task_metadata.json (read by
+# is_solo_mode_enabled_for_spec) from the saved app settings. A settings save
+# also mirrors the flag into the global ~/.aifactory/config.json solo.enabled.
+# ---------------------------------------------------------------------------
+_WEB_SERVER = Path(__file__).parent.parent / "apps" / "web-server"
+if str(_WEB_SERVER) not in sys.path:
+    sys.path.insert(0, str(_WEB_SERVER))
+
+
+def _make_project(tmp_path: Path) -> tuple[str, Path]:
+    """Create a temp project on disk and return (project_id, project_path)."""
+    project_path = tmp_path / "proj"
+    (project_path / ".aifactory" / "specs").mkdir(parents=True)
+    return "proj-1", project_path
+
+
+@pytest.mark.asyncio
+class TestSoloSettingDrivesTaskCreation:
+    """With soloMode saved/true, a new task's task_metadata.json makes
+    is_solo_mode_enabled_for_spec(spec_dir) return True; false/absent -> False."""
+
+    async def _create_task(self, tmp_path, monkeypatch, *, saved_solo, metadata=None):
+        from server.routes import projects
+
+        project_id, project_path = _make_project(tmp_path)
+
+        # Saved app settings: surface the soloMode preference under test.
+        fake_settings = MagicMock()
+        fake_settings.soloMode = saved_solo
+        monkeypatch.setattr(
+            "server.routes.settings.load_app_settings",
+            lambda: fake_settings,
+        )
+
+        # Avoid touching the real projects.json / Task model machinery.
+        monkeypatch.setattr(
+            projects, "load_projects",
+            lambda: {project_id: {"path": str(project_path)}},
+        )
+        import server.routes.tasks as tasks_module
+        monkeypatch.setattr(tasks_module, "spec_to_task", lambda pid, sd: sd)
+        monkeypatch.setattr(tasks_module, "task_to_dict", lambda task: {"spec_dir": str(task)})
+
+        req = projects.TaskCreateRequest(
+            title="Add a thing", description="Do a small thing.", metadata=metadata
+        )
+        result = await projects.create_project_task(project_id, req)
+        return Path(result["spec_dir"])
+
+    async def test_saved_solo_true_enables_for_new_spec(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+        spec_dir = await self._create_task(tmp_path, monkeypatch, saved_solo=True)
+
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        assert meta.get("soloMode") is True
+
+        import solo_mode
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is True
+
+    async def test_saved_solo_false_leaves_spec_disabled(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+        spec_dir = await self._create_task(tmp_path, monkeypatch, saved_solo=False)
+
+        # No metadata at all (no model fields, solo off) -> nothing written.
+        meta_file = spec_dir / "task_metadata.json"
+        if meta_file.exists():
+            assert "soloMode" not in json.loads(meta_file.read_text())
+
+        import solo_mode
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+    async def test_per_task_metadata_overrides_saved_setting(self, tmp_path, monkeypatch):
+        """An explicit per-task soloMode=False wins over a saved global True."""
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+        spec_dir = await self._create_task(
+            tmp_path, monkeypatch, saved_solo=True, metadata={"soloMode": False}
+        )
+
+        import solo_mode
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+    async def test_env_still_overrides_saved_setting(self, tmp_path, monkeypatch):
+        """Backend env override beats a stamped soloMode (precedence unchanged)."""
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
+
+        spec_dir = await self._create_task(tmp_path, monkeypatch, saved_solo=True)
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        assert meta.get("soloMode") is True  # stamped...
+
+        import solo_mode
+        monkeypatch.setenv("AIFACTORY_SOLO_MODE", "off")  # ...but env wins
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+
+class TestSoloSettingMirrorsToGlobalConfig:
+    """Saving settings mirrors soloMode into ~/.aifactory/config.json solo.enabled,
+    which solo_mode.py uses as the global fallback."""
+
+    def test_save_true_writes_global_enabled(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        fake_home = tmp_path / "home"
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+        from server.routes import settings as settings_route
+
+        # Point the app-settings file at a temp dir so we don't touch real data.
+        monkeypatch.setattr(
+            settings_route, "get_settings_file",
+            lambda: tmp_path / "settings.json",
+        )
+
+        settings_route.save_app_settings(settings_route.AppSettings(soloMode=True))
+
+        config = json.loads((fake_home / ".aifactory" / "config.json").read_text())
+        assert config["solo"]["enabled"] is True
+
+        import solo_mode
+        assert solo_mode.is_solo_mode_enabled() is True
+
+    def test_save_preserves_other_global_keys(self, tmp_path, monkeypatch):
+        fake_home = tmp_path / "home"
+        (fake_home / ".aifactory").mkdir(parents=True)
+        (fake_home / ".aifactory" / "config.json").write_text(
+            json.dumps({"other": {"keep": 1}, "solo": {"enabled": False}})
+        )
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+
+        from server.routes import settings as settings_route
+        monkeypatch.setattr(
+            settings_route, "get_settings_file",
+            lambda: tmp_path / "settings.json",
+        )
+
+        settings_route.save_app_settings(settings_route.AppSettings(soloMode=True))
+
+        config = json.loads((fake_home / ".aifactory" / "config.json").read_text())
+        assert config["other"] == {"keep": 1}  # untouched
+        assert config["solo"]["enabled"] is True
