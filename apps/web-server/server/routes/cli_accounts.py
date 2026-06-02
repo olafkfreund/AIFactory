@@ -1,8 +1,14 @@
 """
-CLI Account management routes for Codex CLI (OpenAI) and Gemini CLI (Google).
+CLI Account management routes for Codex CLI (OpenAI) and Antigravity CLI
+(Google — the post-Gemini-CLI successor).
 
 Provides detection, credential import, API key storage, terminal-based
 login polling, and CLI install/update for third-party CLI tools.
+
+Back-compat: the canonical CLI id is ``antigravity``, but the legacy
+``gemini`` id is still accepted on every endpoint (normalised via
+``_canonical_cli``) and the ``/cli-accounts/detect`` response still includes a
+``gemini`` key mirroring ``antigravity`` so older frontends keep working.
 """
 
 import asyncio
@@ -27,7 +33,17 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-SUPPORTED_CLIS = {"codex", "gemini"}
+# Canonical CLI ids.  "antigravity" is the Google CLI (formerly "gemini").
+SUPPORTED_CLIS = {"codex", "antigravity"}
+
+# Legacy id -> canonical id.  Old clients / stored values that say "gemini"
+# are transparently routed to the "antigravity" config.
+_CLI_ALIASES = {"gemini": "antigravity"}
+
+# Antigravity is the npm package @google/gemini-cli installed into
+# ~/.gemini/antigravity-cli (matches scripts/install-backend.js). The bundled
+# binary is ~/.gemini/antigravity-cli/bin/antigravity (symlink -> gemini).
+ANTIGRAVITY_INSTALL_DIR = Path.home() / ".gemini" / "antigravity-cli"
 
 CREDENTIALS_DIR = Path.home() / ".aifactory"
 
@@ -40,15 +56,25 @@ CLI_CONFIG = {
         "stored_credentials": CREDENTIALS_DIR / "codex-credentials.json",
         "npm_package": "@openai/codex",
     },
-    "gemini": {
-        "binary": "gemini",
-        "version_cmd": "gemini --version",
+    "antigravity": {
+        "binary": "antigravity",
+        "version_cmd": "antigravity --version",
+        # Credentials/config still live under ~/.gemini (the Antigravity CLI
+        # keeps the legacy gemini-cli config directory).
         "credentials_file": Path.home() / ".gemini" / "settings.json",
         "oauth_credentials_file": Path.home() / ".gemini" / "oauth_creds.json",
+        # Stored-credential filename kept as gemini-credentials.json for
+        # back-compat with existing installs.
         "stored_credentials": CREDENTIALS_DIR / "gemini-credentials.json",
         "npm_package": "@google/gemini-cli",
+        "install_dir": ANTIGRAVITY_INSTALL_DIR,
     },
 }
+
+
+def _canonical_cli(cli: str) -> str:
+    """Normalise a CLI id, mapping the legacy ``gemini`` alias to ``antigravity``."""
+    return _CLI_ALIASES.get(cli, cli)
 
 # ---------------------------------------------------------------------------
 # Models
@@ -76,11 +102,11 @@ class APIKeyRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def get_gemini_binary() -> str:
-    """Dynamically resolve the gemini / antigravity binary path."""
+def get_antigravity_binary() -> str:
+    """Dynamically resolve the antigravity / gemini binary path."""
     if shutil.which("antigravity"):
         return "antigravity"
-    custom_path = Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+    custom_path = ANTIGRAVITY_INSTALL_DIR / "bin" / "antigravity"
     if custom_path.exists():
         return str(custom_path)
     if shutil.which("gemini"):
@@ -89,9 +115,23 @@ def get_gemini_binary() -> str:
     return "antigravity"
 
 
-def _validate_cli(cli: str) -> None:
-    if cli not in SUPPORTED_CLIS:
-        raise HTTPException(status_code=400, detail=f"Unsupported CLI: {cli}. Must be one of: {', '.join(SUPPORTED_CLIS)}")
+# Back-compat alias for the old helper name (imported by insights provider).
+get_gemini_binary = get_antigravity_binary
+
+
+def _validate_cli(cli: str) -> str:
+    """Validate + normalise a CLI id. Returns the canonical id.
+
+    Accepts the legacy ``gemini`` alias (maps to ``antigravity``).
+    """
+    canonical = _canonical_cli(cli)
+    if canonical not in SUPPORTED_CLIS:
+        supported = ", ".join(sorted(SUPPORTED_CLIS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported CLI: {cli}. Must be one of: {supported} (alias 'gemini' accepted)",
+        )
+    return canonical
 
 
 def _detect_cli_version(cli: str) -> str | None:
@@ -101,9 +141,10 @@ def _detect_cli_version(cli: str) -> str | None:
     startup (e.g. Gemini ~4s), reads version from package.json instead.
     Falls back to bash -l -c only when the binary isn't on the non-login PATH.
     """
+    cli = _canonical_cli(cli)
     cfg = CLI_CONFIG[cli]
-    if cli == "gemini":
-        binary = get_gemini_binary()
+    if cli == "antigravity":
+        binary = get_antigravity_binary()
     else:
         binary = cfg["binary"]
 
@@ -131,10 +172,12 @@ def _detect_cli_version(cli: str) -> str | None:
         # ~/.gemini/antigravity-cli/bin/ by default; that directory is rarely
         # on PATH but the binary IS installed.
         candidates = []
-        if binary == "gemini" or (binary.startswith("/") and binary.endswith("gemini")):
+        if cli == "antigravity" or binary in ("gemini", "antigravity") or (
+            binary.startswith("/") and (binary.endswith("gemini") or binary.endswith("antigravity"))
+        ):
             candidates += [
-                Path.home() / ".gemini" / "antigravity-cli" / "bin" / "gemini",
-                Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity",
+                ANTIGRAVITY_INSTALL_DIR / "bin" / "antigravity",
+                ANTIGRAVITY_INSTALL_DIR / "bin" / "gemini",
             ]
         for candidate in candidates:
             if candidate.is_file() or candidate.is_symlink():
@@ -152,7 +195,7 @@ def _detect_cli_version(cli: str) -> str | None:
 
     # Run version command directly (no login shell overhead)
     try:
-        cmd = f"{binary} --version" if cli == "gemini" else cfg["version_cmd"]
+        cmd = f"{binary} --version" if cli == "antigravity" else cfg["version_cmd"]
         result = subprocess.run(
             cmd.split(),
             capture_output=True,
@@ -224,8 +267,8 @@ def _get_codex_email() -> str | None:
 
 
 def _get_gemini_email() -> str | None:
-    """Extract email from Gemini oauth_creds.json id_token."""
-    oauth_data = _read_json_file(CLI_CONFIG["gemini"]["oauth_credentials_file"])
+    """Extract email from Antigravity oauth_creds.json id_token."""
+    oauth_data = _read_json_file(CLI_CONFIG["antigravity"]["oauth_credentials_file"])
     if oauth_data:
         id_token = oauth_data.get("id_token", "")
         if id_token:
@@ -311,7 +354,7 @@ def _detect_gemini_credentials() -> tuple[bool, str | None, str | None]:
 
     OAuth credentials are stored separately in ~/.gemini/oauth_creds.json.
     """
-    cfg = CLI_CONFIG["gemini"]
+    cfg = CLI_CONFIG["antigravity"]
 
     # Check stored credentials first
     stored = _read_json_file(cfg["stored_credentials"])
@@ -353,6 +396,7 @@ def _detect_gemini_credentials() -> tuple[bool, str | None, str | None]:
 
 def _get_cli_status(cli: str) -> CLIAccountStatus:
     """Get full status for a CLI."""
+    cli = _canonical_cli(cli)
     version = _detect_cli_version(cli)
     installed = version is not None
 
@@ -430,8 +474,8 @@ def _poll_codex_token(mtime_before: float) -> None:
 
 def _poll_gemini_token(mtime_before: float) -> None:
     """Poll ~/.gemini/settings.json and oauth_creds.json for new credentials."""
-    settings_path = CLI_CONFIG["gemini"]["credentials_file"]
-    oauth_path = CLI_CONFIG["gemini"]["oauth_credentials_file"]
+    settings_path = CLI_CONFIG["antigravity"]["credentials_file"]
+    oauth_path = CLI_CONFIG["antigravity"]["oauth_credentials_file"]
 
     for _ in range(90):  # ~3 minutes
         try:
@@ -460,30 +504,30 @@ def _poll_gemini_token(mtime_before: float) -> None:
                     )
 
                 if selected_type in ("oauth-personal", "LOGIN_WITH_GOOGLE") or oauth_changed:
-                    _save_credentials("gemini", {
+                    _save_credentials("antigravity", {
                         "source": "cli_login",
                         "selectedType": selected_type or "oauth-personal",
                         "authMethod": "google_login",
                         "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     })
                     logger.info("[Gemini] Credentials detected and saved")
-                    _broadcast_cli_auth_event("gemini", True)
+                    _broadcast_cli_auth_event("antigravity", True)
                     return
                 elif selected_type == "API_KEY" or (settings and settings.get("apiKey")):
-                    _save_credentials("gemini", {
+                    _save_credentials("antigravity", {
                         "source": "cli_login",
                         "selectedType": selected_type,
                         "authMethod": "api_key",
                         "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     })
                     logger.info("[Gemini] API key credentials detected and saved")
-                    _broadcast_cli_auth_event("gemini", True)
+                    _broadcast_cli_auth_event("antigravity", True)
                     return
         except Exception as e:
             logger.warning(f"[Gemini] Polling error: {e}")
         time.sleep(2)
     logger.warning("[Gemini] Credentials not detected within timeout")
-    _broadcast_cli_auth_event("gemini", False)
+    _broadcast_cli_auth_event("antigravity", False)
 
 
 def _broadcast_cli_auth_event(cli: str, success: bool) -> None:
@@ -506,28 +550,37 @@ def _broadcast_cli_auth_event(cli: str, success: bool) -> None:
 
 @router.get("/cli-accounts/detect")
 async def detect_cli_accounts():
-    """Detect both Codex and Gemini CLIs and their credential status."""
+    """Detect Codex and Antigravity CLIs and their credential status.
+
+    The response is keyed by the canonical ``antigravity`` id, and also
+    duplicated under the legacy ``gemini`` key so older frontends keep working.
+    """
     loop = asyncio.get_event_loop()
     codex_future = loop.run_in_executor(None, _get_cli_status, "codex")
-    gemini_future = loop.run_in_executor(None, _get_cli_status, "gemini")
-    codex_status, gemini_status = await asyncio.gather(codex_future, gemini_future)
+    antigravity_future = loop.run_in_executor(None, _get_cli_status, "antigravity")
+    codex_status, antigravity_status = await asyncio.gather(
+        codex_future, antigravity_future
+    )
+    antigravity_dump = antigravity_status.model_dump()
     return {
         "codex": codex_status.model_dump(),
-        "gemini": gemini_status.model_dump(),
+        "antigravity": antigravity_dump,
+        # Back-compat: legacy clients read cliAccounts.gemini.
+        "gemini": antigravity_dump,
     }
 
 
 @router.get("/cli-accounts/{cli}/status")
 async def get_cli_status(cli: str):
     """Get detailed status for a specific CLI."""
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     return _get_cli_status(cli).model_dump()
 
 
 @router.post("/cli-accounts/{cli}/import")
 async def import_cli_credentials(cli: str):
     """Import existing credentials from the CLI's default location."""
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     cfg = CLI_CONFIG[cli]
 
     if cli == "codex":
@@ -545,7 +598,7 @@ async def import_cli_credentials(cli: str):
                 return {"success": True, "message": "Codex credentials imported successfully"}
         return {"success": False, "error": "No Codex credentials found at ~/.codex/auth.json"}
 
-    else:  # gemini
+    else:  # antigravity
         # Check settings.json for auth type
         settings = _read_json_file(cfg["credentials_file"])
         selected_type = ""
@@ -566,7 +619,7 @@ async def import_cli_credentials(cli: str):
                 "authMethod": "google_login",
                 "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
-            return {"success": True, "message": "Gemini credentials imported successfully"}
+            return {"success": True, "message": "Antigravity credentials imported successfully"}
         if settings and (selected_type == "API_KEY" or settings.get("apiKey")):
             _save_credentials(cli, {
                 "source": "import",
@@ -574,14 +627,14 @@ async def import_cli_credentials(cli: str):
                 "authMethod": "api_key",
                 "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             })
-            return {"success": True, "message": "Gemini credentials imported successfully"}
-        return {"success": False, "error": "No Gemini credentials found at ~/.gemini/settings.json"}
+            return {"success": True, "message": "Antigravity credentials imported successfully"}
+        return {"success": False, "error": "No Antigravity credentials found at ~/.gemini/settings.json"}
 
 
 @router.post("/cli-accounts/{cli}/api-key")
 async def set_cli_api_key(cli: str, body: APIKeyRequest):
     """Save a manual API key for a CLI."""
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     _save_credentials(cli, {
         "source": "api_key",
         "api_key": body.api_key,
@@ -599,7 +652,7 @@ async def start_cli_login(cli: str):
     The frontend should instruct the user to run the login command in
     a terminal.
     """
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     cfg = CLI_CONFIG[cli]
     credentials_path = cfg["credentials_file"]
 
@@ -614,13 +667,14 @@ async def start_cli_login(cli: str):
                 "command": "codex login",
             },
         }
-    else:  # gemini
+    else:  # antigravity
         threading.Thread(target=_poll_gemini_token, args=(mtime_before,), daemon=True).start()
+        binary = get_antigravity_binary()
         return {
             "success": True,
             "data": {
-                "message": "Polling started. Run 'gemini' in your terminal and select Login with Google.",
-                "command": "gemini",
+                "message": f"Polling started. Run '{binary}' in your terminal and select Login with Google.",
+                "command": binary,
             },
         }
 
@@ -633,7 +687,7 @@ async def start_cli_login_terminal(cli: str):
     polling in the background. Returns the terminal ID so the frontend
     can connect via WebSocket to show the interactive session.
     """
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     cfg = CLI_CONFIG[cli]
 
     # Verify CLI is installed
@@ -648,7 +702,7 @@ async def start_cli_login_terminal(cli: str):
     if cli == "codex":
         auth_command = "codex auth login"
     else:
-        auth_command = "gemini auth login"
+        auth_command = f"{get_antigravity_binary()} auth login"
 
     # Create a PTY terminal session
     from ..pty.manager import get_pty_manager
@@ -691,6 +745,62 @@ async def start_cli_login_terminal(cli: str):
     }
 
 
+def _run_login_shell(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
+    """Run a command inside a login shell.
+
+    Takes an argument list (not a raw string) to prevent shell injection.
+    """
+    safe_cmd = " ".join(shlex.quote(a) for a in args)
+    return subprocess.run(
+        ["bash", "-l", "-c", safe_cmd],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _create_antigravity_symlink() -> None:
+    """Create the ``antigravity`` -> ``gemini`` symlink in the install bin dir.
+
+    Mirrors the symlink step in ``scripts/install-backend.js`` so installing
+    the Antigravity CLI via the portal matches installing it via the script:
+    the bundled binary is named ``gemini`` and we expose it as ``antigravity``.
+    """
+    try:
+        bin_dir = ANTIGRAVITY_INSTALL_DIR / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        symlink_path = bin_dir / "antigravity"
+        target_path = bin_dir / "gemini"
+        if target_path.exists():
+            if symlink_path.exists() or symlink_path.is_symlink():
+                symlink_path.unlink()
+            symlink_path.symlink_to("gemini")
+            logger.info("Successfully created antigravity -> gemini symlink.")
+    except Exception as se:
+        logger.error(f"Failed to create antigravity symlink: {se}")
+
+
+def _npm_install_cli(cli: str, package: str) -> subprocess.CompletedProcess:
+    """Run ``npm install -g`` for a CLI, scoped to its install dir if any.
+
+    For Antigravity, installs ``@google/gemini-cli`` into
+    ``~/.gemini/antigravity-cli`` (matching ``scripts/install-backend.js``) and
+    creates the ``antigravity`` symlink afterwards.  For other CLIs, installs
+    globally.  Re-running performs an update to the latest published version.
+    """
+    install_dir = CLI_CONFIG[cli].get("install_dir")
+    if install_dir is not None:
+        Path(install_dir).parent.mkdir(parents=True, exist_ok=True)
+        result = _run_login_shell(
+            ["npm", "install", "-g", "--prefix", str(install_dir), package],
+            timeout=120,
+        )
+        if result.returncode == 0:
+            _create_antigravity_symlink()
+        return result
+    return _run_login_shell(["npm", "install", "-g", package], timeout=120)
+
+
 @router.post("/cli-accounts/{cli}/install")
 def install_or_update_cli(cli: str):
     """Install or update a CLI tool via npm.
@@ -700,24 +810,15 @@ def install_or_update_cli(cli: str):
     2. npm install -g <package> (works for both install and update)
     3. Verify with <cli> --version
     4. Return {success, version, wasUpdate}
+
+    For Antigravity, the install mirrors ``scripts/install-backend.js``:
+    ``@google/gemini-cli`` is installed into ``~/.gemini/antigravity-cli`` and
+    the ``antigravity`` symlink is (re)created.  Re-running this endpoint
+    updates an existing install to the latest published version.
     """
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     cfg = CLI_CONFIG[cli]
     package = cfg["npm_package"]
-
-    def _run(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess:
-        """Run a command inside a login shell.
-
-        Takes an argument list (not a raw string) to prevent shell injection.
-        """
-        safe_cmd = " ".join(shlex.quote(a) for a in args)
-        return subprocess.run(
-            ["bash", "-l", "-c", safe_cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
 
     # Check existing version (to determine install vs update)
     old_version = _detect_cli_version(cli)
@@ -741,13 +842,10 @@ def install_or_update_cli(cli: str):
             "error": f"Failed to check Node.js: {e}",
         }
 
-    # Step 2: Install/update via npm
+    # Step 2: Install/update via npm (scoped to the install dir for Antigravity)
     try:
         logger.info(f"[{cli}] Running npm install -g {package}...")
-        if cli == "gemini":
-            install_result = _run(["npm", "install", "-g", "--prefix", os.path.expanduser("~/.gemini/antigravity-cli"), package], timeout=120)
-        else:
-            install_result = _run(["npm", "install", "-g", package], timeout=120)
+        install_result = _npm_install_cli(cli, package)
 
         if install_result.returncode != 0:
             error_msg = install_result.stderr.strip() or install_result.stdout.strip()
@@ -755,21 +853,6 @@ def install_or_update_cli(cli: str):
                 "success": False,
                 "error": f"npm install failed: {error_msg}",
             }
-
-        # Create antigravity -> gemini symlink if we just installed gemini CLI
-        if cli == "gemini":
-            try:
-                bin_dir = Path.home() / ".gemini" / "antigravity-cli" / "bin"
-                bin_dir.mkdir(parents=True, exist_ok=True)
-                symlink_path = bin_dir / "antigravity"
-                target_path = bin_dir / "gemini"
-                if target_path.exists():
-                    if symlink_path.exists() or symlink_path.is_symlink():
-                        symlink_path.unlink()
-                    symlink_path.symlink_to("gemini")
-                    logger.info("Successfully created antigravity -> gemini symlink.")
-            except Exception as se:
-                logger.error(f"Failed to create symlink: {se}")
     except subprocess.TimeoutExpired:
         return {
             "success": False,
@@ -803,7 +886,7 @@ def install_or_update_cli(cli: str):
 @router.delete("/cli-accounts/{cli}")
 async def remove_cli_account(cli: str):
     """Remove stored credentials for a CLI."""
-    _validate_cli(cli)
+    cli = _validate_cli(cli)
     path = CLI_CONFIG[cli]["stored_credentials"]
     if path.exists():
         path.unlink()

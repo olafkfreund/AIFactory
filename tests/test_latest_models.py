@@ -23,6 +23,13 @@ def test_default_phase_models_use_latest_sonnet():
     assert {resolve_model_id(m) for m in DEFAULT_PHASE_MODELS.values()} == {"claude-sonnet-4-6"}
 
 
-def test_gemini_agentic_default_is_latest_pro():
-    import providers.gemini_agentic as g
+def test_antigravity_agentic_default_is_latest_pro():
+    import providers.antigravity_agentic as g
     assert g._DEFAULT_MODEL == "gemini-3.1-pro-preview"
+
+
+def test_gemini_agentic_shim_still_resolves():
+    # Back-compat: the legacy import path must keep working.
+    import providers.antigravity_agentic as ag
+    import providers.gemini_agentic as g
+    assert g.GeminiAgenticProvider is ag.AntigravityAgenticProvider

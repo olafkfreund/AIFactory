@@ -37,8 +37,9 @@ Package layout
         claude.py           — ClaudeProvider   (wraps ClaudeSDKClient)
         codex.py            — CodexCLIProvider  (Codex CLI text-only)
         codex_agentic.py    — CodexAgenticProvider (Codex CLI full-auto)
-        gemini.py           — GeminiCLIProvider (Gemini CLI text-only)
-        gemini_agentic.py   — GeminiAgenticProvider (Gemini CLI sandbox)
+        antigravity.py      — AntigravityCLIProvider (Antigravity CLI text-only)
+        antigravity_agentic.py — AntigravityAgenticProvider (Antigravity --yolo)
+        gemini.py / gemini_agentic.py — back-compat shims for the above
         ollama.py           — OllamaProvider   (local Ollama text-only adapter)
         ollama_agentic.py   — OllamaAgenticProvider (native tool calling)
         opencode.py         — OpenCodeProvider (OpenCode CLI runtime, text entry)
@@ -84,8 +85,8 @@ class BaseLLMProvider(ABC):
     - ``providers.claude``          — wraps ClaudeSDKClient (default)
     - ``providers.codex``           — Codex CLI text-only
     - ``providers.codex_agentic``   — Codex CLI full-auto (agentic)
-    - ``providers.gemini``          — Gemini CLI text-only
-    - ``providers.gemini_agentic``  — Gemini CLI sandbox (agentic)
+    - ``providers.antigravity``     — Antigravity CLI text-only
+    - ``providers.antigravity_agentic`` — Antigravity CLI ``--yolo`` (agentic)
     - ``providers.ollama``          — local Ollama / OpenAI-compatible
     """
 

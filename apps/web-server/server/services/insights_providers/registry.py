@@ -6,10 +6,10 @@ import asyncio
 import logging
 import time
 
+from .antigravity_provider import AntigravityProvider
 from .base import ProviderInfo, ProviderStrategy
 from .claude_provider import ClaudeProvider
 from .codex_provider import CodexProvider
-from .gemini_provider import GeminiProvider
 from .ollama_provider import OllamaProvider
 from .openai_compat_provider import OpenAICompatProvider
 
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # Singleton provider instances
 _providers: dict[str, ProviderStrategy] = {}
 
+# Alias provider ids that point at the same singleton as a canonical id.
+# Skipped during detection so the provider isn't reported twice.
+_ALIAS_IDS = {"gemini"}
+
 
 def _init_providers() -> None:
     """Lazily initialize all provider singletons."""
@@ -25,10 +29,13 @@ def _init_providers() -> None:
     if _providers:
         return
 
+    antigravity = AntigravityProvider()
     _providers = {
         "claude": ClaudeProvider(),
         "codex": CodexProvider(),
-        "gemini": GeminiProvider(),
+        "antigravity": antigravity,
+        # Back-compat: the frontend still requests the "gemini" provider id.
+        "gemini": antigravity,
         "ollama": OllamaProvider(),
         "lmstudio": OpenAICompatProvider("lmstudio"),
         "localai": OpenAICompatProvider("localai"),
@@ -71,6 +78,7 @@ async def detect_all_providers() -> list[ProviderInfo]:
         *[
             _timed_detect(pid, prov)
             for pid, prov in _providers.items()
+            if pid not in _ALIAS_IDS
         ],
     )
 
