@@ -20,6 +20,7 @@ import { AddProjectModal } from './components/AddProjectModal';
 import { AppSettingsDialog } from './components/settings';
 import { TaskCreationWizard } from './components/TaskCreationWizard';
 import { TaskDetailModal } from './components/task-detail';
+import { MissionControl } from './components/MissionControl';
 import { OnboardingWizard } from './components/onboarding';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ProjectSwitchLoadingModal } from './components/ProjectSwitchLoadingModal';
@@ -93,6 +94,15 @@ function AuthenticatedApp() {
       return task;
     },
     [selectedTaskId, tasks]
+  );
+  // Mission Control: full-page 3-pane workspace for one task (same store-derived pattern).
+  const [missionControlId, setMissionControlId] = useState<string | null>(null);
+  const missionControlTask = useMemo(
+    () => {
+      if (!missionControlId) return null;
+      return tasks.find(t => t.id === missionControlId || t.specId === missionControlId) ?? null;
+    },
+    [missionControlId, tasks]
   );
   const [activeView, setActiveView] = useState<SidebarView>('kanban');
   const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
@@ -420,7 +430,23 @@ function AuthenticatedApp() {
             }}
             onSwitchToTerminals={() => setActiveView('terminals')}
             onOpenInbuiltTerminal={handleOpenInbuiltTerminal}
+            onExpandMissionControl={(taskId) => {
+              setSelectedTaskId(null);
+              setMissionControlId(taskId);
+            }}
           />
+
+          {/* Mission Control — full-page 3-pane workspace */}
+          {missionControlTask && (
+            <MissionControl
+              task={missionControlTask}
+              onClose={() => setMissionControlId(null)}
+              onCollapse={(taskId) => {
+                setMissionControlId(null);
+                setSelectedTaskId(taskId);
+              }}
+            />
+          )}
 
           {/* Onboarding Wizard */}
           <OnboardingWizard
