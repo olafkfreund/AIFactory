@@ -1294,7 +1294,27 @@ class AgentService:
         # otherwise default to SPEC_CREATION for spec creation processes
         current_phase = self._task_current_phases.get(task_id, TaskPhase.SPEC_CREATION)
 
+        # Epic #44 — tee this stream's bytes into the task's Live Console
+        # FIFO (read-only mirror). Gated once up-front so there's no
+        # per-line cost when rmux is off. spec_id is the suffix of the
+        # composite task_id (``project_id:spec_id``).
+        _rmux_spec = task_id.split(":", 1)[1] if ":" in task_id else task_id
+        _rmux_feed = None
+        try:
+            from ..rmux.integration import is_enabled as _rmux_on, feed_if_enabled as _rmux_feed_fn
+            if _rmux_on():
+                _rmux_feed = _rmux_feed_fn
+        except Exception:
+            _rmux_feed = None
+
         async for line_bytes in stream:
+            # Mirror raw bytes to the Live Console (xterm needs CRLF).
+            if _rmux_feed is not None:
+                try:
+                    _rmux_feed(_rmux_spec, line_bytes.replace(b"\n", b"\r\n"))
+                except Exception:
+                    pass
+
             line = line_bytes.decode("utf-8", errors="replace").rstrip()
 
             # Log stderr to server logs for debugging

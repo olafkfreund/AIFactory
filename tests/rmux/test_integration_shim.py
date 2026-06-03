@@ -98,27 +98,29 @@ class TestFlagOnInvokesRegistry:
     """When the flag is on, the shim must delegate to the registry."""
 
     @pytest.mark.asyncio
-    async def test_create_calls_registry_create_for_task(
+    async def test_create_calls_registry_create_passive_for_task(
         self, monkeypatch, tmp_path
     ) -> None:
+        # The agent already runs under agent_service's own PTY, so the shim
+        # registers a FIFO-only (passive) session rather than re-spawning
+        # the agent via rmux. ``agent_cmd`` is accepted for API compat but
+        # not forwarded.
         from server.rmux import integration
         monkeypatch.setenv("AIFACTORY_RMUX_ENABLED", "true")
         fake_fifo = tmp_path / "fake.fifo"
         mock_registry = type(
-            "MockRegistry", (), {"create_for_task": AsyncMock(return_value=fake_fifo)}
+            "MockRegistry", (),
+            {"create_passive_for_task": AsyncMock(return_value=fake_fifo)},
         )()
         with patch("server.rmux.integration.get_registry", return_value=mock_registry):
             result = await integration.create_if_enabled(
                 spec_id="001-feature", project_path=tmp_path, agent_cmd="ls"
             )
             assert result == fake_fifo
-            assert mock_registry.create_for_task.await_count == 1
-            # The worktree path must follow the .aifactory/worktrees/tasks/<spec> convention
-            call_kwargs = mock_registry.create_for_task.await_args.kwargs
-            assert call_kwargs["spec_id"] == "001-feature"
-            assert call_kwargs["worktree_path"] == \
-                tmp_path / ".aifactory" / "worktrees" / "tasks" / "001-feature"
-            assert call_kwargs["agent_cmd"] == "ls"
+            assert mock_registry.create_passive_for_task.await_count == 1
+            call = mock_registry.create_passive_for_task.await_args
+            spec = call.args[0] if call.args else call.kwargs.get("spec_id")
+            assert spec == "001-feature"
 
     @pytest.mark.asyncio
     async def test_create_swallows_registry_exceptions(
@@ -130,7 +132,7 @@ class TestFlagOnInvokesRegistry:
         monkeypatch.setenv("AIFACTORY_RMUX_ENABLED", "true")
         mock_registry = type(
             "MockRegistry", (),
-            {"create_for_task": AsyncMock(side_effect=RuntimeError("rmux died"))},
+            {"create_passive_for_task": AsyncMock(side_effect=RuntimeError("rmux died"))},
         )()
         with patch("server.rmux.integration.get_registry", return_value=mock_registry):
             # Must not raise

@@ -39,9 +39,20 @@ from .wrapper import RmuxError, RmuxWrapper
 
 logger = logging.getLogger(__name__)
 
-# Default panes directory in the runtime container.  Overridden for
-# tests via ``configure(panes_dir=...)`` so they can use a tmp_path.
-_DEFAULT_PANES_DIR = Path("/var/run/aifactory/panes")
+# Default panes directory. In a container ``/var/run/aifactory/panes`` is
+# writable, but on a local laptop it isn't — so we resolve a writable
+# default at runtime (env override → data dir → /var/run as last resort).
+# Overridden for tests via ``configure(panes_dir=...)`` (tmp_path).
+def _default_panes_dir() -> Path:
+    env = os.environ.get("AIFACTORY_RMUX_PANES_DIR", "").strip()
+    if env:
+        return Path(env)
+    try:
+        from ..paths import get_data_dir
+
+        return get_data_dir() / "panes"
+    except Exception:
+        return Path("/var/run/aifactory/panes")
 
 
 @dataclass
@@ -58,6 +69,12 @@ class SessionState:
     fifo_path: Path
     attached_connection_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Non-blocking write fd into the FIFO, lazily opened by ``feed`` once a
+    # reader (the WS bridge) is connected. ``None`` when no writer is open.
+    write_fd: int | None = None
+    # True for sessions fed by agent_service's existing PTY (no rmux process
+    # spawned). Read-only streaming works; Attach/send-keys is unavailable.
+    passive: bool = False
 
 
 class SessionRegistry:
@@ -74,7 +91,7 @@ class SessionRegistry:
         panes_dir: Path | str | None = None,
     ) -> None:
         self._wrapper = wrapper or RmuxWrapper()
-        self._panes_dir = Path(panes_dir) if panes_dir else _DEFAULT_PANES_DIR
+        self._panes_dir = Path(panes_dir) if panes_dir else _default_panes_dir()
         self._states: dict[str, SessionState] = {}
         # Serialises mutations to ``_states`` itself.  Per-session
         # ``attached_connection_id`` flips use the per-state lock.
@@ -143,6 +160,75 @@ class SessionRegistry:
             )
             return fifo_path
 
+    async def create_passive_for_task(self, spec_id: str) -> Path:
+        """Register a FIFO-only session WITHOUT spawning an rmux process.
+
+        Used when the agent already runs under agent_service's own PTY:
+        rmux ``new-session`` would double-spawn the agent, so instead we
+        just create the FIFO + registry state and let agent_service
+        ``feed`` the agent's output bytes into it. The WS bridge streams
+        read-only exactly as it does for a real rmux pane. Attach/send-keys
+        is unavailable for passive sessions (no rmux pane to target).
+
+        Returns the FIFO path. Raises ValueError if already registered.
+        """
+        session_name = f"aifactory-task-{spec_id}"
+        fifo_path = self._panes_dir / f"{spec_id}.fifo"
+
+        async with self._registry_lock:
+            if spec_id in self._states:
+                raise ValueError(
+                    f"rmux session already exists for spec_id={spec_id!r}"
+                )
+            self._panes_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if fifo_path.exists():
+                fifo_path.unlink()
+            os.mkfifo(str(fifo_path), mode=0o600)
+            self._states[spec_id] = SessionState(
+                spec_id=spec_id,
+                session_name=session_name,
+                fifo_path=fifo_path,
+                passive=True,
+            )
+            logger.info(
+                "rmux passive session created: spec_id=%s fifo=%s",
+                spec_id, fifo_path,
+            )
+            return fifo_path
+
+    def feed(self, spec_id: str, data: bytes) -> None:
+        """Best-effort write of agent output bytes into a passive FIFO.
+
+        Lazily opens the FIFO write end non-blocking — which only succeeds
+        while a reader (the WS bridge) is connected, giving natural
+        "live tail" semantics: bytes are delivered to whoever is watching,
+        and silently dropped when nobody is. Never raises.
+        """
+        state = self._states.get(spec_id)
+        if state is None or not state.passive or not data:
+            return
+        try:
+            if state.write_fd is None:
+                try:
+                    state.write_fd = os.open(
+                        str(state.fifo_path), os.O_WRONLY | os.O_NONBLOCK
+                    )
+                except OSError:
+                    # ENXIO = no reader connected yet; drop until one is.
+                    return
+            os.write(state.write_fd, data)
+        except (BlockingIOError, InterruptedError):
+            # Pipe full (slow viewer) — drop this chunk, keep the fd.
+            pass
+        except OSError:
+            # Reader went away (EPIPE) — reset so we re-open on next viewer.
+            try:
+                if state.write_fd is not None:
+                    os.close(state.write_fd)
+            except OSError:
+                pass
+            state.write_fd = None
+
     async def reap_for_task(self, spec_id: str) -> None:
         """Kill the session + remove the FIFO.  Idempotent.
 
@@ -154,18 +240,28 @@ class SessionRegistry:
             if state is None:
                 return  # nothing to reap
 
+        # Close any open FIFO writer (passive sessions).
+        if state.write_fd is not None:
+            try:
+                os.close(state.write_fd)
+            except OSError:
+                pass
+            state.write_fd = None
+
         # Outside the registry lock — these are slow-ish subprocess ops
-        # and other callers don't need to wait on them.
-        try:
-            await self._wrapper.kill_session(
-                state.session_name, ignore_missing=True
-            )
-        except RmuxError:
-            logger.warning(
-                "rmux kill-session failed during reap (ignored): %s",
-                state.session_name,
-                exc_info=True,
-            )
+        # and other callers don't need to wait on them. Passive sessions
+        # have no rmux process, so skip kill-session for them.
+        if not state.passive:
+            try:
+                await self._wrapper.kill_session(
+                    state.session_name, ignore_missing=True
+                )
+            except RmuxError:
+                logger.warning(
+                    "rmux kill-session failed during reap (ignored): %s",
+                    state.session_name,
+                    exc_info=True,
+                )
         try:
             state.fifo_path.unlink(missing_ok=True)
         except OSError:
