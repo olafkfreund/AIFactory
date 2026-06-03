@@ -451,3 +451,50 @@ async def test_agent_status_combines_two_endpoints(tools_by_name, monkeypatch):
     assert payload["model"] == "sonnet-4-6"
     assert payload["overall_progress"] == 42
     assert payload["current_subtask_title"] == "Wire login endpoint"
+
+
+# ── task_apply_correction (TFactory→AIFactory hand-back, #317) ──────────
+
+
+async def test_apply_correction_confirm_gate_makes_no_call(tools_by_name, monkeypatch):
+    """Without confirm, the tool returns a confirm-gate and hits no endpoint."""
+    calls: list = []
+    monkeypatch.setattr(
+        "agents.tools_pkg.tools.task_control.request",
+        lambda *a, **k: calls.append(a) or {},
+    )
+    result = await tools_by_name["task_apply_correction"](
+        {"project_id": "demo", "spec_id": "001-login", "fix_request_md": "fix it"}
+    )
+    payload = json.loads(_content_text(result))
+    assert payload.get("confirm_required") or "confirm" in json.dumps(payload).lower()
+    assert calls == []  # gated — no REST call
+
+
+async def test_apply_correction_posts_to_route(tools_by_name, monkeypatch):
+    """With confirm, it POSTs the fix-request to the apply-correction route."""
+    captured: list = []
+
+    async def stub(method, path, **kwargs):
+        captured.append({"method": method, "path": path, "kwargs": kwargs})
+        return {"success": True, "started": True, "status": "qa_fixing"}
+
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
+
+    result = await tools_by_name["task_apply_correction"](
+        {
+            "project_id": "demo",
+            "spec_id": "001-login",
+            "fix_request_md": "Login returns 500; fix it.",
+            "source": "triage",
+            "confirm": True,
+        }
+    )
+    payload = json.loads(_content_text(result))
+    assert payload["correction_applied"] is True
+    assert captured[0]["method"] == "POST"
+    assert captured[0]["path"] == "/api/tasks/demo:001-login/apply-correction"
+    body = captured[0]["kwargs"]["json"]
+    assert body["fix_request_md"] == "Login returns 500; fix it."
+    assert body["source"] == "triage"
+    assert body["confirm"] is True

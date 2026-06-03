@@ -38,6 +38,14 @@ class StartTaskRequest(BaseModel):
     mode: str | None = Field("full", description="Execution mode: 'quick' for simplified prompts, 'full' for comprehensive")
 
 
+class ApplyCorrectionRequest(BaseModel):
+    """A correction hand-back from an external test tool (e.g. TFactory, #317)."""
+
+    fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
+    source: str | None = Field(None, description="Origin, e.g. 'triage' or 'visual_inspection'")
+    confirm: bool = Field(False, description="Required true to write + run the QA Fixer")
+
+
 class RecoverTaskRequest(BaseModel):
     """Request to recover a stuck task."""
 
@@ -711,3 +719,46 @@ async def create_and_run_task(
         "task_id": task_id,
         "message": "Task creation started. Connect to WebSocket for progress updates.",
     }
+
+
+@router.post("/{task_id}/apply-correction")
+async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
+    """Apply a correction hand-back (e.g. from TFactory) to an existing spec.
+
+    Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
+    Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
+    Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="task_id must be '<project_id>:<spec_id>'",
+        )
+    project_id, spec_id = task_id.split(":", 1)
+
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    spec_dir = Path(projects[project_id]["path"]) / ".aifactory" / "specs" / spec_id
+    if not spec_dir.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Spec not found: {spec_id}",
+        )
+
+    # Reach the backend qa.correction seam — mirror the sys.path bootstrap used
+    # by routes/mcp.py et al (the web-server PYTHONPATH may not include backend).
+    import sys
+
+    backend_dir = Path(__file__).resolve().parents[3] / "backend"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+    from qa.correction import apply_correction
+
+    result = await apply_correction(
+        spec_dir, request.fix_request_md, confirm=request.confirm
+    )
+    return {**result, "task_id": task_id, "source": request.source}
