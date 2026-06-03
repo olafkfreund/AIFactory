@@ -16,7 +16,6 @@ import asyncio
 import threading
 
 import pytest
-
 from server.rmux import session as rmux_session
 
 
