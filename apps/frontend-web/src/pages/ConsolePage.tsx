@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, LayoutGrid } from 'lucide-react';
 import { AgentConsole } from '../components/task-detail/AgentConsole';
 import { useProjectStore } from '../stores/project-store';
 
@@ -61,6 +61,14 @@ export function ConsolePage(): ReactNode {
         <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
           {specId}
         </code>
+        <Link
+          to={`/console/${projectId}`}
+          className="ml-auto flex items-center gap-1 text-muted-foreground hover:text-foreground"
+          title="View all active consoles for this project"
+        >
+          <LayoutGrid className="h-4 w-4" />
+          <span>All consoles</span>
+        </Link>
       </header>
       <main className="flex-1 overflow-hidden">
         <AgentConsole taskId={taskId} />
