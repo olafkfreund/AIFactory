@@ -21,6 +21,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'concepts/spec-driven-development',
         'concepts/multi-provider',
+        'concepts/mission-control-workspace',
         'concepts/rmux-live-console',
         'concepts/remote-control',
         'concepts/delegation',

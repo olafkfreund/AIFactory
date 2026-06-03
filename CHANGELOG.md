@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+### Added
+
+- Mission Control — a full-page three-pane task workspace (plan & subtasks · live activity + embedded Live Console · output tabs for preview / files / review), opened from the task-detail header (⤢). Reuses the existing task-detail data layer; collapses back to the modal; pane sizes persist (#311).
+- Live app **Preview** pane in Mission Control — iframe preview with an address bar and one-click dev-server port presets (#311).
+- Portal UX pass: skeleton loaders on the Kanban board and logs, a live progress timeline with elapsed timer + animated working state, a theme-aware terminal that follows light/dark + Gruvbox/shadcn, a "waiting for you" beacon on tasks in human review, and animated streaming log entries (#311).
+- `APP_RMUX_ENABLED` web-server setting to enable the rmux Live Agent Console for local dev (honored alongside the `AIFACTORY_RMUX_ENABLED` process env var) (#311).
+
+### Fixed
+
+- Defined several portal CSS classes (`task-running-pulse`, `column-*` accents, `column-count-badge`, `drop-zone-highlight`, `progress-working`) that were referenced by components but never defined, so the intended card pulses, column accents, and progress animation now render (#311).
+- Terminal and scrollbars no longer hardcode a dark palette; both follow the active theme (#311).
+
+### Documentation
+
+- New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
+
 ## 3.4.2 - 2026-06-02
 
 ### Fixed

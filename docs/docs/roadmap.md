@@ -28,6 +28,7 @@ What that means for the roadmap, concretely:
 
 ## Recently shipped
 
+- **Mission Control workspace + portal UX** ✅ (PR #311) — a full-page three-pane task workspace (plan & subtasks · live activity + embedded console · preview / files / review), opened on demand from the task header. Ships with a portal polish pass: skeleton loaders, a live progress timeline, a theme-aware terminal, a "waiting for you" review beacon, and animated streaming logs. See [Mission Control workspace](./concepts/mission-control-workspace).
 - **Epic #35 — Enterprise v1.1** ✅ **9/9 children shipped (2026-05-28)**:
   - #36 Tenant Isolation Mode (per-org K8s namespace + IRSA + gatekeeper samples)
   - #37 gVisor sandbox opt-in
