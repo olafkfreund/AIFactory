@@ -29,7 +29,8 @@ import {
   AlertTriangle,
   Pencil,
   X,
-  Zap
+  Zap,
+  Maximize2
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { calculateProgress } from '../../lib/utils';
@@ -56,9 +57,11 @@ interface TaskDetailModalProps {
   onOpenChange: (open: boolean) => void;
   onSwitchToTerminals?: () => void;
   onOpenInbuiltTerminal?: (id: string, cwd: string) => void;
+  /** Open this task in the full-page Mission Control workspace. */
+  onExpandMissionControl?: (taskId: string) => void;
 }
 
-export function TaskDetailModal({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal }: TaskDetailModalProps) {
+export function TaskDetailModal({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal, onExpandMissionControl }: TaskDetailModalProps) {
   // Don't render anything if no task
   if (!task) {
     return null;
@@ -71,6 +74,7 @@ export function TaskDetailModal({ open, task, onOpenChange, onSwitchToTerminals,
       onOpenChange={onOpenChange}
       onSwitchToTerminals={onSwitchToTerminals}
       onOpenInbuiltTerminal={onOpenInbuiltTerminal}
+      onExpandMissionControl={onExpandMissionControl}
     />
   );
 }
@@ -82,7 +86,7 @@ const isFilesTabEnabled = () => {
 };
 
 // Separate component to use hooks only when task exists
-function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal }: { open: boolean; task: Task; onOpenChange: (open: boolean) => void; onSwitchToTerminals?: () => void; onOpenInbuiltTerminal?: (id: string, cwd: string) => void }) {
+function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal, onExpandMissionControl }: { open: boolean; task: Task; onOpenChange: (open: boolean) => void; onSwitchToTerminals?: () => void; onOpenInbuiltTerminal?: (id: string, cwd: string) => void; onExpandMissionControl?: (taskId: string) => void }) {
   const { t } = useTranslation(['tasks']);
   const state = useTaskDetail({ task });
   const showFilesTab = isFilesTabEnabled();
@@ -468,6 +472,17 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                   </DialogPrimitive.Description>
                 </div>
                 <div className="flex items-center gap-1 shrink-0 electron-no-drag">
+                  {onExpandMissionControl && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="hover:bg-primary/10 hover:text-primary transition-colors"
+                      onClick={() => onExpandMissionControl(task.id)}
+                      title="Open in Mission Control"
+                    >
+                      <Maximize2 className="h-4 w-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"

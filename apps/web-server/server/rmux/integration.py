@@ -23,13 +23,28 @@ logger = logging.getLogger(__name__)
 
 
 def is_enabled() -> bool:
-    """Return ``True`` iff ``AIFACTORY_RMUX_ENABLED=true`` in the env.
+    """Return ``True`` if rmux is enabled via env var OR app settings.
 
-    Case-insensitive truthy parsing — ``true`` / ``1`` / ``yes`` all flip
-    it on so operators don't trip over case sensitivity.
+    Two sources (either flips it on):
+      * ``AIFACTORY_RMUX_ENABLED`` env var — case-insensitive truthy
+        (``true`` / ``1`` / ``yes`` / ``on``). Works in any process
+        (e.g. the backend agent runner) without the web-server config.
+      * ``APP_RMUX_ENABLED`` web-server setting — the idiomatic way to
+        turn it on for local dev via ``.env`` (settings are validated,
+        so it can't be a bare unknown key).
     """
     raw = os.environ.get("AIFACTORY_RMUX_ENABLED", "").strip().lower()
-    return raw in {"true", "1", "yes", "on"}
+    if raw in {"true", "1", "yes", "on"}:
+        return True
+
+    # Lazy import so this module stays importable outside the web server
+    # (and to avoid any import cycle with config).
+    try:
+        from ..config import get_settings
+
+        return bool(get_settings().RMUX_ENABLED)
+    except Exception:
+        return False
 
 
 def _worktree_path(project_path: Path | str, spec_id: str) -> Path:

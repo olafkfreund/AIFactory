@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { terminalBufferManager } from '../../lib/terminal-buffer-manager';
+import { getTerminalTheme } from '../../lib/terminal-theme';
 
 interface UseXtermOptions {
   terminalId: string;
@@ -30,30 +31,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize }: UseXtermOptio
       fontFamily: 'var(--font-mono), "JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
       lineHeight: 2,
       letterSpacing: 0,
-      theme: {
-        background: '#0B0B0F',
-        foreground: '#E8E6E3',
-        cursor: '#D6D876',
-        cursorAccent: '#0B0B0F',
-        selectionBackground: '#D6D87640',
-        selectionForeground: '#E8E6E3',
-        black: '#1A1A1F',
-        red: '#FF6B6B',
-        green: '#87D687',
-        yellow: '#D6D876',
-        blue: '#6BB3FF',
-        magenta: '#C792EA',
-        cyan: '#89DDFF',
-        white: '#E8E6E3',
-        brightBlack: '#4A4A50',
-        brightRed: '#FF8A8A',
-        brightGreen: '#A5E6A5',
-        brightYellow: '#E8E87A',
-        brightBlue: '#8AC4FF',
-        brightMagenta: '#DEB3FF',
-        brightCyan: '#A6E8FF',
-        brightWhite: '#FFFFFF',
-      },
+      // Theme is derived from the app's live CSS variables so the terminal
+      // tracks Gruvbox/shadcn + light/dark (see lib/terminal-theme.ts).
+      theme: getTerminalTheme(),
       allowProposedApi: true,
       scrollback: 10000,
     });
@@ -197,6 +177,23 @@ export function useXterm({ terminalId, onCommandEnter, onResize }: UseXtermOptio
       // Cleanup handled by parent component
     };
   }, [terminalId, onCommandEnter, onResize]);
+
+  // Re-apply the terminal theme when the app theme changes (light/dark or
+  // Gruvbox/shadcn). We observe the <html> class + data-theme attributes.
+  useEffect(() => {
+    const target = document.documentElement;
+    const applyTheme = () => {
+      if (xtermRef.current) {
+        xtermRef.current.options.theme = getTerminalTheme();
+      }
+    };
+    const observer = new MutationObserver(applyTheme);
+    observer.observe(target, {
+      attributes: true,
+      attributeFilter: ['class', 'data-theme'],
+    });
+    return () => observer.disconnect();
+  }, []);
 
   // Handle resize on container resize and window resize
   useEffect(() => {

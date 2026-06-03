@@ -27,7 +27,7 @@
 
 AIFactory turns GitHub issues into shipping code via a coordinated **planner / coder / QA** agent pipeline. You bring an issue (or a one-line task description) — AIFactory writes a spec, plans the work, codes it in an isolated git worktree, validates against the spec's acceptance criteria, and hands you back a merge-ready branch.
 
-You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive.
+You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive — or open the task in **Mission Control**, a full-page three-pane workspace (plan · live activity + console · preview / files / review). See [`docs/docs/concepts/mission-control-workspace.md`](docs/docs/concepts/mission-control-workspace.md).
 
 > **🚀 What's new (May 2026)** — three more epics closed on top of the May MCP shipset:
 >
@@ -65,6 +65,7 @@ AIFactory ships **7 major enterprise features** — multi-tenant isolation, obse
 - **Provider-agent delegation.** On GitHub repos, AIFactory can hand the coder phase off to **Copilot Coding Agent**; on GitLab, to **Duo Workflow**. AIFactory still authors the spec + plan; the provider's agent does the typing. Cuts Claude spend ~10× for delegated tasks.
 - **Portal-managed clones.** Point AIFactory at a Git URL and it clones into a workspace PVC (on K8s) or a configurable workspace root (on laptops). Stored PATs are encrypted at rest. Required for SaaS / Kubernetes installs.
 - **Infra-aware out of the box.** A catalog of default MCP servers (Kubernetes, AWS, Azure, GitHub) auto-enables per project when markers + credentials line up. Read-only by default, audit-logged, CVE-aware version pins.
+- **One screen to drive a task.** Mission Control puts the plan, the agent's live activity + embedded terminal, and the output (running preview, diff, or merge controls) side by side — no tab-switching while a build runs.
 - **Isolated by default.** Each task runs in its own git worktree. Nothing touches your working tree until you merge.
 - **Auditable.** Hash-chained audit log, on-disk specs+plans+QA reports, full SOC2 evidence catalog in the enterprise build.
 

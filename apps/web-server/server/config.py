@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     # Task execution
     MAX_CONCURRENT_TASKS: int = 5
 
+    # rmux Live Agent Console (Epic #44). Set APP_RMUX_ENABLED=true to surface
+    # the live "Agent Console" tab. Honored by rmux/integration.is_enabled()
+    # alongside the AIFACTORY_RMUX_ENABLED env var. Keep false on the
+    # bank-pilot image (no bundled rmux binary).
+    RMUX_ENABLED: bool = False
+
     class Config:
         env_file = ".env"
         env_prefix = "APP_"
