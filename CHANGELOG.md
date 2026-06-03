@@ -6,12 +6,15 @@
 - Live app **Preview** pane in Mission Control — iframe preview with an address bar and one-click dev-server port presets (#311).
 - Portal UX pass: skeleton loaders on the Kanban board and logs, a live progress timeline with elapsed timer + animated working state, a theme-aware terminal that follows light/dark + Gruvbox/shadcn, a "waiting for you" beacon on tasks in human review, and animated streaming log entries (#311).
 - `APP_RMUX_ENABLED` web-server setting to enable the rmux Live Agent Console for local dev (honored alongside the `AIFACTORY_RMUX_ENABLED` process env var) (#311).
+- Multi-agent **Live Console grid** at `/console/:projectId` — every active agent's console for a project streamed at once in a responsive grid (live "N active" count, per-tile fullscreen link), the multi-agent counterpart to the single `/console/:projectId/:specId` page. Reachable via "All consoles" on the single console header and an "All consoles ↗" badge in the task detail (#314).
 
 ### Fixed
 
 - Defined several portal CSS classes (`task-running-pulse`, `column-*` accents, `column-count-badge`, `drop-zone-highlight`, `progress-working`) that were referenced by components but never defined, so the intended card pulses, column accents, and progress animation now render (#311).
 - Terminal and scrollbars no longer hardcode a dark palette; both follow the active theme (#311).
 - rmux Live Agent Console now actually streams. Two bugs blocked it: (1) the pane FIFO defaulted to `/var/run/aifactory/panes`, which isn't writable on non-container hosts — it now resolves a writable default (`AIFACTORY_RMUX_PANES_DIR` → data dir `panes/`); (2) the agent already runs under agent_service's PTY, so rmux re-spawning it would double-run the agent — the integration now registers a FIFO-only "passive" session and tees the agent's existing stdout/stderr into it (`feed_if_enabled`), which the WS bridge streams read-only. Attach/send-keys remains for true rmux sessions.
+- Create New Task dialog used a hardcoded blue (`bg-[hsl(204,80%,16%)]`) that clashed with the active theme; switched to the `bg-card` token (#312).
+- Shared `/console/...` deep links bounced to the board on a cold load: routing fired before the async auth check resolved (`isAuthenticated=false` → `/login` → `/`). Routing now waits for the first auth check, so single and grid console links survive a cold load. The "Copy console URL" badge's hardcoded slate colors were also moved to the `info` theme token (#314).
 
 ### Documentation
 
