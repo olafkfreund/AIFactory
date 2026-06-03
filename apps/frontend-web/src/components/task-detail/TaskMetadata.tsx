@@ -145,11 +145,27 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
               >
                 <Badge
                   variant="outline"
-                  className="text-xs bg-slate-500/10 text-slate-300 border-slate-500/30 hover:bg-slate-500/20 transition-colors"
+                  className="text-xs bg-info/10 text-info border-info/30 hover:bg-info/20 transition-colors"
                 >
                   Copy console URL
                 </Badge>
               </button>
+            )}
+            {/* Multi-agent grid — every active console for the project at once. */}
+            {task.projectId && (
+              <a
+                href={`/console/${task.projectId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open all active agent consoles for this project"
+              >
+                <Badge
+                  variant="outline"
+                  className="text-xs bg-muted text-muted-foreground border-border hover:bg-muted-foreground/10 transition-colors"
+                >
+                  All consoles ↗
+                </Badge>
+              </a>
             )}
             {/* Category */}
             {task.metadata?.category && (
