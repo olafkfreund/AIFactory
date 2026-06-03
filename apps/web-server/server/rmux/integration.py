@@ -72,20 +72,37 @@ async def create_if_enabled(
     if not is_enabled():
         return None
 
-    worktree = _worktree_path(project_path, spec_id)
+    # Passive mode: agent_service already runs the agent under its own PTY,
+    # so we DON'T have rmux spawn it again (that would double-run the agent).
+    # We just create the FIFO + state; agent_service tees the agent's output
+    # into it via ``feed_if_enabled``. ``agent_cmd`` is retained for API
+    # compatibility but unused here.
+    del agent_cmd
     try:
         registry = get_registry()
-        return await registry.create_for_task(
-            spec_id=spec_id,
-            worktree_path=worktree,
-            agent_cmd=agent_cmd,
-        )
+        return await registry.create_passive_for_task(spec_id)
     except Exception:
         logger.warning(
-            "rmux create_for_task failed (falling back to PTY); spec_id=%s",
+            "rmux create_passive_for_task failed (Live Console disabled for "
+            "this task); spec_id=%s",
             spec_id, exc_info=True,
         )
         return None
+
+
+def feed_if_enabled(spec_id: str, data: bytes) -> None:
+    """Tee agent output bytes into the task's Live Console FIFO.
+
+    No-op when the feature is off or no session is registered. Never
+    raises — console streaming must never affect task execution.
+    """
+    if not is_enabled() or not data:
+        return
+    try:
+        get_registry().feed(spec_id, data)
+    except Exception:
+        # Best-effort; swallow everything so output processing is unaffected.
+        pass
 
 
 async def reap_if_enabled(spec_id: str) -> None:
