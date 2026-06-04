@@ -161,14 +161,23 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     try:
         import json as _json
 
+        from pfactory.metadata import load_pfactory_metadata
         from pfactory.routing import TFACTORY, routing_target
         from pfactory.taxonomy import classify_requirements
+        from pfactory.tfactory_client import build_handoff_payload, send_handoff
 
         _req_file = spec_dir / "requirements.json"
         if _req_file.exists():
             _req = _json.loads(_req_file.read_text())
             _classification = classify_requirements(_req)
             if routing_target(_classification) == TFACTORY:
+                # Outbound transport (#337): POST the spec + pfactory:meta to
+                # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
+                # no-op ("not_configured") and we still record the local marker.
+                _meta = load_pfactory_metadata(spec_dir, _req)
+                _payload = build_handoff_payload(spec_id, _req, _classification, _meta)
+                transport = await send_handoff(_payload)
+
                 marker = spec_dir / "TFACTORY_HANDOFF.md"
                 marker.write_text(
                     "# Routed to TFactory\n\n"
@@ -177,15 +186,19 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                     "AIFactory coder.\n\n"
                     f"- handoff: {_classification.handoff}\n"
                     f"- types: {', '.join(_classification.types) or '(none)'}\n"
+                    f"- transport: sent={transport.get('sent')} "
+                    f"reason={transport.get('reason')}\n"
                 )
                 logger.info(
                     f"[StartTask] {task_id} routed to TFactory "
-                    "(handoff:tfactory / type:testing) — coder not started"
+                    f"(coder not started); transport sent={transport.get('sent')} "
+                    f"reason={transport.get('reason')}"
                 )
                 return {
                     "success": True,
                     "task_id": task_id,
                     "routed_to": "tfactory",
+                    "transport": transport,
                     "message": (
                         "Routed to TFactory for test generation; the AIFactory "
                         "coder was not started."

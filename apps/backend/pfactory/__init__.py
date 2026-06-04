@@ -20,11 +20,13 @@ from .taxonomy import (
     classify_requirements,
     is_governed_requirements,
 )
+from .tfactory_client import build_handoff_payload, send_handoff, tfactory_config
 
 __all__ = [
     "CODER",
     "TFACTORY",
     "Classification",
+    "build_handoff_payload",
     "classify_labels",
     "classify_requirements",
     "extract_child_issue_numbers",
@@ -34,4 +36,6 @@ __all__ = [
     "priority_rank",
     "render_pfactory_context",
     "routing_target",
+    "send_handoff",
+    "tfactory_config",
 ]

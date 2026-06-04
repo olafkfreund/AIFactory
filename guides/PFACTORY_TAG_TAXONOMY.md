@@ -81,3 +81,20 @@ unknown/missing versions.
 | [#329](https://github.com/olafkfreund/AIFactory/issues/329) | Ingest `pfactory` + `handoff:aifactory` issues as **governed** specs — skip AIFactory's own up-front planning/approval gate; epic children are the executable units. Non-`pfactory` issues are unaffected. |
 | [#330](https://github.com/olafkfreund/AIFactory/issues/330) | Parse the `pfactory:meta` block + `requirements.json` metadata (cost, effort, access, citations) into the spec / planner context. |
 | [#331](https://github.com/olafkfreund/AIFactory/issues/331) | Map `priority:*` → scheduling, `type:*` → track/agent selection, `sev:*` → severity routing, `type:testing` / `handoff:tfactory` → TFactory; surface `citations[]` in planner context. |
+| [#338](https://github.com/olafkfreund/AIFactory/issues/338) | On import, auto-enumerate a PFactory epic's children (`- [ ] #NNN` task-list) and create a spec for each (deduped, idempotent). |
+
+## Outbound TFactory transport (#337)
+
+When a governed child routes to TFactory (`handoff:tfactory` / `type:testing`),
+the task-start route POSTs the spec + `pfactory:meta` to TFactory's HTTP API
+(symmetric with the inbound correction receiver, #317). Configure via the
+web-server environment:
+
+| Var | Meaning |
+|-----|---------|
+| `TFACTORY_BASE_URL` | TFactory base URL — **required to send**; unset = disabled |
+| `TFACTORY_TOKEN` | bearer token (optional) |
+| `TFACTORY_HANDOFF_PATH` | endpoint path (default `/api/handoff`) |
+
+Graceful: when unset, the routing decision still records a local
+`TFACTORY_HANDOFF.md` marker and the coder is skipped — nothing is sent.
