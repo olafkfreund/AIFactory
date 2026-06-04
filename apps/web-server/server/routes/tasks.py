@@ -1488,6 +1488,18 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
         _try_close_github_issue(project_path, spec_dir)
+        # Emit the RFC-0001 completion event so CFactory can thread the unit of
+        # work end to end (best-effort — never breaks the request). #342.
+        try:
+            from ..services.completion import emit_terminal_completion
+
+            emit_terminal_completion(
+                spec_dir, task_id=task_id, project_id=project_id,
+                spec_id=spec_id, status=update.status,
+            )
+        except Exception:  # pragma: no cover - notification is best-effort
+            import logging
+            logging.getLogger(__name__).debug("completion emit failed", exc_info=True)
 
     return spec_to_task(project_id, spec_dir)
 
