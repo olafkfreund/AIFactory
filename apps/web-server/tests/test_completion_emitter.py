@@ -129,6 +129,20 @@ def test_sentinel_written_when_enabled(tmp_path, monkeypatch):
 # ── end-to-end ───────────────────────────────────────────────────────────────
 
 
+def test_failed_terminal_emits_failed_status(tmp_path, monkeypatch):
+    """A failed build (never marked 'done') still emits a conformant event."""
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    spec = _spec_with_issue(tmp_path, 412)
+    ev = emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="failed",
+    )
+    assert _RFC_CORE <= set(ev)
+    assert ev["service"] == "aifactory"
+    assert ev["status"] == "failed"
+    assert ev["correlation_key"] == "412"
+
+
 def test_emit_terminal_completion_builds_from_spec(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)

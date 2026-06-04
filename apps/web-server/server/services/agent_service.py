@@ -2443,6 +2443,28 @@ class AgentService:
             )
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
+            # Emit the RFC-0001 completion event on a terminal build phase so the
+            # cockpit (CFactory) threads the unit end to end. Both COMPLETED and
+            # FAILED fire here — FAILED especially, since a failed build is never
+            # marked "done" and would otherwise never emit. The route's "done"
+            # transition emits the later human-approval event; CFactory dedups by
+            # (service, correlation_key, status), so completed/failed/done are
+            # distinct, complementary events. Best-effort; never breaks the build.
+            if emit_events and phase_enum in (TaskPhase.COMPLETED, TaskPhase.FAILED):
+                try:
+                    from .completion import emit_terminal_completion
+
+                    project_id = task_id.split(":", 1)[0] if ":" in task_id else project_path.name
+                    terminal_status = (
+                        "completed" if phase_enum == TaskPhase.COMPLETED else "failed"
+                    )
+                    emit_terminal_completion(
+                        spec_dir, task_id=task_id, project_id=project_id,
+                        spec_id=spec_id, status=terminal_status,
+                    )
+                except Exception:
+                    logger.debug("completion emit failed (best-effort)", exc_info=True)
+
             # Extract subtasks for WebSocket broadcast
             subtasks_data = []
             phases = plan.get("phases", [])
