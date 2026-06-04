@@ -23,13 +23,28 @@ logger = logging.getLogger(__name__)
 
 
 def is_enabled() -> bool:
-    """Return ``True`` iff ``AIFACTORY_RMUX_ENABLED=true`` in the env.
+    """Return ``True`` if rmux is enabled via env var OR app settings.
 
-    Case-insensitive truthy parsing — ``true`` / ``1`` / ``yes`` all flip
-    it on so operators don't trip over case sensitivity.
+    Two sources (either flips it on):
+      * ``AIFACTORY_RMUX_ENABLED`` env var — case-insensitive truthy
+        (``true`` / ``1`` / ``yes`` / ``on``). Works in any process
+        (e.g. the backend agent runner) without the web-server config.
+      * ``APP_RMUX_ENABLED`` web-server setting — the idiomatic way to
+        turn it on for local dev via ``.env`` (settings are validated,
+        so it can't be a bare unknown key).
     """
     raw = os.environ.get("AIFACTORY_RMUX_ENABLED", "").strip().lower()
-    return raw in {"true", "1", "yes", "on"}
+    if raw in {"true", "1", "yes", "on"}:
+        return True
+
+    # Lazy import so this module stays importable outside the web server
+    # (and to avoid any import cycle with config).
+    try:
+        from ..config import get_settings
+
+        return bool(get_settings().RMUX_ENABLED)
+    except Exception:
+        return False
 
 
 def _worktree_path(project_path: Path | str, spec_id: str) -> Path:
@@ -57,20 +72,37 @@ async def create_if_enabled(
     if not is_enabled():
         return None
 
-    worktree = _worktree_path(project_path, spec_id)
+    # Passive mode: agent_service already runs the agent under its own PTY,
+    # so we DON'T have rmux spawn it again (that would double-run the agent).
+    # We just create the FIFO + state; agent_service tees the agent's output
+    # into it via ``feed_if_enabled``. ``agent_cmd`` is retained for API
+    # compatibility but unused here.
+    del agent_cmd
     try:
         registry = get_registry()
-        return await registry.create_for_task(
-            spec_id=spec_id,
-            worktree_path=worktree,
-            agent_cmd=agent_cmd,
-        )
+        return await registry.create_passive_for_task(spec_id)
     except Exception:
         logger.warning(
-            "rmux create_for_task failed (falling back to PTY); spec_id=%s",
+            "rmux create_passive_for_task failed (Live Console disabled for "
+            "this task); spec_id=%s",
             spec_id, exc_info=True,
         )
         return None
+
+
+def feed_if_enabled(spec_id: str, data: bytes) -> None:
+    """Tee agent output bytes into the task's Live Console FIFO.
+
+    No-op when the feature is off or no session is registered. Never
+    raises — console streaming must never affect task execution.
+    """
+    if not is_enabled() or not data:
+        return
+    try:
+        get_registry().feed(spec_id, data)
+    except Exception:
+        # Best-effort; swallow everything so output processing is unaffected.
+        pass
 
 
 async def reap_if_enabled(spec_id: str) -> None:

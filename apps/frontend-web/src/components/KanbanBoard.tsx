@@ -26,6 +26,7 @@ import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { TaskCard } from './TaskCard';
 import { SortableTaskCard } from './SortableTaskCard';
+import { KanbanColumnSkeleton } from './ui/skeleton';
 import { TASK_STATUS_COLUMNS, TASK_STATUS_LABELS } from '../shared/constants';
 import { cn } from '../lib/utils';
 import { persistTaskStatus, archiveTasks } from '../stores/task-store';
@@ -517,7 +518,20 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
           </Button>
         </div>
       )}
-      {/* Kanban columns */}
+      {/* Loading: shimmer skeleton columns instead of misleading empty states */}
+      {isInitialized === false ? (
+        <div className="flex flex-1 gap-3 overflow-x-auto p-4">
+          {TASK_STATUS_COLUMNS.map((status, i) => (
+            <div
+              key={status}
+              className="flex min-w-52 max-w-[22rem] flex-1 flex-col rounded-xl border border-white/5 bg-linear-to-b from-secondary/30 to-transparent p-4"
+            >
+              <KanbanColumnSkeleton cards={i === 0 ? 3 : i < 3 ? 2 : 1} />
+            </div>
+          ))}
+        </div>
+      ) : (
+      /* Kanban columns */
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -551,6 +565,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
           ) : null}
         </DragOverlay>
       </DndContext>
+      )}
     </div>
   );
 }

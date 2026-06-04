@@ -64,7 +64,11 @@ def _format_json(data: Any) -> dict[str, Any]:
 
 # Heavy fields stripped from task_get so the LLM context doesn't bloat.
 # These remain available via direct REST if needed.
-_HEAVY_FIELDS_TO_TRUNCATE = ("requirements_json", "implementation_plan_json", "context_json")
+_HEAVY_FIELDS_TO_TRUNCATE = (
+    "requirements_json",
+    "implementation_plan_json",
+    "context_json",
+)
 _HEAVY_FIELD_CAP = 2000
 
 
@@ -72,7 +76,11 @@ def _lean_task(task: dict) -> dict:
     """Strip / truncate heavy fields from a task detail payload."""
     lean = dict(task)
     for field in _HEAVY_FIELDS_TO_TRUNCATE:
-        if field in lean and isinstance(lean[field], str) and len(lean[field]) > _HEAVY_FIELD_CAP:
+        if (
+            field in lean
+            and isinstance(lean[field], str)
+            and len(lean[field]) > _HEAVY_FIELD_CAP
+        ):
             lean[field] = lean[field][:_HEAVY_FIELD_CAP] + "...[truncated]"
     return lean
 
@@ -99,8 +107,15 @@ def create_task_control_tools() -> list:
             "type": "object",
             "properties": {
                 "status": {"type": "string", "description": "Optional status filter"},
-                "project_id": {"type": "string", "description": "Optional project filter"},
-                "limit": {"type": "integer", "default": 50, "description": "Max results"},
+                "project_id": {
+                    "type": "string",
+                    "description": "Optional project filter",
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 50,
+                    "description": "Max results",
+                },
             },
         },
     )
@@ -219,7 +234,9 @@ def create_task_control_tools() -> list:
         task_id = args["task_id"]
         tail = min(int(args.get("tail", 100)), 500)
         try:
-            raw = await request("GET", f"/api/tasks/{task_id}/logs", params={"tail": tail})
+            raw = await request(
+                "GET", f"/api/tasks/{task_id}/logs", params={"tail": tail}
+            )
         except MCPHTTPError as exc:
             return _format_error(exc)
         return _format_json(raw)
@@ -281,9 +298,7 @@ def create_task_control_tools() -> list:
     async def task_approve_plan(args: dict[str, Any]) -> dict[str, Any]:
         task_id = args["task_id"]
         try:
-            raw = await request(
-                "POST", f"/api/tasks/{task_id}/approve-plan", json={}
-            )
+            raw = await request("POST", f"/api/tasks/{task_id}/approve-plan", json={})
         except MCPHTTPError as exc:
             return _format_error(exc)
         return _format_json({"approved": True, "task_id": task_id, "details": raw})
@@ -317,7 +332,23 @@ def create_task_control_tools() -> list:
                 "project_id": {"type": "string"},
                 "title": {"type": "string"},
                 "description": {"type": "string"},
-                "model": {"type": "string", "description": "Override default model (optional)"},
+                "model": {
+                    "type": "string",
+                    "description": "Override default model (optional)",
+                },
+                "provenance": {
+                    "type": "object",
+                    "description": (
+                        "Optional upstream provenance to persist on the spec "
+                        "(e.g. from PFactory): session_id, issue_number, repo, source."
+                    ),
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "issue_number": {"type": "integer"},
+                        "repo": {"type": "string"},
+                        "source": {"type": "string"},
+                    },
+                },
                 "confirm": {
                     "type": "boolean",
                     "default": False,
@@ -344,13 +375,64 @@ def create_task_control_tools() -> list:
         }
         if args.get("model"):
             payload["model"] = args["model"]
+        if args.get("provenance"):
+            payload["provenance"] = args["provenance"]
         try:
-            raw = await request(
-                "POST", "/api/tasks/create-and-run", json=payload
-            )
+            raw = await request("POST", "/api/tasks/create-and-run", json=payload)
         except MCPHTTPError as exc:
             return _format_error(exc)
         return _format_json({"created_and_started": True, "details": raw})
+
+    @tool(
+        "task_apply_correction",
+        "Apply a correction (e.g. from TFactory's test findings) to an existing "
+        "spec: writes QA_FIX_REQUEST.md onto it and runs the QA Fixer. "
+        "DESTRUCTIVE: kicks off a paid agent run — requires confirm=true.",
+        {
+            "type": "object",
+            "properties": {
+                "project_id": {"type": "string"},
+                "spec_id": {"type": "string"},
+                "fix_request_md": {
+                    "type": "string",
+                    "description": "The QA_FIX_REQUEST.md body describing what to fix",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Origin, e.g. 'triage' or 'visual_inspection' (optional)",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Required true to actually write + run the fixer",
+                },
+            },
+            "required": ["project_id", "spec_id", "fix_request_md"],
+        },
+    )
+    async def task_apply_correction(args: dict[str, Any]) -> dict[str, Any]:
+        if not args.get("confirm"):
+            return _confirm_gate_response(
+                "apply_correction",
+                {
+                    "project_id": args.get("project_id"),
+                    "spec_id": args.get("spec_id"),
+                    "fix_request_preview": (args.get("fix_request_md", "")[:200]),
+                },
+            )
+        task_id = f"{args['project_id']}:{args['spec_id']}"
+        payload = {
+            "fix_request_md": args["fix_request_md"],
+            "source": args.get("source"),
+            "confirm": True,
+        }
+        try:
+            raw = await request(
+                "POST", f"/api/tasks/{task_id}/apply-correction", json=payload
+            )
+        except MCPHTTPError as exc:
+            return _format_error(exc)
+        return _format_json({"correction_applied": True, "details": raw})
 
     @tool(
         "task_recover",
@@ -379,9 +461,7 @@ def create_task_control_tools() -> list:
         task_id = args["task_id"]
         payload = {"auto_restart": args.get("auto_restart", False)}
         try:
-            raw = await request(
-                "POST", f"/api/tasks/{task_id}/recover", json=payload
-            )
+            raw = await request("POST", f"/api/tasks/{task_id}/recover", json=payload)
         except MCPHTTPError as exc:
             return _format_error(exc)
         return _format_json({"recovered": True, "task_id": task_id, "details": raw})
@@ -483,9 +563,7 @@ def create_task_control_tools() -> list:
         task_id = args["task_id"]
         max_lines = int(args.get("max_lines", 1000))
         try:
-            raw = await request(
-                "GET", f"/api/tasks/{task_id}/worktree/diff"
-            )
+            raw = await request("GET", f"/api/tasks/{task_id}/worktree/diff")
         except MCPHTTPError as exc:
             return _format_error(exc)
 
@@ -516,7 +594,9 @@ def create_task_control_tools() -> list:
             raw = await request("GET", "/api/projects")
         except MCPHTTPError as exc:
             return _format_error(exc)
-        items = raw if isinstance(raw, list) else raw.get("projects", raw.get("data", []))
+        items = (
+            raw if isinstance(raw, list) else raw.get("projects", raw.get("data", []))
+        )
         lean = [
             {
                 "id": p.get("id"),
@@ -571,14 +651,18 @@ def create_task_control_tools() -> list:
         # Schema mirror of the backend's ProjectCreate model_validator —
         # surface the error early rather than waiting for a 422.
         if not path and not git_url:
-            return _format_error(ValueError(
-                "project_create requires either `path` (local mode) or "
-                "`git_url` (clone mode)."
-            ))
+            return _format_error(
+                ValueError(
+                    "project_create requires either `path` (local mode) or "
+                    "`git_url` (clone mode)."
+                )
+            )
         if path and git_url:
-            return _format_error(ValueError(
-                "`path` and `git_url` are mutually exclusive — pass one or the other."
-            ))
+            return _format_error(
+                ValueError(
+                    "`path` and `git_url` are mutually exclusive — pass one or the other."
+                )
+            )
         if not args.get("confirm"):
             return _confirm_gate_response(
                 "create_project",
@@ -683,6 +767,7 @@ def create_task_control_tools() -> list:
             task_approve_plan,
             # M2
             task_create_and_run,
+            task_apply_correction,
             task_recover,
             task_create_pr,
             task_merge_pr,

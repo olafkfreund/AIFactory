@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive } from 'lucide-react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, UserCheck } from 'lucide-react';
 import { toast } from '../hooks/use-toast';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
@@ -295,17 +295,30 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
 
   const isArchived = !!task.metadata?.archivedAt;
 
+  // A task parked in human_review is waiting on the operator — make it
+  // unmissable (glow ring + banner), since this is the workflow's main pause.
+  const needsAttention = task.status === 'human_review' && !isArchived && !isStuck && !isIncomplete;
+
   return (
     <Card
       className={cn(
         'card-surface task-card-enhanced cursor-pointer',
         isRunning && !isStuck && 'ring-2 ring-primary border-primary task-running-pulse',
         isStuck && 'ring-2 ring-warning border-warning task-stuck-pulse',
+        needsAttention && 'ring-2 ring-fuchsia-500/70 border-fuchsia-500 task-attention-pulse',
         isArchived && 'opacity-60 hover:opacity-80'
       )}
       onClick={onClick}
     >
       <CardContent className="p-4">
+        {/* "Waiting for you" beacon — the workflow's main human pause */}
+        {needsAttention && (
+          <div className="-mt-1 mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold text-fuchsia-500">
+            <UserCheck className="h-3.5 w-3.5" />
+            <span>{reviewReasonInfo?.label ?? t('labels.needsReview')}</span>
+            <span className="live-dot ml-auto inline-flex h-1.5 w-1.5 rounded-full bg-fuchsia-500" />
+          </div>
+        )}
         {/* Title - full width, no wrapper */}
         <h3
           className="font-semibold text-sm text-foreground line-clamp-2 leading-snug"
@@ -391,8 +404,9 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
                 {isStuck ? t('labels.needsRecovery') : isIncomplete ? t('labels.needsResume') : getStatusLabel(task.status)}
               </Badge>
             )}
-            {/* Review reason badge - explains why task needs human review */}
-            {reviewReasonInfo && !isStuck && !isIncomplete && (
+            {/* Review reason badge - explains why task needs human review
+                (suppressed when the prominent beacon already shows it) */}
+            {reviewReasonInfo && !isStuck && !isIncomplete && !needsAttention && (
               <Badge
                 variant={reviewReasonInfo.variant}
                 className="text-[10px] px-1.5 py-0.5"

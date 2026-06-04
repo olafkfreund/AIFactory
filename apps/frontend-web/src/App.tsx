@@ -20,12 +20,14 @@ import { AddProjectModal } from './components/AddProjectModal';
 import { AppSettingsDialog } from './components/settings';
 import { TaskCreationWizard } from './components/TaskCreationWizard';
 import { TaskDetailModal } from './components/task-detail';
+import { MissionControl } from './components/MissionControl';
 import { OnboardingWizard } from './components/onboarding';
 import { LoadingScreen } from './components/LoadingScreen';
 import { ProjectSwitchLoadingModal } from './components/ProjectSwitchLoadingModal';
 import { LoginPage } from './pages/LoginPage';
 import { EditorPage } from './pages/EditorPage';
 import { ConsolePage } from './pages/ConsolePage';
+import { ConsoleGridPage } from './pages/ConsoleGridPage';
 import { ViewStateProvider } from './contexts/ViewStateContext';
 import { useProjectStore, loadProjects } from './stores/project-store';
 import { useTaskStore, loadTasks } from './stores/task-store';
@@ -93,6 +95,15 @@ function AuthenticatedApp() {
       return task;
     },
     [selectedTaskId, tasks]
+  );
+  // Mission Control: full-page 3-pane workspace for one task (same store-derived pattern).
+  const [missionControlId, setMissionControlId] = useState<string | null>(null);
+  const missionControlTask = useMemo(
+    () => {
+      if (!missionControlId) return null;
+      return tasks.find(t => t.id === missionControlId || t.specId === missionControlId) ?? null;
+    },
+    [missionControlId, tasks]
   );
   const [activeView, setActiveView] = useState<SidebarView>('kanban');
   const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
@@ -420,7 +431,23 @@ function AuthenticatedApp() {
             }}
             onSwitchToTerminals={() => setActiveView('terminals')}
             onOpenInbuiltTerminal={handleOpenInbuiltTerminal}
+            onExpandMissionControl={(taskId) => {
+              setSelectedTaskId(null);
+              setMissionControlId(taskId);
+            }}
           />
+
+          {/* Mission Control — full-page 3-pane workspace */}
+          {missionControlTask && (
+            <MissionControl
+              task={missionControlTask}
+              onClose={() => setMissionControlId(null)}
+              onCollapse={(taskId) => {
+                setMissionControlId(null);
+                setSelectedTaskId(taskId);
+              }}
+            />
+          )}
 
           {/* Onboarding Wizard */}
           <OnboardingWizard
@@ -438,10 +465,25 @@ function AuthenticatedApp() {
 export default function App() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const checkAuth = useAuthStore((state) => state.checkAuth);
+  const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    checkAuth();
+    let cancelled = false;
+    checkAuth().finally(() => {
+      if (!cancelled) setAuthChecked(true);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [checkAuth]);
+
+  // Wait for the first auth check before routing. Otherwise the initial
+  // isAuthenticated=false bounces a cold-loaded deep link (e.g. a shared
+  // /console/... URL) to /login, and then /login bounces it to / once auth
+  // resolves — so shared console links never reached their target.
+  if (!authChecked) {
+    return null;
+  }
 
   return (
     <Routes>
@@ -455,6 +497,11 @@ export default function App() {
       <Route
         path="/console/:projectId/:specId"
         element={isAuthenticated ? <ConsolePage /> : <Navigate to="/login" replace />}
+      />
+      {/* Multi-agent grid: every active console for a project at once. */}
+      <Route
+        path="/console/:projectId"
+        element={isAuthenticated ? <ConsoleGridPage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/*"

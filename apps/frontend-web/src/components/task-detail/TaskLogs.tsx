@@ -20,6 +20,7 @@ import {
   ScrollText
 } from 'lucide-react';
 import { Badge } from '../ui/badge';
+import { Skeleton } from '../ui/skeleton';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '../ui/collapsible';
 import { cn } from '../../lib/utils';
 import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskLogEntry, TaskMetadata } from '../../shared/types';
@@ -127,8 +128,16 @@ export function TaskLogs({
     >
       <div className="p-4 space-y-2">
         {isLoadingLogs ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="space-y-3 py-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex items-start gap-2">
+                <Skeleton className="h-4 w-4 rounded-md" />
+                <div className="flex-1 space-y-1.5">
+                  <Skeleton className="h-3 w-1/3" />
+                  <Skeleton className="h-3 w-3/4" />
+                </div>
+              </div>
+            ))}
           </div>
         ) : phaseLogs?.phases || phaseLogs?.buildProgress ? (
           <>
@@ -280,7 +289,9 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, p
             <p className="text-xs text-muted-foreground italic">No logs yet</p>
           ) : (
             phaseLog?.entries.map((entry, idx) => (
-              <LogEntry key={`${entry.timestamp}-${idx}`} entry={entry} />
+              <div key={`${entry.timestamp}-${idx}`} className="log-entry-in">
+                <LogEntry entry={entry} />
+              </div>
             ))
           )}
         </div>

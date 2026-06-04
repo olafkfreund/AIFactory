@@ -1504,38 +1504,73 @@ async def investigate_github_issue(
 
 @project_router.post("/import")
 async def import_github_issues(projectId: str, request: ImportIssuesRequest):
-    """Import GitHub issues as tasks."""
+    """Import GitHub issues as tasks.
+
+    When an imported issue is a PFactory epic (`epic` + `pfactory`), its child
+    issues (the `- [ ] #NNN` task-list in the body) are auto-enumerated and
+    imported too (epic #327 / #338). Traversal is one level, deduped by issue
+    number, and idempotent — a child that already has a spec is left untouched.
+    """
     project_path = _resolve_project_path(projectId)
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
 
-    imported = 0
-    failed = 0
-    issues = []
+    specs_dir = project_path / ".aifactory" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
 
-    for issue_number in request.issueNumbers:
+    # Make the backend pfactory package importable for classification + epic
+    # traversal. Degrade gracefully if unavailable.
+    backend_path = FilePath(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+    try:
+        from pfactory.epics import extract_child_issue_numbers
+        from pfactory.taxonomy import classify_labels
+    except ImportError:
+        classify_labels = None
+        extract_child_issue_numbers = None
+
+    def _existing_spec_for_issue(number: int) -> str | None:
+        """An existing spec dir for this issue, if any (idempotency guard)."""
+        for d in specs_dir.iterdir():
+            if d.is_dir() and f"-gh{number}-" in d.name:
+                return d.name
+        return None
+
+    def _import_one(issue_number: int):
+        """Import one issue → spec. Returns (summary, classification, body) or None.
+
+        Skips spec *creation* (but still classifies + returns the body) when a
+        spec already exists for the issue, so re-importing an epic still lets us
+        traverse to any not-yet-imported children.
+        """
         result = run_gh_command(
             ["issue", "view", str(issue_number), "--json", "number,title,body,state,labels,author,createdAt,url"],
             cwd=str(project_path),
         )
         if not result["success"]:
-            failed += 1
-            continue
-
+            return None
         try:
             issue_data = json.loads(result["output"])
         except json.JSONDecodeError:
-            failed += 1
-            continue
+            return None
 
-        # Create a spec directory for the imported issue
-        specs_dir = project_path / ".aifactory" / "specs"
-        specs_dir.mkdir(parents=True, exist_ok=True)
+        body = issue_data.get("body", "") or ""
+        labels = issue_data.get("labels", []) or []
+        label_names = [lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in labels]
+        classification = classify_labels(label_names) if classify_labels else None
+
+        existing = _existing_spec_for_issue(issue_number)
+        if existing:
+            return (
+                {"number": issue_number, "title": issue_data.get("title", ""), "specId": existing, "skipped": True},
+                classification,
+                body,
+            )
 
         # Determine next spec number
-        existing = sorted(specs_dir.iterdir()) if specs_dir.exists() else []
         next_num = 1
-        for d in existing:
+        for d in sorted(specs_dir.iterdir()):
             if d.is_dir() and d.name[:3].isdigit():
                 try:
                     next_num = max(next_num, int(d.name[:3]) + 1)
@@ -1544,18 +1579,14 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
 
         title_slug = (issue_data.get("title", "untitled") or "untitled").lower()
         title_slug = title_slug.replace(" ", "-")[:40]
-        # Remove non-alphanumeric chars except hyphens
         title_slug = "".join(c for c in title_slug if c.isalnum() or c == "-")
         spec_name = f"{next_num:03d}-gh{issue_number}-{title_slug}"
         spec_dir = specs_dir / spec_name
         spec_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write requirements.json
-        labels = issue_data.get("labels", []) or []
-        label_names = [lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in labels]
         requirements = {
             "title": issue_data.get("title", f"GitHub Issue #{issue_number}"),
-            "description": issue_data.get("body", ""),
+            "description": body,
             "source": "github",
             "githubIssue": {
                 "number": issue_number,
@@ -1564,10 +1595,19 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
                 "labels": label_names,
             },
         }
+
+        # PFactory pickup (#329): persist governance markers for pfactory issues.
+        if classification is not None and classification.is_pfactory:
+            requirements["governed"] = classification.governed
+            requirements["pfactory"] = {
+                "governed": classification.governed,
+                "handoff": classification.handoff,
+                "is_epic": classification.is_epic,
+                "taxonomy": "v1",
+            }
+
         (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
-        # Write spec.md
-        body = issue_data.get("body", "") or ""
         spec_md = f"# {issue_data.get('title', f'Issue #{issue_number}')}\n\n"
         spec_md += f"**Source:** GitHub Issue [#{issue_number}]({issue_data.get('url', '')})\n"
         if label_names:
@@ -1575,12 +1615,44 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
         spec_md += f"\n## Description\n\n{body}\n"
         (spec_dir / "spec.md").write_text(spec_md)
 
-        imported += 1
-        issues.append({
-            "number": issue_number,
-            "title": issue_data.get("title", ""),
-            "specId": spec_name,
-        })
+        return (
+            {"number": issue_number, "title": issue_data.get("title", ""), "specId": spec_name},
+            classification,
+            body,
+        )
+
+    imported = 0
+    failed = 0
+    issues = []
+    seen: set[int] = set()
+    queue = list(request.issueNumbers)
+
+    while queue:
+        issue_number = queue.pop(0)
+        if issue_number in seen:
+            continue
+        seen.add(issue_number)
+
+        result = _import_one(issue_number)
+        if result is None:
+            failed += 1
+            continue
+
+        summary, classification, body = result
+        if not summary.get("skipped"):
+            imported += 1
+        issues.append(summary)
+
+        # Epic traversal (#338): enqueue the children of a PFactory epic.
+        if (
+            extract_child_issue_numbers is not None
+            and classification is not None
+            and classification.is_pfactory
+            and classification.is_epic
+        ):
+            for child in extract_child_issue_numbers(body):
+                if child not in seen:
+                    queue.append(child)
 
     return {
         "success": True,

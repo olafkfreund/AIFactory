@@ -760,7 +760,7 @@ export function TaskCreationWizard({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
         className={cn(
-          "max-h-[90vh] p-0 overflow-hidden transition-all duration-300 ease-out bg-[hsl(204,80%,16%)]",
+          "max-h-[90vh] p-0 overflow-hidden transition-all duration-300 ease-out bg-card",
           showFileExplorer ? "sm:max-w-[60vw]" : "sm:max-w-[50vw] sm:min-w-[550px]"
         )}
         hideCloseButton={showFileExplorer}

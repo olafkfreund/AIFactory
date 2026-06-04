@@ -334,6 +334,36 @@ async def test_create_and_run_with_confirm_calls_endpoint(tools_by_name, monkeyp
     assert payload["created_and_started"] is True
 
 
+async def test_create_and_run_forwards_provenance(tools_by_name, monkeypatch):
+    """PFactory provenance (#332) is forwarded to the create-and-run endpoint."""
+    captured: list = []
+    _make_request_stub(monkeypatch, {"task_id": "new123"}, captured)
+    await tools_by_name["task_create_and_run"](
+        {
+            "project_id": "p1",
+            "title": "Add login",
+            "description": "Build a login form",
+            "provenance": {"session_id": "sess-1", "issue_number": 42, "source": "pfactory"},
+            "confirm": True,
+        }
+    )
+    body = captured[0]["kwargs"]["json"]
+    assert body["provenance"] == {
+        "session_id": "sess-1",
+        "issue_number": 42,
+        "source": "pfactory",
+    }
+
+
+async def test_create_and_run_without_provenance_omits_it(tools_by_name, monkeypatch):
+    captured: list = []
+    _make_request_stub(monkeypatch, {"task_id": "x"}, captured)
+    await tools_by_name["task_create_and_run"](
+        {"project_id": "p1", "title": "t", "description": "d", "confirm": True}
+    )
+    assert "provenance" not in captured[0]["kwargs"]["json"]
+
+
 async def test_recover_with_confirm(tools_by_name, monkeypatch):
     captured: list = []
     _make_request_stub(monkeypatch, {"ok": True}, captured)
@@ -451,3 +481,50 @@ async def test_agent_status_combines_two_endpoints(tools_by_name, monkeypatch):
     assert payload["model"] == "sonnet-4-6"
     assert payload["overall_progress"] == 42
     assert payload["current_subtask_title"] == "Wire login endpoint"
+
+
+# ── task_apply_correction (TFactory→AIFactory hand-back, #317) ──────────
+
+
+async def test_apply_correction_confirm_gate_makes_no_call(tools_by_name, monkeypatch):
+    """Without confirm, the tool returns a confirm-gate and hits no endpoint."""
+    calls: list = []
+    monkeypatch.setattr(
+        "agents.tools_pkg.tools.task_control.request",
+        lambda *a, **k: calls.append(a) or {},
+    )
+    result = await tools_by_name["task_apply_correction"](
+        {"project_id": "demo", "spec_id": "001-login", "fix_request_md": "fix it"}
+    )
+    payload = json.loads(_content_text(result))
+    assert payload.get("confirm_required") or "confirm" in json.dumps(payload).lower()
+    assert calls == []  # gated — no REST call
+
+
+async def test_apply_correction_posts_to_route(tools_by_name, monkeypatch):
+    """With confirm, it POSTs the fix-request to the apply-correction route."""
+    captured: list = []
+
+    async def stub(method, path, **kwargs):
+        captured.append({"method": method, "path": path, "kwargs": kwargs})
+        return {"success": True, "started": True, "status": "qa_fixing"}
+
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
+
+    result = await tools_by_name["task_apply_correction"](
+        {
+            "project_id": "demo",
+            "spec_id": "001-login",
+            "fix_request_md": "Login returns 500; fix it.",
+            "source": "triage",
+            "confirm": True,
+        }
+    )
+    payload = json.loads(_content_text(result))
+    assert payload["correction_applied"] is True
+    assert captured[0]["method"] == "POST"
+    assert captured[0]["path"] == "/api/tasks/demo:001-login/apply-correction"
+    body = captured[0]["kwargs"]["json"]
+    assert body["fix_request_md"] == "Login returns 500; fix it."
+    assert body["source"] == "triage"
+    assert body["confirm"] is True

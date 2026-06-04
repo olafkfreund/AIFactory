@@ -5,6 +5,7 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -15,7 +16,16 @@ from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
 from .projects import load_projects
-from .tasks import get_next_spec_id, sync_worktree_to_main_spec
+from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
+
+# Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
+# Mirrors the module-level pattern used by routes/mcp.py et al (the web-server
+# PYTHONPATH may not include backend).
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 
 router = APIRouter()
 
@@ -36,6 +46,35 @@ class StartTaskRequest(BaseModel):
     model: str | None = Field(None, description="Model override for execution")
     baseBranch: str | None = Field(None, description="Base branch for worktree creation")
     mode: str | None = Field("full", description="Execution mode: 'quick' for simplified prompts, 'full' for comprehensive")
+
+
+class ApplyCorrectionRequest(BaseModel):
+    """A correction hand-back from an external test tool (e.g. TFactory, #317)."""
+
+    fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
+    source: str | None = Field(None, description="Origin, e.g. 'triage' or 'visual_inspection'")
+    confirm: bool = Field(False, description="Required true to write + run the QA Fixer")
+
+
+class TaskProvenance(BaseModel):
+    """Upstream provenance for a handed-off task (e.g. from PFactory, #332).
+
+    Persisted onto the spec so the correlation chain (PFactory plan/session →
+    GitHub issue → AIFactory spec) is traversable downstream.
+    """
+
+    session_id: str | None = Field(None, description="Upstream session/plan id")
+    issue_number: int | None = Field(None, description="Originating GitHub issue number")
+    repo: str | None = Field(None, description="Originating repo, e.g. 'owner/name'")
+    source: str | None = Field(None, description="Origin system, e.g. 'pfactory'")
+
+
+class CreateAndRunRequest(StartTaskRequest):
+    """Body for create-and-run; adds optional upstream provenance (#332)."""
+
+    provenance: TaskProvenance | None = Field(
+        None, description="Upstream provenance (session_id, issue#) to persist"
+    )
 
 
 class RecoverTaskRequest(BaseModel):
@@ -133,6 +172,61 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task/spec not found",
         )
+
+    # PFactory taxonomy routing (epic #327 / #331): a governed child labelled
+    # `handoff:tfactory` (or `type:testing`) is test-generation work — route it
+    # to TFactory instead of running the AIFactory coder. We record the handoff
+    # as a marker on the spec and return early; the coder is never spawned.
+    if str(_BACKEND_DIR) not in sys.path:
+        sys.path.insert(0, str(_BACKEND_DIR))
+    try:
+        import json as _json
+
+        from pfactory.metadata import load_pfactory_metadata
+        from pfactory.routing import TFACTORY, routing_target
+        from pfactory.taxonomy import classify_requirements
+        from pfactory.tfactory_client import build_handoff_payload, send_handoff
+
+        _req_file = spec_dir / "requirements.json"
+        if _req_file.exists():
+            _req = _json.loads(_req_file.read_text())
+            _classification = classify_requirements(_req)
+            if routing_target(_classification) == TFACTORY:
+                # Outbound transport (#337): POST the spec + pfactory:meta to
+                # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
+                # no-op ("not_configured") and we still record the local marker.
+                _meta = load_pfactory_metadata(spec_dir, _req)
+                _payload = build_handoff_payload(spec_id, _req, _classification, _meta)
+                transport = await send_handoff(_payload)
+
+                marker = spec_dir / "TFACTORY_HANDOFF.md"
+                marker.write_text(
+                    "# Routed to TFactory\n\n"
+                    "This spec is test-generation work (`handoff:tfactory` / "
+                    "`type:testing`) and was routed to TFactory rather than the "
+                    "AIFactory coder.\n\n"
+                    f"- handoff: {_classification.handoff}\n"
+                    f"- types: {', '.join(_classification.types) or '(none)'}\n"
+                    f"- transport: sent={transport.get('sent')} "
+                    f"reason={transport.get('reason')}\n"
+                )
+                logger.info(
+                    f"[StartTask] {task_id} routed to TFactory "
+                    f"(coder not started); transport sent={transport.get('sent')} "
+                    f"reason={transport.get('reason')}"
+                )
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "routed_to": "tfactory",
+                    "transport": transport,
+                    "message": (
+                        "Routed to TFactory for test generation; the AIFactory "
+                        "coder was not started."
+                    ),
+                }
+    except (json.JSONDecodeError, OSError, ImportError) as e:
+        logger.warning(f"[StartTask] PFactory routing check failed for {task_id}: {e}")
 
     # Fix 3: Check if a VALID implementation_plan.json exists - if not, run spec creation first
     # This handles the case where projects.py created the spec directory but spec_runner.py hasn't run yet
@@ -649,7 +743,7 @@ async def create_and_run_task(
     project_id: str,
     title: str,
     description: str,
-    request: StartTaskRequest,
+    request: CreateAndRunRequest,
 ):
     """Create a new task and immediately start execution.
 
@@ -679,16 +773,18 @@ async def create_and_run_task(
     spec_id = get_next_spec_id(project_path, title)
     spec_dir = specs_dir / spec_id
     spec_dir.mkdir(exist_ok=True)
-    (spec_dir / "requirements.json").write_text(
-        json.dumps(
-            {
-                "title": title,
-                "description": description,
-                "created_at": datetime.now().isoformat(),
-            },
-            indent=2,
-        )
-    )
+    requirements: dict = {
+        "title": title,
+        "description": description,
+        "created_at": datetime.now().isoformat(),
+    }
+    # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
+    # traversable. Optional — omitted entirely when no fields are provided.
+    if request.provenance is not None:
+        prov = request.provenance.model_dump(exclude_none=True)
+        if prov:
+            requirements["provenance"] = prov
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
     task_id = f"{project_id}:{spec_id}"
 
     try:
@@ -711,3 +807,19 @@ async def create_and_run_task(
         "task_id": task_id,
         "message": "Task creation started. Connect to WebSocket for progress updates.",
     }
+
+
+@router.post("/{task_id}/apply-correction")
+async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
+    """Apply a correction hand-back (e.g. from TFactory) to an existing spec.
+
+    Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
+    Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
+    Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+    """
+    *_, spec_dir = _resolve_task(task_id)
+
+    result = await apply_correction(
+        spec_dir, request.fix_request_md, confirm=request.confirm
+    )
+    return {**result, "task_id": task_id, "source": request.source}

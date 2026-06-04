@@ -967,6 +967,29 @@ def task_to_dict(task: Task) -> dict:
 # --------------------------------------------------------------------------
 
 
+def _pfactory_priority_rank(spec_dir: Path) -> int:
+    """PFactory priority sort rank for a spec (p0 → first); 99 when not a
+    prioritised PFactory spec. Best-effort: any failure sorts the task last.
+    See epic #327 / #331.
+    """
+    import sys
+
+    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
+    if str(backend_path) not in sys.path:
+        sys.path.insert(0, str(backend_path))
+    try:
+        from pfactory.routing import priority_rank
+        from pfactory.taxonomy import classify_requirements
+
+        req_file = spec_dir / "requirements.json"
+        if req_file.exists():
+            req = json.loads(req_file.read_text())
+            return priority_rank(classify_requirements(req).priority)
+    except (json.JSONDecodeError, OSError, ImportError):
+        pass
+    return 99
+
+
 @router.get("", response_model=TaskList)
 async def list_tasks(
     project_id: str | None = Query(None, description="Filter by project ID"),
@@ -988,6 +1011,7 @@ async def list_tasks(
 
     # Collect tasks from all projects
     all_tasks = []
+    priority_ranks: dict[str, int] = {}
     for pid in project_ids:
         project_path = Path(projects[pid]["path"])
         spec_dirs = get_spec_dirs(project_path)
@@ -995,9 +1019,13 @@ async def list_tasks(
             task = spec_to_task(pid, spec_dir)
             if status is None or task.status == status:
                 all_tasks.append(task)
+                priority_ranks[task.id] = _pfactory_priority_rank(spec_dir)
 
-    # Sort by created_at descending
+    # Sort by created_at descending, then stably by PFactory priority (epic #327
+    # / #331): governed children with priority:p0 are scheduled ahead of p2,
+    # while tasks with no PFactory priority keep their newest-first ordering.
     all_tasks.sort(key=lambda t: t.created_at, reverse=True)
+    all_tasks.sort(key=lambda t: priority_ranks.get(t.id, 99))
 
     return TaskList(tasks=all_tasks, total=len(all_tasks))
 
@@ -1460,6 +1488,18 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
     # Auto-close linked GitHub issue when task is marked done
     if update.status == "done":
         _try_close_github_issue(project_path, spec_dir)
+        # Emit the RFC-0001 completion event so CFactory can thread the unit of
+        # work end to end (best-effort — never breaks the request). #342.
+        try:
+            from ..services.completion import emit_terminal_completion
+
+            emit_terminal_completion(
+                spec_dir, task_id=task_id, project_id=project_id,
+                spec_id=spec_id, status=update.status,
+            )
+        except Exception:  # pragma: no cover - notification is best-effort
+            import logging
+            logging.getLogger(__name__).debug("completion emit failed", exc_info=True)
 
     return spec_to_task(project_id, spec_dir)
 

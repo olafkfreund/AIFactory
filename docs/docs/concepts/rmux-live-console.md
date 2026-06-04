@@ -36,15 +36,22 @@ sequenceDiagram
 
 ## Enabling it
 
-The Live Console is **opt-in** via env flag:
+The Live Console is **opt-in**. Turn it on either way (either flips it on):
 
 ```bash
+# Web-server setting — the idiomatic way for local dev (apps/web-server/.env).
+# It's a validated APP_-prefixed setting, so it won't trip pydantic config.
+APP_RMUX_ENABLED=true
+
+# Or the raw process env var — works in any context (e.g. the agent runner).
 AIFACTORY_RMUX_ENABLED=true
 ```
 
-When the flag is unset, the backend's behavior is byte-for-byte unchanged — the rmux integration shim is a no-op.
+When neither is set, the backend's behavior is byte-for-byte unchanged — the rmux integration shim is a no-op, and the portal hides the Live Console tab.
 
-You also need the `rmux` binary on PATH. The Helm chart bundles it under a separate image tag (`:vX-rmux`).
+You also need the `rmux` binary on PATH. The Helm chart bundles it under a separate image tag (`:vX-rmux`). If the binary is missing, tasks fall back to the normal PTY path safely (no crash) — you just don't get the live stream.
+
+The console appears both as a tab in the task-detail view and embedded in the [Mission Control workspace](./mission-control-workspace).
 
 ## Why it's not on by default
 
@@ -52,4 +59,4 @@ rmux v0.3.x requires a writable runtime directory and pins replicas to 1. Bank-p
 
 ## Status
 
-Shipping incrementally in PRs #67–#71 (Epic #44). Currently in dev branch. The portal hides the Live Console tab automatically when `AIFACTORY_RMUX_ENABLED` is off.
+Shipping incrementally in PRs #67–#71 (Epic #44). Currently in dev branch. The portal hides the Live Console tab automatically when the feature is off (`APP_RMUX_ENABLED` / `AIFACTORY_RMUX_ENABLED` unset), probing `GET /api/capabilities` on load.
