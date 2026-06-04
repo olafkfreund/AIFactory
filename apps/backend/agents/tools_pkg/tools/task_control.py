@@ -336,6 +336,19 @@ def create_task_control_tools() -> list:
                     "type": "string",
                     "description": "Override default model (optional)",
                 },
+                "provenance": {
+                    "type": "object",
+                    "description": (
+                        "Optional upstream provenance to persist on the spec "
+                        "(e.g. from PFactory): session_id, issue_number, repo, source."
+                    ),
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "issue_number": {"type": "integer"},
+                        "repo": {"type": "string"},
+                        "source": {"type": "string"},
+                    },
+                },
                 "confirm": {
                     "type": "boolean",
                     "default": False,
@@ -362,6 +375,8 @@ def create_task_control_tools() -> list:
         }
         if args.get("model"):
             payload["model"] = args["model"]
+        if args.get("provenance"):
+            payload["provenance"] = args["provenance"]
         try:
             raw = await request("POST", "/api/tasks/create-and-run", json=payload)
         except MCPHTTPError as exc:
