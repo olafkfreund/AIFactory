@@ -5,6 +5,7 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -15,7 +16,16 @@ from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
 from .projects import load_projects
-from .tasks import get_next_spec_id, sync_worktree_to_main_spec
+from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
+
+# Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
+# Mirrors the module-level pattern used by routes/mcp.py et al (the web-server
+# PYTHONPATH may not include backend).
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 
 router = APIRouter()
 
@@ -36,6 +46,14 @@ class StartTaskRequest(BaseModel):
     model: str | None = Field(None, description="Model override for execution")
     baseBranch: str | None = Field(None, description="Base branch for worktree creation")
     mode: str | None = Field("full", description="Execution mode: 'quick' for simplified prompts, 'full' for comprehensive")
+
+
+class ApplyCorrectionRequest(BaseModel):
+    """A correction hand-back from an external test tool (e.g. TFactory, #317)."""
+
+    fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
+    source: str | None = Field(None, description="Origin, e.g. 'triage' or 'visual_inspection'")
+    confirm: bool = Field(False, description="Required true to write + run the QA Fixer")
 
 
 class RecoverTaskRequest(BaseModel):
@@ -711,3 +729,19 @@ async def create_and_run_task(
         "task_id": task_id,
         "message": "Task creation started. Connect to WebSocket for progress updates.",
     }
+
+
+@router.post("/{task_id}/apply-correction")
+async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
+    """Apply a correction hand-back (e.g. from TFactory) to an existing spec.
+
+    Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
+    Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
+    Part of the bidirectional AIFactory ↔ TFactory loop (#317).
+    """
+    *_, spec_dir = _resolve_task(task_id)
+
+    result = await apply_correction(
+        spec_dir, request.fix_request_md, confirm=request.confirm
+    )
+    return {**result, "task_id": task_id, "source": request.source}
