@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from implementation_plan import WorkflowType
+from pfactory.metadata import load_pfactory_metadata, render_pfactory_context
 
 from .models import PlannerContext
 
@@ -62,8 +63,20 @@ class ContextLoader:
         if not services:
             services = list(project_index.get("services", {}).keys())
 
-        # Determine workflow type from multiple sources (priority order)
+        # Determine workflow type from multiple sources (priority order).
+        # Done before any PFactory context is appended so keyword detection
+        # sees only the original spec text.
         workflow_type = self._determine_workflow_type(spec_content)
+
+        # PFactory metadata (#330): when the spec came from a governed PFactory
+        # plan, surface its cost/effort/access/citations in the planner context
+        # so the coder/QA agents see PFactory's findings and cite the same
+        # sources. Tolerant — absent/old metadata simply yields None.
+        pfactory_metadata = load_pfactory_metadata(self.spec_dir)
+        if pfactory_metadata:
+            rendered = render_pfactory_context(pfactory_metadata)
+            if rendered:
+                spec_content = f"{spec_content}\n\n{rendered}"
 
         return PlannerContext(
             spec_content=spec_content,
@@ -73,6 +86,7 @@ class ContextLoader:
             workflow_type=workflow_type,
             files_to_modify=task_context.get("files_to_modify", []),
             files_to_reference=task_context.get("files_to_reference", []),
+            pfactory_metadata=pfactory_metadata,
         )
 
     def _determine_workflow_type(self, spec_content: str) -> WorkflowType:
