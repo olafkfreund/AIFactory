@@ -7,6 +7,7 @@ classifies those issues so AIFactory can ingest them as governed specs.
 See guides/PFACTORY_TAG_TAXONOMY.md and epic #327.
 """
 
+from .epics import extract_child_issue_numbers
 from .metadata import (
     load_pfactory_metadata,
     parse_pfactory_meta,
@@ -26,6 +27,7 @@ __all__ = [
     "Classification",
     "classify_labels",
     "classify_requirements",
+    "extract_child_issue_numbers",
     "is_governed_requirements",
     "load_pfactory_metadata",
     "parse_pfactory_meta",
