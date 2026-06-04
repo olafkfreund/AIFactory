@@ -40,55 +40,59 @@ def write_fix_request(spec_dir: Path | str, fix_request_md: str) -> Path:
     return target
 
 
+async def _run_fixer_bg(spec_dir: Path) -> None:
+    """Run a real QA-fixer session to completion (detached background task).
+
+    Mirrors ``qa/loop.py``'s human-feedback fixer path (model + provider
+    resolution). SDK imports are lazy so this module stays import-light.
+    Best-effort: failures are logged, never raised.
+    """
+    try:
+        from core.client import create_client
+        from phase_config import (
+            get_phase_model,
+            get_phase_thinking_budget,
+            get_provider_extra_kwargs,
+            infer_provider_from_model,
+        )
+        from providers.factory import get_provider
+
+        from .fixer import run_qa_fixer_session
+
+        project_dir = spec_dir.parent.parent.parent
+        qa_model = get_phase_model(spec_dir, "qa_fixer", None)
+        budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
+        provider = infer_provider_from_model(qa_model)
+
+        if provider == "claude":
+            client = create_client(
+                project_dir,
+                spec_dir,
+                qa_model,
+                agent_type="qa_fixer",
+                max_thinking_tokens=budget,
+            )
+        else:
+            client = get_provider(
+                provider,
+                phase="qa_fixer",
+                model=qa_model,
+                working_dir=project_dir,
+                **get_provider_extra_kwargs(provider, qa_model),
+            )
+        async with client:
+            await run_qa_fixer_session(client, spec_dir, 0, False)
+    except Exception:  # noqa: BLE001 — background best-effort
+        _log.exception("background QA fixer failed for %s", spec_dir)
+
+
 async def _default_fixer(spec_dir: Path) -> dict:
     """Schedule a real QA-fixer run in the background; return immediately.
 
-    Mirrors ``qa/loop.py``'s human-feedback fixer path (model + provider
-    resolution). SDK imports are lazy so this module stays import-light. The
-    background task surfaces progress through the usual task status; failures
-    are logged, never raised.
+    Running it inline would block the HTTP request for the whole fix; the
+    background task surfaces progress through the usual task status.
     """
-
-    async def _run() -> None:
-        try:
-            from core.client import create_client
-            from phase_config import (
-                get_phase_model,
-                get_phase_thinking_budget,
-                get_provider_extra_kwargs,
-                infer_provider_from_model,
-            )
-            from providers.factory import get_provider
-
-            from .fixer import run_qa_fixer_session
-
-            project_dir = spec_dir.parent.parent.parent
-            qa_model = get_phase_model(spec_dir, "qa_fixer", None)
-            budget = get_phase_thinking_budget(spec_dir, "qa_fixer")
-            provider = infer_provider_from_model(qa_model)
-
-            if provider == "claude":
-                client = create_client(
-                    project_dir,
-                    spec_dir,
-                    qa_model,
-                    agent_type="qa_fixer",
-                    max_thinking_tokens=budget,
-                )
-            else:
-                client = get_provider(
-                    provider,
-                    phase="qa_fixer",
-                    model=qa_model,
-                    working_dir=project_dir,
-                    **get_provider_extra_kwargs(provider, qa_model),
-                )
-            async with client:
-                await run_qa_fixer_session(client, spec_dir, 0, False)
-        except Exception:  # noqa: BLE001 — background best-effort
-            _log.exception("background QA fixer failed for %s", spec_dir)
-
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_fixer_bg(spec_dir))
     return {"status": "qa_fixing", "scheduled": True}
 
 
@@ -127,7 +131,7 @@ async def apply_correction(
             ),
         }
 
-    write_fix_request(spec, fix_request_md)
+    await asyncio.to_thread(write_fix_request, spec, fix_request_md)
     fixer_result = await (fixer_fn or _default_fixer)(spec)
     return {
         "success": True,

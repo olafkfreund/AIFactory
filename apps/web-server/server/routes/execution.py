@@ -5,6 +5,7 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -15,7 +16,16 @@ from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
 from .projects import load_projects
-from .tasks import get_next_spec_id, sync_worktree_to_main_spec
+from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
+
+# Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
+# Mirrors the module-level pattern used by routes/mcp.py et al (the web-server
+# PYTHONPATH may not include backend).
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 
 router = APIRouter()
 
@@ -729,34 +739,7 @@ async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
     Confirm-first: ``confirm=false`` previews; ``confirm=true`` writes + runs.
     Part of the bidirectional AIFactory ↔ TFactory loop (#317).
     """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="task_id must be '<project_id>:<spec_id>'",
-        )
-    project_id, spec_id = task_id.split(":", 1)
-
-    projects = load_projects()
-    if project_id not in projects:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-        )
-
-    spec_dir = Path(projects[project_id]["path"]) / ".aifactory" / "specs" / spec_id
-    if not spec_dir.is_dir():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Spec not found: {spec_id}",
-        )
-
-    # Reach the backend qa.correction seam — mirror the sys.path bootstrap used
-    # by routes/mcp.py et al (the web-server PYTHONPATH may not include backend).
-    import sys
-
-    backend_dir = Path(__file__).resolve().parents[3] / "backend"
-    if str(backend_dir) not in sys.path:
-        sys.path.insert(0, str(backend_dir))
-    from qa.correction import apply_correction
+    *_, spec_dir = _resolve_task(task_id)
 
     result = await apply_correction(
         spec_dir, request.fix_request_md, confirm=request.confirm
