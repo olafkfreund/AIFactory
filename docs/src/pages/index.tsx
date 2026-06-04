@@ -220,6 +220,39 @@ function CTAStrip() {
   );
 }
 
+function FactoryFamily(): ReactNode {
+  return (
+    <section className="features-section">
+      <div
+        className="container"
+        style={{textAlign: 'center', maxWidth: 820, margin: '0 auto'}}>
+        <Heading as="h2">Part of the Factory family</Heading>
+        <p>
+          AIFactory is the <strong>Act</strong> stage of a governed, verified,
+          observable autonomous software factory:{' '}
+          <Link href="https://pfactory.freundcloud.com/">PFactory</Link> plans ·{' '}
+          <strong>AIFactory</strong> builds ·{' '}
+          <Link href="https://tfactory.freundcloud.com/">TFactory</Link> verifies ·{' '}
+          <Link href="https://github.com/olafkfreund/CFactory">CFactory</Link>{' '}
+          watches over all four.
+        </p>
+        <div className="hero-cta">
+          <Link
+            className="button button--secondary button--lg"
+            href="https://factory.freundcloud.com/why/">
+            Why Factory →
+          </Link>
+          <Link
+            className="button button--outline button--lg hero-cta-secondary"
+            href="https://factory.freundcloud.com/">
+            The Factory family
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function Home(): ReactNode {
   return (
     <Layout
@@ -229,6 +262,7 @@ export default function Home(): ReactNode {
       <main>
         <FeatureGrid />
         <RecentlyShipped />
+        <FactoryFamily />
         <CTAStrip />
       </main>
     </Layout>
