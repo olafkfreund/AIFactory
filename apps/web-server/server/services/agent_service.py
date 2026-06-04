@@ -2644,6 +2644,33 @@ class AgentService:
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(f"[AgentService] Failed to read task_metadata.json: {e}")
 
+            # PFactory governed specs (epic #327 / #329): PFactory already ran its
+            # architecture/security/best-practice/feasibility gates AND a human
+            # approved the plan, so AIFactory skips its own up-front plan-review
+            # gate and proceeds straight to execution planning — force
+            # auto-approve, overriding any requireReviewBeforeCoding.
+            requirements_file = spec_dir / "requirements.json"
+            if requirements_file.exists():
+                try:
+                    import json
+
+                    backend_path = str(self.backend_path)
+                    if backend_path not in sys.path:
+                        sys.path.insert(0, backend_path)
+                    from pfactory.taxonomy import is_governed_requirements
+
+                    requirements = json.loads(requirements_file.read_text())
+                    if is_governed_requirements(requirements):
+                        should_auto_approve = True
+                        logger.info(
+                            f"[AgentService] Task {task_id} is a governed PFactory "
+                            "spec — auto-approving (skipping plan-review gate)"
+                        )
+                except (json.JSONDecodeError, OSError, ImportError) as e:
+                    logger.warning(
+                        f"[AgentService] PFactory governance check failed for {task_id}: {e}"
+                    )
+
         # Build command
         cmd = [
             sys.executable,
