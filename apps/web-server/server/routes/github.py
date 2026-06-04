@@ -1564,6 +1564,30 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
                 "labels": label_names,
             },
         }
+
+        # PFactory pickup (epic #327 / #329): classify the issue's labels and, for
+        # governed PFactory issues, persist the governance marker so the agent
+        # service skips AIFactory's own planning gate. Non-pfactory issues get no
+        # extra keys and keep their current behaviour.
+        backend_path = FilePath(__file__).parent.parent.parent.parent / "backend"
+        if str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+        try:
+            from pfactory.taxonomy import classify_labels
+
+            classification = classify_labels(label_names)
+            if classification.is_pfactory:
+                requirements["governed"] = classification.governed
+                requirements["pfactory"] = {
+                    "governed": classification.governed,
+                    "handoff": classification.handoff,
+                    "is_epic": classification.is_epic,
+                    "taxonomy": "v1",
+                }
+        except ImportError:
+            # Backend not importable (degraded env) — fall back to plain import.
+            pass
+
         (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
         # Write spec.md
