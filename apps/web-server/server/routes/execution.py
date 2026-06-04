@@ -152,6 +152,48 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
             detail="Task/spec not found",
         )
 
+    # PFactory taxonomy routing (epic #327 / #331): a governed child labelled
+    # `handoff:tfactory` (or `type:testing`) is test-generation work — route it
+    # to TFactory instead of running the AIFactory coder. We record the handoff
+    # as a marker on the spec and return early; the coder is never spawned.
+    if str(_BACKEND_DIR) not in sys.path:
+        sys.path.insert(0, str(_BACKEND_DIR))
+    try:
+        import json as _json
+
+        from pfactory.routing import TFACTORY, routing_target
+        from pfactory.taxonomy import classify_requirements
+
+        _req_file = spec_dir / "requirements.json"
+        if _req_file.exists():
+            _req = _json.loads(_req_file.read_text())
+            _classification = classify_requirements(_req)
+            if routing_target(_classification) == TFACTORY:
+                marker = spec_dir / "TFACTORY_HANDOFF.md"
+                marker.write_text(
+                    "# Routed to TFactory\n\n"
+                    "This spec is test-generation work (`handoff:tfactory` / "
+                    "`type:testing`) and was routed to TFactory rather than the "
+                    "AIFactory coder.\n\n"
+                    f"- handoff: {_classification.handoff}\n"
+                    f"- types: {', '.join(_classification.types) or '(none)'}\n"
+                )
+                logger.info(
+                    f"[StartTask] {task_id} routed to TFactory "
+                    "(handoff:tfactory / type:testing) — coder not started"
+                )
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "routed_to": "tfactory",
+                    "message": (
+                        "Routed to TFactory for test generation; the AIFactory "
+                        "coder was not started."
+                    ),
+                }
+    except (json.JSONDecodeError, OSError, ImportError) as e:
+        logger.warning(f"[StartTask] PFactory routing check failed for {task_id}: {e}")
+
     # Fix 3: Check if a VALID implementation_plan.json exists - if not, run spec creation first
     # This handles the case where projects.py created the spec directory but spec_runner.py hasn't run yet
     # A valid plan MUST have "phases" array - minimal plans with just {"status": "..."} are invalid

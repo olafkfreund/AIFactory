@@ -12,6 +12,7 @@ from .metadata import (
     parse_pfactory_meta,
     render_pfactory_context,
 )
+from .routing import CODER, TFACTORY, priority_rank, routing_target
 from .taxonomy import (
     Classification,
     classify_labels,
@@ -20,11 +21,15 @@ from .taxonomy import (
 )
 
 __all__ = [
+    "CODER",
+    "TFACTORY",
     "Classification",
     "classify_labels",
     "classify_requirements",
     "is_governed_requirements",
     "load_pfactory_metadata",
     "parse_pfactory_meta",
+    "priority_rank",
     "render_pfactory_context",
+    "routing_target",
 ]
