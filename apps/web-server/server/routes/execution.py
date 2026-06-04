@@ -56,6 +56,27 @@ class ApplyCorrectionRequest(BaseModel):
     confirm: bool = Field(False, description="Required true to write + run the QA Fixer")
 
 
+class TaskProvenance(BaseModel):
+    """Upstream provenance for a handed-off task (e.g. from PFactory, #332).
+
+    Persisted onto the spec so the correlation chain (PFactory plan/session →
+    GitHub issue → AIFactory spec) is traversable downstream.
+    """
+
+    session_id: str | None = Field(None, description="Upstream session/plan id")
+    issue_number: int | None = Field(None, description="Originating GitHub issue number")
+    repo: str | None = Field(None, description="Originating repo, e.g. 'owner/name'")
+    source: str | None = Field(None, description="Origin system, e.g. 'pfactory'")
+
+
+class CreateAndRunRequest(StartTaskRequest):
+    """Body for create-and-run; adds optional upstream provenance (#332)."""
+
+    provenance: TaskProvenance | None = Field(
+        None, description="Upstream provenance (session_id, issue#) to persist"
+    )
+
+
 class RecoverTaskRequest(BaseModel):
     """Request to recover a stuck task."""
 
@@ -722,7 +743,7 @@ async def create_and_run_task(
     project_id: str,
     title: str,
     description: str,
-    request: StartTaskRequest,
+    request: CreateAndRunRequest,
 ):
     """Create a new task and immediately start execution.
 
@@ -752,16 +773,18 @@ async def create_and_run_task(
     spec_id = get_next_spec_id(project_path, title)
     spec_dir = specs_dir / spec_id
     spec_dir.mkdir(exist_ok=True)
-    (spec_dir / "requirements.json").write_text(
-        json.dumps(
-            {
-                "title": title,
-                "description": description,
-                "created_at": datetime.now().isoformat(),
-            },
-            indent=2,
-        )
-    )
+    requirements: dict = {
+        "title": title,
+        "description": description,
+        "created_at": datetime.now().isoformat(),
+    }
+    # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
+    # traversable. Optional — omitted entirely when no fields are provided.
+    if request.provenance is not None:
+        prov = request.provenance.model_dump(exclude_none=True)
+        if prov:
+            requirements["provenance"] = prov
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
     task_id = f"{project_id}:{spec_id}"
 
     try:
