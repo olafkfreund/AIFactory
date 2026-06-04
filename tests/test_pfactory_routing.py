@@ -133,6 +133,39 @@ async def test_start_task_routes_tfactory_child_away_from_coder(tmp_path, monkey
     assert (
         project / ".aifactory" / "specs" / "001-tests" / "TFACTORY_HANDOFF.md"
     ).exists()
+    # Outbound transport ran; unconfigured in the test env → graceful no-op.
+    assert result["transport"]["sent"] is False
+    assert result["transport"]["reason"] == "not_configured"
+
+
+async def test_start_task_tfactory_sends_when_configured(tmp_path, monkeypatch):
+    from pfactory import tfactory_client
+    from server.routes import execution as exec_mod
+    from server.routes.execution import StartTaskRequest
+
+    project = tmp_path / "proj"
+    _write_spec(project, "001-tests", ["pfactory", "handoff:tfactory", "type:testing"])
+    monkeypatch.setattr(
+        exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
+    )
+
+    # Configure transport + inject a poster so no network is hit. The route
+    # imports send_handoff from the module at call time, so patching the env +
+    # the module's default poster is enough.
+    sent = {}
+
+    async def fake_poster(url, payload, headers):
+        sent["payload"] = payload
+        return {"status": 202, "ok": True, "body": "queued"}
+
+    monkeypatch.setenv("TFACTORY_BASE_URL", "https://tf.example")
+    monkeypatch.setattr(tfactory_client, "_httpx_poster", fake_poster)
+
+    result = await exec_mod.start_task("p:001-tests", StartTaskRequest(), None)
+    assert result["routed_to"] == "tfactory"
+    assert result["transport"]["sent"] is True
+    assert sent["payload"]["spec_id"] == "001-tests"
+    assert sent["payload"]["handoff"] == "tfactory"
 
 
 async def test_start_task_does_not_reroute_aifactory_child(tmp_path, monkeypatch):
