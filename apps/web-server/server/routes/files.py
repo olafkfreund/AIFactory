@@ -10,6 +10,7 @@ Handles file operations for the Monaco editor:
 
 import logging
 import mimetypes
+import os
 import re
 import subprocess
 import urllib.parse
@@ -181,6 +182,7 @@ def is_binary_file(path: Path) -> bool:
 def resolve_path(project_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a project, with security checks."""
     from .projects import load_projects  # Local import to avoid circular dependency
+
     projects = load_projects()
 
     if project_id not in projects:
@@ -211,6 +213,57 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
 
 
 # --------------------------------------------------------------------------
+# Path containment for the absolute-path direct routes (epic #318 / #320)
+# --------------------------------------------------------------------------
+
+
+def _registered_project_roots() -> list[Path]:
+    """Resolved paths of every registered project — the only roots whose file
+    *content* may be read/served (closes arbitrary host read, audit C1)."""
+    from .projects import load_projects
+
+    roots: list[Path] = []
+    for p in load_projects().values():
+        try:
+            roots.append(Path(p["path"]).resolve())
+        except (OSError, KeyError, TypeError):
+            pass
+    return roots
+
+
+def _browse_roots() -> list[Path]:
+    """Roots that may be *listed* for the add-project browser: registered
+    projects + the user's home + any APP_FILE_BROWSE_ROOTS (os.pathsep list).
+    Looser than read roots (names only, no content), but still blocks system
+    dirs like /etc, /root, /var."""
+    roots = _registered_project_roots()
+    try:
+        roots.append(Path.home().resolve())
+    except (OSError, RuntimeError):
+        pass
+    for extra in os.environ.get("APP_FILE_BROWSE_ROOTS", "").split(os.pathsep):
+        extra = extra.strip()
+        if extra:
+            try:
+                roots.append(Path(extra).resolve())
+            except OSError:
+                pass
+    return roots
+
+
+def _assert_within_roots(resolved: Path, roots: list[Path], what: str) -> None:
+    """403 unless ``resolved`` is inside one of ``roots``. Prevents path
+    traversal / arbitrary host access on the absolute-path routes."""
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Access denied: path is outside the {what}",
+    )
+
+
+# --------------------------------------------------------------------------
 # Routes
 # --------------------------------------------------------------------------
 
@@ -222,6 +275,7 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
 
 class DiscoveredProject(BaseModel):
     """A discovered project folder."""
+
     name: str
     path: str
     has_git: bool = False
@@ -234,19 +288,31 @@ class DiscoveredProject(BaseModel):
 @router.get("/discover")
 async def discover_projects(
     base_path: str = Query(..., description="Base directory to scan for projects"),
-    max_depth: int = Query(1, description="How deep to scan (1 = direct children only)"),
+    max_depth: int = Query(
+        1, description="How deep to scan (1 = direct children only)"
+    ),
 ):
     """
     Discover potential project folders in a directory.
     Returns folders that look like projects (have .git, package.json, etc).
     """
-    base = Path(base_path).expanduser().resolve()
+    base = Path(base_path).resolve()
+    # Containment (#320): only scan within browsable roots — no system dirs.
+    _assert_within_roots(base, _browse_roots(), "browsable directories")
 
     if not base.exists():
-        return {"success": False, "error": f"Path does not exist: {base_path}", "data": []}
+        return {
+            "success": False,
+            "error": f"Path does not exist: {base_path}",
+            "data": [],
+        }
 
     if not base.is_dir():
-        return {"success": False, "error": f"Path is not a directory: {base_path}", "data": []}
+        return {
+            "success": False,
+            "error": f"Path is not a directory: {base_path}",
+            "data": [],
+        }
 
     projects = []
 
@@ -260,33 +326,43 @@ async def discover_projects(
                     continue
 
                 # Skip hidden directories and common non-project dirs
-                if entry.name.startswith('.') or entry.name in (
-                    'node_modules', '__pycache__', 'venv', '.venv',
-                    'dist', 'build', 'target', '.git'
+                if entry.name.startswith(".") or entry.name in (
+                    "node_modules",
+                    "__pycache__",
+                    "venv",
+                    ".venv",
+                    "dist",
+                    "build",
+                    "target",
+                    ".git",
                 ):
                     continue
 
                 # Check for project indicators
-                has_git = (entry / '.git').exists()
-                has_package = (entry / 'package.json').exists()
-                has_requirements = (entry / 'requirements.txt').exists() or (entry / 'pyproject.toml').exists()
-                has_magestic_ai = (entry / '.aifactory').exists()
-                has_claude_md = (entry / 'CLAUDE.md').exists()
+                has_git = (entry / ".git").exists()
+                has_package = (entry / "package.json").exists()
+                has_requirements = (entry / "requirements.txt").exists() or (
+                    entry / "pyproject.toml"
+                ).exists()
+                has_magestic_ai = (entry / ".aifactory").exists()
+                has_claude_md = (entry / "CLAUDE.md").exists()
 
                 # If it looks like a project, add it
                 if has_git or has_package or has_requirements:
                     # Skip the AIFactory app itself
                     if _is_app_internal_path(entry):
                         continue
-                    projects.append(DiscoveredProject(
-                        name=entry.name,
-                        path=str(entry),
-                        has_git=has_git,
-                        has_package_json=has_package,
-                        has_requirements=has_requirements,
-                        has_magestic_ai=has_magestic_ai,
-                        has_claude_md=has_claude_md,
-                    ))
+                    projects.append(
+                        DiscoveredProject(
+                            name=entry.name,
+                            path=str(entry),
+                            has_git=has_git,
+                            has_package_json=has_package,
+                            has_requirements=has_requirements,
+                            has_magestic_ai=has_magestic_ai,
+                            has_claude_md=has_claude_md,
+                        )
+                    )
                 elif current_depth < max_depth:
                     # Not a project, but scan deeper
                     scan_directory(entry, current_depth + 1)
@@ -305,10 +381,10 @@ async def list_directory_direct(
     show_hidden: bool = Query(False, description="Show hidden files"),
 ):
     """List contents of a directory by absolute path."""
-    full_path = Path(path).expanduser().resolve()
-
-    if _is_app_internal_path(full_path):
-        return {"success": False, "error": "Access denied", "data": None}
+    # Containment (#320): only browsable roots (registered projects + home +
+    # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
+    full_path = Path(path).resolve()
+    _assert_within_roots(full_path, _browse_roots(), "browsable directories")
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -318,7 +394,9 @@ async def list_directory_direct(
 
     entries = []
     try:
-        for entry in sorted(full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+        for entry in sorted(
+            full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
+        ):
             # Skip hidden files unless requested
             if entry.name.startswith(".") and not show_hidden:
                 continue
@@ -332,7 +410,9 @@ async def list_directory_direct(
                     "size": stat.st_size if entry.is_file() else 0,
                     "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                     "extension": entry.suffix.lower() if entry.is_file() else None,
-                    "language": detect_language(entry.name) if entry.is_file() else None,
+                    "language": detect_language(entry.name)
+                    if entry.is_file()
+                    else None,
                 }
                 entries.append(file_entry)
             except (PermissionError, OSError):
@@ -355,10 +435,12 @@ async def read_file_direct(
     path: str = Query(..., description="Absolute path to file"),
 ):
     """Read file contents by absolute path."""
-    full_path = Path(path).expanduser().resolve()
-
-    if _is_app_internal_path(full_path):
-        return {"success": False, "error": "Access denied", "data": None}
+    # Containment (#320): only files inside a registered project may be read —
+    # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
+    full_path = Path(path).resolve()
+    _assert_within_roots(
+        full_path, _registered_project_roots(), "registered project directories"
+    )
 
     if not full_path.exists():
         return {"success": False, "error": "File not found", "data": None}
@@ -428,7 +510,9 @@ def _validate_serve_token(request: Request, token: str) -> bool:
 async def serve_project_file(
     request: Request,
     path: str = Query(..., description="Absolute path to the file to serve"),
-    root: str = Query(..., description="Project root directory (for resolving relative URLs)"),
+    root: str = Query(
+        ..., description="Project root directory (for resolving relative URLs)"
+    ),
     token: str = Query(default="", description="Bearer token for authentication"),
 ):
     """Serve a project file with its correct MIME type.
@@ -440,16 +524,22 @@ async def serve_project_file(
     # Authenticate: check token from query param or Authorization header
     if not _validate_serve_token(request, token):
         raise HTTPException(status_code=401, detail="Authentication required")
-    file_path = Path(path).expanduser().resolve()
-    root_path = Path(root).expanduser().resolve()
+    file_path = Path(path).resolve()
+    root_path = Path(root).resolve()
 
-    # Security: file must exist inside the declared project root
+    # Containment (#320): the attacker-supplied root must itself be a registered
+    # project dir, and the file must live inside it. Blocks `&root=/` traversal.
+    _assert_within_roots(
+        root_path, _registered_project_roots(), "registered project directories"
+    )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
     try:
         file_path.relative_to(root_path)
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied: path outside project root")
+        raise HTTPException(
+            status_code=403, detail="Access denied: path outside project root"
+        )
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -473,12 +563,14 @@ async def serve_project_file(
     html_dir = file_path.parent
 
     def _rewrite_url(match: re.Match) -> str:
-        attr = match.group(1)   # e.g. src= or href=
+        attr = match.group(1)  # e.g. src= or href=
         quote = match.group(2)  # quote character (" or ')
-        url = match.group(3)    # the URL value
+        url = match.group(3)  # the URL value
 
         # Skip external / special URLs
-        if url.startswith(("http://", "https://", "//", "data:", "#", "mailto:", "javascript:")):
+        if url.startswith(
+            ("http://", "https://", "//", "data:", "#", "mailto:", "javascript:")
+        ):
             return match.group(0)
 
         # Resolve the URL to an absolute filesystem path
@@ -495,16 +587,18 @@ async def serve_project_file(
         except ValueError:
             return match.group(0)  # leave unchanged
 
-        params = urllib.parse.urlencode({
-            "path": str(resolved),
-            "root": str(root_path),
-            "token": token,
-        })
-        return f'{attr}={quote}/api/files/serve?{params}{quote}'
+        params = urllib.parse.urlencode(
+            {
+                "path": str(resolved),
+                "root": str(root_path),
+                "token": token,
+            }
+        )
+        return f"{attr}={quote}/api/files/serve?{params}{quote}"
 
     # Rewrite src="..." and href="..." (both quote styles)
     rewritten = re.sub(
-        r'''(src|href)\s*=\s*(["'])(.*?)\2''',
+        r"""(src|href)\s*=\s*(["'])(.*?)\2""",
         _rewrite_url,
         html_content,
     )
@@ -535,7 +629,9 @@ async def list_directory(
         )
 
     entries = []
-    for entry in sorted(full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+    for entry in sorted(
+        full_path.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
+    ):
         # Skip hidden files unless requested
         if entry.name.startswith(".") and not show_hidden:
             continue
@@ -625,6 +721,14 @@ async def write_file(
     """Write content to a file."""
     full_path = resolve_path(project_id, path)
 
+    # Containment (#320): never let writes land in .git/ (hooks/config → RCE
+    # on the next git operation).
+    if ".git" in full_path.parts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Writing into .git/ is not allowed",
+        )
+
     # Ensure parent directory exists
     full_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -648,6 +752,13 @@ async def delete_file(
     """Delete a file or directory."""
     full_path = resolve_path(project_id, path)
 
+    # Containment (#320): never delete inside .git/ (corrupting the repo).
+    if ".git" in full_path.parts:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Deleting inside .git/ is not allowed",
+        )
+
     if not full_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -657,6 +768,7 @@ async def delete_file(
     try:
         if full_path.is_dir():
             import shutil
+
             shutil.rmtree(full_path)
         else:
             full_path.unlink()
@@ -695,8 +807,10 @@ async def search_files(
         cmd = [
             "rg",
             "--json",
-            "--max-count", str(max_results),
-            "--glob", file_pattern,
+            "--max-count",
+            str(max_results),
+            "--glob",
+            file_pattern,
             query,
             str(full_path),
         ]
@@ -709,13 +823,21 @@ async def search_files(
                 data = __import__("json").loads(line)
                 if data.get("type") == "match":
                     match_data = data["data"]
-                    results.append(SearchResult(
-                        path=str(Path(match_data["path"]["text"]).relative_to(full_path)),
-                        line=match_data["line_number"],
-                        column=match_data["submatches"][0]["start"] if match_data.get("submatches") else 0,
-                        content=match_data["lines"]["text"].rstrip(),
-                        match=match_data["submatches"][0]["match"]["text"] if match_data.get("submatches") else query,
-                    ))
+                    results.append(
+                        SearchResult(
+                            path=str(
+                                Path(match_data["path"]["text"]).relative_to(full_path)
+                            ),
+                            line=match_data["line_number"],
+                            column=match_data["submatches"][0]["start"]
+                            if match_data.get("submatches")
+                            else 0,
+                            content=match_data["lines"]["text"].rstrip(),
+                            match=match_data["submatches"][0]["match"]["text"]
+                            if match_data.get("submatches")
+                            else query,
+                        )
+                    )
             except Exception:
                 continue
 
@@ -735,13 +857,15 @@ async def search_files(
                 for i, line in enumerate(content.split("\n"), 1):
                     match = pattern.search(line)
                     if match:
-                        results.append(SearchResult(
-                            path=str(file_path.relative_to(full_path)),
-                            line=i,
-                            column=match.start(),
-                            content=line.rstrip(),
-                            match=match.group(),
-                        ))
+                        results.append(
+                            SearchResult(
+                                path=str(file_path.relative_to(full_path)),
+                                line=i,
+                                column=match.start(),
+                                content=line.rstrip(),
+                                match=match.group(),
+                            )
+                        )
                         if len(results) >= max_results:
                             truncated = True
                             break
@@ -806,10 +930,12 @@ async def get_git_diff(
                 "R": "renamed",
             }
 
-            diffs.append({
-                "path": file_path,
-                "status": status_map.get(status_code[0], "modified"),
-            })
+            diffs.append(
+                {
+                    "path": file_path,
+                    "status": status_map.get(status_code[0], "modified"),
+                }
+            )
 
         return {"base": base, "diffs": diffs}
 
@@ -836,6 +962,7 @@ def _get_project_path(project_id: str) -> Path:
     """Get project path from project ID."""
     # Import here to avoid circular import
     from .projects import load_projects
+
     projects = load_projects()
     if project_id not in projects:
         raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
@@ -869,6 +996,7 @@ async def clear_insights_session(projectId: str):
 
         # Get insights service
         from ..services.insights_service import get_insights_service
+
         service = get_insights_service()
 
         # Clear current session and create new one
@@ -886,7 +1014,7 @@ async def clear_insights_session(projectId: str):
                 "messageCount": len(new_session.messages),
                 "createdAt": new_session.created_at,
                 "updatedAt": new_session.updated_at,
-            }
+            },
         }
     except HTTPException:
         # Re-raise HTTP exceptions (like 404 from _get_project_path)
@@ -894,8 +1022,10 @@ async def clear_insights_session(projectId: str):
     except Exception as e:
         # Log error and return 500
         import logging
-        logging.getLogger(__name__).error(f"Failed to clear files insights session: {e}", exc_info=True)
+
+        logging.getLogger(__name__).error(
+            f"Failed to clear files insights session: {e}", exc_info=True
+        )
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to clear files insights session: {str(e)}"
+            status_code=500, detail=f"Failed to clear files insights session: {str(e)}"
         )
