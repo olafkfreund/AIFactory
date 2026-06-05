@@ -37,6 +37,9 @@ from project_analyzer import (
 
 from .hooks import bash_security_hook, validate_command, web_fetch_security_hook
 
+# Identifier validation (#371)
+from .identifiers import validate_spec_name, validate_task_id
+
 # Command parsing utilities
 from .parser import (
     extract_commands,
@@ -83,6 +86,8 @@ __all__ = [
     "bash_security_hook",
     "web_fetch_security_hook",
     "wrap_untrusted",
+    "validate_spec_name",
+    "validate_task_id",
     "validate_command",
     "get_security_profile",
     "reset_profile_cache",
