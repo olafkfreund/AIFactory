@@ -119,6 +119,9 @@ async def run_autonomous_agent(
     # Normalize parallelism config (#376). Concurrency is only ever attempted
     # for phases the planner marked parallel_safe; everything else stays serial.
     parallel_workers = max(1, workers or DEFAULT_PARALLEL_WORKERS)
+    # Phases that stalled under parallel execution fall back to serial and must
+    # not be retried in parallel (avoids a re-enter-stall loop).
+    parallel_disabled_phases: set[int] = set()
     if parallel:
         print_status(
             f"Parallel execution enabled (up to {parallel_workers} concurrent "
@@ -466,6 +469,33 @@ async def run_autonomous_agent(
             if not next_subtask:
                 print("No pending subtasks found - build may be complete!")
                 break
+
+            # === PARALLEL WAVE DISPATCH (#376) ===
+            # If parallel execution is enabled and the phase owning this subtask
+            # is parallel_safe with >=2 pending subtasks, run the whole phase
+            # concurrently in dependency-graph waves, then continue the loop
+            # (which picks up the next phase or finishes). Any non-parallel_safe
+            # phase, or a stalled wave, falls through to the serial path below —
+            # so this is always safe.
+            if parallel:
+                handled = await _maybe_run_parallel_phase(
+                    spec_dir=spec_dir,
+                    project_dir=project_dir,
+                    subtask_id=subtask_id,
+                    model=model,
+                    parallel_workers=parallel_workers,
+                    verbose=verbose,
+                    source_spec_dir=source_spec_dir,
+                    remote_control_session=remote_control_session,
+                    status_manager=status_manager,
+                    disabled_phases=parallel_disabled_phases,
+                )
+                if handled:
+                    # Progress was made in parallel; re-evaluate from the top.
+                    print_progress_summary(spec_dir)
+                    status_manager.update(state=BuildState.BUILDING)
+                    await asyncio.sleep(1)
+                    continue
 
             # Get attempt count for recovery context
             attempt_count = recovery_manager.get_attempt_count(subtask_id)
@@ -816,4 +846,84 @@ def _should_require_human_review(spec_dir: Path) -> bool:
 
         return False
     except (json.JSONDecodeError, OSError):
+        return False
+
+
+async def _maybe_run_parallel_phase(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    subtask_id: str | None,
+    model: str,
+    parallel_workers: int,
+    verbose: bool,
+    source_spec_dir: Path | None,
+    remote_control_session: str | None,
+    status_manager,
+    disabled_phases: set[int],
+) -> bool:
+    """Run the subtask's phase as parallel waves if it is eligible (#376).
+
+    Returns True if a parallel phase ran and made progress (caller should
+    `continue` the loop). Returns False if the phase is not eligible or could
+    not progress, so the caller falls back to the serial path for this subtask.
+    """
+    if not subtask_id:
+        return False
+
+    plan_path = spec_dir / "implementation_plan.json"
+    if not plan_path.exists():
+        return False
+
+    try:
+        from implementation_plan.plan import ImplementationPlan
+
+        from .parallel_integration import run_parallel_coding_phase
+        from .parallel_runner import is_phase_parallel_eligible
+
+        plan = ImplementationPlan.load(plan_path)
+        phase = next(
+            (
+                p
+                for p in plan.phases
+                for s in p.subtasks
+                if s.id == subtask_id
+            ),
+            None,
+        )
+        if phase is None:
+            return False
+        if phase.phase in disabled_phases:
+            return False
+        if not is_phase_parallel_eligible(phase, parallel_workers):
+            return False
+
+        print_status(
+            f"Running phase '{phase.name}' in parallel "
+            f"({parallel_workers} workers)",
+            "info",
+        )
+        result = await run_parallel_coding_phase(
+            plan=plan,
+            phase=phase,
+            project_dir=project_dir,
+            spec_dir=spec_dir,
+            model=model,
+            workers=parallel_workers,
+            verbose=verbose,
+            source_spec_dir=source_spec_dir,
+            remote_control_session=remote_control_session,
+        )
+
+        # A stalled phase (cycle / unresolved deps / merge failures) drops to the
+        # serial path for whatever is left — and must not be retried in parallel.
+        if result.stalled or result.failed_ids:
+            disabled_phases.add(phase.phase)
+
+        # "Made progress" => at least one subtask completed; caller continues.
+        return bool(result.completed_ids)
+    except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
+        logger.warning(
+            "Parallel phase execution failed (%s); falling back to serial", exc
+        )
         return False
