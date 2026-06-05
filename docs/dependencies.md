@@ -2,13 +2,14 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory pins **16** backend, **36** web-server, and **49** frontend runtime dependencies.
+AIFactory pins **17** backend, **37** web-server, and **49** frontend runtime dependencies.
 
 ## Backend (Python) — `apps/backend/requirements.txt`
 
 | Package | Version |
 |---------|---------|
 | `anthropic` | `>=0.84.0` |
+| `bashlex` | `>=0.18` |
 | `boto3` | `>=1.43.0` |
 | `claude-agent-sdk` | `>=0.1.16` |
 | `google-generativeai` | `>=0.8.0` |
@@ -36,6 +37,7 @@ AIFactory pins **16** backend, **36** web-server, and **49** frontend runtime de
 | `authlib` | `>=1.3.0` |
 | `azure-identity` | `>=1.20.0` |
 | `azure-keyvault-keys` | `>=4.10.0` |
+| `bashlex` | `>=0.18` |
 | `boto3` | `>=1.35.0` |
 | `email-validator` | `>=2.0.0` |
 | `fastapi` | `>=0.109.0` |
