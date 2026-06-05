@@ -793,6 +793,20 @@ async def search_files(
     """Search for text in files using ripgrep or fallback."""
     full_path = resolve_path(project_id, path)
 
+    # Security (#323 H5): reject argument injection (a leading '-' turns the
+    # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
+    # query length to limit ReDoS on the regex fallback.
+    if query.startswith("-") or file_pattern.startswith("-"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="query and file_pattern must not start with '-'",
+        )
+    if len(query) > 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="query too long",
+        )
+
     if not full_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -811,6 +825,7 @@ async def search_files(
             str(max_results),
             "--glob",
             file_pattern,
+            "--",  # no flags past here — query/path are positional (#323 H5)
             query,
             str(full_path),
         ]
@@ -896,8 +911,17 @@ async def get_git_diff(
             detail="Not a git repository",
         )
 
+    # Security (#323 M3): `base` is a ref before `--`; reject a leading '-'
+    # (option injection like `--output=...`). `path` goes after `--` so it's
+    # always treated as a pathspec, never a flag.
+    if base.startswith("-") or not re.match(r"^[A-Za-z0-9._/~^@{}-]+$", base):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid base ref",
+        )
+
     try:
-        cmd = ["git", "diff", "--name-status", base]
+        cmd = ["git", "diff", "--name-status", base, "--"]
         if path:
             cmd.append(path)
 

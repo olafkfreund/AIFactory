@@ -182,11 +182,13 @@ async def clone_or_update(
         logger.info("[workspace] pulled latest into %s", workspace)
         return workspace
 
-    # Fresh clone
+    # Fresh clone. The `--` separates options from positional args so a
+    # `fetch_url`/branch beginning with '-' can't be parsed as a git flag
+    # (#323 C5 defense-in-depth; the route validates these too).
     cmd = ["clone"]
     if branch:
         cmd.extend(["--branch", branch])
-    cmd.extend([fetch_url, str(workspace)])
+    cmd.extend(["--", fetch_url, str(workspace)])
     await _run_git(cmd, cwd=workspace.parent, timeout=timeout_seconds)
     if credential is not None:
         # Strip the credential from origin so it isn't persisted in
@@ -211,12 +213,17 @@ async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
     """Run ``git <args>`` with a timeout. Returns stdout on success."""
     cmd = ["git", *args]
     logger.debug("[workspace] running: git %s (cwd=%s)", " ".join(args), cwd)
+    # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
+    # transport helper (arbitrary command execution) even if a malicious URL
+    # slips past the route validator.
+    env = {**os.environ, "GIT_ALLOW_PROTOCOL": "https:ssh:git"}
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
     except FileNotFoundError as e:
         raise GitOperationError(f"git executable not found on PATH: {e}") from e
