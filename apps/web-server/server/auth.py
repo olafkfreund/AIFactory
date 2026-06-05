@@ -180,11 +180,15 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
         # Strategy 2: Fall back to legacy bearer token
         if token == settings.API_TOKEN:
-            # Legacy token — populate a default user so notifications still work
+            # Legacy token — a machine/service principal (Factory siblings, the
+            # local UI). `is_service` lets project-level authz (epic #318/#319)
+            # grant M2M access without per-org membership, preserving the
+            # sibling + local-UI contract. Notifications still work via the id.
             request.state.user = {
                 "id": "default",
                 "email": None,
                 "role": "user",
+                "is_service": True,
             }
             return await call_next(request)
 

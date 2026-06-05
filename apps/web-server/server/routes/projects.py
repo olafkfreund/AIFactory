@@ -10,8 +10,11 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -436,7 +439,11 @@ async def scan_for_projects(request: ScanProjectsRequest):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def add_project(project: ProjectCreate):
+async def add_project(
+    project: ProjectCreate,
+    request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    db: AsyncSession = Depends(get_db),
+):
     """Add a new project. Two paths (#82 PR-A):
 
     1. **Local path** (``path`` set) — register an existing directory
@@ -509,9 +516,19 @@ async def add_project(project: ProjectCreate):
     # Create project entry
     project_id = str(uuid4())
     now = datetime.now().isoformat()
+    # Stamp the owning org (#319). Service/M2M creators → default org; human
+    # creators → their own org. Defensive: direct callers (MCP stdio proxy,
+    # tests) pass no Request / real session → fall back to the default org
+    # rather than break. Lazy import avoids a project_authz↔projects cycle.
+    org_id = DEFAULT_ORG_ID
+    if request is not None and isinstance(db, AsyncSession):
+        from .project_authz import resolve_owner_org_id
+
+        org_id = await resolve_owner_org_id(request, db)
     project_data = {
         "path": str(project_path.resolve()),
         "name": project.name or project_path.name,
+        "org_id": org_id,
         "created_at": now,
         "updated_at": now,
     }
