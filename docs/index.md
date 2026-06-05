@@ -1,8 +1,7 @@
 <!-- This page is seeded from README.md. Edit either file;
      they diverge by design after the initial onboarding. -->
 
-<div align="center">
-  <img src="apps/frontend-web/public/logo.png" alt="AIFactory" width="120" />
+<img src="static/img/aifactory-logo.png" alt="AIFactory" width="120" />
 
 # AIFactory
 
@@ -22,7 +21,6 @@
 
 **📖 New here? Start at the docs → [aifactory.freundcloud.com](https://aifactory.freundcloud.com)** — guided demo, screenshots, architecture, and the full getting-started guide.
 
-</div>
 
 ---
 
@@ -95,7 +93,7 @@ Full installation guide: **[Getting Started →](https://aifactory.freundcloud.c
 ## See it work
 
 <p align="center">
-  <img src="docs/static/img/handover-workflow.gif" alt="Terminal walkthrough — clone the demo repo, file a GitHub issue, type /handover in Claude Code, watch AIFactory's planner / coder / QA pipeline produce a merge-ready branch" width="720" />
+  <img src="static/img/handover-workflow.gif" alt="Terminal walkthrough — clone the demo repo, file a GitHub issue, type /handover in Claude Code, watch AIFactory's planner / coder / QA pipeline produce a merge-ready branch" width="720" />
 </p>
 
 A 45-second terminal walkthrough of the `/handover` workflow: clone the demo repo, file a GitHub issue, type `/handover` in Claude Code, AIFactory's planner → coder → QA pipeline lands at a merge-ready branch. Every artifact shown was produced by a real agent run — the recording compresses the timeline.
@@ -114,15 +112,15 @@ Walkthrough with screenshots + browser-side video: **[Demo →](https://aifactor
 
 <table>
   <tr>
-    <td><img src="docs/static/img/screenshots/03-kanban.png" alt="Kanban board" /></td>
-    <td><img src="docs/static/img/screenshots/09-live-agent-console.png" alt="Live Agent Console" /></td>
+    <td><img src="static/img/screenshots/03-kanban.png" alt="Kanban board" /></td>
+    <td><img src="static/img/screenshots/09-live-agent-console.png" alt="Live Agent Console" /></td>
   </tr>
   <tr>
-    <td><img src="docs/static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
-    <td><img src="docs/static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
+    <td><img src="static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
+    <td><img src="static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/static/img/screenshots/13-settings-mcp-servers.png" alt="Settings → MCP Servers tab — the new default-MCP-server catalog (Epic #100) showing per-project auto-enable status" /></td>
+    <td colspan="2"><img src="static/img/screenshots/13-settings-mcp-servers.png" alt="Settings → MCP Servers tab — the new default-MCP-server catalog (Epic #100) showing per-project auto-enable status" /></td>
   </tr>
 </table>
 
