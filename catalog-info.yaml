@@ -7,6 +7,7 @@ metadata:
   name: AIFactory
   description: "Spec-Driven Development for AI agents — plan, code, ship. Web-based platform that turns GitHub issues into shipping code via a planner / coder / QA agent pipeline."
   annotations:
+    backstage.io/techdocs-ref: dir:.
     github.com/project-slug: olafkfreund/AIFactory
   tags: []
 spec:
