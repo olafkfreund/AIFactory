@@ -4,7 +4,8 @@
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: AIFactory
+  name: aifactory
+  title: AIFactory
   description: "Spec-Driven Development for AI agents — plan, code, ship. Web-based platform that turns GitHub issues into shipping code via a planner / coder / QA agent pipeline."
   annotations:
     backstage.io/techdocs-ref: dir:.
