@@ -114,7 +114,11 @@ class SpecOrchestrator:
             self.spec_dir = Path(spec_dir)
             self.spec_dir.mkdir(parents=True, exist_ok=True)
         elif spec_name:
-            self.spec_dir = self.specs_dir / spec_name
+            # #371: validate before building the path — a traversal in
+            # spec_name would escape specs_dir.
+            from security.identifiers import validate_spec_name
+
+            self.spec_dir = self.specs_dir / validate_spec_name(spec_name)
             self.spec_dir.mkdir(parents=True, exist_ok=True)
         else:
             # Use lock for coordinated spec numbering across worktrees
