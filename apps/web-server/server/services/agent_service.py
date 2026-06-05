@@ -2850,6 +2850,8 @@ class AgentService:
         force: bool = False,
         user_id: str = "",
         stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
     ) -> asyncio.subprocess.Process:
         """Start task execution (run.py).
 
@@ -2860,6 +2862,10 @@ class AgentService:
                 Used by the Copilot delegation flow (#94) — the planner writes
                 implementation_plan.json and run.py exits cleanly before the
                 coder/QA phases.
+            parallel: When True, passes ``--parallel`` to run.py so independent
+                subtasks run concurrently in dependency-graph waves (#376).
+            workers: When set with ``parallel``, passes ``--workers N`` to cap
+                concurrent subtasks per wave.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -2944,6 +2950,18 @@ class AgentService:
         if stop_after_planning:
             cmd.append("--stop-after-planning")
             logger.info(f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)")
+
+        # Parallel subtask execution (#376): run independent subtasks in
+        # dependency-graph waves. Previously these flags were accepted by the
+        # API but silently dropped here.
+        if parallel:
+            cmd.append("--parallel")
+            if workers and workers > 0:
+                cmd.extend(["--workers", str(workers)])
+            logger.info(
+                f"[AgentService] Parallel execution enabled for {task_id} "
+                f"(workers={workers or 'default'})"
+            )
 
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;

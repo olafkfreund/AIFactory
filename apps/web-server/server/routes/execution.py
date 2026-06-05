@@ -438,6 +438,20 @@ async def start_task(
             effective_mode = "quick"
             logger.info("[StartTask] Auto-derived quick mode from simple complexity")
 
+    # Resolve parallel execution options (#376). Prefer the explicit request
+    # value, then fall back to task_metadata (set at task creation). These were
+    # previously accepted by StartTaskRequest but never threaded to the executor.
+    effective_parallel = request.parallel
+    if effective_parallel is None:
+        effective_parallel = task_metadata.get("parallel", False)
+    effective_workers = request.workers
+    if effective_workers is None:
+        effective_workers = task_metadata.get("workers")
+    if effective_parallel:
+        logger.info(
+            f"[StartTask] Parallel execution requested (workers={effective_workers or 'default'})"
+        )
+
     agent_service = get_agent_service()
 
     # Check if plan was manually approved - if so, use --force to bypass review check
@@ -568,6 +582,8 @@ async def start_task(
             mode=effective_mode,
             force=force_execution,
             user_id=_user_id,
+            parallel=effective_parallel,
+            workers=effective_workers,
         )
 
         # Persist status to implementation_plan.json for page refresh survival

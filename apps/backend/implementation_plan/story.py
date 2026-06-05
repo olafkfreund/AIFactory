@@ -72,6 +72,9 @@ class Story:
     service: str | None = None
     all_services: bool = False
 
+    # Dependencies (#376: enables dependency-graph wave scheduling, same as Subtask)
+    depends_on: list[str] = field(default_factory=list)
+
     # Files (same as Subtask)
     files_to_modify: list[str] = field(default_factory=list)
     files_to_create: list[str] = field(default_factory=list)
@@ -107,6 +110,8 @@ class Story:
             result["service"] = self.service
         if self.all_services:
             result["all_services"] = True
+        if self.depends_on:
+            result["depends_on"] = self.depends_on
         if self.files_to_modify:
             result["files_to_modify"] = self.files_to_modify
         if self.files_to_create:
@@ -150,6 +155,7 @@ class Story:
             status=SubtaskStatus(data.get("status", "pending")),
             service=data.get("service"),
             all_services=data.get("all_services", False),
+            depends_on=data.get("depends_on", []),
             files_to_modify=data.get("files_to_modify", []),
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),
@@ -198,6 +204,7 @@ class Story:
             status=SubtaskStatus(subtask_data.get("status", "pending")),
             service=subtask_data.get("service"),
             all_services=subtask_data.get("all_services", False),
+            depends_on=subtask_data.get("depends_on", []),
             files_to_modify=subtask_data.get("files_to_modify", []),
             files_to_create=subtask_data.get("files_to_create", []),
             patterns_from=subtask_data.get("patterns_from", []),

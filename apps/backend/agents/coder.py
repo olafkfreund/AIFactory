@@ -75,6 +75,10 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# Default number of subtasks to run concurrently in a parallel_safe wave (#376)
+# when --parallel is requested without an explicit --workers value.
+DEFAULT_PARALLEL_WORKERS = 3
+
 
 async def run_autonomous_agent(
     project_dir: Path,
@@ -85,6 +89,8 @@ async def run_autonomous_agent(
     source_spec_dir: Path | None = None,
     stop_after_planning: bool = False,
     remote_control_session: str | None = None,
+    parallel: bool = False,
+    workers: int | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -103,7 +109,22 @@ async def run_autonomous_agent(
             writing implementation_plan.json. Used by the Copilot delegation
             flow — AIFactory enriches the plan locally then hands the issue
             off to GitHub Copilot Coding Agent (#92, #94).
+        parallel: When True, run independent subtasks of a ``parallel_safe``
+            phase concurrently in dependency-graph waves (#376) instead of
+            strictly one-at-a-time. Phases that are not parallel_safe still run
+            serially, so this is always safe to enable.
+        workers: Max concurrent subtasks per wave when ``parallel`` is set.
+            Defaults to ``DEFAULT_PARALLEL_WORKERS`` (3) when None.
     """
+    # Normalize parallelism config (#376). Concurrency is only ever attempted
+    # for phases the planner marked parallel_safe; everything else stays serial.
+    parallel_workers = max(1, workers or DEFAULT_PARALLEL_WORKERS)
+    if parallel:
+        print_status(
+            f"Parallel execution enabled (up to {parallel_workers} concurrent "
+            "subtasks in parallel_safe phases)",
+            "info",
+        )
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
 

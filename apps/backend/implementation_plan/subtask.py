@@ -26,6 +26,11 @@ class Subtask:
     service: str | None = None  # Which service (backend, frontend, worker)
     all_services: bool = False  # True for integration subtasks
 
+    # Dependencies (#376: enables dependency-graph wave scheduling)
+    # IDs of subtasks that must complete before this one can start. Empty means
+    # the subtask has no prerequisites and may run in the first wave.
+    depends_on: list[str] = field(default_factory=list)
+
     # Files
     files_to_modify: list[str] = field(default_factory=list)
     files_to_create: list[str] = field(default_factory=list)
@@ -57,6 +62,8 @@ class Subtask:
             result["service"] = self.service
         if self.all_services:
             result["all_services"] = True
+        if self.depends_on:
+            result["depends_on"] = self.depends_on
         if self.files_to_modify:
             result["files_to_modify"] = self.files_to_modify
         if self.files_to_create:
@@ -92,6 +99,7 @@ class Subtask:
             status=SubtaskStatus(data.get("status", "pending")),
             service=data.get("service"),
             all_services=data.get("all_services", False),
+            depends_on=data.get("depends_on", []),
             files_to_modify=data.get("files_to_modify", []),
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),
