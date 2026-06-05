@@ -28,17 +28,17 @@
 
 AIFactory turns GitHub issues into shipping code via a coordinated **planner / coder / QA** agent pipeline. You bring an issue (or a one-line task description) — AIFactory writes a spec, plans the work, codes it in an isolated git worktree, validates against the spec's acceptance criteria, and hands you back a merge-ready branch.
 
-You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive — or open the task in **Mission Control**, a full-page three-pane workspace (plan · live activity + console · preview / files / review). See [`docs/docs/concepts/mission-control-workspace.md`](docs/docs/concepts/mission-control-workspace.md).
+You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive — or open the task in **Mission Control**, a full-page three-pane workspace (plan · live activity + console · preview / files / review). See [`docs/docs/concepts/mission-control-workspace.md`](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/mission-control-workspace.md).
 
 > **🚀 What's new (May 2026)** — three more epics closed on top of the May MCP shipset:
 >
-> - **Delegation (#92)** — hand the coder phase off to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps the planning + governance. Hybrid only: planner runs on Claude, the structured plan lands as a comment on the issue, then the provider's agent codes. See [`docs/docs/concepts/delegation.md`](docs/docs/concepts/delegation.md).
-> - **Portal-managed Git clones (#82)** — point the portal at a Git URL, it clones into a workspace root (laptop default `~/.aifactory/workspaces/`, Helm-templated PVC on K8s). Stored Personal Access Tokens encrypted at rest. Required for SaaS / Kubernetes deployments. See [`docs/docs/concepts/portal-clones.md`](docs/docs/concepts/portal-clones.md).
-> - **Scoped MCP API keys (#154)** — replace the host-wide admin token at `~/.aifactory/.token` with per-developer scope-gated `acw_` keys. Mint via **Settings → API Keys**, drop in `$AIFACTORY_MCP_KEY`, done. Legacy admin token still works as a wildcard fallback. See [`docs/docs/concepts/mcp-stdio-keys.md`](docs/docs/concepts/mcp-stdio-keys.md).
+> - **Delegation (#92)** — hand the coder phase off to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps the planning + governance. Hybrid only: planner runs on Claude, the structured plan lands as a comment on the issue, then the provider's agent codes. See [`docs/docs/concepts/delegation.md`](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/delegation.md).
+> - **Portal-managed Git clones (#82)** — point the portal at a Git URL, it clones into a workspace root (laptop default `~/.aifactory/workspaces/`, Helm-templated PVC on K8s). Stored Personal Access Tokens encrypted at rest. Required for SaaS / Kubernetes deployments. See [`docs/docs/concepts/portal-clones.md`](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/portal-clones.md).
+> - **Scoped MCP API keys (#154)** — replace the host-wide admin token at `~/.aifactory/.token` with per-developer scope-gated `acw_` keys. Mint via **Settings → API Keys**, drop in `$AIFACTORY_MCP_KEY`, done. Legacy admin token still works as a wildcard fallback. See [`docs/docs/concepts/mcp-stdio-keys.md`](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/mcp-stdio-keys.md).
 >
 > Earlier May 2026 shipset (still current): **27 MCP tools** across stdio + remote HTTP+SSE transports, the **`/handover` skill** for Claude Code, **default MCP servers** that auto-enable per project, and **Remote Control** wiring for `claude.ai/code` on any device.
 >
-> See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
+> See [`guides/HANDOVER_WORKFLOW.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
 
 ## Enterprise v1.1 (May 28, 2026 — Epic #35)
 
@@ -46,12 +46,12 @@ AIFactory ships **7 major enterprise features** — multi-tenant isolation, obse
 
 | Capability | Issue | Concept doc |
 |-----------|-------|-------------|
-| **SAML 2.0 + SCIM 2.0** — Legacy IdP federation (ADFS-era banks, Azure AD provisioning) | #41 | [saml-scim](docs/docs/concepts/saml-scim.md) |
-| **Tenant Isolation Mode** — Per-tenant K8s namespace + NetPol + S3 + Vault + leader election | #36 | [tenant-isolation](docs/docs/concepts/tenant-isolation.md) |
-| **LiteLLM Gateway** — Per-org budget + rate-limit + allowlist + PII-redacted audit log | #38 | [litellm-gateway](docs/docs/concepts/litellm-gateway.md) |
-| **Bedrock + Vertex Routing** — Cloud-provider LLMs (AWS, Google) via LiteLLM | #39 | [cloud-llm-routing](docs/docs/concepts/cloud-llm-routing.md) |
-| **Signed Audit-Chain Anchor** — Daily HMAC-anchored chain for ISO 27001 A.12 compliance | #43 | [audit-anchor](docs/docs/concepts/audit-anchor.md) |
-| **OpenTelemetry Distributed Tracing** — W3C `traceparent` across web + agent + subprocess | #42 | [observability-tracing](docs/docs/concepts/observability-tracing.md) |
+| **SAML 2.0 + SCIM 2.0** — Legacy IdP federation (ADFS-era banks, Azure AD provisioning) | #41 | [saml-scim](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/saml-scim.md) |
+| **Tenant Isolation Mode** — Per-tenant K8s namespace + NetPol + S3 + Vault + leader election | #36 | [tenant-isolation](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/tenant-isolation.md) |
+| **LiteLLM Gateway** — Per-org budget + rate-limit + allowlist + PII-redacted audit log | #38 | [litellm-gateway](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/litellm-gateway.md) |
+| **Bedrock + Vertex Routing** — Cloud-provider LLMs (AWS, Google) via LiteLLM | #39 | [cloud-llm-routing](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/cloud-llm-routing.md) |
+| **Signed Audit-Chain Anchor** — Daily HMAC-anchored chain for ISO 27001 A.12 compliance | #43 | [audit-anchor](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/audit-anchor.md) |
+| **OpenTelemetry Distributed Tracing** — W3C `traceparent` across web + agent + subprocess | #42 | [observability-tracing](https://github.com/olafkfreund/AIFactory/blob/dev/docs/docs/concepts/observability-tracing.md) |
 | **gVisor Sandbox** — Agent pods opt-in to gVisor RuntimeClass for kernel-level isolation | #37 | — |
 
 **Multi-replica support:** S3 workspace storage + Redis pub/sub (#40) enable horizontally scaled deployments.
