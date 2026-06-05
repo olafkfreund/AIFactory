@@ -17,12 +17,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
-from typing import Any
-
+import socket
 import urllib.error
+import urllib.parse
 import urllib.request
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl
@@ -121,6 +123,43 @@ def _to_response(endpoint: LLMEndpoint) -> EndpointResponse:
     )
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Block redirects so a safe URL can't 30x to a private/metadata host (#323 H6)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        raise urllib.error.HTTPError(
+            req.full_url, code, f"Redirect blocked (SSRF guard): {newurl}", headers, fp
+        )
+
+
+def _assert_url_not_ssrf(url: str) -> None:
+    """Reject URLs whose host resolves to a private/loopback/link-local/reserved
+    address — blocks SSRF to cloud metadata (169.254.169.254) and internal
+    services (#323 H6). Raises ValueError if unsafe.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no host")
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError(f"Refusing to connect to non-public address {ip}")
+
+
 def _probe_models(
     base_url: str,
     api_key: str | None,
@@ -134,6 +173,11 @@ def _probe_models(
     structured feedback instead of an exception.
     """
     url = f"{base_url.rstrip('/')}/v1/models"
+    # SSRF guard (#323 H6): block private/metadata hosts before connecting.
+    try:
+        _assert_url_not_ssrf(url)
+    except ValueError as exc:
+        return EndpointTestResponse(ok=False, error=str(exc))
     req_headers: dict[str, str] = {"Accept": "application/json"}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
@@ -141,8 +185,9 @@ def _probe_models(
         req_headers.update(headers)
 
     req = urllib.request.Request(url, headers=req_headers, method="GET")
+    opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with opener.open(req, timeout=timeout) as resp:
             status_code = resp.getcode()
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:

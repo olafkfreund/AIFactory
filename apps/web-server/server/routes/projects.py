@@ -5,6 +5,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -97,7 +98,36 @@ class ProjectCreate(BaseModel):
     @field_validator("gitUrl", mode="after")
     @classmethod
     def _normalize_git_url(cls, v: str | None) -> str | None:
-        return v.strip() if isinstance(v, str) and v.strip() else None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v = v.strip()
+        # Security (#323 C5): reject git transport / argument injection. Only
+        # https / ssh / scp-like (git@host:path) are allowed; no `ext::`/`fd::`
+        # transport helpers, no `::`, no leading '-' (arg injection on clone).
+        lowered = v.lower()
+        if (
+            v.startswith("-")
+            or "::" in v
+            or lowered.startswith(("ext::", "fd::", "file://"))
+        ):
+            raise ValueError("Unsupported or unsafe git URL")
+        is_https = lowered.startswith(("https://", "ssh://"))
+        is_scp = bool(re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:", v))
+        if not (is_https or is_scp):
+            raise ValueError("git URL must be https://, ssh://, or git@host:path")
+        return v
+
+    @field_validator("branch", mode="after")
+    @classmethod
+    def _validate_branch(cls, v: str | None) -> str | None:
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v = v.strip()
+        # Security (#323 C5): branch flows into `git clone --branch <v>`; reject
+        # a leading '-' (arg injection) and anything outside git's ref charset.
+        if v.startswith("-") or not re.match(r"^[A-Za-z0-9._/-]+$", v):
+            raise ValueError("Invalid branch name")
+        return v
 
     @model_validator(mode="after")
     def _require_exactly_one_source(self):
