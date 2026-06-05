@@ -489,6 +489,7 @@ async def run_autonomous_agent(
                     remote_control_session=remote_control_session,
                     status_manager=status_manager,
                     disabled_phases=parallel_disabled_phases,
+                    recovery_manager=recovery_manager,
                 )
                 if handled:
                     # Progress was made in parallel; re-evaluate from the top.
@@ -861,6 +862,7 @@ async def _maybe_run_parallel_phase(
     remote_control_session: str | None,
     status_manager,
     disabled_phases: set[int],
+    recovery_manager=None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
@@ -913,6 +915,7 @@ async def _maybe_run_parallel_phase(
             verbose=verbose,
             source_spec_dir=source_spec_dir,
             remote_control_session=remote_control_session,
+            recovery_manager=recovery_manager,
         )
 
         # A stalled phase (cycle / unresolved deps / merge failures) drops to the

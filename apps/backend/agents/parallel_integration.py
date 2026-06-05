@@ -48,6 +48,7 @@ from prompt_generator import (
 from providers.factory import get_provider
 from task_logger import LogPhase
 
+from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_agent_session
 from .utils import sync_plan_to_source
@@ -68,6 +69,71 @@ def _task_branch(project_dir: Path) -> str:
     return result.stdout.strip() or "HEAD"
 
 
+def _head_commit(path: Path) -> str | None:
+    """Return the HEAD commit hash at a worktree path (None if unavailable)."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return result.stdout.strip() or None if result.returncode == 0 else None
+
+
+async def _capture_memory(
+    *,
+    subtask: Any,
+    child_spec_dir: Path,
+    child_path: Path,
+    commit_before: str | None,
+    success: bool,
+    recovery_manager: Any,
+    memory_lock: asyncio.Lock,
+    canonical_spec_dir: Path,
+    canonical_project_dir: Path,
+) -> None:
+    """Extract session insights (concurrent) and persist them (serialized).
+
+    Insight extraction is an LLM/read operation and runs concurrently across the
+    wave; only ``save_session_memory`` (the embedded-graph write) is serialized
+    under ``memory_lock`` so concurrent subtasks never write the DB at once.
+    Best-effort: a memory failure never fails the subtask.
+    """
+    try:
+        from analysis.insight_extractor import extract_session_insights
+
+        commit_after = await asyncio.to_thread(_head_commit, child_path)
+        insights = await extract_session_insights(
+            child_spec_dir,
+            child_path,
+            subtask.id,
+            0,
+            commit_before,
+            commit_after,
+            success,
+            recovery_manager,
+        )
+    except Exception as exc:  # noqa: BLE001 - memory is best-effort
+        logger.debug("[parallel] insight extraction skipped for %s: %s", subtask.id, exc)
+        insights = None
+
+    try:
+        async with memory_lock:
+            await save_session_memory(
+                canonical_spec_dir,
+                canonical_project_dir,
+                subtask.id,
+                0,
+                success,
+                [subtask.id] if success else [],
+                discoveries=insights,
+            )
+    except Exception as exc:  # noqa: BLE001 - memory is best-effort
+        logger.debug("[parallel] memory save skipped for %s: %s", subtask.id, exc)
+
+
 def _child_spec_name(spec_name: str, subtask_id: str) -> str:
     """Build a filesystem/branch-safe child worktree name for a subtask."""
     safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", subtask_id).strip("-")
@@ -85,6 +151,7 @@ async def run_parallel_coding_phase(
     verbose: bool = False,
     source_spec_dir: Path | None = None,
     remote_control_session: str | None = None,
+    recovery_manager: Any = None,
 ) -> PhaseRunResult:
     """Run one ``parallel_safe`` phase's subtasks concurrently in waves.
 
@@ -92,6 +159,11 @@ async def run_parallel_coding_phase(
     :func:`agents.parallel_runner.run_parallel_phase`. Returns its
     :class:`PhaseRunResult`; on stall/partial failure the caller resumes the
     remaining subtasks serially.
+
+    Graphiti memory (#376): each subtask reads memory context concurrently
+    (pre-injected into its prompt) and extracts insights concurrently, but the
+    actual knowledge-graph WRITE is funnelled through ``memory_lock`` so the
+    embedded LadybugDB never sees concurrent writers.
     """
     from core.worktree import WorktreeManager  # local import: heavy git module
 
@@ -106,6 +178,7 @@ async def run_parallel_coding_phase(
     wt_mgr = WorktreeManager(project_dir, base_branch=base_branch)
     create_lock = asyncio.Lock()
     plan_lock = asyncio.Lock()
+    memory_lock = asyncio.Lock()
 
     def _make_client(child_path: Path, child_spec_dir: Path):
         if provider_name == "claude":
@@ -150,6 +223,22 @@ async def run_parallel_coding_phase(
             if context.get("patterns") or context.get("files_to_modify"):
                 prompt += "\n\n" + format_context_for_prompt(context)
 
+            # --- memory READ: pre-inject knowledge-graph context (concurrent) ---
+            try:
+                mem_context = await get_graphiti_context(
+                    child_spec_dir, child_path, subtask_dict
+                )
+                if mem_context:
+                    from security import wrap_untrusted
+
+                    prompt += "\n\n" + wrap_untrusted(
+                        mem_context, source="knowledge-graph memory of past sessions"
+                    )
+            except Exception as exc:  # noqa: BLE001 - memory is best-effort
+                logger.debug("[parallel] memory context skipped for %s: %s", subtask.id, exc)
+
+            commit_before = await asyncio.to_thread(_head_commit, child_path)
+
             # --- agent session (the genuinely concurrent, awaited part) ---
             client = _make_client(child_path, child_spec_dir)
             async with client:
@@ -164,7 +253,22 @@ async def run_parallel_coding_phase(
                 f"aifactory: {subtask.id} (parallel wave)",
             )
 
-            if status == "error":
+            session_ok = status != "error"
+
+            # --- memory WRITE: extract insights (concurrent) then save (serialized) ---
+            await _capture_memory(
+                subtask=subtask,
+                child_spec_dir=child_spec_dir,
+                child_path=child_path,
+                commit_before=commit_before,
+                success=session_ok,
+                recovery_manager=recovery_manager,
+                memory_lock=memory_lock,
+                canonical_spec_dir=spec_dir,
+                canonical_project_dir=project_dir,
+            )
+
+            if not session_ok:
                 return SubtaskResult(
                     subtask_id=subtask.id,
                     success=False,
