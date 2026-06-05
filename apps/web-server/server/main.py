@@ -17,7 +17,11 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
 from .auth import TokenAuthMiddleware
-from .config import get_settings
+from .config import (
+    enforce_disable_auth_safety,
+    get_settings,
+    warn_if_auth_disabled,
+)
 from .database.engine import init_db
 from .logging_config import setup_logging
 from .routes import (
@@ -70,6 +74,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AIFactory Web Server...")
     logger.info(f"Backend path: {settings.BACKEND_PATH}")
     logger.info(f"Projects data dir: {settings.PROJECTS_DATA_DIR}")
+    warn_if_auth_disabled(settings)
 
     # Ensure data directory exists
     Path(settings.PROJECTS_DATA_DIR).mkdir(parents=True, exist_ok=True)
@@ -427,6 +432,9 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = get_settings()
+
+    # #324 (H7): never bind an unauthenticated admin API to the network.
+    enforce_disable_auth_safety(settings)
 
     # Build uvicorn config
     uvicorn_config = {

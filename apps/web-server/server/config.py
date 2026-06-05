@@ -4,6 +4,7 @@ Configuration settings for AIFactory Web Server.
 Settings are loaded from environment variables with sensible defaults.
 """
 
+import logging
 import secrets
 from pathlib import Path
 
@@ -11,6 +12,47 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 from .paths import get_data_dir, get_data_file
+
+logger = logging.getLogger(__name__)
+
+# Hosts that only accept local connections — DISABLE_AUTH is tolerable here.
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost", ""}
+
+
+def host_is_loopback(host: str) -> bool:
+    """True when ``host`` only binds the loopback interface (not 0.0.0.0/::)."""
+    return (host or "").strip().lower() in _LOOPBACK_HOSTS
+
+
+def warn_if_auth_disabled(settings: "Settings") -> None:
+    """Loud, unconditional warning whenever auth is bypassed (#324 H7)."""
+    if settings.DISABLE_AUTH:
+        logger.warning(
+            "⚠️  APP_DISABLE_AUTH=true — authentication is BYPASSED; every "
+            "request is treated as admin. Local development only; never expose "
+            "this to a network."
+        )
+
+
+def enforce_disable_auth_safety(settings: "Settings") -> None:
+    """Refuse to bind an unauthenticated admin API to a non-loopback host
+    unless DEBUG explicitly accepts the risk (#324 H7).
+
+    Called only from the real server entrypoint (``main.__main__``) — TestClient
+    never reaches it, so the test suite (which runs with APP_DISABLE_AUTH=true
+    and HOST=0.0.0.0) is unaffected.
+    """
+    if not settings.DISABLE_AUTH:
+        return
+    warn_if_auth_disabled(settings)
+    if not host_is_loopback(settings.HOST) and not settings.DEBUG:
+        raise SystemExit(
+            "Refusing to start: APP_DISABLE_AUTH=true on non-loopback host "
+            f"'{settings.HOST}' without APP_DEBUG. This would expose an "
+            "unauthenticated admin API to the network. Bind APP_HOST to "
+            "127.0.0.1, set APP_DEBUG=true to explicitly accept the risk for "
+            "local development, or unset APP_DISABLE_AUTH."
+        )
 
 
 class Settings(BaseSettings):
@@ -150,13 +192,16 @@ class Settings(BaseSettings):
         token_file.write_text(token)
         token_file.chmod(0o600)  # Owner read/write only
 
+        # #324 (M1): never print the token value — stdout lands in container /
+        # CI / journald logs. Point operators at the 0600 file instead.
         print(f"\n{'='*60}")
         print("AIFactory - First Run Setup")
         print(f"{'='*60}")
-        print(f"Generated API token: {token}")
-        print(f"Token saved to: {token_file}")
-        print("\nUse this token to authenticate API requests:")
-        print(f"  Authorization: Bearer {token}")
+        print(f"Generated API token saved to: {token_file}")
+        print("Read it with:")
+        print(f"  cat {token_file}")
+        print("Then authenticate API requests with:")
+        print("  Authorization: Bearer <token>")
         print(f"{'='*60}\n")
 
         return token
