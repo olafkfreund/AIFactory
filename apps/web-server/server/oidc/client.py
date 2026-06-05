@@ -55,12 +55,31 @@ def get_oauth_client():
         client_id=client_id,
         client_secret=client_secret,
         server_metadata_url=f"{issuer}/.well-known/openid-configuration",
+        # #324 (M2): enforce ID-token claims explicitly rather than relying on
+        # authlib defaults. `iss` must equal our configured issuer and `aud`
+        # must contain our client_id — this rejects a token minted for a
+        # different client/IdP (token substitution). `exp` is essential so an
+        # ID token without an expiry can never validate.
+        claims_options={
+            "iss": {"essential": True, "values": [issuer]},
+            "aud": {"essential": True, "values": [client_id]},
+            "exp": {"essential": True},
+        },
         client_kwargs={
             # PKCE is mandatory per the P3 acceptance criteria. authlib
             # auto-generates code_verifier + code_challenge when this is
             # set.
             "scope": scope,
             "code_challenge_method": "S256",
+            # #324 (M2): never accept an unsigned ID token. authlib rejects
+            # `alg=none` by default; pinning the asymmetric algs IdPs advertise
+            # (RS/ES/PS families) makes the intent explicit and blocks an
+            # HMAC-confusion downgrade.
+            "id_token_signing_alg_values_supported": [
+                "RS256", "RS384", "RS512",
+                "ES256", "ES384", "ES512",
+                "PS256", "PS384", "PS512",
+            ],
         },
     )
     return oauth
