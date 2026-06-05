@@ -49,9 +49,11 @@ class OidcPreset:
 PRESETS: dict[str, OidcPreset] = {
     "keycloak": OidcPreset(
         name="keycloak",
-        # offline_access requests an IdP refresh token used for real per-user
-        # revocation checks at refresh time (#366).
-        default_scope="openid profile email offline_access",
+        # NOTE: we deliberately do NOT request `offline_access` — the
+        # authorization-code flow already yields a (session-scoped) refresh
+        # token that the #366 revocation check uses, and requiring offline
+        # tokens needs extra realm/client config many IdPs don't grant.
+        default_scope="openid profile email",
         groups_claim="groups",
         groups_as_list=True,
         docs_url="https://www.keycloak.org/docs/latest/server_admin/",
@@ -60,7 +62,7 @@ PRESETS: dict[str, OidcPreset] = {
         name="okta",
         # Okta needs `groups` scope explicitly added in the admin
         # console AND the resulting claim included in the token.
-        default_scope="openid profile email groups offline_access",
+        default_scope="openid profile email groups",
         groups_claim="groups",
         groups_as_list=True,
         docs_url=(
@@ -71,7 +73,7 @@ PRESETS: dict[str, OidcPreset] = {
         name="azure_ad",
         # Azure AD uses GroupMembershipClaims setting in the app
         # registration manifest to emit `groups` (object IDs).
-        default_scope="openid profile email offline_access",
+        default_scope="openid profile email",
         groups_claim="groups",
         groups_as_list=True,
         docs_url=(

@@ -251,10 +251,10 @@ class OidcRefreshSession(Base):
 
     Our own refresh JWT is NOT stored — only its ``jti`` claim. The
     *IdP's* refresh token (``idp_refresh_token``) IS stored, encrypted at
-    rest, when the IdP issues one (``offline_access`` scope): it powers the
-    real per-user revocation check at refresh time (#366). Nullable for
-    legacy rows and IdPs that don't issue refresh tokens — those fall back
-    to the discovery-liveness probe.
+    rest, when the IdP issues one (the authorization-code flow's refresh
+    token): it powers the real per-user revocation check at refresh time
+    (#366). Nullable for legacy rows and IdPs that don't issue refresh
+    tokens — those fall back to the discovery-liveness probe.
     """
 
     __tablename__ = "oidc_refresh_sessions"
