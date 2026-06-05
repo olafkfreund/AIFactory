@@ -38,3 +38,9 @@ tree-sitter-typescript>=0.21.0
 kubernetes-asyncio>=32.0
 boto3>=1.43.0
 hvac>=2.3.0
+
+# #321 — fail-closed shell AST parsing for the agent command sandbox.
+# security/ast_parser.py uses bashlex to surface every command a string would
+# execute (nested bash -c / env / xargs / find -exec / $() substitutions) so
+# the allowlist can no longer be bypassed by name-only parsing.
+bashlex>=0.18

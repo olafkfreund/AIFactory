@@ -2,7 +2,10 @@
 Git Validators
 ==============
 
-Validators for git operations (commit with secret scanning).
+Validators for git operations:
+- ``validate_git``: rejects RCE-bearing global options / config injection
+  (#321 finding C4), then delegates to the commit secret-scan.
+- ``validate_git_commit``: secret scanning + spec-artifact unstaging on commit.
 """
 
 import logging
@@ -13,6 +16,77 @@ from pathlib import Path
 from .validation_models import ValidationResult
 
 logger = logging.getLogger(__name__)
+
+# git global options that turn a benign-looking git invocation into arbitrary
+# command execution or a path/transport hijack. ``git -c <key>=<val>`` is the
+# big one (config injection); the others run an attacker-supplied program.
+_DANGEROUS_GIT_FLAGS = {
+    "--exec-path",  # hijacks git's helper exec path
+    "--upload-pack",  # runs an arbitrary program on fetch/clone/ls-remote
+    "--receive-pack",  # runs an arbitrary program on push
+}
+_CONFIG_FLAGS = {"-c", "--config-env"}
+
+
+def _is_dangerous_git_config(key: str) -> bool:
+    """True for ``git -c`` config keys that can execute a command — the
+    pager/editor/ssh/fsmonitor/hooks/alias/upload-pack families (#321 C4)."""
+    k = key.strip().lower()
+    return (
+        k.startswith("alias.")
+        or k.endswith("command")  # core.sshCommand, diff.*.command, …
+        or k == "core.pager"
+        or k.endswith(".pager")
+        or k.startswith("pager.")
+        or k == "core.editor"
+        or k.endswith(".editor")
+        or k == "sequence.editor"
+        or "fsmonitor" in k
+        or k.endswith("hookspath")
+        or k.startswith("uploadpack.")
+        or k.startswith("receive.")
+    )
+
+
+def validate_git(command_string: str) -> ValidationResult:
+    """Reject RCE-bearing git global options before any git command runs, then
+    fall through to the commit secret-scan. Fail closed on unparseable input
+    that still contains a dangerous flag."""
+    try:
+        tokens = shlex.split(command_string)
+    except ValueError:
+        # Can't tokenize — only block if a dangerous construct is visibly
+        # present; otherwise defer to the commit validator's own handling.
+        lowered = command_string.lower()
+        if " -c " in f" {lowered} " or any(f in lowered for f in _DANGEROUS_GIT_FLAGS):
+            return False, (
+                "git blocked: command uses a config/exec option that can run "
+                "arbitrary code and could not be parsed for validation."
+            )
+        return validate_git_commit(command_string)
+
+    for i, tok in enumerate(tokens):
+        base = tok.split("=", 1)[0]
+        # `-c key=value` / `--config-env key=ENVVAR`
+        if base in _CONFIG_FLAGS:
+            value = (
+                tok.split("=", 1)[1]
+                if "=" in tok
+                else (tokens[i + 1] if i + 1 < len(tokens) else "")
+            )
+            key = value.split("=", 1)[0]
+            if _is_dangerous_git_config(key):
+                return False, (
+                    f"git blocked: `-c {key}=…` can execute an arbitrary "
+                    "command (config injection). Remove the inline config."
+                )
+        elif base in _DANGEROUS_GIT_FLAGS:
+            return False, (
+                f"git blocked: `{base}` runs an arbitrary program "
+                "(transport/exec hijack). Not permitted."
+            )
+
+    return validate_git_commit(command_string)
 
 
 def _format_secret_error(matches: list) -> ValidationResult:
@@ -135,6 +209,7 @@ def validate_git_commit(command_string: str) -> ValidationResult:
             # Still scan staged files for secrets
             try:
                 from scan_secrets import get_staged_files, scan_files
+
                 staged_files = get_staged_files()
                 if staged_files:
                     matches = scan_files(staged_files, Path.cwd())

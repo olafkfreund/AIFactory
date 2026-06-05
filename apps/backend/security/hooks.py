@@ -15,9 +15,31 @@ from project_analyzer import BASE_COMMANDS, SecurityProfile, is_command_allowed
 
 logger = logging.getLogger(__name__)
 
+from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
 from .parser import extract_commands, get_command_for_validation, split_command_segments
 from .profile import get_security_profile
 from .validator import VALIDATORS
+
+
+def _extract_commands_fail_closed(command: str) -> tuple[list[str] | None, str]:
+    """Extract command names with the fail-closed AST parser.
+
+    Returns ``(commands, "")`` on success, or ``(None, reason)`` when the
+    command must be blocked because it could not be safely parsed. Falls back
+    to the legacy regex parser only when ``bashlex`` is unavailable (degraded
+    install) — never to widen what the AST parser would have blocked.
+    """
+    if is_available():
+        try:
+            return extract_commands_ast(command), ""
+        except UnparseableCommand as exc:
+            return None, (
+                "Command blocked: could not be safely parsed for security "
+                f"validation ({exc}). Rewrite it without dynamic shell "
+                'payloads (e.g. avoid `bash -c "$VAR"`).'
+            )
+    # Degraded fallback: bashlex not installed.
+    return extract_commands(command), ""
 
 
 async def bash_security_hook(
@@ -82,8 +104,11 @@ async def bash_security_hook(
         profile = SecurityProfile()
         profile.base_commands = BASE_COMMANDS.copy()
 
-    # Extract all commands from the command string
-    commands = extract_commands(command)
+    # Extract all commands from the command string (fail closed on anything
+    # we cannot safely parse — see ast_parser / #321).
+    commands, block_reason = _extract_commands_fail_closed(command)
+    if commands is None:
+        return {"decision": "block", "reason": block_reason}
 
     if not commands:
         # Could not parse - fail safe by blocking
@@ -141,7 +166,9 @@ def validate_command(
         project_dir = Path.cwd()
 
     profile = get_security_profile(project_dir)
-    commands = extract_commands(command)
+    commands, block_reason = _extract_commands_fail_closed(command)
+    if commands is None:
+        return False, block_reason
 
     if not commands:
         return False, "Could not parse command"
