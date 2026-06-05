@@ -2793,6 +2793,11 @@ class AgentService:
 
         master_fd, slave_fd = pty.openpty()
 
+        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+        # is set and bwrap is installed (zero behaviour change by default).
+        from .sandbox import build_sandboxed_command
+        cmd = build_sandboxed_command(cmd, project_path)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -3106,6 +3111,11 @@ class AgentService:
             spec_stderr_log.write_text("")  # truncate any previous capture
         except OSError as _e:
             logger.debug(f"[AgentService] could not prep spawn_stderr.log: {_e}")
+
+        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+        # is set and bwrap is installed (zero behaviour change by default).
+        from .sandbox import build_sandboxed_command
+        cmd = build_sandboxed_command(cmd, project_path)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
