@@ -8,6 +8,7 @@ Validators for file system operations (chmod, rm, init scripts).
 import re
 import shlex
 
+from .exec_context import get_worktree_root, target_escapes_worktree
 from .validation_models import ValidationResult
 
 # Safe chmod modes
@@ -95,6 +96,12 @@ def validate_chmod_command(command_string: str) -> ValidationResult:
             f"chmod only allowed with executable modes (+x, 755, etc.), got: {mode}",
         )
 
+    # #364: every target (incl. `chmod -R`) must stay inside the worktree.
+    root = get_worktree_root()
+    for f in files:
+        if target_escapes_worktree(f, root):
+            return False, f"chmod target '{f}' is outside the worktree and not allowed"
+
     return True, ""
 
 
@@ -116,14 +123,22 @@ def validate_rm_command(command_string: str) -> ValidationResult:
     if not tokens:
         return False, "Empty rm command"
 
-    # Check for dangerous patterns
+    root = get_worktree_root()
+
+    # Check for dangerous flags + targets
     for token in tokens[1:]:
         if token.startswith("-"):
+            # #364: `--no-preserve-root` re-enables `rm -rf /`. Never allow it.
+            if token == "--no-preserve-root":
+                return False, "rm --no-preserve-root is not allowed"
             # Allow -r, -f, -rf, -fr, -v, -i
             continue
         for pattern in DANGEROUS_RM_PATTERNS:
             if re.match(pattern, token):
                 return False, f"rm target '{token}' is not allowed for safety"
+        # #364: reject absolute / `..` targets that resolve outside the worktree.
+        if target_escapes_worktree(token, root):
+            return False, f"rm target '{token}' is outside the worktree and not allowed"
 
     return True, ""
 

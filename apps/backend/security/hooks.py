@@ -19,6 +19,7 @@ from project_analyzer import BASE_COMMANDS, SecurityProfile, is_command_allowed
 logger = logging.getLogger(__name__)
 
 from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
+from .exec_context import reset_worktree_root, set_worktree_root
 from .parser import extract_commands, get_command_for_validation, split_command_segments
 from .profile import get_security_profile
 from .url_guard import assert_url_not_ssrf
@@ -180,14 +181,19 @@ async def bash_security_hook(
                 "reason": reason,
             }
 
-        # Additional validation for sensitive commands
+        # Additional validation for sensitive commands. Expose the worktree
+        # root (cwd) so path validators (rm/chmod) can reject escapes (#364).
         if cmd in VALIDATORS:
             cmd_segment = get_command_for_validation(cmd, segments)
             if not cmd_segment:
                 cmd_segment = command
 
             validator = VALIDATORS[cmd]
-            allowed, reason = validator(cmd_segment)
+            token = set_worktree_root(cwd)
+            try:
+                allowed, reason = validator(cmd_segment)
+            finally:
+                reset_worktree_root(token)
             if not allowed:
                 return {"decision": "block", "reason": reason}
 
@@ -232,7 +238,11 @@ def validate_command(
                 cmd_segment = command
 
             validator = VALIDATORS[cmd]
-            allowed, reason = validator(cmd_segment)
+            token = set_worktree_root(str(project_dir))
+            try:
+                allowed, reason = validator(cmd_segment)
+            finally:
+                reset_worktree_root(token)
             if not allowed:
                 return False, reason
 
