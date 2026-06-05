@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from security import wrap_untrusted
+
 try:
     from ..models import GitHubRunnerConfig, TriageCategory, TriageResult
     from .prompt_manager import PromptManager
@@ -117,15 +119,24 @@ class TriageEngine:
             if overlap > 0.3:
                 potential_dupes.append(other)
 
+        # #369: title / author / labels / body are attacker-controlled (anyone
+        # can open an issue). Wrap them as untrusted DATA so embedded
+        # "ignore previous instructions" can't steer the triage agent.
+        untrusted = "\n".join(
+            [
+                f"Title: {issue['title']}",
+                f"Author: {issue['author']['login']}",
+                f"Labels: {', '.join(label['name'] for label in issue.get('labels', []))}",
+                "",
+                "Body:",
+                issue.get("body", "No description"),
+            ]
+        )
         lines = [
             f"## Issue #{issue['number']}",
-            f"**Title:** {issue['title']}",
-            f"**Author:** {issue['author']['login']}",
             f"**Created:** {issue['createdAt']}",
-            f"**Labels:** {', '.join(label['name'] for label in issue.get('labels', []))}",
             "",
-            "### Body",
-            issue.get("body", "No description"),
+            wrap_untrusted(untrusted, source=f"GitHub issue #{issue['number']}"),
             "",
         ]
 

@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from security import wrap_untrusted
+
 try:
     from ..context_gatherer import PRContext
     from ..models import (
@@ -198,16 +200,26 @@ class PRReviewEngine:
             diff_content = diff_content[:50000]
             diff_truncated_warning = f"\n⚠️ **WARNING**: Diff truncated from {diff_size} to 50,000 characters. Review may be incomplete.\n"
 
+        # #369: title/author/branch/description are attacker-controlled. Wrap
+        # them as untrusted DATA so an embedded "approve regardless" can't steer
+        # the review. The diff itself stays fenced below — it is the subject of
+        # the review, not metadata.
+        pr_meta = "\n".join(
+            [
+                f"Title: {context.title}",
+                f"Author: {context.author}",
+                f"Base: {context.base_branch}  Head: {context.head_branch}",
+                "",
+                "Description:",
+                context.description or "",
+            ]
+        )
         pr_context = f"""
 ## Pull Request #{context.pr_number}
 
-**Title:** {context.title}
-**Author:** {context.author}
-**Base:** {context.base_branch} ← **Head:** {context.head_branch}
 **Changes:** {context.total_additions} additions, {context.total_deletions} deletions across {len(context.changed_files)} files
 
-### Description
-{context.description}
+{wrap_untrusted(pr_meta, source=f"GitHub PR #{context.pr_number} metadata")}
 
 ### Files Changed
 {files_str}

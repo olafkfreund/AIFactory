@@ -50,6 +50,9 @@ from .profile import (
     reset_profile_cache,
 )
 
+# Prompt-injection containment (#369)
+from .prompt_guard import wrap_untrusted
+
 # Tool input validation
 from .tool_input_validator import (
     get_safe_tool_input,
@@ -79,6 +82,7 @@ __all__ = [
     # Main API
     "bash_security_hook",
     "web_fetch_security_hook",
+    "wrap_untrusted",
     "validate_command",
     "get_security_profile",
     "reset_profile_cache",
