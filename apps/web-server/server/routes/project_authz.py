@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database.engine import get_db
 from ..database.models import OrgMember
 from .organizations import ROLE_LEVELS
-from .projects import load_projects
 
 __all__ = [
     "check_project_access",
@@ -124,6 +123,8 @@ class ProjectAccessChecker:
             check_project_access(user, None, None, self.minimum_role)
             return user
 
+        from .projects import load_projects  # lazy: avoid projects↔authz cycle
+
         project = load_projects().get(project_id)
         membership = None
         if (
@@ -151,6 +152,24 @@ def require_project_access(minimum_role: str = "viewer") -> ProjectAccessChecker
 
 # Stable id of the deployment "default" org (mirrors database.engine).
 DEFAULT_ORG_ID = "default"
+
+
+async def accessible_org_ids(request: Request, db: AsyncSession) -> set[str] | None:
+    """Org ids the caller may see, or ``None`` meaning "all" (#319 list filter).
+
+    - Service principal → ``None`` (sees every project; local UI + M2M).
+    - Human JWT user → the set of orgs they're a member of.
+    - No identity → empty set.
+    """
+    user = getattr(request.state, "user", None)
+    if is_service_principal(user):
+        return None
+    if not isinstance(user, dict) or not user.get("id"):
+        return set()
+    result = await db.execute(
+        select(OrgMember.org_id).where(OrgMember.user_id == user["id"])
+    )
+    return set(result.scalars().all())
 
 
 async def resolve_owner_org_id(request: Request, db: AsyncSession) -> str:
