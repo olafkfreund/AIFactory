@@ -180,22 +180,27 @@ async def run_parallel_coding_phase(
     plan_lock = asyncio.Lock()
     memory_lock = asyncio.Lock()
 
-    def _make_client(child_path: Path, child_spec_dir: Path):
-        if provider_name == "claude":
+    def _make_client(child_path: Path, child_spec_dir: Path, sub_model: str):
+        # Per-subtask model override (#376 right-sizing): a subtask may declare
+        # its own model (e.g. "haiku" for scaffolding); fall back to the phase
+        # model. The provider is re-inferred so an override can also switch
+        # providers (e.g. a Gemini subtask inside a Claude build).
+        sub_provider = infer_provider_from_model(sub_model)
+        if sub_provider == "claude":
             return create_client(
                 child_path,
                 child_spec_dir,
-                phase_model,
+                sub_model,
                 agent_type="coder",
                 max_thinking_tokens=thinking_budget,
                 remote_control_session=remote_control_session,
             )
         provider_kwargs = {
-            "model": phase_model,
+            "model": sub_model,
             "working_dir": child_path,
-            **get_provider_extra_kwargs(provider_name, phase_model),
+            **get_provider_extra_kwargs(sub_provider, sub_model),
         }
-        return get_provider(provider_name, phase="coding", **provider_kwargs)
+        return get_provider(sub_provider, phase="coding", **provider_kwargs)
 
     async def run_subtask(subtask: Any, *, index: int) -> SubtaskResult:
         child_name = _child_spec_name(spec_dir.name, subtask.id)
@@ -240,7 +245,8 @@ async def run_parallel_coding_phase(
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
-            client = _make_client(child_path, child_spec_dir)
+            sub_model = getattr(subtask, "model", None) or phase_model
+            client = _make_client(child_path, child_spec_dir, sub_model)
             async with client:
                 status, _resp, _err = await run_agent_session(
                     client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING

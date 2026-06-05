@@ -75,6 +75,9 @@ class Story:
     # Dependencies (#376: enables dependency-graph wave scheduling, same as Subtask)
     depends_on: list[str] = field(default_factory=list)
 
+    # Optional per-subtask model override (#376 right-sizing), same as Subtask.
+    model: str | None = None
+
     # Files (same as Subtask)
     files_to_modify: list[str] = field(default_factory=list)
     files_to_create: list[str] = field(default_factory=list)
@@ -112,6 +115,8 @@ class Story:
             result["all_services"] = True
         if self.depends_on:
             result["depends_on"] = self.depends_on
+        if self.model:
+            result["model"] = self.model
         if self.files_to_modify:
             result["files_to_modify"] = self.files_to_modify
         if self.files_to_create:
@@ -156,6 +161,7 @@ class Story:
             service=data.get("service"),
             all_services=data.get("all_services", False),
             depends_on=data.get("depends_on", []),
+            model=data.get("model"),
             files_to_modify=data.get("files_to_modify", []),
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),

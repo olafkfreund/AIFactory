@@ -316,6 +316,12 @@ async def run_autonomous_agent(
         phase_model = get_phase_model(spec_dir, current_phase, model)
         phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
 
+        # Per-subtask model override (#376 right-sizing): a coding subtask may
+        # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
+        # cheaper/faster than the phase default. Planning is never overridden.
+        if not first_run and next_subtask and next_subtask.get("model"):
+            phase_model = next_subtask["model"]
+
         # Create client (fresh context) with phase-specific model and thinking
         # Route through provider factory for non-Claude models
         provider_name = infer_provider_from_model(phase_model)

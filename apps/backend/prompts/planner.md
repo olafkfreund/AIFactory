@@ -403,6 +403,12 @@ state) into one `parallel_safe` phase with accurate file lists and minimal
 `depends_on`. Keep tightly-coupled or file-sharing work either in a
 `parallel_safe: false` phase or chained via `depends_on`.
 
+**Optional `model` (subtask, right-sizing):** a subtask may set `"model"` to a
+shorthand (e.g. `"haiku"`, `"sonnet"`, `"opus"`) to run on a cheaper/faster
+model when the work is mechanical (scaffolding, config, CI files). Omit it to
+use the phase default. Reserve the strongest model for genuinely complex
+subtasks; this trims cost without hurting quality where quality isn't at stake.
+
 ### Valid Phase Types
 
 Use ONLY these values for the `type` field in phases:

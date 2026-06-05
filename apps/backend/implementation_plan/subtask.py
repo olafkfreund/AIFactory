@@ -31,6 +31,12 @@ class Subtask:
     # the subtask has no prerequisites and may run in the first wave.
     depends_on: list[str] = field(default_factory=list)
 
+    # Optional per-subtask model override (#376 right-sizing). When set, this
+    # subtask runs on the given model/shorthand (e.g. "haiku" for mechanical
+    # scaffolding) instead of the phase default — cheaper/faster where the work
+    # is simple, while planner/QA stay on the stronger model. None = phase model.
+    model: str | None = None
+
     # Files
     files_to_modify: list[str] = field(default_factory=list)
     files_to_create: list[str] = field(default_factory=list)
@@ -64,6 +70,8 @@ class Subtask:
             result["all_services"] = True
         if self.depends_on:
             result["depends_on"] = self.depends_on
+        if self.model:
+            result["model"] = self.model
         if self.files_to_modify:
             result["files_to_modify"] = self.files_to_modify
         if self.files_to_create:
@@ -100,6 +108,7 @@ class Subtask:
             service=data.get("service"),
             all_services=data.get("all_services", False),
             depends_on=data.get("depends_on", []),
+            model=data.get("model"),
             files_to_modify=data.get("files_to_modify", []),
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),
