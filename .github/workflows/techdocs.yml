@@ -1,0 +1,76 @@
+name: TechDocs
+
+# Keep Backstage TechDocs self-documenting: regenerate the OpenAPI spec + the
+# dependencies page, validate that the TechDocs site builds, and commit any
+# refreshed artifacts back so the published docs never drift from the code.
+#
+# Backstage itself builds + serves TechDocs on view (builder: local) from
+# mkdocs.yml on the default branch — this workflow only keeps the generated
+# inputs fresh and catches a broken docs build before it reaches Backstage.
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "apps/backend/requirements.txt"
+      - "apps/web-server/requirements.txt"
+      - "apps/frontend-web/package.json"
+      - "apps/web-server/server/**"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "catalog-info.yaml"
+      - "scripts/generate-techdocs-deps.py"
+      - "scripts/generate-openapi-spec.py"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: techdocs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 1. Dependencies page — cheap, no app import.
+      - name: Regenerate dependencies page
+        run: python3 scripts/generate-techdocs-deps.py
+
+      # 2. OpenAPI spec — best-effort (needs the web-server stack). If the install
+      #    or import fails, keep the committed spec rather than failing the run.
+      - name: Regenerate OpenAPI spec
+        continue-on-error: true
+        run: |
+          python3 -m venv /tmp/ws
+          /tmp/ws/bin/pip install --quiet -r apps/web-server/requirements.txt
+          APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py
+
+      # 3. Validate the TechDocs build (the same thing Backstage runs on view).
+      - name: Validate TechDocs build
+        run: |
+          python3 -m pip install --quiet mkdocs-techdocs-core
+          python3 -m mkdocs build -f mkdocs.yml -d /tmp/techdocs-site
+          test -f /tmp/techdocs-site/index.html
+
+      # 4. Commit refreshed artifacts so the published docs stay current.
+      - name: Commit refreshed docs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/dependencies.md apps/web-server/openapi.yaml; then
+            echo "TechDocs inputs already up to date."
+          else
+            git add docs/dependencies.md apps/web-server/openapi.yaml
+            git commit -m "docs(techdocs): refresh OpenAPI spec + dependencies [skip ci]"
+            git push origin dev
+          fi
