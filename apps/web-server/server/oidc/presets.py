@@ -49,6 +49,10 @@ class OidcPreset:
 PRESETS: dict[str, OidcPreset] = {
     "keycloak": OidcPreset(
         name="keycloak",
+        # NOTE: we deliberately do NOT request `offline_access` — the
+        # authorization-code flow already yields a (session-scoped) refresh
+        # token that the #366 revocation check uses, and requiring offline
+        # tokens needs extra realm/client config many IdPs don't grant.
         default_scope="openid profile email",
         groups_claim="groups",
         groups_as_list=True,
