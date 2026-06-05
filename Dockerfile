@@ -70,6 +70,13 @@ RUN apk add --no-cache \
         npm \
         wget
 
+# Security: the pinned base snapshot ships binutils 2.46-r1, which carries
+# CVE-2026-6846 (heap-buffer-overflow in XCOFF processing → RCE/DoS; fixed in
+# 2.46-r2). Pull the fixed version from the live Wolfi APK repo so the Trivy
+# P0 supply-chain gate stays clean. Remove once the base digest is repinned to
+# a snapshot that already includes the fix.
+RUN apk add --no-cache 'binutils>=2.46-r2'
+
 # Epic #44 R3 — optionally bundle the rmux binary.
 #
 # Build args:
