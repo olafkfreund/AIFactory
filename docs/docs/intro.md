@@ -1,5 +1,5 @@
 ---
-slug: /
+slug: /intro
 title: AIFactory
 sidebar_position: 1
 ---
