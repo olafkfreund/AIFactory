@@ -481,8 +481,18 @@ async def run_autonomous_agent(
                 spec_dir, project_dir, next_subtask
             )
             if graphiti_context:
-                prompt += "\n\n" + graphiti_context
-                seg_coordination += graphiti_context
+                # #369: memory is populated by past sessions and could be
+                # poisoned cross-session. It is reference data, never
+                # instructions — wrap it so an injected directive can't steer
+                # this run.
+                from security import wrap_untrusted
+
+                framed_memory = wrap_untrusted(
+                    graphiti_context,
+                    source="knowledge-graph memory of past sessions",
+                )
+                prompt += "\n\n" + framed_memory
+                seg_coordination += framed_memory
                 print_status("Graphiti memory context loaded", "success")
 
             # Show what we're working on
