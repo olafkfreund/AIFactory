@@ -23,6 +23,7 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server.routes.project_authz import (  # noqa: E402
     ProjectAccessChecker,
+    TaskAccessChecker,
     accessible_org_ids,
 )
 
@@ -139,6 +140,39 @@ async def test_service_principal_bypasses_db(db_factory):
     async with db_factory() as s:
         res = await ProjectAccessChecker("admin")(
             project_id="does-not-exist", request=_req({"is_service": True}), db=s
+        )
+    assert res["is_service"] is True
+
+
+# ── task-scoped variant (task_id = "project_id:spec_id") ───────────────────
+
+
+async def test_task_access_member_allowed(db_factory, monkeypatch):
+    _patch_projects(monkeypatch)
+    async with db_factory() as s:
+        res = await TaskAccessChecker("member")(
+            task_id="p1:001-x", request=_req({"id": "alice", "role": "user"}), db=s
+        )
+    assert res["id"] == "alice"
+
+
+async def test_task_access_cross_tenant_403(db_factory, monkeypatch):
+    _patch_projects(monkeypatch)
+    async with db_factory() as s:
+        with pytest.raises(HTTPException) as exc:
+            await TaskAccessChecker("viewer")(
+                task_id="p1:001-x", request=_req({"id": "bob", "role": "user"}), db=s
+            )
+    assert exc.value.status_code == 403
+
+
+async def test_task_access_service_principal_bypasses(db_factory):
+    # The sibling-contract guard: a service token (PFactory/TFactory, local UI)
+    # reaches task routes (start / create-and-run / apply-correction) regardless
+    # of org membership — proving #319 enforcement doesn't break M2M.
+    async with db_factory() as s:
+        res = await TaskAccessChecker("member")(
+            task_id="anyproj:anyspec", request=_req({"is_service": True}), db=s
         )
     assert res["is_service"] is True
 

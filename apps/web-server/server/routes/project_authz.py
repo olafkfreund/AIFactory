@@ -110,12 +110,10 @@ class ProjectAccessChecker:
     def __init__(self, minimum_role: str = "viewer") -> None:
         self.minimum_role = minimum_role
 
-    async def __call__(
-        self,
-        project_id: str,
-        request: Request,
-        db: AsyncSession = Depends(get_db),
+    async def _authorize(
+        self, project_id: str, request: Request, db: AsyncSession
     ) -> dict:
+        """Shared rule used by the project- and task-scoped variants."""
         user = getattr(request.state, "user", None)
 
         # Service principal short-circuits before any DB / project lookup.
@@ -144,10 +142,37 @@ class ProjectAccessChecker:
         check_project_access(user, project, membership, self.minimum_role)
         return user
 
+    async def __call__(
+        self,
+        project_id: str,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+    ) -> dict:
+        return await self._authorize(project_id, request, db)
+
+
+class TaskAccessChecker(ProjectAccessChecker):
+    """Like :class:`ProjectAccessChecker` but keyed on a ``task_id`` path param
+    of the form ``project_id:spec_id`` (the form task/execution routes use)."""
+
+    async def __call__(
+        self,
+        task_id: str,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+    ) -> dict:
+        project_id = task_id.split(":", 1)[0] if ":" in task_id else task_id
+        return await self._authorize(project_id, request, db)
+
 
 def require_project_access(minimum_role: str = "viewer") -> ProjectAccessChecker:
-    """Factory for the project-access FastAPI dependency."""
+    """Factory for the project-scoped access dependency (``project_id`` param)."""
     return ProjectAccessChecker(minimum_role)
+
+
+def require_task_access(minimum_role: str = "viewer") -> TaskAccessChecker:
+    """Factory for the task-scoped access dependency (``task_id`` param)."""
+    return TaskAccessChecker(minimum_role)
 
 
 # Stable id of the deployment "default" org (mirrors database.engine).
