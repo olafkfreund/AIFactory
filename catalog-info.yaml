@@ -50,6 +50,11 @@ spec:
     - aifactory-web-api
     - aifactory-mcp
     - aifactory-completion-event
+  consumesApis:
+    # Builds from PFactory's governed plan/issues.
+    - pfactory-api
+  dependsOn:
+    - component:default/pfactory
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
@@ -73,6 +78,7 @@ spec:
   lifecycle: experimental
   owner: group:default/factory-maintainers
   system: factory-suite
+  subcomponentOf: aifactory
   consumesApis:
     - aifactory-web-api
 ---
