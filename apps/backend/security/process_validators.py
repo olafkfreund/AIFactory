@@ -99,24 +99,44 @@ def validate_pkill_command(command_string: str) -> ValidationResult:
 
 def validate_kill_command(command_string: str) -> ValidationResult:
     """
-    Validate kill commands - allow killing by PID (user must know the PID).
+    Validate kill commands — every target must be a positive PID (#364).
 
-    Args:
-        command_string: The full kill command string
+    Rejects ``kill -1`` / ``kill 0`` (all processes) and ``kill -- -<pgid>``
+    (process-group kills): a negative or zero target signals "more than one
+    process" and is never a single agent-spawned PID. Signal flags (``-9``,
+    ``-s TERM``) are allowed; only the PID operands are constrained.
 
-    Returns:
-        Tuple of (is_valid, error_message)
+    Note: without a registry of agent-spawned PIDs we can't prove ownership of a
+    given positive PID — that's a separate follow-up. This closes the broad
+    "kill everything / a whole process group" vectors.
     """
     try:
         tokens = shlex.split(command_string)
     except ValueError:
         return False, "Could not parse kill command"
 
-    # Allow kill with specific PIDs or signal + PID
-    # Block kill -9 -1 (kill all processes) and similar
-    for token in tokens[1:]:
-        if token == "-1" or token == "0" or token == "-0":
-            return False, "kill -1 and kill 0 are not allowed (affects all processes)"
+    # Parse kill's grammar: an optional leading signal, then PID operands.
+    # Only the first argument may be a signal — so a later ``-1`` is a negative
+    # PID (a process group / "all processes"), NOT a signal flag.
+    i = 1
+    if i < len(tokens) and tokens[i] != "--" and tokens[i].startswith("-"):
+        if tokens[i] in ("-s", "--signal", "-n"):
+            i += 2  # signal name/number is the next token
+        else:
+            i += 1  # a signal spec like -9 / -TERM / -SIGKILL
+    if i < len(tokens) and tokens[i] == "--":
+        i += 1
+    pids = tokens[i:]
+
+    if not pids:
+        return False, "kill requires a target PID"
+    for pid in pids:
+        if not pid.isdigit() or int(pid) <= 0:
+            return (
+                False,
+                f"kill target {pid!r} must be a single positive PID — process "
+                "groups, -1 and 0 (which signal all processes) are not allowed",
+            )
 
     return True, ""
 
