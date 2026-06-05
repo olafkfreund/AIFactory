@@ -32,6 +32,18 @@ __all__ = [
 ]
 
 
+def _auth_disabled() -> bool:
+    """Whether global auth is off (dev mode). Mirrors TokenAuthMiddleware so the
+    authz dependency also no-ops under DISABLE_AUTH — including in tests/apps
+    that mount routers without the middleware."""
+    try:
+        from ..config import get_settings
+
+        return bool(get_settings().DISABLE_AUTH)
+    except Exception:
+        return False
+
+
 def is_service_principal(user: dict | None) -> bool:
     """Whether the caller is a machine/dev principal that bypasses per-org authz.
 
@@ -116,6 +128,10 @@ class ProjectAccessChecker:
         """Shared rule used by the project- and task-scoped variants."""
         user = getattr(request.state, "user", None)
 
+        # Auth disabled (dev mode) → allow, like the middleware.
+        if _auth_disabled():
+            return user if isinstance(user, dict) else {"id": "default", "role": "admin"}
+
         # Service principal short-circuits before any DB / project lookup.
         if is_service_principal(user):
             check_project_access(user, None, None, self.minimum_role)
@@ -187,7 +203,7 @@ async def accessible_org_ids(request: Request, db: AsyncSession) -> set[str] | N
     - No identity → empty set.
     """
     user = getattr(request.state, "user", None)
-    if is_service_principal(user):
+    if _auth_disabled() or is_service_principal(user):
         return None
     if not isinstance(user, dict) or not user.get("id"):
         return set()

@@ -28,6 +28,13 @@ from server.routes.project_authz import (  # noqa: E402
 )
 
 
+@pytest.fixture(autouse=True)
+def _force_enforcement(monkeypatch):
+    """These tests exercise enforcement, so pin auth ON regardless of the
+    ambient APP_DISABLE_AUTH (CI runs the suite with DISABLE_AUTH=true)."""
+    monkeypatch.setattr("server.routes.project_authz._auth_disabled", lambda: False)
+
+
 @pytest.fixture
 def db_factory():
     """In-memory async SQLite seeded with two tenants. Returns a session factory.
