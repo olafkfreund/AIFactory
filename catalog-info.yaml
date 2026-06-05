@@ -15,3 +15,25 @@ spec:
   lifecycle: experimental
   owner: olafkfreund
   domain: public
+  providesApis:
+    - aifactory-web-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aifactory-web-api
+  description: "AIFactory web-server REST + WebSocket API (FastAPI). The control plane behind the portal: projects, tasks, execution, files, auth/OIDC/SCIM, MCP, audit."
+  tags:
+    - rest
+    - fastapi
+    - openapi
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: olafkfreund
+  # OpenAPI 3.1 spec generated from the FastAPI app. Regenerate with:
+  #   cd apps/web-server && APP_DISABLE_AUTH=true .venv/bin/python -c \
+  #     "import yaml; from server.main import app; \
+  #      yaml.safe_dump(app.openapi(), open('openapi.yaml','w'), sort_keys=False, allow_unicode=True)"
+  definition:
+    $text: ./apps/web-server/openapi.yaml
