@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from .models import Base
 from ..paths import get_data_dir
 
 logger = logging.getLogger(__name__)
@@ -201,28 +200,114 @@ async def init_db() -> None:
             mode = result.scalar()
             logger.info(f"SQLite journal mode: {mode}")
 
-    # Ensure a default user exists when auth is disabled (settings already
-    # resolved above for the autoApply gate).
-    if settings.DISABLE_AUTH:
-        from .models import User
-        async with async_session_factory() as session:
-            from sqlalchemy import select
-            existing = await session.execute(
-                select(User).where(User.id == "default")
-            )
-            if not existing.scalar_one_or_none():
-                session.add(User(
-                    id="default",
-                    email="default@localhost",
-                    name="Default User",
-                    password_hash="disabled",
-                    role="admin",
-                    is_active=True,
-                ))
-                await session.commit()
-                logger.info("Created default user for auth-disabled mode")
+    # Seed tenant defaults: the service/default user, the deployment "default"
+    # org, memberships, and backfill of legacy projects (epic #318 / #319).
+    # Best-effort — never blocks startup.
+    await seed_tenant_defaults(settings.DISABLE_AUTH)
 
     logger.info("Database initialization complete")
+
+
+# Stable ids for the deployment-wide service identity + default org (#319).
+DEFAULT_USER_ID = "default"
+DEFAULT_ORG_ID = "default"
+
+
+async def seed_tenant_defaults(disable_auth: bool) -> None:
+    """Ensure the default service user, default org, memberships, and legacy
+    project ownership exist (epic #318 / #319).
+
+    Idempotent and best-effort: any failure is logged, never raised, so a
+    seeding hiccup cannot block server startup.
+
+    The default user is created **inactive** unless ``DISABLE_AUTH`` is on — so
+    it satisfies the org-owner FK and the ``is_service`` authz bypass works,
+    while ``get_current_user`` keeps rejecting it exactly as before (no
+    expansion of the legacy ``API_TOKEN``'s reach to user-scoped routes).
+    """
+    try:
+        from sqlalchemy import select
+
+        from .models import Organization, OrgMember, User
+
+        async with async_session_factory() as session:
+            # 1. Service/default user (FK target for the default org).
+            user = await session.get(User, DEFAULT_USER_ID)
+            if user is None:
+                session.add(
+                    User(
+                        id=DEFAULT_USER_ID,
+                        email="default@localhost",
+                        name="Default User",
+                        password_hash="disabled",
+                        role="admin" if disable_auth else "user",
+                        is_active=disable_auth,
+                    )
+                )
+                await session.flush()
+            elif disable_auth and not user.is_active:
+                # DISABLE_AUTH turned on after the user was seeded inactive.
+                user.is_active = True
+                user.role = "admin"
+
+            # 2. Deployment "default" organization.
+            org = await session.get(Organization, DEFAULT_ORG_ID)
+            if org is None:
+                session.add(
+                    Organization(
+                        id=DEFAULT_ORG_ID,
+                        name="Default",
+                        slug="default",
+                        owner_id=DEFAULT_USER_ID,
+                        plan="free",
+                    )
+                )
+                await session.flush()
+
+            # 3. Make every existing user a member of the default org so legacy
+            #    projects (backfilled below) stay accessible to current users.
+            existing_members = set(
+                (
+                    await session.execute(
+                        select(OrgMember.user_id).where(
+                            OrgMember.org_id == DEFAULT_ORG_ID
+                        )
+                    )
+                ).scalars().all()
+            )
+            all_user_ids = (await session.execute(select(User.id))).scalars().all()
+            for uid in all_user_ids:
+                if uid not in existing_members:
+                    session.add(
+                        OrgMember(
+                            org_id=DEFAULT_ORG_ID,
+                            user_id=uid,
+                            role="owner" if uid == DEFAULT_USER_ID else "member",
+                        )
+                    )
+
+            await session.commit()
+
+        _backfill_project_orgs()
+    except Exception:
+        logger.exception("seed_tenant_defaults failed (non-fatal)")
+
+
+def _backfill_project_orgs() -> None:
+    """Assign ``org_id=default`` to any registered project that lacks one."""
+    try:
+        from ..routes.projects import load_projects, save_projects
+    except Exception:
+        return
+    projects = load_projects()
+    changed = 0
+    for proj in projects.values():
+        if isinstance(proj, dict) and not proj.get("org_id"):
+            proj["org_id"] = DEFAULT_ORG_ID
+            changed += 1
+    if changed:
+        save_projects(projects)
+        logger.info("Backfilled org_id=default on %d legacy project(s)", changed)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
