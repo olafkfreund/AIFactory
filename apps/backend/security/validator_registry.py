@@ -19,7 +19,7 @@ from .filesystem_validators import (
     validate_init_script,
     validate_rm_command,
 )
-from .git_validators import validate_git_commit
+from .git_validators import validate_git
 from .process_validators import (
     validate_kill_command,
     validate_killall_command,
@@ -37,8 +37,8 @@ VALIDATORS: dict[str, ValidatorFunction] = {
     "chmod": validate_chmod_command,
     "rm": validate_rm_command,
     "init.sh": validate_init_script,
-    # Git
-    "git": validate_git_commit,
+    # Git — option hardening (config injection / exec hijack) + commit scan
+    "git": validate_git,
     # Database - PostgreSQL
     "dropdb": validate_dropdb_command,
     "dropuser": validate_dropuser_command,

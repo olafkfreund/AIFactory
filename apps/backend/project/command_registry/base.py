@@ -78,7 +78,9 @@ BASE_COMMANDS: set[str] = {
     "set",
     "source",
     ".",
-    "eval",
+    # NOTE: `eval` removed (#321) — it runs a dynamically-built string the
+    # allowlist cannot inspect (`eval "$X"`). `bash -c`/`sh -c`/`source`/`exec`
+    # remain but their payloads are unwrapped + validated by ast_parser.py.
     "exec",
     "exit",
     "return",

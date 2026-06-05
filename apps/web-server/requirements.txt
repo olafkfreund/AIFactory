@@ -130,3 +130,9 @@ python3-saml>=1.16
 # server.services.k8s_client so non-isolated deployments never pay
 # the import cost. boto3 + hvac are already declared above for KMS.
 kubernetes-asyncio>=32.0
+
+# #321 — the web-server spawns agents through apps/backend/core/client.py,
+# whose Bash PreToolUse hook (security/ast_parser.py) needs bashlex to parse
+# commands fail-closed. Pin it here too so the production runtime never
+# silently degrades to the bypassable regex parser.
+bashlex>=0.18
