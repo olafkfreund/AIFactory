@@ -27,6 +27,10 @@ def test_full_pytest_suite_passes_against_postgres(test_postgres_url: str) -> No
     env["DATABASE_URL"] = test_postgres_url
     # Don't recursively trigger the postgres-acceptance suite or we get infinite recursion.
     env["TEST_POSTGRES_URL"] = ""
+    # Mirror the `backend (ruff + pytest)` job: the full suite runs in
+    # no-auth/dev mode (project/task authz, #319, is exercised by dedicated
+    # authz tests, not the bare-app route tests like test_issue_232_regression).
+    env["APP_DISABLE_AUTH"] = "true"
 
     result = subprocess.run(
         [
