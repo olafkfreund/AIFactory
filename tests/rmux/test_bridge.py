@@ -59,11 +59,21 @@ def app_with_bridge(tmp_path) -> tuple[FastAPI, SessionRegistry]:
     )
 
     app = FastAPI()
+
+    # #322: attach/detach now authorize the caller. These tests exercise the
+    # attach mechanics as the local-UI service principal (the legacy-token
+    # path), which bypasses per-org membership — so set that identity here.
+    # Without it the bridge correctly 403s when APP_DISABLE_AUTH is unset (as
+    # the rmux acceptance job runs).
+    @app.middleware("http")
+    async def _set_service_user(request, call_next):
+        request.state.user = {"id": "default", "role": "admin", "is_service": True}
+        return await call_next(request)
+
     app.include_router(router)
 
-    # Override the auth + DB dependencies so the test client can call
-    # the routes without needing a real database or token middleware.
-    from server.auth import verify_websocket_token
+    # Override the DB dependency so the test client can call the routes without
+    # a real database (the service-principal path never touches it).
     from server.database.engine import get_db
     async def _no_op_db():
         yield None
