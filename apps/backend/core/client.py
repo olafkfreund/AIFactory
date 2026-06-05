@@ -209,7 +209,7 @@ from prompts_pkg.project_context import (
     detect_project_capabilities,
     load_project_index,
 )
-from security import bash_security_hook
+from security import bash_security_hook, web_fetch_security_hook
 
 
 def _validate_custom_mcp_server(server: dict) -> bool:
@@ -921,6 +921,10 @@ def create_client(
         "hooks": {
             "PreToolUse": [
                 HookMatcher(matcher="Bash", hooks=[bash_security_hook]),
+                # #370: SSRF guard on the agent's web tools — block LLM-chosen
+                # URLs to cloud metadata / loopback / private / non-http(s).
+                HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
+                HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
             ],
         },
         "max_turns": 1000,
