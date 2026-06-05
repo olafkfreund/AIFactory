@@ -35,7 +35,7 @@ from project_analyzer import (
     needs_validation,
 )
 
-from .hooks import bash_security_hook, validate_command
+from .hooks import bash_security_hook, validate_command, web_fetch_security_hook
 
 # Command parsing utilities
 from .parser import (
@@ -78,6 +78,7 @@ from .validator import (
 __all__ = [
     # Main API
     "bash_security_hook",
+    "web_fetch_security_hook",
     "validate_command",
     "get_security_profile",
     "reset_profile_cache",

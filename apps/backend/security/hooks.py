@@ -2,7 +2,10 @@
 Security Hooks
 ==============
 
-Pre-tool-use hooks that validate bash commands for security.
+Pre-tool-use hooks that validate agent tool calls:
+- ``bash_security_hook``: command allowlist + fail-closed parsing (Bash tool).
+- ``web_fetch_security_hook``: SSRF guard on WebFetch URLs (#370).
+
 Main enforcement point for the security system.
 """
 
@@ -18,7 +21,50 @@ logger = logging.getLogger(__name__)
 from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
 from .parser import extract_commands, get_command_for_validation, split_command_segments
 from .profile import get_security_profile
+from .url_guard import assert_url_not_ssrf
 from .validator import VALIDATORS
+
+
+async def web_fetch_security_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,
+    context: Any | None = None,
+) -> dict[str, Any]:
+    """Pre-tool-use hook that blocks SSRF via the agent's ``WebFetch`` tool.
+
+    The agent runs under ``bypassPermissions`` with ``WebFetch`` granted; a
+    prompt-injected/LLM-chosen URL would otherwise reach cloud metadata,
+    loopback, or internal services unchecked (#370). ``WebSearch`` carries a
+    ``query`` (no URL) so it passes through; any URL it surfaces is fetched via
+    ``WebFetch``, which this hook gates.
+
+    Returns ``{}`` to allow, or ``{"decision": "block", "reason": ...}``.
+    """
+    if input_data.get("tool_name") not in ("WebFetch", "WebSearch"):
+        return {}
+
+    tool_input = input_data.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return {}
+
+    url = tool_input.get("url")
+    if not url or not isinstance(url, str):
+        # WebSearch (query only) or a malformed call with no URL to validate.
+        return {}
+
+    try:
+        assert_url_not_ssrf(url)
+    except ValueError as exc:
+        logger.warning("Blocked WebFetch to unsafe URL %r: %s", url, exc)
+        return {
+            "decision": "block",
+            "reason": (
+                f"WebFetch blocked: {exc}. Only public http(s) URLs are "
+                "permitted; private/loopback/link-local/metadata hosts and "
+                "non-http schemes are refused."
+            ),
+        }
+    return {}
 
 
 def _extract_commands_fail_closed(command: str) -> tuple[list[str] | None, str]:
