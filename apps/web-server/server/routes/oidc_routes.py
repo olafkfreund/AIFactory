@@ -66,6 +66,30 @@ def _create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def _capture_idp_refresh_token(refresh_token: str | None) -> str | None:
+    """Return the IdP refresh token to persist, or None if it can't be stored
+    encrypted at rest (#366).
+
+    The column is encrypted via the KMS backend; if no KMS key is configured
+    (a deployment that hasn't enabled encryption-at-rest), we drop the token
+    rather than crash login. The refresh path then falls back to the liveness
+    probe — same as a legacy session.
+    """
+    if not refresh_token:
+        return None
+    try:
+        from ..crypto.kms import get_backend
+
+        get_backend()  # raises if no key configured
+        return refresh_token
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "KMS not configured; not storing IdP refresh token "
+            "(OIDC revocation falls back to liveness probe)"
+        )
+        return None
+
+
 def _create_refresh_token(user: User, jti: str) -> str:
     """Create a refresh token with a JTI that ties it to a RefreshSession row."""
     settings = get_settings()
@@ -193,10 +217,12 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
         jti=jti,
         oidc_sub=sub,
         expires_at=refresh_expires.replace(tzinfo=None),
-        # #366: store the IdP refresh token (offline_access) for real per-user
-        # revocation at refresh time. None when the IdP issues no refresh token
-        # (falls back to the discovery-liveness probe).
-        idp_refresh_token=token.get("refresh_token"),
+        # #366: store the IdP refresh token for real per-user revocation at
+        # refresh time. None when the IdP issues no refresh token OR when
+        # encryption-at-rest isn't configured — in both cases the refresh path
+        # falls back to the discovery-liveness probe, so login never breaks on
+        # a KMS-less deployment.
+        idp_refresh_token=_capture_idp_refresh_token(token.get("refresh_token")),
     )
     db.add(session_row)
     await db.commit()

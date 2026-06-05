@@ -289,6 +289,10 @@ jobs:
           OIDC_ISSUER_URL: "http://localhost:8080/realms/aifactory"
           OIDC_CLIENT_ID: "aifactory-web"
           OIDC_CLIENT_SECRET: "aifactory-test-secret"
+          # #366: OidcRefreshSession.idp_refresh_token is encrypted at rest
+          # (EncryptedString). Provide a throwaway Fernet key so the encrypt
+          # path works in this job (test-only value).
+          KMS_FERNET_KEY: "w5zEtCchBJDrettOdB7PZQohOBQ_gwT3rA_rYO4hy84="
         run: apps/backend/.venv/bin/pytest tests/oidc/ -m oidc -v
 
   saml-scim-acceptance:
