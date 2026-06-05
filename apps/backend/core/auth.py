@@ -9,6 +9,7 @@ credentials, and SDK environment variable passthrough for custom API endpoints.
 import json
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 
@@ -38,6 +39,69 @@ SDK_ENV_VARS = [
     "DISABLE_COST_WARNINGS",
     "API_TIMEOUT_MS",
 ]
+
+
+# --- Agent env credential scrubbing (#363 / H1, slice 1) -------------------
+#
+# The Claude Agent SDK spawns the agent CLI with the FULL parent environment
+# merged in (``process_env = {**os.environ, ..., **options.env}`` in the SDK's
+# subprocess transport). So without scrubbing, the agent's Bash subprocess
+# inherits every host secret the web-server holds — the AIFactory admin
+# ``API_TOKEN``, the ``JWT_SECRET``, ``DATABASE_URL``, cloud + Vault creds — all
+# reachable via ``env`` / ``printenv`` and exfiltratable by a prompt-injected
+# command. An isolated feature-build agent never legitimately needs these.
+#
+# Since ``options.env`` wins over the inherited environment, we neutralize the
+# secrets by setting them to empty there. The agent's OWN auth vars
+# (``CLAUDE_CODE_OAUTH_TOKEN`` / ``ANTHROPIC_AUTH_TOKEN`` / SDK passthrough) are
+# preserved so it keeps working. (Full OS isolation — caps/RO-FS/egress — is the
+# remainder of #363.)
+
+# Vars the agent CLI legitimately needs — never blanked.
+_AGENT_ENV_KEEP: set[str] = {
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    *SDK_ENV_VARS,
+}
+
+# Specific host/infra secrets to neutralize in the agent environment.
+_AGENT_ENV_DENY_EXACT: set[str] = {
+    # AIFactory's own control-plane secrets — an agent with these could call the
+    # web-server as admin or forge tokens.
+    "API_TOKEN", "APP_API_TOKEN", "JWT_SECRET", "APP_JWT_SECRET",
+    "DATABASE_URL", "APP_DATABASE_URL",
+    # Provider API keys (the agent authenticates via OAuth, not these).
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+    "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "VOYAGE_API_KEY",
+    "MISTRAL_API_KEY", "DEEPSEEK_API_KEY",
+    # Cloud + secrets-manager credentials.
+    "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET", "VAULT_TOKEN",
+    # Integrations.
+    "LINEAR_API_KEY", "GITHUB_TOKEN", "GH_TOKEN",
+}
+
+# Generic secret-bearing names (any host var matching is neutralized).
+_AGENT_ENV_DENY_PATTERN = re.compile(
+    r"(SECRET|PASSWORD|PRIVATE_KEY|CREDENTIAL|_KMS|PASSPHRASE)", re.I
+)
+
+
+def get_agent_env_blanks() -> dict[str, str]:
+    """Return ``{var: ""}`` for host secrets that must not reach the agent.
+
+    Blanking (not deleting) because the SDK merges ``options.env`` over the
+    inherited environment — an explicit empty value overrides the inherited
+    secret. Never blanks the agent's own auth vars (:data:`_AGENT_ENV_KEEP`).
+    """
+    blanks: dict[str, str] = {}
+    for key in os.environ:
+        if key in _AGENT_ENV_KEEP:
+            continue
+        if key in _AGENT_ENV_DENY_EXACT or _AGENT_ENV_DENY_PATTERN.search(key):
+            blanks[key] = ""
+    return blanks
 
 
 def get_token_from_keychain() -> str | None:
