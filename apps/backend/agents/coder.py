@@ -856,6 +856,64 @@ def _should_require_human_review(spec_dir: Path) -> bool:
         return False
 
 
+async def _run_trailing_gates_if_build_complete(
+    spec_dir: Path, project_dir: Path
+) -> None:
+    """Run lint/type/test gates once when all subtasks are complete (#376 D).
+
+    Best-effort: detects project gates, runs them as direct subprocesses (not
+    agent turns), logs a one-line summary, and on failure writes a
+    ``GATE_FAILURES.md`` marker the QA/fix loop can pick up. Never raises and
+    never fails the build — a clean run simply removes any stale marker.
+    """
+    try:
+        from .gate_runner import (
+            detect_gates,
+            failing_gates,
+            run_gates,
+            summarize_gates,
+        )
+
+        # Only run when the whole plan is complete — "once at the end".
+        plan_path = spec_dir / "implementation_plan.json"
+        from implementation_plan.enums import SubtaskStatus
+        from implementation_plan.plan import ImplementationPlan
+
+        plan = ImplementationPlan.load(plan_path)
+        pending = [
+            s
+            for p in plan.phases
+            for s in p.subtasks
+            if s.status != SubtaskStatus.COMPLETED
+        ]
+        if pending:
+            return  # more work remains; gates run after the final wave
+
+        gates = detect_gates(project_dir)
+        if not gates:
+            return
+        print_status(
+            f"Running trailing gates once: {', '.join(g.name for g in gates)}",
+            "info",
+        )
+        results = await run_gates(project_dir, gates)
+        summary = summarize_gates(results)
+        failures = failing_gates(results)
+        marker = spec_dir / "GATE_FAILURES.md"
+        if failures:
+            lines = [f"# Gate failures\n\nSummary: {summary}\n"]
+            for r in failures:
+                lines.append(f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n")
+            marker.write_text("".join(lines), encoding="utf-8")
+            print_status(f"Trailing gates failed: {summary}", "warning")
+        else:
+            if marker.exists():
+                marker.unlink()  # clear any stale failures from a prior run
+            print_status(f"Trailing gates passed: {summary}", "success")
+    except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
+        logger.debug("Trailing gate run skipped: %s", exc)
+
+
 async def _maybe_run_parallel_phase(
     *,
     spec_dir: Path,
@@ -928,6 +986,13 @@ async def _maybe_run_parallel_phase(
         # serial path for whatever is left — and must not be retried in parallel.
         if result.stalled or result.failed_ids:
             disabled_phases.add(phase.phase)
+
+        # (#376 solution D) Collapse trailing gates: when this wave finished the
+        # last of the plan's subtasks, run lint/type/test gates ONCE as direct
+        # subprocesses instead of as separate agent turns. Failures are recorded
+        # for the QA/fix loop; this never fails the build itself.
+        if result.completed_ids and not result.stalled:
+            await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
 
         # "Made progress" => at least one subtask completed; caller continues.
         return bool(result.completed_ids)
