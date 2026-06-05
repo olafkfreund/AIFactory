@@ -67,6 +67,10 @@ class SessionState:
     spec_id: str
     session_name: str
     fifo_path: Path
+    # Owning project id, used to authorize console attach/stream (#322). None
+    # only for legacy sessions created before this was threaded through — the
+    # bridge treats None as "service-principal only".
+    project_id: str | None = None
     attached_connection_id: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # Non-blocking write fd into the FIFO, lazily opened by ``feed`` once a
@@ -106,6 +110,7 @@ class SessionRegistry:
         spec_id: str,
         worktree_path: str | Path,
         agent_cmd: str | list[str],
+        project_id: str | None = None,
     ) -> Path:
         """Spin up the rmux session + FIFO + pipe-pane for ``spec_id``.
 
@@ -153,6 +158,7 @@ class SessionRegistry:
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
+                project_id=project_id,
             )
             logger.info(
                 "rmux session created: spec_id=%s session=%s fifo=%s",
@@ -160,7 +166,9 @@ class SessionRegistry:
             )
             return fifo_path
 
-    async def create_passive_for_task(self, spec_id: str) -> Path:
+    async def create_passive_for_task(
+        self, spec_id: str, project_id: str | None = None
+    ) -> Path:
         """Register a FIFO-only session WITHOUT spawning an rmux process.
 
         Used when the agent already runs under agent_service's own PTY:
@@ -188,6 +196,7 @@ class SessionRegistry:
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
+                project_id=project_id,
                 passive=True,
             )
             logger.info(

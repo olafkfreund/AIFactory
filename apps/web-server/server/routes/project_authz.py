@@ -29,6 +29,7 @@ __all__ = [
     "ProjectAccessChecker",
     "require_project_access",
     "is_service_principal",
+    "authorize_project_for_user",
 ]
 
 
@@ -111,6 +112,44 @@ def check_project_access(
         )
 
 
+async def authorize_project_for_user(
+    user: dict | None,
+    project_id: str | None,
+    db: AsyncSession,
+    minimum_role: str = "viewer",
+) -> str | None:
+    """Authorize ``user`` against ``project_id``'s owning org (#322).
+
+    Standalone variant of :meth:`ProjectAccessChecker._authorize` that takes the
+    ``user`` dict directly, so WebSocket handlers — which bypass the HTTP
+    ``TokenAuthMiddleware`` — can authorize too. Raises ``HTTPException`` on
+    denial; returns the project's ``org_id`` (or ``None`` for the service
+    principal / auth-disabled paths) for audit attribution.
+    """
+    if _auth_disabled():
+        return None
+    if is_service_principal(user):
+        check_project_access(user, None, None, minimum_role)
+        return None
+
+    from .projects import load_projects  # lazy: avoid projects↔authz cycle
+
+    project = load_projects().get(project_id) if project_id else None
+    org_id = project.get("org_id") if project else None
+    membership = None
+    if isinstance(user, dict) and user.get("id") and org_id:
+        result = await db.execute(
+            select(OrgMember).where(
+                OrgMember.org_id == org_id,
+                OrgMember.user_id == user["id"],
+            )
+        )
+        membership = result.scalar_one_or_none()
+
+    check_project_access(user, project, membership, minimum_role)
+    return org_id
+
+
 class ProjectAccessChecker:
     """FastAPI dependency: authorize the caller against a project's owning org.
 
@@ -132,30 +171,8 @@ class ProjectAccessChecker:
         if _auth_disabled():
             return user if isinstance(user, dict) else {"id": "default", "role": "admin"}
 
-        # Service principal short-circuits before any DB / project lookup.
-        if is_service_principal(user):
-            check_project_access(user, None, None, self.minimum_role)
-            return user
-
-        from .projects import load_projects  # lazy: avoid projects↔authz cycle
-
-        project = load_projects().get(project_id)
-        membership = None
-        if (
-            isinstance(user, dict)
-            and user.get("id")
-            and project
-            and project.get("org_id")
-        ):
-            result = await db.execute(
-                select(OrgMember).where(
-                    OrgMember.org_id == project["org_id"],
-                    OrgMember.user_id == user["id"],
-                )
-            )
-            membership = result.scalar_one_or_none()
-
-        check_project_access(user, project, membership, self.minimum_role)
+        # Shared rule (also used by the rmux WS bridge, #322).
+        await authorize_project_for_user(user, project_id, db, self.minimum_role)
         return user
 
     async def __call__(
