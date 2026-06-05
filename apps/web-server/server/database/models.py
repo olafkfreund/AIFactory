@@ -249,9 +249,12 @@ class OidcRefreshSession(Base):
     when the user logs out (P3.5) or when the IdP rejects a refresh
     (revocation propagation).
 
-    The refresh token itself is NOT stored — only its ``jti`` claim,
-    which lets refresh lookups find the session without exposing the
-    bearer secret to anyone with DB read access.
+    Our own refresh JWT is NOT stored — only its ``jti`` claim. The
+    *IdP's* refresh token (``idp_refresh_token``) IS stored, encrypted at
+    rest, when the IdP issues one (``offline_access`` scope): it powers the
+    real per-user revocation check at refresh time (#366). Nullable for
+    legacy rows and IdPs that don't issue refresh tokens — those fall back
+    to the discovery-liveness probe.
     """
 
     __tablename__ = "oidc_refresh_sessions"
@@ -266,6 +269,10 @@ class OidcRefreshSession(Base):
         String(64), unique=True, nullable=False
     )
     oidc_sub: Mapped[str] = mapped_column(String(255), nullable=False)
+    # IdP-issued refresh token (offline_access), encrypted at rest (#366).
+    idp_refresh_token: Mapped[str | None] = mapped_column(
+        _EncryptedString(), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )

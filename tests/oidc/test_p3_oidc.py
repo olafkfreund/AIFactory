@@ -388,9 +388,9 @@ def test_userinfo_cache_avoids_per_request_rtt(
     call_count = {"n": 0}
     original = oidc_routes._validate_against_idp
 
-    async def counting_validate(rt: str) -> bool:
+    async def counting_validate(idp_refresh_token):
         call_count["n"] += 1
-        return await original(rt)
+        return await original(idp_refresh_token)
 
     monkeypatch.setattr(oidc_routes, "_validate_against_idp", counting_validate)
 
@@ -452,11 +452,11 @@ def test_user_disabled_in_idp_revoked_within_ttl(
             return len(rows)
     assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
 
-    # Force cache miss + simulate IdP rejection (disabled user).
+    # Force cache miss + simulate IdP rejection (disabled user → "revoked").
     userinfo_cache.clear_all()
 
-    async def _reject(rt: str) -> bool:
-        return False
+    async def _reject(idp_refresh_token):
+        return "revoked"
     monkeypatch.setattr(oidc_routes, "_validate_against_idp", _reject)
 
     with TestClient(app) as client:
@@ -473,6 +473,110 @@ def test_user_disabled_in_idp_revoked_within_ttl(
     assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 0, (
         "rejected refresh must delete the OidcRefreshSession row"
     )
+
+
+@pytest.mark.oidc
+@pytest.mark.slow
+@pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
+def test_idp_transient_error_does_not_revoke_session(
+    oidc_issuer_url, oidc_client_id, monkeypatch,
+) -> None:
+    """A transient IdP failure returns 503 and must NOT revoke the session
+    (avoids locking users out during an IdP outage — #366)."""
+    import asyncio
+
+    from fastapi.testclient import TestClient
+    from server.database.models import OidcRefreshSession
+    from server.oidc import userinfo_cache
+    from server.routes import oidc_routes
+    from sqlalchemy import select
+
+    app = _build_test_app()
+    SessionLocal = app.state.test_session_local
+    refresh_token = _complete_login_get_refresh_token(app, oidc_issuer_url)
+    assert refresh_token
+
+    async def _count_sessions():
+        async with SessionLocal() as s:
+            return len((await s.execute(select(OidcRefreshSession))).scalars().all())
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
+
+    userinfo_cache.clear_all()
+
+    async def _transient(idp_refresh_token):
+        return "idp_error"
+    monkeypatch.setattr(oidc_routes, "_validate_against_idp", _transient)
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/auth/oidc/refresh", json={"refresh_token": refresh_token}
+        )
+    assert resp.status_code == 503, (
+        f"transient IdP error should 503; got {resp.status_code} {resp.text[:200]!r}"
+    )
+    # Session must survive a transient error.
+    assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1, (
+        "a transient IdP error must NOT delete the session"
+    )
+
+
+@pytest.mark.oidc
+@pytest.mark.slow
+@pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
+def test_revocation_via_real_idp_grant_no_mock(
+    oidc_issuer_url, oidc_client_id,
+) -> None:
+    """End-to-end revocation against the REAL IdP, no mock (#366).
+
+    Logs in (capturing a real IdP refresh token), then corrupts the stored
+    token to a bogus value and forces a cache miss. The next /refresh makes a
+    real refresh-token grant to Keycloak, which rejects it with
+    ``invalid_grant`` → the session is revoked (401 + row deleted). This
+    exercises the actual grant path without disabling a shared Keycloak user.
+    """
+    import asyncio
+
+    from fastapi.testclient import TestClient
+    from server.database.models import OidcRefreshSession
+    from server.oidc import userinfo_cache
+    from sqlalchemy import select, update
+
+    app = _build_test_app()
+    SessionLocal = app.state.test_session_local
+    refresh_token = _complete_login_get_refresh_token(app, oidc_issuer_url)
+    assert refresh_token
+
+    async def _sessions():
+        async with SessionLocal() as s:
+            return (await s.execute(select(OidcRefreshSession))).scalars().all()
+
+    rows = asyncio.new_event_loop().run_until_complete(_sessions())
+    assert len(rows) == 1
+    # A real IdP refresh token must have been captured at login (offline_access).
+    assert rows[0].idp_refresh_token, (
+        "login should have captured an IdP refresh token (offline_access)"
+    )
+
+    # Corrupt the stored IdP token so the real grant is rejected by Keycloak.
+    async def _corrupt():
+        async with SessionLocal() as s:
+            await s.execute(
+                update(OidcRefreshSession).values(idp_refresh_token="bogus.invalid.token")
+            )
+            await s.commit()
+    asyncio.new_event_loop().run_until_complete(_corrupt())
+    userinfo_cache.clear_all()
+
+    with TestClient(app) as client:
+        resp = client.post(
+            "/api/auth/oidc/refresh", json={"refresh_token": refresh_token}
+        )
+    assert resp.status_code == 401, (
+        f"a bogus IdP refresh token must be rejected by Keycloak (401); "
+        f"got {resp.status_code} {resp.text[:200]!r}"
+    )
+    remaining = asyncio.new_event_loop().run_until_complete(_sessions())
+    assert len(remaining) == 0, "real-IdP rejection must delete the session row"
 
 
 @pytest.mark.oidc
