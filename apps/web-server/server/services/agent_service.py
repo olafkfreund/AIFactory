@@ -3172,7 +3172,12 @@ class AgentService:
         # bank-pilot image's behaviour is byte-for-byte unchanged.
         from ..rmux.integration import create_if_enabled as _rmux_create
         try:
-            await _rmux_create(spec_id, project_path, " ".join(cmd))
+            # #322: thread the owning project id so the console bridge can
+            # authorize attach/stream against the task's org.
+            _rmux_project_id = task_id.split(":", 1)[0] if ":" in task_id else None
+            await _rmux_create(
+                spec_id, project_path, " ".join(cmd), project_id=_rmux_project_id
+            )
         except Exception:
             # Already swallowed inside _rmux_create; this except is a
             # belt-and-suspenders guard so a wrapper bug here cannot
