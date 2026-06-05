@@ -9,12 +9,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
+from .project_authz import require_project_access, require_task_access
 from .projects import load_projects
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
@@ -114,7 +115,10 @@ async def get_running_tasks():
 
 
 @router.get("/{task_id}/status", response_model=TaskExecutionStatus)
-async def get_task_status(task_id: str):
+async def get_task_status(
+    task_id: str,
+    _access: dict = Depends(require_task_access("viewer")),
+):
     """Get execution status for a specific task."""
     agent_service = get_agent_service()
     is_running = agent_service.is_running(task_id)
@@ -126,7 +130,10 @@ async def get_task_status(task_id: str):
 
 
 @router.get("/{task_id}/running")
-async def is_task_running(task_id: str):
+async def is_task_running(
+    task_id: str,
+    _access: dict = Depends(require_task_access("viewer")),
+):
     """Check if a specific task is currently running."""
     agent_service = get_agent_service()
     is_running = agent_service.is_running(task_id)
@@ -138,7 +145,12 @@ async def is_task_running(task_id: str):
 
 
 @router.post("/{task_id}/start")
-async def start_task(task_id: str, request: StartTaskRequest, raw_request: Request):
+async def start_task(
+    task_id: str,
+    request: StartTaskRequest,
+    raw_request: Request,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Start execution of a task.
 
     The task must already exist (have a spec directory).
@@ -585,7 +597,10 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
 
 @router.post("/{task_id}/stop")
-async def stop_task(task_id: str):
+async def stop_task(
+    task_id: str,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Stop a running task."""
     agent_service = get_agent_service()
 
@@ -614,7 +629,11 @@ async def stop_task(task_id: str):
 
 
 @router.post("/{task_id}/recover")
-async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRequest()):
+async def recover_task(
+    task_id: str,
+    request: RecoverTaskRequest = RecoverTaskRequest(),
+    _access: dict = Depends(require_task_access("member")),
+):
     """Recover a stuck task by resetting its status.
 
     Use this when a task shows as running but the process has died.
@@ -744,6 +763,7 @@ async def create_and_run_task(
     title: str,
     description: str,
     request: CreateAndRunRequest,
+    _access: dict = Depends(require_project_access("member")),
 ):
     """Create a new task and immediately start execution.
 
@@ -810,7 +830,11 @@ async def create_and_run_task(
 
 
 @router.post("/{task_id}/apply-correction")
-async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
+async def apply_task_correction(
+    task_id: str,
+    request: ApplyCorrectionRequest,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Apply a correction hand-back (e.g. from TFactory) to an existing spec.
 
     Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.

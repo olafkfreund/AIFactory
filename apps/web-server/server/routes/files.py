@@ -8,6 +8,7 @@ Handles file operations for the Monaco editor:
 - Git diff viewing
 """
 
+import logging
 import mimetypes
 import re
 import subprocess
@@ -16,14 +17,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-import logging
-
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from ..auth import _try_decode_jwt
 from ..config import get_settings
+from .project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
 
@@ -517,6 +517,7 @@ async def list_directory(
     project_id: str,
     path: str = Query("", description="Relative path within project"),
     show_hidden: bool = Query(False, description="Show hidden files"),
+    _access: dict = Depends(require_project_access("viewer")),
 ):
     """List contents of a directory."""
     full_path = resolve_path(project_id, path)
@@ -568,6 +569,7 @@ async def list_directory(
 async def read_file(
     project_id: str,
     path: str = Query(..., description="Relative path to file"),
+    _access: dict = Depends(require_project_access("viewer")),
 ):
     """Read file contents."""
     full_path = resolve_path(project_id, path)
@@ -618,6 +620,7 @@ async def write_file(
     project_id: str,
     path: str = Query(..., description="Relative path to file"),
     file_data: FileWrite = ...,
+    _access: dict = Depends(require_project_access("member")),
 ):
     """Write content to a file."""
     full_path = resolve_path(project_id, path)
@@ -640,6 +643,7 @@ async def write_file(
 async def delete_file(
     project_id: str,
     path: str = Query(..., description="Relative path to file or directory"),
+    _access: dict = Depends(require_project_access("admin")),
 ):
     """Delete a file or directory."""
     full_path = resolve_path(project_id, path)
@@ -668,6 +672,7 @@ async def delete_file(
 @router.get("/{project_id}/search", response_model=SearchResponse)
 async def search_files(
     project_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
     query: str = Query(..., description="Search query (regex supported)"),
     path: str = Query("", description="Directory to search in"),
     file_pattern: str = Query("*", description="File glob pattern"),
@@ -756,6 +761,7 @@ async def get_git_diff(
     project_id: str,
     path: str = Query("", description="Path to get diff for (empty for all)"),
     base: str = Query("HEAD", description="Base commit/branch"),
+    _access: dict = Depends(require_project_access("viewer")),
 ):
     """Get git diff for files."""
     project_path = resolve_path(project_id, "")

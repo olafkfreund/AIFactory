@@ -32,6 +32,18 @@ __all__ = [
 ]
 
 
+def _auth_disabled() -> bool:
+    """Whether global auth is off (dev mode). Mirrors TokenAuthMiddleware so the
+    authz dependency also no-ops under DISABLE_AUTH — including in tests/apps
+    that mount routers without the middleware."""
+    try:
+        from ..config import get_settings
+
+        return bool(get_settings().DISABLE_AUTH)
+    except Exception:
+        return False
+
+
 def is_service_principal(user: dict | None) -> bool:
     """Whether the caller is a machine/dev principal that bypasses per-org authz.
 
@@ -110,13 +122,15 @@ class ProjectAccessChecker:
     def __init__(self, minimum_role: str = "viewer") -> None:
         self.minimum_role = minimum_role
 
-    async def __call__(
-        self,
-        project_id: str,
-        request: Request,
-        db: AsyncSession = Depends(get_db),
+    async def _authorize(
+        self, project_id: str, request: Request, db: AsyncSession
     ) -> dict:
+        """Shared rule used by the project- and task-scoped variants."""
         user = getattr(request.state, "user", None)
+
+        # Auth disabled (dev mode) → allow, like the middleware.
+        if _auth_disabled():
+            return user if isinstance(user, dict) else {"id": "default", "role": "admin"}
 
         # Service principal short-circuits before any DB / project lookup.
         if is_service_principal(user):
@@ -144,10 +158,37 @@ class ProjectAccessChecker:
         check_project_access(user, project, membership, self.minimum_role)
         return user
 
+    async def __call__(
+        self,
+        project_id: str,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+    ) -> dict:
+        return await self._authorize(project_id, request, db)
+
+
+class TaskAccessChecker(ProjectAccessChecker):
+    """Like :class:`ProjectAccessChecker` but keyed on a ``task_id`` path param
+    of the form ``project_id:spec_id`` (the form task/execution routes use)."""
+
+    async def __call__(
+        self,
+        task_id: str,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+    ) -> dict:
+        project_id = task_id.split(":", 1)[0] if ":" in task_id else task_id
+        return await self._authorize(project_id, request, db)
+
 
 def require_project_access(minimum_role: str = "viewer") -> ProjectAccessChecker:
-    """Factory for the project-access FastAPI dependency."""
+    """Factory for the project-scoped access dependency (``project_id`` param)."""
     return ProjectAccessChecker(minimum_role)
+
+
+def require_task_access(minimum_role: str = "viewer") -> TaskAccessChecker:
+    """Factory for the task-scoped access dependency (``task_id`` param)."""
+    return TaskAccessChecker(minimum_role)
 
 
 # Stable id of the deployment "default" org (mirrors database.engine).
@@ -162,7 +203,7 @@ async def accessible_org_ids(request: Request, db: AsyncSession) -> set[str] | N
     - No identity → empty set.
     """
     user = getattr(request.state, "user", None)
-    if is_service_principal(user):
+    if _auth_disabled() or is_service_principal(user):
         return None
     if not isinstance(user, dict) or not user.get("id"):
         return set()
