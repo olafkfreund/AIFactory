@@ -88,6 +88,26 @@ def _ollama_reachable(base_url: str = "http://localhost:11434") -> bool:
         return False
 
 
+def _model_available(model: str, base_url: str = "http://localhost:11434") -> bool:
+    """Check whether ``model`` is pulled on the local Ollama server.
+
+    Live tests must skip (not fail) when the required model isn't installed —
+    a reachable Ollama without the model otherwise raises a 404, turning an
+    environment gap into a spurious test failure.
+    """
+    try:
+        req = urllib.request.Request(f"{base_url}/api/tags", method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        names = {m.get("name", "") for m in data.get("models", [])}
+        # Accept an exact match or the same model without an explicit ":latest".
+        return model in names or f"{model}:latest" in names or any(
+            n.split(":", 1)[0] == model.split(":", 1)[0] and n == model for n in names
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return False
+
+
 # ===================================================================
 # Section 1: Unit tests (mocked, always run)
 # ===================================================================
@@ -459,8 +479,11 @@ _LIVE_MODEL = "qwen3.5:27b"
 _OLLAMA_URL = "http://localhost:11434"
 
 _skip_no_ollama = pytest.mark.skipif(
-    not _ollama_reachable(_OLLAMA_URL),
-    reason=f"Ollama not reachable at {_OLLAMA_URL}",
+    not (_ollama_reachable(_OLLAMA_URL) and _model_available(_LIVE_MODEL, _OLLAMA_URL)),
+    reason=(
+        f"Live Ollama model {_LIVE_MODEL} not available at {_OLLAMA_URL} "
+        "(server unreachable or model not pulled)"
+    ),
 )
 
 
