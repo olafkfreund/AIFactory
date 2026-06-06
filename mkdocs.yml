@@ -12,6 +12,16 @@ docs_dir: docs
 plugins:
   - techdocs-core
 
+# Render ```mermaid fenced blocks in Backstage TechDocs (the diagrams in
+# concepts/pipeline-flow.md). techdocs-core bundles pymdownx; the Backstage
+# mermaid addon turns the preserved fence into a rendered diagram.
+markdown_extensions:
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
 # docs_dir points at the Docusaurus project, which carries a huge node_modules
 # tree (~1900 markdown files) plus Docusaurus-only sources (.mdx, blog, src).
 # Excluding them keeps the TechDocs build fast (~8s vs a 3-min timeout) and
@@ -38,6 +48,7 @@ nav:
   - Why AIFactory: docs/why-aifactory.md
   - Getting Started: docs/getting-started.md
   - Architecture: docs/architecture/overview.md
+  - Pipeline Flow: docs/concepts/pipeline-flow.md
   - Task Lifecycle: docs/task-lifecycle.md
   - Task Contract v2: docs/task-contract.md
   - API Reference: api.md
