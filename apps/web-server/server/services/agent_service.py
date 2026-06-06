@@ -122,6 +122,23 @@ class TaskPhase(str, Enum):
     FAILED = "failed"
 
 
+def _append_parallel_flags(
+    cmd: list[str], parallel: bool | None, workers: int | None
+) -> bool:
+    """Append run.py parallel flags (#376) to ``cmd`` in place.
+
+    Returns True when ``--parallel`` was added (so the caller can log it).
+    Extracted as a pure helper so the route→executor flag threading is unit
+    testable without spawning a subprocess.
+    """
+    if not parallel:
+        return False
+    cmd.append("--parallel")
+    if workers and workers > 0:
+        cmd.extend(["--workers", str(workers)])
+    return True
+
+
 def phase_to_status(phase: TaskPhase) -> str:
     """Map execution phase to task status for kanban column placement."""
     mapping = {
@@ -2986,10 +3003,7 @@ class AgentService:
         # Parallel subtask execution (#376): run independent subtasks in
         # dependency-graph waves. Previously these flags were accepted by the
         # API but silently dropped here.
-        if parallel:
-            cmd.append("--parallel")
-            if workers and workers > 0:
-                cmd.extend(["--workers", str(workers)])
+        if _append_parallel_flags(cmd, parallel, workers):
             logger.info(
                 f"[AgentService] Parallel execution enabled for {task_id} "
                 f"(workers={workers or 'default'})"

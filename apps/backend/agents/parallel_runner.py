@@ -51,7 +51,11 @@ from pathlib import Path
 from typing import Any
 
 from implementation_plan.enums import SubtaskStatus
-from implementation_plan.scheduler import select_ready_wave, validate_dependencies
+from implementation_plan.scheduler import (
+    conflicts,
+    select_ready_wave,
+    validate_dependencies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -243,16 +247,38 @@ def _mark_failed(subtask: Any, failed_ids: set[str], reason: str) -> None:
 def is_phase_parallel_eligible(phase: Any, workers: int) -> bool:
     """Whether a phase should run via the parallel runner.
 
-    Eligible when the phase is explicitly ``parallel_safe`` and has at least two
-    pending subtasks (a single pending subtask gains nothing from a wave).
+    Eligible when there are >=2 pending subtasks AND either:
+
+    * the planner explicitly marked the phase ``parallel_safe``, OR
+    * **auto-derived (#376):** at least two pending subtasks can provably run
+      together — non-empty, disjoint file sets and no dependency between them.
+
+    The auto-derive path matters because planners (especially smaller models)
+    often omit ``parallel_safe`` even when the work is plainly independent, which
+    silently disabled parallelism. We only auto-enable waves we can prove safe
+    from the declared file sets; the scheduler still enforces per-wave
+    disjointness, so an unknown-footprint subtask never gets co-scheduled.
     """
     if workers <= 1:
-        return False
-    if not getattr(phase, "parallel_safe", False):
         return False
     pending = [
         s
         for s in getattr(phase, "subtasks", [])
         if getattr(s, "status", None) == SubtaskStatus.PENDING
     ]
-    return len(pending) >= 2
+    if len(pending) < 2:
+        return False
+    if getattr(phase, "parallel_safe", False):
+        return True
+
+    # Auto-derive: is there any pair of pending subtasks that can run together?
+    for i in range(len(pending)):
+        for j in range(i + 1, len(pending)):
+            a, b = pending[i], pending[j]
+            a_deps = getattr(a, "depends_on", None) or []
+            b_deps = getattr(b, "depends_on", None) or []
+            if a.id in b_deps or b.id in a_deps:
+                continue
+            if not conflicts(a, b):  # both have non-empty, disjoint file sets
+                return True
+    return False
