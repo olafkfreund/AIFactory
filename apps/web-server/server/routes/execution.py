@@ -856,7 +856,7 @@ async def create_and_run_task(
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
     if request.provenance is not None:
-        prov = request.provenance.model_dump(exclude_none=True)
+        prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
@@ -877,6 +877,24 @@ async def create_and_run_task(
         task_metadata["model"] = request.model
     if request.complexity:
         task_metadata["complexity"] = request.complexity
+
+    # Hybrid skill auto-selection (#394) — propose step. With no manual skills,
+    # rank relevant skills from the task description and persist them as
+    # suggestedSkills. The planner may refine them into selectedSkills (confirm);
+    # otherwise the build falls back to these proposals (see
+    # AgentService._write_skill_context). No LLM cost — deterministic matcher.
+    if not task_metadata.get("selectedSkills"):
+        try:
+            from server.services.skills_service import get_skills_service
+
+            suggested = get_skills_service().suggest_selected_skills(
+                f"{title}\n{description}", max_results=5
+            )
+            if suggested:
+                task_metadata["suggestedSkills"] = suggested
+        except Exception:  # noqa: BLE001 - skill proposal is best-effort
+            pass
+
     if task_metadata:
         (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata, indent=2))
 
@@ -940,7 +958,7 @@ async def create_from_trusted_plan(
         "created_at": datetime.now().isoformat(),
     }
     if request.provenance is not None:
-        prov = request.provenance.model_dump(exclude_none=True)
+        prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))

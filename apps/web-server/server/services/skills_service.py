@@ -146,6 +146,23 @@ class SkillSuggestion:
     reason: str             # human-readable match explanation
 
 
+def suggestion_to_selected(suggestion: "SkillSuggestion") -> dict:
+    """Map a SkillSuggestion to the ``selectedSkills`` shape the build consumes.
+
+    The build's ``_write_skill_context`` reads ``{id, name, category, source}``;
+    relevance/reason are carried along for UI/audit (ignored by the build).
+    """
+    s = suggestion.skill
+    return {
+        "id": s.id,
+        "name": s.name,
+        "category": s.category,
+        "source": s.source,
+        "relevance": suggestion.relevance_score,
+        "reason": suggestion.reason,
+    }
+
+
 # Internal index entry (not exposed to callers)
 @dataclass
 class _IndexEntry:
@@ -606,6 +623,22 @@ class SkillsService:
             )
 
         return suggestions
+
+    def suggest_selected_skills(
+        self, task_description: str, max_results: int = 5
+    ) -> list[dict]:
+        """Auto-propose skills as ``selectedSkills``-shaped dicts (#394).
+
+        The hybrid skill flow's *propose* step: the deterministic matcher ranks
+        skills for a task, mapped to the ``{id, name, category, source}`` shape
+        the build's ``_write_skill_context`` consumes. Written to task_metadata
+        as ``suggestedSkills``; the planner may refine them into ``selectedSkills``
+        (confirm), and the build falls back to the proposals if it doesn't.
+        """
+        return [
+            suggestion_to_selected(s)
+            for s in self.suggest_skills(task_description, max_results=max_results)
+        ]
 
     # ------------------------------------------------------------------
     # Internal helpers
