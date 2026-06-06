@@ -2568,8 +2568,14 @@ class AgentService:
         if task_metadata_file.exists():
             try:
                 task_metadata = json.loads(task_metadata_file.read_text())
-                raw_skills = task_metadata.get("selectedSkills", [])
-                # selectedSkills is stored as list[dict] with {id, name, category, source}
+                # Hybrid skill selection (#394): prefer the planner-confirmed
+                # selectedSkills; fall back to the auto-proposed suggestedSkills
+                # so relevant skills are always applied even if the planner
+                # didn't refine them.
+                raw_skills = task_metadata.get("selectedSkills") or task_metadata.get(
+                    "suggestedSkills", []
+                )
+                # skills are stored as list[dict] with {id, name, category, source}
                 # Also handle plain string IDs for backward compatibility
                 for item in raw_skills:
                     if isinstance(item, dict):

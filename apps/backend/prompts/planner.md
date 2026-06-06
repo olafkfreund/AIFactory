@@ -114,6 +114,22 @@ Find these critical sections:
 - **Files to Reference**: patterns to follow
 - **Success Criteria**: how to verify completion
 
+### 1.1b: Confirm the proposed skills (#394 — hybrid skill selection)
+
+If `task_metadata.json` has a `suggestedSkills` array, it holds skills the
+matcher auto-proposed from the task description. **Review them against the actual
+code you just investigated** and confirm the genuinely-relevant ones by writing a
+`selectedSkills` array to `task_metadata.json` (same `{id, name, category,
+source}` shape). Keep only what helps; drop off-target proposals; you may add a
+skill the matcher missed.
+
+```bash
+cat task_metadata.json   # inspect suggestedSkills (if present)
+```
+
+If you do not write `selectedSkills`, the build automatically falls back to
+`suggestedSkills` — so skills are always applied. Confirm to improve precision.
+
 ### 1.2: Read OR CREATE the Project Index
 
 ```bash
