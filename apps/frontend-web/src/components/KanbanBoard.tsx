@@ -1,6 +1,7 @@
 import { useState, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useViewState } from '../contexts/ViewStateContext';
+import { PipelineHeader } from './pipeline/PipelineHeader';
 import {
   DndContext,
   DragOverlay,
@@ -503,6 +504,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
   return (
     <div className="flex h-full flex-col">
+      {/* Animated Plan → Code → Test pipeline census across all tasks */}
+      <PipelineHeader tasks={filteredTasks} />
       {/* Kanban header with refresh button */}
       {onRefresh && (
         <div className="flex items-center justify-end px-6 pt-4 pb-2">
