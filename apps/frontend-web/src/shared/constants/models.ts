@@ -151,7 +151,7 @@ export const DEFAULT_PHASE_MODELS: PhaseModelConfig = {
   planning: 'opus',   // Complex architecture decisions benefit from highest-capability model
   coding: 'opus',     // Highest quality implementation
   qa: 'opus',         // Thorough QA review
-  qa_fixer: 'sonnet'  // Efficient QA fixing
+  qa_fixer: 'opus'    // Opus 4.8 across all phases (Auto = highest-capability everywhere)
 };
 
 // Default phase thinking configuration for Auto profile
