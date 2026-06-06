@@ -9,7 +9,7 @@ import secrets
 from pathlib import Path
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .paths import get_data_dir, get_data_file
 
@@ -142,9 +142,18 @@ class Settings(BaseSettings):
     # bank-pilot image (no bundled rmux binary).
     RMUX_ENABLED: bool = False
 
-    class Config:
-        env_file = ".env"
-        env_prefix = "APP_"
+    # extra="ignore" (#384): the web-server's environment/.env legitimately
+    # carries cross-cutting, non-APP_ vars meant for other components — notably
+    # AIFACTORY_COMPLETION_WEBHOOK / _SENTINEL / _WEBHOOK_TIMEOUT, which
+    # services/completion.py reads directly from os.environ to push RFC-0001
+    # completion events to the CFactory cockpit. Without this, pydantic's default
+    # extra="forbid" treats those keys as unknown fields and crashes startup.
+    # Sibling services (PFactory/TFactory) already tolerate the extra.
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="APP_",
+        extra="ignore",
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
