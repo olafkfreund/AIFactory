@@ -180,3 +180,201 @@
 @media (prefers-reduced-motion: reduce) {
   .pl-pipeline *, .pl-pipeline *::before { animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PipelineBoard — the rings ARE the board (4 ring-columns: Plan/Code/Review/Done)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.pl-board {
+  --pl-plan: 340 38% 62%;
+  --pl-code: 42 70% 56%;
+  --pl-review: 288 46% 64%;  /* soft violet */
+  --pl-done: 150 42% 52%;    /* green */
+  --pl-panel: 240 6% 12%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background:
+    radial-gradient(120% 40% at 50% 0%, hsl(240 6% 16% / 0.85), transparent 70%),
+    hsl(var(--pl-panel) / 0.4);
+}
+.pl-board-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  flex: 1;
+  min-height: 0;
+  z-index: 1;
+}
+.pl-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.pl-col + .pl-col { border-left: 1px solid hsl(0 0% 100% / 0.04); }
+.pl-col-head {
+  display: flex;
+  justify-content: center;
+  padding: 24px 8px 16px;
+  position: relative;
+  z-index: 2;
+}
+.pl-col-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 12px 16px;
+  scrollbar-width: thin;
+}
+.pl-col-list::-webkit-scrollbar { width: 6px; }
+.pl-col-list::-webkit-scrollbar-thumb { background: hsl(0 0% 100% / 0.08); border-radius: 3px; }
+
+.pl-empty {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: hsl(0 0% 100% / 0.28);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+.pl-add {
+  align-self: stretch;
+  border: 1px dashed hsl(var(--c) / 0.4);
+  color: hsl(var(--c) / 0.85);
+  background: hsl(var(--c) / 0.05);
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.pl-add:hover { background: hsl(var(--c) / 0.12); border-color: hsl(var(--c) / 0.7); }
+
+/* connectors overlay (positioned from measured ring centers) */
+.pl-connectors { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.pl-conn {
+  position: absolute;
+  height: 2px;
+  background-image: linear-gradient(90deg, hsl(var(--c) / 0.6) 0 8px, transparent 8px 16px);
+  background-size: 16px 2px;
+  opacity: 0.35;
+}
+.pl-conn.is-flowing { opacity: 0.9; animation: pl-march 0.8s linear infinite; }
+
+/* package-box flights overlay */
+.pl-flights { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.pl-pkg {
+  position: absolute;
+  margin-left: -11px;
+  margin-top: -11px;
+  color: hsl(var(--c));
+  filter: drop-shadow(0 0 10px hsl(var(--c) / 0.6));
+}
+
+/* a subtle per-card stage tick so cards read at a glance (functional + cool) */
+.pl-col-list .task-card-enhanced { position: relative; }
+
+/* per-card stage accent: a colored left edge + a small stage icon tick, so a
+   card reads as belonging to its ring at a glance (functional + cohesive). */
+.pl-card-wrap { position: relative; border-radius: 12px; }
+.pl-card-wrap::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: hsl(var(--c) / 0.7);
+  box-shadow: 0 0 8px hsl(var(--c) / 0.4);
+  z-index: 2;
+  pointer-events: none;
+}
+.pl-card-tick {
+  position: absolute;
+  top: 9px; right: 9px;
+  z-index: 3;
+  color: hsl(var(--c) / 0.85);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.pl-col.is-coding .pl-card-wrap::before { animation: pl-edge 2.2s ease-in-out infinite; }
+@keyframes pl-edge { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+
+/* completed task: a robot giving a thumbs-up (green), gently celebrating. */
+.pl-card-done {
+  position: absolute;
+  top: 7px; right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  color: hsl(150 50% 52%);
+  filter: drop-shadow(0 0 6px hsl(150 50% 52% / 0.5));
+  pointer-events: none;
+  transform-origin: bottom right;
+  animation: pl-cheer 3.2s ease-in-out infinite;
+}
+@keyframes pl-cheer {
+  0%, 88%, 100% { transform: rotate(0deg); }
+  92% { transform: rotate(-12deg); }
+  96% { transform: rotate(8deg); }
+}
+.pl-card-done .robot-eye { animation: pl-eye 3.2s ease-in-out infinite; }
+
+/* failed task: robot thumbs-down (red) + a big red cross stamp over the card */
+.pl-card-fail {
+  position: absolute;
+  top: 7px; right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  color: hsl(0 72% 58%);
+  filter: drop-shadow(0 0 6px hsl(0 72% 58% / 0.5));
+  pointer-events: none;
+  transform-origin: bottom right;
+  animation: pl-shake 3.4s ease-in-out infinite;
+}
+@keyframes pl-shake {
+  0%, 86%, 100% { transform: rotate(0deg); }
+  90% { transform: rotate(8deg); }
+  94% { transform: rotate(-8deg); }
+}
+.pl-card-cross {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: hsl(0 75% 55%);
+  opacity: 0.14;
+  z-index: 1;
+  pointer-events: none;
+  transform: rotate(-8deg);
+}
+.pl-card-wrap.is-failed::before { background: hsl(0 72% 56% / 0.8); box-shadow: 0 0 8px hsl(0 72% 56% / 0.5); }
+.pl-card-wrap.is-done::before { background: hsl(150 50% 52% / 0.8); box-shadow: 0 0 8px hsl(150 50% 52% / 0.5); }
+
+/* per-card phase strip: Plan · Code · Validate · Log (what's been done) */
+.pl-phase-strip {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 2px;
+  margin-top: -2px;
+}
+.pl-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: hsl(0 0% 100% / 0.3);
+}
+.pl-chip-ico { position: relative; display: inline-flex; }
+.pl-chip-x {
+  position: absolute;
+  inset: -1px -1px auto auto;
+  color: hsl(0 75% 58%);
+}
+.pl-chip[data-state="done"]    { color: hsl(150 45% 55%); }
+.pl-chip[data-state="active"]  { color: hsl(42 75% 58%); animation: pl-edge 1.6s ease-in-out infinite; }
+.pl-chip[data-state="failed"]  { color: hsl(0 72% 60%); }
+.pl-chip[data-state="pending"] { color: hsl(0 0% 100% / 0.25); }
