@@ -420,6 +420,12 @@ async def start_task(
         task_metadata["model"] = request.model
     if request.baseBranch:
         task_metadata["baseBranch"] = request.baseBranch
+    # Persist parallel/workers so the spec→plan→build auto-continue honors them
+    # (#392) — the handoff reads these from task_metadata via _read_parallel_opts.
+    if request.parallel is not None:
+        task_metadata["parallel"] = request.parallel
+    if request.workers is not None:
+        task_metadata["workers"] = request.workers
 
     # Write updated task_metadata.json if we have any settings
     if task_metadata:
@@ -821,6 +827,26 @@ async def create_and_run_task(
         if prov:
             requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Persist execution options so the spec→plan→build auto-continue honors them
+    # (#392). The build handoff reads parallel/workers from task_metadata.json
+    # via AgentService._read_parallel_opts; without this, create-and-run builds
+    # run serial (workers.max=1) even when parallel:true/workers:N was requested,
+    # making the #376 wave executor unreachable from the primary web flow.
+    task_metadata: dict = {}
+    if request.parallel is not None:
+        task_metadata["parallel"] = request.parallel
+    if request.workers is not None:
+        task_metadata["workers"] = request.workers
+    if request.mode and request.mode != "full":  # "full" is the default — don't persist
+        task_metadata["mode"] = request.mode
+    if request.model:
+        task_metadata["model"] = request.model
+    if request.complexity:
+        task_metadata["complexity"] = request.complexity
+    if task_metadata:
+        (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata, indent=2))
+
     task_id = f"{project_id}:{spec_id}"
 
     try:
