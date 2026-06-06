@@ -8,6 +8,7 @@ Coordinates stack detection, framework detection, and structure analysis.
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from .models import SecurityProfile
 from .stack_detector import StackDetector
 from .stack_inference import infer_stack_from_spec, merge_stack
 from .structure_analyzer import StructureAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectAnalyzer:
@@ -433,3 +436,62 @@ class ProjectAnalyzer:
         print(f"\nTotal Allowed Commands: {total_commands}")
 
         print("-" * 60)
+
+
+def seed_profile_with_plan_commands(
+    project_dir: Path,
+    plan_path: Path,
+) -> list[str]:
+    """Merge a plan's declared verification commands into the enforced allowlist.
+
+    The planner knows the commands a build needs to verify itself, but stack
+    detection runs once (cached) at build start and misses tooling the scaffold
+    adds later — so from-scratch builds get blocked running ``uv``/``pytest``
+    etc. This grants the plan's sanitised command NAMES into the profile's
+    ``custom_commands``.
+
+    The profile is read/written at ``project_dir/.aifactory/.aifactory-security.json``
+    — the SAME file the Bash hook reads (it calls ``get_security_profile`` with
+    the agent's cwd and no spec_dir). The hook's in-memory cache is mtime-keyed,
+    so this is picked up live, even mid-build.
+
+    Args:
+        project_dir: The agent's working directory / worktree root (== hook cwd).
+        plan_path: Path to ``implementation_plan.json``.
+
+    Returns:
+        Sorted list of newly-granted command names (empty if none / on error).
+    """
+    # Imported here to avoid any import-time coupling between the project and
+    # security packages.
+    from security.plan_commands import grantable_commands_from_plan
+
+    try:
+        plan = json.loads(Path(plan_path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("plan-commands seed skipped: cannot read %s (%s)", plan_path, exc)
+        return []
+
+    granted, rejected = grantable_commands_from_plan(plan)
+    if rejected:
+        logger.info("plan-commands: rejected non-grantable names: %s", rejected)
+    if not granted:
+        return []
+
+    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
+    profile = analyzer.load_profile()
+    if profile is None:
+        profile = analyzer.analyze()
+
+    newly = sorted(granted - profile.custom_commands)
+    if not newly:
+        return []
+
+    profile.custom_commands |= granted
+    analyzer.save_profile(profile)
+    logger.info(
+        "plan-commands: granted %s into %s allowlist",
+        newly,
+        project_dir,
+    )
+    return newly

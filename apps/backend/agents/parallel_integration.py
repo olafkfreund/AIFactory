@@ -241,6 +241,21 @@ async def run_parallel_coding_phase(
             if not child_spec_dir.exists():
                 child_spec_dir = spec_dir  # fallback: shared spec (read-only use)
 
+            # Plan-driven allowlist: grant the plan's declared verification
+            # commands into THIS child worktree's security profile (its cwd ==
+            # the file the Bash hook reads). Without it, a from-scratch parallel
+            # coder is blocked running uv/pytest/ruff/mypy. Idempotent; sanitised.
+            try:
+                from project.analyzer import seed_profile_with_plan_commands
+
+                _child_plan = child_spec_dir / "implementation_plan.json"
+                if _child_plan.exists():
+                    await asyncio.to_thread(
+                        seed_profile_with_plan_commands, child_path, _child_plan
+                    )
+            except Exception:
+                pass  # never let allowlist seeding break a parallel subtask
+
             # --- scoped prompt for just this subtask ---
             subtask_dict = subtask.to_dict()
             phase_dict = phase.to_dict() if hasattr(phase, "to_dict") else {}

@@ -322,6 +322,23 @@ async def run_autonomous_agent(
             print("To continue, run the script again without --max-iterations")
             break
 
+        # Plan-driven allowlist: grant the verification commands the plan
+        # declares (uv/pytest/ruff/mypy …) into THIS worktree's security profile
+        # before the coder/QA session runs. Detection runs once at build start
+        # and misses tooling the scaffold adds later, so without this a
+        # from-scratch build is blocked running its own checks. Idempotent and
+        # cheap; only grants sanitised, grant-listed command names. project_dir
+        # here is the task worktree root == the agent's cwd == the file the Bash
+        # hook reads (mtime-invalidated, so it applies immediately).
+        plan_file = spec_dir / "implementation_plan.json"
+        if plan_file.exists():
+            try:
+                from project.analyzer import seed_profile_with_plan_commands
+
+                seed_profile_with_plan_commands(project_dir, plan_file)
+            except Exception as exc:  # never let allowlist seeding break a build
+                print(f"plan-commands seed skipped: {exc}")
+
         # Get the next subtask to work on
         next_subtask = get_next_subtask(spec_dir)
         subtask_id = next_subtask.get("id") if next_subtask else None
