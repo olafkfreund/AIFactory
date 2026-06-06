@@ -964,8 +964,10 @@ async def create_from_trusted_plan(
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Gate: verify signature + completeness, then install the plan. Nothing is
-    # built unless the plan is trusted-complete.
-    result = ingest_trusted_plan(spec_dir, request.plan)
+    # built unless the plan is trusted-complete. Passing project_path lets ingest
+    # seed required_commands into the allowlist and apply the v2 execution profile
+    # (model/parallel/workers/complexity/skills) to task_metadata.json (RFC-0002).
+    result = ingest_trusted_plan(spec_dir, request.plan, project_dir=project_path)
     if not result.ok:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -974,6 +976,13 @@ async def create_from_trusted_plan(
                 "reasons": result.reasons,
             },
         )
+
+    # Honor the contract's execution profile when the HTTP request doesn't
+    # override it: a v2 contract carries parallel/workers in its `execution`
+    # block, so a caller can hand off a fully-specified plan with an empty body.
+    _execution = request.plan.get("execution") or {}
+    eff_parallel = request.parallel if request.parallel is not None else _execution.get("parallel")
+    eff_workers = request.workers if request.workers is not None else _execution.get("workers")
 
     task_id = f"{project_id}:{spec_id}"
     try:
@@ -984,8 +993,8 @@ async def create_from_trusted_plan(
             auto_continue=request.auto_continue,
             base_branch=request.baseBranch,
             mode=request.mode or "full",
-            parallel=request.parallel,
-            workers=request.workers,
+            parallel=eff_parallel,
+            workers=eff_workers,
         )
         await emit_task_status(task_id, "in_progress")
     except Exception as e:
