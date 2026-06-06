@@ -378,3 +378,109 @@
 .pl-chip[data-state="active"]  { color: hsl(42 75% 58%); animation: pl-edge 1.6s ease-in-out infinite; }
 .pl-chip[data-state="failed"]  { color: hsl(0 72% 60%); }
 .pl-chip[data-state="pending"] { color: hsl(0 0% 100% / 0.25); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v2 refinements: prominent rail panel + bigger rings + in-card live state
+   ═══════════════════════════════════════════════════════════════════════════ */
+.pl-railpanel {
+  position: relative;
+  margin: 14px 16px 10px;
+  padding: 14px 24px 18px;
+  border-radius: 18px;
+  border: 1px solid hsl(0 0% 100% / 0.07);
+  background:
+    radial-gradient(120% 120% at 50% -10%, hsl(240 6% 18% / 0.9), transparent 65%),
+    linear-gradient(180deg, hsl(var(--pl-panel) / 0.9), hsl(var(--pl-panel) / 0.55));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04), 0 8px 30px hsl(0 0% 0% / 0.3);
+}
+.pl-rail { display: grid; grid-template-columns: repeat(4, 1fr); align-items: start; }
+.pl-rail-cell { display: flex; justify-content: center; }
+
+/* bigger, bolder rings */
+.pl-railpanel .pl-ring {
+  width: clamp(96px, 9vw, 132px);
+  height: clamp(96px, 9vw, 132px);
+  border-width: 3px;
+}
+.pl-railpanel .pl-stage.is-active .pl-ring {
+  box-shadow: 0 0 0 2px hsl(var(--c) / 0.3), 0 0 40px hsl(var(--c) / 0.4);
+}
+.pl-railpanel .pl-stage.is-active .pl-ring::before { inset: -10px; border-width: 3px; }
+.pl-badge { min-width: 36px; height: 36px; font-size: 15px; top: -8px; right: -8px; }
+.pl-label { font-size: clamp(15px, 1.5vw, 19px); font-weight: 700; margin-top: 2px; }
+.pl-sublabel {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(0 0% 100% / 0.32);
+  letter-spacing: 0.04em;
+}
+.pl-conn { height: 3px; }
+
+/* the task columns no longer carry the ring header */
+.pl-board-grid { padding-top: 2px; }
+
+/* current-stage animated badge inside the card (top-left) */
+.pl-card-now {
+  position: absolute;
+  top: 8px; left: 10px;
+  z-index: 4;
+  color: hsl(var(--c));
+  filter: drop-shadow(0 0 7px hsl(var(--c) / 0.55));
+  pointer-events: none;
+  animation: pl-now 1.8s ease-in-out infinite;
+}
+@keyframes pl-now {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.18); opacity: 1; }
+}
+.pl-card-wrap.is-live::before { animation: pl-edge 1.6s ease-in-out infinite; }
+
+/* agent terminals INSIDE the card (bigger + animated) */
+.pl-card-agents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 0 14px;
+  flex-wrap: wrap;
+}
+.pl-card-agents-lbl {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: hsl(var(--pl-code) / 0.7);
+  margin-right: 2px;
+}
+.pl-card-agents .pl-term {
+  color: hsl(var(--pl-code));
+  filter: drop-shadow(0 0 7px hsl(var(--pl-code) / 0.6));
+  animation: pl-now 2s ease-in-out infinite;
+}
+
+/* active phase chip: a glowing pulsing ring around the icon (current stage) */
+.pl-chip[data-state="active"] .pl-chip-ico::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1.5px solid hsl(42 75% 58% / 0.7);
+  animation: pl-pulse-ring 1.4s ease-out infinite;
+}
+@keyframes pl-pulse-ring {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+.pl-chip[data-state="active"] { font-weight: 700; }
+
+/* FORCE the ring rail horizontal (robust against narrow widths) */
+.pl-rail {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pl-rail-cell { flex: 1 1 0; min-width: 0; }
+.pl-railpanel .pl-ring {
+  width: clamp(60px, 7vw, 128px);
+  height: clamp(60px, 7vw, 128px);
+}
