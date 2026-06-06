@@ -38,7 +38,11 @@ from pathlib import Path
 
 # Bump when the signed-payload construction or required envelope fields change,
 # so an old signer and a new verifier don't silently disagree.
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
+
+# Versions this AIFactory can verify/ingest. v2 adds the optional execution +
+# tfactory blocks (RFC-0002); v1 plans (no such blocks) remain fully accepted.
+SUPPORTED_CONTRACT_VERSIONS = frozenset({"1", "2"})
 
 _ENV_KEY_PREFIX = "AIFACTORY_TRUSTED_PLAN_KEY_"
 
@@ -166,11 +170,11 @@ def verify_plan_signature(
         return False, f"approval envelope missing fields: {', '.join(missing)}"
 
     contract = str(envelope["plan_contract_version"])
-    if contract != CONTRACT_VERSION:
+    if contract not in SUPPORTED_CONTRACT_VERSIONS:
         return (
             False,
             f"unsupported plan_contract_version {contract!r} "
-            f"(this AIFactory verifies {CONTRACT_VERSION!r})",
+            f"(this AIFactory verifies {sorted(SUPPORTED_CONTRACT_VERSIONS)})",
         )
 
     authority = str(envelope["approved_by"]).strip().lower()
@@ -330,6 +334,70 @@ def verify_trusted_plan(
 # =============================================================================
 
 
+# =============================================================================
+# Execution profile (RFC-0002 `execution` block → task_metadata.json)
+# =============================================================================
+
+# Maps Task Contract v2 `execution` keys to the task_metadata.json keys the
+# executor already honors (phase_config + agent_service._read_parallel_opts).
+_EXECUTION_TO_METADATA = {
+    "model": "model",
+    "phase_models": "phaseModels",
+    "phase_thinking": "phaseThinking",
+    "parallel": "parallel",
+    "workers": "workers",
+    "complexity": "complexity",
+    "review_tier": "reviewTier",
+    "skills": "selectedSkills",
+    "skip_planning": "skipPlanning",
+}
+
+
+def execution_profile_to_metadata(execution: dict) -> dict:
+    """Translate a v2 ``execution`` block into task_metadata.json fields.
+
+    Pure/serializable; only known keys are mapped (unknown keys ignored). When
+    per-phase models are present, ``isAutoProfile`` is set so phase_config honors
+    ``phaseModels``/``phaseThinking``.
+    """
+    if not isinstance(execution, dict):
+        return {}
+    meta: dict = {}
+    for src, dst in _EXECUTION_TO_METADATA.items():
+        if src in execution and execution[src] is not None:
+            meta[dst] = execution[src]
+    if meta.get("phaseModels") or meta.get("phaseThinking"):
+        meta["isAutoProfile"] = True
+    return meta
+
+
+def apply_execution_profile(spec_dir: Path, plan: dict) -> dict:
+    """Merge the plan's ``execution`` block into the spec's task_metadata.json.
+
+    Returns the dict of fields written (empty when there is no execution block).
+    Existing task_metadata keys are preserved; contract values take precedence.
+    The executor then honors model/parallel/workers/complexity/skills without a
+    planner session (the plan is already installed by ``ingest_trusted_plan``).
+    """
+    execution = plan.get("execution")
+    mapped = execution_profile_to_metadata(execution) if execution else {}
+    if not mapped:
+        return {}
+
+    spec_dir = Path(spec_dir)
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    meta_file = spec_dir / "task_metadata.json"
+    existing: dict = {}
+    if meta_file.exists():
+        try:
+            existing = json.loads(meta_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+    existing.update(mapped)
+    meta_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    return mapped
+
+
 def ingest_trusted_plan(
     spec_dir: Path,
     plan: dict,
@@ -363,6 +431,10 @@ def ingest_trusted_plan(
 
     _record_approval_provenance(spec_dir, result)
     _mark_review_approved(spec_dir, result)
+
+    # Apply the v2 execution profile (model/parallel/workers/complexity/skills)
+    # so the executor honors it and skips planning. No-op for v1 plans.
+    apply_execution_profile(spec_dir, plan)
 
     if project_dir is not None:
         try:
