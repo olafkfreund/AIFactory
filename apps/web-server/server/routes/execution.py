@@ -27,6 +27,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
+from trusted_plan import ingest_trusted_plan  # noqa: E402 — needs sys.path above (#390)
 
 router = APIRouter()
 
@@ -68,6 +69,24 @@ class TaskProvenance(BaseModel):
     issue_number: int | None = Field(None, description="Originating GitHub issue number")
     repo: str | None = Field(None, description="Originating repo, e.g. 'owner/name'")
     source: str | None = Field(None, description="Origin system, e.g. 'pfactory'")
+    # Trusted Plan Handoff (#390): a verifiable approval over a handed-off
+    # implementation_plan.json. When present and verified, the build skips the
+    # spec pipeline. A plain label is spoofable; the signature is tamper-evident.
+    trusted_plan: bool = Field(
+        False, description="Whether this task carries a verified trusted plan"
+    )
+    approved_by: str | None = Field(
+        None, description="Signing authority, e.g. 'cfactory' or 'pfactory'"
+    )
+    approval_timestamp: str | None = Field(
+        None, description="ISO-8601 time the plan was approved/signed"
+    )
+    plan_contract_version: str | None = Field(
+        None, description="Trusted-plan contract version the signer used"
+    )
+    signature: str | None = Field(
+        None, description="HMAC signature over the canonical plan JSON"
+    )
 
 
 class CreateAndRunRequest(StartTaskRequest):
@@ -75,6 +94,20 @@ class CreateAndRunRequest(StartTaskRequest):
 
     provenance: TaskProvenance | None = Field(
         None, description="Upstream provenance (session_id, issue#) to persist"
+    )
+
+
+class FromPlanRequest(StartTaskRequest):
+    """Trusted Plan Handoff (#390): build directly from a signed, vetted plan.
+
+    The plan must embed an ``approval`` envelope (see ``trusted_plan.sign_plan``)
+    that verifies against an authority key in the environment. On success the
+    spec pipeline is skipped and the build starts immediately.
+    """
+
+    plan: dict = Field(..., description="Signed implementation_plan.json (incl. 'approval')")
+    provenance: TaskProvenance | None = Field(
+        None, description="Upstream provenance to persist alongside the approval"
     )
 
 
@@ -842,6 +875,87 @@ async def create_and_run_task(
         "success": True,
         "task_id": task_id,
         "message": "Task creation started. Connect to WebSocket for progress updates.",
+    }
+
+
+@router.post("/from-plan")
+async def create_from_trusted_plan(
+    project_id: str,
+    title: str,
+    description: str,
+    request: FromPlanRequest,
+    _access: dict = Depends(require_project_access("member")),
+):
+    """Trusted Plan Handoff (#390): verify a signed plan and build directly.
+
+    Verifies the plan's signature + completeness checklist. If trusted-complete,
+    installs ``implementation_plan.json``, marks the spec approved, and starts
+    the build — bypassing the full spec pipeline (discovery → … → plan). A
+    tampered, unsigned, or incomplete plan is rejected with 422.
+    """
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    project_path = Path(projects[project_id]["path"])
+    agent_service = get_agent_service()
+
+    specs_dir = project_path / ".aifactory" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    spec_id = get_next_spec_id(project_path, title)
+    spec_dir = specs_dir / spec_id
+    spec_dir.mkdir(exist_ok=True)
+
+    requirements: dict = {
+        "title": title,
+        "description": description,
+        "created_at": datetime.now().isoformat(),
+    }
+    if request.provenance is not None:
+        prov = request.provenance.model_dump(exclude_none=True)
+        if prov:
+            requirements["provenance"] = prov
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Gate: verify signature + completeness, then install the plan. Nothing is
+    # built unless the plan is trusted-complete.
+    result = ingest_trusted_plan(spec_dir, request.plan)
+    if not result.ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — not trusted-complete",
+                "reasons": result.reasons,
+            },
+        )
+
+    task_id = f"{project_id}:{spec_id}"
+    try:
+        await agent_service.start_task_execution(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=request.auto_continue,
+            base_branch=request.baseBranch,
+            mode=request.mode or "full",
+            parallel=request.parallel,
+            workers=request.workers,
+        )
+        await emit_task_status(task_id, "in_progress")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start build from trusted plan: {str(e)}",
+        )
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "approved_by": result.approved_by,
+        "approval_timestamp": result.approval_timestamp,
+        "message": "Trusted plan verified — build started, spec pipeline skipped.",
     }
 
 
