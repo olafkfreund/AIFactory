@@ -76,6 +76,80 @@ export function TerminalIcon({ size = 20, ...rest }: IconProps) {
   );
 }
 
+/** A thumbs-up hand — paired with the robot head to mark a task done. */
+export function ThumbsUpIcon({ size = 16, ...rest }: IconProps) {
+  return (
+    <svg {...base(size)} {...rest} strokeWidth={2.4}>
+      <path d="M13 22h5l5-12a4 4 0 0 0-4-5l-1 9" />
+      <path d="M13 22v16h18l4-13a3 3 0 0 0-3-4h-9" />
+      <rect x="6" y="22" width="7" height="16" rx="1.5" />
+    </svg>
+  );
+}
+
+/** Robot giving a thumbs-up — the "task is done" celebration mark. */
+export function RobotThumbsUpIcon({ size = 18, ...rest }: IconProps) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }} className={rest.className}>
+      <RobotHeadIcon size={size} />
+      <ThumbsUpIcon size={Math.round(size * 0.72)} />
+    </span>
+  );
+}
+
+/** Robot giving a thumbs-down — the "task failed" mark. */
+export function RobotThumbsDownIcon({ size = 18, ...rest }: IconProps) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }} className={rest.className}>
+      <RobotHeadIcon size={size} />
+      <span style={{ display: 'inline-flex', transform: 'scaleY(-1)' }}>
+        <ThumbsUpIcon size={Math.round(size * 0.72)} />
+      </span>
+    </span>
+  );
+}
+
+/** A bold X — marks a failed phase / failed task. */
+export function CrossIcon({ size = 14, ...rest }: IconProps) {
+  return (
+    <svg {...base(size)} {...rest} strokeWidth={3.4}>
+      <path d="M13 13l22 22M35 13L13 35" />
+    </svg>
+  );
+}
+
+/** Review: a magnifier with a check — inspection/QA. */
+export function ReviewIcon({ size = 28, ...rest }: IconProps) {
+  return (
+    <svg {...base(size)} {...rest}>
+      <circle cx="21" cy="21" r="12" />
+      <line x1="30" y1="30" x2="41" y2="41" />
+      <path d="M16 21l4 4 6-7" className="doc-lines" />
+    </svg>
+  );
+}
+
+/** Done: a check inside a circle. */
+export function DoneIcon({ size = 28, ...rest }: IconProps) {
+  return (
+    <svg {...base(size)} {...rest}>
+      <circle cx="24" cy="24" r="17" />
+      <path d="M16 24l5 5 11-12" className="doc-lines" />
+    </svg>
+  );
+}
+
+/** A shipping package — flies between rings on a stage transition. */
+export function PackageIcon({ size = 22, ...rest }: IconProps) {
+  return (
+    <svg {...base(size)} {...rest} strokeWidth={2.2}>
+      <path d="M24 6l16 9v18l-16 9-16-9V15z" />
+      <path d="M8 15l16 9 16-9M24 24v18" />
+      <path d="M16 10.5l16 9" />
+    </svg>
+  );
+}
+
 /** Broadcast/“MCP fetch” signal — concentric arcs from a dot. */
 export function SignalIcon({ size = 18, ...rest }: IconProps) {
   return (

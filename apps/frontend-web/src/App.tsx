@@ -5,7 +5,7 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { Toaster } from './components/ui/toaster';
 import { Sidebar, type SidebarView } from './components/Sidebar';
 import { ProjectTabBar } from './components/ProjectTabBar';
-import { KanbanBoard } from './components/KanbanBoard';
+import { PipelineBoard } from './components/pipeline/PipelineBoard';
 import { TerminalGrid } from './components/TerminalGrid';
 import { Worktrees } from './components/Worktrees';
 import { Context } from './components/context/Context';
@@ -325,7 +325,7 @@ function AuthenticatedApp() {
               {selectedProject ? (
                 <>
                   {activeView === 'kanban' && (
-                    <KanbanBoard
+                    <PipelineBoard
                       tasks={tasks}
                       onTaskClick={handleTaskClick}
                       onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
