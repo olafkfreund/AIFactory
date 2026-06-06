@@ -80,6 +80,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_PARALLEL_WORKERS = 3
 
 
+def solo_session_plans_inline(solo: bool, parallel: bool) -> bool:
+    """Whether the solo first session both plans AND implements in one turn.
+
+    Solo mode (#276) collapses planning and implementation into a single
+    session. That single-session collapse bypasses the parallel wave dispatch
+    (#389) — waves operate on a pre-authored plan, and solo finishes the build
+    before the per-subtask loop is ever reached.
+
+    When the user opts into parallel execution we therefore author the plan
+    first (a planner session) and let the wave dispatch implement independent
+    subtasks concurrently. Trivial plans with no wave-eligible phase fall
+    through to the serial loop (which skips the sub-worktree overhead), so this
+    never makes small tasks slower. With ``parallel`` off, solo is unchanged.
+    """
+    return solo and not parallel
+
+
 async def run_autonomous_agent(
     project_dir: Path,
     spec_dir: Path,
@@ -159,12 +176,25 @@ async def run_autonomous_agent(
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
     solo = is_solo_mode_enabled_for_spec(spec_dir)
 
+    # #389: solo collapses plan+implement into one session, which bypasses the
+    # wave dispatch. Under --parallel, author the plan first (planner session)
+    # so independent subtasks can run concurrently in waves; trivial plans then
+    # fall through to the serial loop. Solo behaviour is unchanged with parallel
+    # off, and solo still skips the plan-review gate / QA loop either way.
+    solo_plans_inline = solo_session_plans_inline(solo, parallel)
+    if solo and parallel:
+        print_status(
+            "Solo + parallel: authoring the plan first so independent subtasks "
+            "can run concurrently in waves (#389)",
+            "info",
+        )
+
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
 
     if first_run:
-        if solo:
+        if solo_plans_inline:
             print_status(
                 "Solo mode - a single self-directed agent will plan and build",
                 "info",
@@ -335,7 +365,9 @@ async def run_autonomous_agent(
                 # update_subtask_status) so the single agent can both author
                 # and track its own plan. The planner toolset lacks
                 # update_subtask_status.
-                agent_type=("coder" if solo else "planner") if first_run else "coder",
+                agent_type=("coder" if solo_plans_inline else "planner")
+                if first_run
+                else "coder",
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -363,9 +395,11 @@ async def run_autonomous_agent(
             # Solo mode (#276): the single agent gets a self-directing prompt
             # that has it author its own plan AND implement it. Otherwise use
             # the dedicated planner prompt.
-            if solo:
+            if solo_plans_inline:
                 prompt = get_solo_prompt(spec_dir)
             else:
+                # Planner-only session: authors the plan without implementing,
+                # so the wave dispatch can pick up independent subtasks (#389).
                 prompt = generate_planner_prompt(spec_dir, project_dir)
             seg_user_prompt = prompt
 
