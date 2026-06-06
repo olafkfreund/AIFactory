@@ -127,7 +127,12 @@ class WaveRecorder:
 
     @property
     def observed_max_concurrency(self) -> int:
-        return max((w["concurrency"] for w in self._waves), default=0)
+        # Include the in-flight (pending) wave so a live report reflects current
+        # concurrency instead of reading 0 until the wave closes.
+        concurrencies = [w["concurrency"] for w in self._waves]
+        if self._pending is not None:
+            concurrencies.append(self._pending["concurrency"])
+        return max(concurrencies, default=0)
 
     def _close_pending(self) -> None:
         if self._pending is None:
