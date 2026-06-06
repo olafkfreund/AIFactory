@@ -59,6 +59,7 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
@@ -95,6 +96,20 @@ def solo_session_plans_inline(solo: bool, parallel: bool) -> bool:
     never makes small tasks slower. With ``parallel`` off, solo is unchanged.
     """
     return solo and not parallel
+
+
+def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> None:
+    """Persist build_report.json at build completion (#397 Phase 1).
+
+    Pure observability: aggregates the wave events (#393) and token attribution
+    (#262) into one profiling artifact. Best-effort — write_build_report swallows
+    I/O errors, and this wrapper guards everything else, so profiling can never
+    affect a build.
+    """
+    try:
+        write_build_report(spec_dir, source_spec_dir=source_spec_dir)
+    except Exception:  # noqa: BLE001 - profiling must never affect a build
+        pass
 
 
 async def run_autonomous_agent(
@@ -218,8 +233,7 @@ async def run_autonomous_agent(
                 "",
                 f"Spec: {highlight(spec_dir.name)}",
                 muted(
-                    "The agent will analyze your spec and create a "
-                    "subtask-based plan."
+                    "The agent will analyze your spec and create a subtask-based plan."
                 ),
             ]
         print()
@@ -246,6 +260,7 @@ async def run_autonomous_agent(
         if is_build_complete(spec_dir):
             print_build_complete_banner(spec_dir)
             status_manager.update(state=BuildState.COMPLETE)
+            _emit_build_report(spec_dir, source_spec_dir)
             return
 
         # Start/continue coding phase in task logger
@@ -452,11 +467,16 @@ async def run_autonomous_agent(
                 if require_review:
                     # Check if already approved
                     from review import ReviewState
+
                     review_state = ReviewState.load(spec_dir)
                     if not review_state.is_approval_valid(spec_dir):
                         # Pause for human review
-                        logger.info("Plan review required - pausing execution for human approval")
-                        emit_phase(ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval")
+                        logger.info(
+                            "Plan review required - pausing execution for human approval"
+                        )
+                        emit_phase(
+                            ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval"
+                        )
 
                         # Update implementation_plan.json status
                         plan_file = spec_dir / "implementation_plan.json"
@@ -481,14 +501,22 @@ async def run_autonomous_agent(
                             )
 
                         print()
-                        print(box([
-                            bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
-                            "",
-                            "The implementation plan has been created and requires your approval.",
-                            "Please review the plan in the web UI and click 'Approve Plan' to continue.",
-                            "",
-                            highlight("Task Status: human_review (plan_review)"),
-                        ], width=70, style="heavy"))
+                        print(
+                            box(
+                                [
+                                    bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
+                                    "",
+                                    "The implementation plan has been created and requires your approval.",
+                                    "Please review the plan in the web UI and click 'Approve Plan' to continue.",
+                                    "",
+                                    highlight(
+                                        "Task Status: human_review (plan_review)"
+                                    ),
+                                ],
+                                width=70,
+                                style="heavy",
+                            )
+                        )
                         print()
 
                         return  # Exit agent loop - task pauses for approval
@@ -664,6 +692,7 @@ async def run_autonomous_agent(
                 if source_spec_dir:
                     try:
                         from .token_attribution import usage_file_path
+
                         src = usage_file_path(spec_dir)
                         if src.exists():
                             (source_spec_dir / src.name).write_text(
@@ -788,9 +817,7 @@ async def run_autonomous_agent(
                     # which is the "resume" — no extra orchestration needed.
                     continue
                 # Caps exhausted — fall through to the normal error path.
-                logger.warning(
-                    "Rate limit auto-resume giving up: %s", decision.reason
-                )
+                logger.warning("Rate limit auto-resume giving up: %s", decision.reason)
                 print_status(
                     f"Rate limit auto-resume stopped: {decision.reason}", "error"
                 )
@@ -854,6 +881,9 @@ async def run_autonomous_agent(
         status_manager.update(state=BuildState.COMPLETE)
     else:
         status_manager.update(state=BuildState.PAUSED)
+
+    # Emit the profiling artifact (#397 Phase 1) — observability only.
+    _emit_build_report(spec_dir, source_spec_dir)
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:
@@ -937,7 +967,9 @@ async def _run_trailing_gates_if_build_complete(
         if failures:
             lines = [f"# Gate failures\n\nSummary: {summary}\n"]
             for r in failures:
-                lines.append(f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n")
+                lines.append(
+                    f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n"
+                )
             marker.write_text("".join(lines), encoding="utf-8")
             print_status(f"Trailing gates failed: {summary}", "warning")
         else:
@@ -983,12 +1015,7 @@ async def _maybe_run_parallel_phase(
 
         plan = ImplementationPlan.load(plan_path)
         phase = next(
-            (
-                p
-                for p in plan.phases
-                for s in p.subtasks
-                if s.id == subtask_id
-            ),
+            (p for p in plan.phases for s in p.subtasks if s.id == subtask_id),
             None,
         )
         if phase is None:
@@ -999,8 +1026,7 @@ async def _maybe_run_parallel_phase(
             return False
 
         print_status(
-            f"Running phase '{phase.name}' in parallel "
-            f"({parallel_workers} workers)",
+            f"Running phase '{phase.name}' in parallel ({parallel_workers} workers)",
             "info",
         )
         result = await run_parallel_coding_phase(
