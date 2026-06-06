@@ -509,3 +509,38 @@
 .pl-card-done { border: 1px solid hsl(150 50% 52% / 0.5); }
 .pl-card-fail { border: 1px solid hsl(0 72% 58% / 0.5); }
 .pl-card-wrap { overflow: visible; }
+
+/* ── icons INSIDE the task box: wrapper is the single bordered card ───────────
+   TaskCard's own border/ring is flattened so the phase strip + agent terminals
+   sit inside one aligned box; status color + active pulse move to the wrapper. */
+.pl-card-wrap {
+  border: 1px solid hsl(0 0% 100% / 0.1);
+  border-radius: 14px;
+  background: hsl(240 6% 13% / 0.75);
+  overflow: visible;            /* keep corner stickers visible */
+}
+.pl-card-wrap .card-surface {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+.pl-card-wrap.is-done { border-color: hsl(150 50% 52% / 0.55); }
+.pl-card-wrap.is-failed { border-color: hsl(0 72% 58% / 0.55); }
+.pl-card-wrap.is-live { border-color: hsl(42 70% 56% / 0.6); animation: pl-livebrd 2.2s ease-in-out infinite; }
+@keyframes pl-livebrd {
+  0%, 100% { box-shadow: 0 0 0 1px hsl(42 70% 56% / 0.15); }
+  50% { box-shadow: 0 0 14px hsl(42 70% 56% / 0.3); }
+}
+
+/* align the in-card rows to the card content padding (16px), tight to the card */
+.pl-card-agents {
+  padding: 2px 14px 0;
+  margin-top: -2px;
+  justify-content: flex-start;
+}
+.pl-phase-strip {
+  padding: 8px 14px 12px;
+  margin-top: 4px;
+  border-top: 1px solid hsl(0 0% 100% / 0.06);
+}
