@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -2838,6 +2839,11 @@ class AgentService:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(project_path),
             env=env,
+            # Own session/process group so stop_task can kill the WHOLE tree —
+            # run.py spawns coder subprocesses (Claude SDK, git); without this,
+            # proc.terminate() only signals run.py and the children orphan and
+            # keep running (the stop-resistance bug).
+            start_new_session=True,
         )
 
         # Close slave fd in parent process
@@ -3194,6 +3200,9 @@ class AgentService:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(project_path),
             env=env,
+            # Own session/process group so stop_task can kill the whole tree
+            # (run.py + coder/git children) instead of orphaning them.
+            start_new_session=True,
         )
 
         # Close slave fd in parent process
@@ -3266,6 +3275,29 @@ class AgentService:
 
         return proc
 
+    @staticmethod
+    def _signal_process_tree(proc: "asyncio.subprocess.Process", sig: int) -> None:
+        """Send ``sig`` to the whole process group, falling back to the proc.
+
+        Builds are spawned with start_new_session=True, so the run.py pid leads a
+        process group containing all its descendants (coder subprocesses, git).
+        Signalling the group terminates the entire tree; without this the children
+        orphan and the build keeps running after a stop (the stop-resistance bug).
+        """
+        pid = getattr(proc, "pid", None)
+        if pid is None:
+            return
+        try:
+            os.killpg(os.getpgid(pid), sig)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        # Fall back to signalling just the process (e.g. non-POSIX, or no pgrp).
+        try:
+            proc.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
         import logging
@@ -3278,12 +3310,14 @@ class AgentService:
         self._task_stopped.add(task_id)
 
         proc = self.running_tasks[task_id]
-        proc.terminate()
+        # Kill the whole process tree (run.py + coder/git children), not just
+        # run.py — otherwise the children orphan and keep running.
+        self._signal_process_tree(proc, signal.SIGTERM)
 
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            proc.kill()
+            self._signal_process_tree(proc, signal.SIGKILL)
             await proc.wait()
 
         # Get actual phase and spec info BEFORE cleanup
