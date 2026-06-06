@@ -484,3 +484,8 @@
   width: clamp(60px, 7vw, 128px);
   height: clamp(60px, 7vw, 128px);
 }
+
+/* FIX: TaskCard already has its own status-colored left border — our extra
+   accent bar collided with it. Drop the accent; the card border + phase strip
+   + corner badge already convey state. */
+.pl-card-wrap::before { display: none !important; }
