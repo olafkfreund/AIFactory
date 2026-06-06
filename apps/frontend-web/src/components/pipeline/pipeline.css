@@ -489,3 +489,8 @@
    accent bar collided with it. Drop the accent; the card border + phase strip
    + corner badge already convey state. */
 .pl-card-wrap::before { display: none !important; }
+
+/* FIX: the top-left current-stage icon overlapped the card title. The phase
+   strip's pulsing active chip already animates the current stage, so drop the
+   redundant overlay. */
+.pl-card-now { display: none !important; }
