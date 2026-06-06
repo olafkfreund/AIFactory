@@ -4,14 +4,19 @@ Tests for Agent Architecture
 ============================
 
 Verifies the agent architecture where:
-- Python orchestrator runs a single Claude SDK session
-- The agent itself decides when to spawn subagents (via Task tool)
-- Parallel execution is handled internally by Claude Code, not Python
+- A Python orchestrator runs Claude SDK / provider sessions
+- The agent may still spawn subagents internally (via the Task tool)
+- Independent subtasks of a ``parallel_safe`` phase are additionally run
+  concurrently by the executor in dependency-graph waves (#376)
 
-Key architectural constraints:
-- No Python-level parallel orchestration (no coordinator.py, task_tool.py)
-- No --parallel CLI flag (agent decides parallelism)
-- Agent prompt includes subagent capability documentation
+History (#376): an earlier design forbade ALL Python-level parallel
+orchestration and relied solely on the agent's own Task-tool subagents to
+parallelize. Empirically that never produced concurrency (builds ran strictly
+serially), so #376 introduced provider-agnostic executor-level wave scheduling
+behind an opt-in ``--parallel``/``--workers`` flag. The legacy
+``coordinator.py``/``task_tool.py`` modules are still intentionally absent — the
+new orchestration lives in ``agents/parallel_runner.py`` (pure scheduling) and
+``agents/parallel_integration.py`` (worktree/session wiring).
 """
 
 import ast
@@ -26,18 +31,23 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
 
 class TestNoExternalParallelism:
-    """Verify no Python-level parallel orchestration exists."""
+    """Verify the legacy orchestration modules stay absent (#376).
+
+    Executor-level parallelism now lives in ``agents/parallel_runner.py`` and
+    ``agents/parallel_integration.py``; the old ``coordinator.py`` /
+    ``task_tool.py`` designs were never adopted and must not reappear.
+    """
 
     def test_no_coordinator_module(self):
-        """No external coordinator module should exist."""
+        """No legacy coordinator module should exist."""
         coordinator_path = Path(__file__).parent.parent / "apps" / "backend" / "coordinator.py"
         assert not coordinator_path.exists(), (
-            "coordinator.py should not exist. Parallel orchestration is handled "
-            "internally by the agent using Claude Code's Task tool."
+            "coordinator.py should not exist. Wave orchestration lives in "
+            "agents/parallel_runner.py (scheduling) + parallel_integration.py."
         )
 
     def test_no_task_tool_module(self):
-        """No task_tool wrapper module should exist."""
+        """No legacy task_tool wrapper module should exist."""
         task_tool_path = Path(__file__).parent.parent / "apps" / "backend" / "task_tool.py"
         assert not task_tool_path.exists(), (
             "task_tool.py should not exist. The agent spawns subagents directly "
@@ -54,50 +64,38 @@ class TestNoExternalParallelism:
 
 
 class TestCLIInterface:
-    """Verify CLI doesn't expose parallel orchestration options."""
+    """Verify the CLI exposes the opt-in parallel execution flags (#376)."""
 
-    def test_no_parallel_flag(self):
-        """CLI should not have --parallel argument."""
-        run_py_path = Path(__file__).parent.parent / "apps" / "backend" / "run.py"
-        content = run_py_path.read_text()
-
-        # Check that --parallel is not defined as an argument
-        assert '"--parallel"' not in content, (
-            "CLI should not have --parallel flag. The agent decides when to "
-            "use parallel execution via subagents."
+    def test_parallel_flag_exposed(self):
+        """CLI should define --parallel and --workers arguments."""
+        main_py_path = (
+            Path(__file__).parent.parent / "apps" / "backend" / "cli" / "main.py"
         )
-        assert "'--parallel'" not in content, (
-            "CLI should not have --parallel flag. The agent decides when to "
-            "use parallel execution via subagents."
+        content = main_py_path.read_text()
+
+        assert '"--parallel"' in content, (
+            "CLI should expose --parallel for dependency-graph wave execution (#376)."
         )
-
-    def test_no_parallel_examples_in_docs(self):
-        """CLI documentation should not mention parallel mode."""
-        run_py_path = Path(__file__).parent.parent / "apps" / "backend" / "run.py"
-        content = run_py_path.read_text()
-
-        # The docstring should not have --parallel examples
-        assert "--parallel" not in content[:2000], (
-            "CLI docs should not contain --parallel examples."
+        assert '"--workers"' in content, (
+            "CLI should expose --workers to cap concurrent subtasks (#376)."
         )
 
 
 class TestAgentEntryPoint:
     """Verify the agent entry point function signature."""
 
-    def test_no_parallel_parameters(self):
-        """Agent entry point should not accept parallel configuration."""
+    def test_accepts_parallel_parameters(self):
+        """Agent entry point accepts the #376 opt-in parallelism config."""
         from agent import run_autonomous_agent
 
         sig = inspect.signature(run_autonomous_agent)
         param_names = list(sig.parameters.keys())
 
-        assert "max_parallel_subtasks" not in param_names, (
-            "Agent should not accept max_parallel_subtasks. "
-            "Parallelism is decided by the agent itself."
+        assert "parallel" in param_names, (
+            "Agent should accept a 'parallel' parameter (#376 executor waves)."
         )
-        assert "parallel" not in param_names, (
-            "Agent should not accept a 'parallel' parameter."
+        assert "workers" in param_names, (
+            "Agent should accept a 'workers' parameter to cap wave concurrency."
         )
 
     def test_required_parameters(self):
@@ -196,13 +194,14 @@ class TestModuleIntegrity:
 class TestProjectDocumentation:
     """Verify project documentation is accurate."""
 
-    def test_no_parallel_cli_documented(self):
-        """CLAUDE.md doesn't document --parallel flag."""
-        claude_md_path = Path(__file__).parent.parent / "CLAUDE.md"
-        content = claude_md_path.read_text(encoding="utf-8")
-
-        assert "--parallel 2" not in content, (
-            "CLAUDE.md should not document --parallel flag"
+    def test_parallel_orchestration_modules_exist(self):
+        """The #376 executor-level wave modules are present."""
+        backend = Path(__file__).parent.parent / "apps" / "backend"
+        assert (backend / "agents" / "parallel_runner.py").exists(), (
+            "agents/parallel_runner.py (pure wave scheduler) should exist (#376)."
+        )
+        assert (backend / "agents" / "parallel_integration.py").exists(), (
+            "agents/parallel_integration.py (worktree/session wiring) should exist (#376)."
         )
 
     def test_subagent_architecture_documented(self):

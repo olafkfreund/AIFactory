@@ -75,6 +75,10 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# Default number of subtasks to run concurrently in a parallel_safe wave (#376)
+# when --parallel is requested without an explicit --workers value.
+DEFAULT_PARALLEL_WORKERS = 3
+
 
 async def run_autonomous_agent(
     project_dir: Path,
@@ -85,6 +89,8 @@ async def run_autonomous_agent(
     source_spec_dir: Path | None = None,
     stop_after_planning: bool = False,
     remote_control_session: str | None = None,
+    parallel: bool = False,
+    workers: int | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -103,7 +109,25 @@ async def run_autonomous_agent(
             writing implementation_plan.json. Used by the Copilot delegation
             flow — AIFactory enriches the plan locally then hands the issue
             off to GitHub Copilot Coding Agent (#92, #94).
+        parallel: When True, run independent subtasks of a ``parallel_safe``
+            phase concurrently in dependency-graph waves (#376) instead of
+            strictly one-at-a-time. Phases that are not parallel_safe still run
+            serially, so this is always safe to enable.
+        workers: Max concurrent subtasks per wave when ``parallel`` is set.
+            Defaults to ``DEFAULT_PARALLEL_WORKERS`` (3) when None.
     """
+    # Normalize parallelism config (#376). Concurrency is only ever attempted
+    # for phases the planner marked parallel_safe; everything else stays serial.
+    parallel_workers = max(1, workers or DEFAULT_PARALLEL_WORKERS)
+    # Phases that stalled under parallel execution fall back to serial and must
+    # not be retried in parallel (avoids a re-enter-stall loop).
+    parallel_disabled_phases: set[int] = set()
+    if parallel:
+        print_status(
+            f"Parallel execution enabled (up to {parallel_workers} concurrent "
+            "subtasks in parallel_safe phases)",
+            "info",
+        )
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
 
@@ -292,6 +316,12 @@ async def run_autonomous_agent(
         phase_model = get_phase_model(spec_dir, current_phase, model)
         phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
 
+        # Per-subtask model override (#376 right-sizing): a coding subtask may
+        # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
+        # cheaper/faster than the phase default. Planning is never overridden.
+        if not first_run and next_subtask and next_subtask.get("model"):
+            phase_model = next_subtask["model"]
+
         # Create client (fresh context) with phase-specific model and thinking
         # Route through provider factory for non-Claude models
         provider_name = infer_provider_from_model(phase_model)
@@ -445,6 +475,34 @@ async def run_autonomous_agent(
             if not next_subtask:
                 print("No pending subtasks found - build may be complete!")
                 break
+
+            # === PARALLEL WAVE DISPATCH (#376) ===
+            # If parallel execution is enabled and the phase owning this subtask
+            # is parallel_safe with >=2 pending subtasks, run the whole phase
+            # concurrently in dependency-graph waves, then continue the loop
+            # (which picks up the next phase or finishes). Any non-parallel_safe
+            # phase, or a stalled wave, falls through to the serial path below —
+            # so this is always safe.
+            if parallel:
+                handled = await _maybe_run_parallel_phase(
+                    spec_dir=spec_dir,
+                    project_dir=project_dir,
+                    subtask_id=subtask_id,
+                    model=model,
+                    parallel_workers=parallel_workers,
+                    verbose=verbose,
+                    source_spec_dir=source_spec_dir,
+                    remote_control_session=remote_control_session,
+                    status_manager=status_manager,
+                    disabled_phases=parallel_disabled_phases,
+                    recovery_manager=recovery_manager,
+                )
+                if handled:
+                    # Progress was made in parallel; re-evaluate from the top.
+                    print_progress_summary(spec_dir)
+                    status_manager.update(state=BuildState.BUILDING)
+                    await asyncio.sleep(1)
+                    continue
 
             # Get attempt count for recovery context
             attempt_count = recovery_manager.get_attempt_count(subtask_id)
@@ -795,4 +853,151 @@ def _should_require_human_review(spec_dir: Path) -> bool:
 
         return False
     except (json.JSONDecodeError, OSError):
+        return False
+
+
+async def _run_trailing_gates_if_build_complete(
+    spec_dir: Path, project_dir: Path
+) -> None:
+    """Run lint/type/test gates once when all subtasks are complete (#376 D).
+
+    Best-effort: detects project gates, runs them as direct subprocesses (not
+    agent turns), logs a one-line summary, and on failure writes a
+    ``GATE_FAILURES.md`` marker the QA/fix loop can pick up. Never raises and
+    never fails the build — a clean run simply removes any stale marker.
+    """
+    try:
+        from .gate_runner import (
+            detect_gates,
+            failing_gates,
+            run_gates,
+            summarize_gates,
+        )
+
+        # Only run when the whole plan is complete — "once at the end".
+        plan_path = spec_dir / "implementation_plan.json"
+        from implementation_plan.enums import SubtaskStatus
+        from implementation_plan.plan import ImplementationPlan
+
+        plan = ImplementationPlan.load(plan_path)
+        pending = [
+            s
+            for p in plan.phases
+            for s in p.subtasks
+            if s.status != SubtaskStatus.COMPLETED
+        ]
+        if pending:
+            return  # more work remains; gates run after the final wave
+
+        gates = detect_gates(project_dir)
+        if not gates:
+            return
+        print_status(
+            f"Running trailing gates once: {', '.join(g.name for g in gates)}",
+            "info",
+        )
+        results = await run_gates(project_dir, gates)
+        summary = summarize_gates(results)
+        failures = failing_gates(results)
+        marker = spec_dir / "GATE_FAILURES.md"
+        if failures:
+            lines = [f"# Gate failures\n\nSummary: {summary}\n"]
+            for r in failures:
+                lines.append(f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n")
+            marker.write_text("".join(lines), encoding="utf-8")
+            print_status(f"Trailing gates failed: {summary}", "warning")
+        else:
+            if marker.exists():
+                marker.unlink()  # clear any stale failures from a prior run
+            print_status(f"Trailing gates passed: {summary}", "success")
+    except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
+        logger.debug("Trailing gate run skipped: %s", exc)
+
+
+async def _maybe_run_parallel_phase(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    subtask_id: str | None,
+    model: str,
+    parallel_workers: int,
+    verbose: bool,
+    source_spec_dir: Path | None,
+    remote_control_session: str | None,
+    status_manager,
+    disabled_phases: set[int],
+    recovery_manager=None,
+) -> bool:
+    """Run the subtask's phase as parallel waves if it is eligible (#376).
+
+    Returns True if a parallel phase ran and made progress (caller should
+    `continue` the loop). Returns False if the phase is not eligible or could
+    not progress, so the caller falls back to the serial path for this subtask.
+    """
+    if not subtask_id:
+        return False
+
+    plan_path = spec_dir / "implementation_plan.json"
+    if not plan_path.exists():
+        return False
+
+    try:
+        from implementation_plan.plan import ImplementationPlan
+
+        from .parallel_integration import run_parallel_coding_phase
+        from .parallel_runner import is_phase_parallel_eligible
+
+        plan = ImplementationPlan.load(plan_path)
+        phase = next(
+            (
+                p
+                for p in plan.phases
+                for s in p.subtasks
+                if s.id == subtask_id
+            ),
+            None,
+        )
+        if phase is None:
+            return False
+        if phase.phase in disabled_phases:
+            return False
+        if not is_phase_parallel_eligible(phase, parallel_workers):
+            return False
+
+        print_status(
+            f"Running phase '{phase.name}' in parallel "
+            f"({parallel_workers} workers)",
+            "info",
+        )
+        result = await run_parallel_coding_phase(
+            plan=plan,
+            phase=phase,
+            project_dir=project_dir,
+            spec_dir=spec_dir,
+            model=model,
+            workers=parallel_workers,
+            verbose=verbose,
+            source_spec_dir=source_spec_dir,
+            remote_control_session=remote_control_session,
+            recovery_manager=recovery_manager,
+        )
+
+        # A stalled phase (cycle / unresolved deps / merge failures) drops to the
+        # serial path for whatever is left — and must not be retried in parallel.
+        if result.stalled or result.failed_ids:
+            disabled_phases.add(phase.phase)
+
+        # (#376 solution D) Collapse trailing gates: when this wave finished the
+        # last of the plan's subtasks, run lint/type/test gates ONCE as direct
+        # subprocesses instead of as separate agent turns. Failures are recorded
+        # for the QA/fix loop; this never fails the build itself.
+        if result.completed_ids and not result.stalled:
+            await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+        # "Made progress" => at least one subtask completed; caller continues.
+        return bool(result.completed_ids)
+    except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
+        logger.warning(
+            "Parallel phase execution failed (%s); falling back to serial", exc
+        )
         return False

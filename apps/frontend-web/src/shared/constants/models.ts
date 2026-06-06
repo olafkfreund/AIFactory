@@ -11,7 +11,7 @@ import { apiRequest } from '../../lib/api-client';
 // ============================================
 
 export const AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.7' },
+  { value: 'opus', label: 'Claude Opus 4.8' },
   { value: 'sonnet', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku 4.5' }
 ] as const;
@@ -20,7 +20,7 @@ export const AVAILABLE_MODELS = [
 // The provider is inferred from the model ID on the backend, so no separate
 // provider setting is needed per phase.
 export const ALL_AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.7' },
+  { value: 'opus', label: 'Claude Opus 4.8' },
   { value: 'sonnet', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku 4.5' },
   { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -256,7 +256,7 @@ import type { InsightsProvider } from '../types/insights';
 
 export const PROVIDER_MODELS: Record<string, { id: string; label: string }[]> = {
   claude: [
-    { id: 'opus', label: 'Claude Opus 4.7' },
+    { id: 'opus', label: 'Claude Opus 4.8' },
     { id: 'sonnet', label: 'Claude Sonnet 4.6' },
     { id: 'haiku', label: 'Claude Haiku 4.5' },
   ],

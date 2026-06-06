@@ -63,6 +63,8 @@ def handle_build_command(
     base_branch: str | None = None,
     stop_after_planning: bool = False,
     remote_control_session: str | None = None,
+    parallel: bool = False,
+    workers: int | None = None,
 ) -> None:
     """
     Handle the main build command.
@@ -83,6 +85,10 @@ def handle_build_command(
             implementation_plan.json. Used by the Copilot delegation flow,
             where AIFactory generates the plan locally and then hands off
             implementation to GitHub Copilot Coding Agent (#92, #94).
+        parallel: Run independent subtasks concurrently in dependency-graph
+            waves (#376). Falls back to serial execution for phases that are
+            not marked parallel_safe.
+        workers: Max concurrent subtasks when ``parallel`` is set (default 3).
     """
     # Lazy imports to avoid loading heavy modules
     from agent import run_autonomous_agent, sync_plan_to_source
@@ -257,6 +263,8 @@ def handle_build_command(
                 source_spec_dir=source_spec_dir,  # For syncing progress back to main project
                 stop_after_planning=stop_after_planning,
                 remote_control_session=remote_control_session,
+                parallel=parallel,
+                workers=workers,
             )
         )
         debug_success("run.py", "Agent execution completed")

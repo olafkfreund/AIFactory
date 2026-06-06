@@ -264,6 +264,7 @@ Based on the workflow type and services involved, create the implementation plan
           "id": "subtask-1-1",
           "description": "Create data models for [feature]",
           "service": "backend",
+          "depends_on": [],
           "files_to_modify": ["src/models/user.py"],
           "files_to_create": ["src/models/analytics.py"],
           "patterns_from": ["src/models/existing_model.py"],
@@ -278,6 +279,7 @@ Based on the workflow type and services involved, create the implementation plan
           "id": "subtask-1-2",
           "description": "Create API endpoints for [feature]",
           "service": "backend",
+          "depends_on": ["subtask-1-1"],
           "files_to_modify": ["src/routes/api.py"],
           "files_to_create": ["src/routes/analytics.py"],
           "patterns_from": ["src/routes/users.py"],
@@ -371,6 +373,41 @@ Based on the workflow type and services involved, create the implementation plan
   ]
 }
 ```
+
+### Parallel Execution (authoring for concurrent waves)
+
+The executor can run independent subtasks of a phase **concurrently** in
+dependency-graph waves (~2-3x faster on builds with many independent files).
+Your plan controls whether this is possible. Three fields drive it:
+
+1. **`parallel_safe`** (phase): set `true` when the phase's subtasks can be
+   worked on at the same time without stepping on each other. Set `false` when
+   subtasks must be strictly ordered or share files heavily (the phase then runs
+   serially). Scaffolding/setup phases (config, models, independent tests, CI
+   files) are usually `parallel_safe: true`.
+
+2. **`files_to_create` / `files_to_modify`** (subtask): **must be accurate.**
+   The scheduler runs two subtasks together only when their file sets are
+   **disjoint**. A subtask that leaves these empty is treated as touching
+   unknown files and is forced to run **alone** — so omitting files silently
+   disables parallelism. List every file each subtask will write.
+
+3. **`depends_on`** (subtask): list the **subtask ids** that must finish before
+   this one starts (e.g. an endpoint subtask `depends_on` its model subtask).
+   Use this for ordering *within* a phase; use the phase-level `depends_on`
+   (phase ids) for ordering *between* phases. Keep it minimal — every
+   unnecessary dependency removes a chance to parallelize. Never create cycles.
+
+Guidance: prefer grouping genuinely independent work (separate files, no shared
+state) into one `parallel_safe` phase with accurate file lists and minimal
+`depends_on`. Keep tightly-coupled or file-sharing work either in a
+`parallel_safe: false` phase or chained via `depends_on`.
+
+**Optional `model` (subtask, right-sizing):** a subtask may set `"model"` to a
+shorthand (e.g. `"haiku"`, `"sonnet"`, `"opus"`) to run on a cheaper/faster
+model when the work is mechanical (scaffolding, config, CI files). Omit it to
+use the phase default. Reserve the strongest model for genuinely complex
+subtasks; this trims cost without hurting quality where quality isn't at stake.
 
 ### Valid Phase Types
 
