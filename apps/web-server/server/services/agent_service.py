@@ -122,6 +122,23 @@ class TaskPhase(str, Enum):
     FAILED = "failed"
 
 
+def _append_parallel_flags(
+    cmd: list[str], parallel: bool | None, workers: int | None
+) -> bool:
+    """Append run.py parallel flags (#376) to ``cmd`` in place.
+
+    Returns True when ``--parallel`` was added (so the caller can log it).
+    Extracted as a pure helper so the route→executor flag threading is unit
+    testable without spawning a subprocess.
+    """
+    if not parallel:
+        return False
+    cmd.append("--parallel")
+    if workers and workers > 0:
+        cmd.extend(["--workers", str(workers)])
+    return True
+
+
 def phase_to_status(phase: TaskPhase) -> str:
     """Map execution phase to task status for kanban column placement."""
     mapping = {
@@ -1936,11 +1953,16 @@ class AgentService:
 
                             # Auto-start task execution
                             try:
+                                _par, _wrk = self._read_parallel_opts(
+                                    project_path, detected_spec_id
+                                )
                                 await self.start_task_execution(
                                     task_id=task_id,
                                     project_path=project_path,
                                     spec_id=detected_spec_id,
                                     auto_continue=True,
+                                    parallel=_par,
+                                    workers=_wrk,
                                 )
                                 logger.info(f"[AgentService] Task execution auto-started for {detected_spec_id}")
                             except Exception as exec_err:
@@ -2205,11 +2227,16 @@ class AgentService:
 
                             # Restart execution
                             try:
+                                _par, _wrk = self._read_parallel_opts(
+                                    project_path, spec_id
+                                )
                                 await self.start_task_execution(
                                     task_id=task_id,
                                     project_path=project_path,
                                     spec_id=spec_id,
                                     auto_continue=True,
+                                    parallel=_par,
+                                    workers=_wrk,
                                 )
                                 logger.info(f"[AgentService] Auto-continuation started for {spec_id} (round {round_num})")
                                 return  # Exit this monitor — new monitor will take over
@@ -2839,6 +2866,28 @@ class AgentService:
 
         return proc
 
+    def _read_parallel_opts(
+        self, project_path: Path, spec_id: str
+    ) -> tuple[bool | None, int | None]:
+        """Read persisted parallel/workers from a spec's task_metadata.json (#376).
+
+        The auto-continue build path (spec→plan→build) honors the same parallel
+        settings the /start route accepts, so a normal create→auto-build run can
+        go parallel without an explicit manual start.
+        """
+        try:
+            import json
+
+            meta_file = (
+                project_path / ".aifactory" / "specs" / spec_id / "task_metadata.json"
+            )
+            if meta_file.exists():
+                meta = json.loads(meta_file.read_text())
+                return meta.get("parallel"), meta.get("workers")
+        except (OSError, ValueError):
+            pass
+        return None, None
+
     async def start_task_execution(
         self,
         task_id: str,
@@ -2954,10 +3003,7 @@ class AgentService:
         # Parallel subtask execution (#376): run independent subtasks in
         # dependency-graph waves. Previously these flags were accepted by the
         # API but silently dropped here.
-        if parallel:
-            cmd.append("--parallel")
-            if workers and workers > 0:
-                cmd.extend(["--workers", str(workers)])
+        if _append_parallel_flags(cmd, parallel, workers):
             logger.info(
                 f"[AgentService] Parallel execution enabled for {task_id} "
                 f"(workers={workers or 'default'})"
