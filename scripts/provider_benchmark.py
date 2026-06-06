@@ -93,8 +93,17 @@ def provider_available(provider: str) -> tuple[bool, str]:
     if provider == "claude":
         return True, "ok"
     if provider == "antigravity":
-        if shutil.which("antigravity") or shutil.which("gemini"):
-            return True, "ok"
+        # Use the provider's own resolver so we detect the bundled
+        # ~/.gemini/antigravity-cli/bin install, not just $PATH.
+        try:
+            sys.path.insert(0, str(BACKEND))
+            from providers.antigravity_agentic import get_antigravity_binary
+            resolved = get_antigravity_binary()
+            found = (os.path.isabs(resolved) and Path(resolved).exists()) or bool(shutil.which(resolved))
+        except Exception:
+            found = bool(shutil.which("antigravity") or shutil.which("gemini"))
+        if found:
+            return True, "ok (antigravity CLI resolved; needs GEMINI auth)"
         return False, "antigravity/gemini CLI not installed (install + auth the Antigravity CLI)"
     if provider == "copilot":
         if shutil.which("copilot"):
