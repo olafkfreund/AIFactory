@@ -230,7 +230,11 @@ async def start_task(
         from pfactory.metadata import load_pfactory_metadata
         from pfactory.routing import TFACTORY, routing_target
         from pfactory.taxonomy import classify_requirements
-        from pfactory.tfactory_client import build_handoff_payload, send_handoff
+        from pfactory.tfactory_client import (
+            build_handoff_payload,
+            load_tfactory_block,
+            send_handoff,
+        )
 
         _req_file = spec_dir / "requirements.json"
         if _req_file.exists():
@@ -241,7 +245,12 @@ async def start_task(
                 # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
                 # no-op ("not_configured") and we still record the local marker.
                 _meta = load_pfactory_metadata(spec_dir, _req)
-                _payload = build_handoff_payload(spec_id, _req, _classification, _meta)
+                # RFC-0002: carry the contract's tfactory test profile so TFactory
+                # plans from declared lanes/frameworks/endpoints, not inference.
+                _tf = load_tfactory_block(spec_dir)
+                _payload = build_handoff_payload(
+                    spec_id, _req, _classification, _meta, tfactory=_tf
+                )
                 transport = await send_handoff(_payload)
 
                 marker = spec_dir / "TFACTORY_HANDOFF.md"
