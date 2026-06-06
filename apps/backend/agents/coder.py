@@ -295,6 +295,7 @@ async def run_autonomous_agent(
 
     # Main loop
     iteration = 0
+    self_heal_emitted = False  # one-time #415 artifact/review-tier emission guard
 
     while True:
         iteration += 1
@@ -338,6 +339,30 @@ async def run_autonomous_agent(
                 seed_profile_with_plan_commands(project_dir, plan_file)
             except Exception as exc:  # never let allowlist seeding break a build
                 print(f"plan-commands seed skipped: {exc}")
+
+            # Self-heal integration (#415, default-off via AIFACTORY_SELF_HEAL):
+            # once the plan exists, emit it as a build Artifact and record the
+            # review tier. Both are no-ops unless the flag is enabled; idempotent.
+            if not self_heal_emitted:
+                try:
+                    import json as _json
+
+                    from agents.self_heal_integration import (
+                        assess_review_tier,
+                        emit_plan_artifact,
+                    )
+
+                    _plan = _json.loads(plan_file.read_text())
+                    emit_plan_artifact(spec_dir, _plan, source_spec_dir=source_spec_dir)
+                    _tier = assess_review_tier(_plan, solo=solo)
+                    if _tier is not None:
+                        print(
+                            f"[self-heal] review tier: {_tier.tier} "
+                            f"(pre-merge gate: {_tier.pre_merge_gate})"
+                        )
+                    self_heal_emitted = True
+                except Exception:
+                    self_heal_emitted = True  # best-effort, do not retry every loop
 
         # Get the next subtask to work on
         next_subtask = get_next_subtask(spec_dir)
