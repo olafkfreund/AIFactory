@@ -19,11 +19,18 @@ tests need no network.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
-__all__ = ["tfactory_config", "build_handoff_payload", "send_handoff"]
+__all__ = [
+    "tfactory_config",
+    "build_handoff_payload",
+    "send_handoff",
+    "load_tfactory_block",
+]
 
 # (url, json_payload, headers) -> {"status": int, "ok": bool, "body": str}
 Poster = Callable[[str, dict, dict], Awaitable[dict]]
@@ -41,13 +48,38 @@ def tfactory_config(env: dict | None = None) -> dict:
     }
 
 
+def load_tfactory_block(spec_dir: Path) -> dict:
+    """Read the Task Contract v2 ``tfactory`` block from implementation_plan.json.
+
+    PFactory computes this block (lanes/frameworks/endpoints/coverage/mutation/
+    security/ac_to_code_map) and it is installed verbatim by trusted_plan ingest.
+    Returns ``{}`` when absent (v1 plans) or unreadable — TFactory then falls
+    back to its own inference.
+    """
+    plan_file = Path(spec_dir) / "implementation_plan.json"
+    if not plan_file.exists():
+        return {}
+    try:
+        plan = json.loads(plan_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    block = plan.get("tfactory")
+    return block if isinstance(block, dict) else {}
+
+
 def build_handoff_payload(
     spec_id: str,
     requirements: dict | None,
     classification: Any,
     metadata: dict | None,
+    tfactory: dict | None = None,
 ) -> dict:
-    """Build the JSON payload AIFactory sends to TFactory for a handoff."""
+    """Build the JSON payload AIFactory sends to TFactory for a handoff.
+
+    When the spec carries a Task Contract v2 ``tfactory`` block (RFC-0002), it is
+    included so TFactory plans tests from declared lanes/frameworks/endpoints/
+    scope instead of inferring them. Omitted (empty) for v1 specs.
+    """
     requirements = requirements or {}
     gh = requirements.get("githubIssue") if isinstance(requirements, dict) else None
     labels = gh.get("labels", []) if isinstance(gh, dict) else []
@@ -62,6 +94,7 @@ def build_handoff_payload(
         "types": list(getattr(classification, "types", ()) or ()),
         "priority": getattr(classification, "priority", None),
         "pfactory_meta": metadata or {},
+        "tfactory": tfactory or {},
     }
 
 
