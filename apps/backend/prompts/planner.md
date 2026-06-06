@@ -260,6 +260,14 @@ Do NOT just describe what the file should contain - you must actually call the W
 
 Based on the workflow type and services involved, create the implementation plan.
 
+**`required_commands` (important):** list the base names of every shell command
+the build will need to *verify* itself — test runners, linters, type checkers,
+and the package manager (e.g. `uv`, `pytest`, `ruff`, `mypy`, `npm`, `cargo`).
+These are granted into the security allowlist before the coder/QA agents run, so
+they are not blocked running their own verification. List command NAMES only
+(not full command lines), and only standard build/verify tooling — never shell
+builtins, `sudo`, or network/remote tools.
+
 ### Plan Structure
 
 ```json
@@ -267,6 +275,7 @@ Based on the workflow type and services involved, create the implementation plan
   "feature": "Short descriptive name for this task/feature",
   "workflow_type": "feature|refactor|investigation|migration|simple",
   "workflow_rationale": "Why this workflow type was chosen",
+  "required_commands": ["uv", "pytest", "ruff", "mypy"],
   "phases": [
     {
       "id": "phase-1-backend",

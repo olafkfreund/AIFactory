@@ -335,6 +335,7 @@ def ingest_trusted_plan(
     plan: dict,
     *,
     keyring: dict[str, str] | None = None,
+    project_dir: Path | None = None,
 ) -> TrustedPlanVerification:
     """Verify a handed-off plan and, if trusted-complete, install it for build.
 
@@ -342,6 +343,11 @@ def ingest_trusted_plan(
     state approved (so the build skips the plan-review gate), and records the
     approval on the spec's provenance — letting the executor go straight to the
     wave dispatch and bypass the spec pipeline. On failure nothing is written.
+
+    When ``project_dir`` is given, the plan's declared verification commands are
+    also granted into that project's security allowlist — a signature-verified
+    plan is the strongest trust context for seeding (mirrors the build-start
+    seeding done by the executor).
     """
     result = verify_trusted_plan(plan, keyring=keyring)
     if not result.ok:
@@ -357,6 +363,17 @@ def ingest_trusted_plan(
 
     _record_approval_provenance(spec_dir, result)
     _mark_review_approved(spec_dir, result)
+
+    if project_dir is not None:
+        try:
+            from project.analyzer import seed_profile_with_plan_commands
+
+            seed_profile_with_plan_commands(
+                Path(project_dir), spec_dir / "implementation_plan.json"
+            )
+        except Exception:
+            pass  # seeding is best-effort; never fail a verified ingest on it
+
     return result
 
 
