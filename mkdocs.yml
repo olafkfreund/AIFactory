@@ -38,6 +38,8 @@ nav:
   - Why AIFactory: docs/why-aifactory.md
   - Getting Started: docs/getting-started.md
   - Architecture: docs/architecture/overview.md
+  - Task Lifecycle: docs/task-lifecycle.md
+  - Task Contract v2: docs/task-contract.md
   - API Reference: api.md
   - Dependencies: dependencies.md
   - Roadmap: docs/roadmap.md
