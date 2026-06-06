@@ -141,6 +141,33 @@ def _child_spec_name(spec_name: str, subtask_id: str) -> str:
     return f"{spec_name}__w__{safe_id}"
 
 
+def reset_subtask_status_pending(plan_path: Path, subtask_id: str) -> bool:
+    """Set a subtask's status to PENDING in the canonical plan file.
+
+    Used when a parallel merge-back fails: the coder already marked the subtask
+    completed in its child worktree, but its files never landed on the task
+    branch. Resetting to PENDING makes the serial loop re-implement it (so the
+    files land) instead of skipping it as 'completed' and losing the work.
+
+    Returns True if the subtask was found and reset.
+    """
+    from implementation_plan.enums import SubtaskStatus
+
+    try:
+        canonical = ImplementationPlan.load(plan_path)
+    except Exception:  # noqa: BLE001 - missing/corrupt plan: nothing to reset
+        return False
+    found = False
+    for ph in canonical.phases:
+        for st in ph.subtasks:
+            if st.id == subtask_id:
+                st.status = SubtaskStatus.PENDING
+                found = True
+    if found:
+        canonical.save(plan_path)
+    return found
+
+
 async def run_parallel_coding_phase(
     *,
     plan: ImplementationPlan,
@@ -294,16 +321,43 @@ async def run_parallel_coding_phase(
                 error=str(exc),
             )
 
+    async def _reset_to_pending(subtask_id: str) -> None:
+        """Reset a merge-failed subtask to PENDING in the canonical plan.
+
+        A merge-back conflict orphans the subtask's work: the coder marked it
+        completed inside its child worktree, but its files never landed on the
+        task branch. If we leave it 'completed', the serial fallback skips it and
+        the files are lost (the build then fails at integration). Reset it to
+        PENDING so the serial loop re-implements it on the merged state —
+        correctness over speed for the conflicting subtask. (#376 follow-up.)
+        """
+        async with plan_lock:
+            try:
+                if reset_subtask_status_pending(plan_path, subtask_id):
+                    sync_plan_to_source(spec_dir, source_spec_dir)
+                    logger.info(
+                        "[parallel] reset %s to pending (merge failed → serial redo)",
+                        subtask_id,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[parallel] reset %s to pending failed: %s", subtask_id, exc)
+
     async def merge_subtask(subtask: Any, result: SubtaskResult) -> bool:
         if not result.worktree_name:
+            await _reset_to_pending(subtask.id)
             return False
         try:
-            return await asyncio.to_thread(
+            ok = await asyncio.to_thread(
                 wt_mgr.merge_worktree, result.worktree_name, True, False
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("[parallel] merge %s failed: %s", subtask.id, exc)
-            return False
+            ok = False
+        if not ok:
+            # Merge conflict / failure → the subtask's work is on its child
+            # branch but not the task branch. Reset so serial redoes it.
+            await _reset_to_pending(subtask.id)
+        return ok
 
     async def mark_complete(subtask: Any) -> None:
         # Parent-owned, serialized canonical plan write (concurrency invariant #3).
