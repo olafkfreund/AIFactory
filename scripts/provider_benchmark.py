@@ -79,6 +79,11 @@ CONFIGS: dict[str, dict] = {
 WORKERS = 4
 BUILD_TIMEOUT_S = 60 * 60  # 1h safety cap per build
 
+# A registered project to build in (so tasks show up in the portal). Each config
+# creates a fresh spec here; its build runs in an isolated worktree forked from
+# the clean base branch, so configs stay comparable. Override with --project.
+DEFAULT_PROJECT = "/mnt/data/Source-home/GitHub/aif-bench-gateway"
+
 
 # ── provider availability ──────────────────────────────────────────────────
 
@@ -168,10 +173,12 @@ def _seed_phase_models(spec_dir: Path, phase_models: dict) -> None:
     meta_file.write_text(json.dumps(meta, indent=2))
 
 
-def run_config(name: str) -> dict:
+def run_config(name: str, project_dir: str | None = None) -> dict:
     cfg = CONFIGS[name]
     env = {**os.environ, "PYTHONPATH": str(BACKEND)}
-    project = _fresh_project(name)
+    # Use a registered project (visible in the portal) when given; else a fresh
+    # throwaway /tmp repo.
+    project = Path(project_dir) if project_dir else _fresh_project(name)
     started = time.time()
     result: dict = {
         "config": name, "label": cfg["label"], "project": str(project),
@@ -242,6 +249,9 @@ def main() -> int:
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--project", default=DEFAULT_PROJECT,
+                    help="Registered project dir to build in (shows in portal). "
+                         "Pass '' for a throwaway /tmp repo per run.")
     args = ap.parse_args()
 
     if args.list or (not args.config and not args.all):
@@ -267,7 +277,7 @@ def main() -> int:
                 rows.append({"config": name, "ok": "SKIP", "status": "blocked"})
                 continue
             print(f"\n=== RUN {name}: {CONFIGS[name]['label']} ===")
-            res = run_config(name)
+            res = run_config(name, args.project or None)
             RESULTS.parent.mkdir(parents=True, exist_ok=True)
             with RESULTS.open("a") as f:
                 f.write(json.dumps(res) + "\n")
