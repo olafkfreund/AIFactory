@@ -244,7 +244,9 @@ class TestChangeTracking:
 
         summary = manager.get_change_summary("test-spec")
 
-        assert summary["new_files"] == 1  # new-file.txt
+        # new-file.txt + the .gitignore auto-added to every worktree (artifact
+        # ignore for clean parallel merges).
+        assert summary["new_files"] == 2
         assert summary["modified_files"] == 1  # README.md
 
     def test_get_changed_files(self, temp_git_repo: Path):

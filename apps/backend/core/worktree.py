@@ -25,6 +25,51 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Build/test artifacts that must never be committed — committing them makes
+# concurrent parallel coders collide on merge-back (binary .coverage conflicts,
+# duplicate .pyc). An untracked .gitignore is honored by `git add`, so writing
+# it into every worktree keeps waves merging cleanly.
+_ARTIFACT_GITIGNORE = """\
+# Build / test artifacts (auto-added by AIFactory so parallel waves merge cleanly)
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+dist/
+build/
+node_modules/
+.DS_Store
+"""
+_GITIGNORE_MARKER = "auto-added by AIFactory"
+
+
+def _ensure_artifact_gitignore(worktree_path: Path) -> None:
+    """Make sure a worktree ignores build/test artifacts. Best-effort/no-raise.
+
+    Creates ``.gitignore`` if absent; appends the artifact block if a
+    ``.gitignore`` exists but doesn't already carry it. Idempotent.
+    """
+    try:
+        gi = Path(worktree_path) / ".gitignore"
+        if not gi.exists():
+            gi.write_text(_ARTIFACT_GITIGNORE, encoding="utf-8")
+            return
+        existing = gi.read_text(encoding="utf-8", errors="replace")
+        if _GITIGNORE_MARKER in existing or ".coverage" in existing:
+            return
+        sep = "" if existing.endswith("\n") else "\n"
+        gi.write_text(existing + sep + "\n" + _ARTIFACT_GITIGNORE, encoding="utf-8")
+    except OSError as exc:
+        logger.debug("could not ensure .gitignore in %s: %s", worktree_path, exc)
+
 
 class WorktreeError(Exception):
     """Error during worktree operations."""
@@ -432,6 +477,12 @@ class WorktreeManager:
                 "base_branch": self.base_branch,
             },
         )
+
+        # Ensure build/test artifacts are gitignored so concurrent coders never
+        # commit them. Without this, each parallel coder commits .coverage /
+        # __pycache__ etc., which then COLLIDE on sequential merge-back (binary
+        # conflict → wave aborts to serial). Found live in the 001 benchmark.
+        _ensure_artifact_gitignore(worktree_path)
 
         return WorktreeInfo(
             path=worktree_path,
