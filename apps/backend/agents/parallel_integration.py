@@ -256,6 +256,29 @@ async def run_parallel_coding_phase(
             if context.get("patterns") or context.get("files_to_modify"):
                 prompt += "\n\n" + format_context_for_prompt(context)
 
+            # Parallel isolation directive — this subtask runs CONCURRENTLY with
+            # siblings in its own worktree and is merged back. Editing shared
+            # files (pyproject.toml, app/main.py, package-level __init__.py, lock
+            # files) causes merge-back conflicts that force a slow serial redo.
+            # Keep each subtask to its own declared files so waves merge cleanly.
+            _own = (subtask_dict.get("files_to_create") or []) + (
+                subtask_dict.get("files_to_modify") or []
+            )
+            prompt += (
+                "\n\n## PARALLEL ISOLATION (important)\n"
+                "You are implementing ONE subtask concurrently with sibling subtasks, "
+                "each in an isolated worktree that is merged back. To avoid merge "
+                "conflicts that slow the whole build down:\n"
+                "- ONLY create/edit the files for THIS subtask"
+                + (f": {', '.join(_own)}.\n" if _own else ".\n")
+                + "- Do NOT edit shared files (pyproject.toml / requirements, "
+                "app/main.py or other app entrypoints, package __init__.py exports, "
+                "or lock files). Dependency additions and app wiring are handled by "
+                "the scaffold and the final integration subtask — not here.\n"
+                "- If your module needs a dependency, assume it is already declared; "
+                "do not add it to pyproject.toml yourself."
+            )
+
             # --- memory READ: pre-inject knowledge-graph context (concurrent) ---
             try:
                 mem_context = await get_graphiti_context(
