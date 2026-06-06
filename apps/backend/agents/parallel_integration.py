@@ -52,6 +52,7 @@ from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_agent_session
 from .utils import sync_plan_to_source
+from .wave_log import WaveRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -318,11 +319,25 @@ async def run_parallel_coding_phase(
             except Exception as exc:  # noqa: BLE001
                 logger.error("[parallel] mark_complete %s failed: %s", subtask.id, exc)
 
-    def _on_wave(wave_num: int, wave: list[Any]) -> None:
-        ids = ", ".join(s.id for s in wave)
-        print(f"\n[parallel] Wave {wave_num}: running {len(wave)} subtask(s) — {ids}")
+    # Persist wave lifecycle to parallel_report.json + build-progress.txt so the
+    # wave path is verifiable after the fact, not just on the live console (#393).
+    phase_name = getattr(phase, "name", "") or getattr(phase, "id", "")
+    recorder = WaveRecorder(
+        spec_dir,
+        workers_max=workers,
+        phase_name=str(phase_name),
+        source_spec_dir=source_spec_dir,
+    )
 
-    return await run_parallel_phase(
+    def _on_wave(wave_num: int, wave: list[Any]) -> None:
+        ids = [s.id for s in wave]
+        print(
+            f"\n[parallel] Wave {wave_num}: running {len(wave)} subtask(s) "
+            f"— {', '.join(ids)}"
+        )
+        recorder.record_wave(wave_num, ids)
+
+    result = await run_parallel_phase(
         phase.subtasks,
         workers=workers,
         run_subtask=run_subtask,
@@ -330,3 +345,5 @@ async def run_parallel_coding_phase(
         mark_complete=mark_complete,
         on_wave=_on_wave,
     )
+    recorder.finish(result)
+    return result
