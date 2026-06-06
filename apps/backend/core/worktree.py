@@ -652,7 +652,11 @@ class WorktreeManager:
                 extra={
                     "worktree_path": str(worktree_path),
                     "error": result.stderr,
-                    "message": message,
+                    # NB: key must NOT be "message" — that's a reserved LogRecord
+                    # attribute and logging raises "Attempt to overwrite 'message'
+                    # in LogRecord", which previously propagated out of a parallel
+                    # subtask and aborted the whole wave to serial (#376 regression).
+                    "commit_message": message,
                 },
             )
             return False
