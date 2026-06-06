@@ -59,6 +59,7 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
@@ -78,6 +79,20 @@ logger = logging.getLogger(__name__)
 # Default number of subtasks to run concurrently in a parallel_safe wave (#376)
 # when --parallel is requested without an explicit --workers value.
 DEFAULT_PARALLEL_WORKERS = 3
+
+
+def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> None:
+    """Persist build_report.json at build completion (#397 Phase 1).
+
+    Pure observability: aggregates the wave events (#393) and token attribution
+    (#262) into one profiling artifact. Best-effort — write_build_report swallows
+    I/O errors, and this wrapper guards everything else, so profiling can never
+    affect a build.
+    """
+    try:
+        write_build_report(spec_dir, source_spec_dir=source_spec_dir)
+    except Exception:  # noqa: BLE001 - profiling must never affect a build
+        pass
 
 
 async def run_autonomous_agent(
@@ -216,6 +231,7 @@ async def run_autonomous_agent(
         if is_build_complete(spec_dir):
             print_build_complete_banner(spec_dir)
             status_manager.update(state=BuildState.COMPLETE)
+            _emit_build_report(spec_dir, source_spec_dir)
             return
 
         # Start/continue coding phase in task logger
@@ -820,6 +836,9 @@ async def run_autonomous_agent(
         status_manager.update(state=BuildState.COMPLETE)
     else:
         status_manager.update(state=BuildState.PAUSED)
+
+    # Emit the profiling artifact (#397 Phase 1) — observability only.
+    _emit_build_report(spec_dir, source_spec_dir)
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:
