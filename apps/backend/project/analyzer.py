@@ -26,6 +26,7 @@ from .config_parser import ConfigParser
 from .framework_detector import FrameworkDetector
 from .models import SecurityProfile
 from .stack_detector import StackDetector
+from .stack_inference import infer_stack_from_spec, merge_stack
 from .structure_analyzer import StructureAnalyzer
 
 
@@ -241,6 +242,12 @@ class ProjectAnalyzer:
         self._detect_frameworks()
         self._detect_structure()
 
+        # Seed from the spec's declared stack. For from-scratch / empty repos
+        # on-disk detection finds nothing, so the spec text is the only signal
+        # for which language tooling the coder will need (issue #391). Union
+        # only — never removes anything detection found.
+        self._seed_stack_from_spec()
+
         # Build stack commands from detected technologies
         self._build_stack_commands()
 
@@ -273,6 +280,18 @@ class ProjectAnalyzer:
         self.profile.custom_scripts = scripts
         self.profile.script_commands = script_commands
         self.profile.custom_commands = custom_commands
+
+    def _seed_stack_from_spec(self) -> None:
+        """Augment the detected stack with the spec's declared technologies.
+
+        Solves the empty-repo chicken-and-egg: a from-scratch FastAPI/Python
+        build has no .py files to detect yet, so without this seed python/pip/
+        pytest never reach the allowlist and the build stalls (issue #391).
+        """
+        if not self.spec_dir:
+            return
+        inferred = infer_stack_from_spec(self.spec_dir)
+        merge_stack(self.profile.detected_stack, inferred)
 
     # Public methods for backward compatibility with tests
     def _detect_languages(self) -> None:
