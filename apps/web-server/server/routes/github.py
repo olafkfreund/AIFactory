@@ -2128,6 +2128,33 @@ async def create_github_release(projectId: str, request: CreateReleaseRequest):
     return {"success": True, "data": {"url": release_url}}
 
 
+@router.get("/models")
+async def list_github_models():
+    """Return the GitHub Models catalog.
+
+    Calls the public catalog endpoint (no auth required for the listing).
+    The caller needs ``GITHUB_TOKEN`` with ``models:read`` only when making
+    inference requests, not for fetching the catalog.
+
+    Returns the raw catalog JSON from models.github.ai.  The frontend uses
+    this to populate the 'GitHub Models' group in the provider dropdown.
+    """
+    result = run_gh_command(["api", "https://models.github.ai/catalog/models"])
+    if not result["success"]:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": result.get("error", "Failed to fetch GitHub Models catalog")},
+        )
+    try:
+        catalog = json.loads(result["output"])
+        return {"success": True, "data": catalog}
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": "Invalid JSON from GitHub Models catalog"},
+        )
+
+
 @router.get("/fork-info")
 async def get_fork_info(project_path: str = Query(..., description="Absolute path to the project")):
     """Detect if repo is a fork and return origin + upstream info."""
