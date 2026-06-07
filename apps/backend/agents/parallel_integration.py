@@ -46,7 +46,7 @@ from prompt_generator import (
     load_subtask_context,
 )
 from providers.factory import get_provider
-from task_logger import LogPhase
+from task_logger import LogPhase, TaskLogger
 
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
@@ -318,14 +318,26 @@ async def run_parallel_coding_phase(
                     client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING
                 )
 
+            session_ok = status != "error"
+
+            # Mirror session errors to the canonical spec_dir task log.
+            # Child-worktree logs (child_spec_dir) are never synced back, so
+            # the portal sees zero entries when a non-Claude provider fails.
+            # TaskLogger.log() is synchronous — safe to call from concurrent
+            # asyncio tasks (no interleaving at await points).
+            if not session_ok:
+                _err_msg = (_err or {}).get("message") or "provider session failed"
+                TaskLogger(spec_dir, emit_markers=False).log_error(
+                    f"[parallel] subtask {subtask.id}: {_err_msg}",
+                    LogPhase.CODING,
+                )
+
             # --- commit the subtask's work in its own worktree ---
             await asyncio.to_thread(
                 wt_mgr.commit_in_worktree,
                 child_name,
                 f"aifactory: {subtask.id} (parallel wave)",
             )
-
-            session_ok = status != "error"
 
             # --- memory WRITE: extract insights (concurrent) then save (serialized) ---
             await _capture_memory(
@@ -345,7 +357,7 @@ async def run_parallel_coding_phase(
                     subtask_id=subtask.id,
                     success=False,
                     worktree_name=child_name,
-                    error="agent session error",
+                    error=(_err or {}).get("message") or "agent session error",
                 )
             return SubtaskResult(
                 subtask_id=subtask.id, success=True, worktree_name=child_name
