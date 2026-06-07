@@ -134,10 +134,10 @@ jobs:
         if: steps.detect.outputs.should_release == 'true'
         uses: docker/setup-qemu-action@v3
         with:
-          # arm64 temporarily dropped: the frontend `vite build` fails under
-          # QEMU-emulated arm64 (native Rollup/lightningcss). Restore via a
-          # native arm64 runner — see tracking issue.
-          platforms: linux/amd64
+          # arm64 restored: the frontend build stage now uses --platform=$BUILDPLATFORM
+          # so vite/rollup/lightningcss run on the native amd64 runner instead of
+          # under QEMU emulation (fix for issue #307).
+          platforms: linux/amd64,linux/arm64
 
       - name: Set up Docker Buildx
         if: steps.detect.outputs.should_release == 'true'
@@ -151,14 +151,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push bank-pilot image (WITH_RMUX=false, amd64)
+      - name: Build + push bank-pilot image (WITH_RMUX=false, amd64+arm64)
         if: steps.detect.outputs.should_release == 'true'
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}
