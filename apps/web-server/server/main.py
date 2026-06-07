@@ -35,6 +35,7 @@ from .routes import (
     email,
     execution,
     files,
+    copilot_mcp,
     git,
     git_credentials,
     github,
@@ -307,6 +308,9 @@ def create_app() -> FastAPI:
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
     app.include_router(mcp.router)
+    # Copilot-facing MCP server at /mcp (JSON-RPC 2.0, POST-only).
+    # Requires AIFACTORY_MCP_SECRET in env; accepts all requests in dev mode.
+    app.include_router(copilot_mcp.router)
 
     # Remote HTTP+SSE MCP server (Epic #50 / Issue #83) — opt-in via
     # AIFACTORY_MCP_REMOTE_ENABLED=true.  Exposes the AIFactory task
