@@ -93,8 +93,8 @@ The single place execution options live (`apps/backend/phase_config.py`
 | Field | Type | Meaning |
 |---|---|---|
 | `isAutoProfile` | bool | Use per-phase model/thinking maps |
-| `phaseModels` | {phase: model} | Per-phase model override (wins when auto-profile) |
-| `phaseThinking` | {phase: level} | Per-phase thinking level |
+| `phaseModels` | `{phase: model}` | Per-phase model override (wins when auto-profile) |
+| `phaseThinking` | `{phase: level}` | Per-phase thinking level |
 | `model` | str | Single model override (non-auto) |
 | `thinkingLevel` | str | Single thinking level |
 | `fastMode` | bool | Faster spec assessment |
