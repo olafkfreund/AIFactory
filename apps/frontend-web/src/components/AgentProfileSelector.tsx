@@ -14,7 +14,9 @@ import { Label } from './ui/label';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue
 } from './ui/select';
@@ -26,7 +28,8 @@ import {
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   fetchOllamaModels,
-  fetchOpenAIEndpointModels
+  fetchOpenAIEndpointModels,
+  fetchGitHubModels
 } from '../shared/constants';
 import type { ModelType, ThinkingLevel } from '../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../shared/types/settings';
@@ -90,10 +93,12 @@ export function AgentProfileSelector({
   const [showPhaseDetails, setShowPhaseDetails] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<{ value: string; label: string }[]>([]);
   const [openaiEndpointModels, setOpenaiEndpointModels] = useState<{ value: string; label: string }[]>([]);
+  const [githubModels, setGithubModels] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
     fetchOllamaModels().then(setOllamaModels);
     fetchOpenAIEndpointModels().then(setOpenaiEndpointModels);
+    fetchGitHubModels().then(setGithubModels);
   }, []);
 
   const isCustom = profileId === 'custom';
@@ -267,7 +272,12 @@ export function AgentProfileSelector({
             <div className="px-4 pb-4 -mt-1">
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {(Object.keys(PHASE_LABEL_KEYS) as Array<keyof PhaseModelConfig>).map((phase) => {
-                  const modelLabel = (ALL_AVAILABLE_MODELS.find(m => m.value === currentPhaseModels[phase]) || ollamaModels.find(m => m.value === currentPhaseModels[phase]) || openaiEndpointModels.find(m => m.value === currentPhaseModels[phase]))?.label?.replace('Claude ', '') || currentPhaseModels[phase];
+                  const modelLabel = (
+                    ALL_AVAILABLE_MODELS.find(m => m.value === currentPhaseModels[phase]) ||
+                    ollamaModels.find(m => m.value === currentPhaseModels[phase]) ||
+                    openaiEndpointModels.find(m => m.value === currentPhaseModels[phase]) ||
+                    githubModels.find(m => m.value === currentPhaseModels[phase])
+                  )?.label?.replace('Claude ', '') || currentPhaseModels[phase];
                   return (
                     <div key={phase} className="flex items-center justify-between rounded bg-background/50 px-2 py-1">
                       <span className="text-muted-foreground">{t(PHASE_LABEL_KEYS[phase].label)}:</span>
@@ -304,11 +314,44 @@ export function AgentProfileSelector({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {[...ALL_AVAILABLE_MODELS, ...ollamaModels, ...openaiEndpointModels].map((m) => (
-                            <SelectItem key={m.value} value={m.value}>
-                              {m.label}
-                            </SelectItem>
-                          ))}
+                          <SelectGroup>
+                            <SelectLabel>Claude &amp; Built-in</SelectLabel>
+                            {ALL_AVAILABLE_MODELS.map((m) => (
+                              <SelectItem key={m.value} value={m.value}>
+                                {m.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                          {githubModels.length > 0 && (
+                            <SelectGroup>
+                              <SelectLabel>GitHub Models</SelectLabel>
+                              {githubModels.map((m) => (
+                                <SelectItem key={m.value} value={m.value}>
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          )}
+                          {ollamaModels.length > 0 && (
+                            <SelectGroup>
+                              <SelectLabel>Ollama</SelectLabel>
+                              {ollamaModels.map((m) => (
+                                <SelectItem key={m.value} value={m.value}>
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          )}
+                          {openaiEndpointModels.length > 0 && (
+                            <SelectGroup>
+                              <SelectLabel>OpenAI-compatible</SelectLabel>
+                              {openaiEndpointModels.map((m) => (
+                                <SelectItem key={m.value} value={m.value}>
+                                  {m.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
@@ -356,11 +399,44 @@ export function AgentProfileSelector({
                 <SelectValue placeholder={t('agentProfile.selectModel')} />
               </SelectTrigger>
               <SelectContent>
-                {AVAILABLE_MODELS.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
+                <SelectGroup>
+                  <SelectLabel>Claude</SelectLabel>
+                  {AVAILABLE_MODELS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {githubModels.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>GitHub Models</SelectLabel>
+                    {githubModels.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {ollamaModels.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>Ollama</SelectLabel>
+                    {ollamaModels.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
+                {openaiEndpointModels.length > 0 && (
+                  <SelectGroup>
+                    <SelectLabel>OpenAI-compatible</SelectLabel>
+                    {openaiEndpointModels.map((m) => (
+                      <SelectItem key={m.value} value={m.value}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
               </SelectContent>
             </Select>
           </div>
