@@ -359,14 +359,21 @@ def format_context_for_prompt(context: dict) -> str:
     """
     sections = []
 
+    # #369: file content may come from an attacker PR; a closing ``` inside it
+    # would break out of the code fence so following text reads as prompt
+    # instructions. Defang the fence with zero-width spaces so it can't close
+    # early — the content still reads correctly to the model.
+    def _fence_safe(text: str) -> str:
+        return (text or "").replace("```", "`​`​`")
+
     if context.get("patterns"):
         sections.append("## Reference Files (Patterns to Follow)\n")
         for path, content in context["patterns"].items():
-            sections.append(f"### `{path}`\n```\n{content}\n```\n")
+            sections.append(f"### `{path}`\n```\n{_fence_safe(content)}\n```\n")
 
     if context.get("files_to_modify"):
         sections.append("## Current File Contents (To Modify)\n")
         for path, content in context["files_to_modify"].items():
-            sections.append(f"### `{path}`\n```\n{content}\n```\n")
+            sections.append(f"### `{path}`\n```\n{_fence_safe(content)}\n```\n")
 
     return "\n".join(sections)

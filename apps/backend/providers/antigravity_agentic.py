@@ -221,9 +221,16 @@ class AntigravityAgenticProvider(BaseLLMProvider):
             len(stderr_text),
         )
 
-        if proc.returncode != 0 and not stdout_text:
-            error_detail = stderr_text or f"exit code {proc.returncode}"
-            raise RuntimeError(f"Antigravity CLI (yolo) error: {error_detail}")
+        if proc.returncode != 0:
+            # Raise on any non-zero exit, even if the CLI produced some stdout.
+            # Previously we only raised when stdout was empty, so a CLI that
+            # failed but printed a partial response would silently continue —
+            # no files would be written, the subtask would be marked failed
+            # with no logged error, and the session appeared to succeed.
+            error_detail = stderr_text or stdout_text or f"exit code {proc.returncode}"
+            raise RuntimeError(
+                f"Antigravity CLI (yolo) exited {proc.returncode}: {error_detail[:500]}"
+            )
 
         if stderr_text:
             logger.warning(

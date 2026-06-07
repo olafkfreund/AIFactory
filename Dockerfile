@@ -9,10 +9,12 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build the React frontend
 # ---------------------------------------------------------------------------
-# Digest is the OCI image-index (manifest-list) sha256 so multi-arch buildx
-# (P0.6) can still resolve the right platform manifest. The `:latest-dev`
-# tag is kept alongside the digest as a human hint and is ignored by docker
-# when a digest is present. Updates land via Renovate PRs (renovate.json).
+# Digest is the OCI image-index (manifest-list) sha256 so buildx can resolve
+# the right platform manifest. The `:latest-dev` tag is kept alongside the
+# digest as a human hint and is ignored by docker when a digest is present.
+# Updates land via Renovate PRs (renovate.json).
+# Builds are amd64-only; arm64 support removed (not needed).
+# The Rollup optional-dep workaround below is kept for safety.
 FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
@@ -69,6 +71,13 @@ RUN apk add --no-cache \
         nodejs \
         npm \
         wget
+
+# Security: the pinned base snapshot ships binutils 2.46-r1, which carries
+# CVE-2026-6846 (heap-buffer-overflow in XCOFF processing → RCE/DoS; fixed in
+# 2.46-r2). Pull the fixed version from the live Wolfi APK repo so the Trivy
+# P0 supply-chain gate stays clean. Remove once the base digest is repinned to
+# a snapshot that already includes the fix.
+RUN apk add --no-cache 'binutils>=2.46-r2'
 
 # Epic #44 R3 — optionally bundle the rmux binary.
 #

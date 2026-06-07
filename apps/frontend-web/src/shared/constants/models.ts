@@ -11,7 +11,7 @@ import { apiRequest } from '../../lib/api-client';
 // ============================================
 
 export const AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.7' },
+  { value: 'opus', label: 'Claude Opus 4.8' },
   { value: 'sonnet', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku 4.5' }
 ] as const;
@@ -20,7 +20,7 @@ export const AVAILABLE_MODELS = [
 // The provider is inferred from the model ID on the backend, so no separate
 // provider setting is needed per phase.
 export const ALL_AVAILABLE_MODELS = [
-  { value: 'opus', label: 'Claude Opus 4.7' },
+  { value: 'opus', label: 'Claude Opus 4.8' },
   { value: 'sonnet', label: 'Claude Sonnet 4.6' },
   { value: 'haiku', label: 'Claude Haiku 4.5' },
   { value: 'gpt-5.5', label: 'GPT-5.5' },
@@ -97,6 +97,35 @@ export async function fetchOpenAIEndpointModels(): Promise<
 // Backward compatibility alias
 export const fetchOllamaQAModels = fetchOllamaModels;
 
+// Fetch the GitHub Models catalog and surface each model as a picker entry.
+// The model value uses the `github-models/<publisher>/<name>` prefix so the
+// backend's phase_config.infer_provider_from_model() routes it correctly.
+// Falls back to an empty list when the gh CLI is absent or unauthenticated.
+interface GitHubModelCatalogEntry {
+  id: string;
+  name?: string;
+  publisher?: string;
+  friendly_name?: string;
+  display_name?: string;
+}
+
+export async function fetchGitHubModels(): Promise<{ value: string; label: string }[]> {
+  try {
+    const result = await apiRequest<GitHubModelCatalogEntry[]>('/github/models');
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.map((m) => {
+        const display = m.friendly_name || m.display_name || m.name || m.id;
+        const prefix = m.publisher ? `${m.publisher}/` : '';
+        return {
+          value: `github-models/${m.id}`,
+          label: `${prefix}${display}`,
+        };
+      });
+    }
+  } catch { /* gh CLI not available or not authenticated — skip */ }
+  return [];
+}
+
 // Dynamically fetch models from any OpenAI-compatible server (LM Studio, vLLM, LocalAI, etc.)
 export async function fetchOpenAICompatibleModels(baseUrl?: string): Promise<{ value: string; label: string }[]> {
   try {
@@ -151,7 +180,7 @@ export const DEFAULT_PHASE_MODELS: PhaseModelConfig = {
   planning: 'opus',   // Complex architecture decisions benefit from highest-capability model
   coding: 'opus',     // Highest quality implementation
   qa: 'opus',         // Thorough QA review
-  qa_fixer: 'sonnet'  // Efficient QA fixing
+  qa_fixer: 'opus'    // Opus 4.8 across all phases (Auto = highest-capability everywhere)
 };
 
 // Default phase thinking configuration for Auto profile
@@ -256,7 +285,7 @@ import type { InsightsProvider } from '../types/insights';
 
 export const PROVIDER_MODELS: Record<string, { id: string; label: string }[]> = {
   claude: [
-    { id: 'opus', label: 'Claude Opus 4.7' },
+    { id: 'opus', label: 'Claude Opus 4.8' },
     { id: 'sonnet', label: 'Claude Sonnet 4.6' },
     { id: 'haiku', label: 'Claude Haiku 4.5' },
   ],

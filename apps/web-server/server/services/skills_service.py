@@ -8,18 +8,24 @@ Skills path resolution (first match wins):
 1. APP_SKILLS_PATH env var (explicit override)
 2. <project-root>/skills/  (local copy, works on host and in Docker)
 
-Uses a pickle cache (~/.aifactory/skills-cache.pkl) to avoid re-scanning
+Uses a JSON cache (~/.aifactory/skills-cache.json) to avoid re-scanning
 6,000+ files on every startup.  The cache is invalidated when the skills
 directory's modification time changes.
+
+The cache is JSON, not pickle (#324 L1): a server-generated cache file is an
+RCE primitive if its path ever becomes writable or traversable, because the
+version/path guards only run *after* ``pickle.load`` has already executed
+arbitrary reduce code.  JSON loads inert data; we reconstruct the dataclasses
+explicitly.
 """
 
+import json
 import logging
 import os
-import pickle
 import re
 import string
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -50,10 +56,11 @@ def _resolve_skills_path() -> Path:
 DEFAULT_SKILLS_PATH = _resolve_skills_path()
 
 # Cache location
-DEFAULT_CACHE_PATH = Path.home() / ".aifactory" / "skills-cache.pkl"
+DEFAULT_CACHE_PATH = Path.home() / ".aifactory" / "skills-cache.json"
 
-# Cache format version — bump when _IndexEntry or SkillSummary fields change
-_CACHE_VERSION = 1
+# Cache format version — bump when _IndexEntry or SkillSummary fields change.
+# Bumped to 2 for the pickle->JSON migration (#324 L1).
+_CACHE_VERSION = 2
 
 # Stop words excluded from keyword search / suggestion scoring
 STOP_WORDS = frozenset({
@@ -139,6 +146,23 @@ class SkillSuggestion:
     reason: str             # human-readable match explanation
 
 
+def suggestion_to_selected(suggestion: "SkillSuggestion") -> dict:
+    """Map a SkillSuggestion to the ``selectedSkills`` shape the build consumes.
+
+    The build's ``_write_skill_context`` reads ``{id, name, category, source}``;
+    relevance/reason are carried along for UI/audit (ignored by the build).
+    """
+    s = suggestion.skill
+    return {
+        "id": s.id,
+        "name": s.name,
+        "category": s.category,
+        "source": s.source,
+        "relevance": suggestion.relevance_score,
+        "reason": suggestion.reason,
+    }
+
+
 # Internal index entry (not exposed to callers)
 @dataclass
 class _IndexEntry:
@@ -214,7 +238,7 @@ class SkillsService:
         return newest
 
     def _load_cache(self) -> bool:
-        """Try to load the index from the pickle cache. Returns True on success."""
+        """Try to load the index from the JSON cache. Returns True on success."""
         try:
             if not self._cache_path.exists():
                 logger.info("No skills cache found — will scan directory")
@@ -232,8 +256,8 @@ class SkillsService:
                 return False
 
             t0 = time.monotonic()
-            with open(self._cache_path, "rb") as f:
-                data = pickle.load(f)
+            with open(self._cache_path, encoding="utf-8") as f:
+                data = json.load(f)
 
             if not isinstance(data, dict) or data.get("version") != _CACHE_VERSION:
                 logger.info("Skills cache version mismatch — rebuilding")
@@ -243,7 +267,7 @@ class SkillsService:
                 logger.info("Skills cache base path mismatch — rebuilding")
                 return False
 
-            self._index = data["index"]
+            self._index = self._index_from_json(data["index"])
             self._built = True
             total = sum(len(entries) for entries in self._index.values())
             elapsed = time.monotonic() - t0
@@ -260,19 +284,59 @@ class SkillsService:
             return False
 
     def _save_cache(self) -> None:
-        """Persist the current index to the pickle cache."""
+        """Persist the current index to the JSON cache."""
         try:
             self._cache_path.parent.mkdir(parents=True, exist_ok=True)
             data = {
                 "version": _CACHE_VERSION,
                 "base_path": str(self._base_path),
-                "index": self._index,
+                "index": self._index_to_json(),
             }
-            with open(self._cache_path, "wb") as f:
-                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            # 0600 — the cache is read back at startup; keep it owner-only.
+            with open(self._cache_path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            try:
+                self._cache_path.chmod(0o600)
+            except OSError:
+                pass
             logger.info("Skills cache saved to %s", self._cache_path)
         except Exception as exc:
             logger.warning("Failed to save skills cache: %s", exc)
+
+    def _index_to_json(self) -> dict[str, list[dict]]:
+        """Serialize the in-memory index to JSON-safe primitives.
+
+        ``frozenset`` token fields become sorted lists; ``Path`` becomes a
+        string; ``SkillSummary`` becomes a plain dict.
+        """
+        out: dict[str, list[dict]] = {}
+        for category, entries in self._index.items():
+            out[category] = [
+                {
+                    "summary": asdict(e.summary),
+                    "file_path": str(e.file_path),
+                    "name_tokens": sorted(e.name_tokens),
+                    "description_tokens": sorted(e.description_tokens),
+                }
+                for e in entries
+            ]
+        return out
+
+    @staticmethod
+    def _index_from_json(raw: dict) -> dict[str, list["_IndexEntry"]]:
+        """Reconstruct the index dataclasses from JSON primitives."""
+        index: dict[str, list[_IndexEntry]] = {}
+        for category, entries in raw.items():
+            index[category] = [
+                _IndexEntry(
+                    summary=SkillSummary(**e["summary"]),
+                    file_path=Path(e["file_path"]),
+                    name_tokens=frozenset(e["name_tokens"]),
+                    description_tokens=frozenset(e["description_tokens"]),
+                )
+                for e in entries
+            ]
+        return index
 
     def _scan_and_build(self) -> None:
         """Full scan of the skills directory (the slow path)."""
@@ -559,6 +623,22 @@ class SkillsService:
             )
 
         return suggestions
+
+    def suggest_selected_skills(
+        self, task_description: str, max_results: int = 5
+    ) -> list[dict]:
+        """Auto-propose skills as ``selectedSkills``-shaped dicts (#394).
+
+        The hybrid skill flow's *propose* step: the deterministic matcher ranks
+        skills for a task, mapped to the ``{id, name, category, source}`` shape
+        the build's ``_write_skill_context`` consumes. Written to task_metadata
+        as ``suggestedSkills``; the planner may refine them into ``selectedSkills``
+        (confirm), and the build falls back to the proposals if it doesn't.
+        """
+        return [
+            suggestion_to_selected(s)
+            for s in self.suggest_skills(task_description, max_results=max_results)
+        ]
 
     # ------------------------------------------------------------------
     # Internal helpers

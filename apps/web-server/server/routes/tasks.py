@@ -12,11 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..database.engine import get_db
 from ..paths import get_data_dir
 from ..services import task_control
+from .project_authz import accessible_org_ids, require_task_access
 from .projects import get_projects_file, load_projects
 
 router = APIRouter()
@@ -34,6 +37,9 @@ TaskStatus = Literal[
     "ai_review",
     "human_review",
     "done",
+    # Copilot cloud-agent delegation statuses (set by copilot_dispatch_service)
+    "copilot_running",
+    "copilot_pr_opened",
 ]
 
 # Backend statuses that get mapped to frontend statuses:
@@ -77,15 +83,17 @@ class TaskCreate(TaskBase):
     """Model for creating a new task."""
 
     project_id: str = Field(..., description="ID of the project this task belongs to")
-    metadata: Optional["TaskMetadataUpdate"] = Field(None, description="Optional task metadata")
+    metadata: Optional["TaskMetadataUpdate"] = Field(
+        None, description="Optional task metadata"
+    )
 
 
 class SelectedSkill(BaseModel):
     """A skill selected to be applied to a task."""
 
-    id: str           # '{category}/{skill_name}'
-    name: str         # human-readable display name
-    category: str     # parent category
+    id: str  # '{category}/{skill_name}'
+    name: str  # human-readable display name
+    category: str  # parent category
     source: str | None = None  # optional source URL from skill metadata
 
 
@@ -130,10 +138,14 @@ class Task(TaskBase):
     subtasks: list[Subtask] = Field(default_factory=list)
     created_at: str = Field(..., description="ISO timestamp")
     updated_at: str = Field(..., description="ISO timestamp")
-    worktree_path: str | None = Field(None, description="Path to git worktree if active")
+    worktree_path: str | None = Field(
+        None, description="Path to git worktree if active"
+    )
     branch_name: str | None = Field(None, description="Git branch name")
     metadata: TaskMetadata | None = Field(None, description="Task metadata")
-    review_reason: str | None = Field(None, description="Reason for human review (e.g., 'plan_review')")
+    review_reason: str | None = Field(
+        None, description="Reason for human review (e.g., 'plan_review')"
+    )
 
 
 class TaskList(BaseModel):
@@ -331,6 +343,7 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
         # Only sync if worktree has more progress (more completed subtasks)
         if worktree_completed > main_completed:
             import logging
+
             logger = logging.getLogger(__name__)
             logger.info(
                 f"[WorktreeSync] Syncing plan for {spec_id}: "
@@ -346,7 +359,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
         return False
     except (json.JSONDecodeError, OSError) as e:
         import logging
-        logging.getLogger(__name__).warning(f"[WorktreeSync] Failed to sync {spec_id}: {e}")
+
+        logging.getLogger(__name__).warning(
+            f"[WorktreeSync] Failed to sync {spec_id}: {e}"
+        )
         return False
 
 
@@ -477,14 +493,18 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                 else:
                     # Check validation phase completed (strongest completion signal)
                     validation_phase = phases.get("validation", {})
-                    if validation_phase.get("status") == "completed" and validation_phase.get("entries"):
+                    if validation_phase.get(
+                        "status"
+                    ) == "completed" and validation_phase.get("entries"):
                         metadata["phase"] = "validation"
                         metadata["status"] = "human_review"
                         metadata["reviewReason"] = "completed"
                     else:
                         # Fall back to coding phase completed
                         coding_phase = phases.get("coding", {})
-                        if coding_phase.get("status") == "completed" and coding_phase.get("entries"):
+                        if coding_phase.get(
+                            "status"
+                        ) == "completed" and coding_phase.get("entries"):
                             metadata["phase"] = "coding"
                             metadata["status"] = "human_review"
                             metadata["reviewReason"] = "completed"
@@ -529,7 +549,10 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             # Check for qa_signoff.status == "approved" which means task completed QA
             # This should show as human_review for final merge approval
             qa_signoff = plan.get("qa_signoff") or {}
-            if qa_signoff.get("status") == "approved" and metadata["status"] == "backlog":
+            if (
+                qa_signoff.get("status") == "approved"
+                and metadata["status"] == "backlog"
+            ):
                 metadata["status"] = "human_review"
                 metadata["reviewReason"] = "completed"
 
@@ -612,16 +635,21 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             # Simple string verification becomes a command
                             verification = SubtaskVerification(type="command", run=v)
                     elif st.get("verification_method"):
-                        verification = SubtaskVerification(type="command", run=st["verification_method"])
+                        verification = SubtaskVerification(
+                            type="command", run=st["verification_method"]
+                        )
 
-                    metadata["subtasks"].append(Subtask(
-                        id=st.get("id", str(i)),
-                        title=st.get("title") or st.get("description", f"Subtask {i+1}")[:80],
-                        description=st.get("description") or st.get("notes"),
-                        status=st.get("status", "pending"),
-                        files=files,
-                        verification=verification,
-                    ))
+                    metadata["subtasks"].append(
+                        Subtask(
+                            id=st.get("id", str(i)),
+                            title=st.get("title")
+                            or st.get("description", f"Subtask {i + 1}")[:80],
+                            description=st.get("description") or st.get("notes"),
+                            status=st.get("status", "pending"),
+                            files=files,
+                            verification=verification,
+                        )
+                    )
         except (json.JSONDecodeError, KeyError):
             pass
 
@@ -660,6 +688,26 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             # All subtasks completed - needs review
             metadata["status"] = "human_review"
             metadata["reviewReason"] = "completed"
+
+    # Correctness guard: a phase can log completed even when subtasks failed
+    # or the build halted early. Never report a clean completed review state
+    # then -- surface that it needs attention so the portal never shows a
+    # halted/failed build as Completed. User-set done/completed wins below.
+    if explicit_status not in ("done", "completed"):
+        _subs = metadata.get("subtasks") or []
+        if _subs:
+            _n_failed = sum(
+                1 for st in _subs if getattr(st, "status", None) == "failed"
+            )
+            _n_done = sum(
+                1 for st in _subs if getattr(st, "status", None) == "completed"
+            )
+            if _n_failed:
+                metadata["status"] = "human_review"
+                metadata["reviewReason"] = "errors"
+            elif metadata.get("reviewReason") == "completed" and _n_done < len(_subs):
+                metadata["status"] = "human_review"
+                metadata["reviewReason"] = "incomplete"
 
     # Final safety: "done"/"completed" always wins over all auto-detection
     # This guards against task_logs or subtask detection overriding user intent
@@ -769,7 +817,15 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
     """
     # Also check worktree for task_logs.json
     project_path = spec_dir.parent.parent  # .aifactory/specs -> project root
-    worktree_spec_dir = project_path / "worktrees" / "tasks" / spec_dir.name / ".aifactory" / "specs" / spec_dir.name
+    worktree_spec_dir = (
+        project_path
+        / "worktrees"
+        / "tasks"
+        / spec_dir.name
+        / ".aifactory"
+        / "specs"
+        / spec_dir.name
+    )
 
     task_logs_file = None
     for check_dir in [worktree_spec_dir, spec_dir]:
@@ -913,7 +969,9 @@ def task_to_dict(task: Task) -> dict:
                         if "archivedAt" in plan:
                             archive_metadata["archivedAt"] = plan["archivedAt"]
                         if "archivedInVersion" in plan:
-                            archive_metadata["archivedInVersion"] = plan["archivedInVersion"]
+                            archive_metadata["archivedInVersion"] = plan[
+                                "archivedInVersion"
+                            ]
                     except json.JSONDecodeError:
                         pass
 
@@ -936,7 +994,9 @@ def task_to_dict(task: Task) -> dict:
                     "type": s.verification.type,
                     "run": s.verification.run,
                     "scenario": s.verification.scenario,
-                } if s.verification else None,
+                }
+                if s.verification
+                else None,
             }
             for s in task.subtasks
         ],
@@ -953,7 +1013,9 @@ def task_to_dict(task: Task) -> dict:
         result["executionProgress"] = execution_progress
 
     # Include task metadata (settings from requirements.json)
-    metadata_payload = task.metadata.model_dump(exclude_none=True) if task.metadata else {}
+    metadata_payload = (
+        task.metadata.model_dump(exclude_none=True) if task.metadata else {}
+    )
     if archive_metadata:
         metadata_payload.update(archive_metadata)  # Add archive info if any
     if metadata_payload:
@@ -994,8 +1056,14 @@ def _pfactory_priority_rank(spec_dir: Path) -> int:
 async def list_tasks(
     project_id: str | None = Query(None, description="Filter by project ID"),
     status: TaskStatus | None = Query(None, description="Filter by status"),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
 ):
-    """List all tasks, optionally filtered by project or status."""
+    """List tasks visible to the caller, optionally filtered by project/status.
+
+    Tenant isolation (#319): a human user only sees tasks in projects owned by
+    an org they belong to; the service principal (local UI / siblings) sees all.
+    """
     projects = load_projects()
 
     # Filter projects
@@ -1008,6 +1076,17 @@ async def list_tasks(
         project_ids = [project_id]
     else:
         project_ids = list(projects.keys())
+
+    # Restrict to projects in the caller's orgs (skipped for direct callers /
+    # service principal, where accessible_org_ids returns None).
+    if request is not None and isinstance(db, AsyncSession):
+        allowed = await accessible_org_ids(request, db)
+        if allowed is not None:
+            project_ids = [
+                pid
+                for pid in project_ids
+                if projects.get(pid, {}).get("org_id") in allowed
+            ]
 
     # Collect tasks from all projects
     all_tasks = []
@@ -1031,7 +1110,9 @@ async def list_tasks(
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str):
+async def get_task(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Get a specific task by ID.
 
     Returns full task details including execution progress and metadata
@@ -1120,10 +1201,24 @@ Created via Magestic AI Web UI
 
             # Sync task_metadata.json for phase_config.py to read model/thinking settings
             # Also include selectedSkills so agent_service.py can inject skill context
-            model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "selectedSkills"]
-            task_metadata = {field: metadata_dict[field] for field in model_fields if field in metadata_dict}
+            model_fields = [
+                "model",
+                "thinkingLevel",
+                "isAutoProfile",
+                "phaseModels",
+                "phaseThinking",
+                "mode",
+                "selectedSkills",
+            ]
+            task_metadata = {
+                field: metadata_dict[field]
+                for field in model_fields
+                if field in metadata_dict
+            }
             if task_metadata:
-                (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata, indent=2))
+                (spec_dir / "task_metadata.json").write_text(
+                    json.dumps(task_metadata, indent=2)
+                )
 
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
@@ -1141,7 +1236,9 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
     Raises HTTPException on invalid input or missing resources.
     """
     if ":" not in task_id:
-        raise HTTPException(status_code=400, detail="Invalid task_id format (expected projectId:specId)")
+        raise HTTPException(
+            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
+        )
 
     project_id, spec_id = task_id.split(":", 1)
     projects = load_projects()
@@ -1159,7 +1256,9 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
 
 
 @router.get("/{task_id}/token-usage")
-async def get_task_token_usage(task_id: str):
+async def get_task_token_usage(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Per-category token / cost breakdown for a task's session(s) (#262).
 
     Returns the structured breakdown produced by the backend token-attribution
@@ -1266,7 +1365,9 @@ def _sample_process_resources(pid: int) -> dict:
         # System RAM percentage from the aggregate RSS.
         try:
             total_ram = psutil.virtual_memory().total
-            memory_percent = (memory_mb * 1024 * 1024 / total_ram) * 100 if total_ram else 0.0
+            memory_percent = (
+                (memory_mb * 1024 * 1024 / total_ram) * 100 if total_ram else 0.0
+            )
         except Exception:
             memory_percent = 0.0
 
@@ -1287,7 +1388,9 @@ def _sample_process_resources(pid: int) -> dict:
 
 
 @router.get("/{task_id}/resource-usage")
-async def get_task_resource_usage(task_id: str):
+async def get_task_resource_usage(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Point-in-time CPU/RAM of the running agent subprocess for a task (#277).
 
     The frontend polls this to drive a live per-agent resource panel. Returns
@@ -1330,7 +1433,9 @@ async def get_task_resource_usage(task_id: str):
 
 
 @router.post("/{task_id}/clarifications", response_model=ClarificationResponse)
-async def generate_clarifications(task_id: str):
+async def generate_clarifications(
+    task_id: str, _access: dict = Depends(require_task_access("member"))
+):
     """Generate clarification questions for a task using an LLM."""
     from ..services.clarification_service import generate_clarification_questions
 
@@ -1355,7 +1460,11 @@ async def generate_clarifications(task_id: str):
 
 
 @router.post("/{task_id}/clarifications/answers", response_model=Task)
-async def submit_clarification_answers(task_id: str, request: ClarificationAnswersRequest):
+async def submit_clarification_answers(
+    task_id: str,
+    request: ClarificationAnswersRequest,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Submit answers to clarification questions and append them to the task."""
     project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
 
@@ -1408,20 +1517,26 @@ def _try_close_github_issue(project_path: Path, spec_dir: Path) -> None:
         if not issue_number:
             return
         from .github import run_gh_command
+
         result = run_gh_command(
             ["issue", "close", str(issue_number)],
             cwd=str(project_path),
         )
         if result["success"]:
             import logging
-            logging.getLogger(__name__).info(f"Auto-closed GitHub issue #{issue_number}")
+
+            logging.getLogger(__name__).info(
+                f"Auto-closed GitHub issue #{issue_number}"
+            )
         else:
             import logging
+
             logging.getLogger(__name__).warning(
                 f"Failed to auto-close GitHub issue #{issue_number}: {result.get('error', 'unknown')}"
             )
     except Exception as e:
         import logging
+
         logging.getLogger(__name__).warning(f"Error auto-closing GitHub issue: {e}")
 
 
@@ -1433,7 +1548,11 @@ class TaskStatusUpdate(BaseModel):
 
 
 @router.patch("/{task_id}/status", response_model=Task)
-async def update_task_status(task_id: str, update: TaskStatusUpdate):
+async def update_task_status(
+    task_id: str,
+    update: TaskStatusUpdate,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Update a task's status (for kanban drag-and-drop)."""
     if ":" not in task_id:
         raise HTTPException(
@@ -1481,7 +1600,8 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
     task_control.write_control(
         spec_dir,
         status=update.status,
-        clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+        clear_review_reason=update.status
+        in ("backlog", "in_progress", "ai_review", "done"),
         updated_by="web_user",
     )
 
@@ -1494,11 +1614,15 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
             from ..services.completion import emit_terminal_completion
 
             emit_terminal_completion(
-                spec_dir, task_id=task_id, project_id=project_id,
-                spec_id=spec_id, status=update.status,
+                spec_dir,
+                task_id=task_id,
+                project_id=project_id,
+                spec_id=spec_id,
+                status=update.status,
             )
         except Exception:  # pragma: no cover - notification is best-effort
             import logging
+
             logging.getLogger(__name__).debug("completion emit failed", exc_info=True)
 
     return spec_to_task(project_id, spec_dir)
@@ -1506,7 +1630,11 @@ async def update_task_status(task_id: str, update: TaskStatusUpdate):
 
 @router.put("/{task_id}", response_model=Task)
 @router.patch("/{task_id}", response_model=Task)
-async def update_task(task_id: str, update: TaskUpdate):
+async def update_task(
+    task_id: str,
+    update: TaskUpdate,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Update a task's metadata (supports both PUT and PATCH)."""
     if ":" not in task_id:
         raise HTTPException(
@@ -1550,10 +1678,10 @@ async def update_task(task_id: str, update: TaskUpdate):
         if update.description:
             # Replace description paragraph (second section after title)
             # Split by double newline: [title, description, rest...]
-            sections = current_content.split('\n\n', 2)
+            sections = current_content.split("\n\n", 2)
             if len(sections) >= 2:
                 sections[1] = update.description
-                current_content = '\n\n'.join(sections)
+                current_content = "\n\n".join(sections)
 
         spec_file.write_text(current_content)
 
@@ -1578,7 +1706,8 @@ async def update_task(task_id: str, update: TaskUpdate):
         task_control.write_control(
             spec_dir,
             status=update.status,
-            clear_review_reason=update.status in ("backlog", "in_progress", "ai_review", "done"),
+            clear_review_reason=update.status
+            in ("backlog", "in_progress", "ai_review", "done"),
             updated_by="web_user",
         )
 
@@ -1625,7 +1754,16 @@ async def update_task(task_id: str, update: TaskUpdate):
 
             # Update model-related fields that phase_config.py expects
             # Also include selectedSkills so agent_service.py can inject skill context
-            model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills"]
+            model_fields = [
+                "model",
+                "thinkingLevel",
+                "isAutoProfile",
+                "phaseModels",
+                "phaseThinking",
+                "mode",
+                "requireReviewBeforeCoding",
+                "selectedSkills",
+            ]
             for field in model_fields:
                 if field in metadata_dict:
                     if metadata_dict[field] is None:
@@ -1646,7 +1784,9 @@ async def update_task(task_id: str, update: TaskUpdate):
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_task(task_id: str):
+async def delete_task(
+    task_id: str, _access: dict = Depends(require_task_access("admin"))
+):
     """Delete a task (removes spec directory)."""
     if ":" not in task_id:
         raise HTTPException(
@@ -1698,7 +1838,11 @@ class RejectPlanRequest(BaseModel):
 
 
 @router.post("/{task_id}/approve-plan")
-async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRequest()):
+async def approve_plan(
+    task_id: str,
+    request: ApprovePlanRequest = ApprovePlanRequest(),
+    _access: dict = Depends(require_task_access("member")),
+):
     """Approve a task's plan to allow coding to proceed.
 
     When a task is in plan_review status (waiting for human approval),
@@ -1730,6 +1874,7 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
 
     # Import ReviewState from backend
     import sys
+
     backend_path = Path(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
@@ -1746,10 +1891,13 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
     if plan_file.exists():
         try:
             import logging
+
             logger = logging.getLogger(__name__)
             logger.info(f"[ApprovePlan] Reading plan file: {plan_file}")
             plan = json.loads(plan_file.read_text())
-            logger.info(f"[ApprovePlan] Current status: {plan.get('status')}, planStatus: {plan.get('planStatus')}, reviewReason: {plan.get('reviewReason')}")
+            logger.info(
+                f"[ApprovePlan] Current status: {plan.get('status')}, planStatus: {plan.get('planStatus')}, reviewReason: {plan.get('reviewReason')}"
+            )
 
             # Update BOTH status and planStatus fields
             plan["status"] = "in_progress"
@@ -1758,7 +1906,9 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
 
             plan_file.write_text(json.dumps(plan, indent=2))
             plan_updated = True
-            logger.info("[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress")
+            logger.info(
+                "[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress"
+            )
 
             # Issue #259: approving the plan moves the task out of human_review;
             # record that in the agent-immutable control store and clear the
@@ -1771,13 +1921,20 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
             )
         except (json.JSONDecodeError, OSError) as e:
             import logging
-            logging.getLogger(__name__).error(f"[ApprovePlan] Failed to update plan file: {e}")
+
+            logging.getLogger(__name__).error(
+                f"[ApprovePlan] Failed to update plan file: {e}"
+            )
     else:
         import logging
-        logging.getLogger(__name__).warning(f"[ApprovePlan] Plan file does not exist: {plan_file}")
+
+        logging.getLogger(__name__).warning(
+            f"[ApprovePlan] Plan file does not exist: {plan_file}"
+        )
 
     # Emit status change via WebSocket
     from ..websockets.events import emit_task_status
+
     await emit_task_status(task_id, "in_progress")
 
     auto_restarted = False
@@ -1794,12 +1951,17 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
             # cleaned up running_tasks (e.g., if the process hung or monitor failed).
             if agent_service.is_running(task_id):
                 import logging
+
                 logger = logging.getLogger(__name__)
-                logger.info(f"[ApprovePlan] Cleaning up stale spec creation process for {task_id}")
+                logger.info(
+                    f"[ApprovePlan] Cleaning up stale spec creation process for {task_id}"
+                )
                 try:
                     await agent_service.stop_task(task_id)
                 except Exception as stop_err:
-                    logger.warning(f"[ApprovePlan] Failed to stop stale process: {stop_err}")
+                    logger.warning(
+                        f"[ApprovePlan] Failed to stop stale process: {stop_err}"
+                    )
                     # Force-remove from running_tasks as fallback
                     agent_service.running_tasks.pop(task_id, None)
 
@@ -1825,7 +1987,10 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
         except Exception as e:
             # If auto-restart fails, still return success for approval
             import logging
-            logging.getLogger(__name__).warning(f"Auto-restart failed for {task_id}: {e}")
+
+            logging.getLogger(__name__).warning(
+                f"Auto-restart failed for {task_id}: {e}"
+            )
 
     return {
         "success": True,
@@ -1836,7 +2001,11 @@ async def approve_plan(task_id: str, request: ApprovePlanRequest = ApprovePlanRe
 
 
 @router.post("/{task_id}/reject-plan")
-async def reject_plan(task_id: str, request: RejectPlanRequest = RejectPlanRequest()):
+async def reject_plan(
+    task_id: str,
+    request: RejectPlanRequest = RejectPlanRequest(),
+    _access: dict = Depends(require_task_access("member")),
+):
     """Reject a task's plan and send the planner back to iterate.
 
     Used by the human-review checkpoint when the implementation plan needs
@@ -1907,7 +2076,9 @@ async def reject_plan(task_id: str, request: RejectPlanRequest = RejectPlanReque
 
 
 @router.get("/{task_id}/qa-report")
-async def get_qa_report(task_id: str):
+async def get_qa_report(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Return the QA report markdown for a task.
 
     Tasks that have completed the QA phase have a ``qa_report.md`` written
@@ -1958,7 +2129,9 @@ async def get_qa_report(task_id: str):
 
 
 @router.get("/{task_id}/agent-console/sse")
-async def stream_agent_console(task_id: str):
+async def stream_agent_console(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Server-Sent Events stream of the running agent's console output.
 
     V1.1 strategy: read ``build-progress.txt`` from the spec dir and emit
@@ -2022,7 +2195,7 @@ async def stream_agent_console(task_id: str):
             while True:
                 now = asyncio.get_event_loop().time()
                 if now - start > max_duration_s:
-                    yield "event: done\ndata: {\"reason\": \"max-duration\"}\n\n"
+                    yield 'event: done\ndata: {"reason": "max-duration"}\n\n'
                     return
 
                 if progress_file.exists():
@@ -2061,7 +2234,9 @@ async def stream_agent_console(task_id: str):
 
 
 @router.get("/{task_id}/plan-html")
-async def get_plan_html(task_id: str):
+async def get_plan_html(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Generate and return HTML view of the implementation plan.
 
     Creates a temporary HTML file with nicely formatted plan for review.
@@ -2092,6 +2267,7 @@ async def get_plan_html(task_id: str):
 
     # Import HTML generator from backend
     import sys
+
     backend_path = Path(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
@@ -2104,6 +2280,7 @@ async def get_plan_html(task_id: str):
 
         # Return the HTML content
         from fastapi.responses import HTMLResponse
+
         return HTMLResponse(content=html_file.read_text(), status_code=200)
 
     except ImportError as e:
@@ -2119,13 +2296,16 @@ async def get_plan_html(task_id: str):
 
 
 @router.get("/{task_id}/logs")
-async def get_task_logs(task_id: str):
+async def get_task_logs(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """Get logs for a task.
 
     Returns phase-based logs from task_logs.json if available,
     checking both main spec dir and worktree.
     """
     import logging
+
     logger = logging.getLogger(__name__)
 
     logger.info(f"[GetTaskLogs] Called with task_id: {task_id}")
@@ -2152,7 +2332,16 @@ async def get_task_logs(task_id: str):
     logger.info(f"[GetTaskLogs] project_path: {project_path}")
 
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
-    worktree_spec_dir = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
+    worktree_spec_dir = (
+        project_path
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / spec_id
+        / ".aifactory"
+        / "specs"
+        / spec_id
+    )
 
     logger.info(f"[GetTaskLogs] Checking spec_dir: {spec_dir}")
     logger.info(f"[GetTaskLogs] Checking worktree_spec_dir: {worktree_spec_dir}")
@@ -2170,7 +2359,9 @@ async def get_task_logs(task_id: str):
     if task_logs_file:
         try:
             task_logs = json.loads(task_logs_file.read_text())
-            logger.info(f"[GetTaskLogs] Successfully loaded task_logs.json, has phases: {'phases' in task_logs}")
+            logger.info(
+                f"[GetTaskLogs] Successfully loaded task_logs.json, has phases: {'phases' in task_logs}"
+            )
             result = {
                 "specId": task_logs.get("spec_id", spec_id),
                 "createdAt": task_logs.get("created_at"),
@@ -2185,13 +2376,17 @@ async def get_task_logs(task_id: str):
                     result["buildProgress"] = build_progress.read_text()
                     break
 
-            logger.info(f"[GetTaskLogs] Returning phase-based logs with {len(result.get('phases', {}))} phases")
+            logger.info(
+                f"[GetTaskLogs] Returning phase-based logs with {len(result.get('phases', {}))} phases"
+            )
             return result
         except json.JSONDecodeError as e:
             logger.error(f"[GetTaskLogs] JSON decode error: {e}")
             pass
     else:
-        logger.warning("[GetTaskLogs] No task_logs.json found, returning fallback format")
+        logger.warning(
+            "[GetTaskLogs] No task_logs.json found, returning fallback format"
+        )
 
     # Fallback: Collect logs from legacy sources
     logs = []
@@ -2209,11 +2404,15 @@ async def get_task_logs(task_id: str):
     # QA report
     qa_report = spec_dir / "qa_report.md"
     if qa_report.exists():
-        logs.append({
-            "type": "qa_report",
-            "content": qa_report.read_text(),
-            "timestamp": datetime.fromtimestamp(qa_report.stat().st_mtime).isoformat(),
-        })
+        logs.append(
+            {
+                "type": "qa_report",
+                "content": qa_report.read_text(),
+                "timestamp": datetime.fromtimestamp(
+                    qa_report.stat().st_mtime
+                ).isoformat(),
+            }
+        )
 
     result = {"logs": logs, "total": len(logs)}
 
@@ -2228,7 +2427,9 @@ async def get_task_logs(task_id: str):
 
 
 @router.post("/{task_id}/logs/watch")
-async def watch_task_logs(task_id: str):
+async def watch_task_logs(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Start watching task logs (stub endpoint for frontend compatibility).
 
@@ -2239,7 +2440,9 @@ async def watch_task_logs(task_id: str):
 
 
 @router.post("/{task_id}/logs/unwatch")
-async def unwatch_task_logs(task_id: str):
+async def unwatch_task_logs(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Stop watching task logs (stub endpoint for frontend compatibility).
 
@@ -2252,6 +2455,7 @@ async def unwatch_task_logs(task_id: str):
 # ============================================
 # Worktree Merge Routes
 # ============================================
+
 
 class CreatePRFromTaskOptions(BaseModel):
     title: str | None = None
@@ -2267,12 +2471,15 @@ class WorktreeMergeOptions(BaseModel):
 
 class ConflictResolveOptions(BaseModel):
     """Options for conflict resolution."""
+
     useAI: bool = True
     strategy: str | None = None
 
 
 @router.get("/{task_id}/worktree/merge-preview")
-async def get_worktree_merge_preview(task_id: str):
+async def get_worktree_merge_preview(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Preview what will happen when merging the worktree.
     Returns conflict info and files that will be merged.
@@ -2328,7 +2535,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2341,7 +2548,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2354,7 +2561,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         changed_files = []
         for line in result.stdout.strip().split("\n"):
@@ -2363,10 +2570,18 @@ async def get_worktree_merge_preview(task_id: str):
                 if len(parts) >= 2:
                     status = parts[0]
                     filename = parts[1]
-                    changed_files.append({
-                        "path": filename,
-                        "status": "added" if status == "A" else "modified" if status == "M" else "deleted" if status == "D" else status
-                    })
+                    changed_files.append(
+                        {
+                            "path": filename,
+                            "status": "added"
+                            if status == "A"
+                            else "modified"
+                            if status == "M"
+                            else "deleted"
+                            if status == "D"
+                            else status,
+                        }
+                    )
     except subprocess.CalledProcessError:
         changed_files = []
 
@@ -2380,27 +2595,27 @@ async def get_worktree_merge_preview(task_id: str):
             ["git", "merge-tree", "--write-tree", base_branch, worktree_branch],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         # Git 2.38+: Return code 1 means conflicts exist
         # stdout format: "<tree_oid>\nCONFLICT (type): description"
         if result.returncode == 1:
             has_conflicts = True
             # Parse CONFLICT lines to get conflicting files
-            for line in result.stdout.split('\n'):
-                if line.startswith('CONFLICT'):
+            for line in result.stdout.split("\n"):
+                if line.startswith("CONFLICT"):
                     # Extract filename from "CONFLICT (content): Merge conflict in path/file"
-                    if ' in ' in line:
-                        file_path = line.split(' in ')[-1].strip()
+                    if " in " in line:
+                        file_path = line.split(" in ")[-1].strip()
                         if file_path:
                             conflicting_files.append(file_path)
         # Fallback: Check for CONFLICT keyword even on return code 0
         # (some edge cases may not set return code correctly)
         elif "CONFLICT" in result.stdout or "CONFLICT" in result.stderr:
             has_conflicts = True
-            for line in (result.stdout + result.stderr).split('\n'):
-                if line.startswith('CONFLICT') and ' in ' in line:
-                    file_path = line.split(' in ')[-1].strip()
+            for line in (result.stdout + result.stderr).split("\n"):
+                if line.startswith("CONFLICT") and " in " in line:
+                    file_path = line.split(" in ")[-1].strip()
                     if file_path:
                         conflicting_files.append(file_path)
         # Legacy fallback: Check for conflict markers (older git versions < 2.38)
@@ -2408,12 +2623,12 @@ async def get_worktree_merge_preview(task_id: str):
             has_conflicts = True
     except subprocess.CalledProcessError as e:
         # Command failed - check output for conflict indicators
-        output = (e.stdout or '') + (e.stderr or '')
+        output = (e.stdout or "") + (e.stderr or "")
         if "CONFLICT" in output or "<<<<<<" in output:
             has_conflicts = True
-            for line in output.split('\n'):
-                if line.startswith('CONFLICT') and ' in ' in line:
-                    file_path = line.split(' in ')[-1].strip()
+            for line in output.split("\n"):
+                if line.startswith("CONFLICT") and " in " in line:
+                    file_path = line.split(" in ")[-1].strip()
                     if file_path:
                         conflicting_files.append(file_path)
 
@@ -2423,7 +2638,8 @@ async def get_worktree_merge_preview(task_id: str):
             result = subprocess.run(
                 ["git", "check-ignore"] + conflicting_files,
                 cwd=project_path,
-                capture_output=True, text=True
+                capture_output=True,
+                text=True,
             )
             ignored = set(result.stdout.strip().splitlines())
             conflicting_files = [f for f in conflicting_files if f not in ignored]
@@ -2447,7 +2663,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         commits_ahead = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -2459,7 +2675,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         commits_behind = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -2475,7 +2691,7 @@ async def get_worktree_merge_preview(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         for line in result.stdout.strip().split("\n"):
             if line:
@@ -2491,12 +2707,14 @@ async def get_worktree_merge_preview(task_id: str):
                 ["git", "diff", "--name-only", f"{base_branch}...{worktree_branch}"],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if task_files_result.returncode == 0:
-                task_files = set(task_files_result.stdout.strip().split('\n'))
+                task_files = set(task_files_result.stdout.strip().split("\n"))
                 # Find files that overlap (uncommitted in main AND modified in task)
-                uncommitted_conflicting_files = list(set(uncommitted_files) & task_files)
+                uncommitted_conflicting_files = list(
+                    set(uncommitted_files) & task_files
+                )
 
                 # Filter out gitignored files (e.g. build artifacts)
                 if uncommitted_conflicting_files:
@@ -2504,10 +2722,13 @@ async def get_worktree_merge_preview(task_id: str):
                         ignored_result = subprocess.run(
                             ["git", "check-ignore"] + uncommitted_conflicting_files,
                             cwd=project_path,
-                            capture_output=True, text=True
+                            capture_output=True,
+                            text=True,
                         )
                         ignored = set(ignored_result.stdout.strip().splitlines())
-                        uncommitted_conflicting_files = [f for f in uncommitted_conflicting_files if f not in ignored]
+                        uncommitted_conflicting_files = [
+                            f for f in uncommitted_conflicting_files if f not in ignored
+                        ]
                     except Exception:
                         pass
     except subprocess.CalledProcessError:
@@ -2541,6 +2762,7 @@ async def get_worktree_merge_preview(task_id: str):
     except Exception as e:
         # Log but don't fail - semantic detection is optional enhancement
         import logging
+
         logging.getLogger(__name__).warning(f"Semantic conflict detection failed: {e}")
 
     # Merge results: combine git conflicts with semantic conflicts
@@ -2550,7 +2772,9 @@ async def get_worktree_merge_preview(task_id: str):
     total_conflicts = len(all_conflicts)
     auto_mergeable = sum(1 for c in all_conflicts if c.get("canAutoMerge", False))
     has_any_conflicts = has_conflicts or total_conflicts > 0
-    can_merge = not has_conflicts and (total_conflicts == 0 or total_conflicts == auto_mergeable)
+    can_merge = not has_conflicts and (
+        total_conflicts == 0 or total_conflicts == auto_mergeable
+    )
 
     # Build preview response with all merge information
     preview_data = {
@@ -2580,7 +2804,9 @@ async def get_worktree_merge_preview(task_id: str):
             "count": len(uncommitted_files),
             "conflictingFiles": uncommitted_conflicting_files,
             "hasConflicts": len(uncommitted_conflicting_files) > 0,
-        } if uncommitted_files else None,
+        }
+        if uncommitted_files
+        else None,
     }
 
     return {
@@ -2595,12 +2821,16 @@ async def get_worktree_merge_preview(task_id: str):
             "worktreeBranch": worktree_branch,
             "baseBranch": base_branch,
             "preview": preview_data,
-        }
+        },
     }
 
 
 @router.post("/{task_id}/worktree/resolve-conflicts")
-async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptions = None):
+async def resolve_worktree_conflicts(
+    task_id: str,
+    options: ConflictResolveOptions = None,
+    _access: dict = Depends(require_task_access("member")),
+):
     """
     Resolve merge conflicts between the worktree branch and the base branch using AI.
 
@@ -2646,7 +2876,10 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                 return {"success": False, "error": f"Project not found: {project_id}"}
             project_path = Path(project["path"])
     else:
-        return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
+        return {
+            "success": False,
+            "error": "Task ID must include project ID (format: project_id:spec_id)",
+        }
 
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
@@ -2664,7 +2897,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2673,15 +2906,19 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
     # Check if a merge is already in progress
     merge_head = project_path / ".git" / "MERGE_HEAD"
     if merge_head.exists():
-        logger.info(f"Merge already in progress for {task_id}, resolving existing conflicts")
+        logger.info(
+            f"Merge already in progress for {task_id}, resolving existing conflicts"
+        )
     else:
         # Start the git merge (allow conflicts)
-        logger.info(f"Starting git merge of {worktree_branch} into current branch for task {task_id}")
+        logger.info(
+            f"Starting git merge of {worktree_branch} into current branch for task {task_id}"
+        )
         merge_result = subprocess.run(
             ["git", "merge", worktree_branch, "--no-commit", "--no-ff"],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if merge_result.returncode == 0:
@@ -2691,7 +2928,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                 ["git", "commit", "-m", f"Merge {worktree_branch} into current branch"],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             return {
                 "success": True,
@@ -2718,7 +2955,9 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
             "data": {
                 "resolved": [],
                 "remaining": [],
-                "stats": {"message": "Merge started with conflicts, AI resolution disabled"},
+                "stats": {
+                    "message": "Merge started with conflicts, AI resolution disabled"
+                },
             },
         }
 
@@ -2729,10 +2968,10 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
             ["git", "diff", "--name-only", "--diff-filter=U"],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
-            conflicted_files = [f for f in result.stdout.strip().split('\n') if f]
+            conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
     except subprocess.CalledProcessError:
         pass
 
@@ -2743,11 +2982,11 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                 ["git", "status", "--porcelain"],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line and line[:2] in ('UU', 'AA', 'DD', 'AU', 'UA', 'DU', 'UD'):
+                for line in result.stdout.strip().split("\n"):
+                    if line and line[:2] in ("UU", "AA", "DD", "AU", "UA", "DU", "UD"):
                         file_path = line[3:].strip()
                         if file_path:
                             conflicted_files.append(file_path)
@@ -2761,7 +3000,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
             ["git", "commit", "--no-edit"],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         return {
             "success": True,
@@ -2779,6 +3018,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
     failed_files = []
 
     from ..services.conflict_service import get_conflict_service
+
     conflict_service = get_conflict_service(project_path)
 
     for file_path in conflicted_files:
@@ -2797,7 +3037,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                     ["git", "add", file_path],
                     cwd=project_path,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 resolved_files.append(file_path)
                 continue
@@ -2812,8 +3052,14 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                 resolved_content = merge_result.get("content", "")
 
                 # Clean up any remaining markers
-                if "<<<<<<< " in resolved_content or "=======" in resolved_content or ">>>>>>> " in resolved_content:
-                    logger.warning(f"AI resolution for {file_path} still has markers, cleaning up")
+                if (
+                    "<<<<<<< " in resolved_content
+                    or "=======" in resolved_content
+                    or ">>>>>>> " in resolved_content
+                ):
+                    logger.warning(
+                        f"AI resolution for {file_path} still has markers, cleaning up"
+                    )
                     resolved_content = _clean_conflict_markers(resolved_content)
 
                 full_path.write_text(resolved_content)
@@ -2823,13 +3069,18 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                     ["git", "add", file_path],
                     cwd=project_path,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 if result.returncode == 0:
                     resolved_files.append(file_path)
                     logger.info(f"Staged resolved file: {file_path}")
                 else:
-                    failed_files.append({"file": file_path, "error": f"Failed to stage: {result.stderr}"})
+                    failed_files.append(
+                        {
+                            "file": file_path,
+                            "error": f"Failed to stage: {result.stderr}",
+                        }
+                    )
             else:
                 error_msg = merge_result.get("error", "AI resolution failed")
                 logger.error(f"AI resolution failed for {file_path}: {error_msg}")
@@ -2846,7 +3097,9 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
                 "resolved": resolved_files,
                 "failed": failed_files,
                 "remaining": [f["file"] for f in failed_files],
-                "stats": {"message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed"},
+                "stats": {
+                    "message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed"
+                },
             },
             "error": f"{len(failed_files)} files could not be resolved",
         }
@@ -2858,7 +3111,7 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
             ["git", "commit", "-m", commit_msg],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode != 0:
             logger.warning(f"Merge commit failed: {result.stderr}")
@@ -2880,13 +3133,17 @@ async def resolve_worktree_conflicts(task_id: str, options: ConflictResolveOptio
         "data": {
             "resolved": resolved_files,
             "remaining": [],
-            "stats": {"message": f"Successfully resolved and merged {len(resolved_files)} conflicting files"},
+            "stats": {
+                "message": f"Successfully resolved and merged {len(resolved_files)} conflicting files"
+            },
         },
     }
 
 
 @router.post("/{task_id}/worktree/resolve-uncommitted")
-async def resolve_uncommitted_conflicts(task_id: str):
+async def resolve_uncommitted_conflicts(
+    task_id: str, _access: dict = Depends(require_task_access("member"))
+):
     """
     Resolve conflicts between uncommitted local changes and task branch changes using AI.
 
@@ -2929,7 +3186,9 @@ async def resolve_uncommitted_conflicts(task_id: str):
         spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            worktree_path = (
+                project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            )
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -2944,7 +3203,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         base_branch = result.stdout.strip()
 
@@ -2953,7 +3212,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         spec_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -2967,7 +3226,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         for line in result.stdout.strip().split("\n"):
             if line:
@@ -2984,9 +3243,9 @@ async def resolve_uncommitted_conflicts(task_id: str):
             ["git", "diff", "--name-only", f"{base_branch}...{spec_branch}"],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
-        task_files = set(result.stdout.strip().split('\n'))
+        task_files = set(result.stdout.strip().split("\n"))
     except subprocess.CalledProcessError:
         task_files = set()
 
@@ -2994,7 +3253,10 @@ async def resolve_uncommitted_conflicts(task_id: str):
     conflicting_files = list(set(uncommitted_files) & task_files)
 
     if not conflicting_files:
-        return {"success": True, "data": {"message": "No conflicting files found", "resolved": []}}
+        return {
+            "success": True,
+            "data": {"message": "No conflicting files found", "resolved": []},
+        }
 
     # Stash uncommitted changes (include untracked files)
     stash_message = f"aifactory-temp-{task_id}"
@@ -3005,7 +3267,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
             ["git", "stash", "push", "--include-untracked", "-m", stash_message],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode == 0 and "No local changes to save" not in result.stdout:
             stash_created = True
@@ -3016,13 +3278,21 @@ async def resolve_uncommitted_conflicts(task_id: str):
                 ["git", "stash", "push", "-m", stash_message],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
-            if result.returncode == 0 and "No local changes to save" not in result.stdout:
+            if (
+                result.returncode == 0
+                and "No local changes to save" not in result.stdout
+            ):
                 stash_created = True
                 logger.info(f"Stashed changes (fallback): {result.stdout.strip()}")
-            elif result.returncode != 0 and "No local changes to save" not in (result.stderr + result.stdout):
-                return {"success": False, "error": f"Failed to stash changes: {result.stderr or result.stdout}"}
+            elif result.returncode != 0 and "No local changes to save" not in (
+                result.stderr + result.stdout
+            ):
+                return {
+                    "success": False,
+                    "error": f"Failed to stash changes: {result.stderr or result.stdout}",
+                }
     except subprocess.CalledProcessError as e:
         return {"success": False, "error": f"Failed to stash changes: {e.stderr}"}
 
@@ -3039,7 +3309,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
                         ["git", "show", f"{base_branch}:{file_path}"],
                         cwd=project_path,
                         capture_output=True,
-                        text=True
+                        text=True,
                     )
                     if result.returncode == 0:
                         base_content = result.stdout
@@ -3055,7 +3325,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
                             ["git", "show", f"stash@{{0}}:{file_path}"],
                             cwd=project_path,
                             capture_output=True,
-                            text=True
+                            text=True,
                         )
                         if result.returncode == 0:
                             local_content = result.stdout
@@ -3074,7 +3344,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
                         ["git", "show", f"{spec_branch}:{file_path}"],
                         cwd=project_path,
                         capture_output=True,
-                        text=True
+                        text=True,
                     )
                     if result.returncode == 0:
                         task_content = result.stdout
@@ -3101,7 +3371,12 @@ async def resolve_uncommitted_conflicts(task_id: str):
                     full_path.write_text(merge_result.get("content", ""))
                     resolved_files.append(file_path)
                 else:
-                    failed_files.append({"file": file_path, "error": merge_result.get("error", "Unknown error")})
+                    failed_files.append(
+                        {
+                            "file": file_path,
+                            "error": merge_result.get("error", "Unknown error"),
+                        }
+                    )
 
             except Exception as e:
                 logger.error(f"Failed to resolve {file_path}: {e}")
@@ -3115,7 +3390,7 @@ async def resolve_uncommitted_conflicts(task_id: str):
                     ["git", "stash", "drop"],
                     cwd=project_path,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 logger.info("Dropped stash after merge")
             except Exception:
@@ -3127,9 +3402,9 @@ async def resolve_uncommitted_conflicts(task_id: str):
             "data": {
                 "resolved": resolved_files,
                 "failed": failed_files,
-                "message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed"
+                "message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed",
             },
-            "error": f"{len(failed_files)} files could not be resolved"
+            "error": f"{len(failed_files)} files could not be resolved",
         }
 
     return {
@@ -3137,13 +3412,15 @@ async def resolve_uncommitted_conflicts(task_id: str):
         "data": {
             "resolved": resolved_files,
             "failed": [],
-            "message": f"Successfully resolved {len(resolved_files)} conflicting files"
-        }
+            "message": f"Successfully resolved {len(resolved_files)} conflicting files",
+        },
     }
 
 
 @router.post("/{task_id}/worktree/resolve-git-merge")
-async def resolve_git_merge_conflicts(task_id: str):
+async def resolve_git_merge_conflicts(
+    task_id: str, _access: dict = Depends(require_task_access("member"))
+):
     """
     Resolve files with git merge conflict markers using AI.
 
@@ -3192,7 +3469,9 @@ async def resolve_git_merge_conflicts(task_id: str):
         spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            worktree_path = (
+                project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            )
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -3201,7 +3480,9 @@ async def resolve_git_merge_conflicts(task_id: str):
     # Check both locations for merge in progress
     work_path = None
     merge_head_main = project_path / ".git" / "MERGE_HEAD"
-    merge_head_worktree = worktree_path / ".git" if worktree_path and worktree_path.exists() else None
+    merge_head_worktree = (
+        worktree_path / ".git" if worktree_path and worktree_path.exists() else None
+    )
 
     if merge_head_main.exists():
         work_path = project_path
@@ -3222,30 +3503,39 @@ async def resolve_git_merge_conflicts(task_id: str):
             ["git", "diff", "--name-only", "--diff-filter=U"],
             cwd=work_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode == 0 and result.stdout.strip():
-            conflicted_files = [f for f in result.stdout.strip().split('\n') if f]
-            logger.info(f"Found {len(conflicted_files)} conflicted files: {conflicted_files}")
+            conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
+            logger.info(
+                f"Found {len(conflicted_files)} conflicted files: {conflicted_files}"
+            )
     except subprocess.CalledProcessError as e:
         logger.warning(f"git diff --diff-filter=U failed: {e}")
 
     # If no conflicted files from git, scan for files with conflict markers
     if not conflicted_files:
-        logger.info("No files from git diff --diff-filter=U, scanning for conflict markers...")
+        logger.info(
+            "No files from git diff --diff-filter=U, scanning for conflict markers..."
+        )
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd=work_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode == 0:
-                for line in result.stdout.strip().split('\n'):
-                    if line and (line.startswith('UU') or line.startswith('AA') or
-                                 line.startswith('DD') or line.startswith('AU') or
-                                 line.startswith('UA') or line.startswith('DU') or
-                                 line.startswith('UD')):
+                for line in result.stdout.strip().split("\n"):
+                    if line and (
+                        line.startswith("UU")
+                        or line.startswith("AA")
+                        or line.startswith("DD")
+                        or line.startswith("AU")
+                        or line.startswith("UA")
+                        or line.startswith("DU")
+                        or line.startswith("UD")
+                    ):
                         # Status codes indicate conflicts
                         file_path = line[3:].strip()
                         if file_path:
@@ -3259,8 +3549,8 @@ async def resolve_git_merge_conflicts(task_id: str):
             "data": {
                 "resolved": [],
                 "failed": [],
-                "message": "No conflicted files found"
-            }
+                "message": "No conflicted files found",
+            },
         }
 
     # Resolve each conflicted file using AI
@@ -3290,7 +3580,7 @@ async def resolve_git_merge_conflicts(task_id: str):
                     ["git", "add", file_path],
                     cwd=work_path,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 resolved_files.append(file_path)
                 continue
@@ -3305,8 +3595,14 @@ async def resolve_git_merge_conflicts(task_id: str):
                 resolved_content = merge_result.get("content", "")
 
                 # Verify no conflict markers remain
-                if "<<<<<<< " in resolved_content or "=======" in resolved_content or ">>>>>>> " in resolved_content:
-                    logger.warning(f"AI resolution for {file_path} still contains conflict markers")
+                if (
+                    "<<<<<<< " in resolved_content
+                    or "=======" in resolved_content
+                    or ">>>>>>> " in resolved_content
+                ):
+                    logger.warning(
+                        f"AI resolution for {file_path} still contains conflict markers"
+                    )
                     # Try to clean up obvious marker remnants
                     resolved_content = _clean_conflict_markers(resolved_content)
 
@@ -3319,14 +3615,19 @@ async def resolve_git_merge_conflicts(task_id: str):
                     ["git", "add", file_path],
                     cwd=work_path,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 if result.returncode == 0:
                     resolved_files.append(file_path)
                     logger.info(f"Staged resolved file: {file_path}")
                 else:
                     logger.warning(f"Failed to stage {file_path}: {result.stderr}")
-                    failed_files.append({"file": file_path, "error": f"Failed to stage: {result.stderr}"})
+                    failed_files.append(
+                        {
+                            "file": file_path,
+                            "error": f"Failed to stage: {result.stderr}",
+                        }
+                    )
             else:
                 error_msg = merge_result.get("error", "AI resolution failed")
                 logger.error(f"AI resolution failed for {file_path}: {error_msg}")
@@ -3342,9 +3643,9 @@ async def resolve_git_merge_conflicts(task_id: str):
             "data": {
                 "resolved": resolved_files,
                 "failed": failed_files,
-                "message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed"
+                "message": f"Resolved {len(resolved_files)} files, {len(failed_files)} failed",
             },
-            "error": f"{len(failed_files)} files could not be resolved"
+            "error": f"{len(failed_files)} files could not be resolved",
         }
 
     # All conflicts resolved successfully - auto-commit the merge
@@ -3360,7 +3661,7 @@ async def resolve_git_merge_conflicts(task_id: str):
                 ["git", "name-rev", "--name-only", merge_commit],
                 cwd=work_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             if result.returncode == 0 and result.stdout.strip():
                 merge_branch = result.stdout.strip()
@@ -3371,7 +3672,7 @@ async def resolve_git_merge_conflicts(task_id: str):
             ["git", "commit", "-m", commit_msg],
             cwd=work_path,
             capture_output=True,
-            text=True
+            text=True,
         )
         if result.returncode == 0:
             commit_result = "Merge committed successfully"
@@ -3389,8 +3690,8 @@ async def resolve_git_merge_conflicts(task_id: str):
             "resolved": resolved_files,
             "failed": [],
             "message": f"Successfully resolved {len(resolved_files)} conflicted files",
-            "commit": commit_result
-        }
+            "commit": commit_result,
+        },
     }
 
 
@@ -3403,7 +3704,7 @@ def _clean_conflict_markers(content: str) -> str:
 
     # Pattern to match conflict blocks
     # <<<<<<< ... ======= ... >>>>>>>
-    pattern = r'<<<<<<<[^\n]*\n(.*?)=======\n(.*?)>>>>>>>[^\n]*\n?'
+    pattern = r"<<<<<<<[^\n]*\n(.*?)=======\n(.*?)>>>>>>>[^\n]*\n?"
 
     def replace_conflict(match):
         # Prefer the second version (usually "theirs"/incoming changes)
@@ -3420,7 +3721,9 @@ def _clean_conflict_markers(content: str) -> str:
 
 
 @router.post("/{task_id}/worktree/abort-merge")
-async def abort_worktree_merge(task_id: str):
+async def abort_worktree_merge(
+    task_id: str, _access: dict = Depends(require_task_access("member"))
+):
     """
     Abort a failed merge in the worktree or main project.
 
@@ -3461,7 +3764,10 @@ async def abort_worktree_merge(task_id: str):
                 return {"success": False, "error": f"Project not found: {project_id}"}
             project_path = Path(project["path"])
     else:
-        return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
+        return {
+            "success": False,
+            "error": "Task ID must include project ID (format: project_id:spec_id)",
+        }
 
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
@@ -3483,13 +3789,15 @@ async def abort_worktree_merge(task_id: str):
                     cwd=worktree_path,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
                 )
                 if result.returncode == 0:
                     aborted_locations.append("worktree")
                     logger.info(f"Aborted merge in worktree: {worktree_path}")
                 else:
-                    logger.warning(f"Failed to abort merge in worktree: {result.stderr}")
+                    logger.warning(
+                        f"Failed to abort merge in worktree: {result.stderr}"
+                    )
                     errors.append(f"Worktree: {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
             errors.append("Worktree: git merge --abort timed out")
@@ -3502,20 +3810,26 @@ async def abort_worktree_merge(task_id: str):
         try:
             # Check if main project is in a merge state
             git_dir = project_path / ".git"
-            merge_head = git_dir / "MERGE_HEAD" if git_dir.is_dir() else project_path / ".git" / "MERGE_HEAD"
+            merge_head = (
+                git_dir / "MERGE_HEAD"
+                if git_dir.is_dir()
+                else project_path / ".git" / "MERGE_HEAD"
+            )
             if merge_head.exists():
                 result = subprocess.run(
                     ["git", "merge", "--abort"],
                     cwd=project_path,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=30,
                 )
                 if result.returncode == 0:
                     aborted_locations.append("main project")
                     logger.info(f"Aborted merge in main project: {project_path}")
                 else:
-                    logger.warning(f"Failed to abort merge in main project: {result.stderr}")
+                    logger.warning(
+                        f"Failed to abort merge in main project: {result.stderr}"
+                    )
                     errors.append(f"Main project: {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
             errors.append("Main project: git merge --abort timed out")
@@ -3528,26 +3842,24 @@ async def abort_worktree_merge(task_id: str):
             "success": True,
             "data": {
                 "abortedIn": aborted_locations,
-                "message": f"Merge aborted in: {', '.join(aborted_locations)}"
-            }
+                "message": f"Merge aborted in: {', '.join(aborted_locations)}",
+            },
         }
     elif errors:
-        return {
-            "success": False,
-            "error": "; ".join(errors)
-        }
+        return {"success": False, "error": "; ".join(errors)}
     else:
         return {
             "success": True,
-            "data": {
-                "abortedIn": [],
-                "message": "No active merge found to abort"
-            }
+            "data": {"abortedIn": [], "message": "No active merge found to abort"},
         }
 
 
 @router.post("/{task_id}/worktree/create-pr")
-async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = None):
+async def create_pr_from_task(
+    task_id: str,
+    options: CreatePRFromTaskOptions = None,
+    _access: dict = Depends(require_task_access("member")),
+):
     """
     Push the worktree branch and create a GitHub Pull Request.
     Does NOT delete the worktree or branch after PR creation.
@@ -3585,7 +3897,10 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
                 return {"success": False, "error": f"Project not found: {project_id}"}
             project_path = Path(project["path"])
     else:
-        return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
+        return {
+            "success": False,
+            "error": "Task ID must include project ID (format: project_id:spec_id)",
+        }
 
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
@@ -3604,7 +3919,7 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -3619,7 +3934,7 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
                 cwd=project_path,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             base_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
@@ -3630,7 +3945,9 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
         subprocess.run(
             ["git", "fetch", "origin", base_branch],
             cwd=worktree_path,
-            capture_output=True, text=True, timeout=30
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     except Exception:
         pass  # Non-fatal — rebase will use whatever is available
@@ -3641,10 +3958,15 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
         stash_result = subprocess.run(
             ["git", "stash", "push", "-m", "aifactory-pre-rebase"],
             cwd=worktree_path,
-            capture_output=True, text=True, timeout=10
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         # "No local changes to save" means nothing was stashed
-        stashed = stash_result.returncode == 0 and "No local changes" not in stash_result.stdout
+        stashed = (
+            stash_result.returncode == 0
+            and "No local changes" not in stash_result.stdout
+        )
     except Exception:
         pass
 
@@ -3654,20 +3976,27 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
         result = subprocess.run(
             ["git", "rebase", f"origin/{base_branch}"],
             cwd=worktree_path,
-            capture_output=True, text=True, timeout=120
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
             # Abort the failed rebase to leave worktree clean
             subprocess.run(
                 ["git", "rebase", "--abort"],
                 cwd=worktree_path,
-                capture_output=True, text=True, timeout=10
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             rebase_failed = True
     except subprocess.TimeoutExpired:
         subprocess.run(
             ["git", "rebase", "--abort"],
-            cwd=worktree_path, capture_output=True, text=True, timeout=10
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         rebase_failed = True
     except Exception:
@@ -3678,24 +4007,32 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
         subprocess.run(
             ["git", "stash", "pop"],
             cwd=worktree_path,
-            capture_output=True, text=True, timeout=10
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
     # Push the branch to remote
     # Use --force-with-lease after successful rebase (rebase rewrites history)
     push_cmd = ["git", "push", "-u", "origin", worktree_branch]
     if not rebase_failed:
-        push_cmd = ["git", "push", "--force-with-lease", "-u", "origin", worktree_branch]
+        push_cmd = [
+            "git",
+            "push",
+            "--force-with-lease",
+            "-u",
+            "origin",
+            worktree_branch,
+        ]
     try:
         result = subprocess.run(
-            push_cmd,
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=60
+            push_cmd, cwd=worktree_path, capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
-            return {"success": False, "error": f"Failed to push branch: {result.stderr.strip()}"}
+            return {
+                "success": False,
+                "error": f"Failed to push branch: {result.stderr.strip()}",
+            }
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Push timed out"}
     except Exception as e:
@@ -3716,7 +4053,9 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
                 if not pr_title:
                     pr_title = reqs.get("title") or reqs.get("taskTitle") or task_id
                 if not pr_body:
-                    pr_body = reqs.get("description") or reqs.get("taskDescription") or ""
+                    pr_body = (
+                        reqs.get("description") or reqs.get("taskDescription") or ""
+                    )
             except (json.JSONDecodeError, KeyError):
                 pass
 
@@ -3737,7 +4076,9 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     if _use_provider_api(project_id):
         try:
             provider = _get_project_provider(project_id)
-            provider_type_value = getattr(provider.provider_type, "value", str(provider.provider_type))
+            provider_type_value = getattr(
+                provider.provider_type, "value", str(provider.provider_type)
+            )
             if provider_type_value == "github":
                 # The provider abstraction picks GitHub when a custom token is
                 # configured; the gh CLI path below already handles GitHub, so
@@ -3775,11 +4116,16 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     # Create the PR using gh CLI (GitHub-only path)
     head_ref = worktree_branch
     gh_args = [
-        "pr", "create",
-        "--head", head_ref,
-        "--base", base_branch,
-        "--title", pr_title,
-        "--body", pr_body or "",
+        "pr",
+        "create",
+        "--head",
+        head_ref,
+        "--base",
+        base_branch,
+        "--title",
+        pr_title,
+        "--body",
+        pr_body or "",
     ]
 
     if options.targetRepo:
@@ -3787,11 +4133,17 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
         try:
             origin_url_result = subprocess.run(
                 ["git", "remote", "get-url", "origin"],
-                cwd=str(worktree_path), capture_output=True, text=True, timeout=5
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if origin_url_result.returncode == 0:
                 import re as _re
-                m = _re.search(r'[:/]([^/]+)/[^/]+?(?:\.git)?$', origin_url_result.stdout.strip())
+
+                m = _re.search(
+                    r"[:/]([^/]+)/[^/]+?(?:\.git)?$", origin_url_result.stdout.strip()
+                )
                 if m:
                     fork_owner = m.group(1)
                     # Update --head to owner:branch format required by gh for cross-repo PRs
@@ -3807,7 +4159,10 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     gh_result = run_gh_command(gh_args, cwd=str(project_path))
 
     if not gh_result["success"]:
-        return {"success": False, "error": f"Failed to create PR: {gh_result.get('error', 'unknown error')}"}
+        return {
+            "success": False,
+            "error": f"Failed to create PR: {gh_result.get('error', 'unknown error')}",
+        }
 
     # Parse PR URL from output
     pr_url = gh_result.get("output", "").strip()
@@ -3815,7 +4170,8 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
     if pr_url:
         # gh pr create outputs the PR URL, extract number from it
         import re as _re
-        match = _re.search(r'/pull/(\d+)', pr_url)
+
+        match = _re.search(r"/pull/(\d+)", pr_url)
         if match:
             pr_number = int(match.group(1))
 
@@ -3826,12 +4182,16 @@ async def create_pr_from_task(task_id: str, options: CreatePRFromTaskOptions = N
             "prNumber": pr_number,
             "branch": worktree_branch,
             "baseBranch": base_branch,
-        }
+        },
     }
 
 
 @router.post("/{task_id}/worktree/merge")
-async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
+async def merge_worktree(
+    task_id: str,
+    options: WorktreeMergeOptions = None,
+    _access: dict = Depends(require_task_access("member")),
+):
     """
     Merge the worktree branch into the base branch.
     """
@@ -3868,7 +4228,10 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
                 return {"success": False, "error": f"Project not found: {project_id}"}
             project_path = Path(project["path"])
     else:
-        return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
+        return {
+            "success": False,
+            "error": "Task ID must include project ID (format: project_id:spec_id)",
+        }
 
     spec_dir = project_path / ".aifactory" / "specs" / spec_id
     if not spec_dir.exists():
@@ -3887,7 +4250,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError as e:
@@ -3900,7 +4263,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -3929,11 +4292,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
             merge_cmd.append("--no-commit")
 
         result = subprocess.run(
-            merge_cmd,
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            check=True
+            merge_cmd, cwd=project_path, capture_output=True, text=True, check=True
         )
 
         # Clean up worktree after successful merge
@@ -3945,7 +4304,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
                 ["git", "worktree", "remove", str(worktree_path), "--force"],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             worktree_deleted = cleanup_result.returncode == 0
 
@@ -3954,7 +4313,7 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
                 ["git", "branch", "-d", worktree_branch],
                 cwd=project_path,
                 capture_output=True,
-                text=True
+                text=True,
             )
             branch_deleted = branch_result.returncode == 0
         except Exception as e:
@@ -3969,8 +4328,8 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
                 "message": f"Successfully merged {worktree_branch} into {base_branch}",
                 "output": result.stdout,
                 "worktreeDeleted": worktree_deleted,
-                "branchDeleted": branch_deleted
-            }
+                "branchDeleted": branch_deleted,
+            },
         }
     except subprocess.CalledProcessError as e:
         # Check if it's a conflict
@@ -3979,17 +4338,19 @@ async def merge_worktree(task_id: str, options: WorktreeMergeOptions = None):
                 "success": False,
                 "error": "Merge conflicts detected. Please resolve manually.",
                 "conflicts": True,
-                "output": e.stdout + e.stderr
+                "output": e.stdout + e.stderr,
             }
         return {
             "success": False,
             "error": f"Merge failed: {e.stderr or e.stdout}",
-            "output": e.stdout + e.stderr
+            "output": e.stdout + e.stderr,
         }
 
 
 @router.get("/{task_id}/worktree/status")
-async def get_worktree_status(task_id: str):
+async def get_worktree_status(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Get the status of a task's worktree.
     Returns information about the worktree including changed files count,
@@ -4014,7 +4375,7 @@ async def get_worktree_status(task_id: str):
             "success": True,
             "data": {
                 "exists": False,
-            }
+            },
         }
 
     projects_data = json.loads(projects_file.read_text())
@@ -4046,7 +4407,7 @@ async def get_worktree_status(task_id: str):
             "success": True,
             "data": {
                 "exists": False,
-            }
+            },
         }
 
     # Check for worktree
@@ -4057,7 +4418,7 @@ async def get_worktree_status(task_id: str):
             "success": True,
             "data": {
                 "exists": False,
-            }
+            },
         }
 
     # Get worktree branch
@@ -4067,7 +4428,7 @@ async def get_worktree_status(task_id: str):
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -4080,7 +4441,7 @@ async def get_worktree_status(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -4093,7 +4454,7 @@ async def get_worktree_status(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         commit_count = int(result.stdout.strip())
     except (subprocess.CalledProcessError, ValueError):
@@ -4110,20 +4471,21 @@ async def get_worktree_status(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         # Parse the last line for summary (e.g., "5 files changed, 100 insertions(+), 20 deletions(-)")
-        lines = result.stdout.strip().split('\n')
+        lines = result.stdout.strip().split("\n")
         if lines:
             summary_line = lines[-1]
             import re
-            files_match = re.search(r'(\d+) files? changed', summary_line)
+
+            files_match = re.search(r"(\d+) files? changed", summary_line)
             if files_match:
                 files_changed = int(files_match.group(1))
-            insert_match = re.search(r'(\d+) insertions?\(\+\)', summary_line)
+            insert_match = re.search(r"(\d+) insertions?\(\+\)", summary_line)
             if insert_match:
                 additions = int(insert_match.group(1))
-            del_match = re.search(r'(\d+) deletions?\(-\)', summary_line)
+            del_match = re.search(r"(\d+) deletions?\(-\)", summary_line)
             if del_match:
                 deletions = int(del_match.group(1))
     except subprocess.CalledProcessError:
@@ -4140,12 +4502,14 @@ async def get_worktree_status(task_id: str):
             "filesChanged": files_changed,
             "additions": additions,
             "deletions": deletions,
-        }
+        },
     }
 
 
 @router.get("/{task_id}/worktree/diff")
-async def get_worktree_diff(task_id: str):
+async def get_worktree_diff(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Get the diff details for a task's worktree.
     Returns detailed file-by-file changes between the worktree branch and base branch.
@@ -4164,10 +4528,7 @@ async def get_worktree_diff(task_id: str):
     projects_file = projects_data_dir / "projects.json"
 
     if not projects_file.exists():
-        return {
-            "success": False,
-            "error": "No projects configured"
-        }
+        return {"success": False, "error": "No projects configured"}
 
     projects_data = json.loads(projects_file.read_text())
 
@@ -4193,19 +4554,13 @@ async def get_worktree_diff(task_id: str):
                 break
 
     if not project_path:
-        return {
-            "success": False,
-            "error": f"Project not found for task {task_id}"
-        }
+        return {"success": False, "error": f"Project not found for task {task_id}"}
 
     # Check for worktree
     worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
 
     if not worktree_path.exists():
-        return {
-            "success": False,
-            "error": "No worktree found for this task"
-        }
+        return {"success": False, "error": "No worktree found for this task"}
 
     # Get worktree branch
     try:
@@ -4214,7 +4569,7 @@ async def get_worktree_diff(task_id: str):
             cwd=worktree_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         worktree_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -4227,7 +4582,7 @@ async def get_worktree_diff(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
@@ -4241,24 +4596,26 @@ async def get_worktree_diff(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line:
-                parts = line.split('\t')
+                parts = line.split("\t")
                 if len(parts) >= 3:
                     added = parts[0]
                     deleted = parts[1]
                     path = parts[2]
                     # Handle binary files (show as -)
-                    additions = int(added) if added != '-' else 0
-                    deletions = int(deleted) if deleted != '-' else 0
-                    files.append({
-                        "path": path,
-                        "status": "modified",  # Will be refined below
-                        "additions": additions,
-                        "deletions": deletions,
-                    })
+                    additions = int(added) if added != "-" else 0
+                    deletions = int(deleted) if deleted != "-" else 0
+                    files.append(
+                        {
+                            "path": path,
+                            "status": "modified",  # Will be refined below
+                            "additions": additions,
+                            "deletions": deletions,
+                        }
+                    )
     except subprocess.CalledProcessError:
         pass
 
@@ -4269,23 +4626,23 @@ async def get_worktree_diff(task_id: str):
             cwd=project_path,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         )
         status_map = {}
-        for line in result.stdout.strip().split('\n'):
+        for line in result.stdout.strip().split("\n"):
             if line:
-                parts = line.split('\t')
+                parts = line.split("\t")
                 if len(parts) >= 2:
                     status_code = parts[0][0]  # First char (R100 -> R)
                     filename = parts[-1]  # Last part is the filename
                     status = "modified"
-                    if status_code == 'A':
+                    if status_code == "A":
                         status = "added"
-                    elif status_code == 'D':
+                    elif status_code == "D":
                         status = "deleted"
-                    elif status_code == 'R':
+                    elif status_code == "R":
                         status = "renamed"
-                    elif status_code == 'M':
+                    elif status_code == "M":
                         status = "modified"
                     status_map[filename] = status
 
@@ -4300,7 +4657,8 @@ async def get_worktree_diff(task_id: str):
     INTERNAL_FILES = {".aifactory-security.json", ".aifactory-status"}
     INTERNAL_PREFIXES = (".aifactory/", "VERIFICATION_REPORT", "LANGUAGE_CHOICE")
     files = [
-        f for f in files
+        f
+        for f in files
         if f["path"] not in INTERNAL_FILES
         and not any(f["path"].startswith(p) for p in INTERNAL_PREFIXES)
     ]
@@ -4310,17 +4668,21 @@ async def get_worktree_diff(task_id: str):
     if not files and worktree_path.exists():
         for f in worktree_path.iterdir():
             # Skip internal files, directories, and dotfiles
-            if f.name.startswith('.') or f.name.startswith('__') or f.is_dir():
+            if f.name.startswith(".") or f.name.startswith("__") or f.is_dir():
                 continue
-            if f.name in INTERNAL_FILES or any(f.name.startswith(p) for p in INTERNAL_PREFIXES):
+            if f.name in INTERNAL_FILES or any(
+                f.name.startswith(p) for p in INTERNAL_PREFIXES
+            ):
                 continue
             # Check if this file exists in the main project
             main_file = project_path / f.name
             if not main_file.exists():
                 # New file created by the agent
                 try:
-                    content = f.read_text(errors='replace')
-                    line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
+                    content = f.read_text(errors="replace")
+                    line_count = content.count("\n") + (
+                        1 if content and not content.endswith("\n") else 0
+                    )
                     # Generate a unified diff for display
                     diff_lines = ["--- /dev/null", f"+++ b/{f.name}"]
                     diff_lines.append(f"@@ -0,0 +1,{line_count} @@")
@@ -4330,13 +4692,15 @@ async def get_worktree_diff(task_id: str):
                 except OSError:
                     line_count = 0
                     synthetic_diff = ""
-                files.append({
-                    "path": f.name,
-                    "status": "added",
-                    "additions": line_count,
-                    "deletions": 0,
-                    "diff": synthetic_diff,
-                })
+                files.append(
+                    {
+                        "path": f.name,
+                        "status": "added",
+                        "additions": line_count,
+                        "deletions": 0,
+                        "diff": synthetic_diff,
+                    }
+                )
 
     # Get actual diff content for each file
     for f in files:
@@ -4346,7 +4710,7 @@ async def get_worktree_diff(task_id: str):
                 cwd=project_path,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             f["diff"] = result.stdout
         except subprocess.CalledProcessError:
@@ -4363,12 +4727,14 @@ async def get_worktree_diff(task_id: str):
         "data": {
             "files": files,
             "summary": summary,
-        }
+        },
     }
 
 
 @router.post("/{task_id}/worktree/discard")
-async def discard_worktree(task_id: str):
+async def discard_worktree(
+    task_id: str, _access: dict = Depends(require_task_access("admin"))
+):
     """
     Discard/delete the worktree for a task.
     Removes the worktree directory and optionally the branch.
@@ -4383,6 +4749,7 @@ async def discard_worktree(task_id: str):
             return {"success": False, "error": "Projects file not found"}
 
         import json
+
         projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs
@@ -4403,7 +4770,10 @@ async def discard_worktree(task_id: str):
             project_path = Path(project["path"])
     else:
         # task_id is just the spec_id, need to find project from context
-        return {"success": False, "error": "Task ID must include project ID (format: project_id:spec_id)"}
+        return {
+            "success": False,
+            "error": "Task ID must include project ID (format: project_id:spec_id)",
+        }
 
     # Find the worktree
     worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
@@ -4420,7 +4790,7 @@ async def discard_worktree(task_id: str):
             ["git", "worktree", "remove", "--force", str(worktree_path)],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
 
         if result.returncode != 0:
@@ -4433,7 +4803,7 @@ async def discard_worktree(task_id: str):
             ["git", "worktree", "prune"],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
 
         # Delete the branch
@@ -4441,15 +4811,15 @@ async def discard_worktree(task_id: str):
             ["git", "branch", "-D", branch_name],
             cwd=project_path,
             capture_output=True,
-            text=True
+            text=True,
         )
 
         return {
             "success": True,
             "data": {
                 "discarded": True,
-                "message": f"Successfully discarded worktree for {spec_id}"
-            }
+                "message": f"Successfully discarded worktree for {spec_id}",
+            },
         }
     except Exception as e:
         return {"success": False, "error": f"Failed to discard worktree: {str(e)}"}
@@ -4462,6 +4832,7 @@ async def discard_worktree(task_id: str):
 
 class OpenInIDERequest(BaseModel):
     """Request body for opening a path in IDE."""
+
     worktreePath: str
     ide: str
     customPath: str | None = None
@@ -4469,6 +4840,7 @@ class OpenInIDERequest(BaseModel):
 
 class OpenInTerminalRequest(BaseModel):
     """Request body for opening a path in terminal."""
+
     worktreePath: str
     terminal: str
     customPath: str | None = None
@@ -4477,6 +4849,7 @@ class OpenInTerminalRequest(BaseModel):
 def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list[str]:
     """Get the command to open a path in the specified IDE."""
     import platform
+
     system = platform.system()
 
     # Use custom path if provided
@@ -4490,63 +4863,67 @@ def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list
         "cursor": ["cursor", path],
         "vscodium": ["codium", path],
         "vscode-insiders": ["code-insiders", path],
-
         # JetBrains IDEs
-        "webstorm": ["webstorm", path] if system != "Darwin" else ["open", "-a", "WebStorm", path],
-        "intellij": ["idea", path] if system != "Darwin" else ["open", "-a", "IntelliJ IDEA", path],
-        "pycharm": ["pycharm", path] if system != "Darwin" else ["open", "-a", "PyCharm", path],
-        "phpstorm": ["phpstorm", path] if system != "Darwin" else ["open", "-a", "PhpStorm", path],
-        "goland": ["goland", path] if system != "Darwin" else ["open", "-a", "GoLand", path],
-        "rider": ["rider", path] if system != "Darwin" else ["open", "-a", "Rider", path],
-        "clion": ["clion", path] if system != "Darwin" else ["open", "-a", "CLion", path],
-        "rubymine": ["rubymine", path] if system != "Darwin" else ["open", "-a", "RubyMine", path],
-        "datagrip": ["datagrip", path] if system != "Darwin" else ["open", "-a", "DataGrip", path],
-
+        "webstorm": ["webstorm", path]
+        if system != "Darwin"
+        else ["open", "-a", "WebStorm", path],
+        "intellij": ["idea", path]
+        if system != "Darwin"
+        else ["open", "-a", "IntelliJ IDEA", path],
+        "pycharm": ["pycharm", path]
+        if system != "Darwin"
+        else ["open", "-a", "PyCharm", path],
+        "phpstorm": ["phpstorm", path]
+        if system != "Darwin"
+        else ["open", "-a", "PhpStorm", path],
+        "goland": ["goland", path]
+        if system != "Darwin"
+        else ["open", "-a", "GoLand", path],
+        "rider": ["rider", path]
+        if system != "Darwin"
+        else ["open", "-a", "Rider", path],
+        "clion": ["clion", path]
+        if system != "Darwin"
+        else ["open", "-a", "CLion", path],
+        "rubymine": ["rubymine", path]
+        if system != "Darwin"
+        else ["open", "-a", "RubyMine", path],
+        "datagrip": ["datagrip", path]
+        if system != "Darwin"
+        else ["open", "-a", "DataGrip", path],
         # Sublime Text
-        "sublime": ["subl", path] if system != "Darwin" else ["open", "-a", "Sublime Text", path],
-
+        "sublime": ["subl", path]
+        if system != "Darwin"
+        else ["open", "-a", "Sublime Text", path],
         # Atom / Pulsar
         "atom": ["atom", path],
         "pulsar": ["pulsar", path],
-
         # Vim/Neovim (terminal-based)
         "vim": ["vim", path],
         "neovim": ["nvim", path],
         "nvim": ["nvim", path],
-
         # Emacs
         "emacs": ["emacs", path],
-
         # Zed
         "zed": ["zed", path] if system != "Darwin" else ["open", "-a", "Zed", path],
-
         # Nova (macOS)
         "nova": ["open", "-a", "Nova", path],
-
         # BBEdit (macOS)
         "bbedit": ["open", "-a", "BBEdit", path],
-
         # TextMate (macOS)
         "textmate": ["open", "-a", "TextMate", path],
-
         # Notepad++ (Windows)
         "notepadpp": ["notepad++", path],
-
         # Visual Studio (Windows)
         "visualstudio": ["devenv", path],
-
         # Fleet
         "fleet": ["fleet", path],
-
         # Lapce
         "lapce": ["lapce", path],
-
         # Helix
         "helix": ["hx", path],
-
         # Kate (Linux/KDE)
         "kate": ["kate", path],
-
         # Geany (Linux)
         "geany": ["geany", path],
     }
@@ -4554,9 +4931,12 @@ def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list
     return ide_commands.get(ide, ["code", path])  # Default to VS Code
 
 
-def get_terminal_command(terminal: str, path: str, custom_path: str | None = None) -> list[str]:
+def get_terminal_command(
+    terminal: str, path: str, custom_path: str | None = None
+) -> list[str]:
     """Get the command to open a terminal at the specified path."""
     import platform
+
     system = platform.system()
 
     # Use custom path if provided
@@ -4632,10 +5012,7 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
 
     # Validate the path exists
     if not Path(worktree_path).exists():
-        return {
-            "success": False,
-            "error": f"Path does not exist: {worktree_path}"
-        }
+        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
 
     try:
         cmd = get_ide_command(ide, worktree_path, custom_path)
@@ -4645,25 +5022,17 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True
+            start_new_session=True,
         )
 
-        return {
-            "success": True,
-            "data": {
-                "opened": True
-            }
-        }
+        return {"success": True, "data": {"opened": True}}
     except FileNotFoundError:
         return {
             "success": False,
-            "error": f"IDE command not found. Make sure '{ide}' is installed and in your PATH."
+            "error": f"IDE command not found. Make sure '{ide}' is installed and in your PATH.",
         }
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to open IDE: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to open IDE: {str(e)}"}
 
 
 @router.post("/worktree/open-in-terminal")
@@ -4678,10 +5047,7 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
 
     # Validate the path exists
     if not Path(worktree_path).exists():
-        return {
-            "success": False,
-            "error": f"Path does not exist: {worktree_path}"
-        }
+        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
 
     try:
         cmd = get_terminal_command(terminal, worktree_path, custom_path)
@@ -4691,25 +5057,17 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True
+            start_new_session=True,
         )
 
-        return {
-            "success": True,
-            "data": {
-                "opened": True
-            }
-        }
+        return {"success": True, "data": {"opened": True}}
     except FileNotFoundError:
         return {
             "success": False,
-            "error": f"Terminal command not found. Make sure '{terminal}' is installed and in your PATH."
+            "error": f"Terminal command not found. Make sure '{terminal}' is installed and in your PATH.",
         }
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to open terminal: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to open terminal: {str(e)}"}
 
 
 @router.post("/worktree/detect-tools")
@@ -4728,11 +5086,27 @@ async def detect_worktree_tools():
         {"id": "vscode", "name": "Visual Studio Code", "command": "code"},
         {"id": "cursor", "name": "Cursor", "command": "cursor"},
         {"id": "vscodium", "name": "VSCodium", "command": "codium"},
-        {"id": "vscode-insiders", "name": "VS Code Insiders", "command": "code-insiders"},
+        {
+            "id": "vscode-insiders",
+            "name": "VS Code Insiders",
+            "command": "code-insiders",
+        },
         {"id": "sublime", "name": "Sublime Text", "command": "subl"},
-        {"id": "webstorm", "name": "WebStorm", "command": "webstorm" if system != "Darwin" else None},
-        {"id": "intellij", "name": "IntelliJ IDEA", "command": "idea" if system != "Darwin" else None},
-        {"id": "pycharm", "name": "PyCharm", "command": "pycharm" if system != "Darwin" else None},
+        {
+            "id": "webstorm",
+            "name": "WebStorm",
+            "command": "webstorm" if system != "Darwin" else None,
+        },
+        {
+            "id": "intellij",
+            "name": "IntelliJ IDEA",
+            "command": "idea" if system != "Darwin" else None,
+        },
+        {
+            "id": "pycharm",
+            "name": "PyCharm",
+            "command": "pycharm" if system != "Darwin" else None,
+        },
         {"id": "zed", "name": "Zed", "command": "zed"},
         {"id": "atom", "name": "Atom", "command": "atom"},
         {"id": "pulsar", "name": "Pulsar", "command": "pulsar"},
@@ -4745,15 +5119,19 @@ async def detect_worktree_tools():
     ]
 
     if system == "Windows":
-        ide_definitions.extend([
-            {"id": "notepadpp", "name": "Notepad++", "command": "notepad++"},
-            {"id": "visualstudio", "name": "Visual Studio", "command": "devenv"},
-        ])
+        ide_definitions.extend(
+            [
+                {"id": "notepadpp", "name": "Notepad++", "command": "notepad++"},
+                {"id": "visualstudio", "name": "Visual Studio", "command": "devenv"},
+            ]
+        )
     elif system == "Linux":
-        ide_definitions.extend([
-            {"id": "kate", "name": "Kate", "command": "kate"},
-            {"id": "geany", "name": "Geany", "command": "geany"},
-        ])
+        ide_definitions.extend(
+            [
+                {"id": "kate", "name": "Kate", "command": "kate"},
+                {"id": "geany", "name": "Geany", "command": "geany"},
+            ]
+        )
 
     # Terminal detection
     terminal_definitions = []
@@ -4780,9 +5158,17 @@ async def detect_worktree_tools():
         ]
     else:  # Linux
         terminal_definitions = [
-            {"id": "gnome-terminal", "name": "GNOME Terminal", "command": "gnome-terminal"},
+            {
+                "id": "gnome-terminal",
+                "name": "GNOME Terminal",
+                "command": "gnome-terminal",
+            },
             {"id": "konsole", "name": "Konsole", "command": "konsole"},
-            {"id": "xfce4-terminal", "name": "Xfce Terminal", "command": "xfce4-terminal"},
+            {
+                "id": "xfce4-terminal",
+                "name": "Xfce Terminal",
+                "command": "xfce4-terminal",
+            },
             {"id": "terminator", "name": "Terminator", "command": "terminator"},
             {"id": "tilix", "name": "Tilix", "command": "tilix"},
             {"id": "kitty", "name": "Kitty", "command": "kitty"},
@@ -4803,12 +5189,14 @@ async def detect_worktree_tools():
             if found:
                 installed = True
                 path = found
-        ides.append({
-            "id": ide_def["id"],
-            "name": ide_def["name"],
-            "path": path,
-            "installed": installed
-        })
+        ides.append(
+            {
+                "id": ide_def["id"],
+                "name": ide_def["name"],
+                "path": path,
+                "installed": installed,
+            }
+        )
 
     terminals = []
     for term_def in terminal_definitions:
@@ -4825,20 +5213,16 @@ async def detect_worktree_tools():
             if Path(app_path).exists():
                 installed = True
                 path = app_path
-        terminals.append({
-            "id": term_def["id"],
-            "name": term_def["name"],
-            "path": path,
-            "installed": installed
-        })
+        terminals.append(
+            {
+                "id": term_def["id"],
+                "name": term_def["name"],
+                "path": path,
+                "installed": installed,
+            }
+        )
 
-    return {
-        "success": True,
-        "data": {
-            "ides": ides,
-            "terminals": terminals
-        }
-    }
+    return {"success": True, "data": {"ides": ides, "terminals": terminals}}
 
 
 # --------------------------------------------------------------------------
@@ -4897,7 +5281,11 @@ def _inbox_target_spec_dir(project_path: Path, spec_id: str, spec_dir: Path) -> 
     response_model=InboxEnqueueResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def enqueue_inbox_message(task_id: str, message: InboxMessageCreate):
+async def enqueue_inbox_message(
+    task_id: str,
+    message: InboxMessageCreate,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Deliver a directed message to a task's agent inbox (#264).
 
     The message is written atomically and verified on disk. The returned
@@ -4938,6 +5326,7 @@ async def list_inbox_messages(
     task_id: str,
     recipient: str = Query("agent", description="Recipient inbox to read"),
     unread_only: bool = Query(False, description="Only return unread messages"),
+    _access: dict = Depends(require_task_access("viewer")),
 ):
     """List messages in a task's agent inbox."""
     from ..services import inbox_service

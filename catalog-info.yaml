@@ -1,0 +1,180 @@
+# Backstage software-catalog descriptor for AIFactory.
+#
+# Hand-maintained (supersedes the auto-generated stub from the catalog-onboard
+# workflow). Import into Backstage via "Register an existing component",
+# pointing at the raw URL of this file:
+#   https://github.com/olafkfreund/AIFactory/blob/main/catalog-info.yaml
+#
+# AIFactory is the "Act" stage of the Factory PARR pipeline. Its entities join
+# the umbrella System `factory-suite` (Domain `factory`, owner Group
+# `factory-maintainers`), both declared in olafkfreund/Factory/catalog-info.yaml.
+#
+# Entity model:
+#   Component  aifactory         -> provides web-api, mcp, completion-event
+#   Component  aifactory-portal  -> consumes web-api
+#   API        aifactory-web-api          (openapi 3.1, 279 paths)
+#   API        aifactory-mcp              (mcp / json-rpc, stdio + remote HTTP+SSE)
+#   API        aifactory-completion-event (asyncapi, RFC-0001 emitter)
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: aifactory
+  title: AIFactory
+  description: >-
+    Spec-first plan → code → QA agent pipeline that turns governed GitHub issues
+    into shipping code in isolated git worktrees. Multi-provider (Claude, OpenAI,
+    Gemini, Ollama, vLLM, Codex, Copilot) with executor delegation. The Act stage
+    of the Factory PARR pipeline.
+  annotations:
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: olafkfreund/AIFactory
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/
+  tags:
+    - python
+    - fastapi
+    - ai-agents
+    - claude-agent-sdk
+    - code-generation
+    - mcp
+  links:
+    - url: https://factory.freundcloud.com/
+      title: Factory website
+      icon: web
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  providesApis:
+    - aifactory-web-api
+    - aifactory-mcp
+    - aifactory-completion-event
+  consumesApis:
+    # Builds from PFactory's governed plan/issues.
+    - pfactory-api
+  dependsOn:
+    - component:default/pfactory
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: aifactory-portal
+  title: AIFactory Portal
+  description: >-
+    React 19 + TypeScript + Vite browser portal (the "Mission Control" workspace):
+    kanban board, Monaco editor, xterm terminals, task wizards and a live agent
+    console driven over the web-server REST/WebSocket API.
+  annotations:
+    github.com/project-slug: olafkfreund/AIFactory
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/frontend-web/
+  tags:
+    - react
+    - typescript
+    - vite
+    - frontend
+spec:
+  type: website
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  subcomponentOf: aifactory
+  consumesApis:
+    - aifactory-web-api
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aifactory-web-api
+  title: AIFactory Web API
+  description: >-
+    AIFactory web-server REST + WebSocket control plane (FastAPI): projects,
+    tasks, execution, files, terminals, auth/OIDC/SAML/SCIM, audit, MCP and
+    memory. OpenAPI 3.1 (v3.4.2, 279 paths). Bearer (JWT) auth.
+  annotations:
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/web-server/
+  tags:
+    - rest
+    - openapi
+    - fastapi
+    - websocket
+spec:
+  type: openapi
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  # OpenAPI 3.1 spec generated from the FastAPI app. Regenerate with:
+  #   cd apps/web-server && APP_DISABLE_AUTH=true .venv/bin/python -c \
+  #     "import yaml; from server.main import app; \
+  #      yaml.safe_dump(app.openapi(), open('openapi.yaml','w'), sort_keys=False, allow_unicode=True)"
+  definition:
+    $text: ./apps/web-server/openapi.yaml
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aifactory-mcp
+  title: AIFactory MCP Control Plane
+  description: >-
+    Model Context Protocol tool surface so MCP-aware agents (Claude Code, Cursor,
+    Continue.dev) can drive AIFactory. Two transports: a stdio server ("aifactory")
+    and an opt-in remote HTTP+SSE server ("aifactory-remote").
+  annotations:
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/backend/mcp_server/
+  tags:
+    - mcp
+    - json-rpc
+spec:
+  type: mcp
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  definition: |
+    AIFactory MCP control plane (Model Context Protocol, JSON-RPC 2.0).
+
+    Transport A — stdio
+      Server name: "aifactory" (v1.0.0)
+      Entrypoint:  apps/backend/mcp_server/aifactory_server.py
+      Launch:      scripts/start-aifactory-mcp.sh  (repo-root .mcp.json)
+      Env:         AIFACTORY_API_URL (default http://localhost:3101)
+                   AIFACTORY_API_TOKEN_FILE (default ~/.aifactory/.token)
+                   AIFACTORY_SPEC_DIR / --spec-dir, AIFACTORY_PROJECT_DIR
+      Spec-internal tools (mcp__aifactory__*): update_subtask_status,
+        get_build_progress, record_discovery, record_gotcha,
+        get_session_context, update_qa_status, test_memory_integration
+      Task-control tools: task_list, task_running, … (8 tools)
+
+    Transport B — remote HTTP+SSE  (opt-in: AIFACTORY_MCP_REMOTE_ENABLED=true)
+      Server name: "aifactory-remote" (v1.0.0)
+      Entrypoint:  apps/web-server/server/mcp_remote/server.py
+      Mounted at:  /api/mcp-remote   (SSE: GET /api/mcp/sse · JSON-RPC: POST /api/mcp/messages/)
+      Auth:        scoped `acw_` keys (bypasses global JWT middleware)
+      Tools (read):  aifactory.list_projects, aifactory.list_tasks,
+                     aifactory.get_task, aifactory.get_worktree_diff
+      Tools (write): aifactory.start_task, aifactory.stop_task,
+                     aifactory.approve_plan, aifactory.merge_pr
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: aifactory-completion-event
+  title: AIFactory completion-event envelope
+  description: >-
+    Normalized RFC-0001 completion-event the web-server emits when a task reaches
+    a terminal status (opt-in webhook POST and/or a same-host COMPLETED.json
+    sentinel). correlation_key is the GitHub issue number (synthetic af-<spec_id>
+    fallback). service = "aifactory".
+  annotations:
+    backstage.io/source-location: url:https://github.com/olafkfreund/AIFactory/tree/main/apps/web-server/server/services/completion.py
+  tags:
+    - asyncapi
+    - events
+    - webhook
+    - rfc-0001
+spec:
+  type: asyncapi
+  lifecycle: experimental
+  owner: group:default/factory-maintainers
+  system: factory-suite
+  definition:
+    $text: ./techdocs/specs/aifactory-completion-event.asyncapi.yaml

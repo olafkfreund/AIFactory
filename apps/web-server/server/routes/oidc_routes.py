@@ -66,6 +66,30 @@ def _create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
+def _capture_idp_refresh_token(refresh_token: str | None) -> str | None:
+    """Return the IdP refresh token to persist, or None if it can't be stored
+    encrypted at rest (#366).
+
+    The column is encrypted via the KMS backend; if no KMS key is configured
+    (a deployment that hasn't enabled encryption-at-rest), we drop the token
+    rather than crash login. The refresh path then falls back to the liveness
+    probe — same as a legacy session.
+    """
+    if not refresh_token:
+        return None
+    try:
+        from ..crypto.kms import get_backend
+
+        get_backend()  # raises if no key configured
+        return refresh_token
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "KMS not configured; not storing IdP refresh token "
+            "(OIDC revocation falls back to liveness probe)"
+        )
+        return None
+
+
 def _create_refresh_token(user: User, jti: str) -> str:
     """Create a refresh token with a JTI that ties it to a RefreshSession row."""
     settings = get_settings()
@@ -193,6 +217,12 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
         jti=jti,
         oidc_sub=sub,
         expires_at=refresh_expires.replace(tzinfo=None),
+        # #366: store the IdP refresh token for real per-user revocation at
+        # refresh time. None when the IdP issues no refresh token OR when
+        # encryption-at-rest isn't configured — in both cases the refresh path
+        # falls back to the discovery-liveness probe, so login never breaks on
+        # a KMS-less deployment.
+        idp_refresh_token=_capture_idp_refresh_token(token.get("refresh_token")),
     )
     db.add(session_row)
     await db.commit()
@@ -302,35 +332,73 @@ async def _fetch_userinfo_from_idp(sub: str) -> dict | None:
         return None
 
 
-async def _validate_against_idp(refresh_token: str) -> bool:
-    """Probe the IdP with a refresh-token grant; return True iff accepted.
+# Result of a per-user IdP revocation check (#366).
+#   "valid"     — the user is still enabled; mint a new access token.
+#   "revoked"   — the IdP rejected the refresh-token grant (invalid_grant);
+#                 the user was disabled / the token revoked → kill the session.
+#   "idp_error" — the IdP was unreachable or returned a non-revocation error;
+#                 DON'T revoke (avoid locking users out on a transient outage).
+IdpValidation = str  # one of: "valid" | "revoked" | "idp_error"
 
-    This is the practical revocation check: Keycloak/Okta/AzureAD all
-    reject a refresh-token grant for a disabled user with 401 +
-    error=invalid_grant. We use that as our signal.
 
-    Note: this requires that the OIDC client received an IdP refresh
-    token at login (offline_access scope) OR that we cache a token
-    binding. For v1 we use the simpler approach: re-validate at
-    refresh time by hitting the IdP's introspection/userinfo proxy.
-    For the test path we make a direct call.
+async def _validate_against_idp(idp_refresh_token: str | None) -> IdpValidation:
+    """Real per-user revocation check via an IdP refresh-token grant (#366).
+
+    Keycloak / Okta / Azure AD reject a refresh-token grant for a disabled or
+    revoked user with HTTP 400 ``error=invalid_grant`` — that is the revocation
+    signal. A transient IdP failure (5xx / network / non-revocation error) must
+    NOT be read as revocation, so it returns ``"idp_error"`` and the caller
+    keeps the session alive.
+
+    Legacy sessions (and IdPs that issue no refresh token) have
+    ``idp_refresh_token is None`` and fall back to a discovery-liveness probe —
+    the pre-#366 behaviour — so they keep working without a forced re-login.
     """
-    # The implementation below is a simplified probe. Production code
-    # should use the actual refresh-token-rotate flow; tests pass via
-    # this minimal path.
     import os
+
     issuer = os.environ["APP_OIDC_ISSUER_URL"].rstrip("/")
+
+    # Fallback for sessions without a stored IdP refresh token.
+    if not idp_refresh_token:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                r = await http.get(f"{issuer}/.well-known/openid-configuration")
+                return "valid" if r.status_code == 200 else "idp_error"
+        except Exception:  # noqa: BLE001
+            return "idp_error"
+
+    client_id = os.environ["APP_OIDC_CLIENT_ID"]
+    client_secret = os.environ["APP_OIDC_CLIENT_SECRET"]
     try:
         async with httpx.AsyncClient(timeout=10.0) as http:
-            # Bare reachability check — if the IdP is up, the realm
-            # config endpoint returns 200. A user-disabled signal must
-            # come from a per-user IdP call, but our v1 minimum is to
-            # confirm the IdP is operational + the cache hasn't been
-            # explicitly invalidated for this sub.
-            r = await http.get(f"{issuer}/.well-known/openid-configuration")
-            return r.status_code == 200
+            disc = (
+                await http.get(f"{issuer}/.well-known/openid-configuration")
+            ).json()
+            token_url = disc["token_endpoint"]
+            tr = await http.post(
+                token_url,
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": idp_refresh_token,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+            )
+            if tr.status_code == 200:
+                return "valid"
+            if tr.status_code == 400:
+                try:
+                    error = tr.json().get("error", "invalid_grant")
+                except Exception:  # noqa: BLE001
+                    error = "invalid_grant"
+                # Only invalid_grant means "user revoked". Other 400s
+                # (e.g. invalid_client = operator misconfig) are not the
+                # user's fault → don't lock them out.
+                return "revoked" if error == "invalid_grant" else "idp_error"
+            # 5xx / unexpected → transient.
+            return "idp_error"
     except Exception:  # noqa: BLE001
-        return False
+        return "idp_error"
 
 
 @router.post(
@@ -384,20 +452,25 @@ async def oidc_refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db))
     # Try cache first.
     cached = get_cached(session.oidc_sub)
     if cached is None:
-        # IdP validation. We use the "is the IdP up + has the sub
-        # not been explicitly invalidated" minimum here; richer
-        # per-user validation lands in P3.4.x extensions.
-        ok = await _validate_against_idp(body.refresh_token)
-        if not ok:
-            # Revocation: delete session, clear cache, 401.
+        # Real per-user revocation check against the IdP (#366).
+        result = await _validate_against_idp(session.idp_refresh_token)
+        if result == "revoked":
+            # User disabled / token revoked at the IdP → kill the session.
             invalidate(session.oidc_sub)
             await db.delete(session)
             await db.commit()
             raise HTTPException(
-                status_code=401, detail="IdP rejected refresh; session revoked"
+                status_code=401, detail="User disabled or revoked at the IdP"
             )
-        # Re-cache (we don't have fresh userinfo here, but presence
-        # in cache means "validated within TTL").
+        if result == "idp_error":
+            # Transient IdP failure — do NOT revoke (that would lock users out
+            # on an IdP outage). Signal "retry shortly"; the refresh cookie
+            # stays valid and the access token still has TTL left.
+            raise HTTPException(
+                status_code=503,
+                detail="Identity provider temporarily unavailable; retry shortly",
+            )
+        # result == "valid" — re-cache (presence == "validated within TTL").
         cache_put(session.oidc_sub, {"sub": session.oidc_sub, "validated": True})
 
     # Look up the user, mint new access token.

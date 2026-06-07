@@ -39,12 +39,24 @@ import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth import verify_websocket_token
-from ..database.engine import get_db
+from ..auth import WebSocketAuthError, authenticate_websocket
+from ..database.engine import async_session_factory, get_db
+from ..routes.project_authz import (
+    _auth_disabled,
+    authorize_project_for_user,
+    is_service_principal,
+)
 from ..services.audit_service import log_audit_event
 from .session import SessionState, get_registry
 from .wrapper import RmuxError
@@ -52,6 +64,37 @@ from .wrapper import RmuxError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tasks", tags=["rmux Live Console"])
+
+# A service principal connecting over WebSocket authenticates via the legacy
+# token, for which ``authenticate_websocket`` returns ``None``. Normalize that
+# to an explicit service-principal user so the shared authz/audit path treats
+# it consistently with the REST middleware (#322).
+_WS_SERVICE_PRINCIPAL = {"id": "default", "email": None, "role": "admin", "is_service": True}
+
+
+async def _authorize_console(
+    user: dict | None,
+    state: SessionState,
+    db: AsyncSession,
+    *,
+    minimum_role: str = "member",
+) -> str | None:
+    """Authorize ``user`` for ``state``'s console. Raises ``HTTPException`` on
+    denial; returns the owning ``org_id`` (or None) for audit attribution.
+
+    Authorization is keyed on the session's **own** ``project_id`` (captured at
+    creation), never a client-supplied path prefix — so ``a_project:b_spec``
+    can't borrow A's access to reach B's session (#322 loose-addressing fix).
+    A legacy session with no known ``project_id`` is service-principal-only.
+    """
+    if state.project_id is None:
+        if not (_auth_disabled() or is_service_principal(user)):
+            raise HTTPException(
+                status_code=403,
+                detail="Console access is not authorized for this session",
+            )
+        return None
+    return await authorize_project_for_user(user, state.project_id, db, minimum_role)
 
 
 # ---------------------------------------------------------------------------
@@ -150,11 +193,14 @@ async def attach(
     state = _resolve_state_or_404(spec_id)
     cid = body.connection_id
 
-    # Audit-relevant metadata — pulled from middleware-set request state
-    # rather than the body so a malicious client can't lie about who
-    # they are.  Mirror existing audit callsites in routes/audit.py.
-    user_id = getattr(request.state, "user_id", None)
-    org_id = getattr(request.state, "org_id", None)
+    # Identity from middleware-set ``request.state.user`` (a dict) — NOT
+    # ``user_id``/``org_id`` attributes, which the middleware never sets, so
+    # audit rows previously recorded null (#322).
+    user = getattr(request.state, "user", None)
+    # Attach is interactive (write) → require at least 'member' on the task's
+    # org, keyed on the session's real project (#322).
+    org_id = await _authorize_console(user, state, db, minimum_role="member")
+    user_id = user.get("id") if isinstance(user, dict) else None
     client_ip = request.client.host if request.client else None
 
     async with state.lock:
@@ -211,8 +257,9 @@ async def detach(
     state = _resolve_state_or_404(spec_id)
     cid = body.connection_id
 
-    user_id = getattr(request.state, "user_id", None)
-    org_id = getattr(request.state, "org_id", None)
+    user = getattr(request.state, "user", None)
+    org_id = await _authorize_console(user, state, db, minimum_role="viewer")
+    user_id = user.get("id") if isinstance(user, dict) else None
     client_ip = request.client.host if request.client else None
 
     released = False
@@ -255,12 +302,17 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
         Otherwise silently dropped (with a debug log) — read-only
         viewers MUST NOT be able to type by accident.
 
-    Auth: ``verify_websocket_token`` is the same gate ``terminal.py``
-    uses.  Adding org-membership check is a v1.1 follow-up (when we add
-    cross-org pane sharing).
+    Auth (#322): authenticate the token, then authorize the caller against the
+    session's owning org (read-only 'viewer' to stream). The write path
+    (keystrokes) additionally requires a successful ``POST /attach``, which
+    demands 'member' — so a viewer can watch but never type.
     """
-    if not await verify_websocket_token(websocket):
-        return
+    try:
+        ws_user = await authenticate_websocket(websocket)
+    except WebSocketAuthError:
+        return  # authenticate_websocket already closed the socket
+    # Legacy-token callers authenticate as the service principal (None).
+    user = ws_user if ws_user is not None else _WS_SERVICE_PRINCIPAL
 
     try:
         state = _resolve_state_or_404(spec_id)
@@ -268,6 +320,15 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
         await websocket.accept()
         await websocket.close(code=4004, reason="no rmux session for spec_id")
         return
+
+    # Authorize read-only streaming against the session's real project.
+    async with async_session_factory() as db:
+        try:
+            await _authorize_console(user, state, db, minimum_role="viewer")
+        except HTTPException:
+            await websocket.accept()
+            await websocket.close(code=4003, reason="forbidden")
+            return
 
     await websocket.accept()
 

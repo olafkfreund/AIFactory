@@ -1,11 +1,15 @@
 import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 
 function HeroBanner() {
   const {siteConfig} = useDocusaurusContext();
+  // Resolve against the site baseUrl so the logo loads regardless of the
+  // deploy path (a bare "img/..." is relative to the current URL and 404s).
+  const logoUrl = useBaseUrl('/img/aifactory-logo.png');
   return (
     <header className="hero-banner">
       {/* Animated gradient orbs in the background — pure CSS, no JS */}
@@ -16,7 +20,7 @@ function HeroBanner() {
       </div>
       <div className="container hero-content">
         <img
-          src="img/aifactory-logo.png"
+          src={logoUrl}
           alt="AIFactory"
           className="hero-logo"
         />

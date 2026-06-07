@@ -134,9 +134,6 @@ jobs:
         if: steps.detect.outputs.should_release == 'true'
         uses: docker/setup-qemu-action@v3
         with:
-          # arm64 temporarily dropped: the frontend `vite build` fails under
-          # QEMU-emulated arm64 (native Rollup/lightningcss). Restore via a
-          # native arm64 runner — see tracking issue.
           platforms: linux/amd64
 
       - name: Set up Docker Buildx
@@ -151,7 +148,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build + push bank-pilot image (WITH_RMUX=false, amd64)
+      - name: Build + push bank-pilot image (WITH_RMUX=false, amd64-only)
         if: steps.detect.outputs.should_release == 'true'
         id: build
         uses: docker/build-push-action@v6

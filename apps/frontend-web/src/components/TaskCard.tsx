@@ -255,6 +255,10 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
         return 'purple';
       case 'done':
         return 'success';
+      case 'copilot_running':
+        return 'warning';
+      case 'copilot_pr_opened':
+        return 'info';
       default:
         return 'secondary';
     }
@@ -270,6 +274,10 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
         return t('labels.needsReview');
       case 'done':
         return t('status.complete');
+      case 'copilot_running':
+        return 'Copilot Running';
+      case 'copilot_pr_opened':
+        return 'Copilot PR';
       default:
         return t('labels.pending');
     }
@@ -413,6 +421,29 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
               >
                 {reviewReasonInfo.label}
               </Badge>
+            )}
+            {/* Copilot dispatch link badges */}
+            {task.status === 'copilot_running' && task.metadata?.copilotDispatch?.issue_url && (
+              <a
+                href={task.metadata.copilotDispatch.issue_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm bg-warning/10 text-warning hover:bg-warning/20 transition-colors"
+              >
+                #{task.metadata.copilotDispatch.issue_number}
+              </a>
+            )}
+            {task.status === 'copilot_pr_opened' && task.metadata?.copilotDispatch?.pr_url && (
+              <a
+                href={task.metadata.copilotDispatch.pr_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-[10px] px-1.5 py-0.5 rounded-sm bg-info/10 text-info hover:bg-info/20 transition-colors"
+              >
+                PR #{task.metadata.copilotDispatch.pr_number}
+              </a>
             )}
             {/* Category badge with icon */}
             {task.metadata?.category && (

@@ -9,12 +9,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..websockets.events import emit_task_status
+from .project_authz import require_project_access, require_task_access
 from .projects import load_projects
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
@@ -26,6 +27,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
+from trusted_plan import ingest_trusted_plan  # noqa: E402 — needs sys.path above (#390)
 
 router = APIRouter()
 
@@ -39,21 +41,32 @@ class StartTaskRequest(BaseModel):
     """Request to start task execution."""
 
     auto_continue: bool = Field(True, description="Auto-continue to next phase")
-    complexity: str | None = Field(None, description="Complexity override for spec creation")
+    complexity: str | None = Field(
+        None, description="Complexity override for spec creation"
+    )
     # Task execution options (matches frontend TaskStartOptions)
     parallel: bool | None = Field(None, description="Enable parallel execution")
     workers: int | None = Field(None, description="Number of parallel workers")
     model: str | None = Field(None, description="Model override for execution")
-    baseBranch: str | None = Field(None, description="Base branch for worktree creation")
-    mode: str | None = Field("full", description="Execution mode: 'quick' for simplified prompts, 'full' for comprehensive")
+    baseBranch: str | None = Field(
+        None, description="Base branch for worktree creation"
+    )
+    mode: str | None = Field(
+        "full",
+        description="Execution mode: 'quick' for simplified prompts, 'full' for comprehensive",
+    )
 
 
 class ApplyCorrectionRequest(BaseModel):
     """A correction hand-back from an external test tool (e.g. TFactory, #317)."""
 
     fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
-    source: str | None = Field(None, description="Origin, e.g. 'triage' or 'visual_inspection'")
-    confirm: bool = Field(False, description="Required true to write + run the QA Fixer")
+    source: str | None = Field(
+        None, description="Origin, e.g. 'triage' or 'visual_inspection'"
+    )
+    confirm: bool = Field(
+        False, description="Required true to write + run the QA Fixer"
+    )
 
 
 class TaskProvenance(BaseModel):
@@ -64,9 +77,29 @@ class TaskProvenance(BaseModel):
     """
 
     session_id: str | None = Field(None, description="Upstream session/plan id")
-    issue_number: int | None = Field(None, description="Originating GitHub issue number")
+    issue_number: int | None = Field(
+        None, description="Originating GitHub issue number"
+    )
     repo: str | None = Field(None, description="Originating repo, e.g. 'owner/name'")
     source: str | None = Field(None, description="Origin system, e.g. 'pfactory'")
+    # Trusted Plan Handoff (#390): a verifiable approval over a handed-off
+    # implementation_plan.json. When present and verified, the build skips the
+    # spec pipeline. A plain label is spoofable; the signature is tamper-evident.
+    trusted_plan: bool = Field(
+        False, description="Whether this task carries a verified trusted plan"
+    )
+    approved_by: str | None = Field(
+        None, description="Signing authority, e.g. 'cfactory' or 'pfactory'"
+    )
+    approval_timestamp: str | None = Field(
+        None, description="ISO-8601 time the plan was approved/signed"
+    )
+    plan_contract_version: str | None = Field(
+        None, description="Trusted-plan contract version the signer used"
+    )
+    signature: str | None = Field(
+        None, description="HMAC signature over the canonical plan JSON"
+    )
 
 
 class CreateAndRunRequest(StartTaskRequest):
@@ -77,11 +110,44 @@ class CreateAndRunRequest(StartTaskRequest):
     )
 
 
+class FromPlanRequest(StartTaskRequest):
+    """Trusted Plan Handoff (#390): build directly from a signed, vetted plan.
+
+    The plan must embed an ``approval`` envelope (see ``trusted_plan.sign_plan``)
+    that verifies against an authority key in the environment. On success the
+    spec pipeline is skipped and the build starts immediately.
+    """
+
+    plan: dict = Field(
+        ..., description="Signed implementation_plan.json (incl. 'approval')"
+    )
+    provenance: TaskProvenance | None = Field(
+        None, description="Upstream provenance to persist alongside the approval"
+    )
+
+
 class RecoverTaskRequest(BaseModel):
     """Request to recover a stuck task."""
 
-    targetStatus: str | None = Field("backlog", description="Target status after recovery")
+    targetStatus: str | None = Field(
+        "backlog", description="Target status after recovery"
+    )
     autoRestart: bool = Field(False, description="Auto-restart the task after recovery")
+
+
+class CopilotDispatchRequest(BaseModel):
+    """Request to delegate a task to the GitHub Copilot cloud agent."""
+
+    repo_full_name: str = Field(
+        ..., description="GitHub repository in 'owner/repo' format"
+    )
+    issue_number: int = Field(
+        ..., description="GitHub issue number to assign to Copilot"
+    )
+    fallback_to_local: bool = Field(
+        True,
+        description="If True, fall back to the local AIFactory pipeline on dispatch failure",
+    )
 
 
 class TaskExecutionStatus(BaseModel):
@@ -114,7 +180,10 @@ async def get_running_tasks():
 
 
 @router.get("/{task_id}/status", response_model=TaskExecutionStatus)
-async def get_task_status(task_id: str):
+async def get_task_status(
+    task_id: str,
+    _access: dict = Depends(require_task_access("viewer")),
+):
     """Get execution status for a specific task."""
     agent_service = get_agent_service()
     is_running = agent_service.is_running(task_id)
@@ -126,7 +195,10 @@ async def get_task_status(task_id: str):
 
 
 @router.get("/{task_id}/running")
-async def is_task_running(task_id: str):
+async def is_task_running(
+    task_id: str,
+    _access: dict = Depends(require_task_access("viewer")),
+):
     """Check if a specific task is currently running."""
     agent_service = get_agent_service()
     is_running = agent_service.is_running(task_id)
@@ -138,13 +210,19 @@ async def is_task_running(task_id: str):
 
 
 @router.post("/{task_id}/start")
-async def start_task(task_id: str, request: StartTaskRequest, raw_request: Request):
+async def start_task(
+    task_id: str,
+    request: StartTaskRequest,
+    raw_request: Request,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Start execution of a task.
 
     The task must already exist (have a spec directory).
     This will run the planner, coder, and QA agents.
     """
     import logging
+
     logger = logging.getLogger(__name__)
     logger.info(f"[StartTask] ===== START ENDPOINT CALLED ===== task_id: {task_id}")
 
@@ -185,7 +263,11 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
         from pfactory.metadata import load_pfactory_metadata
         from pfactory.routing import TFACTORY, routing_target
         from pfactory.taxonomy import classify_requirements
-        from pfactory.tfactory_client import build_handoff_payload, send_handoff
+        from pfactory.tfactory_client import (
+            build_handoff_payload,
+            load_tfactory_block,
+            send_handoff,
+        )
 
         _req_file = spec_dir / "requirements.json"
         if _req_file.exists():
@@ -196,7 +278,12 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                 # TFactory. Graceful — when TFACTORY_BASE_URL is unset this is a
                 # no-op ("not_configured") and we still record the local marker.
                 _meta = load_pfactory_metadata(spec_dir, _req)
-                _payload = build_handoff_payload(spec_id, _req, _classification, _meta)
+                # RFC-0002: carry the contract's tfactory test profile so TFactory
+                # plans from declared lanes/frameworks/endpoints, not inference.
+                _tf = load_tfactory_block(spec_dir)
+                _payload = build_handoff_payload(
+                    spec_id, _req, _classification, _meta, tfactory=_tf
+                )
                 transport = await send_handoff(_payload)
 
                 marker = spec_dir / "TFACTORY_HANDOFF.md"
@@ -232,20 +319,30 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     # This handles the case where projects.py created the spec directory but spec_runner.py hasn't run yet
     # A valid plan MUST have "phases" array - minimal plans with just {"status": "..."} are invalid
     import logging
+
     logger = logging.getLogger(__name__)
     implementation_plan = spec_dir / "implementation_plan.json"
-    logger.info(f"[StartTask] Checking for implementation_plan.json at {implementation_plan}")
-    logger.info(f"[StartTask] implementation_plan.json exists: {implementation_plan.exists()}")
+    logger.info(
+        f"[StartTask] Checking for implementation_plan.json at {implementation_plan}"
+    )
+    logger.info(
+        f"[StartTask] implementation_plan.json exists: {implementation_plan.exists()}"
+    )
 
     # Check if plan is valid (has phases/subtasks structure)
     plan_is_valid = False
     if implementation_plan.exists():
         try:
             import json
+
             plan_data = json.loads(implementation_plan.read_text())
             # Valid plan must have "phases" key (even if empty array)
-            plan_is_valid = "phases" in plan_data and isinstance(plan_data.get("phases"), (list, dict))
-            logger.info(f"[StartTask] Plan validity check: has_phases={plan_is_valid}, keys={list(plan_data.keys())}")
+            plan_is_valid = "phases" in plan_data and isinstance(
+                plan_data.get("phases"), (list, dict)
+            )
+            logger.info(
+                f"[StartTask] Plan validity check: has_phases={plan_is_valid}, keys={list(plan_data.keys())}"
+            )
 
             # Guard against re-starting a completed task
             if plan_data.get("status") == "done":
@@ -261,7 +358,10 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
         # Need to run spec creation first - read title/description from requirements.json
         import json
         from datetime import datetime
-        logger.info(f"[StartTask] No valid implementation plan found, will run spec creation for {task_id}")
+
+        logger.info(
+            f"[StartTask] No valid implementation plan found, will run spec creation for {task_id}"
+        )
         requirements_file = spec_dir / "requirements.json"
         if not requirements_file.exists():
             raise HTTPException(
@@ -289,7 +389,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
         # === FAST PATH: Simple tasks skip spec creation entirely ===
         if complexity == "simple":
-            logger.info(f"[StartTask] Simple task fast path: generating spec + plan programmatically for {task_id}")
+            logger.info(
+                f"[StartTask] Simple task fast path: generating spec + plan programmatically for {task_id}"
+            )
 
             # 1. Generate minimal spec.md
             spec_file = spec_dir / "spec.md"
@@ -310,7 +412,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                         "subtasks": [
                             {
                                 "id": "1.1",
-                                "description": f"{title}: {description}" if description else title,
+                                "description": f"{title}: {description}"
+                                if description
+                                else title,
                                 "status": "pending",
                             }
                         ],
@@ -322,11 +426,16 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
             # 3. Pre-approve (skip review gate)
             review_state_file = spec_dir / "review_state.json"
-            review_state_file.write_text(json.dumps({
-                "approved": True,
-                "approved_by": "auto-simple",
-                "approved_at": datetime.now().isoformat(),
-            }, indent=2))
+            review_state_file.write_text(
+                json.dumps(
+                    {
+                        "approved": True,
+                        "approved_by": "auto-simple",
+                        "approved_at": datetime.now().isoformat(),
+                    },
+                    indent=2,
+                )
+            )
 
             # 4. Set task_metadata for quick mode + reduced thinking
             task_metadata_file = spec_dir / "task_metadata.json"
@@ -349,7 +458,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
             # Mark plan as valid so we fall through to the execution path below
             plan_is_valid = True
-            logger.info("[StartTask] Fast path: spec + plan generated, proceeding to execution")
+            logger.info(
+                "[StartTask] Fast path: spec + plan generated, proceeding to execution"
+            )
 
         else:
             # === STANDARD PATH: Run full spec creation ===
@@ -375,9 +486,13 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                     plan["status"] = "in_progress"
                     plan["phase"] = "spec_creation"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
-                    logger.info(f"[StartTask] Persisted status=in_progress (spec creation) to {implementation_plan}")
+                    logger.info(
+                        f"[StartTask] Persisted status=in_progress (spec creation) to {implementation_plan}"
+                    )
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(f"[StartTask] Failed to persist spec creation status: {e}")
+                    logger.warning(
+                        f"[StartTask] Failed to persist spec creation status: {e}"
+                    )
 
                 # Emit status to show spec creation in progress
                 await emit_task_status(task_id, "in_progress")
@@ -395,6 +510,7 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     # Sync runtime options to task_metadata.json for backend to read
     # This ensures model/thinking/baseBranch overrides are available to run.py
     import json
+
     task_metadata_file = spec_dir / "task_metadata.json"
     task_metadata = {}
     if task_metadata_file.exists():
@@ -408,6 +524,12 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
         task_metadata["model"] = request.model
     if request.baseBranch:
         task_metadata["baseBranch"] = request.baseBranch
+    # Persist parallel/workers so the spec→plan→build auto-continue honors them
+    # (#392) — the handoff reads these from task_metadata via _read_parallel_opts.
+    if request.parallel is not None:
+        task_metadata["parallel"] = request.parallel
+    if request.workers is not None:
+        task_metadata["workers"] = request.workers
 
     # Write updated task_metadata.json if we have any settings
     if task_metadata:
@@ -426,6 +548,20 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
             effective_mode = "quick"
             logger.info("[StartTask] Auto-derived quick mode from simple complexity")
 
+    # Resolve parallel execution options (#376). Prefer the explicit request
+    # value, then fall back to task_metadata (set at task creation). These were
+    # previously accepted by StartTaskRequest but never threaded to the executor.
+    effective_parallel = request.parallel
+    if effective_parallel is None:
+        effective_parallel = task_metadata.get("parallel", False)
+    effective_workers = request.workers
+    if effective_workers is None:
+        effective_workers = task_metadata.get("workers")
+    if effective_parallel:
+        logger.info(
+            f"[StartTask] Parallel execution requested (workers={effective_workers or 'default'})"
+        )
+
     agent_service = get_agent_service()
 
     # Check if plan was manually approved - if so, use --force to bypass review check
@@ -436,14 +572,18 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
             review_data = json.loads(review_state_file.read_text())
             if review_data.get("approved", False):
                 force_execution = True
-                logger.info(f"[StartTask] Plan was manually approved for {task_id}, using --force")
+                logger.info(
+                    f"[StartTask] Plan was manually approved for {task_id}, using --force"
+                )
         except (json.JSONDecodeError, OSError):
             pass
 
     if agent_service.is_running(task_id):
         if force_execution:
             # Plan was approved — clean up stale spec creation process before starting execution
-            logger.info(f"[StartTask] Cleaning up stale spec creation process for approved task {task_id}")
+            logger.info(
+                f"[StartTask] Cleaning up stale spec creation process for approved task {task_id}"
+            )
             try:
                 await agent_service.stop_task(task_id)
             except Exception as stop_err:
@@ -474,7 +614,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                     plan["status"] = "human_review"
                     plan["reviewReason"] = "plan_review"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
-                    logger.info(f"[StartTask] Plan requires approval for {task_id}, set human_review")
+                    logger.info(
+                        f"[StartTask] Plan requires approval for {task_id}, set human_review"
+                    )
                 # Issue #259: control-plane state is authoritative in the
                 # agent-immutable store.
                 task_control.write_control(
@@ -484,7 +626,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                     updated_by="web_server",
                 )
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"[StartTask] Failed to persist human_review status: {e}")
+                logger.warning(
+                    f"[StartTask] Failed to persist human_review status: {e}"
+                )
 
             await emit_task_status(task_id, "human_review", "plan_review")
 
@@ -511,9 +655,14 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
     if isinstance(issue_number, str) and issue_number.isdigit():
         issue_number = int(issue_number)
 
-    if wants_delegation and provider_type in ("github", "gitlab") and isinstance(issue_number, int):
+    if (
+        wants_delegation
+        and provider_type in ("github", "gitlab")
+        and isinstance(issue_number, int)
+    ):
         from ..services.auto_fix_service import _provider_for
         from ..services.delegation_runner import run_delegation
+
         try:
             provider = _provider_for(project_id)
             result = await run_delegation(
@@ -556,6 +705,8 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
             mode=effective_mode,
             force=force_execution,
             user_id=_user_id,
+            parallel=effective_parallel,
+            workers=effective_workers,
         )
 
         # Persist status to implementation_plan.json for page refresh survival
@@ -565,7 +716,9 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
                 plan = json.loads(implementation_plan.read_text())
                 plan["status"] = "in_progress"
                 implementation_plan.write_text(json.dumps(plan, indent=2))
-                logger.info(f"[StartTask] Persisted status=in_progress to {implementation_plan}")
+                logger.info(
+                    f"[StartTask] Persisted status=in_progress to {implementation_plan}"
+                )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"[StartTask] Failed to persist status: {e}")
 
@@ -585,7 +738,10 @@ async def start_task(task_id: str, request: StartTaskRequest, raw_request: Reque
 
 
 @router.post("/{task_id}/stop")
-async def stop_task(task_id: str):
+async def stop_task(
+    task_id: str,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Stop a running task."""
     agent_service = get_agent_service()
 
@@ -614,7 +770,11 @@ async def stop_task(task_id: str):
 
 
 @router.post("/{task_id}/recover")
-async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRequest()):
+async def recover_task(
+    task_id: str,
+    request: RecoverTaskRequest = RecoverTaskRequest(),
+    _access: dict = Depends(require_task_access("member")),
+):
     """Recover a stuck task by resetting its status.
 
     Use this when a task shows as running but the process has died.
@@ -718,7 +878,10 @@ async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRe
         except Exception as e:
             # If auto-restart fails, still return success for recovery
             import logging
-            logging.getLogger(__name__).warning(f"Auto-restart failed for {task_id}: {e}")
+
+            logging.getLogger(__name__).warning(
+                f"Auto-restart failed for {task_id}: {e}"
+            )
             auto_restart_error = str(e)
 
     # Emit status change via WebSocket (single final status to avoid UI flicker)
@@ -729,12 +892,13 @@ async def recover_task(task_id: str, request: RecoverTaskRequest = RecoverTaskRe
         "success": True,
         "data": {
             "task_id": task_id,
-            "message": "Task recovered" + (" and restarted" if auto_restarted else f" and reset to {reset_status}"),
+            "message": "Task recovered"
+            + (" and restarted" if auto_restarted else f" and reset to {reset_status}"),
             "newStatus": reset_status,
             "autoRestarted": auto_restarted,
             "autoRestartError": auto_restart_error,
             "recovered": True,
-        }
+        },
     }
 
 
@@ -744,6 +908,7 @@ async def create_and_run_task(
     title: str,
     description: str,
     request: CreateAndRunRequest,
+    _access: dict = Depends(require_project_access("member")),
 ):
     """Create a new task and immediately start execution.
 
@@ -781,10 +946,50 @@ async def create_and_run_task(
     # Persist upstream provenance (#332) so the PFactory→issue→spec chain is
     # traversable. Optional — omitted entirely when no fields are provided.
     if request.provenance is not None:
-        prov = request.provenance.model_dump(exclude_none=True)
+        prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Persist execution options so the spec→plan→build auto-continue honors them
+    # (#392). The build handoff reads parallel/workers from task_metadata.json
+    # via AgentService._read_parallel_opts; without this, create-and-run builds
+    # run serial (workers.max=1) even when parallel:true/workers:N was requested,
+    # making the #376 wave executor unreachable from the primary web flow.
+    task_metadata: dict = {}
+    if request.parallel is not None:
+        task_metadata["parallel"] = request.parallel
+    if request.workers is not None:
+        task_metadata["workers"] = request.workers
+    if request.mode and request.mode != "full":  # "full" is the default — don't persist
+        task_metadata["mode"] = request.mode
+    if request.model:
+        task_metadata["model"] = request.model
+    if request.complexity:
+        task_metadata["complexity"] = request.complexity
+
+    # Hybrid skill auto-selection (#394) — propose step. With no manual skills,
+    # rank relevant skills from the task description and persist them as
+    # suggestedSkills. The planner may refine them into selectedSkills (confirm);
+    # otherwise the build falls back to these proposals (see
+    # AgentService._write_skill_context). No LLM cost — deterministic matcher.
+    if not task_metadata.get("selectedSkills"):
+        try:
+            from server.services.skills_service import get_skills_service
+
+            suggested = get_skills_service().suggest_selected_skills(
+                f"{title}\n{description}", max_results=5
+            )
+            if suggested:
+                task_metadata["suggestedSkills"] = suggested
+        except Exception:  # noqa: BLE001 - skill proposal is best-effort
+            pass
+
+    if task_metadata:
+        (spec_dir / "task_metadata.json").write_text(
+            json.dumps(task_metadata, indent=2)
+        )
+
     task_id = f"{project_id}:{spec_id}"
 
     try:
@@ -809,8 +1014,106 @@ async def create_and_run_task(
     }
 
 
+@router.post("/from-plan")
+async def create_from_trusted_plan(
+    project_id: str,
+    title: str,
+    description: str,
+    request: FromPlanRequest,
+    _access: dict = Depends(require_project_access("member")),
+):
+    """Trusted Plan Handoff (#390): verify a signed plan and build directly.
+
+    Verifies the plan's signature + completeness checklist. If trusted-complete,
+    installs ``implementation_plan.json``, marks the spec approved, and starts
+    the build — bypassing the full spec pipeline (discovery → … → plan). A
+    tampered, unsigned, or incomplete plan is rejected with 422.
+    """
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+
+    project_path = Path(projects[project_id]["path"])
+    agent_service = get_agent_service()
+
+    specs_dir = project_path / ".aifactory" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    spec_id = get_next_spec_id(project_path, title)
+    spec_dir = specs_dir / spec_id
+    spec_dir.mkdir(exist_ok=True)
+
+    requirements: dict = {
+        "title": title,
+        "description": description,
+        "created_at": datetime.now().isoformat(),
+    }
+    if request.provenance is not None:
+        prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
+        if prov:
+            requirements["provenance"] = prov
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Gate: verify signature + completeness, then install the plan. Nothing is
+    # built unless the plan is trusted-complete. Passing project_path lets ingest
+    # seed required_commands into the allowlist and apply the v2 execution profile
+    # (model/parallel/workers/complexity/skills) to task_metadata.json (RFC-0002).
+    result = ingest_trusted_plan(spec_dir, request.plan, project_dir=project_path)
+    if not result.ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — not trusted-complete",
+                "reasons": result.reasons,
+            },
+        )
+
+    # Honor the contract's execution profile when the HTTP request doesn't
+    # override it: a v2 contract carries parallel/workers in its `execution`
+    # block, so a caller can hand off a fully-specified plan with an empty body.
+    _execution = request.plan.get("execution") or {}
+    eff_parallel = (
+        request.parallel if request.parallel is not None else _execution.get("parallel")
+    )
+    eff_workers = (
+        request.workers if request.workers is not None else _execution.get("workers")
+    )
+
+    task_id = f"{project_id}:{spec_id}"
+    try:
+        await agent_service.start_task_execution(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=request.auto_continue,
+            base_branch=request.baseBranch,
+            mode=request.mode or "full",
+            parallel=eff_parallel,
+            workers=eff_workers,
+        )
+        await emit_task_status(task_id, "in_progress")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start build from trusted plan: {str(e)}",
+        )
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "approved_by": result.approved_by,
+        "approval_timestamp": result.approval_timestamp,
+        "message": "Trusted plan verified — build started, spec pipeline skipped.",
+    }
+
+
 @router.post("/{task_id}/apply-correction")
-async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
+async def apply_task_correction(
+    task_id: str,
+    request: ApplyCorrectionRequest,
+    _access: dict = Depends(require_task_access("member")),
+):
     """Apply a correction hand-back (e.g. from TFactory) to an existing spec.
 
     Writes ``QA_FIX_REQUEST.md`` onto the original spec and runs the QA Fixer.
@@ -823,3 +1126,117 @@ async def apply_task_correction(task_id: str, request: ApplyCorrectionRequest):
         spec_dir, request.fix_request_md, confirm=request.confirm
     )
     return {**result, "task_id": task_id, "source": request.source}
+
+
+@router.post("/{task_id}/dispatch-to-copilot")
+async def dispatch_task_to_copilot(
+    task_id: str,
+    request: CopilotDispatchRequest,
+    _access: dict = Depends(require_task_access("member")),
+):
+    """Delegate a task to the GitHub Copilot cloud agent (#458).
+
+    Assigns the linked GitHub issue to ``copilot-swe-agent[bot]`` and
+    launches a background watcher that polls for the resulting PR (up to
+    59 minutes — GitHub's hard session limit).
+
+    Requires ``AIFACTORY_COPILOT_DISPATCH_ENABLED=true``.  If disabled or
+    the gh CLI call fails and ``fallback_to_local=true``, the task's status
+    is left unchanged so the caller can start the normal pipeline instead.
+
+    On success the task status is set to ``copilot_running`` and the
+    ``copilot_dispatch`` block is written into ``task_metadata.json``.
+    """
+    import asyncio
+    import logging
+
+    from ..services.copilot_dispatch_service import (
+        CopilotDispatchService,
+        is_dispatch_enabled,
+        watch_for_copilot_pr,
+    )
+
+    logger = logging.getLogger(__name__)
+
+    if not is_dispatch_enabled():
+        if request.fallback_to_local:
+            logger.info(
+                "[copilot-dispatch] disabled — fallback signal for task %s", task_id
+            )
+            return {
+                "task_id": task_id,
+                "dispatched": False,
+                "reason": "AIFACTORY_COPILOT_DISPATCH_ENABLED is not set",
+                "fallback": True,
+            }
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Copilot dispatch is not enabled on this instance",
+        )
+
+    *_, spec_dir = _resolve_task(task_id)
+    task_metadata_path = spec_dir / "task_metadata.json"
+
+    service = CopilotDispatchService()
+    try:
+        dispatch_meta = await asyncio.to_thread(
+            service.dispatch, request.repo_full_name, request.issue_number
+        )
+    except RuntimeError as exc:
+        logger.warning("[copilot-dispatch] dispatch failed task=%s: %s", task_id, exc)
+        if request.fallback_to_local:
+            return {
+                "task_id": task_id,
+                "dispatched": False,
+                "reason": str(exc),
+                "fallback": True,
+            }
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    # Persist dispatch metadata.
+    _patch_task_metadata(task_metadata_path, {"copilot_dispatch": dispatch_meta})
+
+    # Emit status transition.
+    await emit_task_status(task_id, "copilot_running")
+
+    # Launch background PR watcher (fire-and-forget — 59-minute deadline).
+    def _on_pr_opened(pr_number: int, pr_url: str | None) -> None:
+        import asyncio as _asyncio
+
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(emit_task_status(task_id, "copilot_pr_opened"))
+
+    asyncio.create_task(
+        watch_for_copilot_pr(
+            task_id=task_id,
+            repo_full_name=request.repo_full_name,
+            issue_number=request.issue_number,
+            task_metadata_path=task_metadata_path,
+            on_pr_opened=_on_pr_opened,
+        )
+    )
+
+    return {
+        "task_id": task_id,
+        "dispatched": True,
+        "agent_handle": dispatch_meta["agent_handle"],
+        "dispatched_at": dispatch_meta["dispatched_at"],
+        "issue_number": request.issue_number,
+        "repo": request.repo_full_name,
+    }
+
+
+def _patch_task_metadata(path: Path, updates: dict) -> None:
+    """Merge ``updates`` into ``task_metadata.json``, creating it if absent."""
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    existing.update(updates)
+    path.write_text(json.dumps(existing, indent=2))

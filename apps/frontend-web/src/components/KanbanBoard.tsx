@@ -1,6 +1,7 @@
 import { useState, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useViewState } from '../contexts/ViewStateContext';
+import { PipelineHeader } from './pipeline/PipelineHeader';
 import {
   DndContext,
   DragOverlay,
@@ -391,8 +392,10 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     })
   );
 
+  type KanbanColumn = (typeof TASK_STATUS_COLUMNS)[number];
+
   const tasksByStatus = useMemo(() => {
-    const grouped: Record<TaskStatus, Task[]> = {
+    const grouped: Record<KanbanColumn, Task[]> = {
       backlog: [],
       in_progress: [],
       ai_review: [],
@@ -401,14 +404,19 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     };
 
     filteredTasks.forEach((task) => {
-      if (grouped[task.status]) {
-        grouped[task.status].push(task);
+      // Copilot sub-statuses display in the in_progress column
+      const column: KanbanColumn =
+        task.status === 'copilot_running' || task.status === 'copilot_pr_opened'
+          ? 'in_progress'
+          : (task.status as KanbanColumn);
+      if (grouped[column] !== undefined) {
+        grouped[column].push(task);
       }
     });
 
     // Sort tasks within each column by createdAt (newest first)
     Object.keys(grouped).forEach((status) => {
-      grouped[status as TaskStatus].sort((a, b) => {
+      grouped[status as KanbanColumn].sort((a, b) => {
         const dateA = new Date(a.createdAt).getTime();
         const dateB = new Date(b.createdAt).getTime();
         return dateB - dateA; // Descending order (newest first)
@@ -456,7 +464,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     const overId = over.id as string;
 
     // Check if over a column
-    if (TASK_STATUS_COLUMNS.includes(overId as TaskStatus)) {
+    if (TASK_STATUS_COLUMNS.includes(overId as KanbanColumn)) {
       setOverColumnId(overId);
       return;
     }
@@ -479,8 +487,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     const overId = over.id as string;
 
     // Check if dropped on a column
-    if (TASK_STATUS_COLUMNS.includes(overId as TaskStatus)) {
-      const newStatus = overId as TaskStatus;
+    if (TASK_STATUS_COLUMNS.includes(overId as KanbanColumn)) {
+      const newStatus = overId as KanbanColumn;
       const task = tasks.find((t) => t.id === activeTaskId);
 
       if (task && task.status !== newStatus) {
@@ -503,6 +511,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
   return (
     <div className="flex h-full flex-col">
+      {/* Animated Plan → Code → Test pipeline census across all tasks */}
+      <PipelineHeader tasks={filteredTasks} />
       {/* Kanban header with refresh button */}
       {onRefresh && (
         <div className="flex items-center justify-end px-6 pt-4 pb-2">

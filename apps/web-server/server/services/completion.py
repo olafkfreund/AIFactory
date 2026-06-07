@@ -27,7 +27,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
-_SCHEMA_VERSION = "1.0"
+_SCHEMA_VERSION = "1.1"
 
 
 def _now_iso() -> str:
@@ -61,6 +61,35 @@ def correlation_key(spec_id: str, issue_number: int | None) -> str:
     return str(issue_number) if issue_number is not None else f"af-{spec_id}"
 
 
+def read_usage(spec_dir: Path) -> dict | None:
+    """The RFC-0001 v1.1 ``usage`` block from the task's ``token_usage.json``.
+
+    The agent's token attribution writes ``<spec_dir>/token_usage.json`` with the
+    run's aggregated token counts and real SDK cost. We map those fields to the
+    RFC block. Returns ``None`` when there is no usage to report (file missing,
+    unreadable, or zero tokens) — the block is additive, so it is simply omitted.
+    Stdlib-only and best-effort, like the rest of this module.
+    """
+    try:
+        agg = json.loads((spec_dir / "token_usage.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(agg, dict):
+        return None
+    in_tok = int(agg.get("totalInputTokens", 0) or 0)
+    out_tok = int(agg.get("outputTokens", 0) or 0)
+    if in_tok == 0 and out_tok == 0:
+        return None
+    total = int(agg.get("totalTokens", 0) or 0) or (in_tok + out_tok)
+    return {
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "total_tokens": total,
+        "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
+        "model": agg.get("model"),
+    }
+
+
 def build_completion_event(
     *,
     task_id: str,
@@ -70,9 +99,14 @@ def build_completion_event(
     phase: str = "act",
     project_id: str | None = None,
     updated_at: str | None = None,
+    usage: dict | None = None,
 ) -> dict:
-    """The RFC-0001 completion-event envelope (six core fields + chain block)."""
-    return {
+    """The RFC-0001 completion-event envelope (six core fields + chain block).
+
+    When ``usage`` is supplied (RFC-0001 v1.1 §3.1) it rides along so the cockpit
+    can attribute the Code stage's token spend; additive and omitted otherwise.
+    """
+    event = {
         "correlation_key": correlation_key(spec_id, issue_number),
         "service": SERVICE_NAME,
         "task_id": task_id,
@@ -88,6 +122,9 @@ def build_completion_event(
         "schema_version": _SCHEMA_VERSION,
         "event": "completion",
     }
+    if usage is not None:
+        event["usage"] = usage
+    return event
 
 
 def _webhook_url() -> str | None:
@@ -137,6 +174,7 @@ def emit_terminal_completion(
         status=status,
         issue_number=read_issue_number(spec_dir),
         project_id=project_id,
+        usage=read_usage(spec_dir),
     )
     notify_completion(event, spec_dir=spec_dir)
     return event

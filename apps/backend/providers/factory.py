@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -51,25 +52,37 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
-    "claude":             ("providers.claude",                       "ClaudeProvider"),
-    "codex":              ("providers.codex_agentic",                "CodexAgenticProvider"),
-    "antigravity":        ("providers.antigravity_agentic",          "AntigravityAgenticProvider"),
-    "ollama":             ("providers.ollama_agentic",               "OllamaAgenticProvider"),
-    "copilot":            ("providers.copilot_agentic",              "CopilotAgenticProvider"),
-    "opencode":           ("providers.opencode_agentic",             "OpenCodeAgenticProvider"),
-    "openai-compatible":  ("providers.openai_compatible_agentic",    "OpenAICompatibleAgenticProvider"),
+    "claude": ("providers.claude", "ClaudeProvider"),
+    "codex": ("providers.codex_agentic", "CodexAgenticProvider"),
+    "antigravity": ("providers.antigravity_agentic", "AntigravityAgenticProvider"),
+    "ollama": ("providers.ollama_agentic", "OllamaAgenticProvider"),
+    "copilot": ("providers.copilot_agentic", "CopilotAgenticProvider"),
+    "opencode": ("providers.opencode_agentic", "OpenCodeAgenticProvider"),
+    "openai-compatible": (
+        "providers.openai_compatible_agentic",
+        "OpenAICompatibleAgenticProvider",
+    ),
+    # github-models routes to the openai-compatible backend with GitHub defaults
+    # injected in get_provider(). Registered here so the phase registry lookup
+    # works before the canonical is swapped to "openai-compatible".
+    "github-models": (
+        "providers.openai_compatible_agentic",
+        "OpenAICompatibleAgenticProvider",
+    ),
 }
 
 _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
-    "claude":             ("providers.claude",               "ClaudeProvider"),
-    "codex":              ("providers.codex",                "CodexCLIProvider"),
-    "antigravity":        ("providers.antigravity",          "AntigravityCLIProvider"),
-    "ollama":             ("providers.ollama",               "OllamaProvider"),
+    "claude": ("providers.claude", "ClaudeProvider"),
+    "codex": ("providers.codex", "CodexCLIProvider"),
+    "antigravity": ("providers.antigravity", "AntigravityCLIProvider"),
+    "ollama": ("providers.ollama", "OllamaProvider"),
     # Copilot has no text-only variant; the agentic CLI returns text fine.
-    "copilot":            ("providers.copilot_agentic",      "CopilotAgenticProvider"),
+    "copilot": ("providers.copilot_agentic", "CopilotAgenticProvider"),
     # OpenCode has no text-only variant; ``opencode run`` returns text fine.
-    "opencode":           ("providers.opencode",             "OpenCodeProvider"),
-    "openai-compatible":  ("providers.openai_compatible",    "OpenAICompatibleProvider"),
+    "opencode": ("providers.opencode", "OpenCodeProvider"),
+    "openai-compatible": ("providers.openai_compatible", "OpenAICompatibleProvider"),
+    # github-models text-only variant (QA review, complexity assessment)
+    "github-models": ("providers.openai_compatible", "OpenAICompatibleProvider"),
 }
 
 # Phases that need agentic capability (file ops, code execution)
@@ -118,6 +131,12 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "groq": "openai-compatible",
     "localai": "openai-compatible",
     "anyscale": "openai-compatible",
+    # GitHub Models API (models.github.ai) — OpenAI-compatible endpoint
+    # with GITHUB_TOKEN auth.  Do NOT add "github" as an alias — it would
+    # shadow the existing gh/GitHub API integration used throughout
+    # runners/github/ and the gh CLI wrapper paths.
+    "github-models": "github-models",
+    "gh-models": "github-models",
 }
 
 
@@ -128,8 +147,7 @@ def _resolve_canonical(provider_name: str) -> str:
     if canonical is None:
         known = sorted(_PROVIDER_ALIASES.keys())
         raise ValueError(
-            f"Unknown LLM provider: {provider_name!r}. "
-            f"Supported values: {known}"
+            f"Unknown LLM provider: {provider_name!r}. Supported values: {known}"
         )
     return canonical
 
@@ -176,6 +194,20 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
             doesn't support the requested phase (e.g. Ollama for coding).
     """
     canonical = _resolve_canonical(provider_name)
+
+    # GitHub Models: inject endpoint defaults then delegate to openai-compatible.
+    # base_url and api_key are set only when the caller hasn't already provided
+    # them (setdefault), so explicit overrides are honoured.
+    if canonical == "github-models":
+        kwargs.setdefault("base_url", "https://models.github.ai/inference")
+        kwargs.setdefault(
+            "api_key",
+            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
+        )
+        raw_model = kwargs.get("model", "openai/gpt-4.1")
+        if raw_model.startswith("github-models/"):
+            kwargs["model"] = raw_model[len("github-models/") :]
+        canonical = "openai-compatible"
 
     if phase in _AGENTIC_PHASES:
         registry = _AGENTIC_REGISTRY
@@ -227,9 +259,19 @@ def get_qa_llm_provider(provider_name: str, **kwargs: Any) -> BaseLLMProvider:
     if canonical is None:
         known = sorted(_PROVIDER_ALIASES.keys())
         raise ValueError(
-            f"Unknown QA LLM provider: {provider_name!r}. "
-            f"Supported values: {known}"
+            f"Unknown QA LLM provider: {provider_name!r}. Supported values: {known}"
         )
+
+    if canonical == "github-models":
+        kwargs.setdefault("base_url", "https://models.github.ai/inference")
+        kwargs.setdefault(
+            "api_key",
+            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
+        )
+        raw_model = kwargs.get("model", "openai/gpt-4.1")
+        if raw_model.startswith("github-models/"):
+            kwargs["model"] = raw_model[len("github-models/") :]
+        canonical = "openai-compatible"
 
     module_path, class_name = _TEXT_REGISTRY[canonical]
 

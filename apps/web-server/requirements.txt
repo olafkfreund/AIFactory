@@ -72,7 +72,7 @@ alembic>=1.13.0
 
 # Authentication (JWT + password hashing)
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 email-validator>=2.0.0
 
 # Epic #26 P2.4 — AWS KMS backend for envelope-encrypted secrets at rest.
@@ -130,3 +130,9 @@ python3-saml>=1.16
 # server.services.k8s_client so non-isolated deployments never pay
 # the import cost. boto3 + hvac are already declared above for KMS.
 kubernetes-asyncio>=32.0
+
+# #321 — the web-server spawns agents through apps/backend/core/client.py,
+# whose Bash PreToolUse hook (security/ast_parser.py) needs bashlex to parse
+# commands fail-closed. Pin it here too so the production runtime never
+# silently degrades to the bypassable regex parser.
+bashlex>=0.18

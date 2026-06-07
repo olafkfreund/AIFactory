@@ -8,6 +8,7 @@ tracking, status management, and follow-up capabilities.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,27 @@ from pathlib import Path
 from .enums import PhaseType, SubtaskStatus, WorkflowType
 from .phase import Phase
 from .subtask import Subtask
+
+
+def _resolve_dep_phase_number(dep: object) -> int | None:
+    """Resolve a phase-dependency token to its integer phase number.
+
+    Dependencies may be expressed either as an integer phase number (e.g. ``2``)
+    or as a planner-emitted slug (e.g. ``"phase-2-modules"``). The reliable
+    signal in a slug is its embedded number, so we extract the first integer.
+    Returns ``None`` when no number can be extracted, which fails the dependency
+    check safely (a phase with an unresolvable dependency stays gated rather
+    than running out of order).
+    """
+    if isinstance(dep, bool):  # bool is an int subclass — never a phase number
+        return None
+    if isinstance(dep, int):
+        return dep
+    if isinstance(dep, str):
+        match = re.search(r"\d+", dep)
+        if match:
+            return int(match.group())
+    return None
 
 
 @dataclass
@@ -26,6 +48,10 @@ class ImplementationPlan:
     services_involved: list[str] = field(default_factory=list)
     phases: list[Phase] = field(default_factory=list)
     final_acceptance: list[str] = field(default_factory=list)
+    # Command names the build needs to verify itself (test/lint/typecheck/pkg
+    # manager). Seeded into the security allowlist before agents run so they
+    # aren't blocked running their own verification. See security/plan_commands.
+    required_commands: list[str] = field(default_factory=list)
 
     # Metadata
     created_at: str | None = None
@@ -53,6 +79,8 @@ class ImplementationPlan:
             "updated_at": self.updated_at,
             "spec_file": self.spec_file,
         }
+        if self.required_commands:
+            result["required_commands"] = self.required_commands
         # Include status fields if set (synced with UI)
         if self.status:
             result["status"] = self.status
@@ -92,6 +120,7 @@ class ImplementationPlan:
                 for idx, p in enumerate(data.get("phases", []))
             ],
             final_acceptance=data.get("final_acceptance", []),
+            required_commands=data.get("required_commands", []),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             spec_file=data.get("spec_file"),
@@ -181,14 +210,25 @@ class ImplementationPlan:
             return cls.from_dict(json.load(f))
 
     def get_available_phases(self) -> list[Phase]:
-        """Get phases whose dependencies are satisfied."""
-        completed_phases = {p.phase for p in self.phases if p.is_complete()}
+        """Get phases whose dependencies are satisfied.
+
+        Dependencies may be integer phase numbers (``2``) or planner slugs
+        (``"phase-2-modules"``); both are resolved to a phase number before the
+        completion check. A prior version compared slug strings directly against
+        a set of integers, so any phase with slug-style dependencies — notably
+        the Integration phase — was never marked available and its subtasks were
+        silently skipped ("No pending subtasks found" with work still pending).
+        """
+        completed_numbers = {p.phase for p in self.phases if p.is_complete()}
         available = []
 
         for phase in self.phases:
             if phase.is_complete():
                 continue
-            deps_met = all(d in completed_phases for d in phase.depends_on)
+            deps_met = all(
+                _resolve_dep_phase_number(d) in completed_numbers
+                for d in phase.depends_on
+            )
             if deps_met:
                 available.append(phase)
 

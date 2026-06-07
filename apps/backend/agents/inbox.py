@@ -159,3 +159,28 @@ def format_for_prompt(messages: list[dict[str, Any]]) -> str:
         text = (m.get("text") or "").strip()
         lines.append(f"- **From {sender}:** {text}")
     return "\n".join(lines)
+
+
+def post_message(
+    spec_dir: Path,
+    text: str,
+    *,
+    sender: str = "user",
+    recipient: str = DEFAULT_RECIPIENT,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Append an unread message to a spec's inbox (the async-feedback channel).
+
+    Public writer counterpart to ``drain_unread`` — used by the artifact async
+    review (#397 Phase 6) and any caller that needs to hand the agent a
+    high-priority message it will pick up between turns. Atomic + locked.
+    """
+    message: dict[str, Any] = {"from": sender, "text": text, "read": False}
+    if source:
+        message["source"] = source
+    inbox_path = _inbox_path(spec_dir, recipient)
+    with _Lock(inbox_path):
+        messages = _read(inbox_path)
+        messages.append(message)
+        _write_atomic(inbox_path, messages)
+    return message

@@ -8,6 +8,7 @@ Coordinates stack detection, framework detection, and structure analysis.
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +27,10 @@ from .config_parser import ConfigParser
 from .framework_detector import FrameworkDetector
 from .models import SecurityProfile
 from .stack_detector import StackDetector
+from .stack_inference import infer_stack_from_spec, merge_stack
 from .structure_analyzer import StructureAnalyzer
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectAnalyzer:
@@ -241,6 +245,12 @@ class ProjectAnalyzer:
         self._detect_frameworks()
         self._detect_structure()
 
+        # Seed from the spec's declared stack. For from-scratch / empty repos
+        # on-disk detection finds nothing, so the spec text is the only signal
+        # for which language tooling the coder will need (issue #391). Union
+        # only — never removes anything detection found.
+        self._seed_stack_from_spec()
+
         # Build stack commands from detected technologies
         self._build_stack_commands()
 
@@ -273,6 +283,18 @@ class ProjectAnalyzer:
         self.profile.custom_scripts = scripts
         self.profile.script_commands = script_commands
         self.profile.custom_commands = custom_commands
+
+    def _seed_stack_from_spec(self) -> None:
+        """Augment the detected stack with the spec's declared technologies.
+
+        Solves the empty-repo chicken-and-egg: a from-scratch FastAPI/Python
+        build has no .py files to detect yet, so without this seed python/pip/
+        pytest never reach the allowlist and the build stalls (issue #391).
+        """
+        if not self.spec_dir:
+            return
+        inferred = infer_stack_from_spec(self.spec_dir)
+        merge_stack(self.profile.detected_stack, inferred)
 
     # Public methods for backward compatibility with tests
     def _detect_languages(self) -> None:
@@ -414,3 +436,62 @@ class ProjectAnalyzer:
         print(f"\nTotal Allowed Commands: {total_commands}")
 
         print("-" * 60)
+
+
+def seed_profile_with_plan_commands(
+    project_dir: Path,
+    plan_path: Path,
+) -> list[str]:
+    """Merge a plan's declared verification commands into the enforced allowlist.
+
+    The planner knows the commands a build needs to verify itself, but stack
+    detection runs once (cached) at build start and misses tooling the scaffold
+    adds later — so from-scratch builds get blocked running ``uv``/``pytest``
+    etc. This grants the plan's sanitised command NAMES into the profile's
+    ``custom_commands``.
+
+    The profile is read/written at ``project_dir/.aifactory/.aifactory-security.json``
+    — the SAME file the Bash hook reads (it calls ``get_security_profile`` with
+    the agent's cwd and no spec_dir). The hook's in-memory cache is mtime-keyed,
+    so this is picked up live, even mid-build.
+
+    Args:
+        project_dir: The agent's working directory / worktree root (== hook cwd).
+        plan_path: Path to ``implementation_plan.json``.
+
+    Returns:
+        Sorted list of newly-granted command names (empty if none / on error).
+    """
+    # Imported here to avoid any import-time coupling between the project and
+    # security packages.
+    from security.plan_commands import grantable_commands_from_plan
+
+    try:
+        plan = json.loads(Path(plan_path).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("plan-commands seed skipped: cannot read %s (%s)", plan_path, exc)
+        return []
+
+    granted, rejected = grantable_commands_from_plan(plan)
+    if rejected:
+        logger.info("plan-commands: rejected non-grantable names: %s", rejected)
+    if not granted:
+        return []
+
+    analyzer = ProjectAnalyzer(project_dir)  # spec_dir=None → enforced profile path
+    profile = analyzer.load_profile()
+    if profile is None:
+        profile = analyzer.analyze()
+
+    newly = sorted(granted - profile.custom_commands)
+    if not newly:
+        return []
+
+    profile.custom_commands |= granted
+    analyzer.save_profile(profile)
+    logger.info(
+        "plan-commands: granted %s into %s allowlist",
+        newly,
+        project_dir,
+    )
+    return newly

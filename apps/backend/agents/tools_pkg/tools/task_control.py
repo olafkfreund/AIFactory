@@ -38,6 +38,8 @@ except ImportError:
     SDK_TOOLS_AVAILABLE = False
     tool = None  # type: ignore[assignment]
 
+from security.identifiers import validate_task_id
+
 from ..http_client import MCPHTTPError, request
 
 
@@ -183,7 +185,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_get(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         try:
             raw = await request("GET", f"/api/tasks/{task_id}")
         except MCPHTTPError as exc:
@@ -206,7 +211,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_status(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         try:
             raw = await request("GET", f"/api/tasks/{task_id}/status")
         except MCPHTTPError as exc:
@@ -231,7 +239,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_get_logs(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         tail = min(int(args.get("tail", 100)), 500)
         try:
             raw = await request(
@@ -256,7 +267,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_start(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         try:
             raw = await request("POST", f"/api/tasks/{task_id}/start", json={})
         except MCPHTTPError as exc:
@@ -276,7 +290,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_stop(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         try:
             raw = await request("POST", f"/api/tasks/{task_id}/stop", json={})
         except MCPHTTPError as exc:
@@ -296,7 +313,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_approve_plan(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         try:
             raw = await request("POST", f"/api/tasks/{task_id}/approve-plan", json={})
         except MCPHTTPError as exc:
@@ -458,7 +478,10 @@ def create_task_control_tools() -> list:
                     "auto_restart": args.get("auto_restart", False),
                 },
             )
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         payload = {"auto_restart": args.get("auto_restart", False)}
         try:
             raw = await request("POST", f"/api/tasks/{task_id}/recover", json=payload)
@@ -491,7 +514,10 @@ def create_task_control_tools() -> list:
                     "title": args.get("title", "(default to spec title)"),
                 },
             )
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         payload: dict[str, Any] = {}
         if args.get("title"):
             payload["title"] = args["title"]
@@ -533,7 +559,10 @@ def create_task_control_tools() -> list:
                     "merge_method": args.get("merge_method", "merge"),
                 },
             )
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         payload = {"merge_method": args.get("merge_method", "merge")}
         try:
             raw = await request(
@@ -560,7 +589,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def task_get_diff(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         max_lines = int(args.get("max_lines", 1000))
         try:
             raw = await request("GET", f"/api/tasks/{task_id}/worktree/diff")
@@ -707,7 +739,10 @@ def create_task_control_tools() -> list:
         },
     )
     async def agent_status(args: dict[str, Any]) -> dict[str, Any]:
-        task_id = args["task_id"]
+        try:
+            task_id = validate_task_id(args["task_id"])
+        except ValueError as exc:
+            return _format_error(exc)
         # Fetch status + task in parallel-ish (sequential here for simpler
         # error handling — both fail in the same way).
         try:

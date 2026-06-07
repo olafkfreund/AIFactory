@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -120,6 +121,23 @@ class TaskPhase(str, Enum):
     QA_FIXING = "qa_fixing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+def _append_parallel_flags(
+    cmd: list[str], parallel: bool | None, workers: int | None
+) -> bool:
+    """Append run.py parallel flags (#376) to ``cmd`` in place.
+
+    Returns True when ``--parallel`` was added (so the caller can log it).
+    Extracted as a pure helper so the route→executor flag threading is unit
+    testable without spawning a subprocess.
+    """
+    if not parallel:
+        return False
+    cmd.append("--parallel")
+    if workers and workers > 0:
+        cmd.extend(["--workers", str(workers)])
+    return True
 
 
 def phase_to_status(phase: TaskPhase) -> str:
@@ -1936,11 +1954,16 @@ class AgentService:
 
                             # Auto-start task execution
                             try:
+                                _par, _wrk = self._read_parallel_opts(
+                                    project_path, detected_spec_id
+                                )
                                 await self.start_task_execution(
                                     task_id=task_id,
                                     project_path=project_path,
                                     spec_id=detected_spec_id,
                                     auto_continue=True,
+                                    parallel=_par,
+                                    workers=_wrk,
                                 )
                                 logger.info(f"[AgentService] Task execution auto-started for {detected_spec_id}")
                             except Exception as exec_err:
@@ -2205,11 +2228,16 @@ class AgentService:
 
                             # Restart execution
                             try:
+                                _par, _wrk = self._read_parallel_opts(
+                                    project_path, spec_id
+                                )
                                 await self.start_task_execution(
                                     task_id=task_id,
                                     project_path=project_path,
                                     spec_id=spec_id,
                                     auto_continue=True,
+                                    parallel=_par,
+                                    workers=_wrk,
                                 )
                                 logger.info(f"[AgentService] Auto-continuation started for {spec_id} (round {round_num})")
                                 return  # Exit this monitor — new monitor will take over
@@ -2443,6 +2471,28 @@ class AgentService:
             )
             logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
 
+            # Emit the RFC-0001 completion event on a terminal build phase so the
+            # cockpit (CFactory) threads the unit end to end. Both COMPLETED and
+            # FAILED fire here — FAILED especially, since a failed build is never
+            # marked "done" and would otherwise never emit. The route's "done"
+            # transition emits the later human-approval event; CFactory dedups by
+            # (service, correlation_key, status), so completed/failed/done are
+            # distinct, complementary events. Best-effort; never breaks the build.
+            if emit_events and phase_enum in (TaskPhase.COMPLETED, TaskPhase.FAILED):
+                try:
+                    from .completion import emit_terminal_completion
+
+                    project_id = task_id.split(":", 1)[0] if ":" in task_id else project_path.name
+                    terminal_status = (
+                        "completed" if phase_enum == TaskPhase.COMPLETED else "failed"
+                    )
+                    emit_terminal_completion(
+                        spec_dir, task_id=task_id, project_id=project_id,
+                        spec_id=spec_id, status=terminal_status,
+                    )
+                except Exception:
+                    logger.debug("completion emit failed (best-effort)", exc_info=True)
+
             # Extract subtasks for WebSocket broadcast
             subtasks_data = []
             phases = plan.get("phases", [])
@@ -2519,8 +2569,14 @@ class AgentService:
         if task_metadata_file.exists():
             try:
                 task_metadata = json.loads(task_metadata_file.read_text())
-                raw_skills = task_metadata.get("selectedSkills", [])
-                # selectedSkills is stored as list[dict] with {id, name, category, source}
+                # Hybrid skill selection (#394): prefer the planner-confirmed
+                # selectedSkills; fall back to the auto-proposed suggestedSkills
+                # so relevant skills are always applied even if the planner
+                # didn't refine them.
+                raw_skills = task_metadata.get("selectedSkills") or task_metadata.get(
+                    "suggestedSkills", []
+                )
+                # skills are stored as list[dict] with {id, name, category, source}
                 # Also handle plain string IDs for backward compatibility
                 for item in raw_skills:
                     if isinstance(item, dict):
@@ -2771,6 +2827,11 @@ class AgentService:
 
         master_fd, slave_fd = pty.openpty()
 
+        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+        # is set and bwrap is installed (zero behaviour change by default).
+        from .sandbox import build_sandboxed_command
+        cmd = build_sandboxed_command(cmd, project_path)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -2778,6 +2839,11 @@ class AgentService:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(project_path),
             env=env,
+            # Own session/process group so stop_task can kill the WHOLE tree —
+            # run.py spawns coder subprocesses (Claude SDK, git); without this,
+            # proc.terminate() only signals run.py and the children orphan and
+            # keep running (the stop-resistance bug).
+            start_new_session=True,
         )
 
         # Close slave fd in parent process
@@ -2812,6 +2878,28 @@ class AgentService:
 
         return proc
 
+    def _read_parallel_opts(
+        self, project_path: Path, spec_id: str
+    ) -> tuple[bool | None, int | None]:
+        """Read persisted parallel/workers from a spec's task_metadata.json (#376).
+
+        The auto-continue build path (spec→plan→build) honors the same parallel
+        settings the /start route accepts, so a normal create→auto-build run can
+        go parallel without an explicit manual start.
+        """
+        try:
+            import json
+
+            meta_file = (
+                project_path / ".aifactory" / "specs" / spec_id / "task_metadata.json"
+            )
+            if meta_file.exists():
+                meta = json.loads(meta_file.read_text())
+                return meta.get("parallel"), meta.get("workers")
+        except (OSError, ValueError):
+            pass
+        return None, None
+
     async def start_task_execution(
         self,
         task_id: str,
@@ -2823,6 +2911,8 @@ class AgentService:
         force: bool = False,
         user_id: str = "",
         stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
     ) -> asyncio.subprocess.Process:
         """Start task execution (run.py).
 
@@ -2833,6 +2923,10 @@ class AgentService:
                 Used by the Copilot delegation flow (#94) — the planner writes
                 implementation_plan.json and run.py exits cleanly before the
                 coder/QA phases.
+            parallel: When True, passes ``--parallel`` to run.py so independent
+                subtasks run concurrently in dependency-graph waves (#376).
+            workers: When set with ``parallel``, passes ``--workers N`` to cap
+                concurrent subtasks per wave.
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -2917,6 +3011,15 @@ class AgentService:
         if stop_after_planning:
             cmd.append("--stop-after-planning")
             logger.info(f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)")
+
+        # Parallel subtask execution (#376): run independent subtasks in
+        # dependency-graph waves. Previously these flags were accepted by the
+        # API but silently dropped here.
+        if _append_parallel_flags(cmd, parallel, workers):
+            logger.info(
+                f"[AgentService] Parallel execution enabled for {task_id} "
+                f"(workers={workers or 'default'})"
+            )
 
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
         # can never silently bill the direct-API account (OAuth-only policy;
@@ -3085,6 +3188,11 @@ class AgentService:
         except OSError as _e:
             logger.debug(f"[AgentService] could not prep spawn_stderr.log: {_e}")
 
+        # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
+        # is set and bwrap is installed (zero behaviour change by default).
+        from .sandbox import build_sandboxed_command
+        cmd = build_sandboxed_command(cmd, project_path)
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=slave_fd,
@@ -3092,6 +3200,9 @@ class AgentService:
             stderr=asyncio.subprocess.PIPE,
             cwd=str(project_path),
             env=env,
+            # Own session/process group so stop_task can kill the whole tree
+            # (run.py + coder/git children) instead of orphaning them.
+            start_new_session=True,
         )
 
         # Close slave fd in parent process
@@ -3150,7 +3261,12 @@ class AgentService:
         # bank-pilot image's behaviour is byte-for-byte unchanged.
         from ..rmux.integration import create_if_enabled as _rmux_create
         try:
-            await _rmux_create(spec_id, project_path, " ".join(cmd))
+            # #322: thread the owning project id so the console bridge can
+            # authorize attach/stream against the task's org.
+            _rmux_project_id = task_id.split(":", 1)[0] if ":" in task_id else None
+            await _rmux_create(
+                spec_id, project_path, " ".join(cmd), project_id=_rmux_project_id
+            )
         except Exception:
             # Already swallowed inside _rmux_create; this except is a
             # belt-and-suspenders guard so a wrapper bug here cannot
@@ -3158,6 +3274,29 @@ class AgentService:
             logger.warning(f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}")
 
         return proc
+
+    @staticmethod
+    def _signal_process_tree(proc: "asyncio.subprocess.Process", sig: int) -> None:
+        """Send ``sig`` to the whole process group, falling back to the proc.
+
+        Builds are spawned with start_new_session=True, so the run.py pid leads a
+        process group containing all its descendants (coder subprocesses, git).
+        Signalling the group terminates the entire tree; without this the children
+        orphan and the build keeps running after a stop (the stop-resistance bug).
+        """
+        pid = getattr(proc, "pid", None)
+        if pid is None:
+            return
+        try:
+            os.killpg(os.getpgid(pid), sig)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        # Fall back to signalling just the process (e.g. non-POSIX, or no pgrp).
+        try:
+            proc.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
@@ -3171,12 +3310,14 @@ class AgentService:
         self._task_stopped.add(task_id)
 
         proc = self.running_tasks[task_id]
-        proc.terminate()
+        # Kill the whole process tree (run.py + coder/git children), not just
+        # run.py — otherwise the children orphan and keep running.
+        self._signal_process_tree(proc, signal.SIGTERM)
 
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except asyncio.TimeoutError:
-            proc.kill()
+            self._signal_process_tree(proc, signal.SIGKILL)
             await proc.wait()
 
         # Get actual phase and spec info BEFORE cleanup

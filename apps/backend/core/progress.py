@@ -9,6 +9,7 @@ Enhanced with colored output, icons, and better visual formatting.
 """
 
 import json
+import re
 from pathlib import Path
 
 from ui import (
@@ -420,14 +421,31 @@ def get_next_subtask(spec_dir: Path) -> dict | None:
 
         phases = plan.get("phases", [])
 
-        # Build a map of phase completion
-        phase_complete = {}
+        # Build a completion lookup keyed by EVERY identifier a dependency might
+        # use: the explicit phase id, the integer phase number, and its string
+        # form. The planner emits depends_on as slugs ("phase-2-modules") while
+        # phases are keyed by integer number — a prior version looked the slug up
+        # directly in an int-keyed map, always missed, and left the Integration
+        # phase permanently "unavailable" (get_next_subtask returned None with a
+        # subtask still pending → "No pending subtasks found", build stops short).
+        phase_complete: dict = {}
         for phase in phases:
-            phase_id = phase.get("id") or phase.get("phase")
             subtasks = phase.get("subtasks", [])
-            phase_complete[phase_id] = all(
-                s.get("status") == "completed" for s in subtasks
-            )
+            complete = all(s.get("status") == "completed" for s in subtasks)
+            num = phase.get("phase")
+            for key in (phase.get("id"), num, str(num) if num is not None else None):
+                if key is not None:
+                    phase_complete[key] = complete
+
+        def _dep_satisfied(dep: object) -> bool:
+            if dep in phase_complete:
+                return phase_complete[dep]
+            # Resolve a slug to its embedded phase number ("phase-2-modules" → 2).
+            if isinstance(dep, str):
+                match = re.search(r"\d+", dep)
+                if match and int(match.group()) in phase_complete:
+                    return phase_complete[int(match.group())]
+            return False
 
         # Find next available subtask
         for phase in phases:
@@ -435,7 +453,7 @@ def get_next_subtask(spec_dir: Path) -> dict | None:
             depends_on = phase.get("depends_on", [])
 
             # Check if dependencies are satisfied
-            deps_satisfied = all(phase_complete.get(dep, False) for dep in depends_on)
+            deps_satisfied = all(_dep_satisfied(dep) for dep in depends_on)
             if not deps_satisfied:
                 continue
 

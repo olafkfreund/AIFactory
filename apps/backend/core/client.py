@@ -203,13 +203,13 @@ from agents.tools_pkg import (
 )
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import HookMatcher
-from core.auth import get_sdk_env_vars, require_auth_token
+from core.auth import get_agent_env_blanks, get_sdk_env_vars, require_auth_token
 from prompts_pkg.project_context import (
     detect_infra_markers,
     detect_project_capabilities,
     load_project_index,
 )
-from security import bash_security_hook
+from security import bash_security_hook, web_fetch_security_hook
 
 
 def _validate_custom_mcp_server(server: dict) -> bool:
@@ -570,6 +570,13 @@ def create_client(
     # Collect env vars to pass to SDK (ANTHROPIC_BASE_URL, etc.)
     sdk_env = get_sdk_env_vars()
 
+    # #363 (H1, slice 1): the SDK merges the full host environment into the
+    # agent subprocess. Neutralize host/infra secrets (AIFactory API_TOKEN,
+    # JWT_SECRET, DATABASE_URL, cloud/Vault creds, provider keys) so a
+    # prompt-injected command can't read them via `env`/`printenv`. options.env
+    # wins over the inherited environment, so empty values override the secrets.
+    sdk_env.update(get_agent_env_blanks())
+
     # Inject effort level for adaptive thinking models (e.g., Opus 4.6)
     if effort_level:
         sdk_env["CLAUDE_CODE_EFFORT_LEVEL"] = effort_level
@@ -921,6 +928,10 @@ def create_client(
         "hooks": {
             "PreToolUse": [
                 HookMatcher(matcher="Bash", hooks=[bash_security_hook]),
+                # #370: SSRF guard on the agent's web tools — block LLM-chosen
+                # URLs to cloud metadata / loopback / private / non-http(s).
+                HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
+                HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
             ],
         },
         "max_turns": 1000,

@@ -35,7 +35,10 @@ from project_analyzer import (
     needs_validation,
 )
 
-from .hooks import bash_security_hook, validate_command
+from .hooks import bash_security_hook, validate_command, web_fetch_security_hook
+
+# Identifier validation (#371)
+from .identifiers import validate_spec_name, validate_task_id
 
 # Command parsing utilities
 from .parser import (
@@ -49,6 +52,9 @@ from .profile import (
     get_security_profile,
     reset_profile_cache,
 )
+
+# Prompt-injection containment (#369)
+from .prompt_guard import wrap_untrusted
 
 # Tool input validation
 from .tool_input_validator import (
@@ -78,6 +84,10 @@ from .validator import (
 __all__ = [
     # Main API
     "bash_security_hook",
+    "web_fetch_security_hook",
+    "wrap_untrusted",
+    "validate_spec_name",
+    "validate_task_id",
     "validate_command",
     "get_security_profile",
     "reset_profile_cache",

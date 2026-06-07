@@ -46,6 +46,7 @@ if sys.version_info < (3, 10):  # noqa: UP036
 
 import asyncio
 import io
+import json
 import os
 from pathlib import Path
 
@@ -96,6 +97,34 @@ from phase_config import resolve_model_id
 from review import ReviewState
 from spec import SpecOrchestrator
 from ui import Icons, highlight, muted, print_section, print_status
+
+
+def forward_parallel_flags(run_cmd: list[str], spec_dir: Path) -> list[str]:
+    """Append --parallel/--workers from a spec's task_metadata.json to run_cmd.
+
+    spec_runner chains into the build via ``os.execv(run.py …)``. Unlike model
+    (which run.py reads from task_metadata), run_autonomous_agent honors
+    parallelism only via the --parallel/--workers CLI flags (#376). The web
+    create-and-run flow persists the user's choice to task_metadata.json (#392),
+    so we must forward it here — otherwise the chained build silently runs serial
+    and the parallel executor is unreachable from the primary UI flow.
+
+    Mutates and returns ``run_cmd``. Best-effort: a missing/unreadable
+    task_metadata leaves the command unchanged (serial).
+    """
+    meta_file = Path(spec_dir) / "task_metadata.json"
+    if not meta_file.exists():
+        return run_cmd
+    try:
+        meta = json.loads(meta_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return run_cmd
+    if isinstance(meta, dict) and meta.get("parallel"):
+        run_cmd.append("--parallel")
+        workers = meta.get("workers")
+        if isinstance(workers, int) and workers > 0:
+            run_cmd.extend(["--workers", str(workers)])
+    return run_cmd
 
 
 def main():
@@ -345,6 +374,15 @@ Examples:
             # Note: Model configuration for subsequent phases (planning, coding, qa)
             # is read from task_metadata.json by run.py, so we don't pass it here.
             # This allows per-phase configuration when using Auto profile.
+
+            # Parallel execution (#376/#392), unlike model, is NOT read from
+            # task_metadata by run.py — run_autonomous_agent only honors the
+            # --parallel/--workers CLI flags. The web create-and-run flow
+            # persists these to task_metadata.json (#392), so forward them here;
+            # otherwise this chained build always runs serial regardless of the
+            # user's parallel choice (the agent_service threading is bypassed by
+            # this os.execv path).
+            forward_parallel_flags(run_cmd, orchestrator.spec_dir)
 
             debug(
                 "spec_runner",

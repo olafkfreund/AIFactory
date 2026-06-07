@@ -25,6 +25,51 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Build/test artifacts that must never be committed — committing them makes
+# concurrent parallel coders collide on merge-back (binary .coverage conflicts,
+# duplicate .pyc). An untracked .gitignore is honored by `git add`, so writing
+# it into every worktree keeps waves merging cleanly.
+_ARTIFACT_GITIGNORE = """\
+# Build / test artifacts (auto-added by AIFactory so parallel waves merge cleanly)
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+*.egg-info/
+.eggs/
+dist/
+build/
+node_modules/
+.DS_Store
+"""
+_GITIGNORE_MARKER = "auto-added by AIFactory"
+
+
+def _ensure_artifact_gitignore(worktree_path: Path) -> None:
+    """Make sure a worktree ignores build/test artifacts. Best-effort/no-raise.
+
+    Creates ``.gitignore`` if absent; appends the artifact block if a
+    ``.gitignore`` exists but doesn't already carry it. Idempotent.
+    """
+    try:
+        gi = Path(worktree_path) / ".gitignore"
+        if not gi.exists():
+            gi.write_text(_ARTIFACT_GITIGNORE, encoding="utf-8")
+            return
+        existing = gi.read_text(encoding="utf-8", errors="replace")
+        if _GITIGNORE_MARKER in existing or ".coverage" in existing:
+            return
+        sep = "" if existing.endswith("\n") else "\n"
+        gi.write_text(existing + sep + "\n" + _ARTIFACT_GITIGNORE, encoding="utf-8")
+    except OSError as exc:
+        logger.debug("could not ensure .gitignore in %s: %s", worktree_path, exc)
+
 
 class WorktreeError(Exception):
     """Error during worktree operations."""
@@ -433,6 +478,12 @@ class WorktreeManager:
             },
         )
 
+        # Ensure build/test artifacts are gitignored so concurrent coders never
+        # commit them. Without this, each parallel coder commits .coverage /
+        # __pycache__ etc., which then COLLIDE on sequential merge-back (binary
+        # conflict → wave aborts to serial). Found live in the 001 benchmark.
+        _ensure_artifact_gitignore(worktree_path)
+
         return WorktreeInfo(
             path=worktree_path,
             branch=branch_name,
@@ -527,6 +578,24 @@ class WorktreeManager:
                 f"Merge attempted but no worktree found for spec '{spec_name}'"
             )
             return False
+
+        # Security pre-merge gate (#415, default-off via AIFACTORY_SELF_HEAL):
+        # scan the branch diff for secrets/injection and refuse to merge a
+        # high-severity finding. No-op unless the flag is enabled.
+        try:
+            from agents.self_heal_integration import security_pre_merge_gate_sync
+
+            _diff = self._run_git(["diff", f"{self.base_branch}...{info.branch}"])
+            _decision = security_pre_merge_gate_sync(_diff.stdout or "")
+            if _decision is not None and _decision.blocked:
+                print(f"Security gate BLOCKED merge of {info.branch}: {_decision.summary}")
+                logger.error(
+                    f"Security pre-merge gate blocked merge for spec '{spec_name}'",
+                    extra={"branch": info.branch, "summary": _decision.summary},
+                )
+                return False
+        except Exception:
+            pass  # gate must never crash a merge that was otherwise fine
 
         if no_commit:
             print(
@@ -652,7 +721,11 @@ class WorktreeManager:
                 extra={
                     "worktree_path": str(worktree_path),
                     "error": result.stderr,
-                    "message": message,
+                    # NB: key must NOT be "message" — that's a reserved LogRecord
+                    # attribute and logging raises "Attempt to overwrite 'message'
+                    # in LogRecord", which previously propagated out of a parallel
+                    # subtask and aborted the whole wave to serial (#376 regression).
+                    "commit_message": message,
                 },
             )
             return False

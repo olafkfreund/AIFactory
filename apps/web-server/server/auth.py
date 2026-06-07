@@ -29,6 +29,7 @@ lets the SCIM Bearer middleware run without the JWT middleware rejecting the
 request first.
 """
 
+import hmac
 import logging
 
 from fastapi import HTTPException, Request, WebSocket, status
@@ -43,6 +44,19 @@ logger = logging.getLogger(__name__)
 
 # Bearer token security scheme for OpenAPI docs
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def _is_legacy_api_token(token: str) -> bool:
+    """Constant-time match of a presented token against the legacy API_TOKEN.
+
+    Uses ``hmac.compare_digest`` to avoid the timing oracle of ``==`` (#324
+    M1). An unset ``API_TOKEN`` never matches, so the legacy path can't be
+    enabled by an empty configured token.
+    """
+    configured = get_settings().API_TOKEN
+    if not configured or not token:
+        return False
+    return hmac.compare_digest(token, configured)
 
 
 def _try_decode_jwt(token: str) -> dict | None:
@@ -150,22 +164,27 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # --- Authenticate API routes ---
-        settings = get_settings()
+        # Accept the token from the Authorization: Bearer header, OR fall back
+        # to the `access_token` cookie set by the OIDC login callback (HttpOnly
+        # cookie session). Without this, SSO logins set a cookie the middleware
+        # ignored, so the SPA bounced straight back to /login.
         auth_header = request.headers.get("Authorization")
+        token = None
+        if auth_header:
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    {"error": "Invalid Authorization header format"},
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                )
+            token = auth_header[7:]  # Remove "Bearer " prefix
+        else:
+            token = request.cookies.get("access_token")
 
-        if not auth_header:
+        if not token:
             return JSONResponse(
                 {"error": "Missing Authorization header"},
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
-
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {"error": "Invalid Authorization header format"},
-                status_code=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        token = auth_header[7:]  # Remove "Bearer " prefix
 
         # Strategy 1: Try JWT validation
         jwt_payload = _try_decode_jwt(token)
@@ -179,12 +198,16 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Strategy 2: Fall back to legacy bearer token
-        if token == settings.API_TOKEN:
-            # Legacy token — populate a default user so notifications still work
+        if _is_legacy_api_token(token):
+            # Legacy token — a machine/service principal (Factory siblings, the
+            # local UI). `is_service` lets project-level authz (epic #318/#319)
+            # grant M2M access without per-org membership, preserving the
+            # sibling + local-UI contract. Notifications still work via the id.
             request.state.user = {
                 "id": "default",
                 "email": None,
                 "role": "user",
+                "is_service": True,
             }
             return await call_next(request)
 
@@ -202,8 +225,6 @@ async def verify_token(
 
     Accepts both JWT tokens and legacy API tokens.
     """
-    settings = get_settings()
-
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -218,7 +239,7 @@ async def verify_token(
         return token
 
     # Accept legacy API token
-    if token == settings.API_TOKEN:
+    if _is_legacy_api_token(token):
         return token
 
     raise HTTPException(
@@ -260,7 +281,7 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
         return True
 
     # Accept legacy API token
-    if token == settings.API_TOKEN:
+    if _is_legacy_api_token(token):
         return True
 
     await websocket.close(code=4001, reason="Unauthorized")
@@ -307,7 +328,7 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
         }
 
     # Fall back to legacy token — no user info available
-    if token == settings.API_TOKEN:
+    if _is_legacy_api_token(token):
         return None
 
     await websocket.close(code=4001, reason="Unauthorized")

@@ -59,6 +59,7 @@ from ui import (
 )
 
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
@@ -75,6 +76,41 @@ from .utils import (
 
 logger = logging.getLogger(__name__)
 
+# Default number of subtasks to run concurrently in a parallel_safe wave (#376)
+# when --parallel is requested without an explicit --workers value.
+DEFAULT_PARALLEL_WORKERS = 3
+
+
+def solo_session_plans_inline(solo: bool, parallel: bool) -> bool:
+    """Whether the solo first session both plans AND implements in one turn.
+
+    Solo mode (#276) collapses planning and implementation into a single
+    session. That single-session collapse bypasses the parallel wave dispatch
+    (#389) — waves operate on a pre-authored plan, and solo finishes the build
+    before the per-subtask loop is ever reached.
+
+    When the user opts into parallel execution we therefore author the plan
+    first (a planner session) and let the wave dispatch implement independent
+    subtasks concurrently. Trivial plans with no wave-eligible phase fall
+    through to the serial loop (which skips the sub-worktree overhead), so this
+    never makes small tasks slower. With ``parallel`` off, solo is unchanged.
+    """
+    return solo and not parallel
+
+
+def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> None:
+    """Persist build_report.json at build completion (#397 Phase 1).
+
+    Pure observability: aggregates the wave events (#393) and token attribution
+    (#262) into one profiling artifact. Best-effort — write_build_report swallows
+    I/O errors, and this wrapper guards everything else, so profiling can never
+    affect a build.
+    """
+    try:
+        write_build_report(spec_dir, source_spec_dir=source_spec_dir)
+    except Exception:  # noqa: BLE001 - profiling must never affect a build
+        pass
+
 
 async def run_autonomous_agent(
     project_dir: Path,
@@ -85,6 +121,8 @@ async def run_autonomous_agent(
     source_spec_dir: Path | None = None,
     stop_after_planning: bool = False,
     remote_control_session: str | None = None,
+    parallel: bool = False,
+    workers: int | None = None,
 ) -> None:
     """
     Run the autonomous agent loop with automatic memory management.
@@ -103,7 +141,25 @@ async def run_autonomous_agent(
             writing implementation_plan.json. Used by the Copilot delegation
             flow — AIFactory enriches the plan locally then hands the issue
             off to GitHub Copilot Coding Agent (#92, #94).
+        parallel: When True, run independent subtasks of a ``parallel_safe``
+            phase concurrently in dependency-graph waves (#376) instead of
+            strictly one-at-a-time. Phases that are not parallel_safe still run
+            serially, so this is always safe to enable.
+        workers: Max concurrent subtasks per wave when ``parallel`` is set.
+            Defaults to ``DEFAULT_PARALLEL_WORKERS`` (3) when None.
     """
+    # Normalize parallelism config (#376). Concurrency is only ever attempted
+    # for phases the planner marked parallel_safe; everything else stays serial.
+    parallel_workers = max(1, workers or DEFAULT_PARALLEL_WORKERS)
+    # Phases that stalled under parallel execution fall back to serial and must
+    # not be retried in parallel (avoids a re-enter-stall loop).
+    parallel_disabled_phases: set[int] = set()
+    if parallel:
+        print_status(
+            f"Parallel execution enabled (up to {parallel_workers} concurrent "
+            "subtasks in parallel_safe phases)",
+            "info",
+        )
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
 
@@ -135,12 +191,25 @@ async def run_autonomous_agent(
     # skipped. Default OFF — the full pipeline is unchanged when disabled.
     solo = is_solo_mode_enabled_for_spec(spec_dir)
 
+    # #389: solo collapses plan+implement into one session, which bypasses the
+    # wave dispatch. Under --parallel, author the plan first (planner session)
+    # so independent subtasks can run concurrently in waves; trivial plans then
+    # fall through to the serial loop. Solo behaviour is unchanged with parallel
+    # off, and solo still skips the plan-review gate / QA loop either way.
+    solo_plans_inline = solo_session_plans_inline(solo, parallel)
+    if solo and parallel:
+        print_status(
+            "Solo + parallel: authoring the plan first so independent subtasks "
+            "can run concurrently in waves (#389)",
+            "info",
+        )
+
     # Track which phase we're in for logging
     current_log_phase = LogPhase.CODING
     is_planning_phase = False
 
     if first_run:
-        if solo:
+        if solo_plans_inline:
             print_status(
                 "Solo mode - a single self-directed agent will plan and build",
                 "info",
@@ -164,8 +233,7 @@ async def run_autonomous_agent(
                 "",
                 f"Spec: {highlight(spec_dir.name)}",
                 muted(
-                    "The agent will analyze your spec and create a "
-                    "subtask-based plan."
+                    "The agent will analyze your spec and create a subtask-based plan."
                 ),
             ]
         print()
@@ -192,6 +260,7 @@ async def run_autonomous_agent(
         if is_build_complete(spec_dir):
             print_build_complete_banner(spec_dir)
             status_manager.update(state=BuildState.COMPLETE)
+            _emit_build_report(spec_dir, source_spec_dir)
             return
 
         # Start/continue coding phase in task logger
@@ -226,6 +295,7 @@ async def run_autonomous_agent(
 
     # Main loop
     iteration = 0
+    self_heal_emitted = False  # one-time #415 artifact/review-tier emission guard
 
     while True:
         iteration += 1
@@ -252,6 +322,47 @@ async def run_autonomous_agent(
             print(f"\nReached max iterations ({max_iterations})")
             print("To continue, run the script again without --max-iterations")
             break
+
+        # Plan-driven allowlist: grant the verification commands the plan
+        # declares (uv/pytest/ruff/mypy …) into THIS worktree's security profile
+        # before the coder/QA session runs. Detection runs once at build start
+        # and misses tooling the scaffold adds later, so without this a
+        # from-scratch build is blocked running its own checks. Idempotent and
+        # cheap; only grants sanitised, grant-listed command names. project_dir
+        # here is the task worktree root == the agent's cwd == the file the Bash
+        # hook reads (mtime-invalidated, so it applies immediately).
+        plan_file = spec_dir / "implementation_plan.json"
+        if plan_file.exists():
+            try:
+                from project.analyzer import seed_profile_with_plan_commands
+
+                seed_profile_with_plan_commands(project_dir, plan_file)
+            except Exception as exc:  # never let allowlist seeding break a build
+                print(f"plan-commands seed skipped: {exc}")
+
+            # Self-heal integration (#415, default-off via AIFACTORY_SELF_HEAL):
+            # once the plan exists, emit it as a build Artifact and record the
+            # review tier. Both are no-ops unless the flag is enabled; idempotent.
+            if not self_heal_emitted:
+                try:
+                    import json as _json
+
+                    from agents.self_heal_integration import (
+                        assess_review_tier,
+                        emit_plan_artifact,
+                    )
+
+                    _plan = _json.loads(plan_file.read_text())
+                    emit_plan_artifact(spec_dir, _plan, source_spec_dir=source_spec_dir)
+                    _tier = assess_review_tier(_plan, solo=solo)
+                    if _tier is not None:
+                        print(
+                            f"[self-heal] review tier: {_tier.tier} "
+                            f"(pre-merge gate: {_tier.pre_merge_gate})"
+                        )
+                    self_heal_emitted = True
+                except Exception:
+                    self_heal_emitted = True  # best-effort, do not retry every loop
 
         # Get the next subtask to work on
         next_subtask = get_next_subtask(spec_dir)
@@ -292,6 +403,12 @@ async def run_autonomous_agent(
         phase_model = get_phase_model(spec_dir, current_phase, model)
         phase_thinking_budget = get_phase_thinking_budget(spec_dir, current_phase)
 
+        # Per-subtask model override (#376 right-sizing): a coding subtask may
+        # declare its own model (e.g. "haiku" for mechanical scaffolding) to run
+        # cheaper/faster than the phase default. Planning is never overridden.
+        if not first_run and next_subtask and next_subtask.get("model"):
+            phase_model = next_subtask["model"]
+
         # Create client (fresh context) with phase-specific model and thinking
         # Route through provider factory for non-Claude models
         provider_name = infer_provider_from_model(phase_model)
@@ -305,7 +422,9 @@ async def run_autonomous_agent(
                 # update_subtask_status) so the single agent can both author
                 # and track its own plan. The planner toolset lacks
                 # update_subtask_status.
-                agent_type=("coder" if solo else "planner") if first_run else "coder",
+                agent_type=("coder" if solo_plans_inline else "planner")
+                if first_run
+                else "coder",
                 max_thinking_tokens=phase_thinking_budget,
                 remote_control_session=remote_control_session,
             )
@@ -333,9 +452,11 @@ async def run_autonomous_agent(
             # Solo mode (#276): the single agent gets a self-directing prompt
             # that has it author its own plan AND implement it. Otherwise use
             # the dedicated planner prompt.
-            if solo:
+            if solo_plans_inline:
                 prompt = get_solo_prompt(spec_dir)
             else:
+                # Planner-only session: authors the plan without implementing,
+                # so the wave dispatch can pick up independent subtasks (#389).
                 prompt = generate_planner_prompt(spec_dir, project_dir)
             seg_user_prompt = prompt
 
@@ -388,11 +509,16 @@ async def run_autonomous_agent(
                 if require_review:
                     # Check if already approved
                     from review import ReviewState
+
                     review_state = ReviewState.load(spec_dir)
                     if not review_state.is_approval_valid(spec_dir):
                         # Pause for human review
-                        logger.info("Plan review required - pausing execution for human approval")
-                        emit_phase(ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval")
+                        logger.info(
+                            "Plan review required - pausing execution for human approval"
+                        )
+                        emit_phase(
+                            ExecutionPhase.PLAN_REVIEW, "Waiting for plan approval"
+                        )
 
                         # Update implementation_plan.json status
                         plan_file = spec_dir / "implementation_plan.json"
@@ -417,14 +543,22 @@ async def run_autonomous_agent(
                             )
 
                         print()
-                        print(box([
-                            bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
-                            "",
-                            "The implementation plan has been created and requires your approval.",
-                            "Please review the plan in the web UI and click 'Approve Plan' to continue.",
-                            "",
-                            highlight("Task Status: human_review (plan_review)"),
-                        ], width=70, style="heavy"))
+                        print(
+                            box(
+                                [
+                                    bold(f"{icon(Icons.WARNING)} PLAN REVIEW REQUIRED"),
+                                    "",
+                                    "The implementation plan has been created and requires your approval.",
+                                    "Please review the plan in the web UI and click 'Approve Plan' to continue.",
+                                    "",
+                                    highlight(
+                                        "Task Status: human_review (plan_review)"
+                                    ),
+                                ],
+                                width=70,
+                                style="heavy",
+                            )
+                        )
                         print()
 
                         return  # Exit agent loop - task pauses for approval
@@ -445,6 +579,34 @@ async def run_autonomous_agent(
             if not next_subtask:
                 print("No pending subtasks found - build may be complete!")
                 break
+
+            # === PARALLEL WAVE DISPATCH (#376) ===
+            # If parallel execution is enabled and the phase owning this subtask
+            # is parallel_safe with >=2 pending subtasks, run the whole phase
+            # concurrently in dependency-graph waves, then continue the loop
+            # (which picks up the next phase or finishes). Any non-parallel_safe
+            # phase, or a stalled wave, falls through to the serial path below —
+            # so this is always safe.
+            if parallel:
+                handled = await _maybe_run_parallel_phase(
+                    spec_dir=spec_dir,
+                    project_dir=project_dir,
+                    subtask_id=subtask_id,
+                    model=model,
+                    parallel_workers=parallel_workers,
+                    verbose=verbose,
+                    source_spec_dir=source_spec_dir,
+                    remote_control_session=remote_control_session,
+                    status_manager=status_manager,
+                    disabled_phases=parallel_disabled_phases,
+                    recovery_manager=recovery_manager,
+                )
+                if handled:
+                    # Progress was made in parallel; re-evaluate from the top.
+                    print_progress_summary(spec_dir)
+                    status_manager.update(state=BuildState.BUILDING)
+                    await asyncio.sleep(1)
+                    continue
 
             # Get attempt count for recovery context
             attempt_count = recovery_manager.get_attempt_count(subtask_id)
@@ -481,8 +643,18 @@ async def run_autonomous_agent(
                 spec_dir, project_dir, next_subtask
             )
             if graphiti_context:
-                prompt += "\n\n" + graphiti_context
-                seg_coordination += graphiti_context
+                # #369: memory is populated by past sessions and could be
+                # poisoned cross-session. It is reference data, never
+                # instructions — wrap it so an injected directive can't steer
+                # this run.
+                from security import wrap_untrusted
+
+                framed_memory = wrap_untrusted(
+                    graphiti_context,
+                    source="knowledge-graph memory of past sessions",
+                )
+                prompt += "\n\n" + framed_memory
+                seg_coordination += framed_memory
                 print_status("Graphiti memory context loaded", "success")
 
             # Show what we're working on
@@ -562,6 +734,7 @@ async def run_autonomous_agent(
                 if source_spec_dir:
                     try:
                         from .token_attribution import usage_file_path
+
                         src = usage_file_path(spec_dir)
                         if src.exists():
                             (source_spec_dir / src.name).write_text(
@@ -591,6 +764,46 @@ async def run_autonomous_agent(
                 status_manager=status_manager,
                 source_spec_dir=source_spec_dir,
             )
+
+            # Self-heal: on failure, verify the project state and checkpoint/rollback
+            # before the RecoveryManager decides whether to retry or mark stuck.
+            # Guarded by AIFACTORY_SELF_HEAL (default off) — zero behavioral change
+            # unless explicitly enabled. This closes #415 item 1 for the serial path.
+            if not success:
+                try:
+                    from agents.self_heal_integration import (
+                        is_self_heal_enabled,
+                        self_heal_subtask,
+                    )
+
+                    if is_self_heal_enabled():
+                        # We don't own the retry loop here (the main loop does via
+                        # RecoveryManager); use max_attempts=1 so self_heal_subtask
+                        # runs exactly one verify + conditional rollback pass, then
+                        # records the outcome in its event log.  A future refactor
+                        # can promote this to full loop ownership once the session
+                        # can be expressed as a callable.
+                        async def _noop_attempt(_n: int) -> None:
+                            pass  # attempt already ran above; verify the result
+
+                        outcome = await self_heal_subtask(
+                            label=subtask_id or "unknown",
+                            attempt=_noop_attempt,
+                            project_dir=project_dir,
+                            max_attempts=1,
+                        )
+                        if outcome is not None:
+                            status_str = outcome.status
+                            print_status(
+                                f"[self-heal] {subtask_id}: {status_str} "
+                                f"(attempts={outcome.attempts}, "
+                                f"rolled_back={outcome.rolled_back})",
+                                "info" if outcome.ok else "warning",
+                            )
+                            if outcome.ok:
+                                success = True  # verify gate says the subtask passed
+                except Exception as _sh_exc:  # noqa: BLE001 - self-heal must not crash build
+                    logger.debug("[self-heal] serial gate skipped: %s", _sh_exc)
 
             # Check for stuck subtasks
             attempt_count = recovery_manager.get_attempt_count(subtask_id)
@@ -686,9 +899,7 @@ async def run_autonomous_agent(
                     # which is the "resume" — no extra orchestration needed.
                     continue
                 # Caps exhausted — fall through to the normal error path.
-                logger.warning(
-                    "Rate limit auto-resume giving up: %s", decision.reason
-                )
+                logger.warning("Rate limit auto-resume giving up: %s", decision.reason)
                 print_status(
                     f"Rate limit auto-resume stopped: {decision.reason}", "error"
                 )
@@ -753,6 +964,9 @@ async def run_autonomous_agent(
     else:
         status_manager.update(state=BuildState.PAUSED)
 
+    # Emit the profiling artifact (#397 Phase 1) — observability only.
+    _emit_build_report(spec_dir, source_spec_dir)
+
 
 def _should_require_human_review(spec_dir: Path) -> bool:
     """
@@ -785,4 +999,147 @@ def _should_require_human_review(spec_dir: Path) -> bool:
 
         return False
     except (json.JSONDecodeError, OSError):
+        return False
+
+
+async def _run_trailing_gates_if_build_complete(
+    spec_dir: Path, project_dir: Path
+) -> None:
+    """Run lint/type/test gates once when all subtasks are complete (#376 D).
+
+    Best-effort: detects project gates, runs them as direct subprocesses (not
+    agent turns), logs a one-line summary, and on failure writes a
+    ``GATE_FAILURES.md`` marker the QA/fix loop can pick up. Never raises and
+    never fails the build — a clean run simply removes any stale marker.
+    """
+    try:
+        from .gate_runner import (
+            detect_gates,
+            failing_gates,
+            run_gates,
+            summarize_gates,
+        )
+
+        # Only run when the whole plan is complete — "once at the end".
+        plan_path = spec_dir / "implementation_plan.json"
+        from implementation_plan.enums import SubtaskStatus
+        from implementation_plan.plan import ImplementationPlan
+
+        plan = ImplementationPlan.load(plan_path)
+        pending = [
+            s
+            for p in plan.phases
+            for s in p.subtasks
+            if s.status != SubtaskStatus.COMPLETED
+        ]
+        if pending:
+            return  # more work remains; gates run after the final wave
+
+        gates = detect_gates(project_dir)
+        if not gates:
+            return
+        print_status(
+            f"Running trailing gates once: {', '.join(g.name for g in gates)}",
+            "info",
+        )
+        results = await run_gates(project_dir, gates)
+        summary = summarize_gates(results)
+        failures = failing_gates(results)
+        marker = spec_dir / "GATE_FAILURES.md"
+        if failures:
+            lines = [f"# Gate failures\n\nSummary: {summary}\n"]
+            for r in failures:
+                lines.append(
+                    f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n"
+                )
+            marker.write_text("".join(lines), encoding="utf-8")
+            print_status(f"Trailing gates failed: {summary}", "warning")
+        else:
+            if marker.exists():
+                marker.unlink()  # clear any stale failures from a prior run
+            print_status(f"Trailing gates passed: {summary}", "success")
+    except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
+        logger.debug("Trailing gate run skipped: %s", exc)
+
+
+async def _maybe_run_parallel_phase(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    subtask_id: str | None,
+    model: str,
+    parallel_workers: int,
+    verbose: bool,
+    source_spec_dir: Path | None,
+    remote_control_session: str | None,
+    status_manager,
+    disabled_phases: set[int],
+    recovery_manager=None,
+) -> bool:
+    """Run the subtask's phase as parallel waves if it is eligible (#376).
+
+    Returns True if a parallel phase ran and made progress (caller should
+    `continue` the loop). Returns False if the phase is not eligible or could
+    not progress, so the caller falls back to the serial path for this subtask.
+    """
+    if not subtask_id:
+        return False
+
+    plan_path = spec_dir / "implementation_plan.json"
+    if not plan_path.exists():
+        return False
+
+    try:
+        from implementation_plan.plan import ImplementationPlan
+
+        from .parallel_integration import run_parallel_coding_phase
+        from .parallel_runner import is_phase_parallel_eligible
+
+        plan = ImplementationPlan.load(plan_path)
+        phase = next(
+            (p for p in plan.phases for s in p.subtasks if s.id == subtask_id),
+            None,
+        )
+        if phase is None:
+            return False
+        if phase.phase in disabled_phases:
+            return False
+        if not is_phase_parallel_eligible(phase, parallel_workers):
+            return False
+
+        print_status(
+            f"Running phase '{phase.name}' in parallel ({parallel_workers} workers)",
+            "info",
+        )
+        result = await run_parallel_coding_phase(
+            plan=plan,
+            phase=phase,
+            project_dir=project_dir,
+            spec_dir=spec_dir,
+            model=model,
+            workers=parallel_workers,
+            verbose=verbose,
+            source_spec_dir=source_spec_dir,
+            remote_control_session=remote_control_session,
+            recovery_manager=recovery_manager,
+        )
+
+        # A stalled phase (cycle / unresolved deps / merge failures) drops to the
+        # serial path for whatever is left — and must not be retried in parallel.
+        if result.stalled or result.failed_ids:
+            disabled_phases.add(phase.phase)
+
+        # (#376 solution D) Collapse trailing gates: when this wave finished the
+        # last of the plan's subtasks, run lint/type/test gates ONCE as direct
+        # subprocesses instead of as separate agent turns. Failures are recorded
+        # for the QA/fix loop; this never fails the build itself.
+        if result.completed_ids and not result.stalled:
+            await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+        # "Made progress" => at least one subtask completed; caller continues.
+        return bool(result.completed_ids)
+    except Exception as exc:  # noqa: BLE001 - parallel is best-effort; serial is the safety net
+        logger.warning(
+            "Parallel phase execution failed (%s); falling back to serial", exc
+        )
         return False

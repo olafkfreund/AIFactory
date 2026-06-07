@@ -6,6 +6,7 @@ Handles GitHub OAuth, repository management, issues, PRs, and releases.
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1608,12 +1609,14 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
 
         (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
-        spec_md = f"# {issue_data.get('title', f'Issue #{issue_number}')}\n\n"
-        spec_md += f"**Source:** GitHub Issue [#{issue_number}]({issue_data.get('url', '')})\n"
-        if label_names:
-            spec_md += f"**Labels:** {', '.join(label_names)}\n"
-        spec_md += f"\n## Description\n\n{body}\n"
-        (spec_dir / "spec.md").write_text(spec_md)
+        # Deliberately do NOT write a stub spec.md. The issue body is preserved
+        # in requirements.json (description), and the spec pipeline regenerates a
+        # complete, *validated* spec.md on launch. A stub here is invalid
+        # (missing required sections) so phase_spec_writing took the
+        # "regenerating" path, where the spec_writer agent's Write on the
+        # pre-existing file tripped the SDK Write-needs-prior-Read guard — at
+        # best ~40s recovery per task, at worst a stalled regeneration. An absent
+        # spec.md lets the agent write fresh on the fast path with no trip.
 
         return (
             {"number": issue_number, "title": issue_data.get("title", ""), "specId": spec_name},
@@ -2124,6 +2127,51 @@ async def create_github_release(projectId: str, request: CreateReleaseRequest):
     # gh release create outputs the release URL
     release_url = result.get("output", "")
     return {"success": True, "data": {"url": release_url}}
+
+
+@router.get("/features")
+async def get_github_features():
+    """Return server-side GitHub feature flags visible to the frontend.
+
+    Currently exposes:
+    - ``copilot_dispatch_enabled``: whether AIFACTORY_COPILOT_DISPATCH_ENABLED is set,
+      used to gate the Copilot dispatch toggle in the task creation UI.
+    """
+    return {
+        "success": True,
+        "data": {
+            "copilot_dispatch_enabled": os.environ.get(
+                "AIFACTORY_COPILOT_DISPATCH_ENABLED", ""
+            ).lower() in ("1", "true", "yes"),
+        },
+    }
+
+
+@router.get("/models")
+async def list_github_models():
+    """Return the GitHub Models catalog.
+
+    Calls the public catalog endpoint (no auth required for the listing).
+    The caller needs ``GITHUB_TOKEN`` with ``models:read`` only when making
+    inference requests, not for fetching the catalog.
+
+    Returns the raw catalog JSON from models.github.ai.  The frontend uses
+    this to populate the 'GitHub Models' group in the provider dropdown.
+    """
+    result = run_gh_command(["api", "https://models.github.ai/catalog/models"])
+    if not result["success"]:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": result.get("error", "Failed to fetch GitHub Models catalog")},
+        )
+    try:
+        catalog = json.loads(result["output"])
+        return {"success": True, "data": catalog}
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": "Invalid JSON from GitHub Models catalog"},
+        )
 
 
 @router.get("/fork-info")

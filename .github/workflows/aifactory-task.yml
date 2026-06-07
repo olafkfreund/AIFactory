@@ -1,0 +1,33 @@
+name: AIFactory Task Creation
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  create-task:
+    if: github.event.label.name == 'aifactory:run'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      models: read
+
+    steps:
+      - name: Create AIFactory task
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AIFACTORY_URL: ${{ secrets.AIFACTORY_URL }}
+          AIFACTORY_TOKEN: ${{ secrets.AIFACTORY_TOKEN }}
+        run: |
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_TITLE="${{ github.event.issue.title }}"
+
+          if [ -n "$AIFACTORY_URL" ]; then
+            curl -sf -X POST "$AIFACTORY_URL/api/tasks/from-github-issue" \
+              -H "Authorization: Bearer $AIFACTORY_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"issue_number\": $ISSUE_NUMBER, \"repo\": \"${{ github.repository }}\"}"
+          else
+            gh issue comment "$ISSUE_NUMBER" \
+              --body "🏭 **AIFactory**: Issue queued for import. Set the \`AIFACTORY_URL\` repository secret to automate task creation."
+          fi

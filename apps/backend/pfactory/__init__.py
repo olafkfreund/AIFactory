@@ -20,13 +20,19 @@ from .taxonomy import (
     classify_requirements,
     is_governed_requirements,
 )
-from .tfactory_client import build_handoff_payload, send_handoff, tfactory_config
+from .tfactory_client import (
+    build_handoff_payload,
+    load_tfactory_block,
+    send_handoff,
+    tfactory_config,
+)
 
 __all__ = [
     "CODER",
     "TFACTORY",
     "Classification",
     "build_handoff_payload",
+    "load_tfactory_block",
     "classify_labels",
     "classify_requirements",
     "extract_child_issue_numbers",

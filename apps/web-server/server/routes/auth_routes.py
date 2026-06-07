@@ -13,13 +13,14 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..auth import _try_decode_jwt
 from ..config import get_settings
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
@@ -32,7 +33,11 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 # Password hashing
 # ---------------------------------------------------------------------------
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def _hash_password(secret: str) -> str:
+    return _bcrypt.hashpw(secret.encode(), _bcrypt.gensalt()).decode()
+
+def _verify_password(secret: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(secret.encode(), hashed.encode())
 
 # ---------------------------------------------------------------------------
 # Request / Response schemas
@@ -143,6 +148,27 @@ async def get_current_user(
     """
     user_data = getattr(request.state, "user", None)
     if user_data is None:
+        # Routes under /api/auth/* bypass TokenAuthMiddleware (it treats
+        # "/api/auth/" as a PUBLIC_PREFIX), so request.state.user is never
+        # populated for them — including this /api/auth/me. Resolve the token
+        # ourselves: the Authorization: Bearer header, else the access_token
+        # cookie set by the OIDC login callback. Without this, SSO logins set
+        # a valid cookie but /me still 401s, bouncing the SPA back to /login.
+        token = None
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if not token:
+            token = request.cookies.get("access_token")
+        if token:
+            payload = _try_decode_jwt(token)
+            if payload is not None:
+                user_data = {
+                    "id": payload.get("sub"),
+                    "email": payload.get("email"),
+                    "role": payload.get("role", "user"),
+                }
+    if user_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
@@ -199,7 +225,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = User(
         email=body.email,
         name=body.name,
-        password_hash=pwd_context.hash(body.password),
+        password_hash=_hash_password(body.password),
         role="user",
     )
     db.add(user)
@@ -257,7 +283,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
-    if user is None or not pwd_context.verify(body.password, user.password_hash):
+    if user is None or not _verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",

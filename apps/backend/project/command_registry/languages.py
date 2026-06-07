@@ -23,6 +23,27 @@ LANGUAGE_COMMANDS: dict[str, set[str]] = {
         "notebook",
         "pdb",
         "pudb",  # debuggers
+        # Standard verification/build toolchain. These are non-destructive
+        # test/lint/typecheck/runner tools and are allowlisted for ANY Python
+        # project, independent of stack detection. Detection runs once at build
+        # start and is cached — for a from-scratch build the scaffold subtask
+        # adds these dev-deps *after* the scan, so detection-based allowlisting
+        # misses them and the coder/QA flail on "Command 'uv' is not allowed"
+        # (seen live in benchmark 004, coding + validation phases). Pinning them
+        # at the language level makes Python builds reliably verifiable.
+        "uv",
+        "uvx",
+        "pytest",
+        "py.test",
+        "ruff",
+        "mypy",
+        "black",
+        "isort",
+        "flake8",
+        "pylint",
+        "coverage",
+        "tox",
+        "nox",
     },
     "javascript": {
         "node",

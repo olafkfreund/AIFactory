@@ -114,7 +114,11 @@ class SpecOrchestrator:
             self.spec_dir = Path(spec_dir)
             self.spec_dir.mkdir(parents=True, exist_ok=True)
         elif spec_name:
-            self.spec_dir = self.specs_dir / spec_name
+            # #371: validate before building the path — a traversal in
+            # spec_name would escape specs_dir.
+            from security.identifiers import validate_spec_name
+
+            self.spec_dir = self.specs_dir / validate_spec_name(spec_name)
             self.spec_dir.mkdir(parents=True, exist_ok=True)
         else:
             # Use lock for coordinated spec numbering across worktrees
@@ -329,8 +333,25 @@ class SpecOrchestrator:
         # Store summary for subsequent phases (compaction)
         await self._store_phase_summary("requirements")
 
-        # Rename spec folder with better name from requirements
-        rename_spec_dir_from_requirements(self.spec_dir)
+        # Rename spec folder with better name from requirements ("NNN-pending"
+        # -> "NNN-slug"). Use the method (not the standalone fn) so self.spec_dir
+        # is updated to the renamed dir.
+        renamed_before = self.spec_dir
+        self._rename_spec_dir_from_requirements()
+        if self.spec_dir != renamed_before:
+            # CRITICAL: the validator, the cached agent runner, the task logger,
+            # and the phase executor all captured the pre-rename "NNN-pending"
+            # path. Without re-pointing them, the spec-writing agent writes
+            # spec.md into the new slug dir while the phase executor checks the
+            # stale "NNN-pending" path -> "Agent did not create spec.md" and the
+            # whole spec run fails. Re-bind every spec_dir-derived reference to
+            # the renamed dir so the rest of the pipeline is self-consistent.
+            self.validator = SpecValidator(self.spec_dir)
+            self._agent_runner = None  # force rebind to the renamed spec_dir
+            task_logger = get_task_logger(self.spec_dir)
+            phase_executor.spec_dir = self.spec_dir
+            phase_executor.spec_validator = self.validator
+            phase_executor.task_logger = task_logger
 
         # Update task description from requirements
         req = requirements.load_requirements(self.spec_dir)

@@ -25,6 +25,26 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_spec_dir(project_dir: Path, spec_name: str) -> Path | None:
+    """Resolve the spec directory for ``spec_name``, validating it first (#371).
+
+    Returns ``None`` for an unsafe name so the caller degrades to "no spec
+    context" rather than building a traversal path outside ``specs/``.
+    """
+    from security.identifiers import validate_spec_name
+
+    try:
+        safe = validate_spec_name(spec_name)
+    except ValueError:
+        logger.warning("Ignoring unsafe spec_name %r for commit message", spec_name)
+        return None
+    primary = project_dir / ".aifactory" / "specs" / safe
+    if primary.exists():
+        return primary
+    return project_dir / "aifactory" / "specs" / safe
+
+
 # Map task categories to conventional commit types
 CATEGORY_TO_COMMIT_TYPE = {
     "feature": "feat",
@@ -265,14 +285,13 @@ def generate_commit_message_sync(
     Returns:
         Generated commit message or fallback message
     """
-    # Find spec directory
-    spec_dir = project_dir / ".aifactory" / "specs" / spec_name
-    if not spec_dir.exists():
-        # Try alternative location
-        spec_dir = project_dir / "aifactory" / "specs" / spec_name
+    # Find spec directory (spec_name validated against traversal — #371)
+    spec_dir = _safe_spec_dir(project_dir, spec_name)
 
     # Get context from spec files
-    spec_context = _get_spec_context(spec_dir) if spec_dir.exists() else {}
+    spec_context = (
+        _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
+    )
 
     # Override with provided github_issue
     if github_issue:
@@ -342,13 +361,13 @@ async def generate_commit_message(
     Returns:
         Generated commit message or fallback message
     """
-    # Find spec directory
-    spec_dir = project_dir / ".aifactory" / "specs" / spec_name
-    if not spec_dir.exists():
-        spec_dir = project_dir / "aifactory" / "specs" / spec_name
+    # Find spec directory (spec_name validated against traversal — #371)
+    spec_dir = _safe_spec_dir(project_dir, spec_name)
 
     # Get context from spec files
-    spec_context = _get_spec_context(spec_dir) if spec_dir.exists() else {}
+    spec_context = (
+        _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
+    )
 
     # Override with provided github_issue
     if github_issue:

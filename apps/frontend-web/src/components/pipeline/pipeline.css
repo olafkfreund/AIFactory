@@ -1,0 +1,549 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Plan → Code → Test pipeline header. Observatory aesthetic: dark panel, thin
+   glowing jewel-tone rings, marching-ant connectors, organic live motion.
+   Stage colors are local vars so the look is identical in light/dark themes.
+   ─────────────────────────────────────────────────────────────────────────── */
+.pl-pipeline {
+  --pl-plan: 340 38% 62%;   /* dusty pink */
+  --pl-code: 42 70% 56%;    /* amber / gold */
+  --pl-test: 74 42% 50%;    /* olive */
+  --pl-panel: 240 6% 12%;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: clamp(12px, 4vw, 64px);
+  padding: 26px clamp(16px, 5vw, 56px) 30px;
+  background:
+    radial-gradient(120% 140% at 50% -10%, hsl(240 6% 17% / 0.9), transparent 60%),
+    linear-gradient(180deg, hsl(var(--pl-panel) / 0.92), hsl(var(--pl-panel) / 0.6));
+  border-bottom: 1px solid hsl(0 0% 100% / 0.06);
+  overflow: hidden;
+}
+/* faint grain for atmosphere */
+.pl-pipeline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(hsl(0 0% 100% / 0.025) 1px, transparent 1px);
+  background-size: 4px 4px;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ── a stage node ─────────────────────────────────────────────────────────── */
+.pl-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 1;
+}
+.pl-ring {
+  position: relative;
+  width: clamp(76px, 11vw, 116px);
+  height: clamp(76px, 11vw, 116px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: hsl(var(--c));
+  border: 2px solid hsl(var(--c) / 0.32);
+  background: radial-gradient(80% 80% at 50% 35%, hsl(var(--c) / 0.06), transparent 70%);
+  transition: border-color 0.5s, box-shadow 0.5s, transform 0.5s;
+}
+.pl-ring svg { color: hsl(var(--c) / 0.85); }
+
+/* active stage: brighten + glow + a slow rotating dashed halo */
+.pl-stage.is-active .pl-ring {
+  border-color: hsl(var(--c) / 0.95);
+  box-shadow: 0 0 0 1px hsl(var(--c) / 0.25), 0 0 28px hsl(var(--c) / 0.28);
+}
+.pl-stage.is-active .pl-ring svg { color: hsl(var(--c)); }
+.pl-stage.is-active .pl-ring::before {
+  content: "";
+  position: absolute;
+  inset: -7px;
+  border-radius: 50%;
+  border: 2px dashed hsl(var(--c) / 0.5);
+  animation: pl-spin 9s linear infinite;
+}
+.pl-stage.is-idle .pl-ring { opacity: 0.55; filter: saturate(0.7); }
+
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+
+/* count badge — monospace, sits on the ring's upper-right */
+.pl-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  font-weight: 700;
+  color: hsl(var(--pl-panel));
+  background: hsl(var(--c) / 0.9);
+  box-shadow: 0 2px 8px hsl(var(--c) / 0.35);
+}
+.pl-stage.is-idle .pl-badge { background: hsl(var(--c) / 0.55); }
+.pl-label {
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: clamp(13px, 1.4vw, 16px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: hsl(var(--c) / 0.85);
+}
+
+/* ── connectors (marching ants flow toward active work) ───────────────────── */
+.pl-link {
+  flex: 1 1 60px;
+  min-width: 40px;
+  max-width: 220px;
+  height: 2px;
+  margin-top: clamp(38px, 5.5vw, 58px);
+  background-image: linear-gradient(90deg, hsl(var(--c) / 0.65) 0 8px, transparent 8px 16px);
+  background-size: 16px 2px;
+  background-repeat: repeat-x;
+  opacity: 0.4;
+}
+.pl-link.is-flowing { opacity: 0.95; animation: pl-march 0.8s linear infinite; }
+@keyframes pl-march { to { background-position: 16px 0; } }
+
+/* ── planning: scan-line on the doc + MCP signal ping ─────────────────────── */
+.pl-stage.is-active .doc-lines { animation: pl-scan 2.2s ease-in-out infinite; }
+@keyframes pl-scan { 0%,100% { opacity: 0.45; } 50% { opacity: 1; } }
+
+.pl-mcp {
+  position: absolute;
+  top: -2px;
+  left: -10px;
+  color: hsl(var(--c));
+  opacity: 0;
+}
+.pl-stage.is-active .pl-mcp { animation: pl-mcp-show 3.2s ease-in-out infinite; }
+@keyframes pl-mcp-show { 0%,70%,100% { opacity: 0; transform: translateX(0); } 18%,52% { opacity: 0.95; } }
+.pl-mcp .sig { opacity: 0; transform-origin: 14px 34px; }
+.pl-stage.is-active .pl-mcp .sig-1 { animation: pl-ping 1.4s ease-out infinite; }
+.pl-stage.is-active .pl-mcp .sig-2 { animation: pl-ping 1.4s ease-out 0.2s infinite; }
+.pl-stage.is-active .pl-mcp .sig-3 { animation: pl-ping 1.4s ease-out 0.4s infinite; }
+@keyframes pl-ping { 0% { opacity: 0; } 30% { opacity: 0.9; } 100% { opacity: 0; } }
+
+/* ── coding: robot antenna blink + gentle head-bob + eye pulse ────────────── */
+.pl-stage.is-active .robot { animation: pl-bob 2.4s ease-in-out infinite; }
+@keyframes pl-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
+.pl-stage.is-active .robot-antenna { animation: pl-blink 1.1s steps(1) infinite; }
+@keyframes pl-blink { 0%,60% { opacity: 1; } 61%,100% { opacity: 0.25; } }
+.pl-stage.is-active .robot-eye { animation: pl-eye 2.4s ease-in-out infinite; }
+@keyframes pl-eye { 0%,92%,100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+.robot-eye { transform-box: fill-box; transform-origin: center; }
+
+/* ── testing: rising bubbles ──────────────────────────────────────────────── */
+.pl-stage.is-active .bubble { opacity: 0; }
+.pl-stage.is-active .bubble-1 { animation: pl-bubble 2.1s ease-in infinite; }
+.pl-stage.is-active .bubble-2 { animation: pl-bubble 2.1s ease-in 0.6s infinite; }
+.pl-stage.is-active .bubble-3 { animation: pl-bubble 2.1s ease-in 1.2s infinite; }
+@keyframes pl-bubble {
+  0% { opacity: 0; transform: translateY(0); }
+  25% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-9px); }
+}
+
+/* ── agent terminals (spawned per active subtask under the Code node) ─────── */
+.pl-agents {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  max-width: clamp(120px, 16vw, 200px);
+  margin-top: 2px;
+  min-height: 22px;
+}
+.pl-term {
+  color: hsl(var(--pl-code));
+  filter: drop-shadow(0 0 6px hsl(var(--pl-code) / 0.4));
+}
+.pl-term .term-cursor { animation: pl-cursor 1s steps(1) infinite; }
+@keyframes pl-cursor { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+.pl-term-more {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: hsl(var(--pl-code) / 0.85);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-pipeline *, .pl-pipeline *::before { animation: none !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PipelineBoard — the rings ARE the board (4 ring-columns: Plan/Code/Review/Done)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.pl-board {
+  --pl-plan: 340 38% 62%;
+  --pl-code: 42 70% 56%;
+  --pl-review: 288 46% 64%;  /* soft violet */
+  --pl-done: 150 42% 52%;    /* green */
+  --pl-panel: 240 6% 12%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background:
+    radial-gradient(120% 40% at 50% 0%, hsl(240 6% 16% / 0.85), transparent 70%),
+    hsl(var(--pl-panel) / 0.4);
+}
+.pl-board-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  flex: 1;
+  min-height: 0;
+  z-index: 1;
+}
+.pl-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.pl-col + .pl-col { border-left: 1px solid hsl(0 0% 100% / 0.04); }
+.pl-col-head {
+  display: flex;
+  justify-content: center;
+  padding: 24px 8px 16px;
+  position: relative;
+  z-index: 2;
+}
+.pl-col-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 12px 16px;
+  scrollbar-width: thin;
+}
+.pl-col-list::-webkit-scrollbar { width: 6px; }
+.pl-col-list::-webkit-scrollbar-thumb { background: hsl(0 0% 100% / 0.08); border-radius: 3px; }
+
+.pl-empty {
+  margin-top: 18px;
+  text-align: center;
+  font-size: 12px;
+  color: hsl(0 0% 100% / 0.28);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+.pl-add {
+  align-self: stretch;
+  border: 1px dashed hsl(var(--c) / 0.4);
+  color: hsl(var(--c) / 0.85);
+  background: hsl(var(--c) / 0.05);
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.pl-add:hover { background: hsl(var(--c) / 0.12); border-color: hsl(var(--c) / 0.7); }
+
+/* connectors overlay (positioned from measured ring centers) */
+.pl-connectors { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.pl-conn {
+  position: absolute;
+  height: 2px;
+  background-image: linear-gradient(90deg, hsl(var(--c) / 0.6) 0 8px, transparent 8px 16px);
+  background-size: 16px 2px;
+  opacity: 0.35;
+}
+.pl-conn.is-flowing { opacity: 0.9; animation: pl-march 0.8s linear infinite; }
+
+/* package-box flights overlay */
+.pl-flights { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.pl-pkg {
+  position: absolute;
+  margin-left: -11px;
+  margin-top: -11px;
+  color: hsl(var(--c));
+  filter: drop-shadow(0 0 10px hsl(var(--c) / 0.6));
+}
+
+/* a subtle per-card stage tick so cards read at a glance (functional + cool) */
+.pl-col-list .task-card-enhanced { position: relative; }
+
+/* per-card stage accent: a colored left edge + a small stage icon tick, so a
+   card reads as belonging to its ring at a glance (functional + cohesive). */
+.pl-card-wrap { position: relative; border-radius: 12px; }
+.pl-card-wrap::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 8px; bottom: 8px;
+  width: 3px;
+  border-radius: 3px;
+  background: hsl(var(--c) / 0.7);
+  box-shadow: 0 0 8px hsl(var(--c) / 0.4);
+  z-index: 2;
+  pointer-events: none;
+}
+.pl-card-tick {
+  position: absolute;
+  top: 9px; right: 9px;
+  z-index: 3;
+  color: hsl(var(--c) / 0.85);
+  opacity: 0.7;
+  pointer-events: none;
+}
+.pl-col.is-coding .pl-card-wrap::before { animation: pl-edge 2.2s ease-in-out infinite; }
+@keyframes pl-edge { 0%,100% { opacity: 0.6; } 50% { opacity: 1; } }
+
+/* completed task: a robot giving a thumbs-up (green), gently celebrating. */
+.pl-card-done {
+  position: absolute;
+  top: 7px; right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  color: hsl(150 50% 52%);
+  filter: drop-shadow(0 0 6px hsl(150 50% 52% / 0.5));
+  pointer-events: none;
+  transform-origin: bottom right;
+  animation: pl-cheer 3.2s ease-in-out infinite;
+}
+@keyframes pl-cheer {
+  0%, 88%, 100% { transform: rotate(0deg); }
+  92% { transform: rotate(-12deg); }
+  96% { transform: rotate(8deg); }
+}
+.pl-card-done .robot-eye { animation: pl-eye 3.2s ease-in-out infinite; }
+
+/* failed task: robot thumbs-down (red) + a big red cross stamp over the card */
+.pl-card-fail {
+  position: absolute;
+  top: 7px; right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  color: hsl(0 72% 58%);
+  filter: drop-shadow(0 0 6px hsl(0 72% 58% / 0.5));
+  pointer-events: none;
+  transform-origin: bottom right;
+  animation: pl-shake 3.4s ease-in-out infinite;
+}
+@keyframes pl-shake {
+  0%, 86%, 100% { transform: rotate(0deg); }
+  90% { transform: rotate(8deg); }
+  94% { transform: rotate(-8deg); }
+}
+.pl-card-cross {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: hsl(0 75% 55%);
+  opacity: 0.14;
+  z-index: 1;
+  pointer-events: none;
+  transform: rotate(-8deg);
+}
+.pl-card-wrap.is-failed::before { background: hsl(0 72% 56% / 0.8); box-shadow: 0 0 8px hsl(0 72% 56% / 0.5); }
+.pl-card-wrap.is-done::before { background: hsl(150 50% 52% / 0.8); box-shadow: 0 0 8px hsl(150 50% 52% / 0.5); }
+
+/* per-card phase strip: Plan · Code · Validate · Log (what's been done) */
+.pl-phase-strip {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px 2px;
+  margin-top: -2px;
+}
+.pl-chip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: hsl(0 0% 100% / 0.3);
+}
+.pl-chip-ico { position: relative; display: inline-flex; }
+.pl-chip-x {
+  position: absolute;
+  inset: -1px -1px auto auto;
+  color: hsl(0 75% 58%);
+}
+.pl-chip[data-state="done"]    { color: hsl(150 45% 55%); }
+.pl-chip[data-state="active"]  { color: hsl(42 75% 58%); animation: pl-edge 1.6s ease-in-out infinite; }
+.pl-chip[data-state="failed"]  { color: hsl(0 72% 60%); }
+.pl-chip[data-state="pending"] { color: hsl(0 0% 100% / 0.25); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v2 refinements: prominent rail panel + bigger rings + in-card live state
+   ═══════════════════════════════════════════════════════════════════════════ */
+.pl-railpanel {
+  position: relative;
+  margin: 14px 16px 10px;
+  padding: 14px 24px 18px;
+  border-radius: 18px;
+  border: 1px solid hsl(0 0% 100% / 0.07);
+  background:
+    radial-gradient(120% 120% at 50% -10%, hsl(240 6% 18% / 0.9), transparent 65%),
+    linear-gradient(180deg, hsl(var(--pl-panel) / 0.9), hsl(var(--pl-panel) / 0.55));
+  box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.04), 0 8px 30px hsl(0 0% 0% / 0.3);
+}
+.pl-rail { display: grid; grid-template-columns: repeat(4, 1fr); align-items: start; }
+.pl-rail-cell { display: flex; justify-content: center; }
+
+/* bigger, bolder rings */
+.pl-railpanel .pl-ring {
+  width: clamp(96px, 9vw, 132px);
+  height: clamp(96px, 9vw, 132px);
+  border-width: 3px;
+}
+.pl-railpanel .pl-stage.is-active .pl-ring {
+  box-shadow: 0 0 0 2px hsl(var(--c) / 0.3), 0 0 40px hsl(var(--c) / 0.4);
+}
+.pl-railpanel .pl-stage.is-active .pl-ring::before { inset: -10px; border-width: 3px; }
+.pl-badge { min-width: 36px; height: 36px; font-size: 15px; top: -8px; right: -8px; }
+.pl-label { font-size: clamp(15px, 1.5vw, 19px); font-weight: 700; margin-top: 2px; }
+.pl-sublabel {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  color: hsl(0 0% 100% / 0.32);
+  letter-spacing: 0.04em;
+}
+.pl-conn { height: 3px; }
+
+/* the task columns no longer carry the ring header */
+.pl-board-grid { padding-top: 2px; }
+
+/* current-stage animated badge inside the card (top-left) */
+.pl-card-now {
+  position: absolute;
+  top: 8px; left: 10px;
+  z-index: 4;
+  color: hsl(var(--c));
+  filter: drop-shadow(0 0 7px hsl(var(--c) / 0.55));
+  pointer-events: none;
+  animation: pl-now 1.8s ease-in-out infinite;
+}
+@keyframes pl-now {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.18); opacity: 1; }
+}
+.pl-card-wrap.is-live::before { animation: pl-edge 1.6s ease-in-out infinite; }
+
+/* agent terminals INSIDE the card (bigger + animated) */
+.pl-card-agents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 0 14px;
+  flex-wrap: wrap;
+}
+.pl-card-agents-lbl {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: hsl(var(--pl-code) / 0.7);
+  margin-right: 2px;
+}
+.pl-card-agents .pl-term {
+  color: hsl(var(--pl-code));
+  filter: drop-shadow(0 0 7px hsl(var(--pl-code) / 0.6));
+  animation: pl-now 2s ease-in-out infinite;
+}
+
+/* active phase chip: a glowing pulsing ring around the icon (current stage) */
+.pl-chip[data-state="active"] .pl-chip-ico::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 1.5px solid hsl(42 75% 58% / 0.7);
+  animation: pl-pulse-ring 1.4s ease-out infinite;
+}
+@keyframes pl-pulse-ring {
+  0% { transform: scale(0.7); opacity: 0.9; }
+  100% { transform: scale(1.3); opacity: 0; }
+}
+.pl-chip[data-state="active"] { font-weight: 700; }
+
+/* FORCE the ring rail horizontal (robust against narrow widths) */
+.pl-rail {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pl-rail-cell { flex: 1 1 0; min-width: 0; }
+.pl-railpanel .pl-ring {
+  width: clamp(60px, 7vw, 128px);
+  height: clamp(60px, 7vw, 128px);
+}
+
+/* FIX: TaskCard already has its own status-colored left border — our extra
+   accent bar collided with it. Drop the accent; the card border + phase strip
+   + corner badge already convey state. */
+.pl-card-wrap::before { display: none !important; }
+
+/* FIX: the top-left current-stage icon overlapped the card title. The phase
+   strip's pulsing active chip already animates the current stage, so drop the
+   redundant overlay. */
+.pl-card-now { display: none !important; }
+
+/* FIX: the done/fail robot badge overlapped TaskCard's own top-right status
+   dot. Lift it to a corner "sticker" just outside the card edge, with a backing
+   chip, so it clears the internal dot. */
+.pl-card-done, .pl-card-fail {
+  top: -11px;
+  right: -11px;
+  padding: 4px 5px;
+  border-radius: 999px;
+  background: hsl(240 6% 10% / 0.96);
+  box-shadow: 0 2px 10px hsl(0 0% 0% / 0.45);
+}
+.pl-card-done { border: 1px solid hsl(150 50% 52% / 0.5); }
+.pl-card-fail { border: 1px solid hsl(0 72% 58% / 0.5); }
+.pl-card-wrap { overflow: visible; }
+
+/* ── icons INSIDE the task box: wrapper is the single bordered card ───────────
+   TaskCard's own border/ring is flattened so the phase strip + agent terminals
+   sit inside one aligned box; status color + active pulse move to the wrapper. */
+.pl-card-wrap {
+  border: 1px solid hsl(0 0% 100% / 0.1);
+  border-radius: 14px;
+  background: hsl(240 6% 13% / 0.75);
+  overflow: visible;            /* keep corner stickers visible */
+}
+.pl-card-wrap .card-surface {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+}
+.pl-card-wrap.is-done { border-color: hsl(150 50% 52% / 0.55); }
+.pl-card-wrap.is-failed { border-color: hsl(0 72% 58% / 0.55); }
+.pl-card-wrap.is-live { border-color: hsl(42 70% 56% / 0.6); animation: pl-livebrd 2.2s ease-in-out infinite; }
+@keyframes pl-livebrd {
+  0%, 100% { box-shadow: 0 0 0 1px hsl(42 70% 56% / 0.15); }
+  50% { box-shadow: 0 0 14px hsl(42 70% 56% / 0.3); }
+}
+
+/* align the in-card rows to the card content padding (16px), tight to the card */
+.pl-card-agents {
+  padding: 2px 14px 0;
+  margin-top: -2px;
+  justify-content: flex-start;
+}
+.pl-phase-strip {
+  padding: 8px 14px 12px;
+  margin-top: 4px;
+  border-top: 1px solid hsl(0 0% 100% / 0.06);
+}
+
+/* flat rail panel: blend into background */
+.pl-railpanel{background:transparent;box-shadow:none;border-color:hsl(0 0% 100% / 0.04);}

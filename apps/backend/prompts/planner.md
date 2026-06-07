@@ -114,6 +114,22 @@ Find these critical sections:
 - **Files to Reference**: patterns to follow
 - **Success Criteria**: how to verify completion
 
+### 1.1b: Confirm the proposed skills (#394 — hybrid skill selection)
+
+If `task_metadata.json` has a `suggestedSkills` array, it holds skills the
+matcher auto-proposed from the task description. **Review them against the actual
+code you just investigated** and confirm the genuinely-relevant ones by writing a
+`selectedSkills` array to `task_metadata.json` (same `{id, name, category,
+source}` shape). Keep only what helps; drop off-target proposals; you may add a
+skill the matcher missed.
+
+```bash
+cat task_metadata.json   # inspect suggestedSkills (if present)
+```
+
+If you do not write `selectedSkills`, the build automatically falls back to
+`suggestedSkills` — so skills are always applied. Confirm to improve precision.
+
 ### 1.2: Read OR CREATE the Project Index
 
 ```bash
@@ -244,6 +260,14 @@ Do NOT just describe what the file should contain - you must actually call the W
 
 Based on the workflow type and services involved, create the implementation plan.
 
+**`required_commands` (important):** list the base names of every shell command
+the build will need to *verify* itself — test runners, linters, type checkers,
+and the package manager (e.g. `uv`, `pytest`, `ruff`, `mypy`, `npm`, `cargo`).
+These are granted into the security allowlist before the coder/QA agents run, so
+they are not blocked running their own verification. List command NAMES only
+(not full command lines), and only standard build/verify tooling — never shell
+builtins, `sudo`, or network/remote tools.
+
 ### Plan Structure
 
 ```json
@@ -251,6 +275,7 @@ Based on the workflow type and services involved, create the implementation plan
   "feature": "Short descriptive name for this task/feature",
   "workflow_type": "feature|refactor|investigation|migration|simple",
   "workflow_rationale": "Why this workflow type was chosen",
+  "required_commands": ["uv", "pytest", "ruff", "mypy"],
   "phases": [
     {
       "id": "phase-1-backend",
@@ -264,6 +289,7 @@ Based on the workflow type and services involved, create the implementation plan
           "id": "subtask-1-1",
           "description": "Create data models for [feature]",
           "service": "backend",
+          "depends_on": [],
           "files_to_modify": ["src/models/user.py"],
           "files_to_create": ["src/models/analytics.py"],
           "patterns_from": ["src/models/existing_model.py"],
@@ -278,6 +304,7 @@ Based on the workflow type and services involved, create the implementation plan
           "id": "subtask-1-2",
           "description": "Create API endpoints for [feature]",
           "service": "backend",
+          "depends_on": ["subtask-1-1"],
           "files_to_modify": ["src/routes/api.py"],
           "files_to_create": ["src/routes/analytics.py"],
           "patterns_from": ["src/routes/users.py"],
@@ -371,6 +398,41 @@ Based on the workflow type and services involved, create the implementation plan
   ]
 }
 ```
+
+### Parallel Execution (authoring for concurrent waves)
+
+The executor can run independent subtasks of a phase **concurrently** in
+dependency-graph waves (~2-3x faster on builds with many independent files).
+Your plan controls whether this is possible. Three fields drive it:
+
+1. **`parallel_safe`** (phase): set `true` when the phase's subtasks can be
+   worked on at the same time without stepping on each other. Set `false` when
+   subtasks must be strictly ordered or share files heavily (the phase then runs
+   serially). Scaffolding/setup phases (config, models, independent tests, CI
+   files) are usually `parallel_safe: true`.
+
+2. **`files_to_create` / `files_to_modify`** (subtask): **must be accurate.**
+   The scheduler runs two subtasks together only when their file sets are
+   **disjoint**. A subtask that leaves these empty is treated as touching
+   unknown files and is forced to run **alone** — so omitting files silently
+   disables parallelism. List every file each subtask will write.
+
+3. **`depends_on`** (subtask): list the **subtask ids** that must finish before
+   this one starts (e.g. an endpoint subtask `depends_on` its model subtask).
+   Use this for ordering *within* a phase; use the phase-level `depends_on`
+   (phase ids) for ordering *between* phases. Keep it minimal — every
+   unnecessary dependency removes a chance to parallelize. Never create cycles.
+
+Guidance: prefer grouping genuinely independent work (separate files, no shared
+state) into one `parallel_safe` phase with accurate file lists and minimal
+`depends_on`. Keep tightly-coupled or file-sharing work either in a
+`parallel_safe: false` phase or chained via `depends_on`.
+
+**Optional `model` (subtask, right-sizing):** a subtask may set `"model"` to a
+shorthand (e.g. `"haiku"`, `"sonnet"`, `"opus"`) to run on a cheaper/faster
+model when the work is mechanical (scaffolding, config, CI files). Omit it to
+use the phase default. Reserve the strongest model for genuinely complex
+subtasks; this trims cost without hurting quality where quality isn't at stake.
 
 ### Valid Phase Types
 

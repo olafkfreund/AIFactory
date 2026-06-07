@@ -7,9 +7,12 @@ all with an injected poster so no network is touched.
 
 from __future__ import annotations
 
+import json
+
 from pfactory.taxonomy import classify_labels
 from pfactory.tfactory_client import (
     build_handoff_payload,
+    load_tfactory_block,
     send_handoff,
     tfactory_config,
 )
@@ -46,6 +49,33 @@ def test_build_payload_carries_taxonomy_and_meta():
     assert payload["handoff"] == "tfactory"
     assert "testing" in payload["types"]
     assert payload["pfactory_meta"]["plan_id"] == "p1"
+    assert payload["tfactory"] == {}  # absent => empty, TFactory infers
+
+
+# ── tfactory block (RFC-0002, #428) ─────────────────────────────────────────
+
+
+def test_payload_carries_tfactory_block_when_provided():
+    c = classify_labels(["pfactory", "handoff:tfactory"])
+    tf = {"lanes": ["unit", "api"], "frameworks": {"unit": "pytest"},
+          "coverage_target": 0.85}
+    payload = build_handoff_payload("001-x", {"title": "t"}, c, {}, tfactory=tf)
+    assert payload["tfactory"] == tf
+
+
+def test_load_tfactory_block_reads_plan(tmp_path):
+    plan = {"feature": "x", "tfactory": {"lanes": ["unit"], "frameworks": {"unit": "pytest"}}}
+    (tmp_path / "implementation_plan.json").write_text(json.dumps(plan))
+    assert load_tfactory_block(tmp_path) == {"lanes": ["unit"], "frameworks": {"unit": "pytest"}}
+
+
+def test_load_tfactory_block_absent_returns_empty(tmp_path):
+    (tmp_path / "implementation_plan.json").write_text(json.dumps({"feature": "x"}))
+    assert load_tfactory_block(tmp_path) == {}
+
+
+def test_load_tfactory_block_no_plan_returns_empty(tmp_path):
+    assert load_tfactory_block(tmp_path) == {}
 
 
 # ── send_handoff ────────────────────────────────────────────────────────────

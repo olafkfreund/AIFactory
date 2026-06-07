@@ -5,7 +5,14 @@
 import type { ThinkingLevel, PhaseModelConfig, PhaseThinkingConfig } from './settings';
 import type { ExecutionPhase as ExecutionPhaseType } from '../constants/phase-protocol';
 
-export type TaskStatus = 'backlog' | 'in_progress' | 'ai_review' | 'human_review' | 'done';
+export type TaskStatus =
+  | 'backlog'
+  | 'in_progress'
+  | 'ai_review'
+  | 'human_review'
+  | 'done'
+  | 'copilot_running'
+  | 'copilot_pr_opened';
 
 // Reason why a task is in human_review status
 // - 'completed': All subtasks done and QA passed, ready for final approval/merge
@@ -244,6 +251,15 @@ export interface TaskMetadata {
   // Delegation — hand the coding phase off to GitHub Copilot Coding
   // Agent (planner still runs locally). Only honoured on GitHub.
   enableDelegation?: boolean;
+
+  // Copilot dispatch tracking — populated by the backend as the dispatch
+  // progresses.  Used by the UI to link to the GitHub issue / PR.
+  copilotDispatch?: {
+    issue_number?: number;
+    issue_url?: string;
+    pr_number?: number;
+    pr_url?: string;
+  };
 
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Model to use (e.g. 'opus', 'ollama:llama3', 'openai_compat:mistral-7b') - used when not auto profile

@@ -5,13 +5,17 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -22,6 +26,7 @@ MemoryBackendType = Literal["graphiti", "file"]
 
 from ..config import get_settings
 from . import changelog, context, files, git, github
+from .project_authz import require_project_access
 
 router = APIRouter()
 
@@ -93,7 +98,36 @@ class ProjectCreate(BaseModel):
     @field_validator("gitUrl", mode="after")
     @classmethod
     def _normalize_git_url(cls, v: str | None) -> str | None:
-        return v.strip() if isinstance(v, str) and v.strip() else None
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v = v.strip()
+        # Security (#323 C5): reject git transport / argument injection. Only
+        # https / ssh / scp-like (git@host:path) are allowed; no `ext::`/`fd::`
+        # transport helpers, no `::`, no leading '-' (arg injection on clone).
+        lowered = v.lower()
+        if (
+            v.startswith("-")
+            or "::" in v
+            or lowered.startswith(("ext::", "fd::", "file://"))
+        ):
+            raise ValueError("Unsupported or unsafe git URL")
+        is_https = lowered.startswith(("https://", "ssh://"))
+        is_scp = bool(re.match(r"^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+:", v))
+        if not (is_https or is_scp):
+            raise ValueError("git URL must be https://, ssh://, or git@host:path")
+        return v
+
+    @field_validator("branch", mode="after")
+    @classmethod
+    def _validate_branch(cls, v: str | None) -> str | None:
+        if not isinstance(v, str) or not v.strip():
+            return None
+        v = v.strip()
+        # Security (#323 C5): branch flows into `git clone --branch <v>`; reject
+        # a leading '-' (arg injection) and anything outside git's ref charset.
+        if v.startswith("-") or not re.match(r"^[A-Za-z0-9._/-]+$", v):
+            raise ValueError("Invalid branch name")
+        return v
 
     @model_validator(mode="after")
     def _require_exactly_one_source(self):
@@ -297,17 +331,24 @@ async def _resolve_git_credential(cred_id: str) -> tuple[str, str] | None:
 
 
 @router.get("")
-async def list_projects():
-    """List all registered projects.
+async def list_projects(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """List registered projects visible to the caller (#319).
 
-    Returns projects array directly (not wrapped) because
-    the frontend api-client.ts adds the {success, data} wrapper automatically.
+    Service principal (local UI / M2M) sees all; a human user sees only
+    projects owned by an org they belong to. Returns the array directly
+    (the frontend api-client.ts adds the {success, data} wrapper).
     """
+    from .project_authz import accessible_org_ids
+
     projects = load_projects()
-    project_list = [
-        project_to_response(pid, pdata) for pid, pdata in projects.items()
-    ]
-    return project_list
+    allowed = await accessible_org_ids(request, db)
+    items = projects.items()
+    if allowed is not None:
+        items = [(pid, p) for pid, p in items if p.get("org_id") in allowed]
+    return [project_to_response(pid, pdata) for pid, pdata in items]
 
 
 class DiscoveredProject(BaseModel):
@@ -436,7 +477,11 @@ async def scan_for_projects(request: ScanProjectsRequest):
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def add_project(project: ProjectCreate):
+async def add_project(
+    project: ProjectCreate,
+    request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+    db: AsyncSession = Depends(get_db),
+):
     """Add a new project. Two paths (#82 PR-A):
 
     1. **Local path** (``path`` set) — register an existing directory
@@ -509,9 +554,19 @@ async def add_project(project: ProjectCreate):
     # Create project entry
     project_id = str(uuid4())
     now = datetime.now().isoformat()
+    # Stamp the owning org (#319). Service/M2M creators → default org; human
+    # creators → their own org. Defensive: direct callers (MCP stdio proxy,
+    # tests) pass no Request / real session → fall back to the default org
+    # rather than break. Lazy import avoids a project_authz↔projects cycle.
+    org_id = DEFAULT_ORG_ID
+    if request is not None and isinstance(db, AsyncSession):
+        from .project_authz import resolve_owner_org_id
+
+        org_id = await resolve_owner_org_id(request, db)
     project_data = {
         "path": str(project_path.resolve()),
         "name": project.name or project_path.name,
+        "org_id": org_id,
         "created_at": now,
         "updated_at": now,
     }
@@ -533,7 +588,10 @@ async def add_project(project: ProjectCreate):
 
 
 @router.get("/{project_id}")
-async def get_project(project_id: str):
+async def get_project(
+    project_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """Get a specific project by ID."""
     projects = load_projects()
     if project_id not in projects:
@@ -546,7 +604,11 @@ async def get_project(project_id: str):
 
 
 @router.put("/{project_id}")
-async def update_project(project_id: str, project: ProjectCreate):
+async def update_project(
+    project_id: str,
+    project: ProjectCreate,
+    _access: dict = Depends(require_project_access("member")),
+):
     """Update a project's metadata."""
     projects = load_projects()
     if project_id not in projects:
@@ -578,7 +640,10 @@ async def update_project(project_id: str, project: ProjectCreate):
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_project(project_id: str):
+async def remove_project(
+    project_id: str,
+    _access: dict = Depends(require_project_access("admin")),
+):
     """Remove a project (unregister, does not delete files)."""
     projects = load_projects()
     if project_id not in projects:
@@ -592,7 +657,10 @@ async def remove_project(project_id: str):
 
 
 @router.post("/{project_id}/initialize")
-async def initialize_project(project_id: str):
+async def initialize_project(
+    project_id: str,
+    _access: dict = Depends(require_project_access("member")),
+):
     """Initialize Magestic AI in a project (create .aifactory directory).
 
     Returns InitializationResult format expected by frontend.
@@ -625,7 +693,10 @@ async def initialize_project(project_id: str):
 
 
 @router.get("/{project_id}/version")
-async def check_project_version(project_id: str):
+async def check_project_version(
+    project_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """Check Magestic AI version info for a project."""
     projects = load_projects()
     if project_id not in projects:
@@ -702,7 +773,11 @@ class ProjectSettingsUpdate(BaseModel):
 
 
 @router.patch("/{project_id}/settings")
-async def update_project_settings(project_id: str, settings: ProjectSettingsUpdate):
+async def update_project_settings(
+    project_id: str,
+    settings: ProjectSettingsUpdate,
+    _access: dict = Depends(require_project_access("admin")),
+):
     """Update project settings."""
     projects = load_projects()
     if project_id not in projects:
@@ -815,7 +890,10 @@ async def update_project_settings(project_id: str, settings: ProjectSettingsUpda
 
 
 @router.get("/{project_id}/worktrees")
-async def list_project_worktrees(project_id: str):
+async def list_project_worktrees(
+    project_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """List worktrees for a project with detailed stats."""
     import re
     import subprocess
@@ -953,7 +1031,10 @@ async def list_project_worktrees(project_id: str):
 
 
 @router.get("/{project_id}/tasks")
-async def list_project_tasks(project_id: str):
+async def list_project_tasks(
+    project_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """List all tasks for a specific project.
 
     Returns tasks array directly (not wrapped) because
@@ -991,7 +1072,11 @@ class TaskCreateRequest(BaseModel):
 
 
 @router.post("/{project_id}/tasks")
-async def create_project_task(project_id: str, task_data: TaskCreateRequest):
+async def create_project_task(
+    project_id: str,
+    task_data: TaskCreateRequest,
+    _access: dict = Depends(require_project_access("member")),
+):
     """Create a new task in a project.
 
     This endpoint delegates to the tasks module for actual creation.
@@ -1096,7 +1181,11 @@ Created via Magestic AI Web UI
 
 
 @router.post("/{project_id}/tasks/{spec_id}/logs/watch")
-async def watch_project_task_logs(project_id: str, spec_id: str):
+async def watch_project_task_logs(
+    project_id: str,
+    spec_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """
     Start watching task logs (stub endpoint for frontend compatibility).
 
@@ -1107,7 +1196,11 @@ async def watch_project_task_logs(project_id: str, spec_id: str):
 
 
 @router.post("/{project_id}/tasks/{spec_id}/logs/unwatch")
-async def unwatch_project_task_logs(project_id: str, spec_id: str):
+async def unwatch_project_task_logs(
+    project_id: str,
+    spec_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """
     Stop watching task logs (stub endpoint for frontend compatibility).
 
@@ -1118,7 +1211,11 @@ async def unwatch_project_task_logs(project_id: str, spec_id: str):
 
 
 @router.get("/{project_id}/tasks/{spec_id}/logs")
-async def get_project_task_logs(project_id: str, spec_id: str):
+async def get_project_task_logs(
+    project_id: str,
+    spec_id: str,
+    _access: dict = Depends(require_project_access("viewer")),
+):
     """Get logs for a task (delegates to tasks router)."""
     from . import tasks as tasks_module
 
@@ -1143,7 +1240,11 @@ class UnarchiveTasksRequest(BaseModel):
 
 
 @router.post("/{project_id}/tasks/archive")
-async def archive_tasks(project_id: str, request: ArchiveTasksRequest):
+async def archive_tasks(
+    project_id: str,
+    request: ArchiveTasksRequest,
+    _access: dict = Depends(require_project_access("member")),
+):
     """Archive completed tasks.
 
     Adds archivedAt timestamp and optional version to task metadata.
@@ -1207,7 +1308,11 @@ async def archive_tasks(project_id: str, request: ArchiveTasksRequest):
 
 
 @router.post("/{project_id}/tasks/unarchive")
-async def unarchive_tasks(project_id: str, request: UnarchiveTasksRequest):
+async def unarchive_tasks(
+    project_id: str,
+    request: UnarchiveTasksRequest,
+    _access: dict = Depends(require_project_access("member")),
+):
     """Unarchive tasks.
 
     Removes archivedAt and archivedInVersion from task metadata,

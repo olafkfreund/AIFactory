@@ -154,6 +154,28 @@ Environment Variables:
         help="Discard an existing build (requires confirmation)",
     )
 
+    # Parallel execution options (#376): run independent subtasks concurrently
+    # in dependency-graph waves instead of strictly one-at-a-time.
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help=(
+            "Run independent subtasks concurrently in dependency-graph waves "
+            "(requires a parallel_safe phase in the plan; falls back to serial "
+            "for unsafe phases). See --workers."
+        ),
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Max subtasks to run concurrently when --parallel is set "
+            "(default: 3). Ignored without --parallel."
+        ),
+    )
+
     # Merge options
     parser.add_argument(
         "--no-commit",
@@ -449,6 +471,8 @@ def main() -> None:
         base_branch=args.base_branch,
         stop_after_planning=args.stop_after_planning,
         remote_control_session=args.remote_control,
+        parallel=args.parallel,
+        workers=args.workers,
     )
 
 

@@ -61,6 +61,7 @@ async def create_if_enabled(
     spec_id: str,
     project_path: Path | str,
     agent_cmd: str | list[str],
+    project_id: str | None = None,
 ) -> Path | None:
     """Spin up the rmux session for a task — no-op when feature flag off.
 
@@ -80,7 +81,7 @@ async def create_if_enabled(
     del agent_cmd
     try:
         registry = get_registry()
-        return await registry.create_passive_for_task(spec_id)
+        return await registry.create_passive_for_task(spec_id, project_id=project_id)
     except Exception:
         logger.warning(
             "rmux create_passive_for_task failed (Live Console disabled for "

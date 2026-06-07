@@ -1,0 +1,150 @@
+asyncapi: 3.0.0
+
+# RFC-0001 completion-event AIFactory emits when a task reaches a terminal
+# state, so the cockpit (CFactory) can thread one unit of work end to end:
+#   pfactory.session_id -> issue# -> aifactory.task_id
+#
+# Source of truth: apps/web-server/server/services/completion.py
+# (build_completion_event / emit_terminal_completion). Keep this spec in sync
+# with that emitter. Conforms to olafkfreund/Factory#4 (RFC-0001).
+
+info:
+  title: AIFactory completion-event
+  version: '1.0'
+  description: >-
+    Normalized completion event the AIFactory web-server emits when a task
+    reaches a terminal status. The shared `correlation_key` is the source
+    GitHub issue number as a string, with a synthetic `af-<spec_id>` fallback
+    so it is never null. `service` is always `aifactory`. Emission is
+    best-effort and never blocks the pipeline.
+  contact:
+    name: factory-maintainers
+    url: https://factory.freundcloud.com/
+  license:
+    name: MIT OR GPL-3.0
+
+defaultContentType: application/json
+
+servers:
+  webhook:
+    host: 'configured at runtime'
+    protocol: http
+    description: >-
+      Opt-in webhook target set via `AIFACTORY_COMPLETION_WEBHOOK`. The event is
+      POSTed as a JSON body (`Content-Type: application/json`); timeout is
+      `AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT` seconds (default 5).
+  sentinel:
+    host: 'same host (filesystem)'
+    protocol: file
+    description: >-
+      Opt-in convenience transport enabled by `AIFACTORY_COMPLETION_SENTINEL`.
+      The same event JSON is written to `<spec_dir>/COMPLETED.json`.
+
+channels:
+  completion:
+    address: completion
+    description: >-
+      Terminal completion notifications. One event is emitted per terminal
+      transition: `completed` and `failed` from the build phase, and `done`
+      from the human-approval transition. CFactory dedups by
+      `(service, correlation_key, status)`, so these are distinct,
+      complementary events for the same unit of work.
+    messages:
+      completionEvent:
+        $ref: '#/components/messages/completionEvent'
+
+operations:
+  emitCompletion:
+    action: send
+    channel:
+      $ref: '#/channels/completion'
+    summary: AIFactory emits a completion event on a terminal task transition.
+    messages:
+      - $ref: '#/channels/completion/messages/completionEvent'
+
+components:
+  messages:
+    completionEvent:
+      name: completionEvent
+      title: Completion event
+      contentType: application/json
+      summary: Emitted when an AIFactory task reaches a terminal status.
+      payload:
+        $ref: '#/components/schemas/CompletionEvent'
+
+  schemas:
+    CompletionEvent:
+      type: object
+      required:
+        - correlation_key
+        - service
+        - task_id
+        - status
+        - phase
+        - updated_at
+      properties:
+        correlation_key:
+          type: string
+          description: >-
+            RFC-0001 §2 shared key — the source GitHub issue number as a string,
+            or the synthetic `af-<spec_id>` fallback when no issue is linked.
+          examples:
+            - '317'
+            - af-042-correction-receiver
+        service:
+          type: string
+          const: aifactory
+          description: Emitting Factory sibling. Always `aifactory`.
+        task_id:
+          type: string
+          description: AIFactory task identifier (often `<project_id>:<spec_id>`).
+          examples:
+            - 'my-project:042-correction-receiver'
+        status:
+          type: string
+          enum: [completed, failed, done]
+          description: >-
+            Terminal status. `completed`/`failed` fire from the build phase;
+            `done` fires on the later human-approval transition.
+        phase:
+          type: string
+          const: act
+          description: PARR pipeline stage. AIFactory is the "Act" stage.
+        updated_at:
+          type: string
+          format: date-time
+          description: ISO-8601 UTC timestamp the event was built.
+        correlation:
+          type: object
+          description: Optional chain block linking the event back to its origins.
+          properties:
+            issue_number:
+              type: [integer, 'null']
+              description: Source GitHub issue number (null when none is linked).
+            spec_id:
+              type: string
+              description: AIFactory spec identifier.
+            project_id:
+              type: [string, 'null']
+              description: AIFactory project identifier.
+        schema_version:
+          type: string
+          const: '1.0'
+          description: Additive (RFC §7) — envelope schema version.
+        event:
+          type: string
+          const: completion
+          description: Additive (RFC §7) — event discriminator.
+      examples:
+        - correlation_key: '317'
+          service: aifactory
+          task_id: 'my-project:042-correction-receiver'
+          status: completed
+          phase: act
+          updated_at: '2026-06-05T12:00:00+00:00'
+          correlation:
+            issue_number: 317
+            spec_id: 042-correction-receiver
+            project_id: my-project
+          schema_version: '1.0'
+          event: completion

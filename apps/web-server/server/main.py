@@ -16,8 +16,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
+from . import env_bootstrap  # noqa: F401  — loads .env into os.environ first
 from .auth import TokenAuthMiddleware
-from .config import get_settings
+from .config import (
+    enforce_disable_auth_safety,
+    get_settings,
+    warn_if_auth_disabled,
+)
 from .database.engine import init_db
 from .logging_config import setup_logging
 from .routes import (
@@ -30,6 +35,7 @@ from .routes import (
     email,
     execution,
     files,
+    copilot_mcp,
     git,
     git_credentials,
     github,
@@ -70,6 +76,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting AIFactory Web Server...")
     logger.info(f"Backend path: {settings.BACKEND_PATH}")
     logger.info(f"Projects data dir: {settings.PROJECTS_DATA_DIR}")
+    warn_if_auth_disabled(settings)
 
     # Ensure data directory exists
     Path(settings.PROJECTS_DATA_DIR).mkdir(parents=True, exist_ok=True)
@@ -301,6 +308,9 @@ def create_app() -> FastAPI:
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
     app.include_router(mcp.router)
+    # Copilot-facing MCP server at /mcp (JSON-RPC 2.0, POST-only).
+    # Requires AIFACTORY_MCP_SECRET in env; accepts all requests in dev mode.
+    app.include_router(copilot_mcp.router)
 
     # Remote HTTP+SSE MCP server (Epic #50 / Issue #83) — opt-in via
     # AIFACTORY_MCP_REMOTE_ENABLED=true.  Exposes the AIFactory task
@@ -376,10 +386,30 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "healthy", "version": app.version}
 
-    # Mount static files for SPA (if build directory exists)
+    # Mount static files for SPA (if build directory exists).
+    #
+    # Cache policy (SSO fix) — the SPA shell (index.html) MUST NOT be
+    # heuristically cached by the browser, or users keep running the previous
+    # build's JS after an upgrade (which is exactly how a fixed auth bug can
+    # look unfixed). Starlette's StaticFiles sends ETag/Last-Modified but no
+    # Cache-Control, which triggers browser heuristic caching of the shell.
+    # So: HTML responses → `no-cache` (store but always revalidate; cheap 304s);
+    # content-hashed assets under /assets/ → long-lived immutable cache.
+    class SPAStaticFiles(StaticFiles):
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            content_type = response.headers.get("content-type", "")
+            if content_type.startswith("text/html"):
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            elif "/assets/" in (scope.get("path") or ""):
+                response.headers["Cache-Control"] = (
+                    "public, max-age=31536000, immutable"
+                )
+            return response
+
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        app.mount("/", SPAStaticFiles(directory=str(static_dir), html=True), name="static")
     else:
         # Placeholder for development
         @app.get("/")
@@ -427,6 +457,9 @@ if __name__ == "__main__":
     import uvicorn
 
     settings = get_settings()
+
+    # #324 (H7): never bind an unauthenticated admin API to the network.
+    enforce_disable_auth_safety(settings)
 
     # Build uvicorn config
     uvicorn_config = {

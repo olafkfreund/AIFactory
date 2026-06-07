@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import AgentDefinition
+from security import wrap_untrusted
 
 try:
     from ...core.client import create_client
@@ -439,20 +440,30 @@ Found {len(context.ai_bot_comments)} comments from AI tools:
 {chr(10).join(ai_comments_list)}
 """
 
+        # #369: title/author/branch/description are attacker-controlled — wrap
+        # as untrusted DATA so an embedded instruction can't steer the
+        # orchestrator's agent-delegation decisions. The diff stays fenced (it
+        # is the review subject).
+        pr_meta = "\n".join(
+            [
+                f"Title: {context.title}",
+                f"Author: {context.author}",
+                f"Base: {context.base_branch}  Head: {context.head_branch}",
+                "",
+                "Description:",
+                context.description or "",
+            ]
+        )
         pr_context = f"""
 ---
 
 ## PR Context for Review
 
 **PR Number:** {context.pr_number}
-**Title:** {context.title}
-**Author:** {context.author}
-**Base:** {context.base_branch} ← **Head:** {context.head_branch}
 **Files Changed:** {len(context.changed_files)} files
 **Total Changes:** +{context.total_additions}/-{context.total_deletions} lines
 
-### Description
-{context.description}
+{wrap_untrusted(pr_meta, source=f"GitHub PR #{context.pr_number} metadata")}
 
 ### All Changed Files
 {chr(10).join(files_list)}
