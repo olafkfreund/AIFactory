@@ -9,18 +9,13 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Build the React frontend
 # ---------------------------------------------------------------------------
-# Digest is the OCI image-index (manifest-list) sha256 so multi-arch buildx
-# (P0.6) can still resolve the right platform manifest. The `:latest-dev`
-# tag is kept alongside the digest as a human hint and is ignored by docker
-# when a digest is present. Updates land via Renovate PRs (renovate.json).
-# --platform=$BUILDPLATFORM pins this stage to the *builder's* native arch
-# (always linux/amd64 on GitHub Actions runners) regardless of the image's
-# --platform target. The frontend bundle is pure JS/CSS — arch-independent —
-# so it is safe to build on amd64 and copy into an arm64 runtime. This
-# eliminates the QEMU-emulated vite/lightningcss crash that broke arm64
-# releases (issue #307). The Rollup optional-dep workaround below is kept
-# for local cross-builds where the builder may be arm64.
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
+# Digest is the OCI image-index (manifest-list) sha256 so buildx can resolve
+# the right platform manifest. The `:latest-dev` tag is kept alongside the
+# digest as a human hint and is ignored by docker when a digest is present.
+# Updates land via Renovate PRs (renovate.json).
+# Builds are amd64-only; arm64 support removed (not needed).
+# The Rollup optional-dep workaround below is kept for safety.
+FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
 WORKDIR /build
