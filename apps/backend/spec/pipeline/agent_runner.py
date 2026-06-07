@@ -5,6 +5,7 @@ Agent Runner
 Handles the execution of AI agents for the spec creation pipeline.
 """
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -176,7 +177,29 @@ class AgentRunner:
 
                 response_text = ""
                 debug("agent_runner", "Starting to receive response stream...")
-                async for msg in client.receive_response():
+                # Inactivity watchdog: if the SDK stream goes silent for too
+                # long (a stalled/hung model call), abort instead of blocking
+                # forever. The raise is caught below -> (False, err) -> the
+                # phase retries, then fails cleanly with a clear message rather
+                # than hanging the whole build. Tune via
+                # AIFACTORY_AGENT_STALL_TIMEOUT (seconds; 0 disables; default 600).
+                _stall_s = float(os.environ.get("AIFACTORY_AGENT_STALL_TIMEOUT", "600"))
+                _resp_iter = client.receive_response().__aiter__()
+                while True:
+                    try:
+                        if _stall_s > 0:
+                            msg = await asyncio.wait_for(
+                                _resp_iter.__anext__(), timeout=_stall_s
+                            )
+                        else:
+                            msg = await _resp_iter.__anext__()
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError as _te:
+                        raise RuntimeError(
+                            f"Agent SDK stream stalled: no message for "
+                            f"{_stall_s:.0f}s (AIFACTORY_AGENT_STALL_TIMEOUT)"
+                        ) from _te
                     msg_type = type(msg).__name__
                     message_count += 1
                     debug_detailed(
