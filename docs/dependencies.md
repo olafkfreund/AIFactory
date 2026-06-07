@@ -2,7 +2,7 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory pins **17** backend, **37** web-server, and **49** frontend runtime dependencies.
+AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime dependencies.
 
 ## Backend (Python) — `apps/backend/requirements.txt`
 
@@ -38,6 +38,7 @@ AIFactory pins **17** backend, **37** web-server, and **49** frontend runtime de
 | `azure-identity` | `>=1.20.0` |
 | `azure-keyvault-keys` | `>=4.10.0` |
 | `bashlex` | `>=0.18` |
+| `bcrypt` | `>=4.0.0` |
 | `boto3` | `>=1.35.0` |
 | `email-validator` | `>=2.0.0` |
 | `fastapi` | `>=0.109.0` |
