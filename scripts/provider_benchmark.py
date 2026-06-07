@@ -154,8 +154,21 @@ def _latest_spec_dir(project: Path) -> Path | None:
     specs = project / ".aifactory" / "specs"
     if not specs.exists():
         return None
-    dirs = sorted([d for d in specs.iterdir() if d.is_dir()])
-    return dirs[-1] if dirs else None
+    # Pick the real spec dir: it must carry requirements.json, and skip any
+    # orphan "*-pending" stub. Choose the most recently modified match.
+    cands = [
+        d for d in specs.iterdir()
+        if d.is_dir() and not d.name.endswith("-pending")
+        and (d / "requirements.json").exists()
+    ]
+    if not cands:  # fall back to anything with requirements.json
+        cands = [d for d in specs.iterdir()
+                 if d.is_dir() and (d / "requirements.json").exists()]
+    if not cands:  # last resort: any dir
+        cands = [d for d in specs.iterdir() if d.is_dir()]
+    if not cands:
+        return None
+    return max(cands, key=lambda d: d.stat().st_mtime)
 
 
 def _seed_phase_models(spec_dir: Path, phase_models: dict) -> None:
@@ -185,11 +198,15 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
         "started_at": datetime.now().isoformat(),
     }
 
-    # 1) spec + plan (Claude baseline)
+    # 1) spec ONLY (Claude baseline). --no-build is critical: without it
+    # spec_runner os.execv's straight into run.py and builds inline with default
+    # models — before we can seed phaseModels below. --auto-approve skips the
+    # interactive review gate.
     spec = subprocess.run(
         [PY, str(BACKEND / "runners" / "spec_runner.py"),
          "--task", TASK, "--project-dir", str(project),
-         "--complexity", "standard", "--no-ai-assessment"],
+         "--complexity", "standard", "--no-ai-assessment",
+         "--no-build", "--auto-approve"],
         cwd=BACKEND, env=env, capture_output=True, text=True, timeout=BUILD_TIMEOUT_S,
     )
     spec_dir = _latest_spec_dir(project)

@@ -1608,12 +1608,14 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
 
         (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
-        spec_md = f"# {issue_data.get('title', f'Issue #{issue_number}')}\n\n"
-        spec_md += f"**Source:** GitHub Issue [#{issue_number}]({issue_data.get('url', '')})\n"
-        if label_names:
-            spec_md += f"**Labels:** {', '.join(label_names)}\n"
-        spec_md += f"\n## Description\n\n{body}\n"
-        (spec_dir / "spec.md").write_text(spec_md)
+        # Deliberately do NOT write a stub spec.md. The issue body is preserved
+        # in requirements.json (description), and the spec pipeline regenerates a
+        # complete, *validated* spec.md on launch. A stub here is invalid
+        # (missing required sections) so phase_spec_writing took the
+        # "regenerating" path, where the spec_writer agent's Write on the
+        # pre-existing file tripped the SDK Write-needs-prior-Read guard — at
+        # best ~40s recovery per task, at worst a stalled regeneration. An absent
+        # spec.md lets the agent write fresh on the fast path with no trip.
 
         return (
             {"number": issue_number, "title": issue_data.get("title", ""), "specId": spec_name},
