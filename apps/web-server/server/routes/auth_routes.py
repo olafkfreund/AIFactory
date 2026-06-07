@@ -13,9 +13,9 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +33,11 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 # Password hashing
 # ---------------------------------------------------------------------------
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def _hash_password(secret: str) -> str:
+    return _bcrypt.hashpw(secret.encode(), _bcrypt.gensalt()).decode()
+
+def _verify_password(secret: str, hashed: str) -> bool:
+    return _bcrypt.checkpw(secret.encode(), hashed.encode())
 
 # ---------------------------------------------------------------------------
 # Request / Response schemas
@@ -221,7 +225,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     user = User(
         email=body.email,
         name=body.name,
-        password_hash=pwd_context.hash(body.password),
+        password_hash=_hash_password(body.password),
         role="user",
     )
     db.add(user)
@@ -279,7 +283,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
-    if user is None or not pwd_context.verify(body.password, user.password_hash):
+    if user is None or not _verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",

@@ -72,7 +72,7 @@ alembic>=1.13.0
 
 # Authentication (JWT + password hashing)
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 email-validator>=2.0.0
 
 # Epic #26 P2.4 — AWS KMS backend for envelope-encrypted secrets at rest.
