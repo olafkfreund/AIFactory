@@ -252,8 +252,8 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
 # ── cli ────────────────────────────────────────────────────────────────────
 
 def _print_table(rows: list[dict]) -> None:
-    cols = ["config", "ok", "wall_s", "subtasks_done", "subtasks_total",
-            "cost_usd", "qa_rounds", "speedup_vs_serial", "status"]
+    cols = ["config", "ok", "wall_s", "parallel_wall_s", "observed_max_concurrency",
+            "subtasks_done", "subtasks_total", "cost_usd", "qa_rounds", "status"]
     print("\n" + " | ".join(c.ljust(12) for c in cols))
     print("-" * (15 * len(cols)))
     for r in rows:
@@ -300,8 +300,9 @@ def main() -> int:
                 f.write(json.dumps(res) + "\n")
             rows.append(res)
             print(json.dumps({k: res.get(k) for k in
-                  ("ok", "wall_s", "subtasks_done", "subtasks_total", "cost_usd",
-                   "qa_rounds", "speedup_vs_serial", "status")}, indent=2))
+                  ("ok", "wall_s", "parallel_wall_s", "observed_max_concurrency",
+                   "subtasks_done", "subtasks_total", "cost_usd",
+                   "qa_rounds", "status")}, indent=2))
 
     _print_table(rows)
     return 0
