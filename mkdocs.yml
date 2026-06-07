@@ -16,6 +16,7 @@ plugins:
 # concepts/pipeline-flow.md). techdocs-core bundles pymdownx; the Backstage
 # mermaid addon turns the preserved fence into a rendered diagram.
 markdown_extensions:
+  - md_in_html
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

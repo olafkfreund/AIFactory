@@ -93,7 +93,7 @@ Full installation guide: **[Getting Started →](https://aifactory.freundcloud.c
 ## See it work
 
 <p align="center">
-  <img src="static/img/handover-workflow.gif" alt="Terminal walkthrough — clone the demo repo, file a GitHub issue, type /handover in Claude Code, watch AIFactory's planner / coder / QA pipeline produce a merge-ready branch" width="720" />
+  ![Terminal walkthrough — clone the demo repo, file a GitHub issue, type /handover in Claude Code, watch AIFactory's planner / coder / QA pipeline produce a merge-ready branch](static/img/handover-workflow.gif)
 </p>
 
 A 45-second terminal walkthrough of the `/handover` workflow: clone the demo repo, file a GitHub issue, type `/handover` in Claude Code, AIFactory's planner → coder → QA pipeline lands at a merge-ready branch. Every artifact shown was produced by a real agent run — the recording compresses the timeline.
@@ -110,19 +110,12 @@ Walkthrough with screenshots + browser-side video: **[Demo →](https://aifactor
 
 ## Screenshots
 
-<table>
-  <tr>
-    <td><img src="static/img/screenshots/03-kanban.png" alt="Kanban board" /></td>
-    <td><img src="static/img/screenshots/09-live-agent-console.png" alt="Live Agent Console" /></td>
-  </tr>
-  <tr>
-    <td><img src="static/img/screenshots/06-task-detail-plan.png" alt="Plan review" /></td>
-    <td><img src="static/img/screenshots/12-settings-llm-providers.png" alt="LLM provider settings" /></td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="static/img/screenshots/13-settings-mcp-servers.png" alt="Settings → MCP Servers tab — the new default-MCP-server catalog (Epic #100) showing per-project auto-enable status" /></td>
-  </tr>
-</table>
+| | |
+|---|---|
+| ![Kanban board](static/img/screenshots/03-kanban.png) | ![Live Agent Console](static/img/screenshots/09-live-agent-console.png) |
+| ![Plan review](static/img/screenshots/06-task-detail-plan.png) | ![LLM provider settings](static/img/screenshots/12-settings-llm-providers.png) |
+
+![Settings MCP Servers tab — the new default-MCP-server catalog showing per-project auto-enable status](static/img/screenshots/13-settings-mcp-servers.png)
 
 > Screenshots are auto-captured by `scripts/capture-screenshots.ts` — refresh them with `npm -w apps/frontend-web run capture-screenshots`.
 
