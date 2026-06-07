@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+## 3.4.3 - 2026-06-07
+
+### Added
+
+- GitHub Agentic Integration (#456): GitHub Models as a first-class provider (`github-models/<publisher>/<model>` model strings, zero-cost inference via `GITHUB_TOKEN`); Copilot cloud agent dispatch (`copilot:delegate` label routes a task to `copilot-swe-agent[bot]`, polls for PR, transitions status to `copilot_running` / `copilot_pr_opened`); AIFactory MCP server (`POST /mcp`, 6 tools, Bearer auth) so the Copilot agent can read specs/plans and write discoveries; three GitHub Actions workflows (`aifactory-task.yml`, `copilot-pr-review.yml`, `pr-review.yml`); frontend GitHub Models picker in the agent profile selector and Copilot dispatch toggle in the task creation wizard.
+
+### Fixed
+
+- Parallel wave subtasks using non-Claude providers (antigravity, copilot, opencode, ollama) now surface the real provider error in the portal instead of a hardcoded `"agent session error"` placeholder, and write an error entry to the canonical task log (child-worktree logs were never synced back, leaving the portal with zero entries) (#455).
+
 ### Added
 
 - Mission Control — a full-page three-pane task workspace (plan & subtasks · live activity + embedded Live Console · output tabs for preview / files / review), opened from the task-detail header (⤢). Reuses the existing task-detail data layer; collapses back to the modal; pane sizes persist (#311).
