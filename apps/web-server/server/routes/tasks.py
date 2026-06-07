@@ -686,6 +686,22 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             metadata["status"] = "human_review"
             metadata["reviewReason"] = "completed"
 
+    # Correctness guard: a phase can log completed even when subtasks failed
+    # or the build halted early. Never report a clean completed review state
+    # then -- surface that it needs attention so the portal never shows a
+    # halted/failed build as Completed. User-set done/completed wins below.
+    if explicit_status not in ('done', 'completed'):
+        _subs = metadata.get('subtasks') or []
+        if _subs:
+            _n_failed = sum(1 for st in _subs if getattr(st, 'status', None) == 'failed')
+            _n_done = sum(1 for st in _subs if getattr(st, 'status', None) == 'completed')
+            if _n_failed:
+                metadata['status'] = 'human_review'
+                metadata['reviewReason'] = 'errors'
+            elif metadata.get('reviewReason') == 'completed' and _n_done < len(_subs):
+                metadata['status'] = 'human_review'
+                metadata['reviewReason'] = 'incomplete'
+
     # Final safety: "done"/"completed" always wins over all auto-detection
     # This guards against task_logs or subtask detection overriding user intent
     if explicit_status in ("done", "completed"):
