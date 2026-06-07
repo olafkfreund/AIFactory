@@ -1,0 +1,34 @@
+name: AIFactory PR Review
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  review:
+    if: github.event.label.name == 'aifactory:review'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      models: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run AIFactory review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AIFACTORY_URL: ${{ secrets.AIFACTORY_URL }}
+          AIFACTORY_TOKEN: ${{ secrets.AIFACTORY_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          if [ -n "$AIFACTORY_URL" ]; then
+            curl -sf -X POST "$AIFACTORY_URL/api/github/prs/$PR_NUMBER/review" \
+              -H "Authorization: Bearer $AIFACTORY_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"repo\": \"${{ github.repository }}\", \"pr_number\": $PR_NUMBER}"
+          fi

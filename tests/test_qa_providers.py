@@ -342,7 +342,7 @@ class TestListProviders:
         """All canonical providers are registered (gemini -> antigravity)."""
         assert set(list_providers()) == {
             "claude", "codex", "antigravity", "ollama", "copilot", "opencode",
-            "openai-compatible",
+            "openai-compatible", "github-models",
         }
 
 

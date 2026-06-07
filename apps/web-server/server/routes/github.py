@@ -6,6 +6,7 @@ Handles GitHub OAuth, repository management, issues, PRs, and releases.
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -2126,6 +2127,51 @@ async def create_github_release(projectId: str, request: CreateReleaseRequest):
     # gh release create outputs the release URL
     release_url = result.get("output", "")
     return {"success": True, "data": {"url": release_url}}
+
+
+@router.get("/features")
+async def get_github_features():
+    """Return server-side GitHub feature flags visible to the frontend.
+
+    Currently exposes:
+    - ``copilot_dispatch_enabled``: whether AIFACTORY_COPILOT_DISPATCH_ENABLED is set,
+      used to gate the Copilot dispatch toggle in the task creation UI.
+    """
+    return {
+        "success": True,
+        "data": {
+            "copilot_dispatch_enabled": os.environ.get(
+                "AIFACTORY_COPILOT_DISPATCH_ENABLED", ""
+            ).lower() in ("1", "true", "yes"),
+        },
+    }
+
+
+@router.get("/models")
+async def list_github_models():
+    """Return the GitHub Models catalog.
+
+    Calls the public catalog endpoint (no auth required for the listing).
+    The caller needs ``GITHUB_TOKEN`` with ``models:read`` only when making
+    inference requests, not for fetching the catalog.
+
+    Returns the raw catalog JSON from models.github.ai.  The frontend uses
+    this to populate the 'GitHub Models' group in the provider dropdown.
+    """
+    result = run_gh_command(["api", "https://models.github.ai/catalog/models"])
+    if not result["success"]:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": result.get("error", "Failed to fetch GitHub Models catalog")},
+        )
+    try:
+        catalog = json.loads(result["output"])
+        return {"success": True, "data": catalog}
+    except json.JSONDecodeError:
+        return JSONResponse(
+            status_code=502,
+            content={"success": False, "error": "Invalid JSON from GitHub Models catalog"},
+        )
 
 
 @router.get("/fork-info")

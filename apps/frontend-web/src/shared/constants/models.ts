@@ -97,6 +97,35 @@ export async function fetchOpenAIEndpointModels(): Promise<
 // Backward compatibility alias
 export const fetchOllamaQAModels = fetchOllamaModels;
 
+// Fetch the GitHub Models catalog and surface each model as a picker entry.
+// The model value uses the `github-models/<publisher>/<name>` prefix so the
+// backend's phase_config.infer_provider_from_model() routes it correctly.
+// Falls back to an empty list when the gh CLI is absent or unauthenticated.
+interface GitHubModelCatalogEntry {
+  id: string;
+  name?: string;
+  publisher?: string;
+  friendly_name?: string;
+  display_name?: string;
+}
+
+export async function fetchGitHubModels(): Promise<{ value: string; label: string }[]> {
+  try {
+    const result = await apiRequest<GitHubModelCatalogEntry[]>('/github/models');
+    if (result.success && Array.isArray(result.data)) {
+      return result.data.map((m) => {
+        const display = m.friendly_name || m.display_name || m.name || m.id;
+        const prefix = m.publisher ? `${m.publisher}/` : '';
+        return {
+          value: `github-models/${m.id}`,
+          label: `${prefix}${display}`,
+        };
+      });
+    }
+  } catch { /* gh CLI not available or not authenticated — skip */ }
+  return [];
+}
+
 // Dynamically fetch models from any OpenAI-compatible server (LM Studio, vLLM, LocalAI, etc.)
 export async function fetchOpenAICompatibleModels(baseUrl?: string): Promise<{ value: string; label: string }[]> {
   try {

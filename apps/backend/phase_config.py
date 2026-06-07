@@ -285,7 +285,10 @@ def interleaved_thinking_betas_for(
     Returns:
         List of beta header strings — either [INTERLEAVED_THINKING_BETA] or [].
     """
-    if model_id in (_OPUS_47_ID, _OPUS_48_ID) and agent_type in INTERLEAVED_THINKING_AGENT_TYPES:
+    if (
+        model_id in (_OPUS_47_ID, _OPUS_48_ID)
+        and agent_type in INTERLEAVED_THINKING_AGENT_TYPES
+    ):
         return [INTERLEAVED_THINKING_BETA]
     return []
 
@@ -568,6 +571,13 @@ def get_fast_mode(spec_dir: Path) -> bool:
     return False
 
 
+def _is_openai_o_series(m: str) -> bool:
+    """Return True for OpenAI o-series model IDs (o1, o3, o4-mini, …)."""
+    import re
+
+    return bool(re.match(r"^o\d", m))
+
+
 def infer_provider_from_model(model: str) -> str:
     """
     Infer the LLM provider from the model ID.  Works for any phase.
@@ -607,6 +617,12 @@ def infer_provider_from_model(model: str) -> str:
         "ollama", "openai-compatible")
     """
     m = model.strip().lower()
+
+    # Explicit prefix: "github-models/<publisher>/<model>"
+    # Checked first so "github-models/openai/gpt-4.1" doesn't fall through to
+    # the gpt-* → codex rule below.
+    if m.startswith("github-models/"):
+        return "github-models"
 
     # Explicit prefix: "studio:model-name"
     if m.startswith("studio:"):
@@ -659,14 +675,17 @@ def infer_provider_from_model(model: str) -> str:
     # since a ChatGPT-account login rejects every explicit model.  Concrete ids
     # ("gpt-5.3-codex", "o4-mini", ...) also route here and are forwarded as-is
     # for API-key accounts.  (#293)
-    if m == "default" or m.startswith("gpt-") or "codex" in m:
+    # o-series OpenAI models: o1, o1-mini, o1-preview, o3, o3-mini, o4-mini, …
+    if m == "default" or m.startswith("gpt-") or "codex" in m or _is_openai_o_series(m):
         return "codex"
 
     # Antigravity CLI (Google).  Canonical IDs are "antigravity" /
     # "antigravity-*".  Legacy "gemini-*" model strings still route here
     # (back-compat) — the Antigravity CLI serves Google's gemini-* models.
-    if m == "antigravity" or m.startswith("antigravity-") or m.startswith(
-        "antigravity:"
+    if (
+        m == "antigravity"
+        or m.startswith("antigravity-")
+        or m.startswith("antigravity:")
     ):
         return "antigravity"
     if m.startswith("gemini"):
@@ -697,6 +716,9 @@ def strip_provider_prefix(model: str) -> str:
     ):
         if model.lower().startswith(prefix):
             return model[len(prefix) :]
+    # github-models uses a slash separator: "github-models/<publisher>/<model>"
+    if model.lower().startswith("github-models/"):
+        return model[len("github-models/") :]
     return model
 
 
@@ -884,6 +906,7 @@ PROVIDER_AGENTIC_SUPPORT = {
     "antigravity",
     "ollama",
     "openai-compatible",
+    "github-models",
 }
 
 

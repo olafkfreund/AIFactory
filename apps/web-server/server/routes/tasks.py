@@ -37,6 +37,9 @@ TaskStatus = Literal[
     "ai_review",
     "human_review",
     "done",
+    # Copilot cloud-agent delegation statuses (set by copilot_dispatch_service)
+    "copilot_running",
+    "copilot_pr_opened",
 ]
 
 # Backend statuses that get mapped to frontend statuses:
@@ -690,17 +693,21 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # or the build halted early. Never report a clean completed review state
     # then -- surface that it needs attention so the portal never shows a
     # halted/failed build as Completed. User-set done/completed wins below.
-    if explicit_status not in ('done', 'completed'):
-        _subs = metadata.get('subtasks') or []
+    if explicit_status not in ("done", "completed"):
+        _subs = metadata.get("subtasks") or []
         if _subs:
-            _n_failed = sum(1 for st in _subs if getattr(st, 'status', None) == 'failed')
-            _n_done = sum(1 for st in _subs if getattr(st, 'status', None) == 'completed')
+            _n_failed = sum(
+                1 for st in _subs if getattr(st, "status", None) == "failed"
+            )
+            _n_done = sum(
+                1 for st in _subs if getattr(st, "status", None) == "completed"
+            )
             if _n_failed:
-                metadata['status'] = 'human_review'
-                metadata['reviewReason'] = 'errors'
-            elif metadata.get('reviewReason') == 'completed' and _n_done < len(_subs):
-                metadata['status'] = 'human_review'
-                metadata['reviewReason'] = 'incomplete'
+                metadata["status"] = "human_review"
+                metadata["reviewReason"] = "errors"
+            elif metadata.get("reviewReason") == "completed" and _n_done < len(_subs):
+                metadata["status"] = "human_review"
+                metadata["reviewReason"] = "incomplete"
 
     # Final safety: "done"/"completed" always wins over all auto-detection
     # This guards against task_logs or subtask detection overriding user intent

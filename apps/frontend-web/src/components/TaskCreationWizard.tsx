@@ -36,6 +36,7 @@ import { SkillsBrowser } from './SkillsBrowser';
 import { Badge } from './ui/badge';
 import { TaskClarificationWizard } from './TaskClarificationWizard';
 import { createTask, saveDraft, loadDraft, clearDraft, isDraftEmpty } from '../stores/task-store';
+import { apiRequest } from '../lib/api-client';
 import { useProjectStore } from '../stores/project-store';
 import { cn } from '../lib/utils';
 import type { Task, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, SelectedSkill } from '../shared/types';
@@ -141,6 +142,9 @@ export function TaskCreationWizard({
   const [enableRemoteControl, setEnableRemoteControl] = useState(false);
   const [enableDelegation, setEnableDelegation] = useState(false);
 
+  // Server feature flag: whether AIFACTORY_COPILOT_DISPATCH_ENABLED is set
+  const [copilotDispatchEnabled, setCopilotDispatchEnabled] = useState(false);
+
   // Skills state
   const [selectedSkills, setSelectedSkills] = useState<SelectedSkill[]>([]);
   const [showSkillsBrowser, setShowSkillsBrowser] = useState(false);
@@ -215,6 +219,18 @@ export function TaskCreationWizard({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectPath]);
+
+  // Fetch server feature flags once when the dialog first opens
+  useEffect(() => {
+    if (!open) return;
+    apiRequest<{ copilot_dispatch_enabled: boolean }>('/github/features')
+      .then((result) => {
+        if (result.success && result.data) {
+          setCopilotDispatchEnabled(result.data.copilot_dispatch_enabled);
+        }
+      })
+      .catch(() => { /* feature flags unavailable — leave as false */ });
+  }, [open]);
 
   const fetchBranches = async () => {
     if (!projectPath) return;
@@ -1220,17 +1236,15 @@ export function TaskCreationWizard({
             </div>
           </div>
 
-          {/* Delegation Toggle — hand the coding phase off to the
-              project's autonomous coding agent (GitHub Copilot Coding
-              Agent on GitHub, GitLab Duo Workflow on GitLab — V1.5,
-              #98). AIFactory still plans the spec locally. Disabled for
-              Azure DevOps (no equivalent agent exists). */}
-          {(() => {
-            const delegationSupported =
-              projectGitProvider === 'github' || projectGitProvider === 'gitlab';
+          {/* Delegation Toggle — hand the coding phase off to GitHub
+              Copilot Coding Agent via the dispatch API. Only shown when
+              the server has AIFACTORY_COPILOT_DISPATCH_ENABLED=true AND
+              the project is on GitHub. */}
+          {copilotDispatchEnabled && (() => {
+            const delegationSupported = projectGitProvider === 'github';
             const delegationDisabled = isCreating || !delegationSupported;
             const delegationTooltip = !delegationSupported
-              ? t('tasks:delegation.githubOrGitlabTooltip')
+              ? 'GitHub Copilot dispatch is only available for GitHub repositories'
               : undefined;
             return (
               <div
@@ -1249,15 +1263,15 @@ export function TaskCreationWizard({
                     htmlFor="enable-delegation"
                     className={cn(
                       'text-sm font-medium cursor-pointer',
-                      delegationDisabled
-                        ? 'text-muted-foreground'
-                        : 'text-foreground'
+                      delegationDisabled ? 'text-muted-foreground' : 'text-foreground'
                     )}
                   >
-                    {t('tasks:delegation.enableLabel')}
+                    Delegate to GitHub Copilot Agent
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    {t('tasks:delegation.enableHelp')}
+                    AIFactory creates the spec locally, then hands the coding phase to the
+                    GitHub Copilot SWE agent via a GitHub issue assignment.
+                    AIFactory monitors for the resulting PR and links it to this task.
                   </p>
                 </div>
               </div>
