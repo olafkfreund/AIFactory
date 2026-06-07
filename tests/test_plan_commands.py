@@ -24,7 +24,6 @@ from security.plan_commands import (  # noqa: E402
     sanitize_command_names,
 )
 
-
 # ---- extraction -----------------------------------------------------------
 
 def test_extract_from_required_commands_top_level():

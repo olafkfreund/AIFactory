@@ -12,8 +12,8 @@ import json
 from pathlib import Path
 
 import pytest
-from agents.coder import _emit_build_report
 from agents.build_report import REPORT_FILENAME, load_build_report
+from agents.coder import _emit_build_report
 
 
 def _seed_parallel_report(spec: Path) -> None:

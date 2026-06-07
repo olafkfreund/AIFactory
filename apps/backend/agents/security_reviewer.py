@@ -155,7 +155,7 @@ async def review_diff(
     *,
     project_dir: Path | None = None,
     threshold: str = DEFAULT_BLOCK_THRESHOLD,
-    llm_scan: Callable[[str], "Any"] | None = None,
+    llm_scan: Callable[[str], Any] | None = None,
 ) -> SecurityReport:
     """Full review: static scan, optionally augmented by an LLM subagent.
 

@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoint import Checkpointer
-from .security_reviewer import GateDecision, gate_decision, review_diff, scan_diff_static
+from .security_reviewer import (
+    GateDecision,
+    gate_decision,
+    review_diff,
+    scan_diff_static,
+)
 from .verifier import verify_unit
 
 _TRUTHY = {"1", "true", "yes", "on"}

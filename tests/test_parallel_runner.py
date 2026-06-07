@@ -79,11 +79,11 @@ class _Harness:
         self.complete_order.append(subtask.id)
 
     def kwargs(self):
-        return dict(
-            run_subtask=self.run_subtask,
-            merge_subtask=self.merge_subtask,
-            mark_complete=self.mark_complete,
-        )
+        return {
+            "run_subtask": self.run_subtask,
+            "merge_subtask": self.merge_subtask,
+            "mark_complete": self.mark_complete,
+        }
 
 
 class TestHappyPath:

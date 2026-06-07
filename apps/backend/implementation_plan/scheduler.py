@@ -120,7 +120,7 @@ def validate_dependencies(subtasks: list[Any]) -> list[str]:
 
     # Cycle detection via DFS over known edges (ignore unknown deps already flagged)
     WHITE, GREY, BLACK = 0, 1, 2
-    color: dict[str, int] = {sid: WHITE for sid in by_id}
+    color: dict[str, int] = dict.fromkeys(by_id, WHITE)
 
     def visit(node: str, stack: list[str]) -> None:
         color[node] = GREY
