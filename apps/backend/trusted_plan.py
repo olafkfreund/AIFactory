@@ -285,7 +285,7 @@ def check_plan_completeness(plan: dict) -> tuple[bool, list[str]]:
 def _is_acyclic(deps: dict[str, list[str]]) -> bool:
     """DFS cycle detection over the subtask dependency graph."""
     WHITE, GREY, BLACK = 0, 1, 2
-    color = {node: WHITE for node in deps}
+    color = dict.fromkeys(deps, WHITE)
 
     def visit(node: str) -> bool:
         color[node] = GREY
