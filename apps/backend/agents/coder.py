@@ -765,6 +765,46 @@ async def run_autonomous_agent(
                 source_spec_dir=source_spec_dir,
             )
 
+            # Self-heal: on failure, verify the project state and checkpoint/rollback
+            # before the RecoveryManager decides whether to retry or mark stuck.
+            # Guarded by AIFACTORY_SELF_HEAL (default off) — zero behavioral change
+            # unless explicitly enabled. This closes #415 item 1 for the serial path.
+            if not success:
+                try:
+                    from agents.self_heal_integration import (
+                        is_self_heal_enabled,
+                        self_heal_subtask,
+                    )
+
+                    if is_self_heal_enabled():
+                        # We don't own the retry loop here (the main loop does via
+                        # RecoveryManager); use max_attempts=1 so self_heal_subtask
+                        # runs exactly one verify + conditional rollback pass, then
+                        # records the outcome in its event log.  A future refactor
+                        # can promote this to full loop ownership once the session
+                        # can be expressed as a callable.
+                        async def _noop_attempt(_n: int) -> None:
+                            pass  # attempt already ran above; verify the result
+
+                        outcome = await self_heal_subtask(
+                            label=subtask_id or "unknown",
+                            attempt=_noop_attempt,
+                            project_dir=project_dir,
+                            max_attempts=1,
+                        )
+                        if outcome is not None:
+                            status_str = outcome.status
+                            print_status(
+                                f"[self-heal] {subtask_id}: {status_str} "
+                                f"(attempts={outcome.attempts}, "
+                                f"rolled_back={outcome.rolled_back})",
+                                "info" if outcome.ok else "warning",
+                            )
+                            if outcome.ok:
+                                success = True  # verify gate says the subtask passed
+                except Exception as _sh_exc:  # noqa: BLE001 - self-heal must not crash build
+                    logger.debug("[self-heal] serial gate skipped: %s", _sh_exc)
+
             # Check for stuck subtasks
             attempt_count = recovery_manager.get_attempt_count(subtask_id)
             if not success and attempt_count >= 3:
