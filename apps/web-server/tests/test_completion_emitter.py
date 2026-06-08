@@ -206,7 +206,7 @@ def test_envelope_includes_usage_when_supplied():
                "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
     )
     assert ev["usage"]["total_tokens"] == 12
-    assert ev["schema_version"] == "1.1"
+    assert ev["schema_version"] == "1.2"
 
 
 def test_envelope_omits_usage_when_absent():
@@ -229,3 +229,94 @@ def test_emit_reads_usage_from_token_usage_json(tmp_path, monkeypatch):
         "input_tokens": 2400, "output_tokens": 100, "total_tokens": 2500,
         "cost_usd": 1.25, "model": "claude-sonnet-4-6",
     }
+
+
+# ── #466 additive envelope upgrade: id + CloudEvents-core + trace context ─────
+
+import re  # noqa: E402
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+_TRACEPARENT_RE = re.compile(r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$")
+
+
+def _base_event(**overrides):
+    kw = dict(task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412)
+    kw.update(overrides)
+    return build_completion_event(**kw)
+
+
+def test_envelope_keeps_all_legacy_fields():
+    """Additive: nothing the old consumers read was removed or renamed."""
+    ev = _base_event(updated_at="2026-06-04T16:00:00+00:00")
+    for legacy in ("correlation_key", "service", "task_id", "status", "phase",
+                   "updated_at", "correlation", "schema_version", "event"):
+        assert legacy in ev, legacy
+    assert ev["service"] == "aifactory"
+    assert ev["event"] == "completion"
+
+
+def test_envelope_has_idempotency_id():
+    ev = _base_event()
+    assert _UUID_RE.match(ev["id"]), ev["id"]
+
+
+def test_event_id_unique_per_call_but_pinnable():
+    # Distinct events get distinct ids…
+    assert _base_event()["id"] != _base_event()["id"]
+    # …but an explicit id makes a rebuild reproduce the same event (relay dedup).
+    pinned = _base_event(event_id="11111111-1111-4111-8111-111111111111")
+    again = _base_event(event_id="11111111-1111-4111-8111-111111111111")
+    assert pinned["id"] == again["id"] == "11111111-1111-4111-8111-111111111111"
+
+
+def test_envelope_has_cloudevents_core_fields(monkeypatch):
+    monkeypatch.delenv("AIFACTORY_EVENT_SOURCE", raising=False)
+    ev = _base_event(updated_at="2026-06-04T16:00:00+00:00")
+    assert ev["specversion"] == "1.0"
+    assert ev["type"] == "io.factory.aifactory.completion"
+    assert ev["source"] == "/aifactory"
+    # CloudEvents `time` mirrors the occurrence time.
+    assert ev["time"] == ev["updated_at"] == "2026-06-04T16:00:00+00:00"
+
+
+def test_source_overridable_by_env(monkeypatch):
+    monkeypatch.setenv("AIFACTORY_EVENT_SOURCE", "/aifactory/prod-eu")
+    assert _base_event()["source"] == "/aifactory/prod-eu"
+
+
+def test_traceparent_is_valid_w3c_and_propagates():
+    ev = _base_event()
+    assert _TRACEPARENT_RE.match(ev["traceparent"]), ev["traceparent"]
+    assert "tracestate" not in ev  # omitted unless supplied
+    inbound = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    propagated = _base_event(traceparent=inbound, tracestate="rojo=00f067aa0ba902b7")
+    assert propagated["traceparent"] == inbound
+    assert propagated["tracestate"] == "rojo=00f067aa0ba902b7"
+
+
+def test_envelope_validates_against_published_schema():
+    """AC #466: the event validates against the published RFC-0001/CloudEvents
+    schema (run in CI)."""
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    ev = _base_event(
+        updated_at="2026-06-04T16:00:00+00:00",
+        usage={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
+               "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
+    )
+    jsonschema.validate(ev, schema)  # raises on non-conformance
+
+
+def test_synthetic_correlation_event_validates_against_schema():
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    ev = build_completion_event(
+        task_id="proj:spec-9", spec_id="spec-9", status="failed", issue_number=None,
+    )
+    jsonschema.validate(ev, schema)
