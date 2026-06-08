@@ -122,12 +122,36 @@ async def lifespan(app: FastAPI):
             "Redis pub/sub disabled (REDIS_URL unset) — in-process broadcasts only"
         )
 
+    # Start the completion-event outbox relay when enabled (#465). Off by
+    # default — the direct webhook path in completion.py is unchanged until the
+    # operator opts in with AIFACTORY_COMPLETION_OUTBOX=true. The relay drains
+    # durably-queued terminal events with retry/backoff (at-least-once delivery).
+    import asyncio as _asyncio
+
+    from .services import outbox as _outbox
+
+    app.state.outbox_relay_stop = None
+    app.state.outbox_relay_task = None
+    if _outbox.outbox_enabled():
+        stop = _asyncio.Event()
+        app.state.outbox_relay_stop = stop
+        app.state.outbox_relay_task = _asyncio.create_task(_outbox.relay_loop(stop=stop))
+        logger.info("Completion outbox relay enabled (at-least-once delivery)")
+    else:
+        logger.info("Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)")
+
     yield
 
     # Shutdown
     logger.info("Shutting down Magestic AI Web Server...")
     if settings.REDIS_URL:
         await event_bus.stop_redis_subscriber()
+    if app.state.outbox_relay_task is not None:
+        app.state.outbox_relay_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
+        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+            app.state.outbox_relay_task.cancel()
 
 
 def _read_app_version() -> str:

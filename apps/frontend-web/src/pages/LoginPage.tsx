@@ -2,7 +2,7 @@
  * Login page for web UI
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth-store';
 import { getAuthToken } from '../lib/auth';
@@ -12,6 +12,26 @@ export function LoginPage() {
   const [token, setToken] = useState(() => getAuthToken() || '');
   const { login, isLoading, error } = useAuthStore();
   const navigate = useNavigate();
+
+  // Show the running server version so it's obvious which deployment you're
+  // authenticating against. /api/health is unauthenticated (PUBLIC_PATHS), so
+  // it resolves before login. Best-effort — a failed/blocked fetch just hides
+  // the line rather than disrupting the login form.
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/health')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.version) setVersion(String(data.version));
+      })
+      .catch(() => {
+        /* version is a nicety — never block login on it */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +128,17 @@ export function LoginPage() {
             Single sign-on via your organization's identity provider
           </p>
         </div>
+
+        {/* Running server version (from the unauthenticated /api/health) so it's
+            clear which deployment you're logging in to. */}
+        {version && (
+          <p
+            className="mt-8 text-center text-xs text-muted-foreground"
+            data-testid="app-version"
+          >
+            v{version}
+          </p>
+        )}
       </div>
     </div>
   );
