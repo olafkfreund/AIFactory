@@ -21,6 +21,17 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.5.1 - 2026-06-08
+
+### Added
+
+- **Reliable completion-event delivery** (epic #468): additive RFC-0001/CloudEvents envelope upgrade — per-event `id` (idempotency), CloudEvents-core fields (`specversion`/`source`/`type`/`time`) and W3C `traceparent`; a transactional outbox + retrying relay for at-least-once delivery (behind `AIFACTORY_COMPLETION_OUTBOX`); and typed handback triage validation + an assertion-pinning guard before the QA fixer (#465, #466, #467).
+- Running server version shown on the login screen (#470).
+
+### Notes
+
+- Ships as 3.5.1 because the 3.5.0 release build failed its CHANGELOG gate before tagging; 3.5.0 was never published.
+
 ## 3.4.3 - 2026-06-07
 
 ### Added
