@@ -2876,6 +2876,16 @@ class AgentService:
         # Pass cmd and env so model fallback can retry with a different model on failure
         asyncio.create_task(self._monitor_process(task_id, proc, project_path=project_path, cmd=cmd, env=env))
 
+        # Epic #44 — Live Console also covers the spec-creation phase, not just
+        # the build phase, so the whole agent run is streamable. No-op when
+        # rmux is off; _process_output tees this subprocess's output into the
+        # passive FIFO. The build phase re-uses the same spec_id session.
+        from ..rmux.integration import create_if_enabled as _rmux_create
+        try:
+            await _rmux_create(spec_id, project_path, " ".join(cmd))
+        except Exception:
+            logger.warning(f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={spec_id}")
+
         return proc
 
     def _read_parallel_opts(
