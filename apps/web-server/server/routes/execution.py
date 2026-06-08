@@ -58,7 +58,12 @@ class StartTaskRequest(BaseModel):
 
 
 class ApplyCorrectionRequest(BaseModel):
-    """A correction hand-back from an external test tool (e.g. TFactory, #317)."""
+    """A correction hand-back from an external test tool (e.g. TFactory, #317).
+
+    Fields below ``confirm`` are the additive #467 typed-handback contract. They
+    are all optional, so the legacy markdown-only POST keeps working untouched
+    until TFactory cuts over to sending the structured ``triage`` block.
+    """
 
     fix_request_md: str = Field(..., description="QA_FIX_REQUEST.md body to apply")
     source: str | None = Field(
@@ -66,6 +71,23 @@ class ApplyCorrectionRequest(BaseModel):
     )
     confirm: bool = Field(
         False, description="Required true to write + run the QA Fixer"
+    )
+    # Typed handback triage validation (#467) — additive / backward-compatible.
+    triage: dict | None = Field(
+        None,
+        description="Structured triage report (TFactory#283). When present it is "
+        "schema-validated before the QA Fixer runs; malformed reports are rejected.",
+    )
+    manifest_hash: str | None = Field(
+        None, description="TFactory assertion-manifest hash, recorded for audit"
+    )
+    correlation_key: str | None = Field(
+        None, description="RFC-0001 correlation key for keyed observability"
+    )
+    # Echoed by TFactory for the auto-loop callback (accepted, not yet acted on).
+    tfactory_task_id: str | None = Field(None, description="TFactory workspace id")
+    tfactory_callback_url: str | None = Field(
+        None, description="URL AIFactory calls back when the fix completes"
     )
 
 
@@ -1123,7 +1145,12 @@ async def apply_task_correction(
     *_, spec_dir = _resolve_task(task_id)
 
     result = await apply_correction(
-        spec_dir, request.fix_request_md, confirm=request.confirm
+        spec_dir,
+        request.fix_request_md,
+        confirm=request.confirm,
+        triage=request.triage,
+        manifest_hash=request.manifest_hash,
+        correlation_key=request.correlation_key,
     )
     return {**result, "task_id": task_id, "source": request.source}
 

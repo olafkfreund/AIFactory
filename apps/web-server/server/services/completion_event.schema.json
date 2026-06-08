@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.2.json",
+  "title": "Factory RFC-0001 completion event (v1.2, CloudEvents-aligned)",
+  "description": "AIFactory terminal completion event. v1.2 (#466) adds a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "correlation_key",
+    "service",
+    "task_id",
+    "status",
+    "phase",
+    "updated_at",
+    "id",
+    "specversion",
+    "source",
+    "type",
+    "time",
+    "traceparent"
+  ],
+  "properties": {
+    "correlation_key": { "type": "string", "minLength": 1 },
+    "service": { "type": "string", "const": "aifactory" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "minLength": 1 },
+    "phase": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "event": { "type": "string" },
+    "schema_version": { "type": "string" },
+    "correlation": {
+      "type": "object",
+      "properties": {
+        "issue_number": { "type": ["integer", "null"] },
+        "spec_id": { "type": ["string", "null"] },
+        "project_id": { "type": ["string", "null"] }
+      }
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "specversion": { "type": "string", "const": "1.0" },
+    "source": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "time": { "type": "string", "format": "date-time" },
+    "traceparent": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+    },
+    "tracestate": { "type": "string" },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "input_tokens": { "type": "integer" },
+        "output_tokens": { "type": "integer" },
+        "total_tokens": { "type": "integer" },
+        "cost_usd": { "type": "number" },
+        "model": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
