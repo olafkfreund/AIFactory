@@ -21,6 +21,13 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.4 - 2026-06-09
+
+### Fixed
+
+- stdio-MCP / `/handover` `task_create_and_run` (write-path) no longer 500s: the proxy built a `StartTaskRequest`, but the handler takes `CreateAndRunRequest` (adds `provenance`, #332) and reads `request.provenance` → `AttributeError`. The proxy now passes `CreateAndRunRequest`, completing the handover end-to-end fix (with #488/#490 for the read-path) (#494).
+- stdio-MCP `task_get_logs` no longer 500s: the proxy forwarded a `tail=` argument that `get_task_logs` doesn't accept (`TypeError`). `tail` is accepted for client compatibility but no longer forwarded (#494).
+
 ## 3.6.3 - 2026-06-09
 
 ### Fixed
