@@ -73,17 +73,22 @@ def build_handoff_payload(
     classification: Any,
     metadata: dict | None,
     tfactory: dict | None = None,
+    spec_dir: Path | None = None,
 ) -> dict:
     """Build the JSON payload AIFactory sends to TFactory for a handoff.
 
     When the spec carries a Task Contract v2 ``tfactory`` block (RFC-0002), it is
     included so TFactory plans tests from declared lanes/frameworks/endpoints/
     scope instead of inferring them. Omitted (empty) for v1 specs.
+
+    When ``spec_dir`` is given and a mutation ledger was recorded this run (#476,
+    ``AIFACTORY_MUTATION_LEDGER``), the ledger rides along as handover evidence so
+    TFactory sees exactly what the coder changed. Additive/best-effort.
     """
     requirements = requirements or {}
     gh = requirements.get("githubIssue") if isinstance(requirements, dict) else None
     labels = gh.get("labels", []) if isinstance(gh, dict) else []
-    return {
+    payload = {
         "source": "aifactory",
         "taxonomy": "v1",
         "spec_id": spec_id,
@@ -96,6 +101,16 @@ def build_handoff_payload(
         "pfactory_meta": metadata or {},
         "tfactory": tfactory or {},
     }
+    if spec_dir is not None:
+        try:
+            from agents.mutation_ledger import MutationLedger
+
+            mutations = MutationLedger(spec_dir).read()
+            if mutations:
+                payload["mutations"] = mutations
+        except Exception:  # noqa: BLE001 — evidence is best-effort
+            pass
+    return payload
 
 
 async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
