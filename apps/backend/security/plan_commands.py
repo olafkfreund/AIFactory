@@ -88,7 +88,11 @@ PLAN_GRANTABLE_COMMANDS: frozenset[str] = frozenset(
 
 # Plan locations (relative to a subtask or the plan root) whose VALUE is a shell
 # command string we should parse for command names.
-_COMMAND_STRING_KEYS = ("command", "dev_command", "test_command", "lint_command")
+# "run" covers the simple/quick-spec plan's verification block
+# (``verification: {type: command, run: "go test ./..."}``) — without it the
+# auto-grant never saw the toolchain a from-scratch build needs (e.g. ``go``),
+# so the coder was blocked running its own verification.
+_COMMAND_STRING_KEYS = ("command", "dev_command", "test_command", "lint_command", "run")
 
 
 def _names_from_command_string(command_string: str) -> set[str]:

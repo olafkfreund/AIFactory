@@ -21,6 +21,19 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.2 - 2026-06-09
+
+### Fixed
+
+- Autonomous tasks no longer hang at 0% in "planning": when a build couldn't find the requested spec, the CLI dropped into an interactive `input()` prompt that blocks forever in a headless run (no TTY, stdin never EOFs). It now detects a non-interactive context and fails fast (#482).
+- Default-org seeding is idempotent on the `organizations.slug` UNIQUE constraint — startup no longer crashes with `IntegrityError` when a "default"-slug org already exists under a different id (#484).
+- The plan-based allowlist auto-grant now reads the simple/quick-spec plan's `verification.run` command, so a from-scratch build's toolchain (e.g. `go`) is granted and its verification actually runs instead of being blocked (#486).
+- stdio-MCP / `/handover` `project_list` no longer returns HTTP 500: the proxy now forwards `request` + `db` to `list_projects` (required since org-scoped visibility), unblocking the handover project-lookup step (#488).
+
+### Added
+
+- Operator override for the command allowlist via `AIFACTORY_EXTRA_ALLOWED_COMMANDS` (comma/whitespace separated), merged into the enforced allowlist — backend hook for a Settings "additional allowed commands" field (#487).
+
 ## 3.6.1 - 2026-06-09
 
 ### Fixed

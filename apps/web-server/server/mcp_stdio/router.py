@@ -28,6 +28,9 @@ import json
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import Request as FastAPIRequest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..database.engine import get_db
 
 from ..mcp_remote.auth import AuthenticatedKey
 from ..services.audit_service import (
@@ -105,9 +108,18 @@ async def _audit_mcp_write(
 # =============================================================================
 
 @router.get("/projects")
-async def proxy_list_projects(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
+async def proxy_list_projects(
+    request: FastAPIRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_acw_scope(MCP_READ_SCOPE)),
+):
+    # list_projects requires (request, db) since #319 (org-scoped visibility).
+    # The proxy previously called it with no args → TypeError → HTTP 500,
+    # which broke the stdio-MCP / `/handover` project-lookup step. Inject and
+    # forward both; the acw/legacy principal resolves to service-principal
+    # (sees all projects), matching the direct REST behaviour.
     from ..routes.projects import list_projects
-    return await list_projects()
+    return await list_projects(request, db=db)
 
 
 @router.get("/tasks")
