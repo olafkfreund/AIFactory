@@ -120,7 +120,14 @@
       "copyOnceHelp": "The backend stores only a hash. If you lose the key you have to revoke and mint a new one.",
       "copyKey": "Copy key",
       "acknowledge": "I've copied it",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "lastUsed": "last used",
+      "neverUsed": "never used",
+      "revokeAriaLabel": "Revoke key",
+      "revokeDialogTitle": "Revoke API key?",
+      "revokeDialogDescription": "Any client using \"{{name}}\" will immediately lose access. This cannot be undone.",
+      "revokeConfirm": "Revoke key",
+      "revoking": "Revoking…"
     },
     "api-profiles": {
       "title": "API Profiles",
