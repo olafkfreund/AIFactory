@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from agents.mutation_ledger import (
     MutationLedger,
     git_checkpoint,
