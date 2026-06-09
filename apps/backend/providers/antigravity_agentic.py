@@ -51,9 +51,38 @@ from providers.types import AssistantMessage, TextBlock
 logger = logging.getLogger(__name__)
 
 _DEFAULT_ANTIGRAVITY_PATH: str = "antigravity"
-_DEFAULT_MODEL: str = "gemini-3.1-pro-preview"
+# Newest model validated on the Antigravity/Gemini CLI for this account
+# (2026-06-09: gemini-3.5-flash → OK; gemini-3.5-pro → ModelNotFound).
+_DEFAULT_MODEL: str = "gemini-3.5-flash"
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
+
+# Named provider-selector strings that mean "use this provider", NOT a literal
+# Gemini model. Passing them as `--model antigravity` yields
+# `ModelNotFoundError: models/antigravity` and the CLI exits 1 → the build fails
+# with no completed subtask. Map these to _DEFAULT_MODEL instead.
+_PROVIDER_SELECTORS: frozenset[str] = frozenset(
+    {"antigravity", "antigravity-default", "default"}
+)
+
+
+def _resolve_model(model: str | None) -> str:
+    """Resolve a task model string to a concrete Gemini model id (or "").
+
+    - Empty / ``None`` → ``""`` (omit ``--model``; the CLI uses its own default).
+    - Named provider selectors (``antigravity``/``default``) → ``_DEFAULT_MODEL``.
+    - ``antigravity:<id>`` → ``<id>``; bare ``antigravity:`` → ``_DEFAULT_MODEL``.
+    - Concrete ids (``gemini-*``, ``antigravity-*``) pass through unchanged.
+    """
+    if not model or not model.strip():
+        return ""
+    m = model.strip()
+    if m.startswith("antigravity:"):
+        m = m[len("antigravity:"):].strip()
+        return m or _DEFAULT_MODEL
+    if m in _PROVIDER_SELECTORS:
+        return _DEFAULT_MODEL
+    return m
 
 
 def get_antigravity_binary(custom_path: str | None = None) -> str:
@@ -113,6 +142,9 @@ class AntigravityAgenticProvider(BaseLLMProvider):
         gemini_path: str | None = None,  # back-compat alias for antigravity_path
     ) -> None:
         _emit_sunset_warning()  # Issue #22 — flag the 2026-06-18 sunset.
+        # Map bare provider selectors ("antigravity"/"default") to a real model
+        # so we never pass `--model antigravity` (ModelNotFoundError → exit 1).
+        model = _resolve_model(model)
         if model and not _MODEL_NAME_RE.match(model):
             raise ValueError(
                 f"Invalid model name '{model}': must be alphanumeric with . _ : / - separators"
