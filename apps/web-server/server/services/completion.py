@@ -145,6 +145,7 @@ def build_completion_event(
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
+    halt_reason: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -191,6 +192,10 @@ def build_completion_event(
         event["tracestate"] = tracestate
     if usage is not None:
         event["usage"] = usage
+    # Anti-loop guardrail (#474): when the Act loop halted on no-progress, carry
+    # the typed reason so CFactory can show *why* a WorkItem stalled.
+    if halt_reason:
+        event["halt_reason"] = halt_reason
     return event
 
 
@@ -256,6 +261,18 @@ def emit_terminal_completion(
         issue_number=read_issue_number(spec_dir),
         project_id=project_id,
         usage=read_usage(spec_dir),
+        halt_reason=_read_halt_reason(spec_dir),
     )
     notify_completion(event, spec_dir=spec_dir)
     return event
+
+
+def _read_halt_reason(spec_dir: Path) -> str | None:
+    """The Act-loop guardrail's typed no-progress reason for this run, if any
+    (#474). Written by ``agents.act_loop_hooks`` to ``guardrail_halt.json``."""
+    try:
+        data = json.loads((spec_dir / "guardrail_halt.json").read_text())
+        reason = data.get("halt_reason")
+        return reason if isinstance(reason, str) else None
+    except (OSError, ValueError):
+        return None
