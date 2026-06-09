@@ -211,7 +211,29 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             }
             return await call_next(request)
 
-        # Neither JWT nor legacy token matched
+        # Strategy 3: per-user ``acw_`` API key minted in Settings → API Keys
+        # (#479). Lets a user authenticate programmatic REST access with their
+        # own scoped token, not just the stdio-MCP proxy path. Gated on the
+        # ``acw_`` prefix so JWT/legacy tokens never incur the DB lookup.
+        if token.startswith("acw_"):
+            try:
+                from .mcp_remote.auth import authenticate as _authenticate_acw
+
+                key = await _authenticate_acw(f"Bearer {token}")
+                request.state.user = {
+                    "id": key.user_id,
+                    "email": None,
+                    "role": "user",
+                    "org_id": key.org_id,
+                    "api_key_id": key.key_id,
+                    "is_service": key.user_id is None,
+                }
+                return await call_next(request)
+            except Exception:
+                # Unknown/disabled/expired acw_ key → fall through to 401.
+                pass
+
+        # Neither JWT, legacy token, nor a valid acw_ key matched
         return JSONResponse(
             {"error": "Invalid token"},
             status_code=status.HTTP_401_UNAUTHORIZED,
