@@ -20,6 +20,40 @@ if TYPE_CHECKING:
     pass
 
 
+# Markers that mean the provider credential failed (expired/invalid OAuth token,
+# bad API key). Retries can't fix this, so we surface it immediately with an
+# actionable message instead of MAX_RETRIES silent retries that collapse into a
+# generic "Agent did not create spec.md" (#483).
+_AUTH_FAILURE_MARKERS = (
+    "invalid authentication credentials",
+    "failed to authenticate",
+    "api error: 401",
+    "401 unauthorized",
+)
+
+
+def _auth_failure_detail(output: str | None) -> str | None:
+    """If agent output indicates an auth failure, return the offending line."""
+    if not output:
+        return None
+    low = output.lower()
+    if not any(m in low for m in _AUTH_FAILURE_MARKERS):
+        return None
+    for line in output.splitlines():
+        if any(m in line.lower() for m in _AUTH_FAILURE_MARKERS):
+            return line.strip()[:200]
+    return "authentication failed"
+
+
+def _auth_error_message(detail: str) -> str:
+    return (
+        "Provider authentication failed — the spec agent cannot run. "
+        "Re-provision the credential (e.g. an expired Claude OAuth token: "
+        "`claude setup-token`) and retry. "
+        f"Detail: {detail}"
+    )
+
+
 class SpecPhaseMixin:
     """Mixin for spec writing and critique phase methods."""
 
@@ -92,6 +126,11 @@ Create:
                     "quick_spec", True, [str(spec_file), str(plan_file)], [], attempt
                 )
 
+            detail = _auth_failure_detail(output)
+            if detail:
+                msg = _auth_error_message(detail)
+                self.ui.print_status(msg, "error")
+                return PhaseResult("quick_spec", False, [], [msg], attempt)
             errors.append(f"Attempt {attempt + 1}: Quick spec agent failed")
 
         return PhaseResult("quick_spec", False, [], errors, MAX_RETRIES)
@@ -135,6 +174,11 @@ Create:
                         f"Spec created but invalid: {result.errors}", "error"
                     )
             else:
+                detail = _auth_failure_detail(output)
+                if detail:
+                    msg = _auth_error_message(detail)
+                    self.ui.print_status(msg, "error")
+                    return PhaseResult("spec_writing", False, [], [msg], attempt)
                 errors.append(f"Attempt {attempt + 1}: Agent did not create spec.md")
 
         return PhaseResult("spec_writing", False, [], errors, MAX_RETRIES)
