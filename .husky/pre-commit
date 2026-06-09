@@ -128,8 +128,12 @@ if git diff --cached --name-only | grep -q "^apps/backend/.*\.py$"; then
   # Run pytest (skip slow/integration tests and Windows-incompatible tests for pre-commit speed)
   echo "Running Python tests..."
   cd apps/backend
-  # Tests to skip: graphiti (external deps), merge_file_tracker/service_orchestrator/worktree/workspace (Windows path/git issues)
-  IGNORE_TESTS="--ignore=../../tests/test_graphiti.py --ignore=../../tests/test_merge_file_tracker.py --ignore=../../tests/test_merge_orchestrator.py --ignore=../../tests/test_service_orchestrator.py --ignore=../../tests/test_worktree.py --ignore=../../tests/test_workspace.py --ignore=../../tests/obs/test_p42_otel_e2e.py"
+  # Tests to skip: graphiti (external deps), merge_file_tracker/service_orchestrator/worktree*/workspace
+  # (these shell out to real `git worktree`, which breaks inside the pre-commit
+  #  hook because git exports GIT_INDEX_FILE/GIT_DIR and holds .git/index.lock —
+  #  the subprocess git then fails with "index file open failed". They run in CI's
+  #  full suite.) test_p42_otel_e2e needs a live OTEL collector.
+  IGNORE_TESTS="--ignore=../../tests/test_graphiti.py --ignore=../../tests/test_merge_file_tracker.py --ignore=../../tests/test_merge_orchestrator.py --ignore=../../tests/test_service_orchestrator.py --ignore=../../tests/test_worktree.py --ignore=../../tests/test_worktree_merge_dirty.py --ignore=../../tests/test_worktree_commit_logging.py --ignore=../../tests/test_workspace.py --ignore=../../tests/obs/test_p42_otel_e2e.py"
   if [ -d ".venv" ]; then
     # Use venv if it exists
     if [ -f ".venv/bin/pytest" ]; then
