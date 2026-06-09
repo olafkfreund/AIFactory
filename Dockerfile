@@ -61,8 +61,17 @@ USER root
 #                   deps (libuv etc.) resolve correctly.
 #   ca-certificates — TLS roots
 #   bash          — entrypoint script (will be removed in P0.3)
+#   bubblewrap    — OS-level bash sandbox for agent commands. Without it the
+#                   Claude Agent SDK logs "Sandbox disabled: ... bubblewrap
+#                   (bwrap) not installed" and runs commands with NO filesystem
+#                   /network enforcement — unacceptable for enterprise use
+#                   (#363). The cluster node allows unprivileged user
+#                   namespaces (verified), so bwrap can create the sandbox.
+#   socat         — required alongside bwrap by the SDK sandbox for the
+#                   network-proxy path; its absence triggers the same warning.
 RUN apk add --no-cache \
         bash \
+        bubblewrap \
         ca-certificates \
         curl \
         git \
@@ -70,6 +79,7 @@ RUN apk add --no-cache \
         gnupg \
         nodejs \
         npm \
+        socat \
         wget
 
 # Security: the pinned base snapshot ships binutils 2.46-r1, which carries
