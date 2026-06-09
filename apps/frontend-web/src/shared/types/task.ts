@@ -179,6 +179,8 @@ export interface TaskDraft {
    * GitLab Duo Workflow delegation lands in V1.5 (#98).
    */
   enableDelegation?: boolean;
+  /** Hand the finished build to TFactory for testing on completion (#496/#503). */
+  auto_handover_tfactory?: boolean;
   selectedSkills?: SelectedSkill[];
   savedAt: Date;
 }
@@ -251,6 +253,8 @@ export interface TaskMetadata {
   // Delegation — hand the coding phase off to GitHub Copilot Coding
   // Agent (planner still runs locally). Only honoured on GitHub.
   enableDelegation?: boolean;
+  // Hand the finished build to TFactory for testing on completion (#496/#503).
+  auto_handover_tfactory?: boolean;
 
   // Copilot dispatch tracking — populated by the backend as the dispatch
   // progresses.  Used by the UI to link to the GitHub issue / PR.
