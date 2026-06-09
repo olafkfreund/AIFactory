@@ -141,6 +141,8 @@ export function TaskCreationWizard({
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [enableRemoteControl, setEnableRemoteControl] = useState(false);
   const [enableDelegation, setEnableDelegation] = useState(false);
+  // #496/#503 — hand the finished build to TFactory for testing on completion.
+  const [autoHandoverTfactory, setAutoHandoverTfactory] = useState(false);
 
   // Server feature flag: whether AIFACTORY_COPILOT_DISPATCH_ENABLED is set
   const [copilotDispatchEnabled, setCopilotDispatchEnabled] = useState(false);
@@ -687,6 +689,7 @@ export function TaskCreationWizard({
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
       if (enableRemoteControl) metadata.enableRemoteControl = true;
       if (enableDelegation) metadata.enableDelegation = true;
+      if (autoHandoverTfactory) metadata.auto_handover_tfactory = true;
       // Only include baseBranch if it's not the project default placeholder
       if (baseBranch && baseBranch !== PROJECT_DEFAULT_BRANCH) metadata.baseBranch = baseBranch;
       // Execution mode: 'quick' uses simplified prompts (~70% fewer tokens)
@@ -1232,6 +1235,30 @@ export function TaskCreationWizard({
                 </a>{' '}
                 or the Claude mobile app. The session appears as &quot;AIFactory: &lt;spec-id&gt;&quot; in your Claude session list. Requires a paid Anthropic subscription (Pro/Max/Team/Enterprise) and{' '}
                 <code className="text-xs bg-muted px-1 rounded">claude auth login</code> on the AIFactory host.
+              </p>
+            </div>
+          </div>
+
+          {/* TFactory Auto-Handover Toggle (#496/#503) — on successful
+              completion, hand the finished build to TFactory for test
+              generation/run. No-op unless TFACTORY_BASE_URL is configured. */}
+          <div className="flex items-start gap-3 p-4 rounded-lg border border-border bg-muted/30">
+            <Checkbox
+              id="auto-handover-tfactory"
+              checked={autoHandoverTfactory}
+              onCheckedChange={(checked) => setAutoHandoverTfactory(checked === true)}
+              disabled={isCreating}
+              className="mt-0.5"
+            />
+            <div className="flex-1 space-y-1">
+              <Label
+                htmlFor="auto-handover-tfactory"
+                className="text-sm font-medium text-foreground cursor-pointer"
+              >
+                Send to TFactory for testing when done
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                When the build completes successfully, AIFactory hands the finished spec and changes to TFactory to generate and run tests. Best-effort — it never blocks completion, and is a no-op if TFactory isn&apos;t configured.
               </p>
             </div>
           </div>

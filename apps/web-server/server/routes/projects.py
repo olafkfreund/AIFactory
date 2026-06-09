@@ -1150,7 +1150,7 @@ Created via Magestic AI Web UI
         # Copy model-related fields that phase_config.py expects
         # Also include 'mode' for Quick Mode prompt selection and 'requireReviewBeforeCoding' for approval gate
         # Also include selectedSkills so agent_service.py can inject skill context
-        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl", "enableDelegation"]
+        model_fields = ["model", "thinkingLevel", "isAutoProfile", "phaseModels", "phaseThinking", "mode", "requireReviewBeforeCoding", "selectedSkills", "enableRemoteControl", "enableDelegation", "auto_handover_tfactory"]
         for field in model_fields:
             if field in task_data.metadata:
                 task_metadata[field] = task_data.metadata[field]
