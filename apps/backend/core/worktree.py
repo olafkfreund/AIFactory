@@ -634,6 +634,24 @@ class WorktreeManager:
                 except OSError:
                     pass
 
+        # The smart-merge step (or an agent) can leave the base working tree
+        # dirty on TRACKED files — notably it rewrites .gitignore — which makes
+        # the checkout/merge below abort with "Your local changes to <file>
+        # would be overwritten by merge" → a bogus "Merge conflict" (#485). The
+        # worktree branch is the source of truth, so stash any uncommitted
+        # changes (incl. untracked) first; drop the stash after a successful
+        # merge (the merge brings the branch's version of those files), or
+        # restore it if the merge fails.
+        stashed = False
+        status = self._run_git(["status", "--porcelain"])
+        if status.returncode == 0 and status.stdout.strip():
+            stash = self._run_git(
+                ["stash", "push", "--include-untracked", "-m", f"aifactory pre-merge {spec_name}"]
+            )
+            stashed = stash.returncode == 0 and "No local changes" not in (stash.stdout or "")
+            if stashed:
+                logger.info(f"Stashed pre-merge working-tree changes for '{spec_name}'")
+
         # Switch to base branch in main project
         result = self._run_git(["checkout", self.base_branch])
         if result.returncode != 0:
@@ -645,6 +663,8 @@ class WorktreeManager:
                     "error": result.stderr,
                 },
             )
+            if stashed:
+                self._run_git(["stash", "pop"])
             return False
 
         # Merge the spec branch
@@ -668,7 +688,16 @@ class WorktreeManager:
                 },
             )
             self._run_git(["merge", "--abort"])
+            if stashed:
+                # Restore the caller's working-tree changes after the aborted merge.
+                self._run_git(["stash", "pop"])
             return False
+
+        # Merge succeeded: the worktree branch's content (incl. .gitignore) is
+        # now in the tree, so the stashed pre-merge edits are superseded — drop
+        # them rather than pop (a pop would re-conflict on the same files).
+        if stashed:
+            self._run_git(["stash", "drop"])
 
         if no_commit:
             # Unstage any files that are gitignored in the main branch

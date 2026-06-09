@@ -21,6 +21,17 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.5 - 2026-06-09
+
+### Fixed
+
+- Spec creation now surfaces a provider **authentication failure** (e.g. an expired Claude OAuth token → 401) with an actionable "re-provision the credential (`claude setup-token`)" error, instead of `MAX_RETRIES` silent retries that collapsed into a generic "Agent did not create spec.md" (#483).
+- `--merge` no longer aborts with a bogus "Merge conflict" when the build touched `.gitignore`: `merge_worktree` stashes uncommitted base-tree changes (the worktree's artifact `.gitignore`) before checkout+merge — dropped on success, restored on failure (#485).
+
+### Added
+
+- The main REST API now authenticates per-user **`acw_` API keys** (minted in Settings → API Keys), not just JWT + the legacy token — so a personal token works for direct programmatic access as well as the MCP proxy path (#479).
+
 ## 3.6.4 - 2026-06-09
 
 ### Fixed
