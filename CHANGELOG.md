@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.9 - 2026-06-09
+
+### Fixed
+
+- Agent bash no longer breaks under the OS sandbox on k3d/Kind. v3.6.8 installed `bubblewrap`, but the SDK's bwrap sandbox **cannot mount `/proc`** when the node is itself a container (k3d/Kind) — even with `CAP_SYS_ADMIN` / `procMount=Unmasked` — so every agent `Bash` command failed (`bwrap: Can't mount proc … Operation not permitted`). The bash sandbox is now gated behind **`AIFACTORY_BASH_SANDBOX`** (default `true`, preserving behaviour where bwrap works). Set it `false` on runtimes that can't host bwrap: bash works and the "WITHOUT sandboxing" warning is gone — isolation rests on the K8s pod boundary (non-root, zero-caps, workspace-restricted FS) + the command allowlist until a gVisor-capable runtime lands. Tracked as the real syscall-sandbox fix on #363.
+
 ## 3.6.8 - 2026-06-09
 
 ### Security
