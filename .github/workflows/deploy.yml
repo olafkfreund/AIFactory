@@ -51,7 +51,10 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          # Prefer GHCR_PAT (write:packages PAT) so pushes survive even if the
+          # aifactory package's repo linkage ever changes; fall back to the
+          # default token. Mirrors PFactory/TFactory (#511).
+          password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
 
       # amd64 only — the k3d cluster on p510 is amd64, and the frontend
       # `vite build` fails under QEMU-emulated arm64 (see release.yml).
