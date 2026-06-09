@@ -102,20 +102,24 @@ _DEFAULT_ANTIGRAVITY_PATH: str = "antigravity"
 _DEFAULT_MODEL: str = "gemini-3.5-flash"
 _DEFAULT_TIMEOUT: int = 300  # seconds
 
-# Bare provider selectors that mean "this provider", not a literal model —
+# Named provider selectors that mean "this provider", not a literal model —
 # passing them as `--model antigravity` → ModelNotFoundError. Map to default.
 _PROVIDER_SELECTORS: frozenset[str] = frozenset(
-    {"", "antigravity", "antigravity-default", "default"}
+    {"antigravity", "antigravity-default", "default"}
 )
 
 
 def _resolve_model(model: str | None) -> str:
-    """Map a bare provider selector / ``antigravity:<id>`` to a concrete model."""
-    if not model:
-        return _DEFAULT_MODEL
+    """Map a provider selector / ``antigravity:<id>`` to a concrete model (or "").
+
+    Empty/``None`` → ``""`` (omit ``--model``); named selectors → default.
+    """
+    if not model or not model.strip():
+        return ""
     m = model.strip()
     if m.startswith("antigravity:"):
         m = m[len("antigravity:"):].strip()
+        return m or _DEFAULT_MODEL
     return _DEFAULT_MODEL if m in _PROVIDER_SELECTORS else m
 
 

@@ -57,27 +57,29 @@ _DEFAULT_MODEL: str = "gemini-3.5-flash"
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 
-# Bare provider-selector strings that mean "use this provider", NOT a literal
+# Named provider-selector strings that mean "use this provider", NOT a literal
 # Gemini model. Passing them as `--model antigravity` yields
 # `ModelNotFoundError: models/antigravity` and the CLI exits 1 → the build fails
 # with no completed subtask. Map these to _DEFAULT_MODEL instead.
 _PROVIDER_SELECTORS: frozenset[str] = frozenset(
-    {"", "antigravity", "antigravity-default", "default"}
+    {"antigravity", "antigravity-default", "default"}
 )
 
 
 def _resolve_model(model: str | None) -> str:
-    """Resolve a task model string to a concrete Gemini model id.
+    """Resolve a task model string to a concrete Gemini model id (or "").
 
-    - Bare provider selectors (``antigravity``/``default``/empty) → ``_DEFAULT_MODEL``.
-    - ``antigravity:<id>`` → ``<id>`` (e.g. ``antigravity:gemini-3.5-flash``).
+    - Empty / ``None`` → ``""`` (omit ``--model``; the CLI uses its own default).
+    - Named provider selectors (``antigravity``/``default``) → ``_DEFAULT_MODEL``.
+    - ``antigravity:<id>`` → ``<id>``; bare ``antigravity:`` → ``_DEFAULT_MODEL``.
     - Concrete ids (``gemini-*``, ``antigravity-*``) pass through unchanged.
     """
-    if not model:
-        return _DEFAULT_MODEL
+    if not model or not model.strip():
+        return ""
     m = model.strip()
     if m.startswith("antigravity:"):
         m = m[len("antigravity:"):].strip()
+        return m or _DEFAULT_MODEL
     if m in _PROVIDER_SELECTORS:
         return _DEFAULT_MODEL
     return m

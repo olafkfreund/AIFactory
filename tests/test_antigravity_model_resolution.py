@@ -23,9 +23,16 @@ def test_default_model_is_newer():
     assert _DEFAULT_MODEL == "gemini-3.5-flash"
 
 
-def test_bare_selectors_map_to_default():
-    for sel in ("antigravity", "default", "antigravity-default", "", None):
+def test_named_selectors_map_to_default():
+    for sel in ("antigravity", "default", "antigravity-default"):
         assert _resolve_model(sel) == _DEFAULT_MODEL, sel
+
+
+def test_empty_omits_model():
+    # Empty/None → "" so the provider omits --model (CLI uses its own default).
+    assert _resolve_model("") == ""
+    assert _resolve_model(None) == ""
+    assert _resolve_model("   ") == ""
 
 
 def test_prefix_stripped():
