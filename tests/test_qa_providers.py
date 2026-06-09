@@ -801,7 +801,7 @@ class TestGeminiCLIProviderInit:
     def test_default_values(self):
         """Default model, path, and timeout are set (now Antigravity defaults)."""
         provider = GeminiCLIProvider()
-        assert provider._model == "gemini-3.1-pro-preview"
+        assert provider._model == "gemini-3.5-flash"
         # Canonical path is now "antigravity"; legacy _gemini_path alias mirrors it.
         assert provider._antigravity_path == "antigravity"
         assert provider._gemini_path == "antigravity"

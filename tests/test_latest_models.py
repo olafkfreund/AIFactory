@@ -23,9 +23,10 @@ def test_default_phase_models_use_latest_sonnet():
     assert {resolve_model_id(m) for m in DEFAULT_PHASE_MODELS.values()} == {"claude-sonnet-4-6"}
 
 
-def test_antigravity_agentic_default_is_latest_pro():
+def test_antigravity_agentic_default_is_latest():
     import providers.antigravity_agentic as g
-    assert g._DEFAULT_MODEL == "gemini-3.1-pro-preview"
+    # Newest model validated on the Antigravity/Gemini CLI (2026-06-09).
+    assert g._DEFAULT_MODEL == "gemini-3.5-flash"
 
 
 def test_gemini_agentic_shim_still_resolves():
