@@ -124,19 +124,26 @@ Format the response as:
 
 • Task: <task_id>
 • Title: <title>
-• Track at: http://localhost:3101/tasks/<task_id>
+• Track at: https://aifactory.freundcloud.org.uk/console/<project_id>/<task_id>
+• Board: https://aifactory.freundcloud.org.uk/
 
 AIFactory's planner runs first — when it hits the plan-review gate the
 portal will show the implementation plan for your approval. You can also
 poll status from here with mcp__aifactory__task_status.
 ```
 
+`<project_id>` is the project from step 2; `<task_id>` is what
+`task_create_and_run` returns (it doubles as the spec id, e.g.
+`001-hello-world-app-in-go`). The `/console/<project_id>/<task_id>`
+deep-link opens the task directly; the board link is the fallback if you
+only have one of the two ids.
+
 If the tool returns an error, surface it verbatim. The MCP HTTP client
 already emits operator-actionable single-line guidance:
 
-- Web-server not running → `"AIFactory web-server not reachable at <url> — start it with: python -m server.main"`
-- Token missing → `"AIFactory API token not found at ~/.aifactory/.token — regenerate via the web UI"`
-- Token rejected → `"AIFactory token at ~/.aifactory/.token rejected — regenerate via the web UI"`
+- Web-server not reachable → `"AIFactory not reachable at https://aifactory.freundcloud.org.uk — check the deployment / network"`
+- Token missing → `"AIFactory API token not found at ~/.aifactory/.token-deployed — set it from the deployment's APP_API_TOKEN"`
+- Token rejected → `"AIFactory token at ~/.aifactory/.token-deployed rejected — it must match the deployment's APP_API_TOKEN (factory-secrets)"`
 
 Don't transform or paraphrase these messages — the user knows what to do
 with them.
@@ -153,7 +160,7 @@ with them.
 ✗ The user is debugging — interactive iteration is faster than autonomous loops
 ✗ The task needs creative judgement on every step
 ✗ There's no clear definition of done — fix that first, then `/handover`
-✗ The web-server isn't running locally (suggest: `python -m server.main`)
+✗ The AIFactory deployment (https://aifactory.freundcloud.org.uk) is unreachable — check the deployment / network before retrying
 
 ## User's optional override
 
