@@ -21,6 +21,17 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.3 - 2026-06-09
+
+### Fixed
+
+- stdio-MCP / `/handover` `project_list` now returns the full project list. #488 stopped the 500 but, for the M2M acw/legacy principal, the org-scoped `list_projects` returned an empty list — so handover still found no project. The proxy now returns all registered projects (M2M service-principal behaviour) (#490).
+- Antigravity/Gemini tasks no longer fail with `ModelNotFoundError: models/antigravity`: the bare provider-selector `antigravity` was passed literally as `--model antigravity` (not a real Gemini model) → CLI exit 1 → build failed with no completed subtask. Bare selectors now resolve to a real model; an explicit empty model still omits `--model` (#491, #492).
+
+### Changed
+
+- Antigravity/Gemini default model bumped to **`gemini-3.5-flash`** (newest validated on the CLI; `gemini-3.5-pro` not yet available) (#492).
+
 ## 3.6.2 - 2026-06-09
 
 ### Fixed
