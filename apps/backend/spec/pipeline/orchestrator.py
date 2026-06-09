@@ -549,6 +549,21 @@ class SpecOrchestrator:
 {chr(10).join(f"- {c}" for c in req.get("constraints", []))}
 """
 
+    def _load_requirements_dict(self) -> dict | None:
+        """Load requirements.json as a dict for structural complexity signals.
+
+        Returns None when the file is missing or unparseable. Used to feed
+        acceptance-criteria / services counts into BMad detection (issue #504).
+        """
+        requirements_file = self.spec_dir / "requirements.json"
+        if not requirements_file.exists():
+            return None
+        try:
+            with open(requirements_file) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
     def _create_override_assessment(self) -> complexity.ComplexityAssessment:
         """Create a complexity assessment from manual override.
 
@@ -616,9 +631,12 @@ class SpecOrchestrator:
             LogPhase.PLANNING,
         )
 
-        # Run BMad detection
+        # Run BMad detection (pass requirements so multi-deliverable / multi-
+        # service features can raise the level — see issue #504)
         bmad_assessment = complexity.run_bmad_complexity_detection(
-            self.task_description, self.project_dir
+            self.task_description,
+            self.project_dir,
+            self._load_requirements_dict(),
         )
 
         if bmad_assessment and bmad_assessment.confidence >= self.BMAD_CONFIDENCE_THRESHOLD:
@@ -744,7 +762,7 @@ class SpecOrchestrator:
 
         # Try to run BMad detection
         bmad_assessment = complexity.run_bmad_complexity_detection(
-            self.task_description, self.project_dir
+            self.task_description, self.project_dir, self._load_requirements_dict()
         )
 
         # If BMad detection succeeded, enhance existing assessment with track info

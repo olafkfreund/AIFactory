@@ -571,7 +571,8 @@ def map_bmad_level_to_complexity(bmad_level: int) -> Complexity:
 
 def run_bmad_complexity_detection(
     task_description: str,
-    project_dir: Path | None = None
+    project_dir: Path | None = None,
+    requirements: dict | None = None,
 ) -> ComplexityAssessment | None:
     """Run BMad complexity detection and return ComplexityAssessment.
 
@@ -581,6 +582,9 @@ def run_bmad_complexity_detection(
     Args:
         task_description: Task description string
         project_dir: Optional project directory for context
+        requirements: Optional parsed requirements.json — used as an extra
+            structural signal (acceptance criteria / services count) that can
+            only raise the detected level (see issue #504).
 
     Returns:
         ComplexityAssessment with BMad track info, or None if BMad not available
@@ -591,7 +595,7 @@ def run_bmad_complexity_detection(
     from integrations.bmad.complexity_detector import ComplexityDetector
 
     detector = ComplexityDetector()
-    bmad_result = detector.detect(task_description, project_dir)
+    bmad_result = detector.detect(task_description, project_dir, requirements)
 
     # Map BMad level to existing Complexity enum
     complexity = map_bmad_level_to_complexity(bmad_result.level)
