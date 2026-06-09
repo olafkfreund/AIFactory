@@ -124,12 +124,19 @@ Format the response as:
 
 • Task: <task_id>
 • Title: <title>
-• Track at: https://aifactory.freundcloud.org.uk/tasks/<task_id>
+• Track at: https://aifactory.freundcloud.org.uk/console/<project_id>/<task_id>
+• Board: https://aifactory.freundcloud.org.uk/
 
 AIFactory's planner runs first — when it hits the plan-review gate the
 portal will show the implementation plan for your approval. You can also
 poll status from here with mcp__aifactory__task_status.
 ```
+
+`<project_id>` is the project from step 2; `<task_id>` is what
+`task_create_and_run` returns (it doubles as the spec id, e.g.
+`001-hello-world-app-in-go`). The `/console/<project_id>/<task_id>`
+deep-link opens the task directly; the board link is the fallback if you
+only have one of the two ids.
 
 If the tool returns an error, surface it verbatim. The MCP HTTP client
 already emits operator-actionable single-line guidance:
