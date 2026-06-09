@@ -30,6 +30,8 @@ __all__ = [
     "build_handoff_payload",
     "send_handoff",
     "load_tfactory_block",
+    "wants_auto_handoff",
+    "maybe_auto_handoff_tfactory",
 ]
 
 # (url, json_payload, headers) -> {"status": int, "ok": bool, "body": str}
@@ -160,3 +162,55 @@ async def send_handoff(
         "status": result.get("status"),
         "url": url,
     }
+
+
+def wants_auto_handoff(spec_dir: Path) -> bool:
+    """True if the task opted into auto-handover to TFactory on completion.
+
+    Read from ``task_metadata.json`` (``auto_handover_tfactory``). Best-effort:
+    a missing/unreadable file means "no".
+    """
+    try:
+        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(
+        isinstance(meta, dict)
+        and (meta.get("auto_handover_tfactory") or meta.get("autoHandoverTFactory"))
+    )
+
+
+async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
+    """On a task's terminal SUCCESS, hand the finished build to TFactory for
+    testing — but only when the task opted in (``auto_handover_tfactory`` in
+    task_metadata) AND TFactory is configured (``TFACTORY_BASE_URL``). The
+    handoff carries the spec's requirements + PFactory/Task-Contract meta + the
+    mutation ledger as evidence. Best-effort: never raises, never blocks task
+    completion (#496).
+    """
+    spec_dir = Path(spec_dir)
+    if not wants_auto_handoff(spec_dir):
+        return {"sent": False, "reason": "not_requested"}
+    try:
+        from .metadata import load_pfactory_metadata
+        from .taxonomy import classify_requirements
+
+        req_file = spec_dir / "requirements.json"
+        requirements = json.loads(req_file.read_text()) if req_file.exists() else {}
+        payload = build_handoff_payload(
+            spec_id,
+            requirements,
+            classify_requirements(requirements),
+            load_pfactory_metadata(spec_dir),
+            load_tfactory_block(spec_dir),
+            spec_dir,
+        )
+        result = await send_handoff(payload)
+    except Exception as exc:  # noqa: BLE001 — must never break task completion
+        return {"sent": False, "reason": "error", "error": str(exc)[:300]}
+    # Record a local marker so the UI / operator can see the handoff outcome.
+    try:
+        (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
+    except OSError:
+        pass
+    return result
