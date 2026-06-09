@@ -153,7 +153,12 @@ async def proxy_get_task_logs(
     _=Depends(require_acw_scope(MCP_READ_SCOPE)),
 ):
     from ..routes.tasks import get_task_logs
-    return await get_task_logs(task_id, tail=tail)
+    # get_task_logs returns the full phase-based log set and has no `tail`
+    # parameter — forwarding tail= raised TypeError → HTTP 500. `tail` is kept
+    # in the proxy signature for client compatibility but intentionally not
+    # forwarded.
+    _ = tail
+    return await get_task_logs(task_id)
 
 
 @router.get("/tasks/{task_id}/worktree/diff")
