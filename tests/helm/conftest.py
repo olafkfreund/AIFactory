@@ -11,6 +11,7 @@ suite for the rest of the codebase.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,6 +20,39 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHART_DIR = REPO_ROOT / "charts" / "aifactory"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip ``gvisor_live`` tests unless they were explicitly selected.
+
+    These are live-cluster gVisor smoke tests (issue #170). They assert the
+    ``gvisor`` RuntimeClass and runsc shim are present — which is only true on
+    the Kind cluster bootstrapped by ``gvisor-smoke.yml`` (run via
+    ``-m gvisor_live``). Their fixtures skip when *no* cluster is reachable,
+    but on a reachable non-gVisor cluster (e.g. the k3d dev/deploy cluster)
+    the RuntimeClass assertion would *fail* — which previously broke the
+    husky pre-commit pytest gate and forced ``git commit --no-verify``.
+
+    The marker's documented contract is "skipped by default; run via
+    gvisor-smoke.yml CI or ``-m gvisor_live``". This hook enforces that
+    contract for every invocation path: skip unless the ``-m`` expression
+    names ``gvisor_live`` (how CI selects them) or ``GVISOR_LIVE=1`` is set.
+    """
+    markexpr = config.getoption("markexpr", default="") or ""
+    explicitly_requested = (
+        "gvisor_live" in markexpr
+        or os.environ.get("GVISOR_LIVE", "").lower() in ("1", "true", "yes")
+    )
+    if explicitly_requested:
+        return
+
+    skip_marker = pytest.mark.skip(
+        reason="gvisor_live: skipped by default — run via gvisor-smoke.yml CI "
+        "or '-m gvisor_live' (requires a Kind cluster with the runsc shim)"
+    )
+    for item in items:
+        if "gvisor_live" in item.keywords:
+            item.add_marker(skip_marker)
 
 
 def _binary_available(name: str) -> bool:
