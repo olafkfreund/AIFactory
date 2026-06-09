@@ -153,7 +153,12 @@ async def proxy_get_task_logs(
     _=Depends(require_acw_scope(MCP_READ_SCOPE)),
 ):
     from ..routes.tasks import get_task_logs
-    return await get_task_logs(task_id, tail=tail)
+    # get_task_logs returns the full phase-based log set and has no `tail`
+    # parameter — forwarding tail= raised TypeError → HTTP 500. `tail` is kept
+    # in the proxy signature for client compatibility but intentionally not
+    # forwarded.
+    _ = tail
+    return await get_task_logs(task_id)
 
 
 @router.get("/tasks/{task_id}/worktree/diff")
@@ -194,10 +199,14 @@ async def proxy_create_and_run_task(
     description: str = Query(...),
     key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
 ):
-    from ..routes.execution import StartTaskRequest, create_and_run_task
+    # create_and_run_task expects CreateAndRunRequest (a StartTaskRequest
+    # subclass that adds `provenance`, #332) and reads request.provenance.
+    # Passing a bare StartTaskRequest → AttributeError: no attribute
+    # 'provenance' → HTTP 500 (broke the /handover write-path).
+    from ..routes.execution import CreateAndRunRequest, create_and_run_task
     body = await _read_json_body(request)
     result = await create_and_run_task(
-        project_id, title, description, StartTaskRequest(**body)
+        project_id, title, description, CreateAndRunRequest(**body)
     )
     task_id = result.get("task_id") if isinstance(result, dict) else None
     await _audit_mcp_write(
