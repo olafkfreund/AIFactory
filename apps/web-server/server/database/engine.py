@@ -250,19 +250,32 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                 user.is_active = True
                 user.role = "admin"
 
-            # 2. Deployment "default" organization.
+            # 2. Deployment "default" organization. Idempotent on BOTH the id
+            # AND the UNIQUE slug: if a "default"-slug org already exists under
+            # a different id (legacy DB, an older seed, or the first-login
+            # flow), a blind insert keyed only on id raises
+            # "UNIQUE constraint failed: organizations.slug" on every startup.
             org = await session.get(Organization, DEFAULT_ORG_ID)
             if org is None:
-                session.add(
-                    Organization(
-                        id=DEFAULT_ORG_ID,
-                        name="Default",
-                        slug="default",
-                        owner_id=DEFAULT_USER_ID,
-                        plan="free",
+                org = (
+                    await session.execute(
+                        select(Organization).where(Organization.slug == "default")
                     )
+                ).scalars().first()
+            if org is None:
+                org = Organization(
+                    id=DEFAULT_ORG_ID,
+                    name="Default",
+                    slug="default",
+                    owner_id=DEFAULT_USER_ID,
+                    plan="free",
                 )
+                session.add(org)
                 await session.flush()
+            # Use the resolved org's actual id for the membership backfill — it
+            # may differ from DEFAULT_ORG_ID in a legacy DB where the default
+            # org was created under another id.
+            default_org_id = org.id
 
             # 3. Make every existing user a member of the default org so legacy
             #    projects (backfilled below) stay accessible to current users.
@@ -270,7 +283,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                 (
                     await session.execute(
                         select(OrgMember.user_id).where(
-                            OrgMember.org_id == DEFAULT_ORG_ID
+                            OrgMember.org_id == default_org_id
                         )
                     )
                 ).scalars().all()
@@ -280,7 +293,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                 if uid not in existing_members:
                     session.add(
                         OrgMember(
-                            org_id=DEFAULT_ORG_ID,
+                            org_id=default_org_id,
                             user_id=uid,
                             role="owner" if uid == DEFAULT_USER_ID else "member",
                         )
