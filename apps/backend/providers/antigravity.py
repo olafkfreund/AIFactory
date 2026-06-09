@@ -98,8 +98,29 @@ def _emit_sunset_warning() -> None:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_ANTIGRAVITY_PATH: str = "antigravity"
-_DEFAULT_MODEL: str = "gemini-3.1-pro-preview"
+# Newest model validated on the Antigravity/Gemini CLI (2026-06-09).
+_DEFAULT_MODEL: str = "gemini-3.5-flash"
 _DEFAULT_TIMEOUT: int = 300  # seconds
+
+# Named provider selectors that mean "this provider", not a literal model —
+# passing them as `--model antigravity` → ModelNotFoundError. Map to default.
+_PROVIDER_SELECTORS: frozenset[str] = frozenset(
+    {"antigravity", "antigravity-default", "default"}
+)
+
+
+def _resolve_model(model: str | None) -> str:
+    """Map a provider selector / ``antigravity:<id>`` to a concrete model (or "").
+
+    Empty/``None`` → ``""`` (omit ``--model``); named selectors → default.
+    """
+    if not model or not model.strip():
+        return ""
+    m = model.strip()
+    if m.startswith("antigravity:"):
+        m = m[len("antigravity:"):].strip()
+        return m or _DEFAULT_MODEL
+    return _DEFAULT_MODEL if m in _PROVIDER_SELECTORS else m
 
 
 def get_antigravity_binary(custom_path: str | None = None) -> str:
@@ -169,7 +190,9 @@ class AntigravityCLIProvider(BaseLLMProvider):
         gemini_path: str | None = None,  # back-compat alias for antigravity_path
     ) -> None:
         _emit_sunset_warning()  # Issue #22 — flag the 2026-06-18 sunset.
-        self._model = model
+        # Never pass `--model antigravity` (ModelNotFoundError); map bare
+        # selectors to the default model.
+        self._model = _resolve_model(model)
         # Honour the legacy ``gemini_path`` kwarg if a caller still passes it.
         if gemini_path is not None and antigravity_path == _DEFAULT_ANTIGRAVITY_PATH:
             antigravity_path = gemini_path
