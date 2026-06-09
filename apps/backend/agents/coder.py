@@ -300,6 +300,20 @@ async def run_autonomous_agent(
     while True:
         iteration += 1
 
+        # #474: the anti-loop guardrail halted this run (no progress). Stop the
+        # build loop early so the terminal completion carries the typed reason
+        # instead of burning the iteration budget. No-op unless the guardrail is
+        # enabled and tripped — the halt file only exists then.
+        try:
+            from agents.act_loop_hooks import read_halt_reason
+
+            _guardrail_halt = read_halt_reason(spec_dir)
+        except Exception:  # noqa: BLE001
+            _guardrail_halt = None
+        if _guardrail_halt:
+            print(f"\n[guardrail #474] halting build loop early: {_guardrail_halt}")
+            break
+
         # Check for human intervention (PAUSE file)
         pause_file = spec_dir / HUMAN_INTERVENTION_FILE
         if pause_file.exists():

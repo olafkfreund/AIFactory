@@ -919,6 +919,21 @@ def create_client(
         project_dir=str(project_dir.resolve()),
     )
 
+    # Act-loop hardening (#474/#475/#476). Bind this worktree to a per-run
+    # guardrail controller + mutation ledger; the bridge hooks below are all
+    # flag-gated and no-op unless their AIFACTORY_* flag is set, so the launch
+    # path is unchanged by default. Lazy import to avoid any import cycle.
+    from agents.act_loop_hooks import (
+        guardrail_posttool_hook,
+        guardrail_pretool_hook,
+        mutation_posttool_hook,
+        mutation_pretool_hook,
+        precompact_summary_hook,
+        register_session,
+    )
+
+    register_session(project_dir, spec_dir)
+
     # Build options dict, conditionally including output_format
     options_kwargs: dict[str, Any] = {
         "model": model,
@@ -932,6 +947,18 @@ def create_client(
                 # URLs to cloud metadata / loopback / private / non-http(s).
                 HookMatcher(matcher="WebFetch", hooks=[web_fetch_security_hook]),
                 HookMatcher(matcher="WebSearch", hooks=[web_fetch_security_hook]),
+                # #474 anti-loop guardrail + #476 pre-mutation checkpoint — run on
+                # every tool (matcher=None); each no-ops unless its flag is on.
+                HookMatcher(hooks=[guardrail_pretool_hook, mutation_pretool_hook]),
+            ],
+            "PostToolUse": [
+                # #474 record tool outcomes + #476 record mutations.
+                HookMatcher(hooks=[guardrail_posttool_hook, mutation_posttool_hook]),
+            ],
+            "PreCompact": [
+                # #475 refresh the structured active-task summary at the
+                # (authoritative) compaction boundary for post-compact re-anchor.
+                HookMatcher(hooks=[precompact_summary_hook]),
             ],
         },
         "max_turns": 1000,

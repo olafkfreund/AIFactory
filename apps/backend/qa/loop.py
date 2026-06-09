@@ -273,6 +273,19 @@ async def run_qa_validation_loop(
         qa_iteration += 1
         iteration_start = time_module.time()
 
+        # #474: the anti-loop guardrail halted this run (no progress). Escalate
+        # instead of spinning the QA fix/review cycle. No-op unless the guardrail
+        # is enabled and tripped.
+        try:
+            from agents.act_loop_hooks import read_halt_reason
+
+            _guardrail_halt = read_halt_reason(spec_dir)
+        except Exception:  # noqa: BLE001
+            _guardrail_halt = None
+        if _guardrail_halt:
+            print(f"[guardrail #474] QA loop halted (no progress): {_guardrail_halt}")
+            return False
+
         debug_section("qa_loop", f"QA Iteration {qa_iteration}")
         debug(
             "qa_loop",

@@ -304,7 +304,8 @@ async def start_task(
                 # plans from declared lanes/frameworks/endpoints, not inference.
                 _tf = load_tfactory_block(spec_dir)
                 _payload = build_handoff_payload(
-                    spec_id, _req, _classification, _meta, tfactory=_tf
+                    spec_id, _req, _classification, _meta, tfactory=_tf,
+                    spec_dir=spec_dir,  # #476: carry the mutation ledger as evidence
                 )
                 transport = await send_handoff(_payload)
 
