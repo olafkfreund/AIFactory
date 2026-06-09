@@ -21,6 +21,15 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.0 - 2026-06-08
+
+### Added
+
+- **Act-loop reliability hardening** (Hermes-inspired, all flag-gated default-off):
+  - Anti-loop / no-progress guardrail — a tool-call-signature controller (repeated-exact-failure → block, same-tool-failure → halt, idempotent-no-progress → block) wired via PreToolUse/PostToolUse hooks; the coder and QA loops break/escalate early on halt and the typed reason rides into the RFC-0001 completion event (`halt_reason`). `AIFACTORY_ACT_GUARDRAIL` (#474).
+  - Budgeted context summary at the SDK `PreCompact` boundary — a deterministic structured 9-section "active task" summary persisted for post-compaction re-anchor, with token budgeting, an anti-thrash guard, and a deterministic fallback. `AIFACTORY_CONTEXT_SUMMARY` (#475).
+  - Checkpoint-before-mutation + per-turn mutation ledger — a cheap git checkpoint before each Write/Edit/Bash, a `.aifactory/mutations.jsonl` ledger, turn-end claimed-vs-actual verification, rollback, and the ledger carried into the TFactory handoff as evidence. `AIFACTORY_MUTATION_LEDGER` (#476).
+
 ## 3.5.1 - 2026-06-08
 
 ### Added
