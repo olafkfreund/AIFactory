@@ -1,11 +1,13 @@
-"""Regression: the stdio-MCP `/projects` proxy must forward request + db.
+"""Regression: the stdio-MCP `/projects` proxy must return ALL projects.
 
-`routes.projects.list_projects` requires `(request, db)` since #319 (org-scoped
-visibility). The proxy `proxy_list_projects` used to call it with no args →
-`TypeError: list_projects() missing 1 required positional argument: 'request'`
-→ HTTP 500, which broke the stdio-MCP / `/handover` project-lookup step
-(reproduced live against the deployed instance). The fix injects and forwards
-both.
+History:
+- It called `list_projects()` with no args → `TypeError: missing 'request'`
+  → HTTP 500 (broke `/handover`'s project lookup). [#488]
+- The first fix forwarded `request`+`db` to the org-scoped `list_projects`,
+  which fixed the 500 but returned an **empty** list for the acw/legacy
+  principal (no accessible orgs) — handover still couldn't find the project.
+- Correct fix: the M2M proxy returns the unfiltered project list directly
+  (`load_projects()`), matching the original pre-#319 behaviour.
 """
 
 import asyncio
@@ -18,23 +20,21 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 from server.mcp_stdio.router import proxy_list_projects  # noqa: E402
 
 
-def test_proxy_list_projects_forwards_request_and_db(monkeypatch):
-    captured = {}
-
-    async def fake_list_projects(request, db=None):
-        captured["request"] = request
-        captured["db"] = db
-        return [{"id": "p1", "name": "proj"}]
-
+def test_proxy_list_projects_returns_all_unfiltered(monkeypatch):
     import server.routes.projects as projects_mod
 
-    monkeypatch.setattr(projects_mod, "list_projects", fake_list_projects)
+    fake = {
+        "p1": {"name": "alpha", "path": "/a", "org_id": "org-1"},
+        "p2": {"name": "beta", "path": "/b", "org_id": "org-2"},
+    }
+    monkeypatch.setattr(projects_mod, "load_projects", lambda: fake)
+    monkeypatch.setattr(
+        projects_mod, "project_to_response",
+        lambda pid, pdata: {"id": pid, "name": pdata["name"]},
+    )
 
-    sentinel_request = object()
-    sentinel_db = object()
-    # Call directly (bypassing FastAPI DI); `_` is the scope dependency.
-    result = asyncio.run(proxy_list_projects(sentinel_request, sentinel_db, None))
+    # `_` is the scope dependency; call directly bypassing FastAPI DI.
+    result = asyncio.run(proxy_list_projects(None))
 
-    assert result == [{"id": "p1", "name": "proj"}]
-    assert captured["request"] is sentinel_request, "request not forwarded"
-    assert captured["db"] is sentinel_db, "db not forwarded"
+    ids = sorted(p["id"] for p in result)
+    assert ids == ["p1", "p2"], f"expected all projects unfiltered, got {result}"
