@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.8 - 2026-06-09
+
+### Security
+
+- Agent command sandbox now actually engages. The Chainguard runtime image omitted `bubblewrap` (`bwrap`) and `socat`, so the Claude Agent SDK logged *"Sandbox disabled: … bubblewrap (bwrap) not installed"* and ran agent bash commands with **no** filesystem/network enforcement — unacceptable for enterprise deployments. Both are now installed in the runtime `apk` layer. Verified on the cluster: the node allows unprivileged user namespaces, so `bwrap` creates a real sandbox (not just silencing the warning) (#363).
+
 ## 3.6.7 - 2026-06-09
 
 ### Added
