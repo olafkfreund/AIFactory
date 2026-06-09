@@ -21,6 +21,20 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.7 - 2026-06-09
+
+### Added
+
+- **"Send to TFactory for testing when done"** toggle in the New Task wizard — the UI last-mile for #496. Ticking it sets `auto_handover_tfactory`, which bridges through `projects.py` → `task_metadata.json` so the backend hands the finished build to TFactory on success. Best-effort; no-op unless `TFACTORY_BASE_URL` is set (#503).
+
+### Fixed
+
+- Complexity assessor no longer under-classifies multi-file features. A multi-endpoint / multi-layer feature (models + routes + wiring + tests) was collapsing to BMad Level 1 / Quick Flow — so the BMad story-planner never engaged — because a low-level keyword like "add" matched first. An *additive* structural floor now raises the level (never lowers it) on strong breadth: ≥2 HTTP endpoints, ≥4 architectural layers (or ≥3 with an endpoint), or ≥5 requirement deliverables / ≥2 services → Standard; ≥3 services / very broad surface → Complex. Requirements (acceptance criteria, services) are threaded into BMad detection, and a calibration test set guards against trivial-task regressions (#504).
+
+### Changed
+
+- Pre-commit pytest gate no longer requires `--no-verify`: `gvisor_live` live-cluster smoke tests are skipped unless explicitly selected (`-m gvisor_live` / `GVISOR_LIVE=1`), the suite defaults `APP_DISABLE_AUTH=true` to match CI (route tests no longer 401), and the worktree tests that shell out to `git worktree` are excluded from the fast gate (they run in full CI) (#508).
+
 ## 3.6.6 - 2026-06-09
 
 ### Added

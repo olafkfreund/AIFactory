@@ -7,6 +7,7 @@ Provides common test fixtures for the Auto-Build Framework test suite.
 """
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,22 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# =============================================================================
+# AMBIENT AUTH DISABLE - Match CI so route tests don't 401 locally
+# =============================================================================
+# CI runs the whole suite with APP_DISABLE_AUTH=true (see the comments in
+# test_project_authz_db.py and rmux/test_console_authz.py). Web-server route
+# tests that drive endpoints through TestClient assume that ambient setting;
+# without it they fail with 401 "Authentication required" — which broke the
+# husky pre-commit pytest gate and forced `git commit --no-verify`.
+#
+# Set it here (before any `server.config` Settings singleton is instantiated)
+# so every local invocation matches CI. `setdefault` never clobbers an
+# explicit value, and the dedicated auth tests pin auth back ON via the
+# settings object (e.g. test_pr_endpoints.py, test_auth_acw_main_api.py),
+# so this is safe for them.
+os.environ.setdefault("APP_DISABLE_AUTH", "true")
 
 # =============================================================================
 # PRE-MOCK EXTERNAL SDK MODULES - Must happen BEFORE adding aifactory to path
