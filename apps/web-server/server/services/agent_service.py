@@ -2493,6 +2493,28 @@ class AgentService:
                 except Exception:
                     logger.debug("completion emit failed (best-effort)", exc_info=True)
 
+            # Auto-handover the finished build to TFactory for testing when the
+            # task opted in (task_metadata `auto_handover_tfactory`, #496) and
+            # TFactory is configured. COMPLETED only — never hand a failed build
+            # to testing. Best-effort: never blocks/breaks task completion.
+            if emit_events and phase_enum == TaskPhase.COMPLETED:
+                try:
+                    if str(self.backend_path) not in sys.path:
+                        sys.path.insert(0, str(self.backend_path))
+                    from pfactory.tfactory_client import maybe_auto_handoff_tfactory
+
+                    handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                    if handoff.get("sent"):
+                        logger.info(
+                            f"[AgentService] Auto-handed off {spec_id} to TFactory for testing"
+                        )
+                    elif handoff.get("reason") not in (None, "not_requested", "not_configured"):
+                        logger.warning(
+                            f"[AgentService] TFactory auto-handoff for {spec_id} did not send: {handoff}"
+                        )
+                except Exception:
+                    logger.debug("tfactory auto-handoff failed (best-effort)", exc_info=True)
+
             # Extract subtasks for WebSocket broadcast
             subtasks_data = []
             phases = plan.get("phases", [])

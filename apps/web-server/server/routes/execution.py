@@ -48,6 +48,10 @@ class StartTaskRequest(BaseModel):
     parallel: bool | None = Field(None, description="Enable parallel execution")
     workers: int | None = Field(None, description="Number of parallel workers")
     model: str | None = Field(None, description="Model override for execution")
+    auto_handover_tfactory: bool = Field(
+        False,
+        description="Hand the finished build to TFactory for testing on completion (#496)",
+    )
     baseBranch: str | None = Field(
         None, description="Base branch for worktree creation"
     )
@@ -553,6 +557,9 @@ async def start_task(
         task_metadata["parallel"] = request.parallel
     if request.workers is not None:
         task_metadata["workers"] = request.workers
+    # Opt-in: auto-handover the finished build to TFactory for testing (#496).
+    if getattr(request, "auto_handover_tfactory", False):
+        task_metadata["auto_handover_tfactory"] = True
 
     # Write updated task_metadata.json if we have any settings
     if task_metadata:
@@ -984,6 +991,9 @@ async def create_and_run_task(
         task_metadata["parallel"] = request.parallel
     if request.workers is not None:
         task_metadata["workers"] = request.workers
+    # Opt-in: auto-handover the finished build to TFactory for testing (#496).
+    if getattr(request, "auto_handover_tfactory", False):
+        task_metadata["auto_handover_tfactory"] = True
     if request.mode and request.mode != "full":  # "full" is the default — don't persist
         task_metadata["mode"] = request.mode
     if request.model:

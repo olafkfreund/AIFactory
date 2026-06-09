@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.6 - 2026-06-09
+
+### Added
+
+- Opt-in **auto-handover to TFactory** for testing: a task created with `auto_handover_tfactory` hands its finished build (spec + requirements + PFactory/Task-Contract meta + mutation-ledger evidence) to TFactory's `/api/handoff` on successful completion. Best-effort, never blocks completion; no-op unless opted in and `TFACTORY_BASE_URL` is set. `StartTaskRequest.auto_handover_tfactory` flag + completion hook (#496, #501).
+
 ## 3.6.5 - 2026-06-09
 
 ### Fixed
