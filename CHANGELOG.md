@@ -21,6 +21,16 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.1 - 2026-06-09
+
+### Fixed
+
+- SPA history-fallback so portal deep-links resolve instead of 404. The static mount served `index.html` only for `/`; any client-side route (e.g. `/console/<project_id>/<spec_id>`) returned `{"detail":"Not Found"}` on a deep-link or hard refresh because `StaticFiles` has no file at that path. `SPAStaticFiles.get_response` now catches the 404 and serves `index.html` for genuine SPA navigations (a GET whose final path segment has no file extension); real missing assets (`/assets/*.js`) keep their 404 and API routes are unaffected. This is the backend complement to the #314 cold-load routing fix (#480).
+
+### Changed
+
+- AIFactory MCP server + `/handover` skill now point at the deployment (`https://aifactory.freundcloud.org.uk`) instead of `localhost:3101`; token sourced from `~/.aifactory/.token-deployed`. The handover skill's track URL was corrected from the non-existent `/tasks/<id>` route to the real `/console/<project_id>/<task_id>`, with the board URL as a fallback (#480).
+
 ## 3.6.0 - 2026-06-08
 
 ### Added

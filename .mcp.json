@@ -8,8 +8,8 @@
       ],
       "env": {
         "AIFACTORY_PROJECT_DIR": "${CLAUDE_PROJECT_DIR:-.}",
-        "AIFACTORY_API_URL": "http://localhost:3101",
-        "AIFACTORY_API_TOKEN_FILE": "~/.aifactory/.token"
+        "AIFACTORY_API_URL": "https://aifactory.freundcloud.org.uk",
+        "AIFACTORY_API_TOKEN_FILE": "~/.aifactory/.token-deployed"
       }
     }
   }
