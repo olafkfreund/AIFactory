@@ -139,7 +139,12 @@ class ComplexityDetector:
             },
         }
 
-    def detect(self, task_description: str, project_dir: Path | None = None) -> ComplexityResult:
+    def detect(
+        self,
+        task_description: str,
+        project_dir: Path | None = None,
+        requirements: dict | None = None,
+    ) -> ComplexityResult:
         """
         Detect complexity level from task description.
 
@@ -148,10 +153,15 @@ class ComplexityDetector:
         2. Story count estimation using pattern matching
         3. Map to complexity level and track
         4. Boost confidence when both methods agree
+        5. Apply a structural floor: multi-endpoint / multi-layer features
+           (and multi-deliverable requirements) can only RAISE the level.
 
         Args:
             task_description: User's task description
             project_dir: Optional project directory for context
+            requirements: Optional parsed requirements.json (acceptance
+                criteria, user requirements, services) used as an extra
+                structural signal. Only ever raises the detected level.
 
         Returns:
             ComplexityResult with level, track, phases, and reasoning
@@ -163,33 +173,136 @@ class ComplexityDetector:
         estimated_stories = self._estimate_story_count(task_description)
         story_level = self._map_stories_to_level(estimated_stories)
 
-        # Step 3: Determine final level and confidence
+        # Step 3: Determine base level and confidence
         if keyword_level is not None:
-            # Keyword match found
             if keyword_level == story_level:
                 # Both methods agree - high confidence (0.95)
-                return self._build_result(
-                    level=keyword_level,
-                    estimated_stories=estimated_stories,
-                    reasoning=f"Keyword and story analysis agree on Level {keyword_level}",
-                    confidence=0.95
-                )
+                base_level = keyword_level
+                base_stories = estimated_stories
+                base_reasoning = f"Keyword and story analysis agree on Level {keyword_level}"
+                base_confidence = 0.95
             else:
                 # Keyword takes priority but lower confidence due to disagreement
-                return self._build_result(
-                    level=keyword_level,
-                    estimated_stories=self._estimate_stories_from_level(keyword_level),
-                    reasoning=f"Detected by keywords matching Level {keyword_level} (story analysis suggested Level {story_level})",
-                    confidence=0.80
+                base_level = keyword_level
+                base_stories = self._estimate_stories_from_level(keyword_level)
+                base_reasoning = (
+                    f"Detected by keywords matching Level {keyword_level} "
+                    f"(story analysis suggested Level {story_level})"
                 )
+                base_confidence = 0.80
+        else:
+            # No keyword match - use story estimation with moderate confidence
+            base_level = story_level
+            base_stories = estimated_stories
+            base_reasoning = f"Estimated {estimated_stories} stories from task analysis"
+            base_confidence = 0.70
 
-        # No keyword match - use story estimation with moderate confidence
+        # Step 4: Apply structural floor (additive — only raises the level).
+        # Catches multi-endpoint / multi-layer features whose prose matched a
+        # low-level keyword like "add" (see issue #504, task 009).
+        floor, floor_reason = self._structural_floor(task_description, requirements)
+        if floor > base_level:
+            return self._build_result(
+                level=floor,
+                estimated_stories=max(base_stories, self._estimate_stories_from_level(floor)),
+                reasoning=(
+                    f"Raised to Level {floor} by structural breadth ({floor_reason}); "
+                    f"base analysis suggested Level {base_level}"
+                ),
+                # Structural breadth is strong, deterministic evidence — keep
+                # confidence high enough to be trusted over an AI fallback.
+                confidence=max(base_confidence, 0.85),
+            )
+
         return self._build_result(
-            level=story_level,
-            estimated_stories=estimated_stories,
-            reasoning=f"Estimated {estimated_stories} stories from task analysis",
-            confidence=0.70
+            level=base_level,
+            estimated_stories=base_stories,
+            reasoning=base_reasoning,
+            confidence=base_confidence,
         )
+
+    def _structural_floor(
+        self, task_description: str, requirements: dict | None = None
+    ) -> tuple[int, str]:
+        """Minimum complexity level implied by structural breadth.
+
+        A feature that exposes multiple HTTP endpoints or spans several
+        architectural layers (models + routes + wiring + tests) implies more
+        than a single atomic change, even when the prose matched a low-level
+        keyword such as "add". Likewise, requirements that enumerate many
+        distinct deliverables / services imply a broader surface.
+
+        This is deliberately conservative (it only fires on strong,
+        unambiguous breadth) and additive — the caller takes ``max`` with the
+        base level, so it can never lower a classification.
+
+        Returns:
+            (floor_level, human_readable_reason). floor_level is 0 when no
+            strong structural signal is present.
+        """
+        text = task_description.lower()
+
+        # Distinct HTTP endpoints exposed (GET /health, POST /echo, ...)
+        endpoints = len(
+            set(re.findall(r"\b(?:get|post|put|patch|delete)\s+/[\w/{}.-]*", text))
+        )
+
+        # Distinct architectural layers referenced
+        layer_groups = {
+            "model": ["model", "schema", "entity", "dataclass", "pydantic"],
+            "route": ["route", "endpoint", "handler", "controller"],
+            "wiring": ["wire", "register", "mount", "wiring"],
+            "service": ["service", "repository", "usecase", "use case"],
+            "test": ["test", "pytest", "unittest", "jest", "vitest"],
+            "migration": ["migration", "migrate"],
+            "ui": ["component", "page", "screen", "view"],
+        }
+        layers = sum(
+            1 for kws in layer_groups.values() if any(kw in text for kw in kws)
+        )
+
+        # Requirement-level breadth (only when requirements were supplied)
+        deliverables = 0
+        services = 0
+        if requirements:
+            deliverables = max(
+                len(requirements.get("acceptance_criteria") or []),
+                len(requirements.get("user_requirements") or []),
+            )
+            services = len(requirements.get("services_involved") or [])
+
+        floor = 0
+        reasons: list[str] = []
+
+        # Standard floor (Level 2): clear multi-endpoint / multi-layer /
+        # multi-deliverable work. Requires unambiguous breadth so trivial
+        # tasks that incidentally mention one layer keyword don't get bumped.
+        if (
+            endpoints >= 2
+            or layers >= 4
+            or (layers >= 3 and endpoints >= 1)
+            or deliverables >= 5
+            or services >= 2
+        ):
+            floor = 2
+            if endpoints >= 2:
+                reasons.append(f"{endpoints} endpoints")
+            if layers >= 3:
+                reasons.append(f"{layers} layers")
+            if deliverables >= 5:
+                reasons.append(f"{deliverables} deliverables")
+            if services >= 2:
+                reasons.append(f"{services} services")
+
+        # Complex floor (Level 3): very broad surface or many distinct services.
+        if services >= 3 or deliverables >= 12 or (endpoints >= 4 and layers >= 4):
+            floor = 3
+            if services >= 3:
+                reasons.append(f"{services} services")
+            if deliverables >= 12:
+                reasons.append(f"{deliverables} deliverables")
+
+        return floor, ", ".join(reasons)
 
     def _detect_by_keywords(self, task_description: str) -> int | None:
         """
