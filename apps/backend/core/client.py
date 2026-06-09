@@ -687,8 +687,20 @@ def create_client(
                     )
             break
 
+    # OS-level bash sandbox (bubblewrap/bwrap). It requires a runtime that
+    # permits unprivileged proc-mounts. On k3d/Kind — where the node is itself a
+    # container — bwrap cannot mount /proc and EVERY agent bash command fails
+    # ("bwrap: Can't mount proc on /newroot/proc: Operation not permitted"),
+    # even with CAP_SYS_ADMIN / procMount=Unmasked. Gate it behind a flag so
+    # such clusters disable it (isolation then rests on the K8s pod boundary +
+    # the command allowlist) until a gVisor-capable runtime is available (#363).
+    # Default on, to preserve behaviour where bwrap works (local dev, gVisor).
+    bash_sandbox_enabled = os.environ.get(
+        "AIFACTORY_BASH_SANDBOX", "true"
+    ).strip().lower() not in ("0", "false", "no", "off")
+
     security_settings = {
-        "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True},
+        "sandbox": {"enabled": bash_sandbox_enabled, "autoAllowBashIfSandboxed": True},
         "enabledPlugins": {},  # Explicitly disable ALL plugins to prevent hook errors
         "permissions": {
             "defaultMode": "bypassPermissions",  # Bypass all permission prompts for headless operation
@@ -750,7 +762,13 @@ def create_client(
         json.dump(security_settings, f, indent=2)
 
     print(f"Security settings: {settings_file}")
-    print("   - Sandbox enabled (OS-level bash isolation)")
+    if bash_sandbox_enabled:
+        print("   - Sandbox enabled (OS-level bash isolation)")
+    else:
+        print(
+            "   - Bash sandbox disabled via AIFACTORY_BASH_SANDBOX "
+            "(runtime can't host bwrap; isolation via pod boundary + allowlist)"
+        )
     print(f"   - Filesystem restricted to: {project_dir.resolve()}")
     if original_project_permissions:
         print("   - Worktree permissions: granted for original project directories")

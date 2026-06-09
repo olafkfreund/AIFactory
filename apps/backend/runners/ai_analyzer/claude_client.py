@@ -3,6 +3,7 @@ Claude SDK client wrapper for AI analysis.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -74,8 +75,13 @@ class ClaudeAnalysisClient:
         Returns:
             Path to settings file
         """
+        # See core/client.py: bwrap can't run on k3d/Kind; honour the same flag
+        # so bash isn't broken there (#363). Default on.
+        _bash_sandbox = os.environ.get(
+            "AIFACTORY_BASH_SANDBOX", "true"
+        ).strip().lower() not in ("0", "false", "no", "off")
         settings = {
-            "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True},
+            "sandbox": {"enabled": _bash_sandbox, "autoAllowBashIfSandboxed": True},
             "permissions": {
                 "defaultMode": "acceptEdits",
                 "allow": [
