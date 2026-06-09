@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
 from providers.antigravity_agentic import (  # noqa: E402
     _DEFAULT_MODEL,
-    _resolve_model,
     AntigravityAgenticProvider,
+    _resolve_model,
 )
 
 
