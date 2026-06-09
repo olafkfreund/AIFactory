@@ -5,6 +5,7 @@ Spec Commands
 CLI commands for managing specs (listing, finding, etc.)
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -106,7 +107,19 @@ def print_specs_list(project_dir: Path, auto_create: bool = True) -> None:
     if not specs:
         print("\nNo specs found.")
 
-        if auto_create:
+        # Defence-in-depth: never drop into the interactive QUICK START prompt
+        # in a headless run. agent_service spawns the CLI with no controlling
+        # TTY and an open (never-EOF) stdin pipe, so input() below would block
+        # forever — tasks would sit at 0% in "planning" indefinitely. Detect a
+        # non-interactive context (no TTY, or CI/cli entrypoint markers) and
+        # fall through to the printed manual instructions instead of prompting.
+        _non_interactive = (
+            not sys.stdin.isatty()
+            or os.environ.get("CI") == "true"
+            or os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "cli"
+        )
+
+        if auto_create and not _non_interactive:
             # Get the backend directory and find spec_runner.py
             backend_dir = Path(__file__).parent.parent
             spec_runner = backend_dir / "runners" / "spec_runner.py"

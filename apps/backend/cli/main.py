@@ -391,7 +391,13 @@ def main() -> None:
         print_banner()
         print(f"\nError: Spec '{args.spec}' not found")
         print("\nAvailable specs:")
-        print_specs_list(project_dir)
+        # auto_create=False: never launch the interactive QUICK START wizard
+        # here. The build runner was asked for a *specific* spec; if it's
+        # missing it must fail fast. Leaving auto_create at its default (True)
+        # made `print_specs_list` call input() — which blocks forever when run
+        # headlessly by agent_service (no TTY, stdin never sends EOF), the root
+        # cause of tasks hanging at 0% in "planning" with no progress.
+        print_specs_list(project_dir, auto_create=False)
         sys.exit(1)
 
     debug_success("run.py", "Spec found", spec_dir=str(spec_dir))
