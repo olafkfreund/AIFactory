@@ -155,12 +155,15 @@ class TestCompleteness:
         ok, reasons = check_plan_completeness(_complete_plan())
         assert ok, reasons
 
-    def test_missing_file_footprint_rejected(self):
+    def test_missing_file_footprint_allowed(self):
+        # File footprints are OPTIONAL (#517): a plan without them is still
+        # trusted-complete (the executor falls back to serial scheduling).
+        # PFactory plans before code exists and can't declare footprints.
         plan = _complete_plan()
         del plan["phases"][0]["subtasks"][0]["files_to_create"]
         ok, reasons = check_plan_completeness(plan)
-        assert not ok
-        assert any("files_to_create or files_to_modify" in r for r in reasons)
+        assert ok, reasons
+        assert not any("files_to_create or files_to_modify" in r for r in reasons)
 
     def test_duplicate_subtask_id_rejected(self):
         plan = _complete_plan()
@@ -202,8 +205,11 @@ class TestVerifyAndIngest:
         assert bool(result) is True
 
     def test_signed_but_incomplete_rejected(self):
+        # A genuinely incomplete plan (subtask missing its description) is
+        # rejected even when correctly signed. (File footprints are optional —
+        # see test_missing_file_footprint_allowed.)
         plan = _complete_plan()
-        del plan["phases"][0]["subtasks"][0]["files_to_create"]
+        del plan["phases"][0]["subtasks"][0]["description"]
         result = verify_trusted_plan(_signed(plan), keyring=KEYRING)
         assert not result.ok
 
