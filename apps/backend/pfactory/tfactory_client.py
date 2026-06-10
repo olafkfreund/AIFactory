@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -121,6 +122,44 @@ def build_handoff_payload(
     return payload
 
 
+# TFactory's spec parser accepts an "## Acceptance Criteria" heading or "AC#N:".
+_ACCEPTANCE_RE = re.compile(
+    r"(^\s*#+\s*acceptance\s+criteria)|(\bAC\s*#?\s*\d+\s*:)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SUCCESS_RE = re.compile(
+    r"^\s*#+\s*success\s+criteria\s*$(.*?)(?=^\s*#+\s|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+
+
+def _collect_acceptance_criteria(req: dict, spec_text: str) -> list[str]:
+    """Best-effort acceptance-criteria bullets for TFactory's spec ingest (#517).
+
+    Prefers requirements.json's ``acceptance_criteria``; falls back to a
+    ``## Success Criteria`` section in the spec, then user requirements, then a
+    synthesized line from the title — so the ingest never 400s on a missing
+    criteria section.
+    """
+    ac = req.get("acceptance_criteria") or req.get("acceptanceCriteria")
+    if isinstance(ac, list) and ac:
+        return [str(c).strip().lstrip("-* ").strip() for c in ac if str(c).strip()]
+    m = _SUCCESS_RE.search(spec_text or "")
+    if m:
+        bullets = [
+            ln.strip().lstrip("-* ").strip()
+            for ln in m.group(1).splitlines()
+            if ln.strip().startswith(("-", "*"))
+        ]
+        if bullets:
+            return bullets
+    ur = req.get("user_requirements") or req.get("userRequirements")
+    if isinstance(ur, list) and ur:
+        return [str(c).strip() for c in ur if str(c).strip()]
+    title = req.get("title")
+    return [f"The feature works as described: {title}"] if title else []
+
+
 def _aifactory_project_name(spec_dir: Path) -> str:
     """Derive the project name from the workspace layout
     (.../workspaces/<project>/.aifactory/specs/<spec_id>)."""
@@ -152,12 +191,24 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     spec_md = spec_dir / "spec.md"
     if spec_md.exists():
         spec_text = spec_md.read_text()
+    req: dict = {}
+    try:
+        req = json.loads((spec_dir / "requirements.json").read_text())
+    except (OSError, ValueError):
+        req = {}
     if not spec_text.strip():
-        try:
-            req = json.loads((spec_dir / "requirements.json").read_text())
-            spec_text = req.get("description") or req.get("title") or ""
-        except (OSError, ValueError):
-            pass
+        spec_text = req.get("description") or req.get("title") or ""
+    # TFactory's spec parser requires an "## Acceptance Criteria" section (or
+    # "AC#N:" lines). AIFactory's quick specs use "## Success Criteria" or carry
+    # criteria in requirements.json, so without this the ingest 400s
+    # ("no acceptance criteria found"). Normalize: if the spec_text lacks the
+    # heading, append one built from the best criteria source we have (#517).
+    if not _ACCEPTANCE_RE.search(spec_text or ""):
+        criteria = _collect_acceptance_criteria(req, spec_text)
+        if criteria:
+            spec_text = (spec_text or "").rstrip() + "\n\n## Acceptance Criteria\n" + (
+                "\n".join(f"- {c}" for c in criteria)
+            )
     return {
         "project_id": project_id,
         "spec_id": spec_id,
