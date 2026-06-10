@@ -76,6 +76,8 @@ def test_create_pr_parses_number():
                       title="t", body="b", runner=r)
     assert pr == 7
     assert r.saw("pr create")
+    # Must configure git auth before pushing, or the deployed push 401s.
+    assert r.saw("auth setup-git")
 
 
 @pytest.mark.parametrize("states,expected", [

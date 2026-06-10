@@ -91,6 +91,12 @@ def create_pr(
     Idempotent-ish: if a PR for the branch already exists, gh reports it and we
     parse the number out.
     """
+    # Ensure git can authenticate the push: configure gh as the credential
+    # helper (idempotent, best-effort). Without this the deployed pod's raw
+    # `git push` fails with "could not read Username" even though gh itself is
+    # authenticated via GITHUB_TOKEN — the PR would never open.
+    runner(["gh", "auth", "setup-git"], None)
+
     push = runner(["git", "push", "-u", "origin", branch], str(worktree))
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])
