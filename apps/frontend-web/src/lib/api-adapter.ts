@@ -986,6 +986,34 @@ function setupEventBroadcast(): void {
         log.debug(`[WS Broadcast] ${event.type}`);
       }
       emitEvent(event.type, event.payload);
+
+      // Auto-surface newly-started tasks without a manual browser reload.
+      // A `task:*` event whose taskId isn't in the store yet means a task was
+      // created outside this tab (e.g. via the API or a PFactory→AIFactory
+      // handoff). updateTaskStatus can't update a card that doesn't exist, so
+      // refetch the selected project's tasks once and the new card appears.
+      // taskId is `${projectId}:${specId}` — only refetch when it belongs to
+      // the selected project and we don't already have it (no over-fetching).
+      if (event.type.startsWith('task:')) {
+        const payload = event.payload as { taskId?: string };
+        const taskId = payload?.taskId;
+        if (taskId) {
+          void Promise.all([
+            import('../stores/project-store'),
+            import('../stores/task-store'),
+          ]).then(([projectMod, taskMod]) => {
+            const projectId = projectMod.useProjectStore.getState().selectedProjectId;
+            if (!projectId || !taskId.startsWith(`${projectId}:`)) return;
+            const known = taskMod.useTaskStore
+              .getState()
+              .tasks.some((t) => t.id === taskId);
+            if (!known) {
+              log.debug(`[WS] new task ${taskId} not in store — refetching`);
+              void taskMod.loadTasks(projectId);
+            }
+          }).catch(() => {});
+        }
+      }
     }
   });
 
