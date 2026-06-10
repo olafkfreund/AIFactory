@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.14 - 2026-06-10
+
+### Changed
+
+- AIFactory→TFactory handoff now carries the signed Task Contract so TFactory tests the DECLARED acceptance criteria instead of inferring (#71 Phase 3). The auto-handoff sent only `{project_id, spec_id, spec_text}` to `/api/specs/ingest`, discarding PFactory's `tfactory` block (lanes/frameworks/`ac_to_code_map`). `build_ingest_payload` now attaches the full contract (the installed `implementation_plan.json`) as `contract` when it carries RFC-0002 markers; TFactory persists it to `context/task_contract.json` and uses it as the authoritative test profile. Create-and-run plans (no markers) attach nothing → TFactory still infers (backward compatible). Requires the paired TFactory change (≥ v0.9.2).
+
 ## 3.6.13 - 2026-06-10
 
 ### Fixed
