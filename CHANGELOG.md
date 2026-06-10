@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.11 - 2026-06-10
+
+### Fixed
+
+- AIFactory→TFactory auto-handoff now works end-to-end (#517). Beyond the endpoint/auth/project-resolution fixes, `build_ingest_payload` now normalizes acceptance criteria into a parseable `## Acceptance Criteria` section (from requirements / the spec's Success-Criteria bullets), so TFactory's spec parser no longer 400s. With the paired TFactory fix (ingest resolves the project by id-or-name), a completed AIFactory task hands off to TFactory and creates a test task.
+
 ## 3.6.10 - 2026-06-10
 
 ### Added
