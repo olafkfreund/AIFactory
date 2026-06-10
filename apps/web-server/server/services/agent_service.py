@@ -14,7 +14,7 @@ import signal
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -2493,69 +2493,81 @@ class AgentService:
                 except Exception:
                     logger.debug("completion emit failed (best-effort)", exc_info=True)
 
-            # Auto-handover the finished build to TFactory for testing when the
-            # task opted in (task_metadata `auto_handover_tfactory`, #496) and
-            # TFactory is configured. COMPLETED only — never hand a failed build
-            # to testing. Best-effort: never blocks/breaks task completion.
-            if emit_events and phase_enum == TaskPhase.COMPLETED:
-                try:
-                    if str(self.backend_path) not in sys.path:
-                        sys.path.insert(0, str(self.backend_path))
-                    from pfactory.tfactory_client import maybe_auto_handoff_tfactory
+            # Terminal completion side-effects: hand off to TFactory + run the PR
+            # endgame. Gated on COMPLETED only — NOT on emit_events. emit_events
+            # controls WS double-emission (Issue #14) and is False on the
+            # _monitor_process terminal path, so gating side-effects on it meant
+            # they NEVER fired on a real completion (#71). A fire-once marker
+            # makes this idempotent across the multiple COMPLETED call paths
+            # (lines ~1972 emit_events=True and ~2269 emit_events=False).
+            if phase_enum == TaskPhase.COMPLETED:
+                _seffx_marker = spec_dir / ".terminal_side_effects_done"
+                if not _seffx_marker.exists():
+                    try:
+                        _seffx_marker.write_text(datetime.now(timezone.utc).isoformat())
+                    except OSError:
+                        pass
 
-                    handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
-                    if handoff.get("sent"):
-                        logger.info(
-                            f"[AgentService] Auto-handed off {spec_id} to TFactory for testing"
-                        )
-                    elif handoff.get("reason") not in (None, "not_requested", "not_configured"):
-                        logger.warning(
-                            f"[AgentService] TFactory auto-handoff for {spec_id} did not send: {handoff}"
-                        )
-                except Exception:
-                    logger.debug("tfactory auto-handoff failed (best-effort)", exc_info=True)
+                    # Auto-handover the finished build to TFactory when the task
+                    # opted in (task_metadata `auto_handover_tfactory`, #496) and
+                    # TFactory is configured. Best-effort: never blocks completion.
+                    try:
+                        if str(self.backend_path) not in sys.path:
+                            sys.path.insert(0, str(self.backend_path))
+                        from pfactory.tfactory_client import maybe_auto_handoff_tfactory
 
-            # PR endgame (#71 Phase 4): on a clean build, optionally open a PR,
-            # request a Copilot review, and (on approval) auto-merge + re-test.
-            # Flag-gated OFF by default (AIFACTORY_AUTO_PR / AIFACTORY_AUTO_MERGE);
-            # human-stop on changes-requested/timeout. Best-effort, never blocks.
-            if emit_events and phase_enum == TaskPhase.COMPLETED:
-                try:
-                    from .pr_endgame import (
-                        gather_pr_context,
-                        is_auto_pr_enabled,
-                        run_pr_endgame,
-                    )
-
-                    if is_auto_pr_enabled():
-                        ctx = gather_pr_context(project_path, spec_dir, spec_id)
-                        if ctx:
-                            async def _re_test() -> None:
-                                from pfactory.tfactory_client import (
-                                    maybe_auto_handoff_tfactory,
-                                )
-
-                                await maybe_auto_handoff_tfactory(spec_dir, spec_id)
-
-                            def _re_test_sync() -> None:
-                                asyncio.create_task(_re_test())
-
-                            endgame = await run_pr_endgame(
-                                spec_dir=spec_dir, spec_id=spec_id,
-                                worktree=ctx["worktree"], branch=ctx["branch"],
-                                base=ctx["base"], repo=ctx["repo"],
-                                re_test=_re_test_sync,
-                            )
+                        handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+                        if handoff.get("sent"):
                             logger.info(
-                                f"[AgentService] PR endgame for {spec_id}: {endgame}"
+                                f"[AgentService] Auto-handed off {spec_id} to TFactory for testing"
                             )
-                        else:
-                            logger.debug(
-                                "[AgentService] PR endgame skipped for %s "
-                                "(no worktree branch / repo)", spec_id
+                        elif handoff.get("reason") not in (None, "not_requested", "not_configured"):
+                            logger.warning(
+                                f"[AgentService] TFactory auto-handoff for {spec_id} did not send: {handoff}"
                             )
-                except Exception:
-                    logger.debug("PR endgame failed (best-effort)", exc_info=True)
+                    except Exception:
+                        logger.debug("tfactory auto-handoff failed (best-effort)", exc_info=True)
+
+                    # PR endgame (#71 Phase 4): on a clean build, optionally open
+                    # a PR, request a Copilot review, and (on approval) auto-merge
+                    # + re-test. Flag-gated OFF by default (AIFACTORY_AUTO_PR /
+                    # AIFACTORY_AUTO_MERGE); human-stop on changes-requested/timeout.
+                    try:
+                        from .pr_endgame import (
+                            gather_pr_context,
+                            is_auto_pr_enabled,
+                            run_pr_endgame,
+                        )
+
+                        if is_auto_pr_enabled():
+                            ctx = gather_pr_context(project_path, spec_dir, spec_id)
+                            if ctx:
+                                async def _re_test() -> None:
+                                    from pfactory.tfactory_client import (
+                                        maybe_auto_handoff_tfactory,
+                                    )
+
+                                    await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+
+                                def _re_test_sync() -> None:
+                                    asyncio.create_task(_re_test())
+
+                                endgame = await run_pr_endgame(
+                                    spec_dir=spec_dir, spec_id=spec_id,
+                                    worktree=ctx["worktree"], branch=ctx["branch"],
+                                    base=ctx["base"], repo=ctx["repo"],
+                                    re_test=_re_test_sync,
+                                )
+                                logger.info(
+                                    f"[AgentService] PR endgame for {spec_id}: {endgame}"
+                                )
+                            else:
+                                logger.info(
+                                    "[AgentService] PR endgame skipped for %s "
+                                    "(no worktree branch / repo)", spec_id
+                                )
+                    except Exception:
+                        logger.debug("PR endgame failed (best-effort)", exc_info=True)
 
             # Extract subtasks for WebSocket broadcast
             subtasks_data = []
