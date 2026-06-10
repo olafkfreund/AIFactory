@@ -231,6 +231,24 @@ class TestVerifyAndIngest:
         assert req["provenance"]["trusted_plan"] is True
         assert req["provenance"]["approved_by"] == "cfactory"
 
+    def test_ingest_writes_spec_md_for_executor(self, tmp_path: Path):
+        # #483: the executor's spec resolution (cli.utils.find_spec) and
+        # validate_environment both require spec.md to exist. A trusted-plan
+        # ingest skips the spec pipeline, so it must synthesize spec.md itself —
+        # otherwise run.py can't find the spec and the build never codes.
+        spec_dir = tmp_path / "spec"
+        plan = _complete_plan()
+        plan["final_acceptance"] = ["GET /version returns 200."]
+        result = ingest_trusted_plan(spec_dir, _signed(plan), keyring=KEYRING)
+
+        assert result.ok, result.reasons
+        spec_md = spec_dir / "spec.md"
+        assert spec_md.exists()
+        body = spec_md.read_text()
+        assert body.startswith("# API gateway endpoints")
+        assert "## Acceptance Criteria" in body
+        assert "GET /version returns 200." in body
+
     def test_ingest_failure_writes_nothing(self, tmp_path: Path):
         spec_dir = tmp_path / "spec"
         result = ingest_trusted_plan(spec_dir, _complete_plan(), keyring=KEYRING)  # unsigned
