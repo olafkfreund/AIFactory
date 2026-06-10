@@ -120,7 +120,14 @@
       "copyOnceHelp": "Le backend ne stocke qu'un hash. Si vous perdez la clé, il faudra la révoquer et en créer une nouvelle.",
       "copyKey": "Copier la clé",
       "acknowledge": "Copiée",
-      "cancel": "Annuler"
+      "cancel": "Annuler",
+      "lastUsed": "dernière utilisation",
+      "neverUsed": "jamais utilisée",
+      "revokeAriaLabel": "Révoquer la clé",
+      "revokeDialogTitle": "Révoquer la clé API ?",
+      "revokeDialogDescription": "Tout client utilisant « {{name}} » perdra immédiatement l'accès. Cette action est irréversible.",
+      "revokeConfirm": "Révoquer la clé",
+      "revoking": "Révocation…"
     },
     "api-profiles": {
       "title": "Profils API",

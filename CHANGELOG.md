@@ -21,6 +21,16 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.10 - 2026-06-10
+
+### Added
+
+- The kanban board now **auto-surfaces newly-started tasks** without a manual browser reload. A task created outside the tab — via the API or a PFactory→AIFactory handoff — previously didn't appear until you reloaded (the WS `task:*` handler only updated existing cards). The `/ws/events` handler now refetches the selected project's tasks when a `task:*` event references a task not yet in the store (scoped to the selected project; fires once per new task) (#516).
+
+### Fixed
+
+- API Tokens settings: revoke now uses an in-app confirm dialog instead of the native `window.confirm`, and the token list shows last-used (#479).
+
 ## 3.6.9 - 2026-06-09
 
 ### Fixed

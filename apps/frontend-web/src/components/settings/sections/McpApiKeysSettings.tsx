@@ -1,5 +1,5 @@
 /**
- * API Keys settings page (Issue #154).
+ * API Tokens settings page (Issue #479 / originally #154).
  *
  * Mint / list / revoke scope-gated ``acw_`` API keys that the stdio
  * MCP client picks up via ``$AIFACTORY_MCP_KEY`` (or
@@ -10,6 +10,8 @@
  * stores only a SHA-256 hash + 8-char preview, so losing the key means
  * revoking it and minting a new one. Mirrors the GitCredentialsSettings
  * UX exactly so the mental model carries over.
+ *
+ * Issue #479 fix: replaced window.confirm() with in-app AlertDialog.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -27,6 +29,16 @@ import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { SettingsSection } from '../SettingsSection';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../../ui/alert-dialog';
 import type {
   ApiKeySummary,
   CreateApiKeyBody,
@@ -74,6 +86,10 @@ export function McpApiKeysSettings() {
     null,
   );
   const [copied, setCopied] = useState(false);
+
+  // In-app revoke confirm (replaces window.confirm per issue #479)
+  const [revokeTarget, setRevokeTarget] = useState<ApiKeySummary | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,27 +173,29 @@ export function McpApiKeysSettings() {
     }
   };
 
-  const handleRevoke = async (key: ApiKeySummary) => {
-    if (
-      !confirm(
-        t(
-          'sections.apiKeys.confirmRevoke',
-          `Revoke key "${key.name}"? Any laptop or shell using this key will immediately lose access.`,
-        ),
-      )
-    ) {
-      return;
-    }
+  // Opens the in-app revoke confirm dialog — no window.confirm (issue #479).
+  const handleRevokeRequest = (key: ApiKeySummary) => {
+    setRevokeTarget(key);
+  };
+
+  const handleRevokeConfirm = async () => {
+    if (!revokeTarget) return;
+    setRevoking(true);
     setError(null);
     try {
-      const result = await window.API.revokeApiKey(key.id);
+      const result = await window.API.revokeApiKey(revokeTarget.id);
       if (result.success) {
+        setRevokeTarget(null);
         await load();
       } else {
         setError(result.error || 'Failed to revoke key');
+        setRevokeTarget(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to revoke key');
+      setRevokeTarget(null);
+    } finally {
+      setRevoking(false);
     }
   };
 
@@ -297,6 +315,10 @@ export function McpApiKeysSettings() {
                       {' · '}
                       {t('sections.apiKeys.created', 'created')}{' '}
                       {new Date(key.created_at).toLocaleDateString()}
+                      {' · '}
+                      {key.last_used_at
+                        ? `${t('sections.apiKeys.lastUsed', 'last used')} ${new Date(key.last_used_at).toLocaleDateString()}`
+                        : t('sections.apiKeys.neverUsed', 'never used')}
                       {key.expires_at && (
                         <>
                           {' · '}
@@ -309,8 +331,9 @@ export function McpApiKeysSettings() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRevoke(key)}
+                    onClick={() => handleRevokeRequest(key)}
                     className="text-destructive hover:text-destructive"
+                    aria-label={t('sections.apiKeys.revokeAriaLabel', 'Revoke key')}
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -462,6 +485,48 @@ export function McpApiKeysSettings() {
           </div>
         )}
       </div>
+
+      {/* In-app revoke confirm — replaces window.confirm (issue #479) */}
+      <AlertDialog
+        open={revokeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevokeTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('sections.apiKeys.revokeDialogTitle', 'Revoke API key?')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'sections.apiKeys.revokeDialogDescription',
+                'Any client using "{{name}}" will immediately lose access. This cannot be undone.',
+                { name: revokeTarget?.name ?? '' },
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={revoking}>
+              {t('sections.apiKeys.cancel', 'Cancel')}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleRevokeConfirm()}
+              disabled={revoking}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {revoking ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  {t('sections.apiKeys.revoking', 'Revoking…')}
+                </>
+              ) : (
+                t('sections.apiKeys.revokeConfirm', 'Revoke key')
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </SettingsSection>
   );
 }
