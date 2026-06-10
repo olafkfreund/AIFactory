@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.22 - 2026-06-10
+
+### Added
+
+- PR-endgame **auto-feedback loop** (#71 Phase B): when the pre-merge reviewer requests changes, the findings are routed to the QA-fixer, the fix is pushed to the PR branch, and the PR is re-reviewed — bounded (≤2 cycles), merging only once it passes; after the budget it hands to a human (`needs_human_after_fixes`). Also verified the `aifactory` reviewer **live** (no Copilot credits — engine verdict `ready_to_merge`) and aligned `verdict_from_review_result` to the engine's `MergeVerdict` vocabulary (`ready_to_merge`⇒approve; `merge_with_changes`/`needs_revision`/`blocked`⇒changes; non-empty `blockers`⇒changes). 25 tests.
+
 ## 3.6.21 - 2026-06-10
 
 ### Added
