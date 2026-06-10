@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.15 - 2026-06-10
+
+### Added
+
+- PR endgame: on a clean build, auto-open a PR → request a Copilot review → merge on approval → re-test (#71 Phase 4). The new `server/services/pr_endgame.py` orchestrates the finish of the closed PARR loop: when `AIFACTORY_AUTO_PR` is set, a `COMPLETED` build opens a PR from the worktree branch, requests a GitHub Copilot review, and watches (bounded) for the verdict; on `APPROVED` and only when `AIFACTORY_AUTO_MERGE` is set, it merges and re-runs TFactory against the result. `CHANGES_REQUESTED`, a review timeout, or a merge conflict is a **human-stop** — the PR is left open, nothing is force-merged. Both flags default OFF (inert until enabled). Every git/gh call is behind an injectable runner (16 unit tests, no network). Wired into the agent_service completion hook (best-effort, never blocks completion).
+
 ## 3.6.14 - 2026-06-10
 
 ### Changed
