@@ -37,7 +37,9 @@ __all__ = [
 # (url, json_payload, headers) -> {"status": int, "ok": bool, "body": str}
 Poster = Callable[[str, dict, dict], Awaitable[dict]]
 
-_DEFAULT_PATH = "/api/handoff"
+# TFactory's self-contained intake: create a test task from a raw spec, no
+# shared workspace/branch required (POST {project_id, spec_id, spec_text}).
+_DEFAULT_PATH = "/api/specs/ingest"
 
 
 def tfactory_config(env: dict | None = None) -> dict:
@@ -45,7 +47,11 @@ def tfactory_config(env: dict | None = None) -> dict:
     env = env if env is not None else os.environ
     return {
         "base_url": (env.get("TFACTORY_BASE_URL") or "").rstrip("/"),
-        "token": env.get("TFACTORY_TOKEN") or "",
+        # TFactory's auth middleware requires a bearer token on /api/*. Prefer a
+        # dedicated TFACTORY_TOKEN; fall back to the shared APP_API_TOKEN that
+        # every factory pod carries (factory-secrets) — without it the handoff
+        # 401s (#517).
+        "token": env.get("TFACTORY_TOKEN") or env.get("APP_API_TOKEN") or "",
         "path": env.get("TFACTORY_HANDOFF_PATH") or _DEFAULT_PATH,
     }
 
@@ -113,6 +119,51 @@ def build_handoff_payload(
         except Exception:  # noqa: BLE001 — evidence is best-effort
             pass
     return payload
+
+
+def _aifactory_project_name(spec_dir: Path) -> str:
+    """Derive the project name from the workspace layout
+    (.../workspaces/<project>/.aifactory/specs/<spec_id>)."""
+    parts = Path(spec_dir).resolve().parts
+    if "workspaces" in parts:
+        i = parts.index("workspaces")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    try:
+        return Path(spec_dir).parents[2].name
+    except IndexError:
+        return ""
+
+
+def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
+    """Build the payload for TFactory's self-contained spec intake
+    (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
+
+    ``project_id`` is the TFactory project to ingest into — resolved by name
+    from the AIFactory workspace (TFactory carries a matching project),
+    overridable via ``TFACTORY_PROJECT_ID``. ``spec_text`` is the finished
+    spec.md (falls back to the requirements description). #517.
+    """
+    spec_dir = Path(spec_dir)
+    project_id = (
+        os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(spec_dir)
+    )
+    spec_text = ""
+    spec_md = spec_dir / "spec.md"
+    if spec_md.exists():
+        spec_text = spec_md.read_text()
+    if not spec_text.strip():
+        try:
+            req = json.loads((spec_dir / "requirements.json").read_text())
+            spec_text = req.get("description") or req.get("title") or ""
+        except (OSError, ValueError):
+            pass
+    return {
+        "project_id": project_id,
+        "spec_id": spec_id,
+        "spec_text": spec_text,
+        "format": "markdown",
+    }
 
 
 async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
@@ -192,19 +243,7 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     if not wants_auto_handoff(spec_dir):
         return {"sent": False, "reason": "not_requested"}
     try:
-        from .metadata import load_pfactory_metadata
-        from .taxonomy import classify_requirements
-
-        req_file = spec_dir / "requirements.json"
-        requirements = json.loads(req_file.read_text()) if req_file.exists() else {}
-        payload = build_handoff_payload(
-            spec_id,
-            requirements,
-            classify_requirements(requirements),
-            load_pfactory_metadata(spec_dir),
-            load_tfactory_block(spec_dir),
-            spec_dir,
-        )
+        payload = build_ingest_payload(spec_dir, spec_id)
         result = await send_handoff(payload)
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
