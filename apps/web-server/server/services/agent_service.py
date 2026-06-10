@@ -2515,6 +2515,48 @@ class AgentService:
                 except Exception:
                     logger.debug("tfactory auto-handoff failed (best-effort)", exc_info=True)
 
+            # PR endgame (#71 Phase 4): on a clean build, optionally open a PR,
+            # request a Copilot review, and (on approval) auto-merge + re-test.
+            # Flag-gated OFF by default (AIFACTORY_AUTO_PR / AIFACTORY_AUTO_MERGE);
+            # human-stop on changes-requested/timeout. Best-effort, never blocks.
+            if emit_events and phase_enum == TaskPhase.COMPLETED:
+                try:
+                    from .pr_endgame import (
+                        gather_pr_context,
+                        is_auto_pr_enabled,
+                        run_pr_endgame,
+                    )
+
+                    if is_auto_pr_enabled():
+                        ctx = gather_pr_context(project_path, spec_dir, spec_id)
+                        if ctx:
+                            async def _re_test() -> None:
+                                from pfactory.tfactory_client import (
+                                    maybe_auto_handoff_tfactory,
+                                )
+
+                                await maybe_auto_handoff_tfactory(spec_dir, spec_id)
+
+                            def _re_test_sync() -> None:
+                                asyncio.create_task(_re_test())
+
+                            endgame = await run_pr_endgame(
+                                spec_dir=spec_dir, spec_id=spec_id,
+                                worktree=ctx["worktree"], branch=ctx["branch"],
+                                base=ctx["base"], repo=ctx["repo"],
+                                re_test=_re_test_sync,
+                            )
+                            logger.info(
+                                f"[AgentService] PR endgame for {spec_id}: {endgame}"
+                            )
+                        else:
+                            logger.debug(
+                                "[AgentService] PR endgame skipped for %s "
+                                "(no worktree branch / repo)", spec_id
+                            )
+                except Exception:
+                    logger.debug("PR endgame failed (best-effort)", exc_info=True)
+
             # Extract subtasks for WebSocket broadcast
             subtasks_data = []
             phases = plan.get("phases", [])
