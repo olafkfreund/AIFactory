@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.13 - 2026-06-10
+
+### Fixed
+
+- Trusted-plan ingest now synthesizes `spec.md` so the build can actually code (#483). A signed plan ingested via `/api/tasks/from-plan` installed `implementation_plan.json` and marked the review approved, but never wrote `spec.md` — and the executor's spec resolution (`cli.utils.find_spec`) plus `validate_environment` both require it. So `run.py` couldn't find the spec, dumped the AVAILABLE SPECS banner, marked planning "failed", and coding never started (the plan installed but never coded — observed on PARR task 009). `ingest_trusted_plan` now renders a minimal `spec.md` from the contract (feature, acceptance criteria, phase/subtask outline); `implementation_plan.json` remains authoritative. This completes the trusted-plan keystone end-to-end.
+
 ## 3.6.12 - 2026-06-10
 
 ### Fixed
