@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.18 - 2026-06-10
+
+### Fixed
+
+- Completion side-effects (TFactory auto-handoff #496, PR endgame #71 Phase 4) now fire on `COMPLETED` regardless of `emit_events`. They were gated on `if emit_events and phase_enum == COMPLETED`, but the real terminal path (`_monitor_process`) calls `_update_plan_status(emit_events=False)` (Issue #14 suppresses WS double-emission, not side-effects) — so **neither ever fired on a real completion** (no task had ever written `tfactory_handoff.json` or a PR-endgame marker). Now gated on `COMPLETED` only, wrapped in a fire-once `.terminal_side_effects_done` marker so the two completion call paths can't double-fire (no duplicate PRs/handoffs).
+
 ## 3.6.17 - 2026-06-10
 
 ### Fixed
