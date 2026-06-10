@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.12 - 2026-06-10
+
+### Fixed
+
+- Trusted-plan handoff: per-subtask file footprints are now OPTIONAL (#517). AIFactory's `from-plan` completeness check hard-required `files_to_create`/`files_to_modify`, which PFactory can't know pre-code — so every signed PFactory contract was rejected and silently fell back to full re-planning, discarding the contract (incl. the TFactory test plan). Footprints present → parallel waves; absent → serial. This is what lets PFactory actually save AIFactory planning time.
+
 ## 3.6.11 - 2026-06-10
 
 ### Fixed
