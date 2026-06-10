@@ -102,6 +102,19 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
+# Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
+# (Claude/Ollama — no Copilot credits, gated on the engine's verdict since GitHub
+# forbids self-approving the PR we opened). "copilot" = GitHub Copilot's review.
+# "any" = any APPROVED GitHub review. Default "aifactory".
+_VALID_REVIEWERS = {"aifactory", "copilot", "any"}
+
+
+def resolve_pr_reviewer(project_path: Path | None = None) -> str:
+    pv = _project_env(project_path, "AIFACTORY_PR_REVIEWER")
+    val = (pv if pv is not None else os.environ.get("AIFACTORY_PR_REVIEWER", "")).strip().lower()
+    return val if val in _VALID_REVIEWERS else "aifactory"
+
+
 # ---------------------------------------------------------------------------
 # GitHub primitives (all via the injectable runner)
 # ---------------------------------------------------------------------------
@@ -184,6 +197,37 @@ def _is_copilot(login: str) -> bool:
     return "copilot" in (login or "").lower()
 
 
+# Severities that block a merge when AIFactory's own engine is the reviewer.
+_BLOCKING_SEVERITIES = {"critical", "high", "blocker", "blocking", "error"}
+
+
+def verdict_from_review_result(result: dict | None) -> ReviewState:
+    """Map AIFactory's stored PR-review result to a ReviewState.
+
+    Used when the reviewer is ``aifactory`` (GitHub forbids self-approving the
+    PR we opened, so we gate on the engine's verdict, not a GitHub review event).
+    A stored ``verdict`` wins; otherwise we derive it from finding severities —
+    any blocking/critical/high finding ⇒ changes_requested, else approved. A
+    missing/empty result ⇒ pending (review not done yet).
+    """
+    if not isinstance(result, dict) or not result:
+        return ReviewState("pending")
+    data = result.get("data") if isinstance(result.get("data"), dict) else result
+    raw = str(data.get("verdict") or data.get("recommendation") or "").lower()
+    if raw in ("approve", "approved"):
+        return ReviewState("approved")
+    if raw in ("request_changes", "changes_requested", "reject", "rejected"):
+        return ReviewState("changes_requested")
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        blocking = any(
+            str((f or {}).get("severity", "")).lower() in _BLOCKING_SEVERITIES
+            for f in findings if isinstance(f, dict)
+        )
+        return ReviewState("changes_requested" if blocking else "approved")
+    return ReviewState("pending")
+
+
 def read_review_verdict(
     owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
 ) -> ReviewState:
@@ -256,6 +300,7 @@ async def watch_and_finish(
     pr: int,
     auto_merge: bool,
     require_copilot: bool = True,
+    review_fn: Callable[[], ReviewState] | None = None,
     on_approved_merged: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
@@ -270,10 +315,20 @@ async def watch_and_finish(
     a human-stop, and if Copilot never reviews we time out to a human-stop too —
     never a blind merge. Never raises; leaves the PR open on any non-clean path.
     """
+    # review_fn (AIFactory's own engine verdict) takes precedence over reading
+    # GitHub review state — AIFactory can't submit a GitHub approval on a PR it
+    # opened (self-approval), so its verdict is read from the engine directly.
+    # With review_fn the Copilot-login gate doesn't apply (verdict is the gate).
+    if review_fn is not None:
+        require_copilot = False
+
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
-        rs = await asyncio.to_thread(read_review_verdict, owner, repo, pr, runner=runner)
+        if review_fn is not None:
+            rs = await asyncio.to_thread(review_fn)
+        else:
+            rs = await asyncio.to_thread(read_review_verdict, owner, repo, pr, runner=runner)
 
         if rs.verdict == "changes_requested":
             who = "copilot" if rs.copilot_changes_requested else "reviewer"
@@ -373,7 +428,9 @@ async def run_pr_endgame(
     base: str,
     repo: str,
     auto_merge: bool = False,
-    require_copilot: bool = True,
+    reviewer: str = "aifactory",
+    review_fn: Callable[[], ReviewState] | None = None,
+    on_pr_opened: Callable[[int], None] | None = None,
     re_test: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
     background: bool = True,
@@ -404,15 +461,25 @@ async def run_pr_endgame(
     if pr is None:
         return {"ok": False, "reason": "pr_not_created"}
 
-    await asyncio.to_thread(request_copilot_review, owner, name, pr, runner=runner)
+    # Kick off the chosen reviewer now that the PR exists. Copilot is requested
+    # via GitHub; the aifactory reviewer is triggered by the caller's
+    # on_pr_opened (it has the review engine + project id).
+    if reviewer == "copilot":
+        await asyncio.to_thread(request_copilot_review, owner, name, pr, runner=runner)
+    elif on_pr_opened is not None:
+        try:
+            on_pr_opened(pr)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[pr-endgame] on_pr_opened (reviewer trigger) failed: %s", exc)
     logger.info(
-        "[pr-endgame] opened PR #%d for %s; requested Copilot review "
-        "(auto_merge=%s, require_copilot=%s)", pr, spec_id, auto_merge, require_copilot
+        "[pr-endgame] opened PR #%d for %s (reviewer=%s, auto_merge=%s)",
+        pr, spec_id, reviewer, auto_merge,
     )
 
     coro = watch_and_finish(
         owner=owner, repo=name, pr=pr, auto_merge=auto_merge,
-        require_copilot=require_copilot, on_approved_merged=re_test, runner=runner,
+        require_copilot=(reviewer == "copilot"), review_fn=review_fn,
+        on_approved_merged=re_test, runner=runner,
     )
     if background:
         asyncio.create_task(coro)

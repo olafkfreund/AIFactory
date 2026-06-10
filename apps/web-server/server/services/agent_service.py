@@ -2539,7 +2539,9 @@ class AgentService:
                             gather_pr_context,
                             is_auto_merge_enabled,
                             is_auto_pr_enabled,
+                            resolve_pr_reviewer,
                             run_pr_endgame,
+                            verdict_from_review_result,
                         )
 
                         if is_auto_pr_enabled(project_path):
@@ -2555,15 +2557,49 @@ class AgentService:
                                 def _re_test_sync() -> None:
                                     asyncio.create_task(_re_test())
 
+                                # Reviewer gating (#71 Phase A). "aifactory" uses
+                                # AIFactory's own review engine (Claude/Ollama, no
+                                # Copilot credits): on PR-open, trigger the engine
+                                # and gate the merge on its stored verdict (GitHub
+                                # forbids self-approving the PR we opened).
+                                _reviewer = resolve_pr_reviewer(project_path)
+                                _proj_id = task_id.split(":", 1)[0] if ":" in task_id else ""
+                                _review_fn = None
+                                _on_pr_opened = None
+                                if _reviewer == "aifactory":
+                                    from .pr_data_service import get_pr_data_service
+                                    from .pr_endgame import ReviewState
+                                    from .pr_review_service import get_pr_review_service
+
+                                    _pr_box: dict = {}
+
+                                    def _on_pr_opened(prn: int) -> None:
+                                        _pr_box["pr"] = prn
+                                        asyncio.create_task(
+                                            get_pr_review_service().start_review(
+                                                _proj_id, prn, project_path
+                                            )
+                                        )
+
+                                    def _review_fn() -> ReviewState:
+                                        prn = _pr_box.get("pr")
+                                        if not prn:
+                                            return ReviewState("pending")
+                                        res = get_pr_data_service().get_review(project_path, prn)
+                                        return verdict_from_review_result(res)
+
                                 endgame = await run_pr_endgame(
                                     spec_dir=spec_dir, spec_id=spec_id,
                                     worktree=ctx["worktree"], branch=ctx["branch"],
                                     base=ctx["base"], repo=ctx["repo"],
                                     auto_merge=is_auto_merge_enabled(project_path),
+                                    reviewer=_reviewer, review_fn=_review_fn,
+                                    on_pr_opened=_on_pr_opened,
                                     re_test=_re_test_sync,
                                 )
                                 logger.info(
-                                    f"[AgentService] PR endgame for {spec_id}: {endgame}"
+                                    f"[AgentService] PR endgame for {spec_id} "
+                                    f"(reviewer={_reviewer}): {endgame}"
                                 )
                             else:
                                 logger.info(

@@ -233,6 +233,35 @@ export function GeneralSettings({
                 }
               />
             </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="font-normal text-foreground">
+                  Pre-merge reviewer
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Who must approve before auto-merge. <strong>AIFactory</strong> uses
+                  its own code-review engine on the project's provider (Claude/Ollama —
+                  no Copilot credits). <strong>Copilot</strong> uses GitHub Copilot's
+                  review (requires Copilot code-review credits). <strong>Any</strong>{' '}
+                  accepts any approving GitHub review.
+                </p>
+              </div>
+              <select
+                className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                value={settings.prReviewer ?? 'aifactory'}
+                disabled={!(settings.autoPr ?? false)}
+                onChange={(e) =>
+                  setSettings({
+                    ...settings,
+                    prReviewer: e.target.value as 'aifactory' | 'copilot' | 'any',
+                  })
+                }
+              >
+                <option value="aifactory">AIFactory (Claude/Ollama)</option>
+                <option value="copilot">GitHub Copilot</option>
+                <option value="any">Any approval</option>
+              </select>
+            </div>
           </section>
 
           <Separator />

@@ -764,6 +764,9 @@ class ProjectSettingsUpdate(BaseModel):
     # OFF. Stored as AIFACTORY_AUTO_PR / AIFACTORY_AUTO_MERGE in .aifactory/.env.
     autoPr: bool | None = Field(default=None, alias="auto_pr")
     autoMerge: bool | None = Field(default=None, alias="auto_merge")
+    # Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
+    # review engine — no Copilot credits), "copilot", or "any". Default aifactory.
+    prReviewer: str | None = Field(default=None, alias="pr_reviewer")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -821,6 +824,7 @@ async def update_project_settings(
             "gitOrg": "GIT_ORG",
             "gitProject": "GIT_PROJECT",
             "gitRepo": "GIT_REPO",
+            "prReviewer": "AIFACTORY_PR_REVIEWER",
         }
 
         # Handle boolean settings with "true"/"false" string values
