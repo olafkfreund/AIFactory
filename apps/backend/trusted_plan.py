@@ -255,14 +255,13 @@ def check_plan_completeness(plan: dict) -> tuple[bool, list[str]]:
                 all_subtask_ids.add(sid)
             if not st.get("description"):
                 reasons.append(f"{label}: missing 'description'")
-            # Wave scheduling needs a file footprint to detect conflicts.
-            creates = st.get("files_to_create") or []
-            modifies = st.get("files_to_modify") or []
-            if not creates and not modifies:
-                reasons.append(
-                    f"{label}: must declare files_to_create or files_to_modify "
-                    "(needed for wave scheduling)"
-                )
+            # File footprints (files_to_create/files_to_modify) drive parallel
+            # wave scheduling when present, but PFactory plans before code
+            # exists and can't reliably declare them. Treat them as OPTIONAL: a
+            # plan without footprints is still trusted-complete — the executor
+            # falls back to serial scheduling (same as the lenient build-time
+            # validator). Requiring them here rejected every PFactory handoff
+            # and silently fell back to full re-planning (#517 PARR).
             if sid:
                 deps[sid] = list(st.get("depends_on") or [])
 
@@ -320,7 +319,9 @@ def verify_trusted_plan(
     complete_ok, complete_reasons = check_plan_completeness(plan)
     reasons.extend(complete_reasons)
 
-    envelope = plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
+    envelope = (
+        plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
+    )
     return TrustedPlanVerification(
         ok=sig_ok and complete_ok,
         reasons=reasons,
