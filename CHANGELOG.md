@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.17 - 2026-06-10
+
+### Fixed
+
+- PR endgame: `create_pr` now runs `gh auth setup-git` before pushing (#71 Phase 4). In the deployed pod a raw `git push` failed with "could not read Username for https://github.com" despite gh being authenticated via `GITHUB_TOKEN`, so an auto-PR never opened. Configuring gh as git's credential helper (idempotent, best-effort) fixes the push.
+
 ## 3.6.16 - 2026-06-10
 
 ### Fixed
