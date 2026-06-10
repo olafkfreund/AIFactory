@@ -21,6 +21,16 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.20 - 2026-06-10
+
+### Added
+
+- PR endgame is now toggleable **per project from the Settings UI** (Project Settings → General → *Auto-open a PR* / *Auto-merge after Copilot approves*) — persisted to the project's `.aifactory/.env` as `AIFACTORY_AUTO_PR`/`AIFACTORY_AUTO_MERGE`; the per-project setting wins over the global env default (#71). `pr_endgame` resolves the flags per-project (the completion hook runs in the web-server process, so it reads the project's `.env`, not just `os.environ`).
+
+### Changed
+
+- Auto-merge now **requires GitHub Copilot's review**: it merges only after Copilot posts an `APPROVED` review (`require_copilot` default). Copilot `CHANGES_REQUESTED`, any reviewer's changes-requested, or no-Copilot-review-yet → human-stop (PR left open); a human-only approval does not satisfy the gate. `read_review_verdict` is now Copilot-aware (`ReviewState`). Copilot's findings are never bypassed.
+
 ## 3.6.19 - 2026-06-10
 
 ### Documentation
