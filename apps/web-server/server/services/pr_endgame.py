@@ -287,12 +287,35 @@ def read_review_verdict(
 def merge_pr(
     owner: str, repo: str, pr: int, *, method: str = "squash", runner: Runner = _default_runner
 ) -> bool:
-    """Merge the PR. Returns True on success. Never force-merges past a conflict."""
+    """Merge the PR. Returns True on success. Never force-merges past a conflict.
+
+    On a non-clean merge (branch behind base — the common sequential case where
+    an earlier auto-merge advanced main), update the PR branch from base once and
+    retry. A TRUE line-level conflict (update-branch fails) is left for a human —
+    we never force it.
+    """
     flag = {"squash": "--squash", "rebase": "--rebase", "merge": "--merge"}.get(method, "--squash")
-    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", f"{owner}/{repo}"], None)
-    if not res.ok:
-        logger.warning("[pr-endgame] merge failed pr=%d: %s", pr, res.err[:300])
-    return res.ok
+    full = f"{owner}/{repo}"
+    res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+    if res.ok:
+        return True
+
+    blob = (res.err + " " + res.out).lower()
+    if any(s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")):
+        logger.info("[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr)
+        upd = runner(["gh", "pr", "update-branch", str(pr), "--repo", full], None)
+        if upd.ok:
+            res2 = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
+            if res2.ok:
+                return True
+            logger.warning("[pr-endgame] merge retry failed pr=%d: %s", pr, res2.err[:300])
+            return False
+        logger.info(
+            "[pr-endgame] pr=%d has a true conflict update-branch can't resolve — human-stop", pr
+        )
+        return False
+    logger.warning("[pr-endgame] merge failed pr=%d: %s", pr, res.err[:300])
+    return False
 
 
 # ---------------------------------------------------------------------------
