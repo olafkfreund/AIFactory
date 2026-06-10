@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.23 - 2026-06-10
+
+### Fixed
+
+- Auto-feedback loop race (#71 Phase B): the fix loop ran the QA-fixer fire-and-forget (`apply_correction` → `_default_fixer` schedules a background task and returns), so it pushed + re-reviewed the **un-fixed** code and re-read the stale `changes_requested` verdict. `_fix_fn` now runs the fixer **to completion** (awaits `_run_fixer_bg` via a `fixer_fn`) before pushing, and waits for the re-review's `reviewedAt` to advance before returning so the loop reads the fresh verdict. Push failure fails the cycle.
+
 ## 3.6.22 - 2026-06-10
 
 ### Added

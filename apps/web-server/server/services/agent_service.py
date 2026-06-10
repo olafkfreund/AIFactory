@@ -2601,23 +2601,58 @@ class AgentService:
                                         try:
                                             import asyncio as _aio
 
-                                            from qa.correction import apply_correction
+                                            from qa.correction import (
+                                                _run_fixer_bg,
+                                                apply_correction,
+                                            )
                                             md = "## Pre-merge review findings (auto-fix)\n\n" + "\n".join(
                                                 f"- [{(f or {}).get('severity', 'note')}] "
                                                 f"{(f or {}).get('title') or (f or {}).get('message') or f}"
                                                 for f in (findings or [])
                                             )
+
+                                            # Run the QA-fixer TO COMPLETION (not the
+                                            # default fire-and-forget background task) so
+                                            # the fix actually lands BEFORE we push +
+                                            # re-review — otherwise we'd re-review the
+                                            # un-fixed code and waste the cycle budget.
+                                            async def _fixer_to_completion(_spec):
+                                                await _run_fixer_bg(_spec)
+                                                return {"status": "qa_fixed", "completed": True}
+
                                             _aio.run(apply_correction(
                                                 spec_dir, md, confirm=True,
+                                                fixer_fn=_fixer_to_completion,
                                                 correlation_key=f"pr-{prn}",
                                             ))
                                             _sp.run(["gh", "auth", "setup-git"],
                                                     capture_output=True, timeout=30)
-                                            _sp.run(["git", "push", "origin", "HEAD"],
-                                                    cwd=str(_wt), capture_output=True, timeout=120)
+                                            push = _sp.run(["git", "push", "origin", "HEAD"],
+                                                           cwd=str(_wt), capture_output=True,
+                                                           text=True, timeout=120)
+                                            if push.returncode != 0:
+                                                logger.warning(
+                                                    "[pr-endgame] fix push failed: %s",
+                                                    (push.stderr or "")[:200])
+                                                return False
+                                            # Re-review the FIXED code and wait for the
+                                            # fresh result before returning, so the loop
+                                            # doesn't re-read the stale (pre-fix) verdict
+                                            # and burn a cycle. Bounded; best-effort.
                                             if prn:
+                                                import time as _t
+
+                                                _ds = get_pr_data_service()
+                                                _before = ((_ds.get_review(project_path, prn) or {})
+                                                           .get("data", {}) or {}).get("reviewedAt")
                                                 _aio.run(get_pr_review_service().start_review(
                                                     _proj_id, prn, project_path))
+                                                for _ in range(40):  # ~6 min cap
+                                                    _t.sleep(9)
+                                                    _now = ((_ds.get_review(project_path, prn) or {})
+                                                            .get("data", {}) or {}).get("reviewedAt")
+                                                    if _now and _now != _before:
+                                                        break
                                             return True
                                         except Exception:  # noqa: BLE001
                                             logger.debug("PR endgame fix_fn failed", exc_info=True)
