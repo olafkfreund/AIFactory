@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.21 - 2026-06-10
+
+### Added
+
+- The pre-merge reviewer is now **configurable** (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`, project setting + env, default `aifactory`) so the merge gate no longer depends on GitHub Copilot **code review** credits (#71 Phase A). With `aifactory`, AIFactory's own review engine reviews the PR with the project's provider (Claude/Ollama) and the merge is gated on **its verdict** (read from `review_{pr}.json`) — GitHub forbids self-approving the PR AIFactory opened, so the engine verdict is the gate, not a GitHub review event. A "Pre-merge reviewer" selector is in Project Settings → General. `copilot`/`any` modes keep gating on GitHub review state. On changes-requested the PR is human-stopped (the auto-feedback fix loop is the next increment).
+
 ## 3.6.20 - 2026-06-10
 
 ### Added
