@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.24 - 2026-06-10
+
+### Fixed
+
+- Sequential auto-merges no longer dead-end on a stale branch (#71): when an earlier auto-merge advances `main`, a later PR is "behind" and `gh pr merge` fails. `merge_pr` now runs `gh pr update-branch` once and retries — resolving the common case where tasks touch different files. A true line-level conflict (update-branch fails) is still left for a human; never force-merged.
+
 ## 3.6.23 - 2026-06-10
 
 ### Fixed

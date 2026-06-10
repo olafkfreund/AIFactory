@@ -366,3 +366,45 @@ def test_no_fix_fn_changes_requested_human_stops():
         runner=FakeRunner({}), poll_interval=0, max_minutes=1,
     ))
     assert res["reason"] == "changes_requested" and res["fix_cycles"] == 0
+
+
+# ── merge conflict handling (update-branch retry) ────────────────────────────
+
+
+def test_merge_clean_succeeds_first_try():
+    r = FakeRunner({"pr merge": CmdResult(0, "merged", "")})
+    assert pe.merge_pr("o", "r", 5, runner=r) is True
+    assert not r.saw("update-branch")
+
+
+class _SeqRunner:
+    """gh pr merge fails (behind) the 1st time, succeeds after update-branch."""
+    def __init__(self, update_ok: bool):
+        self.update_ok = update_ok
+        self.calls: list[str] = []
+        self._merges = 0
+
+    def __call__(self, argv, cwd=None):
+        j = " ".join(argv); self.calls.append(j)
+        if "update-branch" in j:
+            return CmdResult(0 if self.update_ok else 1, "", "" if self.update_ok else "conflicts")
+        if "pr merge" in j:
+            self._merges += 1
+            if self._merges == 1:
+                return CmdResult(1, "", "not mergeable: the merge commit cannot be cleanly created")
+            return CmdResult(0, "merged", "")  # after update-branch
+        return CmdResult(0, "", "")
+
+    def saw(self, n): return any(n in c for c in self.calls)
+
+
+def test_merge_behind_updates_branch_then_merges():
+    r = _SeqRunner(update_ok=True)
+    assert pe.merge_pr("o", "r", 20, runner=r) is True
+    assert r.saw("update-branch")
+
+
+def test_true_conflict_human_stops_no_force():
+    r = _SeqRunner(update_ok=False)  # update-branch fails → true conflict
+    assert pe.merge_pr("o", "r", 20, runner=r) is False
+    assert r.saw("update-branch")  # tried, but did not force-merge
