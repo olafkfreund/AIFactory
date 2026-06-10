@@ -24,7 +24,7 @@ import logging
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -191,6 +191,7 @@ class ReviewState:
     copilot_reviewed: bool = False
     copilot_approved: bool = False
     copilot_changes_requested: bool = False
+    findings: list = field(default_factory=list)  # for the auto-feedback loop
 
 
 def _is_copilot(login: str) -> bool:
@@ -214,17 +215,31 @@ def verdict_from_review_result(result: dict | None) -> ReviewState:
         return ReviewState("pending")
     data = result.get("data") if isinstance(result.get("data"), dict) else result
     raw = str(data.get("verdict") or data.get("recommendation") or "").lower()
-    if raw in ("approve", "approved"):
+    # AIFactory's engine MergeVerdict vocabulary (models.MergeVerdict) + generic
+    # synonyms. ready_to_merge == approved; everything else that's a real verdict
+    # is changes_requested (the auto-feedback loop will try to resolve it).
+    _APPROVE = {"approve", "approved", "ready_to_merge"}
+    _CHANGES = {
+        "request_changes", "changes_requested", "reject", "rejected",
+        "merge_with_changes", "needs_revision", "blocked", "do_not_merge",
+    }
+    blockers = data.get("blockers")
+    if isinstance(blockers, list) and blockers:
+        return ReviewState("changes_requested", findings=blockers)
+    if raw in _APPROVE:
         return ReviewState("approved")
-    if raw in ("request_changes", "changes_requested", "reject", "rejected"):
-        return ReviewState("changes_requested")
+    if raw in _CHANGES:
+        return ReviewState("changes_requested", findings=(data.get("findings") or []))
     findings = data.get("findings")
     if isinstance(findings, list):
-        blocking = any(
-            str((f or {}).get("severity", "")).lower() in _BLOCKING_SEVERITIES
-            for f in findings if isinstance(f, dict)
-        )
-        return ReviewState("changes_requested" if blocking else "approved")
+        blocking = [
+            f for f in findings
+            if isinstance(f, dict)
+            and str(f.get("severity", "")).lower() in _BLOCKING_SEVERITIES
+        ]
+        if blocking:
+            return ReviewState("changes_requested", findings=blocking)
+        return ReviewState("approved")
     return ReviewState("pending")
 
 
@@ -301,6 +316,8 @@ async def watch_and_finish(
     auto_merge: bool,
     require_copilot: bool = True,
     review_fn: Callable[[], ReviewState] | None = None,
+    fix_fn: Callable[[list], bool] | None = None,
+    max_fix_cycles: int = 2,
     on_approved_merged: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
@@ -322,6 +339,7 @@ async def watch_and_finish(
     if review_fn is not None:
         require_copilot = False
 
+    fix_cycles = 0
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
@@ -332,9 +350,24 @@ async def watch_and_finish(
 
         if rs.verdict == "changes_requested":
             who = "copilot" if rs.copilot_changes_requested else "reviewer"
+            # Auto-feedback loop (#71 Phase B): route the findings back to the
+            # QA-fixer, push the fix, and re-review — bounded. Only when a fix_fn
+            # is wired (aifactory reviewer); otherwise human-stop.
+            if fix_fn is not None and fix_cycles < max_fix_cycles:
+                fix_cycles += 1
+                logger.info(
+                    "[pr-endgame] pr=%d changes requested by %s — auto-fix cycle %d/%d",
+                    pr, who, fix_cycles, max_fix_cycles,
+                )
+                ok = await asyncio.to_thread(fix_fn, rs.findings)
+                if not ok:
+                    return {"pr": pr, "verdict": rs.verdict, "merged": False,
+                            "reason": "fix_failed", "fix_cycles": fix_cycles}
+                continue  # re-review on the next poll after the fix lands
             logger.info("[pr-endgame] pr=%d changes requested by %s — handing to a human", pr, who)
             return {"pr": pr, "verdict": rs.verdict, "merged": False,
-                    "reason": "changes_requested",
+                    "reason": "changes_requested" if fix_cycles == 0 else "needs_human_after_fixes",
+                    "fix_cycles": fix_cycles,
                     "copilot_changes_requested": rs.copilot_changes_requested}
 
         # Only consider merging on an approval that satisfies the Copilot gate.
@@ -430,6 +463,7 @@ async def run_pr_endgame(
     auto_merge: bool = False,
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
+    fix_fn: Callable[[list], bool] | None = None,
     on_pr_opened: Callable[[int], None] | None = None,
     re_test: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
@@ -479,7 +513,7 @@ async def run_pr_endgame(
     coro = watch_and_finish(
         owner=owner, repo=name, pr=pr, auto_merge=auto_merge,
         require_copilot=(reviewer == "copilot"), review_fn=review_fn,
-        on_approved_merged=re_test, runner=runner,
+        fix_fn=fix_fn, on_approved_merged=re_test, runner=runner,
     )
     if background:
         asyncio.create_task(coro)

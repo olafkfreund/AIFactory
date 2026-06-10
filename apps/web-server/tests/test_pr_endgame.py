@@ -267,17 +267,22 @@ def test_resolve_pr_reviewer(tmp_path, monkeypatch):
 def test_verdict_from_review_result():
     assert pe.verdict_from_review_result(None).verdict == "pending"
     assert pe.verdict_from_review_result({}).verdict == "pending"
+    # AIFactory engine's MergeVerdict vocabulary
+    assert pe.verdict_from_review_result({"verdict": "ready_to_merge"}).verdict == "approved"
+    assert pe.verdict_from_review_result({"verdict": "needs_revision"}).verdict == "changes_requested"
+    assert pe.verdict_from_review_result({"verdict": "blocked"}).verdict == "changes_requested"
+    assert pe.verdict_from_review_result({"verdict": "merge_with_changes"}).verdict == "changes_requested"
+    # generic synonyms
     assert pe.verdict_from_review_result({"verdict": "approve"}).verdict == "approved"
     assert pe.verdict_from_review_result({"verdict": "request_changes"}).verdict == "changes_requested"
-    # derive from findings
+    # blockers field forces changes_requested + carries them as findings
+    rs = pe.verdict_from_review_result({"verdict": "ready_to_merge", "blockers": [{"title": "b"}]})
+    assert rs.verdict == "changes_requested" and rs.findings == [{"title": "b"}]
+    # derive from findings when no verdict
     assert pe.verdict_from_review_result({"findings": []}).verdict == "approved"
-    assert pe.verdict_from_review_result(
-        {"findings": [{"severity": "low"}]}).verdict == "approved"
-    assert pe.verdict_from_review_result(
-        {"findings": [{"severity": "high"}]}).verdict == "changes_requested"
+    assert pe.verdict_from_review_result({"findings": [{"severity": "high"}]}).verdict == "changes_requested"
     # tolerate {data:{...}} wrapper
-    assert pe.verdict_from_review_result(
-        {"data": {"verdict": "approve"}}).verdict == "approved"
+    assert pe.verdict_from_review_result({"data": {"verdict": "ready_to_merge"}}).verdict == "approved"
 
 
 def test_aifactory_reviewer_gate_merges_on_engine_approval():
@@ -301,3 +306,63 @@ def test_aifactory_reviewer_changes_requested_human_stop():
     ))
     assert res["merged"] is False and res["reason"] == "changes_requested"
     assert not r.saw("pr merge")
+
+
+# ── #71 Phase B: bounded auto-feedback loop ──────────────────────────────────
+
+
+def test_fix_loop_fixes_then_merges():
+    # review: changes_requested → (fix) → approved → merge.
+    states = [pe.ReviewState("changes_requested", findings=[{"severity": "high", "title": "x"}]),
+              pe.ReviewState("approved")]
+    fixes = []
+    def review_fn():
+        return states.pop(0) if states else pe.ReviewState("approved")
+    def fix_fn(findings):
+        fixes.append(findings)
+        return True
+    r = FakeRunner({"pr merge": CmdResult(0, "merged", "")})
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True, review_fn=review_fn, fix_fn=fix_fn,
+        runner=r, poll_interval=0, max_minutes=5,
+    ))
+    assert res["merged"] is True
+    assert len(fixes) == 1 and fixes[0][0]["title"] == "x"  # findings passed to fixer
+
+
+def test_fix_loop_bounded_then_human_stop():
+    # always changes_requested → exhausts cycles → needs_human_after_fixes.
+    def review_fn():
+        return pe.ReviewState("changes_requested", findings=[{"severity": "high"}])
+    cycles = {"n": 0}
+    def fix_fn(findings):
+        cycles["n"] += 1
+        return True
+    r = FakeRunner({})
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True, review_fn=review_fn, fix_fn=fix_fn,
+        max_fix_cycles=2, runner=r, poll_interval=0, max_minutes=5,
+    ))
+    assert res["merged"] is False and res["reason"] == "needs_human_after_fixes"
+    assert cycles["n"] == 2 and res["fix_cycles"] == 2
+    assert not r.saw("pr merge")
+
+
+def test_fix_loop_fix_failure_stops():
+    def review_fn():
+        return pe.ReviewState("changes_requested", findings=[{"severity": "high"}])
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True, review_fn=review_fn,
+        fix_fn=lambda f: False, runner=FakeRunner({}), poll_interval=0, max_minutes=5,
+    ))
+    assert res["merged"] is False and res["reason"] == "fix_failed"
+
+
+def test_no_fix_fn_changes_requested_human_stops():
+    # Without a fix_fn, changes_requested is an immediate human-stop (Phase A behavior).
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True,
+        review_fn=lambda: pe.ReviewState("changes_requested"),
+        runner=FakeRunner({}), poll_interval=0, max_minutes=1,
+    ))
+    assert res["reason"] == "changes_requested" and res["fix_cycles"] == 0

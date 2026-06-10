@@ -39,6 +39,18 @@ reviewer*), or via env. Values:
 `aifactory` is the default precisely because it needs no Copilot credits and rides
 the same provider you build with (Claude now, Ollama later).
 
+### Auto-feedback loop (changes-requested → fix → re-review → merge)
+
+When the reviewer requests changes, the endgame doesn't just stop — it runs a
+**bounded auto-fix loop** (`fix_fn`, ≤2 cycles): the findings are routed to the
+QA-fixer (`apply_correction`), the fix is pushed to the PR branch, and the PR is
+re-reviewed. It merges only once the re-review passes; after the cycle budget it
+hands to a human (`needs_human_after_fixes`). A fixer failure stops immediately
+(`fix_failed`). With no `fix_fn` wired, changes-requested is an immediate
+human-stop. (The AIFactory reviewer's verdict vocabulary is `MergeVerdict`:
+`ready_to_merge` ⇒ approve; `merge_with_changes`/`needs_revision`/`blocked` ⇒
+changes; a non-empty `blockers` list also forces changes.)
+
 ### Copilot's review is a hard gate (it is not bypassed)
 
 Auto-merge requires GitHub Copilot to have **actually reviewed and APPROVED** the

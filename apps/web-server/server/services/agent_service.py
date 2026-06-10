@@ -2566,12 +2566,16 @@ class AgentService:
                                 _proj_id = task_id.split(":", 1)[0] if ":" in task_id else ""
                                 _review_fn = None
                                 _on_pr_opened = None
+                                _fix_fn = None
                                 if _reviewer == "aifactory":
+                                    import subprocess as _sp
+
                                     from .pr_data_service import get_pr_data_service
                                     from .pr_endgame import ReviewState
                                     from .pr_review_service import get_pr_review_service
 
                                     _pr_box: dict = {}
+                                    _wt = ctx["worktree"]
 
                                     def _on_pr_opened(prn: int) -> None:
                                         _pr_box["pr"] = prn
@@ -2588,13 +2592,44 @@ class AgentService:
                                         res = get_pr_data_service().get_review(project_path, prn)
                                         return verdict_from_review_result(res)
 
+                                    def _fix_fn(findings) -> bool:
+                                        # Phase B: route review findings to the QA-fixer,
+                                        # push the fix to the PR branch, then re-review.
+                                        # Runs in a worker thread (no running loop), so
+                                        # asyncio.run is safe. Best-effort.
+                                        prn = _pr_box.get("pr")
+                                        try:
+                                            import asyncio as _aio
+
+                                            from qa.correction import apply_correction
+                                            md = "## Pre-merge review findings (auto-fix)\n\n" + "\n".join(
+                                                f"- [{(f or {}).get('severity', 'note')}] "
+                                                f"{(f or {}).get('title') or (f or {}).get('message') or f}"
+                                                for f in (findings or [])
+                                            )
+                                            _aio.run(apply_correction(
+                                                spec_dir, md, confirm=True,
+                                                correlation_key=f"pr-{prn}",
+                                            ))
+                                            _sp.run(["gh", "auth", "setup-git"],
+                                                    capture_output=True, timeout=30)
+                                            _sp.run(["git", "push", "origin", "HEAD"],
+                                                    cwd=str(_wt), capture_output=True, timeout=120)
+                                            if prn:
+                                                _aio.run(get_pr_review_service().start_review(
+                                                    _proj_id, prn, project_path))
+                                            return True
+                                        except Exception:  # noqa: BLE001
+                                            logger.debug("PR endgame fix_fn failed", exc_info=True)
+                                            return False
+
                                 endgame = await run_pr_endgame(
                                     spec_dir=spec_dir, spec_id=spec_id,
                                     worktree=ctx["worktree"], branch=ctx["branch"],
                                     base=ctx["base"], repo=ctx["repo"],
                                     auto_merge=is_auto_merge_enabled(project_path),
                                     reviewer=_reviewer, review_fn=_review_fn,
-                                    on_pr_opened=_on_pr_opened,
+                                    fix_fn=_fix_fn, on_pr_opened=_on_pr_opened,
                                     re_test=_re_test_sync,
                                 )
                                 logger.info(
