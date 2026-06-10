@@ -190,6 +190,53 @@ export function GeneralSettings({
 
           <Separator />
 
+          {/* PR endgame — auto-open a PR on a clean build, then (optionally)
+              auto-merge once GitHub Copilot's code review APPROVES it. */}
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="font-normal text-foreground">
+                  Auto-open a PR when a build finishes cleanly
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  When a build completes its QA, AIFactory pushes the branch,
+                  opens a pull request, and requests a GitHub Copilot code review —
+                  then stops for a human. Requires a GitHub project. Default off.
+                </p>
+              </div>
+              <Switch
+                checked={settings.autoPr ?? false}
+                onCheckedChange={(checked) =>
+                  setSettings({ ...settings, autoPr: checked })
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="font-normal text-foreground">
+                  Auto-merge after Copilot approves
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Once the auto-PR is open, AIFactory waits for GitHub Copilot's
+                  code review and merges + re-tests <strong>only</strong> if Copilot
+                  posts an <strong>APPROVED</strong> review. If Copilot requests
+                  changes, finds problems, or never reviews, the PR is left open
+                  for a human — nothing is merged around Copilot's findings. No
+                  effect unless &ldquo;Auto-open a PR&rdquo; is on. Default off.
+                </p>
+              </div>
+              <Switch
+                checked={settings.autoMerge ?? false}
+                disabled={!(settings.autoPr ?? false)}
+                onCheckedChange={(checked) =>
+                  setSettings({ ...settings, autoMerge: checked })
+                }
+              />
+            </div>
+          </section>
+
+          <Separator />
+
           {/* Notifications */}
           <section className="space-y-4">
             <h3 className="text-sm font-semibold text-foreground">Notifications</h3>

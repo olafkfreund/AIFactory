@@ -758,6 +758,12 @@ class ProjectSettingsUpdate(BaseModel):
     # in its task_metadata. Only effective on GitHub projects — V1.5 (#98)
     # extends to GitLab Duo Workflow. Per-task overrides win.
     delegateByDefault: bool | None = Field(default=None, alias="delegate_by_default")
+    # PR endgame (#71): when true, a clean build auto-opens a PR + requests a
+    # Copilot review (autoPr), and — only on Copilot's APPROVAL — auto-merges +
+    # re-tests (autoMerge). autoMerge has no effect without autoPr. Both default
+    # OFF. Stored as AIFACTORY_AUTO_PR / AIFACTORY_AUTO_MERGE in .aifactory/.env.
+    autoPr: bool | None = Field(default=None, alias="auto_pr")
+    autoMerge: bool | None = Field(default=None, alias="auto_merge")
 
     @field_validator("memoryBackend", mode="before")
     @classmethod
@@ -823,6 +829,8 @@ async def update_project_settings(
             "useClaudeMd": "USE_CLAUDE_MD",
             "remoteControlByDefault": "REMOTE_CONTROL_BY_DEFAULT",
             "delegateByDefault": "DELEGATE_BY_DEFAULT",
+            "autoPr": "AIFACTORY_AUTO_PR",
+            "autoMerge": "AIFACTORY_AUTO_MERGE",
         }
 
         # Update string/value settings

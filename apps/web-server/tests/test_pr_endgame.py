@@ -80,78 +80,120 @@ def test_create_pr_parses_number():
     assert r.saw("auth setup-git")
 
 
-@pytest.mark.parametrize("states,expected", [
-    (["APPROVED"], "approved"),
-    (["APPROVED", "CHANGES_REQUESTED"], "changes_requested"),  # CR dominates
-    (["COMMENTED"], "pending"),
-    ([], "pending"),
-])
-def test_read_review_verdict(states, expected):
-    r = FakeRunner({"pulls": CmdResult(0, json.dumps(states), "")})
-    assert pe.read_review_verdict("o", "r", 1, runner=r) == expected
+COPILOT = "copilot-pull-request-reviewer[bot]"
 
 
-# ── watch_and_finish ─────────────────────────────────────────────────────────
+def _reviews(*pairs):
+    """pairs of (state, login) → the JSON gh returns for .../reviews."""
+    return CmdResult(0, json.dumps([{"state": s, "login": l} for s, l in pairs]), "")
 
 
-def test_changes_requested_never_merges(monkeypatch):
-    monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")
-    r = FakeRunner({"reviews": CmdResult(0, json.dumps(["CHANGES_REQUESTED"]), "")})
-    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=3, runner=r,
-                                          poll_interval=0, max_minutes=1))
+def test_read_review_verdict_copilot_aware():
+    r = FakeRunner({"reviews": _reviews(("APPROVED", COPILOT))})
+    rs = pe.read_review_verdict("o", "r", 1, runner=r)
+    assert rs.verdict == "approved" and rs.copilot_approved and rs.copilot_reviewed
+
+    r = FakeRunner({"reviews": _reviews(("APPROVED", "alice"))})  # human, not copilot
+    rs = pe.read_review_verdict("o", "r", 1, runner=r)
+    assert rs.verdict == "approved" and not rs.copilot_approved and not rs.copilot_reviewed
+
+    r = FakeRunner({"reviews": _reviews(("CHANGES_REQUESTED", COPILOT), ("APPROVED", "alice"))})
+    rs = pe.read_review_verdict("o", "r", 1, runner=r)
+    assert rs.verdict == "changes_requested" and rs.copilot_changes_requested
+
+
+# ── watch_and_finish (Copilot-gated) ─────────────────────────────────────────
+
+
+def test_changes_requested_never_merges():
+    r = FakeRunner({"reviews": _reviews(("CHANGES_REQUESTED", COPILOT))})
+    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=3, auto_merge=True,
+                                          runner=r, poll_interval=0, max_minutes=1))
     assert res["merged"] is False and res["reason"] == "changes_requested"
+    assert res["copilot_changes_requested"] is True
     assert not r.saw("pr merge")
 
 
-def test_approved_with_flag_merges_and_retests(monkeypatch):
-    monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")
+def test_copilot_approved_with_flag_merges_and_retests():
     r = FakeRunner({
-        "reviews": CmdResult(0, json.dumps(["APPROVED"]), ""),
+        "reviews": _reviews(("APPROVED", COPILOT)),
         "pr merge": CmdResult(0, "merged", ""),
     })
     retested = {"called": False}
     res = asyncio.run(pe.watch_and_finish(
-        owner="o", repo="r", pr=5, runner=r, poll_interval=0, max_minutes=1,
+        owner="o", repo="r", pr=5, auto_merge=True, runner=r, poll_interval=0, max_minutes=1,
         on_approved_merged=lambda: retested.update(called=True),
     ))
     assert res["merged"] is True and res["verdict"] == "approved"
-    assert r.saw("pr merge")
-    assert retested["called"] is True
+    assert r.saw("pr merge") and retested["called"] is True
 
 
-def test_approved_without_flag_does_not_merge(monkeypatch):
-    monkeypatch.delenv("AIFACTORY_AUTO_MERGE", raising=False)
-    r = FakeRunner({"reviews": CmdResult(0, json.dumps(["APPROVED"]), "")})
-    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=5, runner=r,
-                                          poll_interval=0, max_minutes=1))
+def test_copilot_approved_without_flag_does_not_merge():
+    r = FakeRunner({"reviews": _reviews(("APPROVED", COPILOT))})
+    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=5, auto_merge=False,
+                                          runner=r, poll_interval=0, max_minutes=1))
     assert res["merged"] is False and res["reason"] == "auto_merge_disabled"
     assert not r.saw("pr merge")
 
 
-def test_timeout_hands_to_human(monkeypatch):
-    monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")
-    r = FakeRunner({"reviews": CmdResult(0, json.dumps(["COMMENTED"]), "")})
-    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=9, runner=r,
+def test_human_approval_alone_does_not_merge_when_require_copilot():
+    # The whole point: don't merge around Copilot. A human APPROVED but Copilot
+    # hasn't reviewed → keep waiting → timeout → human-stop, never merge.
+    r = FakeRunner({"reviews": _reviews(("APPROVED", "alice"))})
+    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=5, auto_merge=True,
+                                          runner=r, poll_interval=0, max_minutes=1))
+    assert res["merged"] is False and "review_timeout" in res["reason"]
+    assert not r.saw("pr merge")
+
+
+def test_no_copilot_review_times_out_without_merge():
+    r = FakeRunner({"reviews": _reviews(("COMMENTED", COPILOT))})
+    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=9, auto_merge=True,
+                                          runner=r, poll_interval=0, max_minutes=1))
+    assert res["merged"] is False and "review_timeout" in res["reason"]
+
+
+def test_require_copilot_false_allows_human_approval():
+    r = FakeRunner({
+        "reviews": _reviews(("APPROVED", "alice")),
+        "pr merge": CmdResult(0, "merged", ""),
+    })
+    res = asyncio.run(pe.watch_and_finish(owner="o", repo="r", pr=5, auto_merge=True,
+                                          require_copilot=False, runner=r,
                                           poll_interval=0, max_minutes=1))
-    assert res["merged"] is False and res["reason"] == "review_timeout"
+    assert res["merged"] is True
+
+
+# ── per-project settings flags ───────────────────────────────────────────────
+
+
+def test_flags_read_project_env_over_global(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_AUTO_PR", "false")  # global default off
+    env_dir = tmp_path / ".aifactory"
+    env_dir.mkdir()
+    (env_dir / ".env").write_text("AIFACTORY_AUTO_PR=true\nAIFACTORY_AUTO_MERGE=false\n")
+    # project setting (true) overrides the global env (false)
+    assert pe.is_auto_pr_enabled(tmp_path) is True
+    assert pe.is_auto_merge_enabled(tmp_path) is False
+    # no project_path → falls back to global env
+    assert pe.is_auto_pr_enabled(None) is False
 
 
 # ── full chain (inline) ──────────────────────────────────────────────────────
 
 
-def test_run_pr_endgame_full_chain(monkeypatch):
-    monkeypatch.setenv("AIFACTORY_AUTO_MERGE", "true")
+def test_run_pr_endgame_full_chain():
     r = FakeRunner({
         "git push": CmdResult(0, "", ""),
         "pr create": CmdResult(0, "https://github.com/o/r/pull/11", ""),
         "requested_reviewers": CmdResult(0, "", ""),
-        "reviews": CmdResult(0, json.dumps(["APPROVED"]), ""),
+        "reviews": _reviews(("APPROVED", COPILOT)),  # Copilot approved → gate satisfied
         "pr merge": CmdResult(0, "merged", ""),
     })
     res = asyncio.run(pe.run_pr_endgame(
         spec_dir=Path("/tmp"), spec_id="010-x", worktree=Path("/tmp"),
         branch="auto-claude/010-x", base="main", repo="o/r",
-        runner=r, background=False,
+        auto_merge=True, runner=r, background=False,
     ))
     assert res["ok"] and res["pr"] == 11 and res["merged"] is True
     assert r.saw("requested_reviewers")  # Copilot review was requested

@@ -9,15 +9,32 @@ default** and degrades safely to a human-stop at every uncertain step.
 
 ## Feature flags
 
-Both are environment variables on the AIFactory web-server (set in
-`factory-gitops/apps/aifactory/manifests/manifests.yaml`). Both default OFF.
+Toggle these **per project** from the Settings UI (Project Settings → General →
+*Auto-open a PR* / *Auto-merge after Copilot approves*), or globally via env on
+the web-server (`factory-gitops/apps/aifactory/manifests/manifests.yaml`). The
+**per-project setting wins**; the env var is the fallback default. Both OFF by
+default.
 
-| Flag | Default | Effect when `true` |
-|---|---|---|
-| `AIFACTORY_AUTO_PR` | off | On a `COMPLETED` build: push the worktree branch, open a PR, request a Copilot review. Then **stop** for a human. |
-| `AIFACTORY_AUTO_MERGE` | off | *Additionally*: when Copilot's review is **APPROVED**, squash-merge the PR and re-run TFactory against the merged result. |
+| Setting (UI) | Env / project `.aifactory/.env` | Default | Effect when on |
+|---|---|---|---|
+| Auto-open a PR | `AIFACTORY_AUTO_PR` | off | On a `COMPLETED` build: push the worktree branch, open a PR, request a Copilot review. Then **stop** for a human. |
+| Auto-merge after Copilot approves | `AIFACTORY_AUTO_MERGE` | off | *Additionally*: merge + re-test **only after GitHub Copilot posts an APPROVED review**. |
 
-`AIFACTORY_AUTO_MERGE` has no effect unless `AIFACTORY_AUTO_PR` is also on.
+`AIFACTORY_AUTO_MERGE` has no effect unless `AIFACTORY_AUTO_PR` is also on. The
+UI toggle resolution is `is_auto_pr_enabled(project_path)` /
+`is_auto_merge_enabled(project_path)` in `pr_endgame.py` (reads the project's
+`.aifactory/.env`, then the global env).
+
+### Copilot's review is a hard gate (it is not bypassed)
+
+Auto-merge requires GitHub Copilot to have **actually reviewed and APPROVED** the
+PR (`require_copilot=True`, the default). Copilot finds real problems, so its
+verdict gates the merge:
+- **Copilot APPROVED** → merge + re-test (when auto-merge is on).
+- **Copilot CHANGES_REQUESTED** (or any reviewer) → human-stop, PR left open.
+- **Copilot has not reviewed yet** → keep waiting; on timeout, human-stop. Never
+  a blind merge, and never a merge on a *human-only* approval when
+  `require_copilot` is set. A human approval alone does not satisfy the gate.
 
 ## Flow
 

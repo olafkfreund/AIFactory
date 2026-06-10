@@ -53,6 +53,17 @@ export interface ProjectSettings {
    * ``gitProvider === "github"``; ignored otherwise.
    */
   delegateByDefault?: boolean;
+  /**
+   * PR endgame (#71): when true, a clean build auto-opens a PR and requests a
+   * GitHub Copilot review. Default off.
+   */
+  autoPr?: boolean;
+  /**
+   * When true, the auto-PR is auto-merged + re-tested ONLY after GitHub Copilot
+   * posts an APPROVED review (Copilot's findings gate the merge). No effect
+   * unless ``autoPr`` is on. Default off.
+   */
+  autoMerge?: boolean;
 }
 
 export interface NotificationSettings {

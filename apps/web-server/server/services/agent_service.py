@@ -2529,17 +2529,20 @@ class AgentService:
                         logger.debug("tfactory auto-handoff failed (best-effort)", exc_info=True)
 
                     # PR endgame (#71 Phase 4): on a clean build, optionally open
-                    # a PR, request a Copilot review, and (on approval) auto-merge
-                    # + re-test. Flag-gated OFF by default (AIFACTORY_AUTO_PR /
-                    # AIFACTORY_AUTO_MERGE); human-stop on changes-requested/timeout.
+                    # a PR, request a Copilot review, and (only on Copilot's
+                    # APPROVAL) auto-merge + re-test. Toggled per-project from the
+                    # Settings UI (auto_pr / auto_merge in .aifactory/.env), env as
+                    # fallback. Both default OFF; human-stop on changes-requested,
+                    # no-Copilot-review, or timeout.
                     try:
                         from .pr_endgame import (
                             gather_pr_context,
+                            is_auto_merge_enabled,
                             is_auto_pr_enabled,
                             run_pr_endgame,
                         )
 
-                        if is_auto_pr_enabled():
+                        if is_auto_pr_enabled(project_path):
                             ctx = gather_pr_context(project_path, spec_dir, spec_id)
                             if ctx:
                                 async def _re_test() -> None:
@@ -2556,6 +2559,7 @@ class AgentService:
                                     spec_dir=spec_dir, spec_id=spec_id,
                                     worktree=ctx["worktree"], branch=ctx["branch"],
                                     base=ctx["base"], repo=ctx["repo"],
+                                    auto_merge=is_auto_merge_enabled(project_path),
                                     re_test=_re_test_sync,
                                 )
                                 logger.info(

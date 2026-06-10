@@ -62,14 +62,44 @@ def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
 # ---------------------------------------------------------------------------
 
 _TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
 
 
-def is_auto_pr_enabled() -> bool:
-    return os.environ.get("AIFACTORY_AUTO_PR", "").strip().lower() in _TRUTHY
+def _project_env(project_path: Path | None, key: str) -> str | None:
+    """Read ``key`` from a project's ``.aifactory/.env`` (the per-project settings
+    store the Settings UI writes via PATCH /api/projects/{id}/settings). Returns
+    None when unset/unreadable so the caller can fall back to the global env.
+    """
+    if project_path is None:
+        return None
+    env_path = Path(project_path) / ".aifactory" / ".env"
+    try:
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                if k.strip() == key:
+                    return v.strip()
+    except OSError:
+        return None
+    return None
 
 
-def is_auto_merge_enabled() -> bool:
-    return os.environ.get("AIFACTORY_AUTO_MERGE", "").strip().lower() in _TRUTHY
+def _flag(key: str, project_path: Path | None) -> bool:
+    """Resolve a boolean flag: per-project setting (Settings UI) wins, else the
+    global env var (deployment default). Both default OFF."""
+    pv = _project_env(project_path, key)
+    if pv is not None:
+        return pv.strip().lower() in _TRUTHY
+    return os.environ.get(key, "").strip().lower() in _TRUTHY
+
+
+def is_auto_pr_enabled(project_path: Path | None = None) -> bool:
+    return _flag("AIFACTORY_AUTO_PR", project_path)
+
+
+def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
+    return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
 # ---------------------------------------------------------------------------
@@ -141,31 +171,58 @@ def request_copilot_review(
     return res.ok
 
 
+@dataclass
+class ReviewState:
+    """Copilot-aware view of a PR's reviews."""
+    verdict: str  # 'approved' | 'changes_requested' | 'pending'
+    copilot_reviewed: bool = False
+    copilot_approved: bool = False
+    copilot_changes_requested: bool = False
+
+
+def _is_copilot(login: str) -> bool:
+    return "copilot" in (login or "").lower()
+
+
 def read_review_verdict(
     owner: str, repo: str, pr: int, *, runner: Runner = _default_runner
-) -> str:
-    """Return the PR's current verdict: 'approved' | 'changes_requested' | 'pending'.
+) -> ReviewState:
+    """Summarize a PR's reviews with Copilot called out explicitly.
 
-    CHANGES_REQUESTED dominates (a human-stop), then APPROVED, else pending. We
-    consider all reviews — a Copilot approval and a human approval both count.
+    ``verdict`` is the overall latest-per-reviewer signal (CHANGES_REQUESTED
+    dominates APPROVED). The ``copilot_*`` fields let the watcher REQUIRE that
+    GitHub Copilot's code review actually ran and approved before merging — we
+    want to use Copilot's findings, not merge around them.
     """
     res = runner(
         ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr}/reviews", "--jq",
-         "[.[] | .state]"],
+         "[.[] | {state, login: .user.login}]"],
         None,
     )
     if not res.ok:
-        return "pending"
+        return ReviewState("pending")
     try:
-        states = json.loads(res.out or "[]")
+        reviews = json.loads(res.out or "[]")
     except (ValueError, TypeError):
-        return "pending"
-    states = {str(s).upper() for s in states}
-    if "CHANGES_REQUESTED" in states:
-        return "changes_requested"
-    if "APPROVED" in states:
-        return "approved"
-    return "pending"
+        return ReviewState("pending")
+
+    states = {str(r.get("state", "")).upper() for r in reviews if isinstance(r, dict)}
+    copilot_states = {
+        str(r.get("state", "")).upper()
+        for r in reviews
+        if isinstance(r, dict) and _is_copilot(r.get("login", ""))
+    }
+    verdict = (
+        "changes_requested" if "CHANGES_REQUESTED" in states
+        else "approved" if "APPROVED" in states
+        else "pending"
+    )
+    return ReviewState(
+        verdict=verdict,
+        copilot_reviewed=bool(copilot_states),
+        copilot_approved="APPROVED" in copilot_states,
+        copilot_changes_requested="CHANGES_REQUESTED" in copilot_states,
+    )
 
 
 def merge_pr(
@@ -197,37 +254,53 @@ async def watch_and_finish(
     owner: str,
     repo: str,
     pr: int,
+    auto_merge: bool,
+    require_copilot: bool = True,
     on_approved_merged: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
 ) -> dict:
-    """Poll the PR verdict; on APPROVED (+ AIFACTORY_AUTO_MERGE) merge it.
+    """Poll the PR's reviews and merge only on a CLEAN Copilot approval.
 
-    Returns a result dict. Never raises. Leaves the PR open for a human on
-    changes_requested / timeout / merge failure.
+    Merge requires ALL of: ``auto_merge`` on, no CHANGES_REQUESTED, and — when
+    ``require_copilot`` (default) — that GitHub Copilot's code review actually ran
+    and APPROVED. Copilot finds real problems, so we gate on its verdict rather
+    than merging around it: ``changes_requested`` (from anyone, incl. Copilot) is
+    a human-stop, and if Copilot never reviews we time out to a human-stop too —
+    never a blind merge. Never raises; leaves the PR open on any non-clean path.
     """
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
-        verdict = await asyncio.to_thread(
-            read_review_verdict, owner, repo, pr, runner=runner
-        )
-        if verdict == "changes_requested":
-            logger.info("[pr-endgame] pr=%d changes requested — handing to a human", pr)
-            return {"pr": pr, "verdict": verdict, "merged": False, "reason": "changes_requested"}
-        if verdict == "approved":
-            if not is_auto_merge_enabled():
-                return {"pr": pr, "verdict": verdict, "merged": False, "reason": "auto_merge_disabled"}
+        rs = await asyncio.to_thread(read_review_verdict, owner, repo, pr, runner=runner)
+
+        if rs.verdict == "changes_requested":
+            who = "copilot" if rs.copilot_changes_requested else "reviewer"
+            logger.info("[pr-endgame] pr=%d changes requested by %s — handing to a human", pr, who)
+            return {"pr": pr, "verdict": rs.verdict, "merged": False,
+                    "reason": "changes_requested",
+                    "copilot_changes_requested": rs.copilot_changes_requested}
+
+        # Only consider merging on an approval that satisfies the Copilot gate.
+        approved = rs.copilot_approved if require_copilot else (rs.verdict == "approved")
+        if approved:
+            if not auto_merge:
+                return {"pr": pr, "verdict": "approved", "merged": False,
+                        "reason": "auto_merge_disabled", "copilot_approved": rs.copilot_approved}
             merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
             if merged and on_approved_merged is not None:
                 try:
                     on_approved_merged()
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("[pr-endgame] post-merge re-test hook failed: %s", exc)
-            return {"pr": pr, "verdict": verdict, "merged": merged,
-                    "reason": None if merged else "merge_failed"}
-    return {"pr": pr, "verdict": "pending", "merged": False, "reason": "review_timeout"}
+            return {"pr": pr, "verdict": "approved", "merged": merged,
+                    "reason": None if merged else "merge_failed",
+                    "copilot_approved": rs.copilot_approved}
+        # else: pending (or approved-but-not-by-Copilot when require_copilot) → keep waiting
+
+    return {"pr": pr, "verdict": "pending", "merged": False,
+            "reason": "review_timeout (no Copilot approval)" if require_copilot else "review_timeout"}
 
 
 def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
@@ -299,15 +372,19 @@ async def run_pr_endgame(
     branch: str,
     base: str,
     repo: str,
+    auto_merge: bool = False,
+    require_copilot: bool = True,
     re_test: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
     background: bool = True,
 ) -> dict:
-    """Drive the endgame: open a PR, request Copilot review, then (in the
-    background) wait for the verdict and merge+re-test on approval.
+    """Drive the endgame: open a PR, request a Copilot review, then (in the
+    background) wait for Copilot's verdict and merge+re-test only on a clean
+    Copilot approval when ``auto_merge`` is set.
 
-    Caller guards with ``is_auto_pr_enabled()``. Returns immediately with the PR
-    number once it's opened; the verdict-watch runs as a background task unless
+    Caller guards with ``is_auto_pr_enabled(project_path)`` and resolves
+    ``auto_merge`` via ``is_auto_merge_enabled(project_path)``. Returns once the
+    PR is opened; the verdict-watch runs as a background task unless
     ``background=False`` (tests await it inline). Never raises.
     """
     parts = _split_repo(repo)
@@ -328,10 +405,14 @@ async def run_pr_endgame(
         return {"ok": False, "reason": "pr_not_created"}
 
     await asyncio.to_thread(request_copilot_review, owner, name, pr, runner=runner)
-    logger.info("[pr-endgame] opened PR #%d for %s; requested Copilot review", pr, spec_id)
+    logger.info(
+        "[pr-endgame] opened PR #%d for %s; requested Copilot review "
+        "(auto_merge=%s, require_copilot=%s)", pr, spec_id, auto_merge, require_copilot
+    )
 
     coro = watch_and_finish(
-        owner=owner, repo=name, pr=pr, on_approved_merged=re_test, runner=runner
+        owner=owner, repo=name, pr=pr, auto_merge=auto_merge,
+        require_copilot=require_copilot, on_approved_merged=re_test, runner=runner,
     )
     if background:
         asyncio.create_task(coro)
