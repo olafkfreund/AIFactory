@@ -394,3 +394,31 @@ class TestPerSpecWorktreeName:
         # New path: .aifactory/worktrees/tasks/{spec_name}
         assert "worktrees" in str(working_dir)
         assert working_dir.parent.name == "tasks"
+
+
+class TestCopySpecToWorktreeIdempotent:
+    """#71 follow-up: copy_spec_to_worktree must tolerate an existing target.
+
+    A resume / concurrent setup_workspace can leave the target spec dir present
+    when copytree runs; without dirs_exist_ok this raised FileExistsError and
+    killed the trusted-plan build right after worktree creation (before any code
+    was written). The copy must be idempotent.
+    """
+
+    def test_copy_is_idempotent(self, tmp_path: Path):
+        from core.workspace.setup import copy_spec_to_worktree
+
+        src = tmp_path / "src" / "011-x"
+        src.mkdir(parents=True)
+        (src / "spec.md").write_text("# spec")
+        (src / "implementation_plan.json").write_text("{}")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+
+        t1 = copy_spec_to_worktree(src, wt, "011-x")
+        assert (t1 / "spec.md").exists()
+
+        # Pre-create the target (simulates the resume/race) — must NOT raise.
+        (wt / ".aifactory" / "specs" / "011-x").mkdir(parents=True, exist_ok=True)
+        t2 = copy_spec_to_worktree(src, wt, "011-x")
+        assert (t2 / "spec.md").exists()
