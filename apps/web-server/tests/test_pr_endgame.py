@@ -193,10 +193,30 @@ def test_run_pr_endgame_full_chain():
     res = asyncio.run(pe.run_pr_endgame(
         spec_dir=Path("/tmp"), spec_id="010-x", worktree=Path("/tmp"),
         branch="auto-claude/010-x", base="main", repo="o/r",
-        auto_merge=True, runner=r, background=False,
+        auto_merge=True, reviewer="copilot", runner=r, background=False,
     ))
     assert res["ok"] and res["pr"] == 11 and res["merged"] is True
     assert r.saw("requested_reviewers")  # Copilot review was requested
+
+
+def test_run_pr_endgame_aifactory_reviewer_uses_engine_verdict():
+    # Default reviewer (aifactory): no Copilot request; merge gated on review_fn.
+    r = FakeRunner({
+        "git push": CmdResult(0, "", ""),
+        "pr create": CmdResult(0, "https://github.com/o/r/pull/12", ""),
+        "pr merge": CmdResult(0, "merged", ""),
+    })
+    opened = {}
+    res = asyncio.run(pe.run_pr_endgame(
+        spec_dir=Path("/tmp"), spec_id="012-x", worktree=Path("/tmp"),
+        branch="aifactory/012-x", base="main", repo="o/r", auto_merge=True,
+        review_fn=lambda: pe.ReviewState("approved"),
+        on_pr_opened=lambda prn: opened.update(pr=prn),
+        runner=r, background=False,
+    ))
+    assert res["ok"] and res["merged"] is True
+    assert opened.get("pr") == 12           # reviewer trigger fired with the PR number
+    assert not r.saw("requested_reviewers")  # Copilot NOT requested
 
 
 def test_run_pr_endgame_no_repo():
@@ -226,3 +246,58 @@ def test_gather_pr_context_resolves_repo(tmp_path):
     assert ctx is not None
     assert ctx["branch"] == "auto-claude/spec-1"
     assert ctx["repo"] == "olafkfreund/demo"
+
+
+# ── #71 Phase A: configurable reviewer + AIFactory-verdict gate ──────────────
+
+
+def test_resolve_pr_reviewer(tmp_path, monkeypatch):
+    monkeypatch.delenv("AIFACTORY_PR_REVIEWER", raising=False)
+    assert pe.resolve_pr_reviewer(None) == "aifactory"  # default
+    monkeypatch.setenv("AIFACTORY_PR_REVIEWER", "copilot")
+    assert pe.resolve_pr_reviewer(None) == "copilot"
+    monkeypatch.setenv("AIFACTORY_PR_REVIEWER", "bogus")
+    assert pe.resolve_pr_reviewer(None) == "aifactory"  # invalid → default
+    # project .env wins
+    d = tmp_path / ".aifactory"; d.mkdir()
+    (d / ".env").write_text("AIFACTORY_PR_REVIEWER=any\n")
+    assert pe.resolve_pr_reviewer(tmp_path) == "any"
+
+
+def test_verdict_from_review_result():
+    assert pe.verdict_from_review_result(None).verdict == "pending"
+    assert pe.verdict_from_review_result({}).verdict == "pending"
+    assert pe.verdict_from_review_result({"verdict": "approve"}).verdict == "approved"
+    assert pe.verdict_from_review_result({"verdict": "request_changes"}).verdict == "changes_requested"
+    # derive from findings
+    assert pe.verdict_from_review_result({"findings": []}).verdict == "approved"
+    assert pe.verdict_from_review_result(
+        {"findings": [{"severity": "low"}]}).verdict == "approved"
+    assert pe.verdict_from_review_result(
+        {"findings": [{"severity": "high"}]}).verdict == "changes_requested"
+    # tolerate {data:{...}} wrapper
+    assert pe.verdict_from_review_result(
+        {"data": {"verdict": "approve"}}).verdict == "approved"
+
+
+def test_aifactory_reviewer_gate_merges_on_engine_approval():
+    # review_fn supplies the AIFactory engine verdict; no GitHub review state read.
+    r = FakeRunner({"pr merge": CmdResult(0, "merged", "")})
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True,
+        review_fn=lambda: pe.ReviewState("approved"),
+        runner=r, poll_interval=0, max_minutes=1,
+    ))
+    assert res["merged"] is True
+    assert not r.saw("reviews")  # GitHub review state was NOT consulted
+
+
+def test_aifactory_reviewer_changes_requested_human_stop():
+    r = FakeRunner({})
+    res = asyncio.run(pe.watch_and_finish(
+        owner="o", repo="r", pr=5, auto_merge=True,
+        review_fn=lambda: pe.ReviewState("changes_requested"),
+        runner=r, poll_interval=0, max_minutes=1,
+    ))
+    assert res["merged"] is False and res["reason"] == "changes_requested"
+    assert not r.saw("pr merge")

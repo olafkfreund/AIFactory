@@ -25,6 +25,20 @@ UI toggle resolution is `is_auto_pr_enabled(project_path)` /
 `is_auto_merge_enabled(project_path)` in `pr_endgame.py` (reads the project's
 `.aifactory/.env`, then the global env).
 
+### Configurable reviewer (`AIFACTORY_PR_REVIEWER`)
+
+The merge gate's reviewer is selectable per-project (Settings → General → *Pre-merge
+reviewer*), or via env. Values:
+
+| Reviewer | How it gates | Credits |
+|---|---|---|
+| `aifactory` (default) | AIFactory's **own** review engine reviews the diff with the project's provider (Claude/Ollama) and the merge is gated on **its verdict** (read from `review_{pr}.json`). GitHub forbids self-approving the PR AIFactory opened, so we gate on the engine verdict, not a GitHub review event. | none beyond your Claude/Ollama usage |
+| `copilot` | GitHub Copilot's review must be `APPROVED` (see below). | GitHub Copilot **code review** credits |
+| `any` | Any `APPROVED` GitHub review (human or bot). | none |
+
+`aifactory` is the default precisely because it needs no Copilot credits and rides
+the same provider you build with (Claude now, Ollama later).
+
 ### Copilot's review is a hard gate (it is not bypassed)
 
 Auto-merge requires GitHub Copilot to have **actually reviewed and APPROVED** the

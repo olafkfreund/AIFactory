@@ -64,6 +64,11 @@ export interface ProjectSettings {
    * unless ``autoPr`` is on. Default off.
    */
   autoMerge?: boolean;
+  /**
+   * Which reviewer gates the auto-merge: "aifactory" (its own Claude/Ollama
+   * review engine — no Copilot credits), "copilot", or "any". Default aifactory.
+   */
+  prReviewer?: 'aifactory' | 'copilot' | 'any';
 }
 
 export interface NotificationSettings {
