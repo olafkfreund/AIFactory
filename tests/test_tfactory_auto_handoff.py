@@ -56,6 +56,33 @@ def test_opted_in_sends_and_records(tmp_path, monkeypatch):
     assert (tmp_path / "tfactory_handoff.json").exists()
 
 
+def test_ingest_payload_carries_contract_when_trusted(tmp_path):
+    # #71 Phase 3: a trusted plan (implementation_plan.json with the tfactory
+    # block / contract_version) rides along on the handoff so TFactory tests the
+    # DECLARED ACs instead of inferring.
+    _spec(tmp_path, True)
+    (tmp_path / "implementation_plan.json").write_text(json.dumps({
+        "feature": "x", "contract_version": "2",
+        "phases": [{"name": "p", "subtasks": [{"id": "C1", "description": "d"}]}],
+        "tfactory": {"lanes": ["unit"], "frameworks": {"unit": "pytest"}},
+    }))
+    payload = tc.build_ingest_payload(tmp_path, "001-x")
+    assert "contract" in payload
+    assert payload["contract"]["tfactory"]["lanes"] == ["unit"]
+
+
+def test_ingest_payload_omits_contract_for_plain_plan(tmp_path):
+    # AIFactory's own (create-and-run) plan has no RFC-0002 markers → no contract
+    # attached → TFactory falls back to inference. Backward compatible.
+    _spec(tmp_path, True)
+    (tmp_path / "implementation_plan.json").write_text(json.dumps({
+        "feature": "x", "workflow_type": "feature",
+        "phases": [{"name": "p", "subtasks": [{"id": "C1", "description": "d"}]}],
+    }))
+    payload = tc.build_ingest_payload(tmp_path, "001-x")
+    assert "contract" not in payload
+
+
 def test_never_raises_on_bad_input(tmp_path, monkeypatch):
     _spec(tmp_path, True)
 
