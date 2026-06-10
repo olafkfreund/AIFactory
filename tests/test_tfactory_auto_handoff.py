@@ -48,7 +48,10 @@ def test_opted_in_sends_and_records(tmp_path, monkeypatch):
     result = asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "001-x"))
     assert result["sent"] is True
     assert captured["payload"]["spec_id"] == "001-x"
-    assert captured["payload"]["source"] == "aifactory"
+    # #517: the handoff now uses TFactory's self-contained ingest contract
+    # ({project_id, spec_id, spec_text}), not the legacy rich payload.
+    assert "project_id" in captured["payload"]
+    assert captured["payload"]["format"] == "markdown"
     # Outcome marker written for the UI/operator.
     assert (tmp_path / "tfactory_handoff.json").exists()
 

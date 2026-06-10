@@ -26,7 +26,7 @@ def test_config_reads_env_and_strips_trailing_slash():
     )
     assert cfg["base_url"] == "https://tf.example"
     assert cfg["token"] == "t"
-    assert cfg["path"] == "/api/handoff"  # default
+    assert cfg["path"] == "/api/specs/ingest"  # default (#517)
 
 
 def test_config_empty_when_unset():
