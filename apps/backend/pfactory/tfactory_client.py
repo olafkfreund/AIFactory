@@ -31,6 +31,7 @@ __all__ = [
     "build_handoff_payload",
     "send_handoff",
     "load_tfactory_block",
+    "load_task_contract",
     "wants_auto_handoff",
     "maybe_auto_handoff_tfactory",
 ]
@@ -74,6 +75,32 @@ def load_tfactory_block(spec_dir: Path) -> dict:
         return {}
     block = plan.get("tfactory")
     return block if isinstance(block, dict) else {}
+
+
+def load_task_contract(spec_dir: Path) -> dict:
+    """Return the full signed Task Contract (``implementation_plan.json``) when it
+    carries RFC-0002 markers, else ``{}``.
+
+    The trusted-plan ingest installs PFactory's signed contract verbatim as
+    ``implementation_plan.json`` — it carries the ``tfactory`` block (lanes /
+    frameworks / ``ac_to_code_map``) plus ``contract_version``/``approval``.
+    Sending the WHOLE contract on the handoff lets TFactory persist it to
+    ``context/task_contract.json`` and test the DECLARED acceptance criteria
+    instead of inferring (#71 Phase 3). For AIFactory's own (create-and-run)
+    plans — no contract markers — this returns ``{}`` so TFactory still infers.
+    """
+    plan_file = Path(spec_dir) / "implementation_plan.json"
+    if not plan_file.exists():
+        return {}
+    try:
+        plan = json.loads(plan_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(plan, dict) and (
+        "tfactory" in plan or "contract_version" in plan or "approval" in plan
+    ):
+        return plan
+    return {}
 
 
 def build_handoff_payload(
@@ -209,12 +236,19 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
             spec_text = (spec_text or "").rstrip() + "\n\n## Acceptance Criteria\n" + (
                 "\n".join(f"- {c}" for c in criteria)
             )
-    return {
+    payload = {
         "project_id": project_id,
         "spec_id": spec_id,
         "spec_text": spec_text,
         "format": "markdown",
     }
+    # Carry the full signed Task Contract so TFactory tests the DECLARED ACs
+    # (tfactory block: lanes/frameworks/ac_to_code_map) rather than inferring
+    # from spec_text. Present only for trusted plans; absent → TFactory infers.
+    contract = load_task_contract(spec_dir)
+    if contract:
+        payload["contract"] = contract
+    return payload
 
 
 async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
