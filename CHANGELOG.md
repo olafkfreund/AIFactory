@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.16 - 2026-06-10
+
+### Fixed
+
+- `copy_spec_to_worktree` is now idempotent — a resume/concurrent `setup_workspace` no longer crashes the build with `FileExistsError` right after worktree creation (#71 follow-up). It guarded with `exists()`+`rmtree` but then called `shutil.copytree` without `dirs_exist_ok`, so when the target spec dir reappeared between the check and the copy, `copytree`'s `makedirs` raised and the trusted-plan build exited 1 before any code was written. The Phase 0 `spec.md` fix unmasked this (trusted tasks now reach `setup_workspace` instead of dying at `find_spec`). Fixed with `dirs_exist_ok=True`.
+
 ## 3.6.15 - 2026-06-10
 
 ### Added
