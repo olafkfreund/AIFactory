@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.19 - 2026-06-10
+
+### Documentation
+
+- Added `guides/pr-endgame.md` documenting the PR-endgame feature (#71 Phase 4): the `AIFACTORY_AUTO_PR` / `AIFACTORY_AUTO_MERGE` opt-in flags (default OFF), the create-PR → Copilot-review → merge → re-test flow, the human-stop safety properties, prerequisites, the known limitation (GitHub Copilot *code review* must be enabled on the repo for the review→auto-merge leg to run), and the single-replica deploy-downtime note.
+
 ## 3.6.18 - 2026-06-10
 
 ### Fixed
