@@ -3,6 +3,9 @@
 
 ### Added
 
+- **Deploy-then-verify (deploy stage)** — `apps/web-server/server/services/deploy_templates.py` (deterministic AWS App Runner Terraform + `deploy.yml`/`destroy.yml`; `destroy` always ships with `deploy`; every resource `factory-ephemeral`/`spec_id` tagged; S3 remote state) + `deploy_endgame.py` (flag-gated `AIFACTORY_AUTO_DEPLOY`, default off: writes the workflow into the worktree, sets AWS keys as GitHub repo secrets via `gh`, push-triggers the deploy, captures the live App Runner URL, auto-fires teardown on any failed/timed-out deploy). 13 tests. Proven end-to-end on real AWS (local-terraform + GitHub-Actions paths).
+- **Contract + deployed-URL carried on the TFactory handoff (#547)** — `pfactory/tfactory_client.build_ingest_payload` now attaches `repo`/`branch`/`head_sha`/`deployed_url` from `deploy_result.json`, so TFactory verifies the **real deployment** against the **declared** acceptance criteria.
+- **Guides** — `guides/parr-pipeline-and-guards.md` (the full guarded pipeline + 15 guards + adoption stories) and `guides/testing-authenticated-web-apps.md` (deploy → log in as a test user → browser-test → record screenshots/findings → teardown; how to add test-target secrets + `.tfactory.yml`).
 - Mission Control — a full-page three-pane task workspace (plan & subtasks · live activity + embedded Live Console · output tabs for preview / files / review), opened from the task-detail header (⤢). Reuses the existing task-detail data layer; collapses back to the modal; pane sizes persist (#311).
 - Live app **Preview** pane in Mission Control — iframe preview with an address bar and one-click dev-server port presets (#311).
 - Portal UX pass: skeleton loaders on the Kanban board and logs, a live progress timeline with elapsed timer + animated working state, a theme-aware terminal that follows light/dark + Gruvbox/shadcn, a "waiting for you" beacon on tasks in human review, and animated streaming log entries (#311).

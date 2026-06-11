@@ -39,6 +39,14 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 >
 > See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
 
+> **🚀 What's new (June 2026)** — the PARR loop grew a real **deploy-then-verify** leg and tightened auth:
+>
+> - **Deploy-then-verify on real AWS** — a clean build can ship to **AWS App Runner** via deterministic, cost-guarded Terraform (`apps/web-server/server/services/deploy_templates.py` + `deploy_endgame.py`), expose a live HTTPS endpoint, and be **verified against the running deployment**, then torn down. `destroy` always ships with `deploy`; every resource is `factory-ephemeral`-tagged so teardown can never touch other infra. Flag-gated `AIFACTORY_AUTO_DEPLOY` (default off).
+> - **Test authenticated web apps + record proof** — deploy a UI behind a login, have a browser test **log in as a test user** (Playwright `storageState`, credentials from TFactory's encrypted store), exercise it, find faults, and record **screenshots + findings**. See [`guides/testing-authenticated-web-apps.md`](guides/testing-authenticated-web-apps.md).
+> - **Contract-carrying handoff to TFactory (#547)** — the AIFactory→TFactory handoff now carries the signed contract + the deployed URL, so TFactory tests the **declared** acceptance criteria against the **real deployment**.
+> - **Opt-in direct-API-key auth** — `AIFACTORY_ALLOW_API_KEY` (default off): OAuth-only by default (a stray `ANTHROPIC_API_KEY` is scrubbed from agents so it can't silently bill); operators billing via a direct key opt in with the flag. Plus **Gemini-through-the-contract** via PFactory's `PFACTORY_EXECUTION_MODEL`.
+> - **Reusable demo commands** — `/run-aws-demo` (deploy 3 FastAPI services → verify live API → teardown) and `/run-aws-webtest` (authenticated web-form browser test with screenshot proof). The full guarded pipeline is documented in [`guides/parr-pipeline-and-guards.md`](guides/parr-pipeline-and-guards.md).
+
 ## Enterprise v1.1 (May 28, 2026 — Epic #35)
 
 AIFactory ships **7 major enterprise features** — multi-tenant isolation, observability, audit hardening, and IdP integration for regulated deployments. All features are opt-in via Helm values; default deployments remain unchanged.
