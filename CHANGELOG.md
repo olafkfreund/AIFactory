@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.26 - 2026-06-11
+
+### Added
+
+- **Opt-in direct-API-key auth via `AIFACTORY_ALLOW_API_KEY`.** AIFactory is OAuth-only by default (Claude subscription): any `ANTHROPIC_API_KEY` in the environment is scrubbed from agents so it can never silently bill the Anthropic API. Operators whose intended billing model *is* a direct API key (no subscription) now set `AIFACTORY_ALLOW_API_KEY=1` — then `ANTHROPIC_API_KEY` is accepted as an auth token (after OAuth), passed through to agents, and no longer scrubbed. Default off preserves the billing-safe behavior; the flag is the single switch (`core.auth.api_key_auth_enabled()`) honored by token resolution, the agent env scrub, and the SDK passthrough.
+
 ## 3.6.25 - 2026-06-11
 
 ### Fixed
