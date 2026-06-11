@@ -21,6 +21,12 @@
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
 
+## 3.6.25 - 2026-06-11
+
+### Fixed
+
+- Trusted-plan tasks now carry their signed Task Contract to TFactory so it tests the **declared** ACs instead of inferring (#71 Phase 3). `ingest_trusted_plan` installed the contract as `implementation_plan.json`, but the executor rewrites that file into AIFactory's runtime format during the build (adding `planStatus`/`status`/`reviewReason`, dropping the contract's `tfactory`/`contract_version`/`approval` blocks) — so by the time the AIFactory→TFactory handoff fires on completion, the RFC-0002 metadata (incl. the `tfactory` test profile: lanes/frameworks/`ac_to_code_map`) was gone and `load_task_contract` returned `{}`. Fix: ingest now stashes the full signed contract in the build-safe `context/task_contract.json`, and `tfactory_client.load_task_contract` reads that first (falling back to `implementation_plan.json` for older specs). Verified end-to-end: a contract-carrying handoff makes TFactory persist the contract and the planner emit a test plan matching the declared profile (e.g. a `browser`/`playwright` lane that inference would never produce for an API service).
+
 ## 3.6.24 - 2026-06-10
 
 ### Fixed

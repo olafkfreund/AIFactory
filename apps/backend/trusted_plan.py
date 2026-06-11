@@ -430,6 +430,21 @@ def ingest_trusted_plan(
         json.dumps(plan, indent=2), encoding="utf-8"
     )
 
+    # Also stash the signed contract in a BUILD-SAFE location. The executor
+    # rewrites implementation_plan.json into AIFactory's runtime format during
+    # the build (adding planStatus/status/reviewReason, dropping the contract's
+    # tfactory/contract_version/approval blocks), so by the time the
+    # AIFactory→TFactory handoff fires on completion the RFC-0002 metadata —
+    # including the `tfactory` test profile (lanes/frameworks/ac_to_code_map) —
+    # is gone. Writing it here (where the build never touches) lets
+    # tfactory_client.load_task_contract recover the full contract and carry it
+    # to TFactory so it tests the DECLARED ACs instead of inferring (#71 Phase 3).
+    context_dir = spec_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "task_contract.json").write_text(
+        json.dumps(plan, indent=2), encoding="utf-8"
+    )
+
     # Synthesize spec.md from the signed plan. The trusted fast path skips the
     # spec pipeline, but the executor's spec resolution (cli.utils.find_spec)
     # and validate_environment both REQUIRE spec.md to exist — without it run.py
