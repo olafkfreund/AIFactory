@@ -255,7 +255,23 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     contract = load_task_contract(spec_dir)
     if contract:
         payload["contract"] = contract
+    # Carry the deploy result (#547): when the deploy stage ran, hand TFactory the
+    # repo/branch/sha AND the live App Runner URL so it verifies the REAL deployed
+    # endpoint (dispatch_http_lane → TFACTORY_TARGET_URL) instead of only the
+    # declared tests. Additive/best-effort — absent → TFactory's existing behavior.
+    deploy = _read_deploy_result(spec_dir)
+    for _field in ("repo", "branch", "head_sha", "deployed_url"):
+        if deploy.get(_field):
+            payload[_field] = deploy[_field]
     return payload
+
+
+def _read_deploy_result(spec_dir: Path) -> dict:
+    """Read ``deploy_result.json`` written by deploy_endgame, or ``{}``."""
+    try:
+        return json.loads((Path(spec_dir) / "deploy_result.json").read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 async def _httpx_poster(url: str, payload: dict, headers: dict) -> dict:
