@@ -233,7 +233,17 @@ def capture_deployed_url(owner: str, repo: str, run_id: int, dest_dir: str, *, r
 
 
 def teardown(owner: str, repo: str, branch: str, *, runner: Runner | None = None) -> bool:
-    """Fire destroy.yml (the cost guard). Best-effort, idempotent."""
+    """Fire destroy.yml (cost guard). Best-effort, idempotent.
+
+    NOTE (verified live): ``gh workflow run destroy.yml`` 404s unless destroy.yml
+    is on the repo's DEFAULT branch — GitHub only dispatches default-branch
+    workflows. So this dispatch is reliable ONLY when a persistent teardown
+    workflow lives on ``main``; on a feature-branch-only setup it will fail. The
+    DURABLE cost guards therefore do not depend on it: (1) the scheduled sweeper
+    destroys anything tagged ``factory-ephemeral`` older than 1h, and (2) the
+    operator/conductor can ``terraform destroy`` directly against the shared S3
+    state. Keep this as the fast-path nudge, not the sole guarantee.
+    """
     runner = runner or _default_runner
     return trigger_workflow(owner, repo, branch, _DESTROY_WF, runner=runner)
 
@@ -288,11 +298,19 @@ async def run_deploy_endgame(
         head = runner(["git", "rev-parse", "HEAD"], worktree)
         head_sha = head.out.strip() if head.ok else ""
         result["head_sha"] = head_sha
-        if not trigger_workflow(owner, name, branch, _DEPLOY_WF, runner=runner):
-            result["reason"] = "trigger_failed"
-            _write_result(spec_dir, result)
-            return result
-        run_id = latest_run_id(owner, name, head_sha, _DEPLOY_WF, runner=runner)
+        # The push above ALREADY triggers deploy.yml via its `on: push` filter
+        # (auto-claude/** + <spec>**) — verified live. workflow_dispatch is only a
+        # best-effort nudge for repos where the workflow also sits on the default
+        # branch (GitHub 404s dispatch otherwise), so its failure is NOT fatal.
+        trigger_workflow(owner, name, branch, _DEPLOY_WF, runner=runner)
+        # Find the run our push created (poll briefly — the run may take a few
+        # seconds to register).
+        run_id = None
+        for _ in range(6):
+            run_id = latest_run_id(owner, name, head_sha, _DEPLOY_WF, runner=runner)
+            if run_id is not None:
+                break
+            await asyncio.sleep(5)
         if run_id is None:
             result["reason"] = "run_not_found"
             _write_result(spec_dir, result)
