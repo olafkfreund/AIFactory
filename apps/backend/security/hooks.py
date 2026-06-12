@@ -19,6 +19,7 @@ from project_analyzer import BASE_COMMANDS, SecurityProfile, is_command_allowed
 logger = logging.getLogger(__name__)
 
 from .ast_parser import UnparseableCommand, extract_commands_ast, is_available
+from .egress import check_egress
 from .exec_context import reset_worktree_root, set_worktree_root
 from .parser import extract_commands, get_command_for_validation, split_command_segments
 from .profile import get_security_profile
@@ -196,6 +197,15 @@ async def bash_security_hook(
                 reset_worktree_root(token)
             if not allowed:
                 return {"decision": "block", "reason": reason}
+
+    # Egress policy (#363 AC3): defense-in-depth over the allowlist. When opted
+    # in (AIFACTORY_EGRESS_POLICY=deny|allowlist) an allowlisted network tool
+    # (curl/wget/ssh/…) is still blocked unless the target host is permitted —
+    # so a prompt-injected command can't exfiltrate even though the binary is
+    # allowed. Default off → no behavior change.
+    egress_ok, egress_reason = check_egress(command, commands)
+    if not egress_ok:
+        return {"decision": "block", "reason": egress_reason}
 
     return {}
 
