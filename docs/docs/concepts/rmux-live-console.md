@@ -53,6 +53,21 @@ You also need the `rmux` binary on PATH. The Helm chart bundles it under a separ
 
 The console appears both as a tab in the task-detail view and embedded in the [Mission Control workspace](./mission-control-workspace).
 
+## Multi-agent console grid
+
+When several tasks run in the same project, you can watch all their consoles at
+once:
+
+```
+/console/:projectId
+```
+
+This renders a responsive grid — one tile per active agent — with a live "N
+active" count, a per-tile fullscreen control, and real-time streaming from every
+agent. Reach it from the "All consoles" link on any single console header or the
+badge in task detail. It's the view to keep open when monitoring a parallel-wave
+build or a batch of tasks.
+
 ## Why it's not on by default
 
 rmux v0.3.x requires a writable runtime directory and pins replicas to 1. Bank-pilot deployments where these constraints break the existing infra opt out by leaving the flag unset.
