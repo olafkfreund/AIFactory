@@ -130,6 +130,21 @@ autoscaling:
   maxReplicas: 5
   targetCPUUtilizationPercentage: 50
 
+# Agent egress control (#363 AC3) — the command-layer half. The NetworkPolicy
+# below blocks RFC1918 + non-443, but allows 443 to any public IP (vanilla
+# NetworkPolicy can't do per-host egress without Cilium FQDN). This guard adds
+# per-host allowlisting over the bash hook, so a prompt-injected `curl
+# https://attacker` is blocked even though 443 is open at the network layer.
+security:
+  egress:
+    # off | deny | allowlist. Default off (no behavior change). Recommended on
+    # the deployed cluster: "allowlist" with the hosts the build legitimately
+    # needs.
+    policy: "off"
+    # Hosts permitted in "allowlist" mode (exact host or apex — subdomains of an
+    # apex are allowed). Example: [api.anthropic.com, github.com, pypi.org]
+    allowedHosts: []
+
 networkPolicy:
   # Default-deny + explicit allowlist. ALWAYS enabled in production.
   enabled: true
