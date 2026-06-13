@@ -29,6 +29,7 @@ import asyncio
 import logging
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -51,10 +52,172 @@ from task_logger import LogPhase, TaskLogger
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_agent_session
+from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import sync_plan_to_source
 from .wave_log import WaveRecorder
 
 logger = logging.getLogger(__name__)
+
+
+# Cache for the lazily-loaded web-server completion module (#45 P1). The backend
+# runs as a separate subprocess and must NOT import the web-server package (see
+# agents/inbox.py); so the live per-worker sub-event reuses the SAME emitter the
+# terminal event uses by loading that single stdlib-only module BY FILE PATH —
+# its only web-server imports are relative and guarded inside functions, so the
+# module loads standalone. Sentinel ``False`` = a load attempt already failed
+# (never retry); ``None`` = not yet attempted.
+_completion_mod: Any = None
+
+
+def _load_completion_emitter() -> Any:
+    """Best-effort handle to the web-server completion emitter (#45 P1).
+
+    Returns the loaded module, or ``None`` if it cannot be located/loaded (in
+    which case live sub-event emission silently no-ops — additive + best-effort,
+    exactly the terminal event's contract). Never raises.
+    """
+    global _completion_mod
+    if _completion_mod is not None:
+        return _completion_mod or None
+    try:
+        import importlib.util
+
+        # This module file lives at apps/backend/agents/parallel_integration.py;
+        # the emitter is its sibling app apps/web-server/server/services/.
+        comp_path = (
+            Path(__file__).resolve().parents[2]
+            / "web-server"
+            / "server"
+            / "services"
+            / "completion.py"
+        )
+        if not comp_path.exists():
+            _completion_mod = False
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "aifactory_completion_emitter", comp_path
+        )
+        if spec is None or spec.loader is None:
+            _completion_mod = False
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _completion_mod = mod
+        return mod
+    except Exception:  # noqa: BLE001 — emitter is optional; never break a build
+        _completion_mod = False
+        return None
+
+
+def emit_worker_live_event(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    worker_id: str,
+    subtask_id: str | None,
+    provider: str | None,
+    model: str | None,
+    agent_phase: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    duration_ms: int,
+) -> None:
+    """Emit ONE live per-worker sub-event as this worker finishes (#45 P1).
+
+    Reuses the terminal event's emitter + transport via the lazily-loaded
+    completion module. Fully best-effort: any failure (module missing, transport
+    down, slow webhook) is swallowed so it can NEVER fail or slow a build —
+    identical contract to the existing terminal completion event. The terminal
+    event at task end is unchanged (still fires, now with v1.3 rollups).
+
+    ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed the same way the
+    web-server's terminal emit derives them (``spec_id = spec_dir.name``,
+    ``project_id = project_dir.name``, ``task_id = project_id:spec_id``) so the
+    live sub-event shares the terminal event's correlation key.
+    """
+    try:
+        mod = _load_completion_emitter()
+        if mod is None:
+            return
+        spec_id = spec_dir.name
+        project_id = project_dir.name
+        worker_rec = {
+            "worker_id": worker_id,
+            "subtask_id": subtask_id,
+            "provider": provider,
+            "model": model,
+            "agent_phase": agent_phase,
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "total_tokens": int(input_tokens) + int(output_tokens),
+            "cost_usd": float(cost_usd or 0.0),
+            "duration_ms": int(duration_ms),
+        }
+        mod.emit_worker_completion(
+            spec_dir=spec_dir,
+            task_id=f"{project_id}:{spec_id}",
+            spec_id=spec_id,
+            project_id=project_id,
+            worker=worker_rec,
+        )
+    except Exception:  # noqa: BLE001 — a live sub-event must never break a build
+        logger.debug("[parallel] worker live event skipped", exc_info=True)
+
+
+def emit_worker_progress_heartbeat(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    worker_id: str,
+    subtask_id: str | None,
+    provider: str | None,
+    model: str | None,
+    agent_phase: str | None,
+    total_tokens: int,
+    cost_usd: float,
+    elapsed_ms: int,
+) -> None:
+    """Emit ONE throttled per-worker PROGRESS heartbeat for a RUNNING worker
+    (#45 Tier 2).
+
+    Reuses the SAME completion emitter + transport as the terminal/worker_done
+    events via the lazily-loaded completion module (loaded by file path across
+    the subprocess/web-server import boundary). Fully best-effort and bounded:
+    the emitter throttles to at most one heartbeat per worker_id per ~10s window,
+    and any failure (module missing, transport down/slow) is swallowed here too —
+    so a heartbeat can NEVER fail, slow, or block the build. The one-shot
+    ``worker_done`` event still fires unchanged when the worker finishes.
+
+    ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed exactly as the
+    terminal/worker emits derive them, so the heartbeat shares the same
+    correlation key.
+    """
+    try:
+        mod = _load_completion_emitter()
+        if mod is None or not hasattr(mod, "emit_worker_progress"):
+            return
+        spec_id = spec_dir.name
+        project_id = project_dir.name
+        worker_rec = {
+            "worker_id": worker_id,
+            "subtask_id": subtask_id,
+            "provider": provider,
+            "model": model,
+            "agent_phase": agent_phase,
+            "total_tokens": int(total_tokens),
+            "cost_usd": float(cost_usd or 0.0),
+            "elapsed_ms": int(elapsed_ms),
+        }
+        mod.emit_worker_progress(
+            spec_dir=spec_dir,
+            task_id=f"{project_id}:{spec_id}",
+            spec_id=spec_id,
+            project_id=project_id,
+            worker=worker_rec,
+        )
+    except Exception:  # noqa: BLE001 — a progress heartbeat must never break a build
+        logger.debug("[parallel] worker progress heartbeat skipped", exc_info=True)
 
 
 def _task_branch(project_dir: Path) -> str:
@@ -117,7 +280,9 @@ async def _capture_memory(
             recovery_manager,
         )
     except Exception as exc:  # noqa: BLE001 - memory is best-effort
-        logger.debug("[parallel] insight extraction skipped for %s: %s", subtask.id, exc)
+        logger.debug(
+            "[parallel] insight extraction skipped for %s: %s", subtask.id, exc
+        )
         insights = None
 
     try:
@@ -306,19 +471,89 @@ async def run_parallel_coding_phase(
                         mem_context, source="knowledge-graph memory of past sessions"
                     )
             except Exception as exc:  # noqa: BLE001 - memory is best-effort
-                logger.debug("[parallel] memory context skipped for %s: %s", subtask.id, exc)
+                logger.debug(
+                    "[parallel] memory context skipped for %s: %s", subtask.id, exc
+                )
 
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
             sub_model = getattr(subtask, "model", None) or phase_model
             client = _make_client(child_path, child_spec_dir, sub_model)
+            _t_start = time.monotonic()
             async with client:
                 status, _resp, _err = await run_agent_session(
                     client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING
                 )
+            _t_end = time.monotonic()
 
             session_ok = status != "error"
+
+            # --- per-worker token attribution (#45 P1, additive) ---
+            # Each parallel subtask IS a worker. Fold its real SDK usage into the
+            # canonical token_usage.json keyed by the subtask id, tagged with the
+            # subtask's provider/model — so a heterogeneous parallel run is
+            # observable per worker / per provider. Best-effort: bookkeeping must
+            # never fail a build (mirrors the serial coder path).
+            try:
+                _usage_payload = (_err or {}).get("usage") if _err else None
+                if _usage_payload:
+                    _turn_usage = TurnUsage.from_sdk_usage(
+                        {
+                            "input_tokens": _usage_payload.get("input_tokens", 0),
+                            "output_tokens": _usage_payload.get("output_tokens", 0),
+                            "cache_read_input_tokens": _usage_payload.get(
+                                "cache_read_tokens", 0
+                            ),
+                            "cache_creation_input_tokens": _usage_payload.get(
+                                "cache_creation_tokens", 0
+                            ),
+                        },
+                        cost_usd=_usage_payload.get("cost_usd", 0.0),
+                    )
+                    _segments = PromptSegments(
+                        user_prompt=prompt,
+                        tool_output_chars=_usage_payload.get("tool_output_chars", 0),
+                    )
+                    _sub_provider = (
+                        infer_provider_from_model(sub_model) if sub_model else None
+                    )
+                    _duration_ms = int((_t_end - _t_start) * 1000)
+                    record_turn(
+                        spec_dir,
+                        _segments,
+                        _turn_usage,
+                        model=sub_model,
+                        worker_id=subtask.id,
+                        subtask_id=subtask.id,
+                        provider=_sub_provider,
+                        phase=LogPhase.CODING.value,
+                        duration_ms=_duration_ms,
+                    )
+                    # Live per-worker sub-event (#45 P1): this worker has just
+                    # finished its wave session and its record is persisted —
+                    # emit the live drill-down event now, reusing the terminal
+                    # event's best-effort emitter/transport. Best-effort: a
+                    # failed/slow emit never fails or slows the build.
+                    emit_worker_live_event(
+                        spec_dir=spec_dir,
+                        project_dir=project_dir,
+                        worker_id=subtask.id,
+                        subtask_id=subtask.id,
+                        provider=_sub_provider,
+                        model=sub_model,
+                        agent_phase=LogPhase.CODING.value,
+                        input_tokens=_turn_usage.total_input_tokens,
+                        output_tokens=_turn_usage.output_tokens,
+                        cost_usd=_turn_usage.cost_usd,
+                        duration_ms=_duration_ms,
+                    )
+            except Exception as _exc:  # noqa: BLE001 - bookkeeping must not crash a build
+                logger.debug(
+                    "[parallel] token attribution skipped for %s: %s",
+                    subtask.id,
+                    _exc,
+                )
 
             # Mirror session errors to the canonical spec_dir task log.
             # Child-worktree logs (child_spec_dir) are never synced back, so
@@ -390,7 +625,9 @@ async def run_parallel_coding_phase(
                         subtask_id,
                     )
             except Exception as exc:  # noqa: BLE001
-                logger.error("[parallel] reset %s to pending failed: %s", subtask_id, exc)
+                logger.error(
+                    "[parallel] reset %s to pending failed: %s", subtask_id, exc
+                )
 
     async def merge_subtask(subtask: Any, result: SubtaskResult) -> bool:
         if not result.worktree_name:

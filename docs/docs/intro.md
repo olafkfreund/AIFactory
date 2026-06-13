@@ -31,15 +31,29 @@ You watch the whole thing happen live in the **Agent Console** — read-only by 
 - **Isolated by default.** Each task runs in its own git worktree on its own branch. Nothing touches your working tree until you merge.
 - **MCP control plane.** 27 MCP tools across stdio + HTTP+SSE transports let any MCP-aware editor (Claude Code, Cursor, Continue.dev) inspect and direct AIFactory tasks, including autonomous hand-off via the `/handover` skill.
 
-## Recently shipped (May 2026)
+## Recently shipped (May–June 2026)
 
-The MCP Control-Plane Epic (#50) and Default MCP Servers Epic (#100) landed together — a substantial expansion of how developers interact with the platform:
+### June 2026 — the PARR loop grew a real deploy-then-verify leg
+
+- **Deploy-then-verify on real AWS** — after the build, AIFactory ships the services to **AWS App Runner** with deterministic Terraform, proves the live HTTPS endpoint works, runs the acceptance tests against the deployed URL, and tears it all down. Cost-guarded (`factory-ephemeral` tags), opt-in via `AIFACTORY_AUTO_DEPLOY` (default off). See [Deploy-then-verify](./concepts/deploy-then-verify).
+- **PR endgame** — auto-open a PR, request review, merge, and re-test, configurable per project (`AIFACTORY_AUTO_PR`, `AIFACTORY_AUTO_MERGE`). The pre-merge reviewer is selectable (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`); the built-in engine needs no Copilot credits. On *changes-requested* a bounded auto-feedback loop fixes and re-reviews (up to 2 cycles) before handing to a human. See [`guides/pr-endgame.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/pr-endgame.md).
+- **Contract-carrying handoff to TFactory** — a signed Task Contract v2 (RFC-0002) carries the declared acceptance criteria, lanes, and endpoints downstream, so verification tests the declared profile instead of guessing. See [Task Contract](./task-contract).
+- **Opt-in direct-API-key auth** — OAuth-only by default (a stray `ANTHROPIC_API_KEY` is scrubbed from agents so it can never silently bill); operators who bill via a direct key opt in with `AIFACTORY_ALLOW_API_KEY=1`. See [API-key auth](./concepts/api-key-auth).
+- **Test authenticated web apps** — deploy behind a login, have the browser test log in as a test user, exercise the UI, and record screenshots + findings as proof. See [`guides/testing-authenticated-web-apps.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/testing-authenticated-web-apps.md).
+- **Multi-agent Live Console grid** — stream every active agent's console for a project at once at `/console/:projectId`. See [Live Console](./concepts/rmux-live-console).
+
+### May 2026 — MCP control plane + delegation
 
 - **Stdio MCP server** at `apps/backend/mcp_server/aifactory_server.py` exposes 15 task-control tools (`task_list`, `task_create_and_run`, `task_approve_plan`, etc.) to any Claude Code session opening this repo via the project-scoped `.mcp.json`.
 - **Remote HTTP+SSE MCP server** at `/api/mcp-remote/sse` (opt-in via `AIFACTORY_MCP_REMOTE_ENABLED=true`) exposes 12 tools to non-Claude clients with `acw_` API key + scope-gating (`mcp:read` / `mcp:write`).
-- **`/handover` skill** for Claude Code in this repo — captures conversation context, calls the MCP `task_create_and_run` primitive, returns a portal URL. See [`guides/HANDOVER_WORKFLOW.md`](https://github.com/olafkfreund/AIFactory/blob/main/guides/HANDOVER_WORKFLOW.md).
-- **Default MCP server catalog** (Kubernetes, AWS, Azure, GitHub) auto-enables based on project markers + credential probes. Read-only by default. CVE-2026-46519-aware pinning.
-- **Remote Control** integration with Claude Code's native `--remote-control` flag — drive a running AIFactory agent from `claude.ai/code` on any device. See [Remote Control](./concepts/remote-control).
+- **`/handover` skill** for Claude Code in this repo — captures conversation context, calls the MCP `task_create_and_run` primitive, returns a portal URL. See [`guides/HANDOVER_WORKFLOW.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/HANDOVER_WORKFLOW.md).
+- **Delegation (#92)** — hand the coder phase to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps planning + governance. See [Delegation](./concepts/delegation).
+- **Portal-managed Git clones (#82)** — point the portal at a Git URL; repos clone into the workspace root (laptop) or PVC (K8s) with encrypted-at-rest credential storage. See [Portal-managed clones](./concepts/portal-clones).
+- **Scoped MCP API keys (#154)** — per-developer `acw_` keys with scope-gating replace the host-wide admin token.
+- **Default MCP server catalog** (Kubernetes, AWS, Azure, GitHub) auto-enables based on project markers + credential probes. Read-only by default.
+- **Remote Control** — drive a running AIFactory agent from `claude.ai/code` on any device. See [Remote Control](./concepts/remote-control).
+
+Full detail in the [Configuration Reference](./configuration-reference) and the [CHANGELOG](https://github.com/olafkfreund/AIFactory/blob/dev/CHANGELOG.md).
 
 ## Get started
 

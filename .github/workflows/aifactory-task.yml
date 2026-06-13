@@ -6,7 +6,13 @@ on:
 
 jobs:
   create-task:
-    if: github.event.label.name == 'aifactory:run'
+    # Who-can-trigger guard: only run for the `aifactory:run` label AND
+    # when the issue author is a trusted member (OWNER/MEMBER/COLLABORATOR).
+    # Prevents drive-by contributors from dispatching factory tasks that
+    # hold GH_TOKEN + AIFACTORY_TOKEN.
+    if: >-
+      github.event.label.name == 'aifactory:run' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -18,15 +24,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AIFACTORY_URL: ${{ secrets.AIFACTORY_URL }}
           AIFACTORY_TOKEN: ${{ secrets.AIFACTORY_TOKEN }}
+          # Attacker-controlled event fields are passed through env, never
+          # inlined as ${{ }} in the shell, to prevent script injection.
+          # A crafted issue title/body cannot break out of the quoted var.
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          REPO: ${{ github.repository }}
         run: |
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          ISSUE_TITLE="${{ github.event.issue.title }}"
-
           if [ -n "$AIFACTORY_URL" ]; then
             curl -sf -X POST "$AIFACTORY_URL/api/tasks/from-github-issue" \
               -H "Authorization: Bearer $AIFACTORY_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"issue_number\": $ISSUE_NUMBER, \"repo\": \"${{ github.repository }}\"}"
+              -d "{\"issue_number\": $ISSUE_NUMBER, \"repo\": \"$REPO\"}"
           else
             gh issue comment "$ISSUE_NUMBER" \
               --body "🏭 **AIFactory**: Issue queued for import. Set the \`AIFACTORY_URL\` repository secret to automate task creation."

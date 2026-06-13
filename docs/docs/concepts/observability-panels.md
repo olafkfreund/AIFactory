@@ -18,6 +18,8 @@ A breakdown of the task's context-window spend, by category, with cost:
 
 This is per-category **token monitoring**: it makes an over-large system prompt or a runaway tool-output category obvious at a glance. The panel also survives context compaction — token attribution is recovered after a compact rather than resetting to zero.
 
+For parallel multi-provider builds, `token_usage.json` also carries a per-worker `workers` map — input/output tokens, cost and duration for **each** worker — so you can see which worker, provider and model spent what, not just the aggregate. The scalar total is preserved unchanged, and the same breakdown is carried on the v1.3 build completion event as `usage.workers[]` / `usage.by_provider` / `usage.by_model`, with a per-worker OTel metrics counterpart (see [Distributed tracing](./observability-tracing.md)). A soft, observe-only budget alert (`usage.budget{limit,spent,exceeded}`) reports overspend but never aborts a build.
+
 Backed by `GET /api/tasks/{id}/token-usage`.
 
 ## 2. Resource usage

@@ -6,8 +6,13 @@ on:
 
 jobs:
   aifactory-review:
-    # Only run when the Copilot cloud agent opens or updates a PR
-    if: github.actor == 'copilot-swe-agent[bot]'
+    # Identity/membership gate instead of trusting the `[bot]` actor
+    # suffix (CVE-2025-66032: a malicious PR can spoof or ride a
+    # `[bot]`-suffixed actor). Only review PRs whose author is a trusted
+    # member of the repo — OWNER/MEMBER/COLLABORATOR — so an all-tools
+    # agent never runs over an untrusted fork's diff.
+    if: >-
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,19 +29,26 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AIFACTORY_URL: ${{ secrets.AIFACTORY_URL }}
           AIFACTORY_TOKEN: ${{ secrets.AIFACTORY_TOKEN }}
+          # Event fields passed via env, never inlined as ${{ }} in shell.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-
           if [ -n "$AIFACTORY_URL" ]; then
             # Trigger AIFactory's review engine on this PR
             curl -sf -X POST "$AIFACTORY_URL/api/github/prs/$PR_NUMBER/review" \
               -H "Authorization: Bearer $AIFACTORY_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"repo\": \"${{ github.repository }}\", \"pr_number\": $PR_NUMBER}"
+              -d "{\"repo\": \"$REPO\", \"pr_number\": $PR_NUMBER}"
           else
-            # Fallback: inline Copilot CLI review when AIFactory is not reachable
+            # Fallback: inline Copilot CLI review when AIFactory is not
+            # reachable. Tools are scoped to the minimum the reviewer needs
+            # (read-only shell + GitHub review API) — `--allow-all-tools` is
+            # NOT passed, so the agent cannot run arbitrary write tools over
+            # the checked-out PR content.
             npm install -g @github/copilot 2>/dev/null || true
             copilot -p "Review this PR for correctness, security, and code quality. Post a summary review comment." \
-              --allow-all-tools --no-color \
+              --allow-tool 'shell(git diff)' \
+              --allow-tool 'shell(git log)' \
+              --no-color \
               --add-dir "${{ github.workspace }}" || true
           fi

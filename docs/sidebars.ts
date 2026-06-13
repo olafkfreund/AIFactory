@@ -13,6 +13,7 @@ const sidebars: SidebarsConfig = {
     'intro',
     'why-aifactory',
     'getting-started',
+    'configuration-reference',
     'demo',
     {
       type: 'category',
@@ -21,6 +22,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'concepts/spec-driven-development',
         'concepts/multi-provider',
+        'concepts/deploy-then-verify',
+        'concepts/api-key-auth',
         'concepts/mission-control-workspace',
         'concepts/rmux-live-console',
         'concepts/remote-control',
