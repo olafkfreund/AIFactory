@@ -13,8 +13,10 @@ if str(_WS) not in sys.path:
 from server.services.completion import (  # noqa: E402
     SERVICE_NAME,
     build_completion_event,
+    build_worker_event,
     correlation_key,
     emit_terminal_completion,
+    emit_worker_completion,
     notify_completion,
     read_issue_number,
     read_usage,
@@ -466,3 +468,234 @@ def test_old_consumer_ignores_new_usage_fields_still_validates(tmp_path):
         (_WS / "server" / "services" / "completion_event.schema.json").read_text()
     )
     jsonschema.validate(ev, schema)
+
+
+# ── #45 P1: LIVE per-worker sub-event (build_worker_event / emit_worker_*) ─────
+
+
+def _sample_worker(**overrides):
+    rec = {
+        "worker_id": "sub-A",
+        "subtask_id": "sub-A",
+        "phase": "coding",  # token_usage.json names it `phase`
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "input_tokens": 300,
+        "output_tokens": 40,
+        "total_tokens": 340,
+        "cost_usd": 0.30,
+        "duration_ms": 1500,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def test_build_worker_event_exact_shape():
+    """The live sub-event matches the EXACT v1.3 worker contract CFactory is
+    being built against (status/phase + the worker{} object fields)."""
+    ev = build_worker_event(
+        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
+        project_id="proj", worker=_sample_worker(),
+        updated_at="2026-06-13T12:00:00+00:00",
+    )
+    assert _RFC_CORE <= set(ev)
+    assert ev["service"] == "aifactory"
+    assert ev["correlation_key"] == "412"
+    assert ev["task_id"] == "proj:spec-9"
+    assert ev["schema_version"] == "1.3"
+    assert ev["status"] == "worker_done"
+    assert ev["phase"] == "worker"
+    assert ev["time"] == ev["updated_at"] == "2026-06-13T12:00:00+00:00"
+    assert _UUID_RE.match(ev["id"])
+    assert _TRACEPARENT_RE.match(ev["traceparent"])
+    assert ev["worker"] == {
+        "worker_id": "sub-A",
+        "subtask_id": "sub-A",
+        "agent_phase": "coding",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "input_tokens": 300,
+        "output_tokens": 40,
+        "total_tokens": 340,
+        "cost_usd": 0.30,
+        "duration_ms": 1500,
+    }
+
+
+def test_build_worker_event_defaults_to_main_and_derives_total():
+    ev = build_worker_event(
+        task_id="proj:s", spec_id="s", issue_number=None,
+        worker={"input_tokens": 10, "output_tokens": 5},  # no id, no total
+    )
+    assert ev["correlation_key"] == "af-s"  # synthetic key when no issue
+    assert ev["worker"]["worker_id"] == "main"
+    assert ev["worker"]["total_tokens"] == 15  # derived
+    assert ev["worker"]["cost_usd"] == 0.0
+
+
+def test_build_worker_event_prefers_agent_phase_over_phase():
+    ev = build_worker_event(
+        task_id="proj:s", spec_id="s", issue_number=1,
+        worker=_sample_worker(agent_phase="qa", phase="coding"),
+    )
+    assert ev["worker"]["agent_phase"] == "qa"
+
+
+def test_worker_event_validates_against_published_schema():
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    ev = build_worker_event(
+        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
+        project_id="proj", worker=_sample_worker(provider="ollama", cost_usd=0.0),
+        updated_at="2026-06-13T12:00:00+00:00",
+    )
+    jsonschema.validate(ev, schema)  # phase:"worker" + worker{} must validate
+
+
+def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
+    """The live sub-event uses the SAME webhook transport as the terminal event."""
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    captured = {}
+
+    class _Resp:
+        def close(self):
+            pass
+
+    def _fake(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return _Resp()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+
+    spec = _spec_with_issue(tmp_path, 412)
+    ev = emit_worker_completion(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_sample_worker(),
+    )
+    assert captured["url"] == "http://hook.test/c"
+    assert captured["body"]["status"] == "worker_done"
+    assert captured["body"]["phase"] == "worker"
+    assert captured["body"]["worker"]["worker_id"] == "sub-A"
+    assert ev["worker"]["worker_id"] == "sub-A"
+
+
+def test_emit_worker_completion_is_best_effort_on_raising_transport(tmp_path, monkeypatch):
+    """A raising transport MUST NOT propagate — emission is best-effort."""
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+
+    def _boom(req, timeout=None):
+        raise OSError("refused")
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    spec = _spec_with_issue(tmp_path, 1)
+    # Must not raise — returns the built event regardless of transport failure.
+    ev = emit_worker_completion(
+        spec_dir=spec, task_id="t", spec_id="s", project_id="p",
+        worker=_sample_worker(),
+    )
+    assert ev["status"] == "worker_done"
+
+
+def test_worker_sentinel_written_to_per_worker_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("AIFACTORY_COMPLETION_SENTINEL", "1")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    spec = _spec_with_issue(tmp_path, 412)
+    emit_worker_completion(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_sample_worker(worker_id="sub-A"),
+    )
+    # Per-worker sentinel — does NOT clobber the terminal COMPLETED.json.
+    sentinel = spec / "WORKER.sub-A.json"
+    assert sentinel.exists()
+    assert json.loads(sentinel.read_text())["phase"] == "worker"
+    assert not (spec / "COMPLETED.json").exists()
+
+
+def test_terminal_event_unchanged_and_serial_main_worker_subevent_fires(tmp_path, monkeypatch):
+    """The terminal event still fires unchanged; the serial 'main' worker also
+    gets a live sub-event on completion (different status/phase)."""
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    posts = []
+
+    class _Resp:
+        def close(self):
+            pass
+
+    def _fake(req, timeout=None):
+        posts.append(json.loads(req.data.decode()))
+        return _Resp()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+
+    spec = _spec_with_issue(tmp_path, 412)
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 1200, "outputTokens": 50, "totalTokens": 1250,
+        "totalCostUsd": 0.5, "model": "claude-sonnet-4-6",
+        "workers": {
+            "main": _worker("main", "claude", "claude-sonnet-4-6",
+                            in_t=1200, out_t=50, cost=0.5),
+        },
+    }))
+    ev = emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        status="completed",
+    )
+    # Terminal event itself is UNCHANGED: completion event, with usage rollups,
+    # NOT a worker sub-event.
+    assert ev["status"] == "completed"
+    assert ev["phase"] == "act"
+    assert "worker" not in ev
+    assert ev["usage"]["total_tokens"] == 1250
+    assert len(ev["usage"]["workers"]) == 1
+    # Two POSTs landed: the live 'main' sub-event AND the terminal event.
+    statuses = sorted(p["status"] for p in posts)
+    assert statuses == ["completed", "worker_done"]
+    worker_post = next(p for p in posts if p["status"] == "worker_done")
+    assert worker_post["phase"] == "worker"
+    assert worker_post["worker"]["worker_id"] == "main"
+    assert worker_post["correlation_key"] == ev["correlation_key"] == "412"
+
+
+def test_terminal_event_no_serial_subevent_for_multiple_workers(tmp_path, monkeypatch):
+    """When >1 worker (parallel) is present, the terminal emit does NOT also fire
+    a 'main' sub-event — parallel workers already emitted theirs live."""
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    posts = []
+
+    class _Resp:
+        def close(self):
+            pass
+
+    def _fake(req, timeout=None):
+        posts.append(json.loads(req.data.decode()))
+        return _Resp()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+
+    spec = _spec_with_issue(tmp_path, 412)
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
+        "totalCostUsd": 0.30, "model": "ollama:llama3",
+        "workers": {
+            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
+                             in_t=300, out_t=40, cost=0.30),
+            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
+                             in_t=500, out_t=60, cost=0.0),
+        },
+    }))
+    emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        status="completed",
+    )
+    # Only the terminal event — no extra worker sub-event from the terminal path.
+    assert [p["status"] for p in posts] == ["completed"]

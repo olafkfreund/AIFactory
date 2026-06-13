@@ -59,6 +59,112 @@ from .wave_log import WaveRecorder
 logger = logging.getLogger(__name__)
 
 
+# Cache for the lazily-loaded web-server completion module (#45 P1). The backend
+# runs as a separate subprocess and must NOT import the web-server package (see
+# agents/inbox.py); so the live per-worker sub-event reuses the SAME emitter the
+# terminal event uses by loading that single stdlib-only module BY FILE PATH —
+# its only web-server imports are relative and guarded inside functions, so the
+# module loads standalone. Sentinel ``False`` = a load attempt already failed
+# (never retry); ``None`` = not yet attempted.
+_completion_mod: Any = None
+
+
+def _load_completion_emitter() -> Any:
+    """Best-effort handle to the web-server completion emitter (#45 P1).
+
+    Returns the loaded module, or ``None`` if it cannot be located/loaded (in
+    which case live sub-event emission silently no-ops — additive + best-effort,
+    exactly the terminal event's contract). Never raises.
+    """
+    global _completion_mod
+    if _completion_mod is not None:
+        return _completion_mod or None
+    try:
+        import importlib.util
+
+        # This module file lives at apps/backend/agents/parallel_integration.py;
+        # the emitter is its sibling app apps/web-server/server/services/.
+        comp_path = (
+            Path(__file__).resolve().parents[2]
+            / "web-server"
+            / "server"
+            / "services"
+            / "completion.py"
+        )
+        if not comp_path.exists():
+            _completion_mod = False
+            return None
+        spec = importlib.util.spec_from_file_location(
+            "aifactory_completion_emitter", comp_path
+        )
+        if spec is None or spec.loader is None:
+            _completion_mod = False
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _completion_mod = mod
+        return mod
+    except Exception:  # noqa: BLE001 — emitter is optional; never break a build
+        _completion_mod = False
+        return None
+
+
+def emit_worker_live_event(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    worker_id: str,
+    subtask_id: str | None,
+    provider: str | None,
+    model: str | None,
+    agent_phase: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    duration_ms: int,
+) -> None:
+    """Emit ONE live per-worker sub-event as this worker finishes (#45 P1).
+
+    Reuses the terminal event's emitter + transport via the lazily-loaded
+    completion module. Fully best-effort: any failure (module missing, transport
+    down, slow webhook) is swallowed so it can NEVER fail or slow a build —
+    identical contract to the existing terminal completion event. The terminal
+    event at task end is unchanged (still fires, now with v1.3 rollups).
+
+    ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed the same way the
+    web-server's terminal emit derives them (``spec_id = spec_dir.name``,
+    ``project_id = project_dir.name``, ``task_id = project_id:spec_id``) so the
+    live sub-event shares the terminal event's correlation key.
+    """
+    try:
+        mod = _load_completion_emitter()
+        if mod is None:
+            return
+        spec_id = spec_dir.name
+        project_id = project_dir.name
+        worker_rec = {
+            "worker_id": worker_id,
+            "subtask_id": subtask_id,
+            "provider": provider,
+            "model": model,
+            "agent_phase": agent_phase,
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "total_tokens": int(input_tokens) + int(output_tokens),
+            "cost_usd": float(cost_usd or 0.0),
+            "duration_ms": int(duration_ms),
+        }
+        mod.emit_worker_completion(
+            spec_dir=spec_dir,
+            task_id=f"{project_id}:{spec_id}",
+            spec_id=spec_id,
+            project_id=project_id,
+            worker=worker_rec,
+        )
+    except Exception:  # noqa: BLE001 — a live sub-event must never break a build
+        logger.debug("[parallel] worker live event skipped", exc_info=True)
+
+
 def _task_branch(project_dir: Path) -> str:
     """Return the current branch of the task worktree (merge target)."""
     result = subprocess.run(
@@ -354,6 +460,10 @@ async def run_parallel_coding_phase(
                         user_prompt=prompt,
                         tool_output_chars=_usage_payload.get("tool_output_chars", 0),
                     )
+                    _sub_provider = (
+                        infer_provider_from_model(sub_model) if sub_model else None
+                    )
+                    _duration_ms = int((_t_end - _t_start) * 1000)
                     record_turn(
                         spec_dir,
                         _segments,
@@ -361,11 +471,27 @@ async def run_parallel_coding_phase(
                         model=sub_model,
                         worker_id=subtask.id,
                         subtask_id=subtask.id,
-                        provider=infer_provider_from_model(sub_model)
-                        if sub_model
-                        else None,
+                        provider=_sub_provider,
                         phase=LogPhase.CODING.value,
-                        duration_ms=int((_t_end - _t_start) * 1000),
+                        duration_ms=_duration_ms,
+                    )
+                    # Live per-worker sub-event (#45 P1): this worker has just
+                    # finished its wave session and its record is persisted —
+                    # emit the live drill-down event now, reusing the terminal
+                    # event's best-effort emitter/transport. Best-effort: a
+                    # failed/slow emit never fails or slows the build.
+                    emit_worker_live_event(
+                        spec_dir=spec_dir,
+                        project_dir=project_dir,
+                        worker_id=subtask.id,
+                        subtask_id=subtask.id,
+                        provider=_sub_provider,
+                        model=sub_model,
+                        agent_phase=LogPhase.CODING.value,
+                        input_tokens=_turn_usage.total_input_tokens,
+                        output_tokens=_turn_usage.output_tokens,
+                        cost_usd=_turn_usage.cost_usd,
+                        duration_ms=_duration_ms,
                     )
             except Exception as _exc:  # noqa: BLE001 - bookkeeping must not crash a build
                 logger.debug(

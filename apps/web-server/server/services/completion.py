@@ -53,6 +53,12 @@ _SCHEMA_VERSION = "1.3"
 # per deployment so a multi-instance fleet can be told apart by the consumer.
 _CE_SPECVERSION = "1.0"
 _CE_TYPE = "io.factory.aifactory.completion"
+# Live per-worker sub-event (#45 P1): a distinct CloudEvents ``type`` so a
+# consumer can route the live drill-down events apart from the terminal rollup.
+_CE_TYPE_WORKER = "io.factory.aifactory.worker"
+# Status + phase of the live sub-event each worker emits as it finishes.
+_WORKER_STATUS = "worker_done"
+_WORKER_PHASE = "worker"
 
 
 def _now_iso() -> str:
@@ -313,6 +319,149 @@ def build_completion_event(
     return event
 
 
+def build_worker_event(
+    *,
+    task_id: str,
+    spec_id: str,
+    issue_number: int | None,
+    worker: dict,
+    project_id: str | None = None,
+    updated_at: str | None = None,
+    event_id: str | None = None,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
+) -> dict:
+    """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
+
+    Today only ONE terminal completion event fires at task end. This builds the
+    additive *live* event each parallel worker (and the serial single 'main'
+    worker) emits as it finishes, so the cockpit can show per-worker spend as it
+    happens rather than only the end-of-task rollup. Shape mirrors
+    :func:`build_completion_event` (same correlation key, same CloudEvents
+    envelope) but carries ``status="worker_done"`` / ``phase="worker"`` and an
+    additive top-level ``worker`` object instead of ``usage``.
+
+    Dedup key for consumers: ``(service, correlation_key, worker.worker_id)`` —
+    a worker emits at most one terminal sub-event, and a relay re-delivers the
+    persisted event verbatim, so re-delivery dedups on the same triple.
+
+    ``worker`` is the per-worker record already persisted to ``token_usage.json``
+    (the agent's token attribution writes it); it is normalised here to the exact
+    RFC field set, never recomputed.
+    """
+    when = updated_at or _now_iso()
+    rec = worker or {}
+    in_tok = int(rec.get("input_tokens", 0) or 0)
+    out_tok = int(rec.get("output_tokens", 0) or 0)
+    worker_block = {
+        "worker_id": str(rec.get("worker_id") or "main"),
+        "subtask_id": rec.get("subtask_id"),
+        "agent_phase": rec.get("agent_phase") or rec.get("phase"),
+        "provider": rec.get("provider"),
+        "model": rec.get("model"),
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+        "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+        "duration_ms": int(rec.get("duration_ms", 0) or 0),
+    }
+    event = {
+        "correlation_key": correlation_key(spec_id, issue_number),
+        "service": SERVICE_NAME,
+        "task_id": task_id,
+        "status": _WORKER_STATUS,
+        "phase": _WORKER_PHASE,
+        "updated_at": when,
+        "correlation": {
+            "issue_number": issue_number,
+            "spec_id": spec_id,
+            "project_id": project_id,
+        },
+        "schema_version": _SCHEMA_VERSION,
+        "event": "completion",
+        "id": event_id or _new_event_id(),
+        "specversion": _CE_SPECVERSION,
+        "source": _ce_source(),
+        # Distinct CloudEvents ``type`` so the live sub-event is routable apart
+        # from the terminal rollup; everything else matches the terminal envelope.
+        "type": _CE_TYPE_WORKER,
+        "time": when,
+        "traceparent": traceparent or _new_traceparent(),
+        "worker": worker_block,
+    }
+    if tracestate:
+        event["tracestate"] = tracestate
+    return event
+
+
+def emit_worker_completion(
+    *,
+    spec_dir: Path,
+    task_id: str,
+    spec_id: str,
+    project_id: str | None,
+    worker: dict,
+) -> dict | None:
+    """Build + best-effort emit one LIVE per-worker sub-event (#45 P1).
+
+    Reuses the SAME transport as the terminal event (:func:`notify_completion`
+    — opt-in webhook + opt-in sentinel, both swallow every error). A failing or
+    slow emit must NEVER fail or slow the build, so the whole call is wrapped:
+    any exception is logged at debug and discarded, exactly like the terminal
+    path's contract. Returns the event (for callers/tests) or ``None`` if it
+    could not be built.
+
+    The sentinel for a worker sub-event is written to a per-worker filename so it
+    never clobbers the terminal ``COMPLETED.json``.
+    """
+    try:
+        event = build_worker_event(
+            task_id=task_id,
+            spec_id=spec_id,
+            issue_number=read_issue_number(spec_dir),
+            project_id=project_id,
+            worker=worker,
+        )
+        _notify_worker(event, spec_dir=spec_dir)
+        return event
+    except Exception:  # noqa: BLE001 — a live sub-event must never break a build
+        logger.debug("worker sub-event emit failed (best-effort)", exc_info=True)
+        return None
+
+
+def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
+    """Best-effort live sub-event transport: opt-in sentinel + opt-in webhook.
+
+    Mirrors :func:`notify_completion` (same env-gated webhook + sentinel), but
+    the sentinel lands in a per-worker file so concurrent workers and the
+    terminal ``COMPLETED.json`` never collide. Never raises."""
+    if _sentinel_enabled() and spec_dir is not None:
+        try:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            wid = str((event.get("worker") or {}).get("worker_id") or "main")
+            safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in wid)
+            (spec_dir / f"WORKER.{safe}.json").write_text(json.dumps(event, indent=2))
+        except OSError:
+            pass
+
+    url = _webhook_url()
+    if not url:
+        return
+    try:
+        import urllib.request
+
+        timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
+    except Exception:
+        logger.debug("worker sub-event webhook failed (best-effort)", exc_info=True)
+
+
 def _webhook_url() -> str | None:
     return (os.environ.get("AIFACTORY_COMPLETION_WEBHOOK") or "").strip() or None
 
@@ -368,15 +517,34 @@ def emit_terminal_completion(
 ) -> dict:
     """Build + emit the completion event for a task that reached ``status``.
     Returns the event (for callers/tests). Best-effort; never raises."""
+    usage = read_usage(spec_dir)
     event = build_completion_event(
         task_id=task_id,
         spec_id=spec_id,
         status=status,
         issue_number=read_issue_number(spec_dir),
         project_id=project_id,
-        usage=read_usage(spec_dir),
+        usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
     )
+    # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
+    # emit their live sub-event as they finish (agents/parallel_integration.py);
+    # a serial build has no fan-out, so its single implicit 'main' worker has no
+    # live event yet — emit it here, on completion. Guarded so it's restricted to
+    # exactly the serial case (one 'main' worker) and never duplicates a parallel
+    # worker's live event. Best-effort: never affects the terminal event below.
+    try:
+        workers = (usage or {}).get("workers") or []
+        if len(workers) == 1 and str(workers[0].get("worker_id")) == "main":
+            emit_worker_completion(
+                spec_dir=spec_dir,
+                task_id=task_id,
+                spec_id=spec_id,
+                project_id=project_id,
+                worker=workers[0],
+            )
+    except Exception:  # noqa: BLE001 — must never break the terminal event
+        logger.debug("serial main-worker sub-event skipped (best-effort)", exc_info=True)
     notify_completion(event, spec_dir=spec_dir)
     return event
 
