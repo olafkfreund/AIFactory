@@ -106,3 +106,35 @@ jobs:
           echo "### Deployed aifactory \`${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "factory-gitops bumped → ArgoCD will auto-sync (or run \`argocd app sync aifactory\`)." >> "$GITHUB_STEP_SUMMARY"
+
+  # Post-deploy PARR seam smoke check (Factory#44). Steps-based on purpose: a
+  # cross-repo reusable-workflow `uses:` call fails the deploy at startup, so we
+  # check out the Factory harness and run it directly. Soft gate — continue-on-error
+  # plus `|| true` mean a probe failure can never break or roll back the deploy;
+  # self-skips when FACTORY_TOKEN is unset. TODO: tighten to a required gate once stable.
+  seam-check:
+    needs: build-push-bump
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout Factory seam harness
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: PARR seam smoke regression
+        env:
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          PFACTORY_API: ${{ vars.PFACTORY_API }}
+          AIFACTORY_API: ${{ vars.AIFACTORY_API }}
+          TFACTORY_API: ${{ vars.TFACTORY_API }}
+          CFACTORY_API: ${{ vars.CFACTORY_API }}
+        run: |
+          if [ -z "${FACTORY_TOKEN}" ]; then
+            echo "FACTORY_TOKEN not set — skipping seam smoke gate."
+            exit 0
+          fi
+          python3 scripts/parr_regression.py --smoke || true
