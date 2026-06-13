@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,13 +43,55 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
 # Envelope grew additively in #466 (CloudEvents-core + id + trace context).
-_SCHEMA_VERSION = "1.2"
+# v1.3 (#45 P1) adds an additive per-worker breakdown to the usage block:
+# ``usage.workers[]`` + ``usage.by_provider{}`` / ``usage.by_model{}`` rollups.
+# The scalar usage fields are KEPT verbatim, so old consumers ignore the new
+# fields and still validate — an additive minor bump.
+_SCHEMA_VERSION = "1.3"
 
 # CloudEvents 1.0 (CNCF) — the spec version we align to, and the reverse-DNS
 # ``type`` for AIFactory's terminal completion event. ``source`` is overridable
 # per deployment so a multi-instance fleet can be told apart by the consumer.
 _CE_SPECVERSION = "1.0"
 _CE_TYPE = "io.factory.aifactory.completion"
+# Live per-worker sub-event (#45 P1): a distinct CloudEvents ``type`` so a
+# consumer can route the live drill-down events apart from the terminal rollup.
+_CE_TYPE_WORKER = "io.factory.aifactory.worker"
+# Status + phase of the live sub-event each worker emits as it finishes.
+_WORKER_STATUS = "worker_done"
+_WORKER_PHASE = "worker"
+
+# Live per-worker PROGRESS heartbeat (#45 P2 Tier 2): a periodic "still running"
+# event emitted from the per-worker run path while a worker is in flight, so the
+# cockpit can render a per-second-ticking graph for a running task. Distinct from
+# the one-shot ``worker_done`` event above: a worker emits MANY progress
+# heartbeats while running and exactly one ``worker_done`` when it finishes.
+_CE_TYPE_WORKER_PROGRESS = "io.factory.aifactory.worker_progress"
+_WORKER_PROGRESS_STATUS = "running"
+_WORKER_PROGRESS_PHASE = "worker_progress"
+
+# Heartbeat throttle window (seconds). At most one progress event per worker_id
+# per window, so a fast per-turn loop can't flood the transport — the heartbeat
+# is a bounded ~1-point-per-window signal, not a per-turn firehose. Overridable
+# for tests/ops via AIFACTORY_WORKER_PROGRESS_INTERVAL_S.
+_WORKER_PROGRESS_WINDOW_S = 10.0
+
+# Per-worker_id monotonic timestamp of the last progress emit. Module-level
+# state: one running build is one subprocess, so this map is naturally scoped to
+# a single task's lifetime. ``{worker_id: last_emit_monotonic}``.
+_progress_last_emit: dict[str, float] = {}
+
+
+def _progress_window_s() -> float:
+    """The throttle window in seconds (env-overridable, defaults to ~10s)."""
+    raw = os.environ.get("AIFACTORY_WORKER_PROGRESS_INTERVAL_S")
+    if raw is None:
+        return _WORKER_PROGRESS_WINDOW_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return _WORKER_PROGRESS_WINDOW_S
+    return val if val >= 0 else _WORKER_PROGRESS_WINDOW_S
 
 
 def _now_iso() -> str:
@@ -68,9 +111,24 @@ def _new_event_id() -> str:
 def _new_traceparent() -> str:
     """A valid W3C ``traceparent`` (version 00, sampled flag set).
 
-    ``00-<16-byte trace-id>-<8-byte span-id>-01`` — a freshly rooted trace for
-    this terminal event when no inbound context is being propagated.
+    Prefer the CURRENTLY ACTIVE span's trace context (#45 P1): when this
+    terminal event is built inside a request/task span (FastAPI auto-
+    instrumentation has one open when OTel is enabled), reusing its
+    ``traceparent`` LINKS the completion event to that trace instead of
+    rooting an orphan. Falls back to a freshly rooted synthetic trace
+    (``00-<16-byte trace-id>-<8-byte span-id>-01``) when no span is active —
+    e.g. OTel disabled, or emitted outside a request context. Additive + safe:
+    the return shape is unchanged and the fallback matches the old behavior.
     """
+    try:
+        from ..observability.tracing import get_current_traceparent
+
+        active = get_current_traceparent()
+        if active:
+            return active
+    except Exception:
+        # Any import/lookup failure → fall through to the synthetic value.
+        pass
     trace_id = secrets.token_hex(16)
     span_id = secrets.token_hex(8)
     return f"00-{trace_id}-{span_id}-01"
@@ -103,14 +161,145 @@ def correlation_key(spec_id: str, issue_number: int | None) -> str:
     return str(issue_number) if issue_number is not None else f"af-{spec_id}"
 
 
+def _worker_records(agg: dict) -> list[dict]:
+    """Normalise the persisted per-worker map (#45 P1) into a stable list.
+
+    ``token_usage.json`` carries a ``workers`` map keyed by worker_id; the RFC
+    event exposes it as an ordered list of records. Each record echoes the
+    on-disk shape. Returns ``[]`` when no worker breakdown was recorded (old
+    files / nothing to report) — the field is additive and simply omitted then.
+    """
+    workers = agg.get("workers")
+    if not isinstance(workers, dict) or not workers:
+        return []
+    records: list[dict] = []
+    for wid, rec in workers.items():
+        if not isinstance(rec, dict):
+            continue
+        in_tok = int(rec.get("input_tokens", 0) or 0)
+        out_tok = int(rec.get("output_tokens", 0) or 0)
+        records.append(
+            {
+                "worker_id": rec.get("worker_id") or wid,
+                "phase": rec.get("phase"),
+                "subtask_id": rec.get("subtask_id"),
+                "provider": rec.get("provider"),
+                "model": rec.get("model"),
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "total_tokens": int(rec.get("total_tokens", 0) or 0)
+                or (in_tok + out_tok),
+                "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+                "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            }
+        )
+    # Deterministic order for stable events/tests.
+    records.sort(key=lambda r: str(r["worker_id"]))
+    return records
+
+
+def _rollup(records: list[dict], key: str) -> dict:
+    """Roll worker records up by ``provider`` or ``model`` into a token/cost map.
+
+    Records with a null/empty key are bucketed under ``"unknown"`` so the rollup
+    never silently drops a worker's spend.
+    """
+    out: dict[str, dict] = {}
+    for rec in records:
+        bucket = rec.get(key) or "unknown"
+        slot = out.setdefault(
+            bucket,
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "workers": 0,
+            },
+        )
+        slot["input_tokens"] += int(rec.get("input_tokens", 0) or 0)
+        slot["output_tokens"] += int(rec.get("output_tokens", 0) or 0)
+        slot["total_tokens"] += int(rec.get("total_tokens", 0) or 0)
+        slot["cost_usd"] = round(slot["cost_usd"] + float(rec.get("cost_usd", 0.0) or 0.0), 6)
+        slot["workers"] += 1
+    return out
+
+
+def _read_budget_usd(spec_dir: Path) -> float | None:
+    """The optional soft cost budget (USD) for this task, if set (#45 P2).
+
+    Sourced from the Task Contract's ``execution.budget_usd``, which
+    ``trusted_plan.apply_execution_profile`` carries into the spec's
+    ``task_metadata.json`` as ``budgetUsd``. Returns ``None`` when no budget is
+    set (file missing/unreadable, or the key absent/non-numeric) — the budget
+    block is then omitted entirely (back-compat). Stdlib-only, best-effort,
+    never raises.
+    """
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("budgetUsd")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        budget = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return budget if budget >= 0 else None
+
+
+def _budget_block(spent_usd: float, budget_usd: float | None) -> dict | None:
+    """The additive ``usage.budget`` soft-alert block (#45 P2), or ``None``.
+
+    OBSERVE-ONLY: this only describes the rolled-up spend against the contract
+    budget; it never aborts, pauses, or kills the build. Returns ``None`` when no
+    budget is set, so the block is omitted entirely (back-compat). EXACT shape
+    (CFactory consumes it): ``{limit_usd, spent_usd, exceeded}``.
+    """
+    if budget_usd is None:
+        return None
+    spent = round(float(spent_usd or 0.0), 6)
+    exceeded = spent > budget_usd
+    if exceeded:
+        # Fire the OTel counter (no-op when OTel disabled). NEVER aborts.
+        _emit_budget_exceeded()
+    return {
+        "limit_usd": round(float(budget_usd), 6),
+        "spent_usd": spent,
+        "exceeded": exceeded,
+    }
+
+
+def _emit_budget_exceeded() -> None:
+    """Increment the OTel ``budget.exceeded`` counter (#45 P2). Best-effort.
+
+    Complete no-op when OTel is disabled; never raises. OBSERVE-ONLY — recording
+    a metric only, with no effect on the build's terminal state."""
+    try:
+        from ..observability.metrics_otel import record_budget_exceeded
+
+        record_budget_exceeded()
+    except Exception:  # noqa: BLE001 — metrics must never break completion
+        logger.debug("budget.exceeded metric emit failed (best-effort)", exc_info=True)
+
+
 def read_usage(spec_dir: Path) -> dict | None:
-    """The RFC-0001 v1.1 ``usage`` block from the task's ``token_usage.json``.
+    """The RFC-0001 ``usage`` block from the task's ``token_usage.json``.
 
     The agent's token attribution writes ``<spec_dir>/token_usage.json`` with the
     run's aggregated token counts and real SDK cost. We map those fields to the
     RFC block. Returns ``None`` when there is no usage to report (file missing,
     unreadable, or zero tokens) — the block is additive, so it is simply omitted.
     Stdlib-only and best-effort, like the rest of this module.
+
+    v1.3 (#45 P1, additive): when the file carries a per-worker ``workers`` map,
+    the block also gains ``workers[]`` + ``by_provider{}`` / ``by_model{}``
+    rollups derived from it. The scalar fields above are KEPT verbatim for
+    back-compat; a serial single-model task still produces exactly the same
+    scalar block plus a one-entry workers list.
     """
     try:
         agg = json.loads((spec_dir / "token_usage.json").read_text())
@@ -123,13 +312,46 @@ def read_usage(spec_dir: Path) -> dict | None:
     if in_tok == 0 and out_tok == 0:
         return None
     total = int(agg.get("totalTokens", 0) or 0) or (in_tok + out_tok)
-    return {
+    block = {
         "input_tokens": in_tok,
         "output_tokens": out_tok,
         "total_tokens": total,
         "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
         "model": agg.get("model"),
     }
+    workers = _worker_records(agg)
+    if workers:
+        block["workers"] = workers
+        block["by_provider"] = _rollup(workers, "provider")
+        block["by_model"] = _rollup(workers, "model")
+        # OTel per-worker / per-provider metric emission (#45 P1). Complete
+        # no-op when OTel is disabled (no exporter endpoint) and best-effort
+        # otherwise — never affects the usage block or the completion path.
+        _emit_worker_metrics(workers)
+    # Soft budget alert (#45 P2, additive + OBSERVE-ONLY): when the contract set
+    # a budget (carried into task_metadata.budgetUsd), attach a usage.budget
+    # block comparing the rolled-up aggregate spend (block["cost_usd"]) against
+    # it. Omitted entirely when no budget is set (back-compat). NEVER aborts the
+    # build — this is purely a warning surface on the terminal event.
+    budget = _budget_block(block["cost_usd"], _read_budget_usd(spec_dir))
+    if budget is not None:
+        block["budget"] = budget
+    return block
+
+
+def _emit_worker_metrics(workers: list[dict]) -> None:
+    """Re-emit the per-worker breakdown as OTel metrics (#45 P1).
+
+    The OTLP exporter lives in the web-server (the agent subprocess has none),
+    so the worker records the agent persisted are exported from here at task
+    end. A complete no-op when OTel is disabled; never raises.
+    """
+    try:
+        from ..observability.metrics_otel import record_worker_metrics_batch
+
+        record_worker_metrics_batch(workers)
+    except Exception:  # noqa: BLE001 — metrics must never break completion
+        logger.debug("worker metrics emit failed (best-effort)", exc_info=True)
 
 
 def build_completion_event(
@@ -199,6 +421,305 @@ def build_completion_event(
     return event
 
 
+def build_worker_event(
+    *,
+    task_id: str,
+    spec_id: str,
+    issue_number: int | None,
+    worker: dict,
+    project_id: str | None = None,
+    updated_at: str | None = None,
+    event_id: str | None = None,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
+) -> dict:
+    """A LIVE per-worker sub-event (RFC-0001 v1.3, #45 P1).
+
+    Today only ONE terminal completion event fires at task end. This builds the
+    additive *live* event each parallel worker (and the serial single 'main'
+    worker) emits as it finishes, so the cockpit can show per-worker spend as it
+    happens rather than only the end-of-task rollup. Shape mirrors
+    :func:`build_completion_event` (same correlation key, same CloudEvents
+    envelope) but carries ``status="worker_done"`` / ``phase="worker"`` and an
+    additive top-level ``worker`` object instead of ``usage``.
+
+    Dedup key for consumers: ``(service, correlation_key, worker.worker_id)`` —
+    a worker emits at most one terminal sub-event, and a relay re-delivers the
+    persisted event verbatim, so re-delivery dedups on the same triple.
+
+    ``worker`` is the per-worker record already persisted to ``token_usage.json``
+    (the agent's token attribution writes it); it is normalised here to the exact
+    RFC field set, never recomputed.
+    """
+    when = updated_at or _now_iso()
+    rec = worker or {}
+    in_tok = int(rec.get("input_tokens", 0) or 0)
+    out_tok = int(rec.get("output_tokens", 0) or 0)
+    worker_block = {
+        "worker_id": str(rec.get("worker_id") or "main"),
+        "subtask_id": rec.get("subtask_id"),
+        "agent_phase": rec.get("agent_phase") or rec.get("phase"),
+        "provider": rec.get("provider"),
+        "model": rec.get("model"),
+        "input_tokens": in_tok,
+        "output_tokens": out_tok,
+        "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+        "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+        "duration_ms": int(rec.get("duration_ms", 0) or 0),
+    }
+    event = {
+        "correlation_key": correlation_key(spec_id, issue_number),
+        "service": SERVICE_NAME,
+        "task_id": task_id,
+        "status": _WORKER_STATUS,
+        "phase": _WORKER_PHASE,
+        "updated_at": when,
+        "correlation": {
+            "issue_number": issue_number,
+            "spec_id": spec_id,
+            "project_id": project_id,
+        },
+        "schema_version": _SCHEMA_VERSION,
+        "event": "completion",
+        "id": event_id or _new_event_id(),
+        "specversion": _CE_SPECVERSION,
+        "source": _ce_source(),
+        # Distinct CloudEvents ``type`` so the live sub-event is routable apart
+        # from the terminal rollup; everything else matches the terminal envelope.
+        "type": _CE_TYPE_WORKER,
+        "time": when,
+        "traceparent": traceparent or _new_traceparent(),
+        "worker": worker_block,
+    }
+    if tracestate:
+        event["tracestate"] = tracestate
+    return event
+
+
+def build_worker_progress_event(
+    *,
+    task_id: str,
+    spec_id: str,
+    issue_number: int | None,
+    worker: dict,
+    project_id: str | None = None,
+    updated_at: str | None = None,
+    event_id: str | None = None,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
+) -> dict:
+    """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
+
+    Sibling of :func:`build_worker_event`, but for a worker that is STILL
+    RUNNING: it carries ``status="running"`` / ``phase="worker_progress"`` and a
+    distinct CloudEvents ``type`` (``io.factory.aifactory.worker_progress``) so a
+    consumer can stream a per-second-ticking graph of a live task and route these
+    heartbeats apart from both the terminal rollup and the one-shot
+    ``worker_done`` event. A worker emits MANY of these while running (throttled
+    — see :func:`emit_worker_progress`) and exactly one ``worker_done`` when it
+    finishes; the ``worker_done`` / terminal events are unchanged.
+
+    The ``worker`` object is the running snapshot the per-worker run path holds
+    (cumulative ``total_tokens`` / ``cost_usd`` and ``elapsed_ms`` since the
+    worker started). Shape mirrors the EXACT v1.3 heartbeat contract a future
+    CFactory consumer matches against.
+    """
+    when = updated_at or _now_iso()
+    rec = worker or {}
+    in_tok = int(rec.get("input_tokens", 0) or 0)
+    out_tok = int(rec.get("output_tokens", 0) or 0)
+    worker_block = {
+        "worker_id": str(rec.get("worker_id") or "main"),
+        "subtask_id": rec.get("subtask_id"),
+        "agent_phase": rec.get("agent_phase") or rec.get("phase"),
+        "provider": rec.get("provider"),
+        "model": rec.get("model"),
+        "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+        "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+        "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
+    }
+    event = {
+        "correlation_key": correlation_key(spec_id, issue_number),
+        "service": SERVICE_NAME,
+        "task_id": task_id,
+        "status": _WORKER_PROGRESS_STATUS,
+        "phase": _WORKER_PROGRESS_PHASE,
+        "updated_at": when,
+        "correlation": {
+            "issue_number": issue_number,
+            "spec_id": spec_id,
+            "project_id": project_id,
+        },
+        "schema_version": _SCHEMA_VERSION,
+        "event": "completion",
+        "id": event_id or _new_event_id(),
+        "specversion": _CE_SPECVERSION,
+        "source": _ce_source(),
+        "type": _CE_TYPE_WORKER_PROGRESS,
+        "time": when,
+        "traceparent": traceparent or _new_traceparent(),
+        "worker": worker_block,
+    }
+    if tracestate:
+        event["tracestate"] = tracestate
+    return event
+
+
+def emit_worker_completion(
+    *,
+    spec_dir: Path,
+    task_id: str,
+    spec_id: str,
+    project_id: str | None,
+    worker: dict,
+) -> dict | None:
+    """Build + best-effort emit one LIVE per-worker sub-event (#45 P1).
+
+    Reuses the SAME transport as the terminal event (:func:`notify_completion`
+    — opt-in webhook + opt-in sentinel, both swallow every error). A failing or
+    slow emit must NEVER fail or slow the build, so the whole call is wrapped:
+    any exception is logged at debug and discarded, exactly like the terminal
+    path's contract. Returns the event (for callers/tests) or ``None`` if it
+    could not be built.
+
+    The sentinel for a worker sub-event is written to a per-worker filename so it
+    never clobbers the terminal ``COMPLETED.json``.
+    """
+    try:
+        event = build_worker_event(
+            task_id=task_id,
+            spec_id=spec_id,
+            issue_number=read_issue_number(spec_dir),
+            project_id=project_id,
+            worker=worker,
+        )
+        _notify_worker(event, spec_dir=spec_dir)
+        return event
+    except Exception:  # noqa: BLE001 — a live sub-event must never break a build
+        logger.debug("worker sub-event emit failed (best-effort)", exc_info=True)
+        return None
+
+
+def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
+    """Best-effort live sub-event transport: opt-in sentinel + opt-in webhook.
+
+    Mirrors :func:`notify_completion` (same env-gated webhook + sentinel), but
+    the sentinel lands in a per-worker file so concurrent workers and the
+    terminal ``COMPLETED.json`` never collide. Never raises."""
+    if _sentinel_enabled() and spec_dir is not None:
+        try:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            wid = str((event.get("worker") or {}).get("worker_id") or "main")
+            safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in wid)
+            (spec_dir / f"WORKER.{safe}.json").write_text(json.dumps(event, indent=2))
+        except OSError:
+            pass
+
+    url = _webhook_url()
+    if not url:
+        return
+    try:
+        import urllib.request
+
+        timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
+    except Exception:
+        logger.debug("worker sub-event webhook failed (best-effort)", exc_info=True)
+
+
+def emit_worker_progress(
+    *,
+    spec_dir: Path,
+    task_id: str,
+    spec_id: str,
+    project_id: str | None,
+    worker: dict,
+) -> dict | None:
+    """Build + best-effort emit ONE throttled per-worker PROGRESS heartbeat
+    (#45 Tier 2).
+
+    THROTTLED: at most one heartbeat per ``worker_id`` per window (~10s, see
+    :data:`_WORKER_PROGRESS_WINDOW_S`). Repeated calls inside the window are
+    skipped and return ``None`` — so a fast per-turn build loop produces a
+    bounded ~1-point-per-window heartbeat, never a flood. The throttle is keyed
+    on a monotonic clock so it's wall-clock-jump safe.
+
+    Best-effort + non-blocking by contract: a missing/slow/raising transport is
+    swallowed (mirrors :func:`emit_worker_completion`). It must NEVER fail, slow,
+    or block the build. Returns the emitted event, or ``None`` when throttled or
+    on any failure.
+
+    Transport reuses the live sub-event path (:func:`_notify_worker_progress`),
+    but the sentinel is a ROLLING ``WORKER.<id>.progress.json`` file — it is
+    overwritten on each heartbeat and never clobbers the terminal
+    ``COMPLETED.json`` or the worker's final ``WORKER.<id>.json``.
+    """
+    try:
+        wid = str((worker or {}).get("worker_id") or "main")
+        now = time.monotonic()
+        window = _progress_window_s()
+        last = _progress_last_emit.get(wid)
+        if last is not None and (now - last) < window:
+            return None  # throttled — within the per-worker window
+        # Reserve the slot BEFORE emitting so a slow transport can't let a
+        # second concurrent call slip through the window.
+        _progress_last_emit[wid] = now
+        event = build_worker_progress_event(
+            task_id=task_id,
+            spec_id=spec_id,
+            issue_number=read_issue_number(spec_dir),
+            project_id=project_id,
+            worker=worker,
+        )
+        _notify_worker_progress(event, spec_dir=spec_dir)
+        return event
+    except Exception:  # noqa: BLE001 — a progress heartbeat must never break a build
+        logger.debug("worker progress heartbeat emit failed (best-effort)", exc_info=True)
+        return None
+
+
+def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
+    """Best-effort heartbeat transport: opt-in rolling sentinel + opt-in webhook.
+
+    Mirrors :func:`_notify_worker`, but the sentinel is a ROLLING
+    ``WORKER.<id>.progress.json`` (overwritten each heartbeat) so it never
+    collides with the worker's final ``WORKER.<id>.json`` or the terminal
+    ``COMPLETED.json``. Never raises."""
+    if _sentinel_enabled() and spec_dir is not None:
+        try:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            wid = str((event.get("worker") or {}).get("worker_id") or "main")
+            safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in wid)
+            (spec_dir / f"WORKER.{safe}.progress.json").write_text(
+                json.dumps(event, indent=2)
+            )
+        except OSError:
+            pass
+
+    url = _webhook_url()
+    if not url:
+        return
+    try:
+        import urllib.request
+
+        timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
+    except Exception:
+        logger.debug("worker progress webhook failed (best-effort)", exc_info=True)
+
+
 def _webhook_url() -> str | None:
     return (os.environ.get("AIFACTORY_COMPLETION_WEBHOOK") or "").strip() or None
 
@@ -254,15 +775,34 @@ def emit_terminal_completion(
 ) -> dict:
     """Build + emit the completion event for a task that reached ``status``.
     Returns the event (for callers/tests). Best-effort; never raises."""
+    usage = read_usage(spec_dir)
     event = build_completion_event(
         task_id=task_id,
         spec_id=spec_id,
         status=status,
         issue_number=read_issue_number(spec_dir),
         project_id=project_id,
-        usage=read_usage(spec_dir),
+        usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
     )
+    # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
+    # emit their live sub-event as they finish (agents/parallel_integration.py);
+    # a serial build has no fan-out, so its single implicit 'main' worker has no
+    # live event yet — emit it here, on completion. Guarded so it's restricted to
+    # exactly the serial case (one 'main' worker) and never duplicates a parallel
+    # worker's live event. Best-effort: never affects the terminal event below.
+    try:
+        workers = (usage or {}).get("workers") or []
+        if len(workers) == 1 and str(workers[0].get("worker_id")) == "main":
+            emit_worker_completion(
+                spec_dir=spec_dir,
+                task_id=task_id,
+                spec_id=spec_id,
+                project_id=project_id,
+                worker=workers[0],
+            )
+    except Exception:  # noqa: BLE001 — must never break the terminal event
+        logger.debug("serial main-worker sub-event skipped (best-effort)", exc_info=True)
     notify_completion(event, spec_dir=spec_dir)
     return event
 

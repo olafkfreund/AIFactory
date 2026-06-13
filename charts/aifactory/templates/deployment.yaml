@@ -97,6 +97,17 @@ spec:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
             {{- end }}
+            {{- if ne .Values.security.egress.policy "off" }}
+            # Agent egress control (#363 AC3): command-layer allowlist over the
+            # bash hook — complements the NetworkPolicy with per-host filtering
+            # that vanilla NetworkPolicy can't do (no FQDN egress without Cilium).
+            - name: AIFACTORY_EGRESS_POLICY
+              value: {{ .Values.security.egress.policy | quote }}
+            {{- with .Values.security.egress.allowedHosts }}
+            - name: AIFACTORY_EGRESS_ALLOWED_HOSTS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.workspaces.storage.enabled }}
             # S3-compatible durable workspace storage (Epic #35 #40
             # half-B PR-2). ``WORKSPACE_S3_URI_BASE`` switches the

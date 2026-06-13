@@ -28,6 +28,17 @@ What that means for the roadmap, concretely:
 
 ## Recently shipped
 
+### June 2026 — deploy-then-verify + the PR endgame
+
+- **Deploy-then-verify on real AWS** ✅ — after the build, ship the services to **AWS App Runner** with deterministic Terraform, verify the live HTTPS endpoint, run the acceptance tests against it, and tear down — cost-guarded with `factory-ephemeral` tags, opt-in via `AIFACTORY_AUTO_DEPLOY` (default off). Demo: `/run-aws-demo`. See [Deploy-then-verify](./concepts/deploy-then-verify).
+- **PR endgame closed** ✅ — auto-PR → review → merge → re-test, configurable per project (`AIFACTORY_AUTO_PR` / `AIFACTORY_AUTO_MERGE`), with a selectable reviewer (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`) and a bounded auto-feedback fix-and-re-review loop (≤2 cycles) on changes-requested. See [`guides/pr-endgame.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/pr-endgame.md).
+- **Contract-carrying TFactory handoff** ✅ — a signed Task Contract v2 (RFC-0002) carries declared acceptance criteria, lanes, and endpoints through to TFactory, so it verifies the declared profile instead of inferring it. See [Task Contract](./task-contract).
+- **Opt-in direct-API-key auth** ✅ — `AIFACTORY_ALLOW_API_KEY=1` for operators billing via a direct key; OAuth-only and key-scrubbed by default. See [API-key auth](./concepts/api-key-auth).
+- **Test authenticated web apps** ✅ — deploy behind a login, browser-test logs in as a test user, records screenshots + findings as proof. See [`guides/testing-authenticated-web-apps.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/testing-authenticated-web-apps.md).
+- **Multi-agent Live Console grid** ✅ — stream every active agent's console for a project at `/console/:projectId`. See [Live Console](./concepts/rmux-live-console).
+
+### May 2026 — Mission Control + Enterprise v1.1 + delegation
+
 - **Mission Control workspace + portal UX** ✅ (PR #311) — a full-page three-pane task workspace (plan & subtasks · live activity + embedded console · preview / files / review), opened on demand from the task header. Ships with a portal polish pass: skeleton loaders, a live progress timeline, a theme-aware terminal, a "waiting for you" review beacon, and animated streaming logs. See [Mission Control workspace](./concepts/mission-control-workspace).
 - **Epic #35 — Enterprise v1.1** ✅ **9/9 children shipped (2026-05-28)**:
   - #36 Tenant Isolation Mode (per-org K8s namespace + IRSA + gatekeeper samples)

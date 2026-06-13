@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [dev, main, "feat/**", "release/**"]
   push:
-    branches: [dev, main]
+    branches: [dev, main, "feat/**", "release/**"]
 
 # Cancel superseded runs on the same ref
 concurrency:
@@ -613,6 +613,71 @@ jobs:
 
       - name: Type-check frontend
         run: npm -w apps/frontend-web run typecheck
+
+  frontend-test:
+    name: frontend (vitest)
+    runs-on: ubuntu-latest
+    # Runs the apps/frontend-web vitest component suite (14 .test.tsx
+    # files) so the tests can no longer silently rot. Started NON-blocking
+    # (continue-on-error) because the suite currently has 5 pre-existing
+    # failures in OnboardingWizard.test.tsx (stale assertions vs. the
+    # component's current copy) that this CI-gating change deliberately
+    # surfaces but does not fix. Flip continue-on-error to false to make
+    # this a required check once those 5 tests are repaired.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace deps
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm -w apps/frontend-web run test
+
+  python-typecheck:
+    name: python (mypy)
+    runs-on: ubuntu-latest
+    # Runs mypy over apps/backend + apps/web-server. mypy is already
+    # declared in tests/requirements-test.txt. The backend is large and
+    # only partially annotated, so this job is NON-blocking for now
+    # (continue-on-error) — it surfaces type errors as annotations without
+    # gating merges. Flip continue-on-error to false to make it required
+    # once the error count is driven to zero.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+
+      - name: Mypy (backend + web-server)
+        run: |
+          apps/backend/.venv/bin/mypy \
+            --ignore-missing-imports \
+            --follow-imports=silent \
+            apps/backend apps/web-server/server
 
   docker-acceptance:
     name: docker (P0 acceptance)

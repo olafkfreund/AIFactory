@@ -351,6 +351,10 @@ _EXECUTION_TO_METADATA = {
     "review_tier": "reviewTier",
     "skills": "selectedSkills",
     "skip_planning": "skipPlanning",
+    # Soft budget alert (#45 P2): carry the optional contract cost budget into
+    # task metadata so completion.py can surface a usage.budget warning when the
+    # rolled-up spend exceeds it. OBSERVE-ONLY — never used to abort a build.
+    "budget_usd": "budgetUsd",
 }
 
 

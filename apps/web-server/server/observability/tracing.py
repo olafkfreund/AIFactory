@@ -215,7 +215,11 @@ def instrument_fastapi_app(app) -> None:
 
 @contextmanager
 def task_phase_span(
-    task_id: str, phase: str,
+    task_id: str,
+    phase: str,
+    *,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> Generator[object, None, None]:
     """Open a span named ``task:phase:{phase}`` with attributes
     ``task.id`` + ``task.phase``.
@@ -226,6 +230,11 @@ def task_phase_span(
 
         with task_phase_span(task_id, "coding") as span:
             ...
+
+    Optional ``provider`` / ``model`` (#45 P1) attach bounded-cardinality
+    ``gen_ai.provider`` / ``gen_ai.request.model`` span attributes when a
+    caller knows them — additive, omitted when ``None`` so existing call
+    sites behave exactly as before.
 
     When OTel SDK isn't available (or init_tracing has not run yet),
     yields a no-op object that callers can safely interact with via
@@ -238,6 +247,10 @@ def task_phase_span(
         with tracer.start_as_current_span(f"task:phase:{phase}") as span:
             span.set_attribute("task.id", task_id)
             span.set_attribute("task.phase", phase)
+            if provider:
+                span.set_attribute("gen_ai.provider", provider)
+            if model:
+                span.set_attribute("gen_ai.request.model", model)
             yield span
     except Exception:
         # If OTel imports fail or anything else goes wrong, yield a
