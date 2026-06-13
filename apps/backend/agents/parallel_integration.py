@@ -29,6 +29,7 @@ import asyncio
 import logging
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ from task_logger import LogPhase, TaskLogger
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_agent_session
+from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import sync_plan_to_source
 from .wave_log import WaveRecorder
 
@@ -117,7 +119,9 @@ async def _capture_memory(
             recovery_manager,
         )
     except Exception as exc:  # noqa: BLE001 - memory is best-effort
-        logger.debug("[parallel] insight extraction skipped for %s: %s", subtask.id, exc)
+        logger.debug(
+            "[parallel] insight extraction skipped for %s: %s", subtask.id, exc
+        )
         insights = None
 
     try:
@@ -306,19 +310,69 @@ async def run_parallel_coding_phase(
                         mem_context, source="knowledge-graph memory of past sessions"
                     )
             except Exception as exc:  # noqa: BLE001 - memory is best-effort
-                logger.debug("[parallel] memory context skipped for %s: %s", subtask.id, exc)
+                logger.debug(
+                    "[parallel] memory context skipped for %s: %s", subtask.id, exc
+                )
 
             commit_before = await asyncio.to_thread(_head_commit, child_path)
 
             # --- agent session (the genuinely concurrent, awaited part) ---
             sub_model = getattr(subtask, "model", None) or phase_model
             client = _make_client(child_path, child_spec_dir, sub_model)
+            _t_start = time.monotonic()
             async with client:
                 status, _resp, _err = await run_agent_session(
                     client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING
                 )
+            _t_end = time.monotonic()
 
             session_ok = status != "error"
+
+            # --- per-worker token attribution (#45 P1, additive) ---
+            # Each parallel subtask IS a worker. Fold its real SDK usage into the
+            # canonical token_usage.json keyed by the subtask id, tagged with the
+            # subtask's provider/model — so a heterogeneous parallel run is
+            # observable per worker / per provider. Best-effort: bookkeeping must
+            # never fail a build (mirrors the serial coder path).
+            try:
+                _usage_payload = (_err or {}).get("usage") if _err else None
+                if _usage_payload:
+                    _turn_usage = TurnUsage.from_sdk_usage(
+                        {
+                            "input_tokens": _usage_payload.get("input_tokens", 0),
+                            "output_tokens": _usage_payload.get("output_tokens", 0),
+                            "cache_read_input_tokens": _usage_payload.get(
+                                "cache_read_tokens", 0
+                            ),
+                            "cache_creation_input_tokens": _usage_payload.get(
+                                "cache_creation_tokens", 0
+                            ),
+                        },
+                        cost_usd=_usage_payload.get("cost_usd", 0.0),
+                    )
+                    _segments = PromptSegments(
+                        user_prompt=prompt,
+                        tool_output_chars=_usage_payload.get("tool_output_chars", 0),
+                    )
+                    record_turn(
+                        spec_dir,
+                        _segments,
+                        _turn_usage,
+                        model=sub_model,
+                        worker_id=subtask.id,
+                        subtask_id=subtask.id,
+                        provider=infer_provider_from_model(sub_model)
+                        if sub_model
+                        else None,
+                        phase=LogPhase.CODING.value,
+                        duration_ms=int((_t_end - _t_start) * 1000),
+                    )
+            except Exception as _exc:  # noqa: BLE001 - bookkeeping must not crash a build
+                logger.debug(
+                    "[parallel] token attribution skipped for %s: %s",
+                    subtask.id,
+                    _exc,
+                )
 
             # Mirror session errors to the canonical spec_dir task log.
             # Child-worktree logs (child_spec_dir) are never synced back, so
@@ -390,7 +444,9 @@ async def run_parallel_coding_phase(
                         subtask_id,
                     )
             except Exception as exc:  # noqa: BLE001
-                logger.error("[parallel] reset %s to pending failed: %s", subtask_id, exc)
+                logger.error(
+                    "[parallel] reset %s to pending failed: %s", subtask_id, exc
+                )
 
     async def merge_subtask(subtask: Any, result: SubtaskResult) -> bool:
         if not result.worktree_name:

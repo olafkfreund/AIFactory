@@ -206,7 +206,7 @@ def test_envelope_includes_usage_when_supplied():
                "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
     )
     assert ev["usage"]["total_tokens"] == 12
-    assert ev["schema_version"] == "1.2"
+    assert ev["schema_version"] == "1.3"
 
 
 def test_envelope_omits_usage_when_absent():
@@ -318,5 +318,151 @@ def test_synthetic_correlation_event_validates_against_schema():
     )
     ev = build_completion_event(
         task_id="proj:spec-9", spec_id="spec-9", status="failed", issue_number=None,
+    )
+    jsonschema.validate(ev, schema)
+
+
+# ── #45 P1: v1.3 per-worker usage (workers[] + by_provider/by_model) ──────────
+
+
+def _worker(wid, provider, model, *, in_t, out_t, cost, dur=0):
+    return {
+        "worker_id": wid,
+        "phase": "coding",
+        "subtask_id": wid,
+        "provider": provider,
+        "model": model,
+        "input_tokens": in_t,
+        "output_tokens": out_t,
+        "total_tokens": in_t + out_t,
+        "cost_usd": cost,
+        "duration_ms": dur,
+    }
+
+
+def test_read_usage_serial_back_compat_one_main_worker(tmp_path):
+    """BACK-COMPAT: a serial single-model task still produces the same scalar
+    usage block, plus a one-entry 'main' workers list."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 1200, "outputTokens": 50, "totalTokens": 1250,
+        "totalCostUsd": 0.5, "model": "claude-sonnet-4-6",
+        "workers": {
+            "main": _worker("main", "claude", "claude-sonnet-4-6",
+                            in_t=1200, out_t=50, cost=0.5),
+        },
+    }))
+    usage = read_usage(spec)
+    # Scalar block is exactly the pre-#45 shape.
+    assert usage["input_tokens"] == 1200
+    assert usage["output_tokens"] == 50
+    assert usage["total_tokens"] == 1250
+    assert usage["cost_usd"] == 0.5
+    assert usage["model"] == "claude-sonnet-4-6"
+    # Additive: one main worker + rollups.
+    assert len(usage["workers"]) == 1
+    assert usage["workers"][0]["worker_id"] == "main"
+    assert usage["by_provider"]["claude"]["total_tokens"] == 1250
+    assert usage["by_model"]["claude-sonnet-4-6"]["total_tokens"] == 1250
+
+
+def test_read_usage_two_workers_rollups(tmp_path):
+    """Two workers on two providers/models → workers[] + correct rollups."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
+        "totalCostUsd": 0.30, "model": "ollama:llama3",  # scalar = last-writer
+        "workers": {
+            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
+                             in_t=300, out_t=40, cost=0.30, dur=1500),
+            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
+                             in_t=500, out_t=60, cost=0.0, dur=2200),
+        },
+    }))
+    usage = read_usage(spec)
+    assert len(usage["workers"]) == 2
+    # Deterministic order by worker_id.
+    assert [w["worker_id"] for w in usage["workers"]] == ["sub-A", "sub-B"]
+
+    bp = usage["by_provider"]
+    assert set(bp) == {"claude", "ollama"}
+    assert bp["claude"]["total_tokens"] == 340
+    assert bp["claude"]["cost_usd"] == 0.30
+    assert bp["ollama"]["total_tokens"] == 560
+    assert bp["ollama"]["cost_usd"] == 0.0  # local → no cost
+    assert bp["claude"]["workers"] == 1
+
+    bm = usage["by_model"]
+    assert set(bm) == {"claude-sonnet-4-6", "ollama:llama3"}
+    assert bm["ollama:llama3"]["total_tokens"] == 560
+
+    # Scalar fields preserved untouched.
+    assert usage["input_tokens"] == 800
+    assert usage["total_tokens"] == 900
+
+
+def test_read_usage_no_workers_map_omits_new_fields(tmp_path):
+    """An old token_usage.json without a workers map → scalar block only, no
+    workers[]/by_provider/by_model keys (additive omission)."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 10, "outputTokens": 5, "totalTokens": 15,
+        "totalCostUsd": 0.01, "model": "claude-sonnet-4-6",
+    }))
+    usage = read_usage(spec)
+    assert usage["total_tokens"] == 15
+    assert "workers" not in usage
+    assert "by_provider" not in usage
+    assert "by_model" not in usage
+
+
+def test_v13_usage_round_trips_through_build_completion_event(tmp_path):
+    """The v1.3 usage block (workers[]/by_provider/by_model) survives
+    build_completion_event and validates against the published schema."""
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
+        "totalCostUsd": 0.30, "model": "ollama:llama3",
+        "workers": {
+            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
+                             in_t=300, out_t=40, cost=0.30, dur=1500),
+            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
+                             in_t=500, out_t=60, cost=0.0, dur=2200),
+        },
+    }))
+    ev = build_completion_event(
+        task_id="t", spec_id="s", status="done", issue_number=1,
+        usage=read_usage(spec),
+    )
+    assert ev["schema_version"] == "1.3"
+    assert len(ev["usage"]["workers"]) == 2
+    assert "claude" in ev["usage"]["by_provider"]
+    assert "ollama:llama3" in ev["usage"]["by_model"]
+    # Scalar usage fields still present for back-compat consumers.
+    assert ev["usage"]["total_tokens"] == 900
+    assert ev["usage"]["model"] == "ollama:llama3"
+
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    jsonschema.validate(ev, schema)  # additive fields must validate
+
+
+def test_old_consumer_ignores_new_usage_fields_still_validates(tmp_path):
+    """An old producer's event (scalar usage only, no workers) still validates
+    against the v1.3 schema — the new fields are optional, not required."""
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    ev = build_completion_event(
+        task_id="t", spec_id="s", status="done", issue_number=1,
+        usage={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
+               "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
+    )
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
     )
     jsonschema.validate(ev, schema)

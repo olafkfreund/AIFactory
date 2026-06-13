@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.2.json",
-  "title": "Factory RFC-0001 completion event (v1.2, CloudEvents-aligned)",
-  "description": "AIFactory terminal completion event. v1.2 (#466) adds a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation.",
+  "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.3.json",
+  "title": "Factory RFC-0001 completion event (v1.3, per-worker usage)",
+  "description": "AIFactory terminal completion event. v1.3 (#45 P1) additively extends the usage block with a per-worker breakdown (usage.workers[]) and by_provider{} / by_model{} rollups; the scalar usage fields are kept for back-compat. v1.2 (#466) added a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation; the new usage fields are optional, so old producers/consumers still validate.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -56,7 +56,54 @@
         "output_tokens": { "type": "integer" },
         "total_tokens": { "type": "integer" },
         "cost_usd": { "type": "number" },
-        "model": { "type": ["string", "null"] }
+        "model": { "type": ["string", "null"] },
+        "workers": {
+          "type": "array",
+          "description": "Per-worker (per-subtask) usage breakdown (v1.3, #45 P1). Additive; absent for old producers. A serial single-model task carries one implicit 'main' worker.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "worker_id": { "type": "string" },
+              "phase": { "type": ["string", "null"] },
+              "subtask_id": { "type": ["string", "null"] },
+              "provider": { "type": ["string", "null"] },
+              "model": { "type": ["string", "null"] },
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "duration_ms": { "type": "integer" }
+            }
+          }
+        },
+        "by_provider": {
+          "type": "object",
+          "description": "Token/cost rollup keyed by provider, derived from workers[] (v1.3, #45 P1). Additive.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "workers": { "type": "integer" }
+            }
+          }
+        },
+        "by_model": {
+          "type": "object",
+          "description": "Token/cost rollup keyed by model, derived from workers[] (v1.3, #45 P1). Additive.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "workers": { "type": "integer" }
+            }
+          }
+        }
       }
     }
   }

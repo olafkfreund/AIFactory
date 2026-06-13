@@ -259,3 +259,125 @@ def test_record_turn_atomic_no_partial_file(tmp_path: Path):
     record_turn(spec_dir, PromptSegments(user_prompt="hi"), TurnUsage(input_tokens=10))
     leftovers = [p.name for p in spec_dir.iterdir()]
     assert leftovers == ["token_usage.json"]
+
+
+# ── per-worker attribution (#45 P1, additive) ────────────────────────────────
+
+
+def test_serial_build_back_compat_scalar_unchanged(tmp_path: Path):
+    """BACK-COMPAT: a single-model/serial task produces the SAME scalar
+    aggregate as before AND a workers map with exactly one 'main' entry.
+
+    The scalar fields (turns/totals/cost/model/categories) must match what a
+    pre-#45 record_turn produced — the per-worker map is purely additive.
+    """
+    spec_dir = tmp_path / "001-serial"
+    spec_dir.mkdir()
+    seg = PromptSegments(user_prompt="u" * 400, tool_output_chars=400)
+    usage = TurnUsage(
+        input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
+    )
+    # No worker_id passed → serial path → implicit "main" worker.
+    rendered = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+
+    # Scalar aggregate is exactly as it was before the per-worker change.
+    assert rendered["turns"] == 1
+    assert rendered["totalInputTokens"] == 1200  # 200 fresh + 1000 cache
+    assert rendered["outputTokens"] == 50
+    assert rendered["totalTokens"] == 1250
+    assert rendered["totalCostUsd"] == pytest.approx(0.5)
+    assert rendered["model"] == "claude-sonnet-4-5"
+
+    on_disk = json.loads(usage_file_path(spec_dir).read_text())
+    # All legacy scalar keys still present and unchanged.
+    assert on_disk["totalInputTokens"] == 1200
+    assert on_disk["outputTokens"] == 50
+    assert on_disk["totalTokens"] == 1250
+    assert on_disk["totalCostUsd"] == pytest.approx(0.5)
+    assert on_disk["model"] == "claude-sonnet-4-5"
+
+    # Additive: exactly one implicit "main" worker.
+    assert set(on_disk["workers"].keys()) == {"main"}
+    main = on_disk["workers"]["main"]
+    assert main["worker_id"] == "main"
+    assert main["input_tokens"] == 1200
+    assert main["output_tokens"] == 50
+    assert main["total_tokens"] == 1250
+    assert main["cost_usd"] == pytest.approx(0.5)
+
+
+def test_two_workers_two_models_produce_two_records(tmp_path: Path):
+    """Two workers on two providers/models → two worker records, each carrying
+    its own provider/model/tokens/cost; the scalar aggregate still sums both."""
+    spec_dir = tmp_path / "002-parallel"
+    spec_dir.mkdir()
+
+    # Worker A: Claude, with cost.
+    record_turn(
+        spec_dir,
+        PromptSegments(user_prompt="a" * 400),
+        TurnUsage(input_tokens=300, output_tokens=40, cost_usd=0.30),
+        model="claude-sonnet-4-5",
+        worker_id="sub-A",
+        subtask_id="sub-A",
+        provider="claude",
+        phase="coding",
+        duration_ms=1500,
+    )
+    # Worker B: local Ollama, cost_usd = 0 but tokens > 0.
+    record_turn(
+        spec_dir,
+        PromptSegments(user_prompt="b" * 400),
+        TurnUsage(input_tokens=500, output_tokens=60, cost_usd=0.0),
+        model="ollama:llama3",
+        worker_id="sub-B",
+        subtask_id="sub-B",
+        provider="ollama",
+        phase="coding",
+        duration_ms=2200,
+    )
+
+    on_disk = json.loads(usage_file_path(spec_dir).read_text())
+    workers = on_disk["workers"]
+    assert set(workers.keys()) == {"sub-A", "sub-B"}
+
+    a = workers["sub-A"]
+    assert a["provider"] == "claude"
+    assert a["model"] == "claude-sonnet-4-5"
+    assert a["input_tokens"] == 300
+    assert a["output_tokens"] == 40
+    assert a["total_tokens"] == 340
+    assert a["cost_usd"] == pytest.approx(0.30)
+    assert a["duration_ms"] == 1500
+
+    b = workers["sub-B"]
+    assert b["provider"] == "ollama"
+    assert b["model"] == "ollama:llama3"
+    assert b["cost_usd"] == 0.0  # local provider → no cost
+    assert b["total_tokens"] == 560
+
+    # Scalar aggregate sums both workers (back-compat invariant).
+    assert on_disk["totalInputTokens"] == 800
+    assert on_disk["outputTokens"] == 100
+    assert on_disk["totalCostUsd"] == pytest.approx(0.30)
+    assert on_disk["turns"] == 2
+
+
+def test_same_worker_accumulates_across_turns(tmp_path: Path):
+    """Multiple turns for one worker accumulate into a single record."""
+    spec_dir = tmp_path / "003-accum"
+    spec_dir.mkdir()
+    for _ in range(2):
+        record_turn(
+            spec_dir,
+            PromptSegments(user_prompt="x" * 400),
+            TurnUsage(input_tokens=100, output_tokens=10, cost_usd=0.1),
+            model="claude-sonnet-4-5",
+            worker_id="sub-A",
+            provider="claude",
+        )
+    rec = json.loads(usage_file_path(spec_dir).read_text())["workers"]["sub-A"]
+    assert rec["input_tokens"] == 200
+    assert rec["output_tokens"] == 20
+    assert rec["total_tokens"] == 220
+    assert rec["cost_usd"] == pytest.approx(0.2)
