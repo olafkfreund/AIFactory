@@ -20,6 +20,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import env_bootstrap  # noqa: F401  — loads .env into os.environ first
 from .auth import TokenAuthMiddleware
 from .config import (
+    cors_allows_credentials,
+    enforce_cors_safety,
     enforce_disable_auth_safety,
     get_settings,
     warn_if_auth_disabled,
@@ -217,11 +219,14 @@ def create_app() -> FastAPI:
     from .observability.tracing import instrument_fastapi_app
     instrument_fastapi_app(app)
 
-    # Add CORS middleware
+    # Add CORS middleware. Never combine a wildcard origin with credentials
+    # (#555): when CORS_ORIGINS contains '*', drop allow_credentials so we don't
+    # expose authenticated responses cross-origin. enforce_cors_safety() (called
+    # from the real entrypoint) refuses to boot on this misconfig in production.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=cors_allows_credentials(settings),
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -508,6 +513,9 @@ if __name__ == "__main__":
 
     # #324 (H7): never bind an unauthenticated admin API to the network.
     enforce_disable_auth_safety(settings)
+
+    # #555: never bind a wildcard CORS origin alongside credentialed CORS.
+    enforce_cors_safety(settings)
 
     # Build uvicorn config
     uvicorn_config = {
