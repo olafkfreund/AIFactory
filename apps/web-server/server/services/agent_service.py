@@ -2478,20 +2478,37 @@ class AgentService:
             # transition emits the later human-approval event; CFactory dedups by
             # (service, correlation_key, status), so completed/failed/done are
             # distinct, complementary events. Best-effort; never breaks the build.
-            if emit_events and phase_enum in (TaskPhase.COMPLETED, TaskPhase.FAILED):
-                try:
-                    from .completion import emit_terminal_completion
+            # NOT gated on emit_events. emit_events controls WS double-emission
+            # (Issue #14) and is False on the _monitor_process terminal path — so
+            # gating the completion event on it meant a successful build (which
+            # ends at human_review via that path) NEVER emitted the RFC-0001 event
+            # to CFactory, and never emitted the per-worker OTel metrics that ride
+            # inside it. Result: an empty cockpit + empty OpenObserve dashboard.
+            # Mirror the side-effects block below: fire on the terminal phase with
+            # a fire-once marker so the multiple COMPLETED call paths
+            # (~emit_events=True and ~emit_events=False) don't double-emit. CFactory
+            # also dedups by (service, correlation_key, status), but the OTel
+            # metrics are NOT deduped, so the marker is what protects them.
+            if phase_enum in (TaskPhase.COMPLETED, TaskPhase.FAILED):
+                _completion_marker = spec_dir / ".terminal_completion_emitted"
+                if not _completion_marker.exists():
+                    try:
+                        _completion_marker.write_text(datetime.now(timezone.utc).isoformat())
+                    except OSError:
+                        pass
+                    try:
+                        from .completion import emit_terminal_completion
 
-                    project_id = task_id.split(":", 1)[0] if ":" in task_id else project_path.name
-                    terminal_status = (
-                        "completed" if phase_enum == TaskPhase.COMPLETED else "failed"
-                    )
-                    emit_terminal_completion(
-                        spec_dir, task_id=task_id, project_id=project_id,
-                        spec_id=spec_id, status=terminal_status,
-                    )
-                except Exception:
-                    logger.debug("completion emit failed (best-effort)", exc_info=True)
+                        project_id = task_id.split(":", 1)[0] if ":" in task_id else project_path.name
+                        terminal_status = (
+                            "completed" if phase_enum == TaskPhase.COMPLETED else "failed"
+                        )
+                        emit_terminal_completion(
+                            spec_dir, task_id=task_id, project_id=project_id,
+                            spec_id=spec_id, status=terminal_status,
+                        )
+                    except Exception:
+                        logger.debug("completion emit failed (best-effort)", exc_info=True)
 
             # Terminal completion side-effects: hand off to TFactory + run the PR
             # endgame. Gated on COMPLETED only — NOT on emit_events. emit_events

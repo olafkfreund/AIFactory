@@ -314,6 +314,43 @@ class TestUpdatePlanStatusEmitEvents:
             assert saved["status"] in {"completed", "human_review"}
 
     @pytest.mark.asyncio
+    async def test_terminal_completion_fires_even_when_emit_events_false(
+        self, service: AgentService, tmp_path: Path
+    ) -> None:
+        """The RFC-0001 completion event MUST fire on a terminal phase even when
+        emit_events=False (the _monitor_process path a successful build takes).
+
+        emit_events gates only WS double-emission (Issue #14); gating the
+        completion event on it meant CFactory + OTel metrics never fired for a
+        build that ends at human_review. A fire-once marker makes it idempotent
+        across the multiple terminal call paths.
+        """
+        spec_dir = tmp_path / ".aifactory" / "specs" / "spec-001"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "implementation_plan.json").write_text(
+            '{"status": "in_progress", '
+            '"phases": [{"subtasks": [{"id": "1.1", "status": "completed"}]}]}'
+        )
+        with patch(
+            "server.services.completion.emit_terminal_completion",
+        ) as mock_emit, patch(
+            "server.services.agent_service.emit_task_update", new_callable=AsyncMock,
+        ), patch(
+            "server.services.agent_service.emit_task_status", new_callable=AsyncMock,
+        ):
+            # emit_events=False — the terminal completion must STILL fire.
+            await service._update_plan_status(
+                tmp_path, "spec-001", "completed", _TASK, emit_events=False
+            )
+            assert mock_emit.call_count == 1
+            assert (spec_dir / ".terminal_completion_emitted").exists()
+            # Second terminal call must NOT re-emit (fire-once marker).
+            await service._update_plan_status(
+                tmp_path, "spec-001", "completed", _TASK, emit_events=False
+            )
+            assert mock_emit.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_emit_events_true_default_still_emits(
         self, service: AgentService, tmp_path: Path
     ) -> None:
