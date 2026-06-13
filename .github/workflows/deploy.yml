@@ -106,3 +106,19 @@ jobs:
           echo "### Deployed aifactory \`${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "factory-gitops bumped → ArgoCD will auto-sync (or run \`argocd app sync aifactory\`)." >> "$GITHUB_STEP_SUMMARY"
+
+  # Post-deploy PARR cross-service seam regression (Factory#44, reusable wf #46).
+  # Runs the fast read-only smoke probe across the four factory boundaries AFTER a
+  # deploy lands. Soft gate today: it `needs: build-push-bump`, so the deploy has
+  # already completed before this runs and NOTHING depends on seam-check — a probe
+  # failure can never break or roll back the deploy. FACTORY_TOKEN flows in via
+  # `secrets: inherit`; the reusable workflow self-skips cleanly when that secret
+  # is unset. (`continue-on-error` is not allowed on a `uses:` job, so the soft
+  # gate is structural rather than a flag.)
+  # TODO: flip to required once stable (add seam-check to branch protection).
+  seam-check:
+    needs: build-push-bump
+    uses: olafkfreund/Factory/.github/workflows/parr-regression.yml@main
+    with:
+      mode: smoke
+    secrets: inherit
