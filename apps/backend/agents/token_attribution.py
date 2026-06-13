@@ -108,11 +108,11 @@ class PromptSegments:
     strings in memory.
     """
 
-    system_prompt: str = ""        # CLAUDE.md + AGENTS.md + base instructions
-    user_prompt: str = ""          # the subtask/user instruction prompt
+    system_prompt: str = ""  # CLAUDE.md + AGENTS.md + base instructions
+    user_prompt: str = ""  # the subtask/user instruction prompt
     coordination_context: str = ""  # graphiti / inbox / team coordination blocks
-    file_context: str = ""         # injected source-file context (counts as user)
-    tool_output_chars: int = 0     # observed tool-result characters this turn
+    file_context: str = ""  # injected source-file context (counts as user)
+    tool_output_chars: int = 0  # observed tool-result characters this turn
 
     def category_weights(self) -> dict[str, int]:
         """Estimated token weight per *fresh-input* category (pre-normalisation).
@@ -142,11 +142,7 @@ class TurnUsage:
     @property
     def total_input_tokens(self) -> int:
         """All input-side tokens billed this turn, including cache."""
-        return (
-            self.input_tokens
-            + self.cache_read_tokens
-            + self.cache_creation_tokens
-        )
+        return self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
 
     @classmethod
     def from_sdk_usage(
@@ -158,9 +154,7 @@ class TurnUsage:
             input_tokens=int(usage.get("input_tokens", 0) or 0),
             output_tokens=int(usage.get("output_tokens", 0) or 0),
             cache_read_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
-            cache_creation_tokens=int(
-                usage.get("cache_creation_input_tokens", 0) or 0
-            ),
+            cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0) or 0),
             cost_usd=float(cost_usd or 0.0),
         )
 
@@ -293,13 +287,22 @@ def _empty_aggregate() -> dict[str, Any]:
         "outputTokens": 0,
         "totalTokens": 0,
         "totalCostUsd": 0.0,
-        "categories": {
-            k: {"tokens": 0, "costUsd": 0.0} for k in CATEGORY_LABELS
-        },
+        "categories": {k: {"tokens": 0, "costUsd": 0.0} for k in CATEGORY_LABELS},
         "model": None,
         "maxTokens": 200_000,
         "updatedAt": None,
+        # Per-worker breakdown (#45 P1) — additive sibling of the scalar
+        # aggregate above. Keyed by worker_id (a serial build = one implicit
+        # worker, "main"). The scalar fields are KEPT verbatim for back-compat;
+        # this map is the per-worker / per-provider drill-down.
+        "workers": {},
     }
+
+
+# Default worker id for the serial / single-implicit-worker path. A serial
+# build has no subtask fan-out, so its whole spend is attributed to one
+# implicit worker named "main".
+DEFAULT_WORKER_ID = "main"
 
 
 def _read_aggregate(usage_path: Path) -> dict[str, Any]:
@@ -311,6 +314,8 @@ def _read_aggregate(usage_path: Path) -> dict[str, Any]:
             # Backfill any newly added categories.
             for k in CATEGORY_LABELS:
                 data["categories"].setdefault(k, {"tokens": 0, "costUsd": 0.0})
+            # Backfill the per-worker map for files written before #45 P1.
+            data.setdefault("workers", {})
             return data
     except (json.JSONDecodeError, OSError):
         pass
@@ -342,6 +347,57 @@ def usage_file_path(spec_dir: Path) -> Path:
     return Path(spec_dir) / USAGE_FILE_NAME
 
 
+def _fold_worker(
+    agg: dict[str, Any],
+    *,
+    worker_id: str,
+    phase: str | None,
+    subtask_id: str | None,
+    provider: str | None,
+    model: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cost_usd: float,
+    duration_ms: int | None,
+) -> None:
+    """Fold one turn's usage into the per-worker record (in-place, additive).
+
+    A worker = one subtask (a serial build = the single implicit ``"main"``
+    worker). The scalar aggregate the rest of this module maintains is left
+    untouched; this only updates ``agg["workers"][worker_id]``. Providers with
+    no cost (local / Ollama) record ``cost_usd: 0`` but still accrue tokens +
+    duration. (LiteLLM cost-mapping is a deliberate follow-up, not this PR.)
+    """
+    workers = agg.setdefault("workers", {})
+    rec = workers.get(worker_id)
+    if rec is None:
+        rec = {
+            "worker_id": worker_id,
+            "phase": phase,
+            "subtask_id": subtask_id,
+            "provider": provider,
+            "model": model,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "cost_usd": 0.0,
+            "duration_ms": 0,
+        }
+        workers[worker_id] = rec
+    # Last-writer-wins for the descriptive fields (a worker keeps one
+    # provider/model across its turns; later turns can fill blanks).
+    rec["phase"] = phase if phase is not None else rec.get("phase")
+    rec["subtask_id"] = subtask_id if subtask_id is not None else rec.get("subtask_id")
+    rec["provider"] = provider if provider is not None else rec.get("provider")
+    rec["model"] = model if model is not None else rec.get("model")
+    rec["input_tokens"] = int(rec.get("input_tokens", 0)) + int(input_tokens)
+    rec["output_tokens"] = int(rec.get("output_tokens", 0)) + int(output_tokens)
+    rec["total_tokens"] = int(rec["input_tokens"]) + int(rec["output_tokens"])
+    rec["cost_usd"] = round(float(rec.get("cost_usd", 0.0)) + float(cost_usd or 0.0), 6)
+    if duration_ms is not None:
+        rec["duration_ms"] = int(rec.get("duration_ms", 0)) + int(duration_ms)
+
+
 def record_turn(
     spec_dir: Path,
     segments: PromptSegments,
@@ -349,15 +405,33 @@ def record_turn(
     *,
     model: str | None = None,
     max_tokens: int | None = None,
+    worker_id: str | None = None,
+    phase: str | None = None,
+    subtask_id: str | None = None,
+    provider: str | None = None,
+    duration_ms: int | None = None,
 ) -> dict[str, Any]:
     """Attribute one turn and fold it into the per-task aggregate (atomic).
 
     Returns the rendered breakdown dict (same shape the API serves). Never
     raises on IO problems — token accounting must not break a build; on a
     read/write error it returns the freshly computed single-turn view.
+
+    Per-worker breakdown (#45 P1, additive): the turn is ALSO folded into a
+    ``workers`` map keyed by ``worker_id`` (the subtask id; a serial build is
+    one implicit worker, ``"main"``). Every existing scalar aggregate field is
+    written exactly as before — the workers map rides alongside, never replaces.
+    ``provider``/``subtask_id``/``phase``/``duration_ms`` describe the worker;
+    when omitted they default sensibly (``worker_id`` → ``"main"``).
     """
     attribution = attribute_turn(segments, usage)
     window = max_tokens or context_window_for_model(model)
+    wid = worker_id or DEFAULT_WORKER_ID
+    sub_id = (
+        subtask_id
+        if subtask_id is not None
+        else (worker_id if worker_id and worker_id != DEFAULT_WORKER_ID else None)
+    )
 
     try:
         agg = _read_aggregate(usage_file_path(spec_dir))
@@ -371,22 +445,31 @@ def record_turn(
         # Persist the combined input+output total so raw-file consumers (the
         # #277 token-usage panel and any reader that doesn't go through
         # ``render_breakdown``) see a real value instead of a missing key (#288).
-        agg["totalTokens"] = (
-            int(agg.get("totalInputTokens", 0)) + int(agg.get("outputTokens", 0))
+        agg["totalTokens"] = int(agg.get("totalInputTokens", 0)) + int(
+            agg.get("outputTokens", 0)
         )
         agg["totalCostUsd"] = round(
             float(agg.get("totalCostUsd", 0.0)) + attribution.cost_usd, 6
         )
         for key, cat in attribution.categories.items():
-            slot = agg["categories"].setdefault(
-                key, {"tokens": 0, "costUsd": 0.0}
-            )
+            slot = agg["categories"].setdefault(key, {"tokens": 0, "costUsd": 0.0})
             slot["tokens"] = int(slot.get("tokens", 0)) + cat.tokens
-            slot["costUsd"] = round(
-                float(slot.get("costUsd", 0.0)) + cat.cost_usd, 6
-            )
+            slot["costUsd"] = round(float(slot.get("costUsd", 0.0)) + cat.cost_usd, 6)
         agg["model"] = model or agg.get("model")
         agg["maxTokens"] = window
+        # Per-worker fold (#45 P1, additive) — alongside the scalar aggregate.
+        _fold_worker(
+            agg,
+            worker_id=wid,
+            phase=phase,
+            subtask_id=sub_id,
+            provider=provider,
+            model=model,
+            input_tokens=attribution.total_input_tokens,
+            output_tokens=attribution.output_tokens,
+            cost_usd=attribution.cost_usd,
+            duration_ms=duration_ms,
+        )
         agg["updatedAt"] = datetime.now(timezone.utc).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
         return render_breakdown(agg)
@@ -407,6 +490,18 @@ def record_turn(
                 "tokens": cat.tokens,
                 "costUsd": round(cat.cost_usd, 6),
             }
+        _fold_worker(
+            single,
+            worker_id=wid,
+            phase=phase,
+            subtask_id=sub_id,
+            provider=provider,
+            model=model,
+            input_tokens=attribution.total_input_tokens,
+            output_tokens=attribution.output_tokens,
+            cost_usd=attribution.cost_usd,
+            duration_ms=duration_ms,
+        )
         return render_breakdown(single)
 
 

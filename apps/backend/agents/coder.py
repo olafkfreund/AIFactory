@@ -742,7 +742,23 @@ async def run_autonomous_agent(
                     file_context=seg_file_context,
                     tool_output_chars=usage_payload.get("tool_output_chars", 0),
                 )
-                record_turn(spec_dir, segments, turn_usage, model=phase_model)
+                # Per-worker attribution (#45 P1, additive). The serial coder
+                # path is a single implicit worker: key it by the active
+                # subtask id when there is one, else the default "main".
+                record_turn(
+                    spec_dir,
+                    segments,
+                    turn_usage,
+                    model=phase_model,
+                    worker_id=subtask_id or None,
+                    subtask_id=subtask_id or None,
+                    provider=infer_provider_from_model(phase_model)
+                    if phase_model
+                    else None,
+                    phase=current_log_phase.value
+                    if hasattr(current_log_phase, "value")
+                    else None,
+                )
                 # Sync the usage file back to the source spec dir (worktree mode)
                 # so the web-server reader sees it.
                 if source_spec_dir:

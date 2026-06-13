@@ -42,7 +42,11 @@ logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
 # Envelope grew additively in #466 (CloudEvents-core + id + trace context).
-_SCHEMA_VERSION = "1.2"
+# v1.3 (#45 P1) adds an additive per-worker breakdown to the usage block:
+# ``usage.workers[]`` + ``usage.by_provider{}`` / ``usage.by_model{}`` rollups.
+# The scalar usage fields are KEPT verbatim, so old consumers ignore the new
+# fields and still validate — an additive minor bump.
+_SCHEMA_VERSION = "1.3"
 
 # CloudEvents 1.0 (CNCF) — the spec version we align to, and the reverse-DNS
 # ``type`` for AIFactory's terminal completion event. ``source`` is overridable
@@ -103,14 +107,84 @@ def correlation_key(spec_id: str, issue_number: int | None) -> str:
     return str(issue_number) if issue_number is not None else f"af-{spec_id}"
 
 
+def _worker_records(agg: dict) -> list[dict]:
+    """Normalise the persisted per-worker map (#45 P1) into a stable list.
+
+    ``token_usage.json`` carries a ``workers`` map keyed by worker_id; the RFC
+    event exposes it as an ordered list of records. Each record echoes the
+    on-disk shape. Returns ``[]`` when no worker breakdown was recorded (old
+    files / nothing to report) — the field is additive and simply omitted then.
+    """
+    workers = agg.get("workers")
+    if not isinstance(workers, dict) or not workers:
+        return []
+    records: list[dict] = []
+    for wid, rec in workers.items():
+        if not isinstance(rec, dict):
+            continue
+        in_tok = int(rec.get("input_tokens", 0) or 0)
+        out_tok = int(rec.get("output_tokens", 0) or 0)
+        records.append(
+            {
+                "worker_id": rec.get("worker_id") or wid,
+                "phase": rec.get("phase"),
+                "subtask_id": rec.get("subtask_id"),
+                "provider": rec.get("provider"),
+                "model": rec.get("model"),
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "total_tokens": int(rec.get("total_tokens", 0) or 0)
+                or (in_tok + out_tok),
+                "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+                "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            }
+        )
+    # Deterministic order for stable events/tests.
+    records.sort(key=lambda r: str(r["worker_id"]))
+    return records
+
+
+def _rollup(records: list[dict], key: str) -> dict:
+    """Roll worker records up by ``provider`` or ``model`` into a token/cost map.
+
+    Records with a null/empty key are bucketed under ``"unknown"`` so the rollup
+    never silently drops a worker's spend.
+    """
+    out: dict[str, dict] = {}
+    for rec in records:
+        bucket = rec.get(key) or "unknown"
+        slot = out.setdefault(
+            bucket,
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+                "workers": 0,
+            },
+        )
+        slot["input_tokens"] += int(rec.get("input_tokens", 0) or 0)
+        slot["output_tokens"] += int(rec.get("output_tokens", 0) or 0)
+        slot["total_tokens"] += int(rec.get("total_tokens", 0) or 0)
+        slot["cost_usd"] = round(slot["cost_usd"] + float(rec.get("cost_usd", 0.0) or 0.0), 6)
+        slot["workers"] += 1
+    return out
+
+
 def read_usage(spec_dir: Path) -> dict | None:
-    """The RFC-0001 v1.1 ``usage`` block from the task's ``token_usage.json``.
+    """The RFC-0001 ``usage`` block from the task's ``token_usage.json``.
 
     The agent's token attribution writes ``<spec_dir>/token_usage.json`` with the
     run's aggregated token counts and real SDK cost. We map those fields to the
     RFC block. Returns ``None`` when there is no usage to report (file missing,
     unreadable, or zero tokens) — the block is additive, so it is simply omitted.
     Stdlib-only and best-effort, like the rest of this module.
+
+    v1.3 (#45 P1, additive): when the file carries a per-worker ``workers`` map,
+    the block also gains ``workers[]`` + ``by_provider{}`` / ``by_model{}``
+    rollups derived from it. The scalar fields above are KEPT verbatim for
+    back-compat; a serial single-model task still produces exactly the same
+    scalar block plus a one-entry workers list.
     """
     try:
         agg = json.loads((spec_dir / "token_usage.json").read_text())
@@ -123,13 +197,19 @@ def read_usage(spec_dir: Path) -> dict | None:
     if in_tok == 0 and out_tok == 0:
         return None
     total = int(agg.get("totalTokens", 0) or 0) or (in_tok + out_tok)
-    return {
+    block = {
         "input_tokens": in_tok,
         "output_tokens": out_tok,
         "total_tokens": total,
         "cost_usd": round(float(agg.get("totalCostUsd", 0.0) or 0.0), 6),
         "model": agg.get("model"),
     }
+    workers = _worker_records(agg)
+    if workers:
+        block["workers"] = workers
+        block["by_provider"] = _rollup(workers, "provider")
+        block["by_model"] = _rollup(workers, "model")
+    return block
 
 
 def build_completion_event(
