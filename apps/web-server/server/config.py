@@ -55,6 +55,47 @@ def enforce_disable_auth_safety(settings: "Settings") -> None:
         )
 
 
+def cors_allows_credentials(settings: "Settings") -> bool:
+    """Whether the CORS layer may safely echo credentials (#555).
+
+    A wildcard origin (``*``) combined with ``allow_credentials=True`` lets any
+    site read authenticated responses cross-origin — the browser only rejects
+    the literal ``Access-Control-Allow-Origin: *`` + credentials pairing, not a
+    reflected-origin variant some stacks emit. We never want that combination,
+    so when ``CORS_ORIGINS`` contains a wildcard we drop credentials rather than
+    fail open. Returns ``False`` to signal the caller must set
+    ``allow_credentials=False``.
+    """
+    return "*" not in (settings.CORS_ORIGINS or [])
+
+
+def enforce_cors_safety(settings: "Settings") -> None:
+    """Refuse to bind a wildcard CORS origin alongside credentials (#555).
+
+    Mirrors ``enforce_disable_auth_safety``: called only from the real server
+    entrypoint. A wildcard origin with ``allow_credentials=True`` is a
+    cross-origin credential-theft vector. In production (non-DEBUG) we refuse to
+    boot so the misconfiguration is caught loudly; under ``APP_DEBUG`` we warn
+    and let the app run with credentials dropped (see ``cors_allows_credentials``
+    / the CORS middleware wiring in ``main.create_app``).
+    """
+    if cors_allows_credentials(settings):
+        return
+    logger.warning(
+        "⚠️  CORS_ORIGINS contains '*' — credentialed CORS will be DISABLED "
+        "(allow_credentials=False) to avoid a cross-origin credential-theft "
+        "vector. Set APP_CORS_ORIGINS to an explicit allowlist."
+    )
+    if not settings.DEBUG:
+        raise SystemExit(
+            "Refusing to start: APP_CORS_ORIGINS contains a wildcard '*' "
+            "origin. Combined with credentialed CORS this exposes "
+            "authenticated responses to any site. Set APP_CORS_ORIGINS to an "
+            "explicit allowlist, or set APP_DEBUG=true to run locally with "
+            "credentialed CORS disabled."
+        )
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 

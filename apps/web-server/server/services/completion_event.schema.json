@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.2.json",
-  "title": "Factory RFC-0001 completion event (v1.2, CloudEvents-aligned)",
-  "description": "AIFactory terminal completion event. v1.2 (#466) adds a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation.",
+  "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.3.json",
+  "title": "Factory RFC-0001 completion event (v1.3, per-worker usage + live sub-events + progress heartbeats)",
+  "description": "AIFactory completion events. v1.3 (#45 P1) additively (a) extends the terminal event's usage block with a per-worker breakdown (usage.workers[]) and by_provider{} / by_model{} rollups (scalar usage fields kept for back-compat), and (b) adds a LIVE per-worker sub-event with phase:\"worker\", status:\"worker_done\", and an additive top-level worker{} object emitted as each parallel/serial worker finishes. v1.3 Tier 2 (#45) additionally adds a LIVE per-worker PROGRESS heartbeat with phase:\"worker_progress\", status:\"running\", and a worker{} snapshot ({worker_id, subtask_id, agent_phase, provider, model, total_tokens, cost_usd, elapsed_ms}) emitted periodically (throttled) while a worker is still running. v1.2 (#466) added a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation; the worker object and the new usage fields are optional, so old producers/consumers still validate.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -49,6 +49,23 @@
       "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
     },
     "tracestate": { "type": "string" },
+    "worker": {
+      "type": "object",
+      "description": "Per-worker (per-subtask) record carried by a LIVE sub-event. Two flavours, distinguished by the event's phase/status/type: (1) the one-shot worker-DONE event (phase:\"worker\", status:\"worker_done\") emitted as a worker finishes (v1.3, #45 P1), carrying input/output/total tokens, cost_usd, and duration_ms; (2) the periodic PROGRESS heartbeat (phase:\"worker_progress\", status:\"running\", type io.factory.aifactory.worker_progress) emitted while a worker is still running (v1.3 Tier 2, #45), carrying the running snapshot total_tokens, cost_usd, and elapsed_ms. Both are additive and optional; absent on the terminal event and for old producers. Dedup/identity key for consumers: (service, correlation_key, worker.worker_id).",
+      "properties": {
+        "worker_id": { "type": "string", "minLength": 1 },
+        "subtask_id": { "type": ["string", "null"] },
+        "agent_phase": { "type": ["string", "null"] },
+        "provider": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "input_tokens": { "type": "integer" },
+        "output_tokens": { "type": "integer" },
+        "total_tokens": { "type": "integer" },
+        "cost_usd": { "type": "number" },
+        "duration_ms": { "type": "integer" },
+        "elapsed_ms": { "type": "integer" }
+      }
+    },
     "usage": {
       "type": "object",
       "properties": {
@@ -56,7 +73,64 @@
         "output_tokens": { "type": "integer" },
         "total_tokens": { "type": "integer" },
         "cost_usd": { "type": "number" },
-        "model": { "type": ["string", "null"] }
+        "model": { "type": ["string", "null"] },
+        "workers": {
+          "type": "array",
+          "description": "Per-worker (per-subtask) usage breakdown (v1.3, #45 P1). Additive; absent for old producers. A serial single-model task carries one implicit 'main' worker.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "worker_id": { "type": "string" },
+              "phase": { "type": ["string", "null"] },
+              "subtask_id": { "type": ["string", "null"] },
+              "provider": { "type": ["string", "null"] },
+              "model": { "type": ["string", "null"] },
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "duration_ms": { "type": "integer" }
+            }
+          }
+        },
+        "by_provider": {
+          "type": "object",
+          "description": "Token/cost rollup keyed by provider, derived from workers[] (v1.3, #45 P1). Additive.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "workers": { "type": "integer" }
+            }
+          }
+        },
+        "by_model": {
+          "type": "object",
+          "description": "Token/cost rollup keyed by model, derived from workers[] (v1.3, #45 P1). Additive.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input_tokens": { "type": "integer" },
+              "output_tokens": { "type": "integer" },
+              "total_tokens": { "type": "integer" },
+              "cost_usd": { "type": "number" },
+              "workers": { "type": "integer" }
+            }
+          }
+        },
+        "budget": {
+          "type": "object",
+          "description": "Soft budget alert (v1.3, #45 P2). Present only when the contract set execution.budget_usd. OBSERVE-ONLY: a warning surface comparing the rolled-up spend against the budget; the build is NEVER aborted. Additive and optional; omitted when no budget is set.",
+          "required": ["limit_usd", "spent_usd", "exceeded"],
+          "properties": {
+            "limit_usd": { "type": "number" },
+            "spent_usd": { "type": "number" },
+            "exceeded": { "type": "boolean" }
+          }
+        }
       }
     }
   }

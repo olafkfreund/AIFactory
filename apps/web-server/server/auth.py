@@ -4,8 +4,20 @@ Authentication middleware for Magestic AI Web Server.
 Supports dual authentication:
 1. JWT tokens (primary) - validated via python-jose, populates request.state.user
 2. Legacy bearer token (fallback) - simple string comparison for API key access
+3. Scoped ``acw_`` API keys - per-org/project keys minted in Settings → API Keys.
 
 Public paths (no auth required): /api/auth/*, /api/health, static assets, etc.
+
+Legacy wildcard API_TOKEN (DEPRECATED — #555)
+---------------------------------------------
+The legacy ``API_TOKEN`` grants host-wide ``is_service=True`` and is shared
+across Factory siblings, so a compromise of any sibling yields full admin REST
++ WebSocket access. It is RETAINED for backward compatibility — notably the
+PFactory->AIFactory machine-to-machine path that ships ``APP_API_TOKEN`` — but
+is deprecated. Every authentication via the wildcard token emits a one-time
+loud warning (``_warn_legacy_api_token_once``). New machine-to-machine and
+programmatic integrations should mint scoped per-org ``acw_`` keys instead,
+which carry org/project scope rather than wildcard admin.
 
 SAML sessions (Epic #35 #41)
 -----------------------------
@@ -44,6 +56,75 @@ logger = logging.getLogger(__name__)
 
 # Bearer token security scheme for OpenAPI docs
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# One-time deprecation flags (#555). The legacy wildcard API_TOKEN and the
+# WS-terminal ``?token=`` query param are still honored for backward
+# compatibility, but each emits a single loud warning per process so the
+# signal isn't drowned out by per-request log spam.
+_LEGACY_TOKEN_DEPRECATION_LOGGED = False
+_WS_QUERY_TOKEN_DEPRECATION_LOGGED = False
+
+
+def _warn_legacy_api_token_once() -> None:
+    """Emit a one-time deprecation warning for legacy wildcard API_TOKEN use.
+
+    The legacy ``API_TOKEN`` grants host-wide ``is_service=True`` and is shared
+    across Factory siblings (#555). It remains a documented fallback for
+    PFactory->AIFactory M2M (``APP_API_TOKEN``), but new integrations should mint
+    scoped per-org ``acw_`` keys (Settings → API Keys) instead, which carry
+    org/project scope rather than wildcard admin.
+    """
+    global _LEGACY_TOKEN_DEPRECATION_LOGGED
+    if _LEGACY_TOKEN_DEPRECATION_LOGGED:
+        return
+    _LEGACY_TOKEN_DEPRECATION_LOGGED = True
+    logger.warning(
+        "⚠️  DEPRECATED: request authenticated via the legacy wildcard "
+        "API_TOKEN, which grants host-wide service access shared across "
+        "Factory siblings. Migrate machine-to-machine traffic to scoped "
+        "acw_ keys (Settings → API Keys). This token is retained only for "
+        "backward compatibility (#555)."
+    )
+
+
+def _warn_ws_query_token_once() -> None:
+    """Emit a one-time deprecation warning for WS ``?token=`` query auth (#555).
+
+    Passing a bearer token in the URL leaks it into proxy/access logs and
+    browser history — especially dangerous for the PTY/shell terminal socket.
+    Clients should send ``Authorization: Bearer <token>`` instead.
+    """
+    global _WS_QUERY_TOKEN_DEPRECATION_LOGGED
+    if _WS_QUERY_TOKEN_DEPRECATION_LOGGED:
+        return
+    _WS_QUERY_TOKEN_DEPRECATION_LOGGED = True
+    logger.warning(
+        "⚠️  DEPRECATED: WebSocket token supplied via the ?token= query "
+        "param, which leaks into proxy/access logs and browser history. "
+        "Send it via the 'Authorization: Bearer <token>' header instead "
+        "(#555)."
+    )
+
+
+def _ws_extract_token(websocket: WebSocket) -> str | None:
+    """Pull the bearer token from a WebSocket, preferring the header (#555).
+
+    Order: ``Authorization: Bearer <token>`` header first, then the legacy
+    ``?token=`` query param. Using the query param emits a one-time deprecation
+    warning since it leaks the token into logs/history. Returns ``None`` when no
+    token is present.
+    """
+    auth_header = websocket.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        return auth_header[7:]
+
+    # Backward-compatible fallback: token in the URL query string.
+    query_token = websocket.query_params.get("token")
+    if query_token:
+        _warn_ws_query_token_once()
+        return query_token
+
+    return None
 
 
 def _is_legacy_api_token(token: str) -> bool:
@@ -199,10 +280,18 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
         # Strategy 2: Fall back to legacy bearer token
         if _is_legacy_api_token(token):
-            # Legacy token — a machine/service principal (Factory siblings, the
-            # local UI). `is_service` lets project-level authz (epic #318/#319)
-            # grant M2M access without per-org membership, preserving the
-            # sibling + local-UI contract. Notifications still work via the id.
+            # Legacy wildcard token — a machine/service principal (Factory
+            # siblings, the local UI). `is_service` lets project-level authz
+            # (epic #318/#319) grant M2M access without per-org membership,
+            # preserving the sibling + local-UI contract. Notifications still
+            # work via the id.
+            #
+            # DEPRECATED (#555): this token is host-wide and shared across
+            # siblings. It is kept only for backward compatibility (notably
+            # PFactory->AIFactory M2M via APP_API_TOKEN). New integrations
+            # should mint scoped per-org ``acw_`` keys (Strategy 3 below /
+            # Settings → API Keys) instead of the wildcard token.
+            _warn_legacy_api_token_once()
             request.state.user = {
                 "id": "default",
                 "email": None,
@@ -260,8 +349,9 @@ async def verify_token(
     if _try_decode_jwt(token) is not None:
         return token
 
-    # Accept legacy API token
+    # Accept legacy API token (deprecated wildcard — see #555)
     if _is_legacy_api_token(token):
+        _warn_legacy_api_token_once()
         return token
 
     raise HTTPException(
@@ -275,8 +365,9 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
     """Verify token for WebSocket connections.
 
     Token can be passed as:
-    - Query parameter: ?token=xxx
-    - Header: Authorization: Bearer xxx
+    - Header (preferred): Authorization: Bearer xxx
+    - Query parameter (DEPRECATED, #555): ?token=xxx — leaks into proxy/access
+      logs and browser history; emits a one-time deprecation warning.
 
     Accepts both JWT tokens and legacy API tokens.
     """
@@ -285,14 +376,9 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
     if settings.DISABLE_AUTH:
         return True
 
-    # Try query parameter first
-    token = websocket.query_params.get("token")
-
-    # Fall back to header
-    if not token:
-        auth_header = websocket.headers.get("authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+    # Prefer the Authorization header; fall back to the legacy ?token= query
+    # param (with a deprecation warning) for backward compatibility (#555).
+    token = _ws_extract_token(websocket)
 
     if not token:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -302,8 +388,9 @@ async def verify_websocket_token(websocket: WebSocket) -> bool:
     if _try_decode_jwt(token) is not None:
         return True
 
-    # Accept legacy API token
+    # Accept legacy API token (deprecated wildcard — see #555)
     if _is_legacy_api_token(token):
+        _warn_legacy_api_token_once()
         return True
 
     await websocket.close(code=4001, reason="Unauthorized")
@@ -327,14 +414,9 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
     if settings.DISABLE_AUTH:
         return None
 
-    # Try query parameter first
-    token = websocket.query_params.get("token")
-
-    # Fall back to header
-    if not token:
-        auth_header = websocket.headers.get("authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+    # Prefer the Authorization header; fall back to the legacy ?token= query
+    # param (with a deprecation warning) for backward compatibility (#555).
+    token = _ws_extract_token(websocket)
 
     if not token:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -349,8 +431,9 @@ async def authenticate_websocket(websocket: WebSocket) -> dict | None:
             "role": jwt_payload.get("role", "user"),
         }
 
-    # Fall back to legacy token — no user info available
+    # Fall back to legacy token — no user info available (deprecated, #555)
     if _is_legacy_api_token(token):
+        _warn_legacy_api_token_once()
         return None
 
     await websocket.close(code=4001, reason="Unauthorized")

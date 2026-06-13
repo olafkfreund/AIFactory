@@ -19,8 +19,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database.engine import get_db
 from ..paths import get_data_dir
 from ..services import task_control
+
+# PR-creation route (POST /{task_id}/worktree/create-pr) and its request model
+# were extracted into ``routes/pr.py`` (issue #556) and are mounted via
+# ``include_router`` below. The names are re-exported here so existing imports
+# (``from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task``,
+# used by ``mcp_stdio/router.py``) keep working.
+from .inbox import (  # noqa: F401
+    InboxEnqueueResponse,
+    InboxMessage,
+    InboxMessageCreate,
+    enqueue_inbox_message,
+    list_inbox_messages,
+)
+from .inbox import router as inbox_router
+from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
+from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
 from .projects import get_projects_file, load_projects
+from .worktree_tools import (
+    OpenInIDERequest,
+    OpenInTerminalRequest,
+    detect_worktree_tools,
+    get_ide_command,
+    get_terminal_command,
+    open_worktree_in_ide,
+    open_worktree_in_terminal,
+)
+from .worktree_tools import router as worktree_tools_router
 
 router = APIRouter()
 
@@ -1818,261 +1844,18 @@ async def delete_task(
     shutil.rmtree(spec_dir)
 
 
-class ApprovePlanRequest(BaseModel):
-    """Request to approve a plan."""
-
-    auto_restart: bool = Field(True, description="Auto-restart task after approval")
-
-
-class RejectPlanRequest(BaseModel):
-    """Request to reject a plan with feedback for the planner.
-
-    Mirrors ApprovePlanRequest's shape but carries the operator's reason so the
-    planner's next iteration sees it in the spec's review feedback log.
-    """
-
-    feedback: str | None = Field(
-        None,
-        description="Optional reason for rejection — gets recorded on the review state's feedback log.",
-    )
-
-
-@router.post("/{task_id}/approve-plan")
-async def approve_plan(
-    task_id: str,
-    request: ApprovePlanRequest = ApprovePlanRequest(),
-    _access: dict = Depends(require_task_access("member")),
-):
-    """Approve a task's plan to allow coding to proceed.
-
-    When a task is in plan_review status (waiting for human approval),
-    this endpoint marks the plan as approved and optionally restarts the task.
-    """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid task ID format",
-        )
-
-    project_id, spec_id = task_id.split(":", 1)
-    projects = load_projects()
-
-    if project_id not in projects:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-
-    if not spec_dir.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
-        )
-
-    # Import ReviewState from backend
-    import sys
-
-    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
-    if str(backend_path) not in sys.path:
-        sys.path.insert(0, str(backend_path))
-
-    from review import ReviewState
-
-    # Approve the plan
-    review_state = ReviewState.load(spec_dir)
-    review_state.approve(spec_dir, approved_by="web_user")
-
-    # Update implementation_plan.json status back to in_progress
-    plan_file = spec_dir / "implementation_plan.json"
-    plan_updated = False
-    if plan_file.exists():
-        try:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.info(f"[ApprovePlan] Reading plan file: {plan_file}")
-            plan = json.loads(plan_file.read_text())
-            logger.info(
-                f"[ApprovePlan] Current status: {plan.get('status')}, planStatus: {plan.get('planStatus')}, reviewReason: {plan.get('reviewReason')}"
-            )
-
-            # Update BOTH status and planStatus fields
-            plan["status"] = "in_progress"
-            plan["planStatus"] = "in_progress"
-            plan.pop("reviewReason", None)
-
-            plan_file.write_text(json.dumps(plan, indent=2))
-            plan_updated = True
-            logger.info(
-                "[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress"
-            )
-
-            # Issue #259: approving the plan moves the task out of human_review;
-            # record that in the agent-immutable control store and clear the
-            # plan_review reason.
-            task_control.write_control(
-                spec_dir,
-                status="in_progress",
-                clear_review_reason=True,
-                updated_by="web_user",
-            )
-        except (json.JSONDecodeError, OSError) as e:
-            import logging
-
-            logging.getLogger(__name__).error(
-                f"[ApprovePlan] Failed to update plan file: {e}"
-            )
-    else:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            f"[ApprovePlan] Plan file does not exist: {plan_file}"
-        )
-
-    # Emit status change via WebSocket
-    from ..websockets.events import emit_task_status
-
-    await emit_task_status(task_id, "in_progress")
-
-    auto_restarted = False
-
-    # Auto-restart if requested
-    if request.auto_restart:
-        try:
-            from ..services.agent_service import get_agent_service
-
-            agent_service = get_agent_service()
-
-            # Clean up stale spec creation process if still tracked as running.
-            # The spec_runner process may have exited but the monitor may not have
-            # cleaned up running_tasks (e.g., if the process hung or monitor failed).
-            if agent_service.is_running(task_id):
-                import logging
-
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"[ApprovePlan] Cleaning up stale spec creation process for {task_id}"
-                )
-                try:
-                    await agent_service.stop_task(task_id)
-                except Exception as stop_err:
-                    logger.warning(
-                        f"[ApprovePlan] Failed to stop stale process: {stop_err}"
-                    )
-                    # Force-remove from running_tasks as fallback
-                    agent_service.running_tasks.pop(task_id, None)
-
-            # Read mode from task_metadata.json
-            task_metadata_file = spec_dir / "task_metadata.json"
-            mode = "full"
-            if task_metadata_file.exists():
-                try:
-                    metadata = json.loads(task_metadata_file.read_text())
-                    mode = metadata.get("mode", "full")
-                except (json.JSONDecodeError, OSError):
-                    pass
-
-            await agent_service.start_task_execution(
-                task_id=task_id,
-                project_path=project_path,
-                spec_id=spec_id,
-                auto_continue=True,
-                mode=mode,
-                force=True,  # Bypass approval check since plan was manually approved
-            )
-            auto_restarted = True
-        except Exception as e:
-            # If auto-restart fails, still return success for approval
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"Auto-restart failed for {task_id}: {e}"
-            )
-
-    return {
-        "success": True,
-        "task_id": task_id,
-        "message": "Plan approved" + (" and task restarted" if auto_restarted else ""),
-        "autoRestarted": auto_restarted,
-    }
-
-
-@router.post("/{task_id}/reject-plan")
-async def reject_plan(
-    task_id: str,
-    request: RejectPlanRequest = RejectPlanRequest(),
-    _access: dict = Depends(require_task_access("member")),
-):
-    """Reject a task's plan and send the planner back to iterate.
-
-    Used by the human-review checkpoint when the implementation plan needs
-    rework. The optional ``feedback`` field is appended to the spec's
-    review-state feedback log so the planner's next pass picks it up.
-    """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid task ID format"
-        )
-
-    project_id, spec_id = task_id.split(":", 1)
-    projects = load_projects()
-    if project_id not in projects:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-        )
-
-    project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-    if not spec_dir.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task not found"
-        )
-
-    # Import ReviewState the same way approve_plan does (sys.path shim
-    # because the web-server doesn't have ``backend`` on its PYTHONPATH
-    # in every install layout).
-    import sys
-
-    backend_path = Path(__file__).parent.parent.parent.parent / "backend"
-    if str(backend_path) not in sys.path:
-        sys.path.insert(0, str(backend_path))
-
-    from review.state import ReviewState
-
-    review_state = ReviewState.load(spec_dir)
-    review_state.reject(spec_dir)
-    if request.feedback:
-        review_state.add_feedback(request.feedback, spec_dir=spec_dir)
-
-    # Mirror approve_plan's bookkeeping: flip the plan back to "needs work"
-    # so the next planner pass sees a clean slate.
-    plan_file = spec_dir / "implementation_plan.json"
-    if plan_file.exists():
-        try:
-            plan = json.loads(plan_file.read_text())
-            plan["status"] = "rejected"
-            plan["planStatus"] = "rejected"
-            if request.feedback:
-                plan["reviewReason"] = request.feedback
-            plan_file.write_text(json.dumps(plan, indent=2))
-        except (OSError, json.JSONDecodeError) as exc:
-            # Plan file unreadable — review state was already updated, so
-            # the reject took effect even if the bookkeeping fails. Log
-            # and continue.
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"[RejectPlan] couldn't update implementation_plan.json: {exc}"
-            )
-
-    return {
-        "success": True,
-        "task_id": task_id,
-        "feedback_recorded": bool(request.feedback),
-    }
+# Plan-approval routes (POST /{task_id}/approve-plan, /{task_id}/reject-plan)
+# and their request models were extracted into ``routes/plan_approval.py``
+# (issue #556) and are mounted via ``include_router`` below. The names are
+# re-exported here so existing imports (``from .tasks import approve_plan`` /
+# ``ApprovePlanRequest`` / ``reject_plan`` / ``RejectPlanRequest``) keep working.
+from .plan_approval import (  # noqa: E402,F401
+    ApprovePlanRequest,
+    RejectPlanRequest,
+    approve_plan,
+    reject_plan,
+)
+from .plan_approval import router as plan_approval_router
 
 
 @router.get("/{task_id}/qa-report")
@@ -2455,14 +2238,6 @@ async def unwatch_task_logs(
 # ============================================
 # Worktree Merge Routes
 # ============================================
-
-
-class CreatePRFromTaskOptions(BaseModel):
-    title: str | None = None
-    body: str | None = None
-    draft: bool = False
-    baseBranch: str | None = None
-    targetRepo: str | None = None  # "owner/repo" for cross-fork PRs
 
 
 class WorktreeMergeOptions(BaseModel):
@@ -3854,338 +3629,6 @@ async def abort_worktree_merge(
         }
 
 
-@router.post("/{task_id}/worktree/create-pr")
-async def create_pr_from_task(
-    task_id: str,
-    options: CreatePRFromTaskOptions = None,
-    _access: dict = Depends(require_task_access("member")),
-):
-    """
-    Push the worktree branch and create a GitHub Pull Request.
-    Does NOT delete the worktree or branch after PR creation.
-    """
-    import subprocess
-
-    if options is None:
-        options = CreatePRFromTaskOptions()
-
-    # Parse task_id to get spec_id
-    # task_id could be "project_id:spec_id" or just "spec_id"
-    if ":" in task_id:
-        project_id, spec_id = task_id.split(":", 1)
-        # Look up project path
-        projects_file = get_projects_file()
-        if not projects_file.exists():
-            return {"success": False, "error": "Projects file not found"}
-
-        projects_data = json.loads(projects_file.read_text())
-
-        # Handle dict format where keys are project IDs
-        if isinstance(projects_data, dict):
-            project = projects_data.get(project_id)
-            if not project:
-                return {"success": False, "error": f"Project not found: {project_id}"}
-            project_path = Path(project["path"])
-        else:
-            # Handle list format where each item has an "id" field
-            project = None
-            for p in projects_data:
-                if isinstance(p, dict) and p.get("id") == project_id:
-                    project = p
-                    break
-            if not project:
-                return {"success": False, "error": f"Project not found: {project_id}"}
-            project_path = Path(project["path"])
-    else:
-        return {
-            "success": False,
-            "error": "Task ID must include project ID (format: project_id:spec_id)",
-        }
-
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-    if not spec_dir.exists():
-        return {"success": False, "error": f"Task {task_id} not found"}
-
-    # Find the worktree
-    worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
-
-    if not worktree_path.exists():
-        return {"success": False, "error": "No worktree found for this task"}
-
-    # Get the branch name from the worktree
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": f"Could not determine worktree branch: {e}"}
-
-    # Get the base branch (from options or detect from main project)
-    base_branch = options.baseBranch
-    if not base_branch:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=project_path,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            base_branch = result.stdout.strip()
-        except subprocess.CalledProcessError:
-            base_branch = "main"
-
-    # Fetch latest base branch from remote
-    try:
-        subprocess.run(
-            ["git", "fetch", "origin", base_branch],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except Exception:
-        pass  # Non-fatal — rebase will use whatever is available
-
-    # Stash any uncommitted changes before rebasing
-    stashed = False
-    try:
-        stash_result = subprocess.run(
-            ["git", "stash", "push", "-m", "aifactory-pre-rebase"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        # "No local changes to save" means nothing was stashed
-        stashed = (
-            stash_result.returncode == 0
-            and "No local changes" not in stash_result.stdout
-        )
-    except Exception:
-        pass
-
-    # Rebase onto latest base branch to minimize conflicts (best-effort)
-    rebase_failed = False
-    try:
-        result = subprocess.run(
-            ["git", "rebase", f"origin/{base_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            # Abort the failed rebase to leave worktree clean
-            subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            rebase_failed = True
-    except subprocess.TimeoutExpired:
-        subprocess.run(
-            ["git", "rebase", "--abort"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        rebase_failed = True
-    except Exception:
-        rebase_failed = True
-
-    # Restore stashed changes
-    if stashed:
-        subprocess.run(
-            ["git", "stash", "pop"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-
-    # Push the branch to remote
-    # Use --force-with-lease after successful rebase (rebase rewrites history)
-    push_cmd = ["git", "push", "-u", "origin", worktree_branch]
-    if not rebase_failed:
-        push_cmd = [
-            "git",
-            "push",
-            "--force-with-lease",
-            "-u",
-            "origin",
-            worktree_branch,
-        ]
-    try:
-        result = subprocess.run(
-            push_cmd, cwd=worktree_path, capture_output=True, text=True, timeout=60
-        )
-        if result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Failed to push branch: {result.stderr.strip()}",
-            }
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Push timed out"}
-    except Exception as e:
-        return {"success": False, "error": f"Failed to push branch: {e}"}
-
-    # Load task title/description for PR defaults
-    pr_title = options.title
-    pr_body = options.body
-
-    if not pr_title or not pr_body:
-        # Try requirements.json first
-        req_file = spec_dir / "requirements.json"
-        spec_file = spec_dir / "spec.md"
-
-        if req_file.exists():
-            try:
-                reqs = json.loads(req_file.read_text())
-                if not pr_title:
-                    pr_title = reqs.get("title") or reqs.get("taskTitle") or task_id
-                if not pr_body:
-                    pr_body = (
-                        reqs.get("description") or reqs.get("taskDescription") or ""
-                    )
-            except (json.JSONDecodeError, KeyError):
-                pass
-
-        if not pr_title:
-            pr_title = task_id
-        if not pr_body and spec_file.exists():
-            try:
-                pr_body = spec_file.read_text()[:2000]
-            except Exception:
-                pr_body = ""
-
-    # Route PR creation through the configured git provider. When the project
-    # is on GitLab or Azure DevOps the gh CLI path can't open the PR (we
-    # pushed to the GitLab `origin`, not to a GitHub remote). Only fall back
-    # to `gh pr create` when the project is actually a GitHub project.
-    from .github import _get_project_provider, _use_provider_api, run_gh_command
-
-    if _use_provider_api(project_id):
-        try:
-            provider = _get_project_provider(project_id)
-            provider_type_value = getattr(
-                provider.provider_type, "value", str(provider.provider_type)
-            )
-            if provider_type_value == "github":
-                # The provider abstraction picks GitHub when a custom token is
-                # configured; the gh CLI path below already handles GitHub, so
-                # let it run.
-                pass
-            else:
-                created = await provider.create_pr(
-                    source_branch=worktree_branch,
-                    target_branch=base_branch,
-                    title=pr_title,
-                    body=pr_body or "",
-                    draft=bool(options.draft),
-                )
-                return {
-                    "success": True,
-                    "data": {
-                        "prUrl": created.get("web_url") or "",
-                        "prNumber": created.get("number"),
-                        "branch": worktree_branch,
-                        "baseBranch": base_branch,
-                        "provider": provider_type_value,
-                    },
-                }
-        except AttributeError:
-            # Provider hasn't implemented create_pr yet — surface a clear error
-            # instead of silently falling through to gh CLI (which would hit
-            # the wrong remote and produce GraphQL noise).
-            return {
-                "success": False,
-                "error": f"Provider {provider_type_value!r} does not support PR creation yet",
-            }
-        except Exception as exc:
-            return {"success": False, "error": f"Failed to create PR: {exc}"}
-
-    # Create the PR using gh CLI (GitHub-only path)
-    head_ref = worktree_branch
-    gh_args = [
-        "pr",
-        "create",
-        "--head",
-        head_ref,
-        "--base",
-        base_branch,
-        "--title",
-        pr_title,
-        "--body",
-        pr_body or "",
-    ]
-
-    if options.targetRepo:
-        # Cross-fork PR: need owner:branch format for --head
-        try:
-            origin_url_result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                cwd=str(worktree_path),
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if origin_url_result.returncode == 0:
-                import re as _re
-
-                m = _re.search(
-                    r"[:/]([^/]+)/[^/]+?(?:\.git)?$", origin_url_result.stdout.strip()
-                )
-                if m:
-                    fork_owner = m.group(1)
-                    # Update --head to owner:branch format required by gh for cross-repo PRs
-                    head_idx = gh_args.index("--head") + 1
-                    gh_args[head_idx] = f"{fork_owner}:{worktree_branch}"
-        except Exception:
-            pass  # Fall back to plain branch name
-        gh_args.extend(["--repo", options.targetRepo])
-
-    if options.draft:
-        gh_args.append("--draft")
-
-    gh_result = run_gh_command(gh_args, cwd=str(project_path))
-
-    if not gh_result["success"]:
-        return {
-            "success": False,
-            "error": f"Failed to create PR: {gh_result.get('error', 'unknown error')}",
-        }
-
-    # Parse PR URL from output
-    pr_url = gh_result.get("output", "").strip()
-    pr_number = None
-    if pr_url:
-        # gh pr create outputs the PR URL, extract number from it
-        import re as _re
-
-        match = _re.search(r"/pull/(\d+)", pr_url)
-        if match:
-            pr_number = int(match.group(1))
-
-    return {
-        "success": True,
-        "data": {
-            "prUrl": pr_url,
-            "prNumber": pr_number,
-            "branch": worktree_branch,
-            "baseBranch": base_branch,
-        },
-    }
-
-
 @router.post("/{task_id}/worktree/merge")
 async def merge_worktree(
     task_id: str,
@@ -4826,521 +4269,62 @@ async def discard_worktree(
 
 
 # ============================================
-# Worktree Open in IDE/Terminal Routes
+# Worktree Open in IDE/Terminal Routes (#556)
 # ============================================
+#
+# Extracted into ``routes/worktree_tools.py`` as a behavior-preserving
+# sub-router. It is mounted here so the public paths are unchanged:
+#   POST /worktree/open-in-ide, /worktree/open-in-terminal, /worktree/detect-tools
+router.include_router(worktree_tools_router)
 
+# ============================================
+# Plan-approval Routes (#556)
+# ============================================
+#
+# Extracted into ``routes/plan_approval.py`` as a behavior-preserving
+# sub-router. It is mounted here so the public paths are unchanged:
+#   POST /{task_id}/approve-plan, /{task_id}/reject-plan
+router.include_router(plan_approval_router)
 
-class OpenInIDERequest(BaseModel):
-    """Request body for opening a path in IDE."""
+# ============================================
+# PR-creation Route (#556)
+# ============================================
+#
+# Extracted into ``routes/pr.py`` as a behavior-preserving sub-router. It is
+# mounted here so the public path is unchanged:
+#   POST /{task_id}/worktree/create-pr
+router.include_router(pr_router)
 
-    worktreePath: str
-    ide: str
-    customPath: str | None = None
-
-
-class OpenInTerminalRequest(BaseModel):
-    """Request body for opening a path in terminal."""
-
-    worktreePath: str
-    terminal: str
-    customPath: str | None = None
-
-
-def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list[str]:
-    """Get the command to open a path in the specified IDE."""
-    import platform
-
-    system = platform.system()
-
-    # Use custom path if provided
-    if custom_path:
-        return [custom_path, path]
-
-    # IDE command mappings
-    ide_commands = {
-        # VS Code family
-        "vscode": ["code", path],
-        "cursor": ["cursor", path],
-        "vscodium": ["codium", path],
-        "vscode-insiders": ["code-insiders", path],
-        # JetBrains IDEs
-        "webstorm": ["webstorm", path]
-        if system != "Darwin"
-        else ["open", "-a", "WebStorm", path],
-        "intellij": ["idea", path]
-        if system != "Darwin"
-        else ["open", "-a", "IntelliJ IDEA", path],
-        "pycharm": ["pycharm", path]
-        if system != "Darwin"
-        else ["open", "-a", "PyCharm", path],
-        "phpstorm": ["phpstorm", path]
-        if system != "Darwin"
-        else ["open", "-a", "PhpStorm", path],
-        "goland": ["goland", path]
-        if system != "Darwin"
-        else ["open", "-a", "GoLand", path],
-        "rider": ["rider", path]
-        if system != "Darwin"
-        else ["open", "-a", "Rider", path],
-        "clion": ["clion", path]
-        if system != "Darwin"
-        else ["open", "-a", "CLion", path],
-        "rubymine": ["rubymine", path]
-        if system != "Darwin"
-        else ["open", "-a", "RubyMine", path],
-        "datagrip": ["datagrip", path]
-        if system != "Darwin"
-        else ["open", "-a", "DataGrip", path],
-        # Sublime Text
-        "sublime": ["subl", path]
-        if system != "Darwin"
-        else ["open", "-a", "Sublime Text", path],
-        # Atom / Pulsar
-        "atom": ["atom", path],
-        "pulsar": ["pulsar", path],
-        # Vim/Neovim (terminal-based)
-        "vim": ["vim", path],
-        "neovim": ["nvim", path],
-        "nvim": ["nvim", path],
-        # Emacs
-        "emacs": ["emacs", path],
-        # Zed
-        "zed": ["zed", path] if system != "Darwin" else ["open", "-a", "Zed", path],
-        # Nova (macOS)
-        "nova": ["open", "-a", "Nova", path],
-        # BBEdit (macOS)
-        "bbedit": ["open", "-a", "BBEdit", path],
-        # TextMate (macOS)
-        "textmate": ["open", "-a", "TextMate", path],
-        # Notepad++ (Windows)
-        "notepadpp": ["notepad++", path],
-        # Visual Studio (Windows)
-        "visualstudio": ["devenv", path],
-        # Fleet
-        "fleet": ["fleet", path],
-        # Lapce
-        "lapce": ["lapce", path],
-        # Helix
-        "helix": ["hx", path],
-        # Kate (Linux/KDE)
-        "kate": ["kate", path],
-        # Geany (Linux)
-        "geany": ["geany", path],
-    }
-
-    return ide_commands.get(ide, ["code", path])  # Default to VS Code
-
-
-def get_terminal_command(
-    terminal: str, path: str, custom_path: str | None = None
-) -> list[str]:
-    """Get the command to open a terminal at the specified path."""
-    import platform
-
-    system = platform.system()
-
-    # Use custom path if provided
-    if custom_path:
-        if system == "Darwin":
-            return ["open", "-a", custom_path, path]
-        elif system == "Windows":
-            return [custom_path, "/d", path]
-        else:
-            return [custom_path, f"--working-directory={path}"]
-
-    # Terminal command mappings by platform
-    if system == "Darwin":  # macOS
-        terminal_commands = {
-            "system": ["open", "-a", "Terminal", path],
-            "terminal": ["open", "-a", "Terminal", path],
-            "iterm2": ["open", "-a", "iTerm", path],
-            "iterm": ["open", "-a", "iTerm", path],
-            "warp": ["open", "-a", "Warp", path],
-            "hyper": ["open", "-a", "Hyper", path],
-            "kitty": ["kitty", "--directory", path],
-            "alacritty": ["alacritty", "--working-directory", path],
-            "wezterm": ["wezterm", "start", "--cwd", path],
-            "tabby": ["open", "-a", "Tabby", path],
-        }
-    elif system == "Windows":
-        terminal_commands = {
-            "system": ["cmd", "/c", "start", "cmd", "/k", f"cd /d {path}"],
-            "wt": ["wt", "-d", path],
-            "windows-terminal": ["wt", "-d", path],
-            "cmd": ["cmd", "/c", "start", "cmd", "/k", f"cd /d {path}"],
-            "powershell": ["powershell", "-NoExit", "-Command", f"cd '{path}'"],
-            "pwsh": ["pwsh", "-NoExit", "-Command", f"cd '{path}'"],
-            "hyper": ["hyper", path],
-            "alacritty": ["alacritty", "--working-directory", path],
-            "wezterm": ["wezterm", "start", "--cwd", path],
-            "kitty": ["kitty", "--directory", path],
-            "cmder": ["cmder", "/START", path],
-            "conemu": ["conemu", "-Dir", path],
-        }
-    else:  # Linux and others
-        terminal_commands = {
-            "system": ["x-terminal-emulator", "-e", f"cd {path} && $SHELL"],
-            "gnome-terminal": ["gnome-terminal", f"--working-directory={path}"],
-            "konsole": ["konsole", f"--workdir={path}"],
-            "xfce4-terminal": ["xfce4-terminal", f"--working-directory={path}"],
-            "terminator": ["terminator", f"--working-directory={path}"],
-            "tilix": ["tilix", f"--working-directory={path}"],
-            "kitty": ["kitty", "--directory", path],
-            "alacritty": ["alacritty", "--working-directory", path],
-            "wezterm": ["wezterm", "start", "--cwd", path],
-            "hyper": ["hyper", path],
-            "xterm": ["xterm", "-e", f"cd {path} && $SHELL"],
-            "urxvt": ["urxvt", "-cd", path],
-            "st": ["st", "-d", path],
-            "foot": ["foot", f"--working-directory={path}"],
-            "sakura": ["sakura", f"--working-directory={path}"],
-            "tabby": ["tabby", path],
-        }
-
-    return terminal_commands.get(terminal, terminal_commands.get("system", ["xterm"]))
-
-
-@router.post("/worktree/open-in-ide")
-async def open_worktree_in_ide(request: OpenInIDERequest):
-    """
-    Open a worktree path in the specified IDE.
-    Used by the web UI to launch external IDE applications.
-    """
-    worktree_path = request.worktreePath
-    ide = request.ide
-    custom_path = request.customPath
-
-    # Validate the path exists
-    if not Path(worktree_path).exists():
-        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
-
-    try:
-        cmd = get_ide_command(ide, worktree_path, custom_path)
-
-        # Launch the IDE (don't wait for it to finish)
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
-        return {"success": True, "data": {"opened": True}}
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "error": f"IDE command not found. Make sure '{ide}' is installed and in your PATH.",
-        }
-    except Exception as e:
-        return {"success": False, "error": f"Failed to open IDE: {str(e)}"}
-
-
-@router.post("/worktree/open-in-terminal")
-async def open_worktree_in_terminal(request: OpenInTerminalRequest):
-    """
-    Open a worktree path in the specified terminal emulator.
-    Used by the web UI to launch external terminal applications.
-    """
-    worktree_path = request.worktreePath
-    terminal = request.terminal
-    custom_path = request.customPath
-
-    # Validate the path exists
-    if not Path(worktree_path).exists():
-        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
-
-    try:
-        cmd = get_terminal_command(terminal, worktree_path, custom_path)
-
-        # Launch the terminal (don't wait for it to finish)
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
-        return {"success": True, "data": {"opened": True}}
-    except FileNotFoundError:
-        return {
-            "success": False,
-            "error": f"Terminal command not found. Make sure '{terminal}' is installed and in your PATH.",
-        }
-    except Exception as e:
-        return {"success": False, "error": f"Failed to open terminal: {str(e)}"}
-
-
-@router.post("/worktree/detect-tools")
-async def detect_worktree_tools():
-    """
-    Detect installed IDEs and terminal emulators on the system.
-    Returns lists of available tools with their installation status.
-    """
-    import platform
-    import shutil
-
-    system = platform.system()
-
-    # IDE detection
-    ide_definitions = [
-        {"id": "vscode", "name": "Visual Studio Code", "command": "code"},
-        {"id": "cursor", "name": "Cursor", "command": "cursor"},
-        {"id": "vscodium", "name": "VSCodium", "command": "codium"},
-        {
-            "id": "vscode-insiders",
-            "name": "VS Code Insiders",
-            "command": "code-insiders",
-        },
-        {"id": "sublime", "name": "Sublime Text", "command": "subl"},
-        {
-            "id": "webstorm",
-            "name": "WebStorm",
-            "command": "webstorm" if system != "Darwin" else None,
-        },
-        {
-            "id": "intellij",
-            "name": "IntelliJ IDEA",
-            "command": "idea" if system != "Darwin" else None,
-        },
-        {
-            "id": "pycharm",
-            "name": "PyCharm",
-            "command": "pycharm" if system != "Darwin" else None,
-        },
-        {"id": "zed", "name": "Zed", "command": "zed"},
-        {"id": "atom", "name": "Atom", "command": "atom"},
-        {"id": "pulsar", "name": "Pulsar", "command": "pulsar"},
-        {"id": "vim", "name": "Vim", "command": "vim"},
-        {"id": "neovim", "name": "Neovim", "command": "nvim"},
-        {"id": "emacs", "name": "Emacs", "command": "emacs"},
-        {"id": "helix", "name": "Helix", "command": "hx"},
-        {"id": "fleet", "name": "Fleet", "command": "fleet"},
-        {"id": "lapce", "name": "Lapce", "command": "lapce"},
-    ]
-
-    if system == "Windows":
-        ide_definitions.extend(
-            [
-                {"id": "notepadpp", "name": "Notepad++", "command": "notepad++"},
-                {"id": "visualstudio", "name": "Visual Studio", "command": "devenv"},
-            ]
-        )
-    elif system == "Linux":
-        ide_definitions.extend(
-            [
-                {"id": "kate", "name": "Kate", "command": "kate"},
-                {"id": "geany", "name": "Geany", "command": "geany"},
-            ]
-        )
-
-    # Terminal detection
-    terminal_definitions = []
-    if system == "Darwin":
-        terminal_definitions = [
-            {"id": "terminal", "name": "Terminal", "command": None, "app": "Terminal"},
-            {"id": "iterm2", "name": "iTerm2", "command": None, "app": "iTerm"},
-            {"id": "warp", "name": "Warp", "command": None, "app": "Warp"},
-            {"id": "hyper", "name": "Hyper", "command": None, "app": "Hyper"},
-            {"id": "kitty", "name": "Kitty", "command": "kitty"},
-            {"id": "alacritty", "name": "Alacritty", "command": "alacritty"},
-            {"id": "wezterm", "name": "WezTerm", "command": "wezterm"},
-        ]
-    elif system == "Windows":
-        terminal_definitions = [
-            {"id": "wt", "name": "Windows Terminal", "command": "wt"},
-            {"id": "cmd", "name": "Command Prompt", "command": "cmd"},
-            {"id": "powershell", "name": "PowerShell", "command": "powershell"},
-            {"id": "pwsh", "name": "PowerShell Core", "command": "pwsh"},
-            {"id": "hyper", "name": "Hyper", "command": "hyper"},
-            {"id": "alacritty", "name": "Alacritty", "command": "alacritty"},
-            {"id": "wezterm", "name": "WezTerm", "command": "wezterm"},
-            {"id": "kitty", "name": "Kitty", "command": "kitty"},
-        ]
-    else:  # Linux
-        terminal_definitions = [
-            {
-                "id": "gnome-terminal",
-                "name": "GNOME Terminal",
-                "command": "gnome-terminal",
-            },
-            {"id": "konsole", "name": "Konsole", "command": "konsole"},
-            {
-                "id": "xfce4-terminal",
-                "name": "Xfce Terminal",
-                "command": "xfce4-terminal",
-            },
-            {"id": "terminator", "name": "Terminator", "command": "terminator"},
-            {"id": "tilix", "name": "Tilix", "command": "tilix"},
-            {"id": "kitty", "name": "Kitty", "command": "kitty"},
-            {"id": "alacritty", "name": "Alacritty", "command": "alacritty"},
-            {"id": "wezterm", "name": "WezTerm", "command": "wezterm"},
-            {"id": "hyper", "name": "Hyper", "command": "hyper"},
-            {"id": "xterm", "name": "XTerm", "command": "xterm"},
-            {"id": "foot", "name": "Foot", "command": "foot"},
-        ]
-
-    # Check which tools are installed
-    ides = []
-    for ide_def in ide_definitions:
-        installed = False
-        path = ""
-        if ide_def.get("command"):
-            found = shutil.which(ide_def["command"])
-            if found:
-                installed = True
-                path = found
-        ides.append(
-            {
-                "id": ide_def["id"],
-                "name": ide_def["name"],
-                "path": path,
-                "installed": installed,
-            }
-        )
-
-    terminals = []
-    for term_def in terminal_definitions:
-        installed = False
-        path = ""
-        if term_def.get("command"):
-            found = shutil.which(term_def["command"])
-            if found:
-                installed = True
-                path = found
-        elif term_def.get("app") and system == "Darwin":
-            # Check macOS applications
-            app_path = f"/Applications/{term_def['app']}.app"
-            if Path(app_path).exists():
-                installed = True
-                path = app_path
-        terminals.append(
-            {
-                "id": term_def["id"],
-                "name": term_def["name"],
-                "path": path,
-                "installed": installed,
-            }
-        )
-
-    return {"success": True, "data": {"ides": ides, "terminals": terminals}}
-
-
-# --------------------------------------------------------------------------
-# Inbox / inter-agent messaging (#264)
-# --------------------------------------------------------------------------
-
-
-class InboxMessageCreate(BaseModel):
-    """Request to deliver a directed message to a running task's agent."""
-
-    text: str = Field(..., min_length=1, description="Message body for the agent")
-    recipient: str = Field(
-        "agent",
-        description="Logical agent recipient (e.g. 'agent', 'coder', 'planner')",
-    )
-    sender: str = Field("user", description="Sender identity")
-    summary: str | None = Field(
-        None, description="Optional short summary (auto-derived if omitted)"
-    )
-
-
-class InboxMessage(BaseModel):
-    """A stored inbox message."""
-
-    from_: str = Field(..., alias="from")
-    text: str
-    summary: str
-    timestamp: str
-    messageId: str
-    read: bool
-
-    model_config = {"populate_by_name": True}
-
-
-class InboxEnqueueResponse(BaseModel):
-    """Response after enqueuing an inbox message."""
-
-    messageId: str
-    delivered: bool
-    recipient: str
-
-
-def _inbox_target_spec_dir(project_path: Path, spec_id: str, spec_dir: Path) -> Path:
-    """Resolve where to write the inbox so a RUNNING agent will see it.
-
-    A running build executes inside its isolated worktree, reading from the
-    worktree spec dir. If that worktree exists we target it; otherwise we fall
-    back to the main spec dir (message will be picked up when a build starts).
-    """
-    worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
-    return worktree_spec_dir if worktree_spec_dir else spec_dir
-
-
-@router.post(
-    "/{task_id}/inbox",
-    response_model=InboxEnqueueResponse,
-    status_code=status.HTTP_201_CREATED,
+# Backward-compatible re-exports: these names historically lived in this
+# module. Nothing in-tree imports them today, but keep the public surface of
+# ``routes.tasks`` stable so the extraction is a pure no-op for any importer.
+__all_worktree_tools__ = (
+    OpenInIDERequest,
+    OpenInTerminalRequest,
+    get_ide_command,
+    get_terminal_command,
+    open_worktree_in_ide,
+    open_worktree_in_terminal,
+    detect_worktree_tools,
 )
-async def enqueue_inbox_message(
-    task_id: str,
-    message: InboxMessageCreate,
-    _access: dict = Depends(require_task_access("member")),
-):
-    """Deliver a directed message to a task's agent inbox (#264).
-
-    The message is written atomically and verified on disk. The returned
-    `delivered` flag is the read-back proof that the message persisted.
-    """
-    from ..services import inbox_service
-
-    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
-    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
-
-    try:
-        result = inbox_service.enqueue(
-            target_dir,
-            text=message.text,
-            recipient=message.recipient,
-            sender=message.sender,
-            summary=message.summary,
-        )
-    except inbox_service.DeliveryVerificationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Message could not be verified after write: {exc}",
-        ) from exc
-    except inbox_service.InboxError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
-
-    return InboxEnqueueResponse(
-        messageId=result["messageId"],
-        delivered=result["delivered"],
-        recipient=result["recipient"],
-    )
 
 
-@router.get("/{task_id}/inbox", response_model=list[InboxMessage])
-async def list_inbox_messages(
-    task_id: str,
-    recipient: str = Query("agent", description="Recipient inbox to read"),
-    unread_only: bool = Query(False, description="Only return unread messages"),
-    _access: dict = Depends(require_task_access("viewer")),
-):
-    """List messages in a task's agent inbox."""
-    from ..services import inbox_service
+# ============================================
+# Inbox / inter-agent messaging Routes (#556, #264)
+# ============================================
+#
+# Extracted into ``routes/inbox.py`` as a behavior-preserving sub-router. It is
+# mounted here so the public paths are unchanged:
+#   POST /{task_id}/inbox, GET /{task_id}/inbox
+router.include_router(inbox_router)
 
-    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
-    target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
-
-    try:
-        messages = inbox_service.list_messages(
-            target_dir, recipient=recipient, unread_only=unread_only
-        )
-    except inbox_service.InboxError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
-        ) from exc
-
-    return [InboxMessage(**m) for m in messages]
+# Backward-compatible re-exports: the inbox models and handlers historically
+# lived in this module. Nothing in-tree imports them today, but keep the public
+# surface of ``routes.tasks`` stable so the extraction is a pure no-op.
+__all_inbox__ = (
+    InboxMessageCreate,
+    InboxMessage,
+    InboxEnqueueResponse,
+    enqueue_inbox_message,
+    list_inbox_messages,
+)

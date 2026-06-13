@@ -8,6 +8,7 @@ Main autonomous agent loop that runs the coder agent to implement subtasks.
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 
 from core.client import create_client
@@ -162,6 +163,11 @@ async def run_autonomous_agent(
         )
     # Initialize recovery manager (handles memory persistence)
     recovery_manager = RecoveryManager(spec_dir, project_dir)
+
+    # Live per-worker PROGRESS heartbeat baseline (#45 Tier 2): the monotonic
+    # start of this serial worker's run, used to compute ``elapsed_ms`` for the
+    # throttled heartbeat emitted after each turn's token attribution below.
+    _worker_run_start = time.monotonic()
 
     # Initialize status manager for ccstatusline
     status_manager = StatusManager(project_dir)
@@ -742,7 +748,59 @@ async def run_autonomous_agent(
                     file_context=seg_file_context,
                     tool_output_chars=usage_payload.get("tool_output_chars", 0),
                 )
-                record_turn(spec_dir, segments, turn_usage, model=phase_model)
+                # Per-worker attribution (#45 P1, additive). The serial coder
+                # path is a single implicit worker: key it by the active
+                # subtask id when there is one, else the default "main".
+                _wid = subtask_id or "main"
+                _sub_provider = (
+                    infer_provider_from_model(phase_model) if phase_model else None
+                )
+                _agent_phase = (
+                    current_log_phase.value
+                    if hasattr(current_log_phase, "value")
+                    else None
+                )
+                _breakdown = record_turn(
+                    spec_dir,
+                    segments,
+                    turn_usage,
+                    model=phase_model,
+                    worker_id=subtask_id or None,
+                    subtask_id=subtask_id or None,
+                    provider=_sub_provider,
+                    phase=_agent_phase,
+                )
+                # Live per-worker PROGRESS heartbeat (#45 Tier 2): this worker is
+                # STILL RUNNING and just persisted another turn's spend — emit a
+                # throttled (~1/10s per worker_id) heartbeat carrying the running
+                # cumulative tokens/cost + elapsed time, so the cockpit can tick a
+                # live graph. The emitter throttles + swallows all errors, so this
+                # can NEVER flood, fail, slow, or block the build. The one-shot
+                # worker_done + terminal events are unchanged.
+                try:
+                    from agents.parallel_integration import (
+                        emit_worker_progress_heartbeat,
+                    )
+
+                    # render_breakdown exposes only the scalar cumulative totals
+                    # (no per-worker map). The serial coder path is a single
+                    # implicit worker, so its cumulative spend IS the aggregate —
+                    # use the scalar running totals for the heartbeat snapshot.
+                    _bd = _breakdown or {}
+                    emit_worker_progress_heartbeat(
+                        spec_dir=source_spec_dir or spec_dir,
+                        project_dir=project_dir,
+                        worker_id=_wid,
+                        subtask_id=subtask_id or None,
+                        provider=_sub_provider,
+                        model=phase_model,
+                        agent_phase=_agent_phase,
+                        total_tokens=int(_bd.get("totalTokens", 0) or 0),
+                        cost_usd=float(_bd.get("totalCostUsd", 0.0) or 0.0),
+                        elapsed_ms=int((time.monotonic() - _worker_run_start) * 1000),
+                    )
+                except Exception:  # noqa: BLE001 - heartbeat must not crash a build
+                    logger.debug("progress heartbeat skipped", exc_info=True)
                 # Sync the usage file back to the source spec dir (worktree mode)
                 # so the web-server reader sees it.
                 if source_spec_dir:
