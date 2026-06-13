@@ -99,6 +99,19 @@ def test_execution_profile_to_metadata_maps_keys():
     assert "provider" not in meta
 
 
+def test_execution_profile_maps_budget_usd(tmp_path):
+    """#45 P2: execution.budget_usd → task_metadata.budgetUsd (observe-only)."""
+    meta = execution_profile_to_metadata({"budget_usd": 5.0})
+    assert meta["budgetUsd"] == 5.0
+    # Absent budget → no budgetUsd key (back-compat).
+    assert "budgetUsd" not in execution_profile_to_metadata({"model": "x"})
+    # Applied to the spec's task_metadata.json so completion.py can read it.
+    written = apply_execution_profile(tmp_path, _plan(execution={"budget_usd": 2.5}))
+    assert written["budgetUsd"] == 2.5
+    on_disk = json.loads((tmp_path / "task_metadata.json").read_text())
+    assert on_disk["budgetUsd"] == 2.5
+
+
 def test_apply_execution_profile_writes_and_merges(tmp_path):
     (tmp_path / "task_metadata.json").write_text(json.dumps({"baseBranch": "dev"}))
     written = apply_execution_profile(tmp_path, _plan(execution={"parallel": True, "workers": 3}))

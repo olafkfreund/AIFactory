@@ -195,6 +195,80 @@ def test_batch_noop_on_empty(monkeypatch):
         metrics_otel._reset_for_tests()
 
 
+# ── #45 P2: budget.exceeded counter (soft budget alert) ──────────────────────
+
+
+def test_budget_exceeded_counter_emitted_when_over(metrics_enabled):
+    """Budget set + spent > limit → the budget.exceeded counter increments 1
+    with the bounded {provider:"aggregate"} attribute and NO task_id label."""
+    reader, metrics_otel = metrics_enabled
+    metrics_otel.record_budget_exceeded()
+
+    collected = _collect(reader)
+    assert "budget.exceeded" in collected
+    pts = collected["budget.exceeded"]
+    total = sum(v for _, v, _ in pts)
+    assert total == 1
+    for attrs, _, _ in pts:
+        assert attrs == {"provider": "aggregate"}
+        assert "task_id" not in attrs
+        assert "worker_id" not in attrs
+        assert "correlation_key" not in attrs
+
+
+def test_budget_exceeded_counter_noop_when_otel_disabled(monkeypatch):
+    """ABSOLUTE: with no OTEL endpoint, record_budget_exceeded is a complete
+    no-op — no error, no instruments built, no metrics."""
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    from server.observability import metrics_otel
+
+    metrics_otel._reset_for_tests()
+    try:
+        metrics_otel.record_budget_exceeded()  # must not raise
+        assert metrics_otel._budget_exceeded_counter is None
+        assert metrics_otel._meter_provider is None
+    finally:
+        metrics_otel._reset_for_tests()
+
+
+def test_completion_over_budget_emits_counter_under_does_not(metrics_enabled, tmp_path):
+    """End-to-end through the completion path with the in-memory reader:
+    over-budget read_usage fires budget.exceeded; under-budget does not."""
+    import json
+
+    reader, metrics_otel = metrics_enabled
+    from server.services import completion
+
+    # Over budget: spent 1.25 > limit 1.00 → counter fires once.
+    over = tmp_path / "over"
+    over.mkdir()
+    (over / "task_metadata.json").write_text(json.dumps({"budgetUsd": 1.00}))
+    (over / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 2400, "outputTokens": 100, "totalTokens": 2500,
+        "totalCostUsd": 1.25, "model": "claude-sonnet-4-6",
+    }))
+    usage = completion.read_usage(over)
+    assert usage["budget"]["exceeded"] is True
+
+    collected = _collect(reader)
+    assert sum(v for _, v, _ in collected.get("budget.exceeded", [])) == 1
+
+    # Under budget: spent 0.50 < limit 5.00 → no further increment.
+    under = tmp_path / "under"
+    under.mkdir()
+    (under / "task_metadata.json").write_text(json.dumps({"budgetUsd": 5.00}))
+    (under / "token_usage.json").write_text(json.dumps({
+        "totalInputTokens": 100, "outputTokens": 10, "totalTokens": 110,
+        "totalCostUsd": 0.50, "model": "claude-sonnet-4-6",
+    }))
+    usage2 = completion.read_usage(under)
+    assert usage2["budget"]["exceeded"] is False
+
+    collected2 = _collect(reader)
+    # Still exactly 1 — the under-budget task did not increment the counter.
+    assert sum(v for _, v, _ in collected2.get("budget.exceeded", [])) == 1
+
+
 # ── _new_traceparent: active-span linkage + fallback ─────────────────────────
 
 

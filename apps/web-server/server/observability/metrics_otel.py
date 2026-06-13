@@ -57,6 +57,7 @@ _input_tokens_counter = None  # type: ignore[assignment]
 _output_tokens_counter = None  # type: ignore[assignment]
 _cost_counter = None  # type: ignore[assignment]
 _duration_histogram = None  # type: ignore[assignment]
+_budget_exceeded_counter = None  # type: ignore[assignment]
 _init_attempted: bool = False
 
 
@@ -77,7 +78,8 @@ def _ensure_instruments() -> bool:
     never raises.
     """
     global _meter_provider, _input_tokens_counter, _output_tokens_counter
-    global _cost_counter, _duration_histogram, _init_attempted
+    global _cost_counter, _duration_histogram, _budget_exceeded_counter
+    global _init_attempted
 
     if _input_tokens_counter is not None:
         return True  # already built
@@ -147,6 +149,16 @@ def _ensure_instruments() -> bool:
             "worker.duration_ms",
             unit="ms",
             description="Per-worker wall-clock duration, by provider/model/phase.",
+        )
+        # Soft budget alert (#45 P2): a plain counter incremented once whenever a
+        # task's rolled-up spend exceeds its contract budget. Bounded cardinality
+        # by design — NO task_id / worker_id / correlation_key label (would
+        # explode the series); an optional {provider:"aggregate"} marks it as a
+        # whole-task aggregate rather than a per-provider series. OBSERVE-ONLY.
+        _budget_exceeded_counter = meter.create_counter(
+            "budget.exceeded",
+            unit="{event}",
+            description="Count of tasks whose rolled-up spend exceeded the contract budget.",
         )
         return True
     except Exception:
@@ -220,16 +232,36 @@ def record_worker_metrics_batch(records: list[dict] | None) -> None:
         record_worker_metrics(rec)
 
 
+def record_budget_exceeded() -> None:
+    """Increment the ``budget.exceeded`` counter by 1 (#45 P2 soft budget alert).
+
+    Called from the completion path when a task's rolled-up spend exceeds its
+    contract budget. Bounded cardinality: a single optional ``{provider:
+    "aggregate"}`` attribute, never a task/worker/correlation id. Complete NO-OP
+    when OTel is disabled (``OTEL_EXPORTER_OTLP_ENDPOINT`` unset). Never raises —
+    best-effort, like the rest of this module. OBSERVE-ONLY: this only records a
+    metric; it does not (and must not) abort, pause, or kill the build.
+    """
+    if not _ensure_instruments():
+        return  # OTel off or init failed → no-op
+    try:
+        _budget_exceeded_counter.add(1, {"provider": "aggregate"})
+    except Exception:
+        logger.debug("record_budget_exceeded failed (best-effort)", exc_info=True)
+
+
 def _reset_for_tests() -> None:
     """Drop the lazy singletons so a test can re-init under a fresh fixture.
 
     Test-only helper; the production code never calls this.
     """
     global _meter_provider, _input_tokens_counter, _output_tokens_counter
-    global _cost_counter, _duration_histogram, _init_attempted
+    global _cost_counter, _duration_histogram, _budget_exceeded_counter
+    global _init_attempted
     _meter_provider = None
     _input_tokens_counter = None
     _output_tokens_counter = None
     _cost_counter = None
     _duration_histogram = None
+    _budget_exceeded_counter = None
     _init_attempted = False
