@@ -699,3 +699,107 @@ def test_terminal_event_no_serial_subevent_for_multiple_workers(tmp_path, monkey
     )
     # Only the terminal event — no extra worker sub-event from the terminal path.
     assert [p["status"] for p in posts] == ["completed"]
+
+
+# ── #45 P2: soft budget alert (usage.budget; OBSERVE-ONLY, never aborts) ──────
+
+
+def _write_budget(spec_dir: Path, budget) -> None:
+    (spec_dir / "task_metadata.json").write_text(json.dumps({"budgetUsd": budget}))
+
+
+def test_budget_block_exceeded_true_when_spent_over_limit(tmp_path):
+    """Budget set + spent > limit → usage.budget.exceeded is true, EXACT shape."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_budget(spec, 1.00)
+    _write_usage(
+        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    usage = read_usage(spec)
+    assert usage["budget"] == {"limit_usd": 1.0, "spent_usd": 1.25, "exceeded": True}
+
+
+def test_budget_block_exceeded_false_when_under_limit(tmp_path):
+    """Budget set + under limit → exceeded false."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_budget(spec, 5.00)
+    _write_usage(
+        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    usage = read_usage(spec)
+    assert usage["budget"] == {"limit_usd": 5.0, "spent_usd": 1.25, "exceeded": False}
+
+
+def test_no_budget_block_when_no_budget_set(tmp_path):
+    """BACK-COMPAT: no budget set → no usage.budget block at all."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    # No task_metadata.json budgetUsd.
+    _write_usage(
+        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    assert "budget" not in read_usage(spec)
+    # An empty/absent budgetUsd key also omits the block.
+    (spec / "task_metadata.json").write_text(json.dumps({"model": "x"}))
+    assert "budget" not in read_usage(spec)
+
+
+def test_budget_block_exceeded_at_exactly_limit_is_false(tmp_path):
+    """Spend exactly at the limit is NOT over budget (strict >)."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_budget(spec, 1.25)
+    _write_usage(
+        spec, totalInputTokens=10, outputTokens=5, totalTokens=15,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    assert read_usage(spec)["budget"]["exceeded"] is False
+
+
+def test_budget_block_validates_against_schema(tmp_path):
+    """The usage.budget block validates against the published v1.3 schema."""
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    _write_budget(spec, 1.00)
+    _write_usage(
+        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    ev = build_completion_event(
+        task_id="t", spec_id="s", status="done", issue_number=1,
+        usage=read_usage(spec),
+    )
+    assert ev["usage"]["budget"]["exceeded"] is True
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    jsonschema.validate(ev, schema)
+
+
+def test_budget_over_does_not_abort_build(tmp_path, monkeypatch):
+    """OBSERVE-ONLY: a build whose spend exceeds budget still completes normally —
+    the terminal event fires with status as given, carrying the warning block."""
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    spec = _spec_with_issue(tmp_path, 412)
+    _write_budget(spec, 0.10)
+    _write_usage(
+        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
+        totalCostUsd=1.25, model="claude-sonnet-4-6",
+    )
+    ev = emit_terminal_completion(
+        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        status="completed",
+    )
+    # Build reached its natural terminal state; the event is the normal
+    # completion event with the additive budget warning — NOT aborted/killed.
+    assert ev["status"] == "completed"
+    assert ev["phase"] == "act"
+    assert ev["usage"]["budget"]["exceeded"] is True
+    assert ev["usage"]["budget"]["limit_usd"] == 0.10

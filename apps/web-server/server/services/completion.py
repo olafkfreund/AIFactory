@@ -192,6 +192,67 @@ def _rollup(records: list[dict], key: str) -> dict:
     return out
 
 
+def _read_budget_usd(spec_dir: Path) -> float | None:
+    """The optional soft cost budget (USD) for this task, if set (#45 P2).
+
+    Sourced from the Task Contract's ``execution.budget_usd``, which
+    ``trusted_plan.apply_execution_profile`` carries into the spec's
+    ``task_metadata.json`` as ``budgetUsd``. Returns ``None`` when no budget is
+    set (file missing/unreadable, or the key absent/non-numeric) — the budget
+    block is then omitted entirely (back-compat). Stdlib-only, best-effort,
+    never raises.
+    """
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    raw = meta.get("budgetUsd")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        budget = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return budget if budget >= 0 else None
+
+
+def _budget_block(spent_usd: float, budget_usd: float | None) -> dict | None:
+    """The additive ``usage.budget`` soft-alert block (#45 P2), or ``None``.
+
+    OBSERVE-ONLY: this only describes the rolled-up spend against the contract
+    budget; it never aborts, pauses, or kills the build. Returns ``None`` when no
+    budget is set, so the block is omitted entirely (back-compat). EXACT shape
+    (CFactory consumes it): ``{limit_usd, spent_usd, exceeded}``.
+    """
+    if budget_usd is None:
+        return None
+    spent = round(float(spent_usd or 0.0), 6)
+    exceeded = spent > budget_usd
+    if exceeded:
+        # Fire the OTel counter (no-op when OTel disabled). NEVER aborts.
+        _emit_budget_exceeded()
+    return {
+        "limit_usd": round(float(budget_usd), 6),
+        "spent_usd": spent,
+        "exceeded": exceeded,
+    }
+
+
+def _emit_budget_exceeded() -> None:
+    """Increment the OTel ``budget.exceeded`` counter (#45 P2). Best-effort.
+
+    Complete no-op when OTel is disabled; never raises. OBSERVE-ONLY — recording
+    a metric only, with no effect on the build's terminal state."""
+    try:
+        from ..observability.metrics_otel import record_budget_exceeded
+
+        record_budget_exceeded()
+    except Exception:  # noqa: BLE001 — metrics must never break completion
+        logger.debug("budget.exceeded metric emit failed (best-effort)", exc_info=True)
+
+
 def read_usage(spec_dir: Path) -> dict | None:
     """The RFC-0001 ``usage`` block from the task's ``token_usage.json``.
 
@@ -234,6 +295,14 @@ def read_usage(spec_dir: Path) -> dict | None:
         # no-op when OTel is disabled (no exporter endpoint) and best-effort
         # otherwise — never affects the usage block or the completion path.
         _emit_worker_metrics(workers)
+    # Soft budget alert (#45 P2, additive + OBSERVE-ONLY): when the contract set
+    # a budget (carried into task_metadata.budgetUsd), attach a usage.budget
+    # block comparing the rolled-up aggregate spend (block["cost_usd"]) against
+    # it. Omitted entirely when no budget is set (back-compat). NEVER aborts the
+    # build — this is purely a warning surface on the terminal event.
+    budget = _budget_block(block["cost_usd"], _read_budget_usd(spec_dir))
+    if budget is not None:
+        block["budget"] = budget
     return block
 
 

@@ -119,6 +119,16 @@
               "workers": { "type": "integer" }
             }
           }
+        },
+        "budget": {
+          "type": "object",
+          "description": "Soft budget alert (v1.3, #45 P2). Present only when the contract set execution.budget_usd. OBSERVE-ONLY: a warning surface comparing the rolled-up spend against the budget; the build is NEVER aborted. Additive and optional; omitted when no budget is set.",
+          "required": ["limit_usd", "spent_usd", "exceeded"],
+          "properties": {
+            "limit_usd": { "type": "number" },
+            "spent_usd": { "type": "number" },
+            "exceeded": { "type": "boolean" }
+          }
         }
       }
     }
