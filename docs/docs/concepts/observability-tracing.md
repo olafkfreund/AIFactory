@@ -37,6 +37,7 @@ You **don't** need it for:
 | Agent phase spans (`task:phase:coding`, etc.) | ✅ |
 | Cross-replica trace continuity (Redis envelope carries `traceparent`) | ✅ |
 | Agent-subprocess trace continuity (`TRACEPARENT` env var) | ✅ (context only — agent doesn't export) |
+| Per-worker OTel metrics (`gen_ai.*`, `worker.duration_ms`) from the web-server | ✅ (#567) |
 | Sampling configuration (ParentBased + ratio) | ✅ |
 | Trace-aware logs (request_id = trace_id when in span) | ✅ |
 | Per-MCP-server spans inside the agent | ❌ (v1.2 — needs SDK changes) |
@@ -134,10 +135,38 @@ In Tempo, click any span → "View logs" jumps straight to the matching log line
 
 The sampler is `ParentBased(TraceIdRatioBased(ratio))`: children **always** inherit the parent's decision, so a sampled request stays end-to-end visible across the agent / MCP / Redis hops. Only root spans (those without an inherited parent) go through the ratio decision.
 
+## Per-worker metrics (#567)
+
+When a parallel build completes, the web-server emits OpenTelemetry **metrics** for
+each worker — alongside the spans above and gated by the same `otel.enabled`
+toggle (a no-op when OTel is off):
+
+| Instrument | Meaning |
+|------------|---------|
+| `gen_ai.input_tokens` | Input tokens consumed by the worker |
+| `gen_ai.output_tokens` | Output tokens produced by the worker |
+| `gen_ai.cost_usd` | Worker spend in USD |
+| `worker.duration_ms` | Worker wall-clock duration |
+| `budget.exceeded` | Counter — fires when a build's spend crosses its configured budget (observe-only; never aborts the build) |
+
+Every instrument is tagged `{provider, model, phase}` and **nothing else** — in
+particular **never `task_id`**. Provider, model and phase are small closed sets, so
+the series stay cheap regardless of how many builds run; per-task labels would blow
+up cardinality and are deliberately excluded.
+
+These metrics are emitted **from the web-server, not the agent** — agent
+subprocesses inherit the trace context but don't run their own exporter, so the
+web-server (which already owns the OTel SDK lifecycle and receives the completion
+data) is the single emission point. The same change also fixed the
+completion-event `traceparent` to link to the real active span, so a build's
+metrics and its trace line up in your backend. The matching per-worker token/cost
+breakdown is also written to `token_usage.json` and carried on the v1.3 completion
+event — see [Task observability panels](./observability-panels.md).
+
 ## What's not yet supported
 
 - **Custom processors** (TailSamplingProcessor, attribute filters, etc.) — set via the OTel SDK's standard env vars (`OTEL_PROCESSOR_BSP_*`, `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`, etc.) which the Python SDK picks up automatically. AIFactory doesn't wrap these.
-- **Metrics + Logs** signals — only **Traces** in v1.1. The Prometheus metrics + structlog stack already covers those layers; OTel signals will land if/when operators ask for unification.
+- **Logs** signal — not yet emitted over OTLP; the structlog stack covers it (logs stay trace-aware via the shared trace ID). The **Metrics** signal now has a first set of OTel instruments (see below).
 - **Per-MCP-server spans inside the agent** — the agent inherits the parent trace context (so the trace ID is consistent), but the agent doesn't itself export spans for individual MCP calls in v1.1. The web-server's outbound `httpx` calls to MCP servers DO show up.
 
 ## See also
