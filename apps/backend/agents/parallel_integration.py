@@ -165,6 +165,61 @@ def emit_worker_live_event(
         logger.debug("[parallel] worker live event skipped", exc_info=True)
 
 
+def emit_worker_progress_heartbeat(
+    *,
+    spec_dir: Path,
+    project_dir: Path,
+    worker_id: str,
+    subtask_id: str | None,
+    provider: str | None,
+    model: str | None,
+    agent_phase: str | None,
+    total_tokens: int,
+    cost_usd: float,
+    elapsed_ms: int,
+) -> None:
+    """Emit ONE throttled per-worker PROGRESS heartbeat for a RUNNING worker
+    (#45 Tier 2).
+
+    Reuses the SAME completion emitter + transport as the terminal/worker_done
+    events via the lazily-loaded completion module (loaded by file path across
+    the subprocess/web-server import boundary). Fully best-effort and bounded:
+    the emitter throttles to at most one heartbeat per worker_id per ~10s window,
+    and any failure (module missing, transport down/slow) is swallowed here too —
+    so a heartbeat can NEVER fail, slow, or block the build. The one-shot
+    ``worker_done`` event still fires unchanged when the worker finishes.
+
+    ``spec_id`` / ``task_id`` / ``project_id`` are reconstructed exactly as the
+    terminal/worker emits derive them, so the heartbeat shares the same
+    correlation key.
+    """
+    try:
+        mod = _load_completion_emitter()
+        if mod is None or not hasattr(mod, "emit_worker_progress"):
+            return
+        spec_id = spec_dir.name
+        project_id = project_dir.name
+        worker_rec = {
+            "worker_id": worker_id,
+            "subtask_id": subtask_id,
+            "provider": provider,
+            "model": model,
+            "agent_phase": agent_phase,
+            "total_tokens": int(total_tokens),
+            "cost_usd": float(cost_usd or 0.0),
+            "elapsed_ms": int(elapsed_ms),
+        }
+        mod.emit_worker_progress(
+            spec_dir=spec_dir,
+            task_id=f"{project_id}:{spec_id}",
+            spec_id=spec_id,
+            project_id=project_id,
+            worker=worker_rec,
+        )
+    except Exception:  # noqa: BLE001 — a progress heartbeat must never break a build
+        logger.debug("[parallel] worker progress heartbeat skipped", exc_info=True)
+
+
 def _task_branch(project_dir: Path) -> str:
     """Return the current branch of the task worktree (merge target)."""
     result = subprocess.run(

@@ -10,13 +10,16 @@ _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
+from server.services import completion as _completion_mod  # noqa: E402
 from server.services.completion import (  # noqa: E402
     SERVICE_NAME,
     build_completion_event,
     build_worker_event,
+    build_worker_progress_event,
     correlation_key,
     emit_terminal_completion,
     emit_worker_completion,
+    emit_worker_progress,
     notify_completion,
     read_issue_number,
     read_usage,
@@ -803,3 +806,222 @@ def test_budget_over_does_not_abort_build(tmp_path, monkeypatch):
     assert ev["phase"] == "act"
     assert ev["usage"]["budget"]["exceeded"] is True
     assert ev["usage"]["budget"]["limit_usd"] == 0.10
+
+
+# ── #45 Tier 2: LIVE per-worker PROGRESS heartbeat (build/emit_worker_progress) ─
+
+
+def _progress_worker(**overrides):
+    rec = {
+        "worker_id": "sub-A",
+        "subtask_id": "sub-A",
+        "agent_phase": "coding",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "total_tokens": 340,
+        "cost_usd": 0.30,
+        "elapsed_ms": 4200,
+    }
+    rec.update(overrides)
+    return rec
+
+
+def _reset_progress_throttle():
+    """Clear the module-level per-worker throttle map between tests."""
+    _completion_mod._progress_last_emit.clear()
+
+
+def test_build_worker_progress_event_exact_shape():
+    """The progress heartbeat matches the EXACT Tier 2 contract a future CFactory
+    consumer matches against (status/phase/type + the worker{} snapshot)."""
+    ev = build_worker_progress_event(
+        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
+        project_id="proj", worker=_progress_worker(),
+        updated_at="2026-06-13T12:00:00+00:00",
+    )
+    assert _RFC_CORE <= set(ev)
+    assert ev["service"] == "aifactory"
+    assert ev["correlation_key"] == "412"
+    assert ev["task_id"] == "proj:spec-9"
+    assert ev["schema_version"] == "1.3"
+    assert ev["status"] == "running"
+    assert ev["phase"] == "worker_progress"
+    assert ev["type"] == "io.factory.aifactory.worker_progress"
+    assert ev["time"] == ev["updated_at"] == "2026-06-13T12:00:00+00:00"
+    assert _UUID_RE.match(ev["id"])
+    assert _TRACEPARENT_RE.match(ev["traceparent"])
+    assert ev["worker"] == {
+        "worker_id": "sub-A",
+        "subtask_id": "sub-A",
+        "agent_phase": "coding",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "total_tokens": 340,
+        "cost_usd": 0.30,
+        "elapsed_ms": 4200,
+    }
+
+
+def test_build_worker_progress_event_defaults_and_derives_total():
+    ev = build_worker_progress_event(
+        task_id="proj:s", spec_id="s", issue_number=None,
+        worker={"input_tokens": 10, "output_tokens": 5},  # no id, no total
+    )
+    assert ev["correlation_key"] == "af-s"  # synthetic key when no issue
+    assert ev["worker"]["worker_id"] == "main"
+    assert ev["worker"]["total_tokens"] == 15  # derived from in+out
+    assert ev["worker"]["cost_usd"] == 0.0
+    assert ev["worker"]["elapsed_ms"] == 0
+
+
+def test_worker_progress_event_validates_against_published_schema():
+    jsonschema = __import__("pytest").importorskip("jsonschema")
+    schema = json.loads(
+        (_WS / "server" / "services" / "completion_event.schema.json").read_text()
+    )
+    ev = build_worker_progress_event(
+        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
+        project_id="proj", worker=_progress_worker(provider="ollama", cost_usd=0.0),
+        updated_at="2026-06-13T12:00:00+00:00",
+    )
+    jsonschema.validate(ev, schema)  # phase:"worker_progress" + worker{} must validate
+
+
+def test_progress_throttle_one_emit_per_window(tmp_path, monkeypatch):
+    """Two calls within the window → exactly ONE emit; the second is skipped."""
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    _reset_progress_throttle()
+    # Pin a 10s window and a controllable monotonic clock.
+    monkeypatch.setenv("AIFACTORY_WORKER_PROGRESS_INTERVAL_S", "10")
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(_completion_mod.time, "monotonic", lambda: clock["t"])
+    spec = _spec_with_issue(tmp_path, 412)
+
+    ev1 = emit_worker_progress(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_progress_worker(),
+    )
+    assert ev1 is not None and ev1["status"] == "running"
+    # 5s later — still inside the 10s window → throttled (None).
+    clock["t"] = 1005.0
+    ev2 = emit_worker_progress(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_progress_worker(),
+    )
+    assert ev2 is None
+
+
+def test_progress_throttle_emits_again_after_window(tmp_path, monkeypatch):
+    """After the window elapses, the SAME worker emits again."""
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    _reset_progress_throttle()
+    monkeypatch.setenv("AIFACTORY_WORKER_PROGRESS_INTERVAL_S", "10")
+    clock = {"t": 2000.0}
+    monkeypatch.setattr(_completion_mod.time, "monotonic", lambda: clock["t"])
+    spec = _spec_with_issue(tmp_path, 412)
+
+    assert emit_worker_progress(
+        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
+        worker=_progress_worker(),
+    ) is not None
+    # 11s later — past the 10s window → emits again.
+    clock["t"] = 2011.0
+    assert emit_worker_progress(
+        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
+        worker=_progress_worker(),
+    ) is not None
+
+
+def test_progress_throttle_independent_per_worker(tmp_path, monkeypatch):
+    """The throttle is keyed per worker_id — a second worker emits immediately."""
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    _reset_progress_throttle()
+    monkeypatch.setenv("AIFACTORY_WORKER_PROGRESS_INTERVAL_S", "10")
+    monkeypatch.setattr(_completion_mod.time, "monotonic", lambda: 500.0)
+    spec = _spec_with_issue(tmp_path, 412)
+
+    assert emit_worker_progress(
+        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
+        worker=_progress_worker(worker_id="sub-A"),
+    ) is not None
+    # Different worker, same instant → NOT throttled.
+    assert emit_worker_progress(
+        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
+        worker=_progress_worker(worker_id="sub-B"),
+    ) is not None
+
+
+def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
+    """The heartbeat uses the SAME webhook transport as the other events."""
+    _reset_progress_throttle()
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+    captured = {}
+
+    class _Resp:
+        def close(self):
+            pass
+
+    def _fake(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["body"] = json.loads(req.data.decode())
+        return _Resp()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    spec = _spec_with_issue(tmp_path, 412)
+    emit_worker_progress(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_progress_worker(),
+    )
+    assert captured["url"] == "http://hook.test/c"
+    assert captured["body"]["status"] == "running"
+    assert captured["body"]["phase"] == "worker_progress"
+    assert captured["body"]["worker"]["elapsed_ms"] == 4200
+
+
+def test_progress_emit_best_effort_on_raising_transport(tmp_path, monkeypatch):
+    """A raising transport MUST NOT propagate — the heartbeat is best-effort."""
+    _reset_progress_throttle()
+    monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
+
+    def _boom(req, timeout=None):
+        raise OSError("refused")
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    spec = _spec_with_issue(tmp_path, 1)
+    # Must not raise — the slot was reserved and the transport error swallowed.
+    ev = emit_worker_progress(
+        spec_dir=spec, task_id="t", spec_id="s", project_id="p",
+        worker=_progress_worker(),
+    )
+    # Built + returned despite the transport failure (best-effort).
+    assert ev is not None and ev["status"] == "running"
+
+
+def test_progress_sentinel_is_rolling_and_never_clobbers(tmp_path, monkeypatch):
+    """The heartbeat sentinel is a rolling WORKER.<id>.progress.json — it does NOT
+    clobber the worker's final WORKER.<id>.json or the terminal COMPLETED.json."""
+    _reset_progress_throttle()
+    monkeypatch.setenv("AIFACTORY_COMPLETION_SENTINEL", "1")
+    monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
+    spec = _spec_with_issue(tmp_path, 412)
+    # Pre-existing terminal + worker-done sentinels must survive.
+    (spec / "COMPLETED.json").write_text(json.dumps({"keep": "terminal"}))
+    (spec / "WORKER.sub-A.json").write_text(json.dumps({"keep": "worker_done"}))
+
+    emit_worker_progress(
+        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
+        project_id="proj", worker=_progress_worker(worker_id="sub-A"),
+    )
+    progress = spec / "WORKER.sub-A.progress.json"
+    assert progress.exists()
+    assert json.loads(progress.read_text())["phase"] == "worker_progress"
+    # The other sentinels are untouched.
+    assert json.loads((spec / "COMPLETED.json").read_text()) == {"keep": "terminal"}
+    assert json.loads((spec / "WORKER.sub-A.json").read_text()) == {"keep": "worker_done"}

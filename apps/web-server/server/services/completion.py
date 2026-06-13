@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,38 @@ _CE_TYPE_WORKER = "io.factory.aifactory.worker"
 # Status + phase of the live sub-event each worker emits as it finishes.
 _WORKER_STATUS = "worker_done"
 _WORKER_PHASE = "worker"
+
+# Live per-worker PROGRESS heartbeat (#45 P2 Tier 2): a periodic "still running"
+# event emitted from the per-worker run path while a worker is in flight, so the
+# cockpit can render a per-second-ticking graph for a running task. Distinct from
+# the one-shot ``worker_done`` event above: a worker emits MANY progress
+# heartbeats while running and exactly one ``worker_done`` when it finishes.
+_CE_TYPE_WORKER_PROGRESS = "io.factory.aifactory.worker_progress"
+_WORKER_PROGRESS_STATUS = "running"
+_WORKER_PROGRESS_PHASE = "worker_progress"
+
+# Heartbeat throttle window (seconds). At most one progress event per worker_id
+# per window, so a fast per-turn loop can't flood the transport — the heartbeat
+# is a bounded ~1-point-per-window signal, not a per-turn firehose. Overridable
+# for tests/ops via AIFACTORY_WORKER_PROGRESS_INTERVAL_S.
+_WORKER_PROGRESS_WINDOW_S = 10.0
+
+# Per-worker_id monotonic timestamp of the last progress emit. Module-level
+# state: one running build is one subprocess, so this map is naturally scoped to
+# a single task's lifetime. ``{worker_id: last_emit_monotonic}``.
+_progress_last_emit: dict[str, float] = {}
+
+
+def _progress_window_s() -> float:
+    """The throttle window in seconds (env-overridable, defaults to ~10s)."""
+    raw = os.environ.get("AIFACTORY_WORKER_PROGRESS_INTERVAL_S")
+    if raw is None:
+        return _WORKER_PROGRESS_WINDOW_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return _WORKER_PROGRESS_WINDOW_S
+    return val if val >= 0 else _WORKER_PROGRESS_WINDOW_S
 
 
 def _now_iso() -> str:
@@ -463,6 +496,75 @@ def build_worker_event(
     return event
 
 
+def build_worker_progress_event(
+    *,
+    task_id: str,
+    spec_id: str,
+    issue_number: int | None,
+    worker: dict,
+    project_id: str | None = None,
+    updated_at: str | None = None,
+    event_id: str | None = None,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
+) -> dict:
+    """A LIVE per-worker PROGRESS heartbeat event (#45 Tier 2).
+
+    Sibling of :func:`build_worker_event`, but for a worker that is STILL
+    RUNNING: it carries ``status="running"`` / ``phase="worker_progress"`` and a
+    distinct CloudEvents ``type`` (``io.factory.aifactory.worker_progress``) so a
+    consumer can stream a per-second-ticking graph of a live task and route these
+    heartbeats apart from both the terminal rollup and the one-shot
+    ``worker_done`` event. A worker emits MANY of these while running (throttled
+    — see :func:`emit_worker_progress`) and exactly one ``worker_done`` when it
+    finishes; the ``worker_done`` / terminal events are unchanged.
+
+    The ``worker`` object is the running snapshot the per-worker run path holds
+    (cumulative ``total_tokens`` / ``cost_usd`` and ``elapsed_ms`` since the
+    worker started). Shape mirrors the EXACT v1.3 heartbeat contract a future
+    CFactory consumer matches against.
+    """
+    when = updated_at or _now_iso()
+    rec = worker or {}
+    in_tok = int(rec.get("input_tokens", 0) or 0)
+    out_tok = int(rec.get("output_tokens", 0) or 0)
+    worker_block = {
+        "worker_id": str(rec.get("worker_id") or "main"),
+        "subtask_id": rec.get("subtask_id"),
+        "agent_phase": rec.get("agent_phase") or rec.get("phase"),
+        "provider": rec.get("provider"),
+        "model": rec.get("model"),
+        "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+        "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+        "elapsed_ms": int(rec.get("elapsed_ms", 0) or 0),
+    }
+    event = {
+        "correlation_key": correlation_key(spec_id, issue_number),
+        "service": SERVICE_NAME,
+        "task_id": task_id,
+        "status": _WORKER_PROGRESS_STATUS,
+        "phase": _WORKER_PROGRESS_PHASE,
+        "updated_at": when,
+        "correlation": {
+            "issue_number": issue_number,
+            "spec_id": spec_id,
+            "project_id": project_id,
+        },
+        "schema_version": _SCHEMA_VERSION,
+        "event": "completion",
+        "id": event_id or _new_event_id(),
+        "specversion": _CE_SPECVERSION,
+        "source": _ce_source(),
+        "type": _CE_TYPE_WORKER_PROGRESS,
+        "time": when,
+        "traceparent": traceparent or _new_traceparent(),
+        "worker": worker_block,
+    }
+    if tracestate:
+        event["tracestate"] = tracestate
+    return event
+
+
 def emit_worker_completion(
     *,
     spec_dir: Path,
@@ -529,6 +631,93 @@ def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
         urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
     except Exception:
         logger.debug("worker sub-event webhook failed (best-effort)", exc_info=True)
+
+
+def emit_worker_progress(
+    *,
+    spec_dir: Path,
+    task_id: str,
+    spec_id: str,
+    project_id: str | None,
+    worker: dict,
+) -> dict | None:
+    """Build + best-effort emit ONE throttled per-worker PROGRESS heartbeat
+    (#45 Tier 2).
+
+    THROTTLED: at most one heartbeat per ``worker_id`` per window (~10s, see
+    :data:`_WORKER_PROGRESS_WINDOW_S`). Repeated calls inside the window are
+    skipped and return ``None`` — so a fast per-turn build loop produces a
+    bounded ~1-point-per-window heartbeat, never a flood. The throttle is keyed
+    on a monotonic clock so it's wall-clock-jump safe.
+
+    Best-effort + non-blocking by contract: a missing/slow/raising transport is
+    swallowed (mirrors :func:`emit_worker_completion`). It must NEVER fail, slow,
+    or block the build. Returns the emitted event, or ``None`` when throttled or
+    on any failure.
+
+    Transport reuses the live sub-event path (:func:`_notify_worker_progress`),
+    but the sentinel is a ROLLING ``WORKER.<id>.progress.json`` file — it is
+    overwritten on each heartbeat and never clobbers the terminal
+    ``COMPLETED.json`` or the worker's final ``WORKER.<id>.json``.
+    """
+    try:
+        wid = str((worker or {}).get("worker_id") or "main")
+        now = time.monotonic()
+        window = _progress_window_s()
+        last = _progress_last_emit.get(wid)
+        if last is not None and (now - last) < window:
+            return None  # throttled — within the per-worker window
+        # Reserve the slot BEFORE emitting so a slow transport can't let a
+        # second concurrent call slip through the window.
+        _progress_last_emit[wid] = now
+        event = build_worker_progress_event(
+            task_id=task_id,
+            spec_id=spec_id,
+            issue_number=read_issue_number(spec_dir),
+            project_id=project_id,
+            worker=worker,
+        )
+        _notify_worker_progress(event, spec_dir=spec_dir)
+        return event
+    except Exception:  # noqa: BLE001 — a progress heartbeat must never break a build
+        logger.debug("worker progress heartbeat emit failed (best-effort)", exc_info=True)
+        return None
+
+
+def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
+    """Best-effort heartbeat transport: opt-in rolling sentinel + opt-in webhook.
+
+    Mirrors :func:`_notify_worker`, but the sentinel is a ROLLING
+    ``WORKER.<id>.progress.json`` (overwritten each heartbeat) so it never
+    collides with the worker's final ``WORKER.<id>.json`` or the terminal
+    ``COMPLETED.json``. Never raises."""
+    if _sentinel_enabled() and spec_dir is not None:
+        try:
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            wid = str((event.get("worker") or {}).get("worker_id") or "main")
+            safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in wid)
+            (spec_dir / f"WORKER.{safe}.progress.json").write_text(
+                json.dumps(event, indent=2)
+            )
+        except OSError:
+            pass
+
+    url = _webhook_url()
+    if not url:
+        return
+    try:
+        import urllib.request
+
+        timeout = float(os.environ.get("AIFACTORY_COMPLETION_WEBHOOK_TIMEOUT", "5"))
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=timeout).close()  # noqa: S310
+    except Exception:
+        logger.debug("worker progress webhook failed (best-effort)", exc_info=True)
 
 
 def _webhook_url() -> str | None:

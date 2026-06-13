@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://factory.dev/schemas/rfc-0001/completion-event-1.3.json",
-  "title": "Factory RFC-0001 completion event (v1.3, per-worker usage + live sub-events)",
-  "description": "AIFactory completion events. v1.3 (#45 P1) additively (a) extends the terminal event's usage block with a per-worker breakdown (usage.workers[]) and by_provider{} / by_model{} rollups (scalar usage fields kept for back-compat), and (b) adds a LIVE per-worker sub-event with phase:\"worker\", status:\"worker_done\", and an additive top-level worker{} object emitted as each parallel/serial worker finishes. v1.2 (#466) added a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation; the worker object and the new usage fields are optional, so old producers/consumers still validate.",
+  "title": "Factory RFC-0001 completion event (v1.3, per-worker usage + live sub-events + progress heartbeats)",
+  "description": "AIFactory completion events. v1.3 (#45 P1) additively (a) extends the terminal event's usage block with a per-worker breakdown (usage.workers[]) and by_provider{} / by_model{} rollups (scalar usage fields kept for back-compat), and (b) adds a LIVE per-worker sub-event with phase:\"worker\", status:\"worker_done\", and an additive top-level worker{} object emitted as each parallel/serial worker finishes. v1.3 Tier 2 (#45) additionally adds a LIVE per-worker PROGRESS heartbeat with phase:\"worker_progress\", status:\"running\", and a worker{} snapshot ({worker_id, subtask_id, agent_phase, provider, model, total_tokens, cost_usd, elapsed_ms}) emitted periodically (throttled) while a worker is still running. v1.2 (#466) added a per-event idempotency id, CloudEvents-core fields, and W3C trace context alongside the legacy RFC-0001 fields. additionalProperties is permitted so the envelope can keep growing additively without breaking validation; the worker object and the new usage fields are optional, so old producers/consumers still validate.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -51,7 +51,7 @@
     "tracestate": { "type": "string" },
     "worker": {
       "type": "object",
-      "description": "Per-worker (per-subtask) record carried by a LIVE sub-event (phase:\"worker\", status:\"worker_done\") emitted as that worker finishes (v1.3, #45 P1). Additive and optional; absent on the terminal event and for old producers. Dedup key for consumers: (service, correlation_key, worker.worker_id).",
+      "description": "Per-worker (per-subtask) record carried by a LIVE sub-event. Two flavours, distinguished by the event's phase/status/type: (1) the one-shot worker-DONE event (phase:\"worker\", status:\"worker_done\") emitted as a worker finishes (v1.3, #45 P1), carrying input/output/total tokens, cost_usd, and duration_ms; (2) the periodic PROGRESS heartbeat (phase:\"worker_progress\", status:\"running\", type io.factory.aifactory.worker_progress) emitted while a worker is still running (v1.3 Tier 2, #45), carrying the running snapshot total_tokens, cost_usd, and elapsed_ms. Both are additive and optional; absent on the terminal event and for old producers. Dedup/identity key for consumers: (service, correlation_key, worker.worker_id).",
       "properties": {
         "worker_id": { "type": "string", "minLength": 1 },
         "subtask_id": { "type": ["string", "null"] },
@@ -62,7 +62,8 @@
         "output_tokens": { "type": "integer" },
         "total_tokens": { "type": "integer" },
         "cost_usd": { "type": "number" },
-        "duration_ms": { "type": "integer" }
+        "duration_ms": { "type": "integer" },
+        "elapsed_ms": { "type": "integer" }
       }
     },
     "usage": {
