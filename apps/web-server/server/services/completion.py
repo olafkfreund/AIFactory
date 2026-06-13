@@ -72,9 +72,24 @@ def _new_event_id() -> str:
 def _new_traceparent() -> str:
     """A valid W3C ``traceparent`` (version 00, sampled flag set).
 
-    ``00-<16-byte trace-id>-<8-byte span-id>-01`` — a freshly rooted trace for
-    this terminal event when no inbound context is being propagated.
+    Prefer the CURRENTLY ACTIVE span's trace context (#45 P1): when this
+    terminal event is built inside a request/task span (FastAPI auto-
+    instrumentation has one open when OTel is enabled), reusing its
+    ``traceparent`` LINKS the completion event to that trace instead of
+    rooting an orphan. Falls back to a freshly rooted synthetic trace
+    (``00-<16-byte trace-id>-<8-byte span-id>-01``) when no span is active —
+    e.g. OTel disabled, or emitted outside a request context. Additive + safe:
+    the return shape is unchanged and the fallback matches the old behavior.
     """
+    try:
+        from ..observability.tracing import get_current_traceparent
+
+        active = get_current_traceparent()
+        if active:
+            return active
+    except Exception:
+        # Any import/lookup failure → fall through to the synthetic value.
+        pass
     trace_id = secrets.token_hex(16)
     span_id = secrets.token_hex(8)
     return f"00-{trace_id}-{span_id}-01"
@@ -209,7 +224,26 @@ def read_usage(spec_dir: Path) -> dict | None:
         block["workers"] = workers
         block["by_provider"] = _rollup(workers, "provider")
         block["by_model"] = _rollup(workers, "model")
+        # OTel per-worker / per-provider metric emission (#45 P1). Complete
+        # no-op when OTel is disabled (no exporter endpoint) and best-effort
+        # otherwise — never affects the usage block or the completion path.
+        _emit_worker_metrics(workers)
     return block
+
+
+def _emit_worker_metrics(workers: list[dict]) -> None:
+    """Re-emit the per-worker breakdown as OTel metrics (#45 P1).
+
+    The OTLP exporter lives in the web-server (the agent subprocess has none),
+    so the worker records the agent persisted are exported from here at task
+    end. A complete no-op when OTel is disabled; never raises.
+    """
+    try:
+        from ..observability.metrics_otel import record_worker_metrics_batch
+
+        record_worker_metrics_batch(workers)
+    except Exception:  # noqa: BLE001 — metrics must never break completion
+        logger.debug("worker metrics emit failed (best-effort)", exc_info=True)
 
 
 def build_completion_event(
