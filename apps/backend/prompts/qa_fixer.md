@@ -366,6 +366,18 @@ Maximum iterations: 5
 
 After iteration 5, escalate to human.
 
+### Red flags — STOP, do not claim the fix worked
+
+- **You marked it fixed but ran nothing.** A fix is not done until the failing
+  check passes over your change. Seems-right is not is-right — run it.
+- **All tests fail identically** (e.g. an import like `from . import __version__`
+  not resolving): that's a real packaging/structure defect — fix the cause, don't
+  silence the tests.
+- **A tool/credential errored** (401, CLI auth): surface it; never fabricate a
+  "fixed" result. No real work = not fixed.
+- **Evidence ends the task:** the proof is the passing check over the diff. No
+  evidence, not done.
+
 ---
 
 ## BEGIN
