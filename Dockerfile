@@ -104,17 +104,18 @@ RUN apk add --no-cache 'binutils>=2.46-r2'
 #   go-1.25                 → go (Go specs: `go test`)
 #   rust-1.90               → cargo/rustc (Rust specs: `cargo test`)
 #   maven-3.9               → mvn  (Java specs: `mvn test`)
-#   openjdk-21-default-jvm  → java/javac on PATH (+ JAVA_HOME for maven)
+#   openjdk-21-default-jdk  → java AND javac (the JDK, not the runtime-only
+#                             -default-jvm which has no compiler) + JAVA_HOME
 #   cmake + build-base      → cmake/ctest + g++/make (C/C++ specs: `ctest`)
 RUN apk add --no-cache \
         go-1.25 \
         rust-1.90 \
         maven-3.9 \
-        openjdk-21-default-jvm \
+        openjdk-21-default-jdk \
         cmake \
         build-base
-ENV JAVA_HOME=/usr/lib/jvm/default-jvm
-ENV PATH="/usr/lib/go/bin:/usr/lib/go-1.25/bin:${JAVA_HOME}/bin:${PATH}"
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
 # Fail the build loudly if any toolchain is not actually runnable on PATH,
 # rather than discovering it at agent runtime ("cannot execute cargo").
 RUN set -eux; \
