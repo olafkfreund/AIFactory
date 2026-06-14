@@ -96,6 +96,13 @@ class Subtask(BaseModel):
     status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
     files: list[str] = Field(default_factory=list)  # Files affected by this subtask
     verification: SubtaskVerification | None = None  # How to verify completion
+    # Dependency-graph + timing fields (#94: feeds the cockpit's live execution
+    # diagram). Additive + optional — older plans without them serialize as
+    # [] / null and the diagram degrades gracefully.
+    depends_on: list[str] = Field(default_factory=list)  # IDs of prerequisite subtasks
+    service: str | None = None  # Which service (backend/frontend/worker) — diagram accent
+    started_at: str | None = None  # ISO; set when the subtask is picked up
+    completed_at: str | None = None  # ISO; set when it finishes
 
 
 class TaskBase(BaseModel):
@@ -665,6 +672,14 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             type="command", run=st["verification_method"]
                         )
 
+                    # Dependency edges + timing for the live diagram (#94). The
+                    # planner persists these via the implementation_plan Subtask
+                    # dataclass; tolerate absence (defaults keep old plans valid).
+                    depends_on = st.get("depends_on")
+                    if not isinstance(depends_on, list):
+                        depends_on = []
+                    depends_on = [d for d in depends_on if isinstance(d, str)]
+
                     metadata["subtasks"].append(
                         Subtask(
                             id=st.get("id", str(i)),
@@ -674,6 +689,10 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             status=st.get("status", "pending"),
                             files=files,
                             verification=verification,
+                            depends_on=depends_on,
+                            service=st.get("service"),
+                            started_at=st.get("started_at"),
+                            completed_at=st.get("completed_at"),
                         )
                     )
         except (json.JSONDecodeError, KeyError):
@@ -1023,6 +1042,11 @@ def task_to_dict(task: Task) -> dict:
                 }
                 if s.verification
                 else None,
+                # Dependency graph + timing for the cockpit's live diagram (#94).
+                "depends_on": getattr(s, "depends_on", []),
+                "service": getattr(s, "service", None),
+                "started_at": getattr(s, "started_at", None),
+                "completed_at": getattr(s, "completed_at", None),
             }
             for s in task.subtasks
         ],
