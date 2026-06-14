@@ -39,6 +39,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .billing import classify_billing_mode
+
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
@@ -191,6 +193,10 @@ def _worker_records(agg: dict) -> list[dict]:
                 or (in_tok + out_tok),
                 "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
                 "duration_ms": int(rec.get("duration_ms", 0) or 0),
+                # Billing mode (#96): api/cloud are metered (show cost);
+                # subscription/local are not (show tokens + time). Lets CFactory
+                # avoid surfacing a notional dollar cost for subscription/local work.
+                "billing_mode": classify_billing_mode(rec.get("provider")),
             }
         )
     # Deterministic order for stable events/tests.
@@ -222,6 +228,11 @@ def _rollup(records: list[dict], key: str) -> dict:
         slot["total_tokens"] += int(rec.get("total_tokens", 0) or 0)
         slot["cost_usd"] = round(slot["cost_usd"] + float(rec.get("cost_usd", 0.0) or 0.0), 6)
         slot["workers"] += 1
+        slot["duration_ms"] = int(slot.get("duration_ms", 0)) + int(rec.get("duration_ms", 0) or 0)
+        # A provider bucket shares one billing mode; carry it so CFactory knows
+        # whether this bucket's spend is real dollars or notional (#96).
+        if rec.get("billing_mode"):
+            slot.setdefault("billing_mode", rec.get("billing_mode"))
     return out
 
 

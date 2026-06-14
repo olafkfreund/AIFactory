@@ -89,7 +89,12 @@
               "output_tokens": { "type": "integer" },
               "total_tokens": { "type": "integer" },
               "cost_usd": { "type": "number" },
-              "duration_ms": { "type": "integer" }
+              "duration_ms": { "type": "integer" },
+              "billing_mode": {
+                "type": ["string", "null"],
+                "enum": ["api", "cloud", "subscription", "local", "unknown", null],
+                "description": "Billing mode of this worker's provider (v1.3, #96). api/cloud are metered (real cost_usd); subscription/local are not (cost_usd is notional/zero - show tokens + time instead). Additive/optional."
+              }
             }
           }
         },
@@ -103,7 +108,13 @@
               "output_tokens": { "type": "integer" },
               "total_tokens": { "type": "integer" },
               "cost_usd": { "type": "number" },
-              "workers": { "type": "integer" }
+              "workers": { "type": "integer" },
+              "duration_ms": { "type": "integer" },
+              "billing_mode": {
+                "type": ["string", "null"],
+                "enum": ["api", "cloud", "subscription", "local", "unknown", null],
+                "description": "Billing mode shared by this provider's workers (#96). Metered when api/cloud; subscription/local are not."
+              }
             }
           }
         },
