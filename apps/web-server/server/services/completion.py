@@ -382,6 +382,19 @@ def build_completion_event(
         let a fresh ``traceparent`` be rooted here. ``tracestate`` is omitted
         unless supplied.
     """
+    # RFC-0001a evidence gate: a build may only claim a SUCCESS status if it
+    # carries proof it actually ran. A 0-token "completed" is a dead build — an
+    # expired provider credential produces a stub plan that finishes in seconds
+    # having consumed nothing, and was historically reported green. Downgrade it
+    # to failed with a "no_evidence" reason so no consumer can render it as a
+    # pass. Scoped to events that carry usage (i.e. build events); never touches
+    # the legitimate FAILED path or non-build events.
+    _SUCCESS_STATUSES = {"completed", "passed", "verified", "succeeded"}
+    if status in _SUCCESS_STATUSES and usage is not None:
+        _evidence_tokens = int((usage or {}).get("total_tokens", 0) or 0)
+        if _evidence_tokens <= 0:
+            status = "failed"
+            halt_reason = halt_reason or "no_evidence: build emitted 0 tokens (did not run)"
     when = updated_at or _now_iso()
     event = {
         "correlation_key": correlation_key(spec_id, issue_number),
@@ -414,6 +427,13 @@ def build_completion_event(
         event["tracestate"] = tracestate
     if usage is not None:
         event["usage"] = usage
+        # RFC-0001a evidence block: the proof this build stage ran. `tokens` is
+        # the gate field (see the downgrade above); consumers MAY require it.
+        event["evidence"] = {
+            "proof_kind": "tokens",
+            "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            "cost_usd": float(usage.get("cost_usd", 0.0) or 0.0),
+        }
     # Anti-loop guardrail (#474): when the Act loop halted on no-progress, carry
     # the typed reason so CFactory can show *why* a WorkItem stalled.
     if halt_reason:
