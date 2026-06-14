@@ -33,3 +33,22 @@ All `/api/*` routes require a bearer token (`Authorization: Bearer <token>`):
 Object-level authorization (per-org access on projects, tasks, and files) is
 enforced for human JWT users; the service token bypasses for trusted M2M
 traffic. See the security epic for details.
+
+## Task-detail subtask graph fields
+
+`GET /api/tasks/{id}` returns each subtask with dependency-graph and timing
+fields alongside the existing `id`, `title`, `description`, `status`, `files`,
+and `verification`:
+
+| Field | Type | Notes |
+|---|---|---|
+| `depends_on` | `string[]` | IDs of prerequisite subtasks (dependency edges) |
+| `service` | `string \| null` | Which service the subtask touches (backend / frontend / worker) |
+| `started_at` | `string \| null` | ISO timestamp, set when the subtask is picked up |
+| `completed_at` | `string \| null` | ISO timestamp, set when the subtask finishes |
+
+These are tracked on the internal `implementation_plan` subtask and are now
+serialized at the API boundary so the cockpit (CFactory) can render the live
+code-stage execution diagram. They are **additive and optional**: plans without
+them serialize as `[]` / `null`, so existing consumers are unaffected and the
+diagram degrades gracefully.
