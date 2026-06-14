@@ -93,7 +93,7 @@ class Subtask(BaseModel):
     id: str
     title: str
     description: str | None = None
-    status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
+    status: Literal["pending", "in_progress", "completed", "failed", "blocked"] = "pending"
     files: list[str] = Field(default_factory=list)  # Files affected by this subtask
     verification: SubtaskVerification | None = None  # How to verify completion
     # Dependency-graph + timing fields (#94: feeds the cockpit's live execution
