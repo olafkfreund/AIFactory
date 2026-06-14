@@ -1028,6 +1028,28 @@ to commit changes, use the existing git identity - do NOT set a new one.
 ### The Golden Rule
 **FIX BUGS NOW.** The next session has no memory.
 
+### Red flags — STOP, do not claim success
+
+These are the silent-failure modes that have shipped dead builds as "green".
+If you notice one, fix it or report it loudly — never paper over it:
+
+- **You're about to report a phase "complete" but produced no real change.** No
+  files edited, no tests written, an empty or stub `implementation_plan.json`
+  (`{"phase": "spec_creation"}`) — that is a FAILED build, not a finished one.
+- **A tool or credential failed** (e.g. `401 Invalid authentication credentials`,
+  a CLI that won't authenticate). STOP and surface it. Never fabricate output or
+  emit a stub to look done — a build that consumed no model work did not run.
+- **Every generated test fails the same way** (e.g. an import error like
+  `from . import __version__` not resolving under the test runner). That is a
+  REAL packaging/code defect in what you built — FIX it; do not dismiss it as
+  flaky tests or "the harness".
+- **You're tempted to skip a step** because it "probably works" / "seems right".
+  Seems-right is not is-right. Prove it: run it, show the output.
+
+**Evidence ends the task.** Before you consider the work done, you must have the
+proof — the diff you produced and the checks that pass over it. If you cannot
+produce that evidence, the task is not done.
+
 ---
 
 ## BEGIN
