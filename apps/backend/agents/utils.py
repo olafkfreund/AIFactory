@@ -114,3 +114,53 @@ def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     except Exception as e:
         logger.warning(f"Failed to sync implementation plan to source: {e}")
         return False
+
+
+def record_subtask_completion(
+    subtask_id: str, plan_path: Path, source_spec_dir: Path | None
+) -> bool:
+    """Mark a subtask completed in the canonical implementation plan + sync it.
+
+    The parallel coder records completion via the parent's ``plan_path``
+    (``spec_dir/implementation_plan.json``). When that worktree spec dir holds no
+    plan, a bare ``ImplementationPlan.load(plan_path)`` throws and the caller
+    swallows it — so completion is silently lost, the canonical plan stays at 0
+    completed, and the finalize step reports a SUCCESSFUL build as ``failed``.
+    Fall back to the canonical ``source_spec_dir`` plan in that case, and never
+    fail silently: return False (the caller logs) when no plan can be found.
+
+    Returns True iff a subtask was found and its completion persisted.
+    """
+    from implementation_plan.plan import ImplementationPlan
+
+    target = plan_path
+    if not target.exists() and source_spec_dir is not None:
+        fallback = source_spec_dir / "implementation_plan.json"
+        if fallback.exists():
+            target = fallback
+    if not target.exists():
+        logger.error(
+            "record_subtask_completion: no implementation_plan.json at %s "
+            "(nor source %s) — subtask %s completion NOT recorded; the build may "
+            "be falsely reported failed",
+            plan_path,
+            source_spec_dir,
+            subtask_id,
+        )
+        return False
+
+    plan = ImplementationPlan.load(target)
+    found = False
+    for phase in plan.phases:
+        for subtask in phase.subtasks:
+            if subtask.id == subtask_id:
+                subtask.complete()
+                found = True
+    if not found:
+        return False
+
+    plan.save(target)
+    # Propagate the worktree plan to the canonical source (no-op when target is
+    # already the source).
+    sync_plan_to_source(target.parent, source_spec_dir)
+    return True

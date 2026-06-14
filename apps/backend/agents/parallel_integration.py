@@ -53,7 +53,7 @@ from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_agent_session
 from .token_attribution import PromptSegments, TurnUsage, record_turn
-from .utils import sync_plan_to_source
+from .utils import record_subtask_completion, sync_plan_to_source
 from .wave_log import WaveRecorder
 
 logger = logging.getLogger(__name__)
@@ -648,15 +648,21 @@ async def run_parallel_coding_phase(
 
     async def mark_complete(subtask: Any) -> None:
         # Parent-owned, serialized canonical plan write (concurrency invariant #3).
+        # record_subtask_completion falls back to the canonical source plan when
+        # the worktree spec dir has no implementation_plan.json — otherwise the
+        # update is silently lost and the successful build is reported failed.
         async with plan_lock:
             try:
-                canonical = ImplementationPlan.load(plan_path)
-                for ph in canonical.phases:
-                    for st in ph.subtasks:
-                        if st.id == subtask.id:
-                            st.complete()
-                canonical.save(plan_path)
-                sync_plan_to_source(spec_dir, source_spec_dir)
+                if not record_subtask_completion(
+                    subtask.id, plan_path, source_spec_dir
+                ):
+                    logger.error(
+                        "[parallel] mark_complete %s: completion not recorded "
+                        "(plan not found at %s or source %s)",
+                        subtask.id,
+                        plan_path,
+                        source_spec_dir,
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.error("[parallel] mark_complete %s failed: %s", subtask.id, exc)
 
