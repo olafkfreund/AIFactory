@@ -50,7 +50,7 @@ class Classification:
     handoff: str | None  # "aifactory" | "tfactory" | None
     is_epic: bool  # `epic` label present
     governed: bool  # pfactory AND routed to aifactory → skip planning gate
-    types: tuple[str, ...]  # type:* values, prefix stripped
+    types: tuple[str, ...]  # values from type:* labels, prefix stripped
     plan_type: str | None  # first plan-type:* value, prefix stripped
     priority: str | None  # first priority:* value (e.g. "p1"), prefix stripped
     sev: str | None  # first sev:* value, prefix stripped
