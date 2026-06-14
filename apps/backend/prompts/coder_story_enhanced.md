@@ -83,6 +83,8 @@ From `technical_context.stack`, you know what technologies to use:
 
 Don't invent your own - use what's specified. If architecture says "JWT for stateless auth", don't implement sessions.
 
+**Language is set by the SPEC, not the surrounding repo.** If the subtask's acceptance criteria call for a language/toolchain (e.g. `cargo test` → Rust, `mvn test` → Java, `ctest` → C++/CMake, `go test` → Go, `pytest` → Python) that differs from the files already in the repo, build the spec's language in its own self-contained project (its own manifest + sources) — do NOT edit the repo's existing-language files to make tests pass in the wrong language. If you cannot produce the spec's language, mark the subtask `blocked` with a `LANGUAGE CONFLICT` note rather than delivering the wrong language.
+
 **Dependencies:**
 From `technical_context.dependencies`, check that prerequisite stories are complete:
 ```json
