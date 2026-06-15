@@ -1,13 +1,14 @@
 """KubeJobBackend (#68): manifest builder + gate_runner kubejob selection."""
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
-from core.kube_sandbox import build_job_manifest  # noqa: E402
+from agents.gate_runner import _default_runner, _select_runner  # noqa: E402
 from core.factory_sandbox import RunResult  # noqa: E402
-from agents.gate_runner import _select_runner, _default_runner  # noqa: E402
+from core.kube_sandbox import _pvc_subpath, build_job_manifest  # noqa: E402
 
 
 def test_manifest_is_one_shot_gc_hardened():
@@ -26,6 +27,43 @@ def test_manifest_is_one_shot_gc_hardened():
     assert c["resources"]["limits"]["memory"] == "2Gi"
 
 
+def test_manifest_no_repo_mount_by_default():
+    # Toolchain-only Job (back-compat): no PVC volume, no workingDir.
+    m = build_job_manifest("fsbx-abc", "img", ["go version"])
+    t = m["spec"]["template"]["spec"]
+    assert "volumes" not in t
+    assert "volumeMounts" not in t["containers"][0]
+    assert "workingDir" not in t["containers"][0]
+
+
+def test_manifest_co_mounts_worktree_via_pvc_subpath():
+    m = build_job_manifest(
+        "fsbx-abc", "img", ["go build ./..."],
+        repo_pvc="aifactory-data",
+        repo_subpath="workspaces/olafkfreund-hello-go/.aifactory/worktrees/tasks/hello-go",
+    )
+    t = m["spec"]["template"]["spec"]
+    assert t["volumes"] == [{
+        "name": "repo",
+        "persistentVolumeClaim": {"claimName": "aifactory-data", "readOnly": False},
+    }]
+    c = t["containers"][0]
+    assert c["workingDir"] == "/work"
+    vm = c["volumeMounts"][0]
+    assert vm["name"] == "repo" and vm["mountPath"] == "/work"
+    assert vm["subPath"].endswith("worktrees/tasks/hello-go")
+    assert vm["readOnly"] is False
+
+
+def test_pvc_subpath_strips_data_root():
+    root = "/home/nonroot/.aifactory"
+    wt = root + "/workspaces/proj/.aifactory/worktrees/tasks/spec-x"
+    assert _pvc_subpath(wt, root) == "workspaces/proj/.aifactory/worktrees/tasks/spec-x"
+    assert _pvc_subpath(root, root) == ""              # PVC root itself
+    assert _pvc_subpath("/tmp/elsewhere", root) is None  # outside PVC -> no mount
+    assert _pvc_subpath(None, root) is None              # unset -> no mount
+
+
 def test_select_runner_kubejob_backend(monkeypatch):
     monkeypatch.setenv("AIFACTORY_SANDBOX_GATES", "1")
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/x/go:1.25")
@@ -35,8 +73,12 @@ def test_select_runner_kubejob_backend(monkeypatch):
     calls = {}
 
     class FakeKubeSandbox:
-        def __init__(self, image, **kw): calls["image"] = image
-        def run(self, commands, **kw): calls["commands"] = commands; return RunResult(True, 0, "go1.25", [])
+        def __init__(self, image, **kw):
+            calls["image"] = image
+
+        def run(self, commands, **kw):
+            calls["commands"] = commands
+            return RunResult(True, 0, "go1.25", [])
 
     monkeypatch.setattr(ks, "KubeJobSandbox", FakeKubeSandbox)
 

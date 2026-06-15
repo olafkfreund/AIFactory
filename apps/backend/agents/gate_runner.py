@@ -179,14 +179,25 @@ def _sandbox_runner(image: str) -> Callable[[list[str], Path], tuple[int | None,
 def _kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None, str]]:
     """Run a gate as an ephemeral k8s Job (#68 in-cluster backend). Same contract.
 
-    The workdir is not mounted yet (PVC RWO can't co-mount; tracked for RWX/tar-
-    inject), so this suits toolchain/no-repo gates until that lands.
+    The task worktree (``cwd``) is co-mounted into the Job via the data PVC's
+    subPath (``AIFACTORY_SANDBOX_REPO_PVC``, default ``aifactory-data``; mount
+    prefix ``AIFACTORY_DATA_ROOT``, default ``/home/nonroot/.aifactory``), so
+    code-reading gates run against real files. Set the PVC to "" to disable the
+    mount and run toolchain-only Jobs. Unlike the docker runner this reports
+    Job success/failure (not the container's real exit code), so a missing tool
+    surfaces as a *failure* rather than *skipped* — acceptable, since a per-task
+    image is expected to carry its own toolchain.
     """
     from core.kube_sandbox import KubeJobSandbox
 
+    repo_pvc = os.environ.get("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data") or None
+    data_root = os.environ.get("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+
     def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
         try:
-            res = KubeJobSandbox(image).run([shlex.join(command)], timeout=GATE_TIMEOUT_SECONDS)
+            res = KubeJobSandbox(image, repo_pvc=repo_pvc, data_root=data_root).run(
+                [shlex.join(command)], workdir=str(cwd), timeout=GATE_TIMEOUT_SECONDS
+            )
         except Exception as exc:  # noqa: BLE001 - sandbox issues are gate failures, never crashes
             return 1, f"kube-sandbox error: {exc}"
         return (res.exit_code if res.ok else 1), res.output[-_OUTPUT_TAIL_CHARS:]
@@ -199,17 +210,25 @@ def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     into a per-task sandbox (#61 runtime adoption). OFF by default → no change.
     AIFACTORY_SANDBOX_BACKEND selects docker (host runtime) or kubejob (in-cluster).
     """
-    enabled = os.environ.get("AIFACTORY_SANDBOX_GATES", "").lower() in ("1", "true", "yes")
+    enabled = os.environ.get("AIFACTORY_SANDBOX_GATES", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     image = os.environ.get("AIFACTORY_SANDBOX_IMAGE", "")
     if enabled and image:
         backend = os.environ.get("AIFACTORY_SANDBOX_BACKEND", "docker").lower()
         if backend == "kubejob":
             logger.info("[gate] routing gates through k8s Job sandbox image %s", image)
             return _kube_runner(image)
-        logger.info("[gate] routing gates through docker factory-sandbox image %s", image)
+        logger.info(
+            "[gate] routing gates through docker factory-sandbox image %s", image
+        )
         return _sandbox_runner(image)
     if enabled and not image:
-        logger.warning("[gate] AIFACTORY_SANDBOX_GATES set but AIFACTORY_SANDBOX_IMAGE empty; using host runner")
+        logger.warning(
+            "[gate] AIFACTORY_SANDBOX_GATES set but AIFACTORY_SANDBOX_IMAGE empty; using host runner"
+        )
     return _default_runner
 
 
