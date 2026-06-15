@@ -176,14 +176,37 @@ def _sandbox_runner(image: str) -> Callable[[list[str], Path], tuple[int | None,
     return run
 
 
+def _kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None, str]]:
+    """Run a gate as an ephemeral k8s Job (#68 in-cluster backend). Same contract.
+
+    The workdir is not mounted yet (PVC RWO can't co-mount; tracked for RWX/tar-
+    inject), so this suits toolchain/no-repo gates until that lands.
+    """
+    from core.kube_sandbox import KubeJobSandbox
+
+    def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
+        try:
+            res = KubeJobSandbox(image).run([shlex.join(command)], timeout=GATE_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - sandbox issues are gate failures, never crashes
+            return 1, f"kube-sandbox error: {exc}"
+        return (res.exit_code if res.ok else 1), res.output[-_OUTPUT_TAIL_CHARS:]
+
+    return run
+
+
 def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     """Default runner: host subprocess, unless AIFACTORY_SANDBOX_GATES routes gates
-    into a per-task container (#61 runtime adoption). OFF by default → no change.
+    into a per-task sandbox (#61 runtime adoption). OFF by default → no change.
+    AIFACTORY_SANDBOX_BACKEND selects docker (host runtime) or kubejob (in-cluster).
     """
     enabled = os.environ.get("AIFACTORY_SANDBOX_GATES", "").lower() in ("1", "true", "yes")
     image = os.environ.get("AIFACTORY_SANDBOX_IMAGE", "")
     if enabled and image:
-        logger.info("[gate] routing gates through factory-sandbox image %s", image)
+        backend = os.environ.get("AIFACTORY_SANDBOX_BACKEND", "docker").lower()
+        if backend == "kubejob":
+            logger.info("[gate] routing gates through k8s Job sandbox image %s", image)
+            return _kube_runner(image)
+        logger.info("[gate] routing gates through docker factory-sandbox image %s", image)
         return _sandbox_runner(image)
     if enabled and not image:
         logger.warning("[gate] AIFACTORY_SANDBOX_GATES set but AIFACTORY_SANDBOX_IMAGE empty; using host runner")
