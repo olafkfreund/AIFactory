@@ -207,11 +207,15 @@ def copy_spec_to_worktree(
     # Create parent directories if needed
     target_spec_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    # Copy spec files (overwrite if exists to get latest)
+    # Copy spec files (overwrite if exists to get latest). Use dirs_exist_ok so a
+    # resume / concurrent setup_workspace (the target dir reappearing between the
+    # exists() check and the copy) merges instead of crashing with FileExistsError
+    # — which previously killed the trusted-plan build right after worktree
+    # creation, before any code was written (#71 follow-up).
     if target_spec_dir.exists():
-        shutil.rmtree(target_spec_dir)
+        shutil.rmtree(target_spec_dir, ignore_errors=True)
 
-    shutil.copytree(source_spec_dir, target_spec_dir)
+    shutil.copytree(source_spec_dir, target_spec_dir, dirs_exist_ok=True)
 
     return target_spec_dir
 

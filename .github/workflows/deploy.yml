@@ -1,0 +1,140 @@
+name: Deploy (CD → ArgoCD)
+
+# Continuous deployment: every push to main builds an immutable image,
+# pushes it to GHCR, then bumps the image tag in the factory-gitops repo.
+# ArgoCD (auto-sync) redeploys aifactory on the p510 k3d cluster.
+#
+# One-time setup: add a repo secret GITOPS_PAT — a token (fine-grained PAT
+# is best) with `contents: write` on olafkfreund/factory-gitops:
+#   gh secret set GITOPS_PAT --repo olafkfreund/AIFactory
+#
+# This is separate from release.yml (which cuts semver releases + SBOM on a
+# version bump). deploy.yml ships main continuously under sha-<short> tags.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/aifactory
+  GITOPS_REPO: olafkfreund/factory-gitops
+  GITOPS_PATH: apps/aifactory/manifests
+
+jobs:
+  build-push-bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AIFactory
+        uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: tags
+        run: echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Prefer GHCR_PAT (write:packages PAT) so pushes survive even if the
+          # aifactory package's repo linkage ever changes; fall back to the
+          # default token. Mirrors PFactory/TFactory (#511).
+          password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
+
+      # amd64 only — the k3d cluster on p510 is amd64, and the frontend
+      # `vite build` fails under QEMU-emulated arm64 (see release.yml).
+      - name: Build + push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Checkout factory-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Bump image tag in gitops
+        working-directory: gitops/${{ env.GITOPS_PATH }}
+        run: kustomize edit set image ${{ env.IMAGE }}=${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}
+
+      - name: Commit + push the bump
+        working-directory: gitops
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No image change to commit."
+            exit 0
+          fi
+          git add ${{ env.GITOPS_PATH }}/kustomization.yaml
+          git commit -m "cd(aifactory): ${{ steps.tags.outputs.sha }} [skip ci]
+
+          From olafkfreund/AIFactory@${{ github.sha }}"
+          git push
+
+      - name: Summary
+        run: |
+          echo "### Deployed aifactory \`${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "factory-gitops bumped → ArgoCD will auto-sync (or run \`argocd app sync aifactory\`)." >> "$GITHUB_STEP_SUMMARY"
+
+  # Post-deploy PARR seam smoke check (Factory#44). Steps-based on purpose: a
+  # cross-repo reusable-workflow `uses:` call fails the deploy at startup, so we
+  # check out the Factory harness and run it directly. Soft gate — continue-on-error
+  # plus `|| true` mean a probe failure can never break or roll back the deploy;
+  # self-skips when FACTORY_TOKEN is unset. TODO: tighten to a required gate once stable.
+  seam-check:
+    needs: build-push-bump
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout Factory seam harness
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: PARR seam smoke regression
+        env:
+          FACTORY_TOKEN: ${{ secrets.FACTORY_TOKEN }}
+          PFACTORY_API: ${{ vars.PFACTORY_API }}
+          AIFACTORY_API: ${{ vars.AIFACTORY_API }}
+          TFACTORY_API: ${{ vars.TFACTORY_API }}
+          CFACTORY_API: ${{ vars.CFACTORY_API }}
+        run: |
+          if [ -z "${FACTORY_TOKEN}" ]; then
+            echo "FACTORY_TOKEN not set — skipping seam smoke gate."
+            exit 0
+          fi
+          python3 scripts/parr_regression.py --smoke || true

@@ -52,6 +52,28 @@ Subtasks respect dependencies. The frontend can't show data the backend doesn't 
 
 **CRITICAL**: Before ANY planning, you MUST thoroughly investigate the existing codebase. Poor investigation leads to plans that don't match the codebase's actual patterns.
 
+### 0.0: Target Language/Stack — the SPEC wins over the repo (MANDATORY)
+
+Decide the target language and toolchain from the **spec**, not the repo. The
+acceptance criteria are authoritative: build/test commands like `cargo test`,
+`mvn test` / `gradle test`, `ctest`, `go test`, `pytest`, `npm test` name the
+required language and build tool; the title and description reinforce it.
+
+Investigate the existing codebase for its **conventions and structure** — but its
+language NEVER overrides the spec's. If the spec's required language differs from
+the repo's primary language:
+
+1. Plan a **self-contained sub-project in the spec's language**, in its own
+   directory, with its own manifest (`Cargo.toml` / `pom.xml` / `CMakeLists.txt`
+   / `go.mod` / `pyproject.toml` / `package.json`). List every such file
+   explicitly in the subtasks' `files_to_create`. Do **NOT** edit the repo's
+   existing-language files to fake the deliverable.
+2. If a correct-language project genuinely cannot be produced (toolchain absent,
+   contradictory constraints), **HALT and emit a `LANGUAGE CONFLICT` blocker** in
+   the plan instead of silently matching the repo. A plan that ships the wrong
+   language is a FAILURE even if its tests pass — a wrong-language "green" run is
+   the worst possible outcome.
+
 ### 0.1: Understand Project Structure
 
 ```bash

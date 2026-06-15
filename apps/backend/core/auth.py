@@ -13,17 +13,40 @@ import re
 import subprocess
 from pathlib import Path
 
-# Priority order for auth token resolution
-# NOTE: We intentionally do NOT fall back to ANTHROPIC_API_KEY.
-# Magestic AI is designed to use Claude Code OAuth tokens only.
-# This prevents silent billing to user's API credits when OAuth fails.
+# Priority order for auth token resolution.
+# NOTE: By DEFAULT we do NOT fall back to ANTHROPIC_API_KEY — AIFactory targets
+# Claude subscription (Max) OAuth, and a stray API key would silently bill the
+# user's API credits when OAuth is misconfigured/expired. Operators who bill via
+# a direct API key (no subscription) opt in with AIFACTORY_ALLOW_API_KEY=1 — see
+# api_key_auth_enabled(); when enabled, ANTHROPIC_API_KEY becomes a valid auth
+# source and is no longer scrubbed from agents.
 AUTH_TOKEN_ENV_VARS = [
     "CLAUDE_CODE_OAUTH_TOKEN",  # OAuth token from Claude Code CLI
     "ANTHROPIC_AUTH_TOKEN",  # CCR/proxy token (for enterprise setups)
 ]
 
+
+def api_key_auth_enabled() -> bool:
+    """True when the operator opted into direct ANTHROPIC_API_KEY auth.
+
+    Default **off**: AIFactory is OAuth-only (Claude subscription), and any
+    ANTHROPIC_API_KEY in the environment is scrubbed from agents so it can never
+    silently bill the Anthropic API. Operators whose intended billing model IS a
+    direct API key (no Max subscription) set ``AIFACTORY_ALLOW_API_KEY=1`` to
+    permit it — then the key is accepted as an auth token and passed through to
+    agents instead of being blanked.
+    """
+    return os.environ.get("AIFACTORY_ALLOW_API_KEY", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
 # Environment variables to pass through to SDK subprocess
-# NOTE: ANTHROPIC_API_KEY is intentionally excluded to prevent silent API billing
+# NOTE: ANTHROPIC_API_KEY is excluded here by default (prevents silent API
+# billing); it is added dynamically by get_sdk_env_vars() only when
+# AIFACTORY_ALLOW_API_KEY is set (opt-in).
 SDK_ENV_VARS = [
     # API endpoint configuration
     "ANTHROPIC_BASE_URL",
@@ -95,9 +118,14 @@ def get_agent_env_blanks() -> dict[str, str]:
     inherited environment — an explicit empty value overrides the inherited
     secret. Never blanks the agent's own auth vars (:data:`_AGENT_ENV_KEEP`).
     """
+    allow_api_key = api_key_auth_enabled()
     blanks: dict[str, str] = {}
     for key in os.environ:
         if key in _AGENT_ENV_KEEP:
+            continue
+        # When the operator opted into API-key auth, the agent legitimately needs
+        # ANTHROPIC_API_KEY — don't blank it. Default (off) still scrubs it.
+        if key == "ANTHROPIC_API_KEY" and allow_api_key:
             continue
         if key in _AGENT_ENV_DENY_EXACT or _AGENT_ENV_DENY_PATTERN.search(key):
             blanks[key] = ""
@@ -262,8 +290,18 @@ def get_auth_token() -> str | None:
     if token:
         return token
 
-    # Fallback to system credential store
-    return get_token_from_keychain()
+    # System credential store
+    token = get_token_from_keychain()
+    if token:
+        return token
+
+    # Opt-in only: a direct API key counts as auth when AIFACTORY_ALLOW_API_KEY
+    # is set (operators billing via API, no subscription). Off by default so a
+    # stray key never silently substitutes for a missing OAuth token.
+    if api_key_auth_enabled():
+        return os.environ.get("ANTHROPIC_API_KEY") or None
+
+    return None
 
 
 def get_auth_token_source() -> str | None:
@@ -291,6 +329,10 @@ def get_auth_token_source() -> str | None:
         else:
             return "System Credential Store"
 
+    # Opt-in direct API key (AIFACTORY_ALLOW_API_KEY).
+    if api_key_auth_enabled() and os.environ.get("ANTHROPIC_API_KEY"):
+        return "ANTHROPIC_API_KEY (opt-in)"
+
     return None
 
 
@@ -305,8 +347,9 @@ def require_auth_token() -> str:
     if not token:
         error_msg = (
             "No OAuth token found.\n\n"
-            "AIFactory requires Claude Code OAuth authentication.\n"
-            "Direct API keys (ANTHROPIC_API_KEY) are not supported.\n\n"
+            "AIFactory uses Claude Code OAuth authentication by default.\n"
+            "Direct API keys (ANTHROPIC_API_KEY) are opt-in: set "
+            "AIFACTORY_ALLOW_API_KEY=1 to bill via a direct key instead.\n\n"
         )
         # Provide platform-specific guidance
         system = platform.system()
@@ -350,6 +393,13 @@ def get_sdk_env_vars() -> dict[str, str]:
         value = os.environ.get(var)
         if value:
             env[var] = value
+    # Opt-in: pass the direct API key through to the SDK subprocess so the agent
+    # CLI can authenticate with it. Off by default (OAuth-only); see
+    # api_key_auth_enabled().
+    if api_key_auth_enabled():
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
     return env
 
 

@@ -206,10 +206,42 @@ bypass this hook — the allowlist is the gate.
 - **QA**: `qa_reviewer` validates acceptance criteria → `qa_report.md`; on
   rejection `qa_fixer` resolves issues in a bounded loop. Gates use
   `gate_runner.detect_gates`/`run_gates`.
+- **Agent red-flags** (`apps/backend/prompts/coder.md`, `qa_fixer.md`): both
+  prompts carry a "Red flags — STOP, do not claim success" block listing the
+  silent-failure modes that have shipped dead builds as green (no real change, a
+  failed tool/credential such as a `401`, every generated test failing
+  identically, skipping a step because it "probably works"). The closing rule is
+  **evidence ends the task** — the diff plus the checks that pass over it.
 
 ---
 
-## 11. Required vs optional — minimum to drive a task end to end
+## 11. Completion event & the evidence gate
+
+When a task reaches a terminal state the web-server emits the RFC-0001
+completion-event envelope (`apps/web-server/server/services/completion.py`,
+`build_completion_event`) keyed by `correlation_key`, so the cockpit (CFactory)
+and TFactory can thread the unit of work end to end.
+
+- **Usage block** (additive, schema v1.3): when `token_usage.json` records work,
+  the event carries `usage` with the scalar token/cost aggregate plus, for
+  parallel multi-provider builds, a per-worker `usage.workers[]` breakdown and
+  `usage.by_provider` / `usage.by_model` rollups. An optional observe-only
+  `usage.budget{limit_usd, spent_usd, exceeded}` block is attached when the
+  contract set `execution.budget_usd`; it reports overspend but **never aborts a
+  build**.
+- **Evidence gate (RFC-0001a):** a build may only claim a success status
+  (`completed`, `passed`, `verified`, `succeeded`) if it carries proof it ran. A
+  build event whose `usage.total_tokens` is 0 is downgraded to `failed` with
+  `halt_reason: "no_evidence: build emitted 0 tokens (did not run)"`, and the
+  event gains an `evidence{proof_kind, total_tokens, cost_usd}` block. This
+  closes the failure mode where an expired provider credential produced a stub
+  plan that finished in seconds and was historically reported green. The gate is
+  scoped to build events that carry usage — it never touches the legitimate
+  `failed` path or non-build events.
+
+---
+
+## 12. Required vs optional — minimum to drive a task end to end
 
 **Required:** `title` + `description` (creation); for a plan: `feature`,
 `workflow_type`, `phases`, and per subtask `id` + `description`. For the

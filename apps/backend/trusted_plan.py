@@ -434,6 +434,27 @@ def ingest_trusted_plan(
         json.dumps(plan, indent=2), encoding="utf-8"
     )
 
+    # Also stash the signed contract in a BUILD-SAFE location. The executor
+    # rewrites implementation_plan.json into AIFactory's runtime format during
+    # the build (adding planStatus/status/reviewReason, dropping the contract's
+    # tfactory/contract_version/approval blocks), so by the time the
+    # AIFactory→TFactory handoff fires on completion the RFC-0002 metadata —
+    # including the `tfactory` test profile (lanes/frameworks/ac_to_code_map) —
+    # is gone. Writing it here (where the build never touches) lets
+    # tfactory_client.load_task_contract recover the full contract and carry it
+    # to TFactory so it tests the DECLARED ACs instead of inferring (#71 Phase 3).
+    context_dir = spec_dir / "context"
+    context_dir.mkdir(parents=True, exist_ok=True)
+    (context_dir / "task_contract.json").write_text(
+        json.dumps(plan, indent=2), encoding="utf-8"
+    )
+
+    # Synthesize spec.md from the signed plan. The trusted fast path skips the
+    # spec pipeline, but the executor's spec resolution (cli.utils.find_spec)
+    # and validate_environment both REQUIRE spec.md to exist — without it run.py
+    # can't find the spec, dumps the spec list, and the build never codes (#483).
+    _write_spec_md_from_plan(spec_dir, plan)
+
     _record_approval_provenance(spec_dir, result)
     _mark_review_approved(spec_dir, result)
 
@@ -452,6 +473,60 @@ def ingest_trusted_plan(
             pass  # seeding is best-effort; never fail a verified ingest on it
 
     return result
+
+
+def _write_spec_md_from_plan(spec_dir: Path, plan: dict) -> None:
+    """Render a signed plan into a minimal ``spec.md`` for the executor (#483).
+
+    The trusted fast path installs ``implementation_plan.json`` (the authoritative
+    build artifact) and skips the spec pipeline, but ``cli.utils.find_spec`` and
+    ``validate_environment`` both require a ``spec.md`` to even resolve/run the
+    spec. We synthesize one from the contract's feature, acceptance criteria, and
+    phase/subtask outline. Never overwrites an existing spec.md.
+    """
+    spec_file = spec_dir / "spec.md"
+    if spec_file.exists():
+        return
+
+    feature = str(plan.get("feature") or "Trusted plan").strip()
+    workflow = str(plan.get("workflow_type") or "feature").strip()
+    envelope = plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
+    approved_by = str(envelope.get("approved_by") or "authority").strip()
+
+    lines: list[str] = [
+        f"# {feature}",
+        "",
+        f"> Generated from a signed trusted plan (approved by {approved_by}). "
+        "The authoritative build artifact is implementation_plan.json.",
+        "",
+        f"**Workflow type:** {workflow}",
+        "",
+    ]
+
+    acceptance = plan.get("final_acceptance")
+    if isinstance(acceptance, list) and acceptance:
+        lines += ["## Acceptance Criteria", ""]
+        lines += [f"- {str(ac).strip()}" for ac in acceptance if str(ac).strip()]
+        lines.append("")
+
+    phases = plan.get("phases")
+    if isinstance(phases, list) and phases:
+        lines += ["## Implementation Plan", ""]
+        for phase in phases:
+            if not isinstance(phase, dict):
+                continue
+            pname = str(phase.get("name") or phase.get("id") or "Phase").strip()
+            lines += [f"### {pname}", ""]
+            for st in phase.get("subtasks") or []:
+                if not isinstance(st, dict):
+                    continue
+                sid = str(st.get("id") or "").strip()
+                desc = str(st.get("description") or "").strip()
+                prefix = f"`{sid}` " if sid else ""
+                lines.append(f"- {prefix}{desc}".rstrip())
+            lines.append("")
+
+    spec_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def _record_approval_provenance(

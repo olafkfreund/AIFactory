@@ -1,7 +1,14 @@
 ## [Unreleased]
 
+
 ### Added
 
+- **Multi-language build toolchains in the coder sandbox (#586, #587).** The coder runs in the AIFactory image but it shipped only `g++`/Python/Node, so specs in Rust/Go/Java/CMake could be written but not built or tested (`cannot execute cargo`). The `Dockerfile` now `apk add`s `go-1.25`, `rust-1.90`, `maven-3.9`, `openjdk-21-default-jdk` (the JDK with `javac`, not the runtime-only `-default-jvm`), `cmake`, and `build-base`, sets `JAVA_HOME`/`PATH`, and runs a fail-fast build-time verification (`go version && cargo --version && mvn -v && javac -version && cmake --version && g++ --version`) so a bad PATH fails the build instead of the agent at runtime. Image grows ~1.5 GB.
+- **Planner honors the spec's language over the repo's (#585).** A new `PHASE 0.0` rule in `prompts/planner.md` derives the target language/stack from the spec (acceptance-criteria build/test commands like `cargo test` / `mvn test` / `ctest` are authoritative); it matches the repo's conventions but never its language. On a language mismatch it scaffolds a self-contained sub-project in the spec's language (own manifest + explicit `files_to_create`) or HALTs with a `LANGUAGE CONFLICT` blocker — closing the silent failure where a Rust/Java/C++ spec dropped into a Go repo produced Go and was marked complete. The coder prompt (`prompts/coder_story_enhanced.md`) mirrors the guard.
+- **Per-worker billing mode on the usage block (#96).** Each worker's provider is classified into a billing mode — `api` / `cloud` (metered, real dollars) or `subscription` / `local` (no dollar spend; `cost_usd` is notional/zero) — inferred zero-config from how the run is authenticated (provider + API-key env presence + Ollama endpoint). Carried on `usage.workers[].billing_mode` and `usage.by_provider{}.billing_mode` (with a `duration_ms` rollup). This lets CFactory show real cost only for metered work and tokens + time for subscription/local, instead of a misleading notional dollar figure. New `services/billing.py` is pure and unit-tested; additive — `additionalProperties: true` validates the field.
+- **Subtask graph + timing fields on the task-detail API (#577).** The subtasks in `GET /api/tasks/{id}` now expose `depends_on` (dependency edges), `service`, `started_at`, and `completed_at`. These were already tracked on the internal `implementation_plan` subtask but were dropped at the API boundary; they are now serialized so CFactory can render the live code-stage execution diagram. Additive and optional — plans without them serialize as `[]` / `null` and the diagram degrades gracefully.
+- **RFC-0001a evidence gate on the completion event (#575).** A build may only claim a success status (`completed`/`passed`/`verified`/`succeeded`) if it carries proof it ran. A build event with `usage.total_tokens` at 0 is downgraded to `failed` with `halt_reason: "no_evidence: build emitted 0 tokens (did not run)"`, and the event gains an `evidence{proof_kind, total_tokens, cost_usd}` block. This closes the silent-failure mode where an expired provider credential produced a stub plan that finished in seconds and was historically reported green. Scoped to build events that carry usage; never touches the legitimate `failed` path or non-build events.
+- **Evidence / red-flags block in the coder and qa_fixer prompts (#576).** Both agent prompts gained a "Red flags — STOP, do not claim success" section calling out the silent-failure modes that have shipped dead builds as green: reporting a phase complete with no real change, a failed tool/credential (e.g. `401`), every generated test failing identically, or skipping a step because it "probably works". The closing rule — "Evidence ends the task" — requires the diff plus passing checks over it before the work is considered done.
 - **Per-worker observability for parallel builds (#45 P1).** Parallel multi-provider builds already existed; this adds the instrumentation. `token_usage.json` now carries a per-worker `workers` map (input/output tokens, cost, duration per worker) with the scalar aggregate preserved unchanged, and the completion event grows to **v1.3** with an additive `usage.workers[]` / `usage.by_provider` / `usage.by_model` block (#566). The web-server emits OpenTelemetry metrics — `gen_ai.input_tokens`, `gen_ai.output_tokens`, `gen_ai.cost_usd`, `worker.duration_ms` — tagged `{provider, model, phase}` with bounded cardinality (never `task_id`), a no-op when OTel is disabled; the completion-event `traceparent` was fixed to link to the real active span (#567). Live `phase:"worker"` sub-events fire as each worker finishes (#568) and throttled (~10s) `phase:"worker_progress"` heartbeats keep long workers visibly ticking (#570). A soft, **observe-only** budget alert adds `usage.budget{limit,spent,exceeded}` and a `budget.exceeded` OTel counter — it reports but **never aborts a build** (#569). Emitted from the web-server because agent subprocesses deliberately don't export.
 - **Auth hardening (#558).** Startup CORS guard refuses a wildcard origin combined with credentials; the WebSocket terminal token is now accepted via the `Authorization` header (query-param still works but logs a deprecation warning); the legacy wildcard `API_TOKEN` now emits a loud deprecation warning (scoped `acw_` keys are the replacement).
 - **Actions security pass + CI gates (#557, for #553/#554).** Fixed a GitHub Actions script-injection — an untrusted issue title is now bound through `env:` instead of interpolated into a shell step — and hardened `copilot-pr-review.yml`: the spoofable `[bot]`-suffix actor trust (the CVE-2025-66032 pattern) is replaced with an `author_association` membership gate, and `--allow-all-tools` is removed from the path that runs over untrusted PR content. Added non-blocking frontend `vitest` and `mypy` jobs with broadened triggers (report first, promote to required once the signal is clean).
@@ -14,6 +21,9 @@
 
 ### Fixed
 
+- **Successful parallel builds no longer falsely reported `failed` (#588).** After each subtask merged, `mark_complete` loaded the plan from the worktree `spec_dir/implementation_plan.json` and swallowed any exception — so when that worktree path held no plan, completion was silently lost, the canonical plan stayed at 0 completed (observed: 7 subtasks / 0 done with passing `go test`/`cargo test`), the finalize step saw an empty plan ("No implementation subtasks yet"), and the coding agent exited non-zero → `final_status=failed`. Extracted `record_subtask_completion()` (`agents/utils.py`) which falls back to the canonical source plan and returns False (logged, not swallowed) when no plan is found. 4 new unit tests; 24 existing parallel tests green.
+- **Pin `fastapi==0.136.3` / `starlette==1.3.1` (#584).** An image rebuild pulled `fastapi 0.137.0` (unpinned at `>=0.109.0`), which broke route introspection — `prometheus-fastapi-instrumentator.get_route_name()` hit an `_IncludedRouter` with no `.path` and 500'd every `/api/*` route (only `/api/health` survived), taking down the cockpit's polling and the PARR conductor. Same regression + pin TFactory shipped.
+- **`blocked` subtask status no longer 500s the task list (#583).** A coder can mark a subtask `blocked`; the `Subtask.status` Literal only allowed `pending/in_progress/completed/failed`, so one blocked subtask raised a `ValidationError` in `load_spec_metadata` and 500'd the entire `GET /api/projects/{pid}/tasks` list — blinding the cockpit for every task. Added `blocked` to the Literal.
 - Defined several portal CSS classes (`task-running-pulse`, `column-*` accents, `column-count-badge`, `drop-zone-highlight`, `progress-working`) that were referenced by components but never defined, so the intended card pulses, column accents, and progress animation now render (#311).
 - Terminal and scrollbars no longer hardcode a dark palette; both follow the active theme (#311).
 - rmux Live Agent Console now actually streams. Two bugs blocked it: (1) the pane FIFO defaulted to `/var/run/aifactory/panes`, which isn't writable on non-container hosts — it now resolves a writable default (`AIFACTORY_RMUX_PANES_DIR` → data dir `panes/`); (2) the agent already runs under agent_service's PTY, so rmux re-spawning it would double-run the agent — the integration now registers a FIFO-only "passive" session and tees the agent's existing stdout/stderr into it (`feed_if_enabled`), which the WS bridge streams read-only. Attach/send-keys remains for true rmux sessions.
@@ -23,6 +33,230 @@
 ### Documentation
 
 - New concept page for the Mission Control workspace; rmux Live Console docs updated with the `APP_RMUX_ENABLED` setting; roadmap "Recently shipped" updated (#311).
+
+## 3.6.26 - 2026-06-11
+
+### Added
+
+- **Opt-in direct-API-key auth via `AIFACTORY_ALLOW_API_KEY`.** AIFactory is OAuth-only by default (Claude subscription): any `ANTHROPIC_API_KEY` in the environment is scrubbed from agents so it can never silently bill the Anthropic API. Operators whose intended billing model *is* a direct API key (no subscription) now set `AIFACTORY_ALLOW_API_KEY=1` — then `ANTHROPIC_API_KEY` is accepted as an auth token (after OAuth), passed through to agents, and no longer scrubbed. Default off preserves the billing-safe behavior; the flag is the single switch (`core.auth.api_key_auth_enabled()`) honored by token resolution, the agent env scrub, and the SDK passthrough.
+
+## 3.6.25 - 2026-06-11
+
+### Fixed
+
+- Trusted-plan tasks now carry their signed Task Contract to TFactory so it tests the **declared** ACs instead of inferring (#71 Phase 3). `ingest_trusted_plan` installed the contract as `implementation_plan.json`, but the executor rewrites that file into AIFactory's runtime format during the build (adding `planStatus`/`status`/`reviewReason`, dropping the contract's `tfactory`/`contract_version`/`approval` blocks) — so by the time the AIFactory→TFactory handoff fires on completion, the RFC-0002 metadata (incl. the `tfactory` test profile: lanes/frameworks/`ac_to_code_map`) was gone and `load_task_contract` returned `{}`. Fix: ingest now stashes the full signed contract in the build-safe `context/task_contract.json`, and `tfactory_client.load_task_contract` reads that first (falling back to `implementation_plan.json` for older specs). Verified end-to-end: a contract-carrying handoff makes TFactory persist the contract and the planner emit a test plan matching the declared profile (e.g. a `browser`/`playwright` lane that inference would never produce for an API service).
+
+## 3.6.24 - 2026-06-10
+
+### Fixed
+
+- Sequential auto-merges no longer dead-end on a stale branch (#71): when an earlier auto-merge advances `main`, a later PR is "behind" and `gh pr merge` fails. `merge_pr` now runs `gh pr update-branch` once and retries — resolving the common case where tasks touch different files. A true line-level conflict (update-branch fails) is still left for a human; never force-merged.
+
+## 3.6.23 - 2026-06-10
+
+### Fixed
+
+- Auto-feedback loop race (#71 Phase B): the fix loop ran the QA-fixer fire-and-forget (`apply_correction` → `_default_fixer` schedules a background task and returns), so it pushed + re-reviewed the **un-fixed** code and re-read the stale `changes_requested` verdict. `_fix_fn` now runs the fixer **to completion** (awaits `_run_fixer_bg` via a `fixer_fn`) before pushing, and waits for the re-review's `reviewedAt` to advance before returning so the loop reads the fresh verdict. Push failure fails the cycle.
+
+## 3.6.22 - 2026-06-10
+
+### Added
+
+- PR-endgame **auto-feedback loop** (#71 Phase B): when the pre-merge reviewer requests changes, the findings are routed to the QA-fixer, the fix is pushed to the PR branch, and the PR is re-reviewed — bounded (≤2 cycles), merging only once it passes; after the budget it hands to a human (`needs_human_after_fixes`). Also verified the `aifactory` reviewer **live** (no Copilot credits — engine verdict `ready_to_merge`) and aligned `verdict_from_review_result` to the engine's `MergeVerdict` vocabulary (`ready_to_merge`⇒approve; `merge_with_changes`/`needs_revision`/`blocked`⇒changes; non-empty `blockers`⇒changes). 25 tests.
+
+## 3.6.21 - 2026-06-10
+
+### Added
+
+- The pre-merge reviewer is now **configurable** (`AIFACTORY_PR_REVIEWER` = `aifactory` | `copilot` | `any`, project setting + env, default `aifactory`) so the merge gate no longer depends on GitHub Copilot **code review** credits (#71 Phase A). With `aifactory`, AIFactory's own review engine reviews the PR with the project's provider (Claude/Ollama) and the merge is gated on **its verdict** (read from `review_{pr}.json`) — GitHub forbids self-approving the PR AIFactory opened, so the engine verdict is the gate, not a GitHub review event. A "Pre-merge reviewer" selector is in Project Settings → General. `copilot`/`any` modes keep gating on GitHub review state. On changes-requested the PR is human-stopped (the auto-feedback fix loop is the next increment).
+
+## 3.6.20 - 2026-06-10
+
+### Added
+
+- PR endgame is now toggleable **per project from the Settings UI** (Project Settings → General → *Auto-open a PR* / *Auto-merge after Copilot approves*) — persisted to the project's `.aifactory/.env` as `AIFACTORY_AUTO_PR`/`AIFACTORY_AUTO_MERGE`; the per-project setting wins over the global env default (#71). `pr_endgame` resolves the flags per-project (the completion hook runs in the web-server process, so it reads the project's `.env`, not just `os.environ`).
+
+### Changed
+
+- Auto-merge now **requires GitHub Copilot's review**: it merges only after Copilot posts an `APPROVED` review (`require_copilot` default). Copilot `CHANGES_REQUESTED`, any reviewer's changes-requested, or no-Copilot-review-yet → human-stop (PR left open); a human-only approval does not satisfy the gate. `read_review_verdict` is now Copilot-aware (`ReviewState`). Copilot's findings are never bypassed.
+
+## 3.6.19 - 2026-06-10
+
+### Documentation
+
+- Added `guides/pr-endgame.md` documenting the PR-endgame feature (#71 Phase 4): the `AIFACTORY_AUTO_PR` / `AIFACTORY_AUTO_MERGE` opt-in flags (default OFF), the create-PR → Copilot-review → merge → re-test flow, the human-stop safety properties, prerequisites, the known limitation (GitHub Copilot *code review* must be enabled on the repo for the review→auto-merge leg to run), and the single-replica deploy-downtime note.
+
+## 3.6.18 - 2026-06-10
+
+### Fixed
+
+- Completion side-effects (TFactory auto-handoff #496, PR endgame #71 Phase 4) now fire on `COMPLETED` regardless of `emit_events`. They were gated on `if emit_events and phase_enum == COMPLETED`, but the real terminal path (`_monitor_process`) calls `_update_plan_status(emit_events=False)` (Issue #14 suppresses WS double-emission, not side-effects) — so **neither ever fired on a real completion** (no task had ever written `tfactory_handoff.json` or a PR-endgame marker). Now gated on `COMPLETED` only, wrapped in a fire-once `.terminal_side_effects_done` marker so the two completion call paths can't double-fire (no duplicate PRs/handoffs).
+
+## 3.6.17 - 2026-06-10
+
+### Fixed
+
+- PR endgame: `create_pr` now runs `gh auth setup-git` before pushing (#71 Phase 4). In the deployed pod a raw `git push` failed with "could not read Username for https://github.com" despite gh being authenticated via `GITHUB_TOKEN`, so an auto-PR never opened. Configuring gh as git's credential helper (idempotent, best-effort) fixes the push.
+
+## 3.6.16 - 2026-06-10
+
+### Fixed
+
+- `copy_spec_to_worktree` is now idempotent — a resume/concurrent `setup_workspace` no longer crashes the build with `FileExistsError` right after worktree creation (#71 follow-up). It guarded with `exists()`+`rmtree` but then called `shutil.copytree` without `dirs_exist_ok`, so when the target spec dir reappeared between the check and the copy, `copytree`'s `makedirs` raised and the trusted-plan build exited 1 before any code was written. The Phase 0 `spec.md` fix unmasked this (trusted tasks now reach `setup_workspace` instead of dying at `find_spec`). Fixed with `dirs_exist_ok=True`.
+
+## 3.6.15 - 2026-06-10
+
+### Added
+
+- PR endgame: on a clean build, auto-open a PR → request a Copilot review → merge on approval → re-test (#71 Phase 4). The new `server/services/pr_endgame.py` orchestrates the finish of the closed PARR loop: when `AIFACTORY_AUTO_PR` is set, a `COMPLETED` build opens a PR from the worktree branch, requests a GitHub Copilot review, and watches (bounded) for the verdict; on `APPROVED` and only when `AIFACTORY_AUTO_MERGE` is set, it merges and re-runs TFactory against the result. `CHANGES_REQUESTED`, a review timeout, or a merge conflict is a **human-stop** — the PR is left open, nothing is force-merged. Both flags default OFF (inert until enabled). Every git/gh call is behind an injectable runner (16 unit tests, no network). Wired into the agent_service completion hook (best-effort, never blocks completion).
+
+## 3.6.14 - 2026-06-10
+
+### Changed
+
+- AIFactory→TFactory handoff now carries the signed Task Contract so TFactory tests the DECLARED acceptance criteria instead of inferring (#71 Phase 3). The auto-handoff sent only `{project_id, spec_id, spec_text}` to `/api/specs/ingest`, discarding PFactory's `tfactory` block (lanes/frameworks/`ac_to_code_map`). `build_ingest_payload` now attaches the full contract (the installed `implementation_plan.json`) as `contract` when it carries RFC-0002 markers; TFactory persists it to `context/task_contract.json` and uses it as the authoritative test profile. Create-and-run plans (no markers) attach nothing → TFactory still infers (backward compatible). Requires the paired TFactory change (≥ v0.9.2).
+
+## 3.6.13 - 2026-06-10
+
+### Fixed
+
+- Trusted-plan ingest now synthesizes `spec.md` so the build can actually code (#483). A signed plan ingested via `/api/tasks/from-plan` installed `implementation_plan.json` and marked the review approved, but never wrote `spec.md` — and the executor's spec resolution (`cli.utils.find_spec`) plus `validate_environment` both require it. So `run.py` couldn't find the spec, dumped the AVAILABLE SPECS banner, marked planning "failed", and coding never started (the plan installed but never coded — observed on PARR task 009). `ingest_trusted_plan` now renders a minimal `spec.md` from the contract (feature, acceptance criteria, phase/subtask outline); `implementation_plan.json` remains authoritative. This completes the trusted-plan keystone end-to-end.
+
+## 3.6.12 - 2026-06-10
+
+### Fixed
+
+- Trusted-plan handoff: per-subtask file footprints are now OPTIONAL (#517). AIFactory's `from-plan` completeness check hard-required `files_to_create`/`files_to_modify`, which PFactory can't know pre-code — so every signed PFactory contract was rejected and silently fell back to full re-planning, discarding the contract (incl. the TFactory test plan). Footprints present → parallel waves; absent → serial. This is what lets PFactory actually save AIFactory planning time.
+
+## 3.6.11 - 2026-06-10
+
+### Fixed
+
+- AIFactory→TFactory auto-handoff now works end-to-end (#517). Beyond the endpoint/auth/project-resolution fixes, `build_ingest_payload` now normalizes acceptance criteria into a parseable `## Acceptance Criteria` section (from requirements / the spec's Success-Criteria bullets), so TFactory's spec parser no longer 400s. With the paired TFactory fix (ingest resolves the project by id-or-name), a completed AIFactory task hands off to TFactory and creates a test task.
+
+## 3.6.10 - 2026-06-10
+
+### Added
+
+- The kanban board now **auto-surfaces newly-started tasks** without a manual browser reload. A task created outside the tab — via the API or a PFactory→AIFactory handoff — previously didn't appear until you reloaded (the WS `task:*` handler only updated existing cards). The `/ws/events` handler now refetches the selected project's tasks when a `task:*` event references a task not yet in the store (scoped to the selected project; fires once per new task) (#516).
+
+### Fixed
+
+- API Tokens settings: revoke now uses an in-app confirm dialog instead of the native `window.confirm`, and the token list shows last-used (#479).
+
+## 3.6.9 - 2026-06-09
+
+### Fixed
+
+- Agent bash no longer breaks under the OS sandbox on k3d/Kind. v3.6.8 installed `bubblewrap`, but the SDK's bwrap sandbox **cannot mount `/proc`** when the node is itself a container (k3d/Kind) — even with `CAP_SYS_ADMIN` / `procMount=Unmasked` — so every agent `Bash` command failed (`bwrap: Can't mount proc … Operation not permitted`). The bash sandbox is now gated behind **`AIFACTORY_BASH_SANDBOX`** (default `true`, preserving behaviour where bwrap works). Set it `false` on runtimes that can't host bwrap: bash works and the "WITHOUT sandboxing" warning is gone — isolation rests on the K8s pod boundary (non-root, zero-caps, workspace-restricted FS) + the command allowlist until a gVisor-capable runtime lands. Tracked as the real syscall-sandbox fix on #363.
+
+## 3.6.8 - 2026-06-09
+
+### Security
+
+- Agent command sandbox now actually engages. The Chainguard runtime image omitted `bubblewrap` (`bwrap`) and `socat`, so the Claude Agent SDK logged *"Sandbox disabled: … bubblewrap (bwrap) not installed"* and ran agent bash commands with **no** filesystem/network enforcement — unacceptable for enterprise deployments. Both are now installed in the runtime `apk` layer. Verified on the cluster: the node allows unprivileged user namespaces, so `bwrap` creates a real sandbox (not just silencing the warning) (#363).
+
+## 3.6.7 - 2026-06-09
+
+### Added
+
+- **"Send to TFactory for testing when done"** toggle in the New Task wizard — the UI last-mile for #496. Ticking it sets `auto_handover_tfactory`, which bridges through `projects.py` → `task_metadata.json` so the backend hands the finished build to TFactory on success. Best-effort; no-op unless `TFACTORY_BASE_URL` is set (#503).
+
+### Fixed
+
+- Complexity assessor no longer under-classifies multi-file features. A multi-endpoint / multi-layer feature (models + routes + wiring + tests) was collapsing to BMad Level 1 / Quick Flow — so the BMad story-planner never engaged — because a low-level keyword like "add" matched first. An *additive* structural floor now raises the level (never lowers it) on strong breadth: ≥2 HTTP endpoints, ≥4 architectural layers (or ≥3 with an endpoint), or ≥5 requirement deliverables / ≥2 services → Standard; ≥3 services / very broad surface → Complex. Requirements (acceptance criteria, services) are threaded into BMad detection, and a calibration test set guards against trivial-task regressions (#504).
+
+### Changed
+
+- Pre-commit pytest gate no longer requires `--no-verify`: `gvisor_live` live-cluster smoke tests are skipped unless explicitly selected (`-m gvisor_live` / `GVISOR_LIVE=1`), the suite defaults `APP_DISABLE_AUTH=true` to match CI (route tests no longer 401), and the worktree tests that shell out to `git worktree` are excluded from the fast gate (they run in full CI) (#508).
+
+## 3.6.6 - 2026-06-09
+
+### Added
+
+- Opt-in **auto-handover to TFactory** for testing: a task created with `auto_handover_tfactory` hands its finished build (spec + requirements + PFactory/Task-Contract meta + mutation-ledger evidence) to TFactory's `/api/handoff` on successful completion. Best-effort, never blocks completion; no-op unless opted in and `TFACTORY_BASE_URL` is set. `StartTaskRequest.auto_handover_tfactory` flag + completion hook (#496, #501).
+
+## 3.6.5 - 2026-06-09
+
+### Fixed
+
+- Spec creation now surfaces a provider **authentication failure** (e.g. an expired Claude OAuth token → 401) with an actionable "re-provision the credential (`claude setup-token`)" error, instead of `MAX_RETRIES` silent retries that collapsed into a generic "Agent did not create spec.md" (#483).
+- `--merge` no longer aborts with a bogus "Merge conflict" when the build touched `.gitignore`: `merge_worktree` stashes uncommitted base-tree changes (the worktree's artifact `.gitignore`) before checkout+merge — dropped on success, restored on failure (#485).
+
+### Added
+
+- The main REST API now authenticates per-user **`acw_` API keys** (minted in Settings → API Keys), not just JWT + the legacy token — so a personal token works for direct programmatic access as well as the MCP proxy path (#479).
+
+## 3.6.4 - 2026-06-09
+
+### Fixed
+
+- stdio-MCP / `/handover` `task_create_and_run` (write-path) no longer 500s: the proxy built a `StartTaskRequest`, but the handler takes `CreateAndRunRequest` (adds `provenance`, #332) and reads `request.provenance` → `AttributeError`. The proxy now passes `CreateAndRunRequest`, completing the handover end-to-end fix (with #488/#490 for the read-path) (#494).
+- stdio-MCP `task_get_logs` no longer 500s: the proxy forwarded a `tail=` argument that `get_task_logs` doesn't accept (`TypeError`). `tail` is accepted for client compatibility but no longer forwarded (#494).
+
+## 3.6.3 - 2026-06-09
+
+### Fixed
+
+- stdio-MCP / `/handover` `project_list` now returns the full project list. #488 stopped the 500 but, for the M2M acw/legacy principal, the org-scoped `list_projects` returned an empty list — so handover still found no project. The proxy now returns all registered projects (M2M service-principal behaviour) (#490).
+- Antigravity/Gemini tasks no longer fail with `ModelNotFoundError: models/antigravity`: the bare provider-selector `antigravity` was passed literally as `--model antigravity` (not a real Gemini model) → CLI exit 1 → build failed with no completed subtask. Bare selectors now resolve to a real model; an explicit empty model still omits `--model` (#491, #492).
+
+### Changed
+
+- Antigravity/Gemini default model bumped to **`gemini-3.5-flash`** (newest validated on the CLI; `gemini-3.5-pro` not yet available) (#492).
+
+## 3.6.2 - 2026-06-09
+
+### Fixed
+
+- Autonomous tasks no longer hang at 0% in "planning": when a build couldn't find the requested spec, the CLI dropped into an interactive `input()` prompt that blocks forever in a headless run (no TTY, stdin never EOFs). It now detects a non-interactive context and fails fast (#482).
+- Default-org seeding is idempotent on the `organizations.slug` UNIQUE constraint — startup no longer crashes with `IntegrityError` when a "default"-slug org already exists under a different id (#484).
+- The plan-based allowlist auto-grant now reads the simple/quick-spec plan's `verification.run` command, so a from-scratch build's toolchain (e.g. `go`) is granted and its verification actually runs instead of being blocked (#486).
+- stdio-MCP / `/handover` `project_list` no longer returns HTTP 500: the proxy now forwards `request` + `db` to `list_projects` (required since org-scoped visibility), unblocking the handover project-lookup step (#488).
+
+### Added
+
+- Operator override for the command allowlist via `AIFACTORY_EXTRA_ALLOWED_COMMANDS` (comma/whitespace separated), merged into the enforced allowlist — backend hook for a Settings "additional allowed commands" field (#487).
+
+## 3.6.1 - 2026-06-09
+
+### Fixed
+
+- SPA history-fallback so portal deep-links resolve instead of 404. The static mount served `index.html` only for `/`; any client-side route (e.g. `/console/<project_id>/<spec_id>`) returned `{"detail":"Not Found"}` on a deep-link or hard refresh because `StaticFiles` has no file at that path. `SPAStaticFiles.get_response` now catches the 404 and serves `index.html` for genuine SPA navigations (a GET whose final path segment has no file extension); real missing assets (`/assets/*.js`) keep their 404 and API routes are unaffected. This is the backend complement to the #314 cold-load routing fix (#480).
+
+### Changed
+
+- AIFactory MCP server + `/handover` skill now point at the deployment (`https://aifactory.freundcloud.org.uk`) instead of `localhost:3101`; token sourced from `~/.aifactory/.token-deployed`. The handover skill's track URL was corrected from the non-existent `/tasks/<id>` route to the real `/console/<project_id>/<task_id>`, with the board URL as a fallback (#480).
+
+## 3.6.0 - 2026-06-08
+
+### Added
+
+- **Act-loop reliability hardening** (Hermes-inspired, all flag-gated default-off):
+  - Anti-loop / no-progress guardrail — a tool-call-signature controller (repeated-exact-failure → block, same-tool-failure → halt, idempotent-no-progress → block) wired via PreToolUse/PostToolUse hooks; the coder and QA loops break/escalate early on halt and the typed reason rides into the RFC-0001 completion event (`halt_reason`). `AIFACTORY_ACT_GUARDRAIL` (#474).
+  - Budgeted context summary at the SDK `PreCompact` boundary — a deterministic structured 9-section "active task" summary persisted for post-compaction re-anchor, with token budgeting, an anti-thrash guard, and a deterministic fallback. `AIFACTORY_CONTEXT_SUMMARY` (#475).
+  - Checkpoint-before-mutation + per-turn mutation ledger — a cheap git checkpoint before each Write/Edit/Bash, a `.aifactory/mutations.jsonl` ledger, turn-end claimed-vs-actual verification, rollback, and the ledger carried into the TFactory handoff as evidence. `AIFACTORY_MUTATION_LEDGER` (#476).
+
+## 3.5.1 - 2026-06-08
+
+### Added
+
+- **Reliable completion-event delivery** (epic #468): additive RFC-0001/CloudEvents envelope upgrade — per-event `id` (idempotency), CloudEvents-core fields (`specversion`/`source`/`type`/`time`) and W3C `traceparent`; a transactional outbox + retrying relay for at-least-once delivery (behind `AIFACTORY_COMPLETION_OUTBOX`); and typed handback triage validation + an assertion-pinning guard before the QA fixer (#465, #466, #467).
+- Running server version shown on the login screen (#470).
+
+### Notes
+
+- Ships as 3.5.1 because the 3.5.0 release build failed its CHANGELOG gate before tagging; 3.5.0 was never published.
+
+## 3.4.3 - 2026-06-07
+
+### Added
+
+- GitHub Agentic Integration (#456): GitHub Models as a first-class provider (`github-models/<publisher>/<model>` model strings, zero-cost inference via `GITHUB_TOKEN`); Copilot cloud agent dispatch (`copilot:delegate` label routes a task to `copilot-swe-agent[bot]`, polls for PR, transitions status to `copilot_running` / `copilot_pr_opened`); AIFactory MCP server (`POST /mcp`, 6 tools, Bearer auth) so the Copilot agent can read specs/plans and write discoveries; three GitHub Actions workflows (`aifactory-task.yml`, `copilot-pr-review.yml`, `pr-review.yml`); frontend GitHub Models picker in the agent profile selector and Copilot dispatch toggle in the task creation wizard.
+
+### Fixed
+
+- Parallel wave subtasks using non-Claude providers (antigravity, copilot, opencode, ollama) now surface the real provider error in the portal instead of a hardcoded `"agent session error"` placeholder, and write an error entry to the canonical task log (child-worktree logs were never synced back, leaving the portal with zero entries) (#455).
 
 ## 3.4.2 - 2026-06-02
 

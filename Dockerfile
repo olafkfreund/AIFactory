@@ -96,6 +96,37 @@ RUN apk add --no-cache \
 # a snapshot that already includes the fix.
 RUN apk add --no-cache 'binutils>=2.46-r2'
 
+# Multi-language build toolchains for the coder sandbox. The coder runs in this
+# image, so to BUILD and TEST the spec's language (not just write it) the
+# toolchains must be present. Without them, Rust/Go/Java/CMake specs produced
+# unverified code that failed with "cannot execute cargo/go/...". All available
+# in the configured Chainguard apk repo under versioned package names.
+#   go-1.25                 → go (Go specs: `go test`)
+#   rust-1.90               → cargo/rustc (Rust specs: `cargo test`)
+#   maven-3.9               → mvn  (Java specs: `mvn test`)
+#   openjdk-21-default-jdk  → java AND javac (the JDK, not the runtime-only
+#                             -default-jvm which has no compiler) + JAVA_HOME
+#   cmake + build-base      → cmake/ctest + g++/make (C/C++ specs: `ctest`)
+RUN apk add --no-cache \
+        go-1.25 \
+        rust-1.90 \
+        maven-3.9 \
+        openjdk-21-default-jdk \
+        cmake \
+        build-base
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+# Fail the build loudly if any toolchain is not actually runnable on PATH,
+# rather than discovering it at agent runtime ("cannot execute cargo").
+RUN set -eux; \
+    go version; \
+    cargo --version; \
+    rustc --version; \
+    mvn --version; \
+    javac --version; \
+    cmake --version; \
+    g++ --version
+
 # Epic #44 R3 — optionally bundle the rmux binary.
 #
 # Build args:
