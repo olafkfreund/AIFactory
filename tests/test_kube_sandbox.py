@@ -1,13 +1,14 @@
 """KubeJobBackend (#68): manifest builder + gate_runner kubejob selection."""
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
-from core.kube_sandbox import build_job_manifest, _pvc_subpath  # noqa: E402
+from agents.gate_runner import _default_runner, _select_runner  # noqa: E402
 from core.factory_sandbox import RunResult  # noqa: E402
-from agents.gate_runner import _select_runner, _default_runner  # noqa: E402
+from core.kube_sandbox import _pvc_subpath, build_job_manifest  # noqa: E402
 
 
 def test_manifest_is_one_shot_gc_hardened():
@@ -72,8 +73,12 @@ def test_select_runner_kubejob_backend(monkeypatch):
     calls = {}
 
     class FakeKubeSandbox:
-        def __init__(self, image, **kw): calls["image"] = image
-        def run(self, commands, **kw): calls["commands"] = commands; return RunResult(True, 0, "go1.25", [])
+        def __init__(self, image, **kw):
+            calls["image"] = image
+
+        def run(self, commands, **kw):
+            calls["commands"] = commands
+            return RunResult(True, 0, "go1.25", [])
 
     monkeypatch.setattr(ks, "KubeJobSandbox", FakeKubeSandbox)
 
