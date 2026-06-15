@@ -79,7 +79,9 @@ class KubeJobSandbox:
             await batch.create_namespaced_job(self.namespace, manifest)
             succeeded = False
             for _ in range(max(1, timeout // 3)):
-                st = (await batch.read_namespaced_job_status(name, self.namespace)).status
+                # read the Job object (needs only `get jobs`), not the jobs/status
+                # subresource — keeps the sandbox Role least-privilege.
+                st = (await batch.read_namespaced_job(name, self.namespace)).status
                 if st and st.succeeded:
                     succeeded = True
                     break
