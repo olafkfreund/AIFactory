@@ -208,6 +208,54 @@ def _aifactory_project_name(spec_dir: Path) -> str:
         return ""
 
 
+def _build_worktree(spec_dir: Path, spec_id: str) -> Path:
+    """The build worktree for a spec: <project>/.aifactory/worktrees/tasks/<spec_id>."""
+    p = Path(spec_dir).resolve()
+    # spec_dir == <project>/.aifactory/specs/<spec_id>
+    project_dir = p.parents[2] if len(p.parents) >= 3 else p.parent
+    return project_dir / ".aifactory" / "worktrees" / "tasks" / spec_id
+
+
+def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
+    """Return ``(git_url, source_branch)`` for the build worktree, pushing the branch
+    to origin so TFactory (separate PVC) can fetch the built code.
+
+    Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
+    missing or git fails — the handoff then degrades gracefully.
+    """
+    import subprocess
+
+    wt = _build_worktree(spec_dir, spec_id)
+    if not wt.is_dir():
+        return None, None
+
+    def _git(args: list[str]) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=str(wt), capture_output=True, text=True, timeout=60
+        ).stdout.strip()
+
+    try:
+        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"])
+        url = _git(["remote", "get-url", "origin"])
+        if not branch or not url:
+            return None, None
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        push_url = url
+        if token and url.startswith("https://github.com/"):
+            push_url = url.replace("https://", f"https://x-access-token:{token}@", 1)
+        # Push the build branch so TFactory can clone/fetch it. Best-effort.
+        subprocess.run(
+            ["git", "push", push_url, f"HEAD:{branch}"],
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return url, branch
+    except Exception:  # noqa: BLE001 - handoff prep must never break the build
+        return None, None
+
+
 def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -218,8 +266,8 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     spec.md (falls back to the requirements description). #517.
     """
     spec_dir = Path(spec_dir)
-    project_id = (
-        os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(spec_dir)
+    project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+        spec_dir
     )
     spec_text = ""
     spec_md = spec_dir / "spec.md"
@@ -240,8 +288,10 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     if not _ACCEPTANCE_RE.search(spec_text or ""):
         criteria = _collect_acceptance_criteria(req, spec_text)
         if criteria:
-            spec_text = (spec_text or "").rstrip() + "\n\n## Acceptance Criteria\n" + (
-                "\n".join(f"- {c}" for c in criteria)
+            spec_text = (
+                (spec_text or "").rstrip()
+                + "\n\n## Acceptance Criteria\n"
+                + ("\n".join(f"- {c}" for c in criteria))
             )
     payload = {
         "project_id": project_id,
@@ -255,6 +305,14 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     contract = load_task_contract(spec_dir)
     if contract:
         payload["contract"] = contract
+    # PARR seam: hand TFactory the repo + the build branch so it can fetch the
+    # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
+    # TFactory self-register the project from git_url when it isn't pre-registered.
+    git_url, source_branch = _git_info_and_push(spec_dir, spec_id)
+    if git_url:
+        payload["git_url"] = git_url
+    if source_branch:
+        payload["source_branch"] = source_branch
     return payload
 
 
