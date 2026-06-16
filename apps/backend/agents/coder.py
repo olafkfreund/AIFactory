@@ -987,6 +987,11 @@ async def run_autonomous_agent(
             print("\nPreparing next session...\n")
             await asyncio.sleep(1)
 
+    # Trailing gates run once at build completion. The parallel wave executor
+    # also calls this after the final wave; the run-once marker dedupes, and this
+    # post-loop call is what reaches the SERIAL path (which has no wave). (#597)
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
     # Final summary
     content = [
         bold(f"{icon(Icons.SESSION)} SESSION SUMMARY"),
@@ -1107,14 +1112,33 @@ async def _run_trailing_gates_if_build_complete(
         if pending:
             return  # more work remains; gates run after the final wave
 
-        gates = detect_gates(project_dir)
+        # Run gates where the build's code actually lives: the task worktree.
+        # Parallel waves merge into the task branch *there*, and the kube sandbox
+        # derives its PVC subPath from this cwd — so detecting/running against the
+        # primary checkout (often no go.mod / package.json) silently found nothing.
+        # Fall back to project_dir for a non-worktree build. (#597)
+        worktree = project_dir / ".aifactory" / "worktrees" / "tasks" / spec_dir.name
+        gate_dir = worktree if worktree.exists() else project_dir
+
+        # Run exactly once per build, no matter how many parallel waves or the
+        # serial post-loop call reach this point. (#597)
+        done_marker = spec_dir / ".trailing_gates_done"
+        if done_marker.exists():
+            return
+
+        gates = detect_gates(gate_dir)
         if not gates:
+            # A skipped gate must be VISIBLE, never silently treated as green. (#597)
+            done_marker.write_text(
+                f"no gates detected in {gate_dir}\n", encoding="utf-8"
+            )
+            print_status(f"Trailing gates: none detected in {gate_dir}", "info")
             return
         print_status(
-            f"Running trailing gates once: {', '.join(g.name for g in gates)}",
+            f"Running trailing gates once in {gate_dir}: {', '.join(g.name for g in gates)}",
             "info",
         )
-        results = await run_gates(project_dir, gates)
+        results = await run_gates(gate_dir, gates)
         summary = summarize_gates(results)
         failures = failing_gates(results)
         marker = spec_dir / "GATE_FAILURES.md"
@@ -1130,6 +1154,7 @@ async def _run_trailing_gates_if_build_complete(
             if marker.exists():
                 marker.unlink()  # clear any stale failures from a prior run
             print_status(f"Trailing gates passed: {summary}", "success")
+        done_marker.write_text(f"{summary}\n", encoding="utf-8")  # ran once (#597)
     except Exception as exc:  # noqa: BLE001 - gates are best-effort, never break a build
         logger.debug("Trailing gate run skipped: %s", exc)
 
