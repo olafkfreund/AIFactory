@@ -28,6 +28,13 @@ signature envelope:
   TFactory).
 - **TRUST** — `approval`: `approved_by`, `approval_timestamp`,
   `plan_contract_version`, `signature` (HMAC-SHA256).
+- **ENVIRONMENT** — `environment` (RFC-0005): the per-task toolchain manifest
+  (`language`, `toolchain`, `system_packages`, `build_commands`,
+  `verify_commands`, `serve_command`, `provisioning.method` = `nix`, `network`,
+  `proof.verify`). AIFactory builds in this env so build and verify cannot drift —
+  see [Nix Reproducible Build](./nix-reproducible-build.md).
+- **ACCESS** — `access` (RFC-0007): discovered auth requirements for any external
+  resource the tests must reach (broker refs only, never secrets).
 
 ---
 
