@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+# VENDORED from Factory hub scripts/nix_provisioner.py (RFC-0005 Tier A).
+# Keep in sync with the hub; do not diverge. Pure stdlib, no AIFactory deps.
+"""nix_provisioner — RFC-0005 Tier A (Nix) materialization, shared across the fleet.
+
+Turns an RFC-0005 `environment` manifest (the contract `$defs.environment` block)
+into (a) a generated `flake.nix` when the repo carries none, and (b) the
+`nix develop -c` argv that materializes that flake and runs the build/verify
+commands hermetically. Pairs with `factory_sandbox.py`: the sandbox provides the
+*disposable container*, this provides the *toolchain inside it*.
+
+Why a generator, not a hand-written flake per repo: the planner already resolves
+language + toolchain + system_packages into the manifest, so the flake is a pure
+function of the manifest — generate it, commit it as a deliverable
+(`provisioning.generated = true`), and the build env (AIFactory) and verify env
+(TFactory) cannot drift because both `nix develop` the same `flake.lock`.
+
+The flake template is the PROVEN PoC recipe (validated 2026-06-17: real Playwright
+screenshots from `nix develop -c`):
+  - version-matched `playwright-test` (node) + `playwright-driver.browsers` from
+    nixpkgs, browsers wired via PLAYWRIGHT_BROWSERS_PATH (no network download);
+  - the Nix `playwright` binary is used directly — NEVER `npx playwright`, which
+    re-fetches a mismatched copy.
+
+SDK-free, pure-string + argv building so it is testable without Nix installed.
+Run directly for the self-tests: `python3 scripts/nix_provisioner.py`.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+
+# nixpkgs pin for generated flakes. A FULL commit rev (not a branch) keeps
+# generated flakes reproducible AND avoids a GitHub API call to resolve the
+# branch — which anonymously rate-limits inside a token-less k8s-Job container
+# (proven 2026-06-17: a branch ref 403'd; the pinned rev fetches the tarball
+# directly). Bump deliberately (Renovate can automate).
+DEFAULT_NIXPKGS = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f"
+
+# language -> (nix python attr | node attr). Extend as the fleet grows.
+_PY_ATTR = {
+    "3.11": "python311",
+    "3.12": "python312",
+    "3.13": "python313",
+    "3.14": "python314",
+}
+
+# common pip/distribution names -> the nixpkgs pythonPackages attr when they
+# differ. Anything not here is passed through unchanged (most match).
+_PY_PKG_ALIASES = {
+    "pyyaml": "pyyaml",
+    "beautifulsoup4": "beautifulsoup4",
+    "scikit-learn": "scikit-learn",
+}
+
+
+class ProvisionError(RuntimeError):
+    pass
+
+
+@dataclass
+class Manifest:
+    """Typed view over the contract `environment` block (all fields optional)."""
+
+    language: str | None = None
+    toolchain: dict[str, str] = field(default_factory=dict)
+    system_packages: list[str] = field(default_factory=list)
+    build_commands: list[str] = field(default_factory=list)
+    verify_commands: list[str] = field(default_factory=list)
+    network: str | None = None
+    proof_verify: list[str] = field(default_factory=list)
+    provisioning_method: str = "nix"
+    provisioning_ref: str | None = None
+    provisioning_generated: bool = False
+
+    @classmethod
+    def from_contract(cls, env: dict) -> Manifest:
+        prov = env.get("provisioning") or {}
+        return cls(
+            language=env.get("language"),
+            toolchain=dict(env.get("toolchain") or {}),
+            system_packages=list(env.get("system_packages") or []),
+            build_commands=list(env.get("build_commands") or []),
+            verify_commands=list(env.get("verify_commands") or []),
+            network=env.get("network"),
+            proof_verify=list((env.get("proof") or {}).get("verify") or []),
+            provisioning_method=prov.get("method", "nix"),
+            provisioning_ref=prov.get("ref"),
+            provisioning_generated=bool(prov.get("generated", False)),
+        )
+
+
+def _needs_browser(m: Manifest) -> bool:
+    """A browser lane is implied by a browser system package or a playwright/
+    chromium reference in the verify commands or proof checks."""
+    hay = " ".join(
+        m.system_packages + m.verify_commands + m.proof_verify
+    ).lower()
+    return any(t in hay for t in ("playwright", "chromium", "browser"))
+
+
+def _python_attr(m: Manifest) -> str:
+    ver = m.toolchain.get("python")
+    return _PY_ATTR.get(ver or "", "python313")
+
+
+# nixpkgs top-level attrs we know how to map system_packages onto. Browser libs
+# come bundled with playwright-driver.browsers, so a bare 'chromium' is dropped
+# in favour of the playwright stack (added separately) to avoid version skew.
+_DROP_SYSTEM_PKGS = {"chromium", "playwright", "browser", "playwright-driver"}
+
+
+def _system_pkg_attrs(m: Manifest) -> list[str]:
+    return [
+        p for p in m.system_packages
+        if p.lower() not in _DROP_SYSTEM_PKGS
+    ]
+
+
+def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
+    """Render a reproducible `flake.nix` from an RFC-0005 environment manifest.
+
+    Mirrors the proven PoC: a single devShell with the language toolchain, any
+    system packages, and (when a browser lane is implied) version-matched
+    playwright-test + browsers wired via env. The shell's tools are on PATH so
+    consumers call the Nix binaries directly.
+    """
+    m = Manifest.from_contract(env)
+    py = _python_attr(m)
+    py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m)]
+    sys_attrs = _system_pkg_attrs(m)
+
+    pkg_lines: list[str] = []
+    if py_pkgs:
+        joined = " ".join(py_pkgs)
+        pkg_lines.append(f"(pkgs.{py}.withPackages (p: with p; [ {joined} ]))")
+    else:
+        pkg_lines.append(f"pkgs.{py}")
+    sys_attrs_with_node = list(sys_attrs)
+    browser = _needs_browser(m)
+    if browser:
+        # dejavu_fonts + a FONTCONFIG_FILE so headless chromium actually renders
+        # text in a minimal Nix container (without it, screenshots come out
+        # textless — proven in-container 2026-06-17).
+        sys_attrs_with_node += ["nodejs_22", "playwright-test", "dejavu_fonts"]
+    for a in sys_attrs_with_node:
+        pkg_lines.append(f"pkgs.{a}")
+
+    packages = "\n          ".join(pkg_lines)
+
+    let_lines = ""
+    env_lines = ""
+    if browser:
+        let_lines = (
+            "\n      fontsConf = pkgs.makeFontsConf "
+            "{ fontDirectories = [ pkgs.dejavu_fonts ]; };"
+        )
+        env_lines = (
+            '\n        # Nix-provided, version-matched browsers — no network '
+            "download.\n"
+            '        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";\n'
+            '        PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";\n'
+            '        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1";\n'
+            "        # Headless chromium needs fontconfig to find a font, else "
+            "text won't render.\n"
+            "        FONTCONFIG_FILE = fontsConf;"
+        )
+
+    return f"""{{
+  # GENERATED by RFC-0005 nix_provisioner from the task contract environment
+  # manifest. Committed as a deliverable so build (AIFactory) and verify
+  # (TFactory) share one flake.lock and cannot drift. Edit the manifest, not this.
+  description = "Factory per-task toolchain (RFC-0005 Tier A)";
+  inputs.nixpkgs.url = "{nixpkgs}";
+  outputs = {{ self, nixpkgs }}:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {{ inherit system; }};{let_lines}
+    in {{
+      devShells.${{system}}.default = pkgs.mkShell {{
+        packages = [
+          {packages}
+        ];{env_lines}
+      }};
+    }};
+}}
+"""
+
+
+def _python_libs(m: Manifest) -> list[str]:
+    """Python libraries to put in the withPackages set. Always include pytest for
+    the verify lane; add fastapi/uvicorn/httpx when the commands imply a web app."""
+    libs: list[str] = []
+    hay = " ".join(m.verify_commands + m.build_commands + m.proof_verify).lower()
+    if (m.language or "").lower() in ("", "python") or "pytest" in hay:
+        libs.append("pytest")
+    if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or _needs_browser(m):
+        libs += ["fastapi", "uvicorn", "httpx"]
+    # de-dup, stable order
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in libs:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def nix_develop_argv(
+    flake_dir: str, commands: list[str], *, binary: str = "nix",
+    attr: str = "default", path_ref: bool = False,
+) -> list[str]:
+    """argv that materializes `flake_dir`'s devShell and runs `commands` in it.
+
+    `nix develop <dir>#<attr> -c bash -c "<cmd1> && <cmd2>"`. The flake is GC-rooted
+    by the store; first run fetches/builds, later runs are cache hits.
+
+    ``path_ref=True`` uses a ``path:`` flake reference instead of the bare dir.
+    REQUIRED for a co-mounted git worktree (proven live 2026-06-17): a bare dir
+    makes nix use the git fetcher, which (a) rejects the repo on a uid mismatch
+    ("repository not owned by current user") and (b) ignores the untracked
+    generated flake.nix. ``path:`` copies the path directly — no git, no
+    ownership check, untracked flake visible.
+    """
+    if not commands:
+        raise ProvisionError("no commands to run in the nix dev shell")
+    joined = " && ".join(commands)
+    ref = f"path:{flake_dir}#{attr}" if path_ref else f"{flake_dir}#{attr}"
+    return [
+        binary, "develop", ref,
+        "--command", "bash", "-c", joined,
+    ]
+
+
+def materialize_or_halt_argv(flake_dir: str, env: dict, **kw) -> list[str]:
+    """Build the proof.verify argv (RFC-0005 §3.4). Empty proof => a no-op `true`
+    so the caller still gets a runnable command (never a silent skip)."""
+    m = Manifest.from_contract(env)
+    return nix_develop_argv(flake_dir, m.proof_verify or ["true"], **kw)
+
+
+# --------------------------------------------------------------------------- #
+def _test() -> None:
+    # 1. browser manifest -> flake has playwright + browsers env, drops bare chromium.
+    env_browser = {
+        "language": "python",
+        "toolchain": {"python": "3.13"},
+        "system_packages": ["chromium"],
+        "verify_commands": ["pytest -q", "playwright test"],
+        "proof": {"verify": ["python --version", "playwright --version"]},
+        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
+    }
+    flake = generate_flake(env_browser)
+    assert "python313.withPackages" in flake, flake
+    assert "playwright-test" in flake and "nodejs_22" in flake, flake
+    assert "PLAYWRIGHT_BROWSERS_PATH" in flake, flake
+    assert "pkgs.chromium" not in flake, "bare chromium must be dropped for the pw stack"
+    assert "fastapi" in flake and "pytest" in flake, flake  # web+test libs inferred
+    # fonts: headless chromium needs them to render text in a minimal container.
+    assert "dejavu_fonts" in flake and "FONTCONFIG_FILE" in flake, flake
+    assert "makeFontsConf" in flake, flake
+
+    # 2. non-browser python manifest -> no playwright, no browser env.
+    env_plain = {
+        "language": "python",
+        "toolchain": {"python": "3.12"},
+        "verify_commands": ["pytest -q"],
+        "provisioning": {"method": "nix"},
+    }
+    f2 = generate_flake(env_plain)
+    assert "python312" in f2, f2
+    assert "playwright" not in f2 and "PLAYWRIGHT_BROWSERS_PATH" not in f2, f2
+    assert "pytest" in f2, f2
+
+    # 3. system packages pass through (minus browser drops).
+    env_sys = {"language": "python", "system_packages": ["pkg-config", "openssl"],
+               "verify_commands": ["pytest"]}
+    f3 = generate_flake(env_sys)
+    assert "pkgs.pkg-config" in f3 and "pkgs.openssl" in f3, f3
+
+    # 4. nix develop argv shape.
+    argv = nix_develop_argv("/work", ["pytest -q", "playwright test"])
+    assert argv[:3] == ["nix", "develop", "/work#default"], argv
+    assert argv[-3:] == ["bash", "-c", "pytest -q && playwright test"], argv
+    # path_ref for a co-mounted git worktree (avoids the git-fetcher ownership trap).
+    argv_p = nix_develop_argv("/work", ["true"], path_ref=True)
+    assert argv_p[2] == "path:/work#default", argv_p
+
+    # 5. materialize-or-halt uses proof.verify; empty => true.
+    a = materialize_or_halt_argv("/work", env_browser)
+    assert a[-1] == "python --version && playwright --version", a
+    a0 = materialize_or_halt_argv("/work", env_plain)  # no proof
+    assert a0[-1] == "true", a0
+
+    # 6. empty commands rejected.
+    try:
+        nix_develop_argv("/work", [])
+        raise AssertionError("expected ProvisionError")
+    except ProvisionError:
+        pass
+
+    # 7. generated flake is internally consistent (balanced braces, parseable shape).
+    assert flake.count("{") == flake.count("}"), "unbalanced braces in generated flake"
+
+    print("nix_provisioner self-tests: passed")
+    # Emit a sample for eyeballing when run with --print.
+    import sys
+    if "--print" in sys.argv:
+        print("\n--- sample generated flake (browser manifest) ---\n")
+        print(flake)
+        print("--- materialize argv ---")
+        print(json.dumps(nix_develop_argv("/work", env_browser["verify_commands"])))
+
+
+if __name__ == "__main__":
+    _test()

@@ -205,6 +205,48 @@ def _kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None, st
     return run
 
 
+def _nix_wrap(command: list[str], *, mount: str = "/work") -> list[str]:
+    """Wrap a gate command to run inside the per-task Nix dev shell (RFC-0005
+    Tier A). `nix develop path:/work#default -c bash -c "<cmd>"`. ``path:`` (not a
+    bare dir) is REQUIRED for a co-mounted git worktree — a bare ref makes nix use
+    the git fetcher, which rejects the repo on a uid mismatch and ignores the
+    untracked generated flake.nix (proven live in TFactory 2026-06-17).
+    """
+    inner = shlex.join(command)
+    return [
+        "nix", "develop", f"path:{mount}#default",
+        "--command", "bash", "-c", inner,
+    ]
+
+
+def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None, str]]:
+    """k8s-Job gate runner that runs each gate inside the per-task Nix dev shell.
+
+    Identical to ``_kube_runner`` except the gate command is wrapped in
+    ``nix develop`` so the toolchain comes from the worktree's flake.nix (built by
+    the planner/coder from the contract `environment`), not baked into the image.
+    The build env thus matches TFactory's verify env — no drift. Requires
+    flake.nix in the co-mounted worktree (materialize_flake_into writes it).
+    """
+    from core.kube_sandbox import KubeJobSandbox
+
+    repo_pvc = os.environ.get("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data") or None
+    data_root = os.environ.get("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+
+    def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
+        try:
+            res = KubeJobSandbox(image, repo_pvc=repo_pvc, data_root=data_root).run(
+                [shlex.join(_nix_wrap(command))],
+                workdir=str(cwd),
+                timeout=GATE_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 - sandbox issues are gate failures
+            return 1, f"nix-kube-sandbox error: {exc}"
+        return (res.exit_code if res.ok else 1), res.output[-_OUTPUT_TAIL_CHARS:]
+
+    return run
+
+
 def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     """Default runner: host subprocess, unless AIFACTORY_SANDBOX_GATES routes gates
     into a per-task sandbox (#61 runtime adoption). OFF by default → no change.
@@ -218,6 +260,12 @@ def _select_runner() -> Callable[[list[str], Path], tuple[int | None, str]]:
     image = os.environ.get("AIFACTORY_SANDBOX_IMAGE", "")
     if enabled and image:
         backend = os.environ.get("AIFACTORY_SANDBOX_BACKEND", "docker").lower()
+        if backend == "nixjob":
+            logger.info(
+                "[gate] routing gates through Nix k8s Job (RFC-0005 Tier A) image %s",
+                image,
+            )
+            return _nix_kube_runner(image)
         if backend == "kubejob":
             logger.info("[gate] routing gates through k8s Job sandbox image %s", image)
             return _kube_runner(image)
