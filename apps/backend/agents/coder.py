@@ -1126,6 +1126,29 @@ async def _run_trailing_gates_if_build_complete(
         if done_marker.exists():
             return
 
+        # RFC-0005 Tier A: when gates route through the Nix Job backend,
+        # materialize the per-task flake from the contract `environment` into the
+        # worktree so the build runs in the SAME env TFactory verifies in (no
+        # drift). No-op for any other backend or when there's no nix env.
+        import os as _os
+
+        if _os.environ.get("AIFACTORY_SANDBOX_BACKEND", "").lower() == "nixjob":
+            try:
+                import json as _json
+
+                from core.nix_env import materialize_flake_into
+
+                cpath = spec_dir / "implementation_plan.json"
+                env = (
+                    (_json.loads(cpath.read_text()) or {}).get("environment")
+                    if cpath.exists()
+                    else None
+                )
+                if materialize_flake_into(gate_dir, env):
+                    print_status("Nix env: materialized flake.nix for gates", "info")
+            except Exception as exc:  # noqa: BLE001 - best-effort; gates still run
+                print_status(f"Nix env materialize skipped: {exc}", "info")
+
         gates = detect_gates(gate_dir)
         if not gates:
             # A skipped gate must be VISIBLE, never silently treated as green. (#597)
