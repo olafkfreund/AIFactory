@@ -1086,6 +1086,18 @@ async def create_from_trusted_plan(
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
+    # RFC-0001 correlation: stamp the GitHub issue (from the contract's numeric
+    # correlation_key) into the FIRST requirements.json write — before the task is
+    # ever listed — so the cockpit's AIFactory adapter reads githubIssueNumber from
+    # the very first poll. Otherwise an early poll sees None and CFactory mints an
+    # orphaned `af-<spec>` duplicate card that never threads. (ingest's
+    # _record_approval_provenance preserves this issue_number.)
+    corr = request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    if corr is not None and str(corr).isdigit():
+        prov = requirements.get("provenance")
+        prov = prov if isinstance(prov, dict) else {}
+        prov.setdefault("issue_number", int(corr))
+        requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Gate: verify signature + completeness, then install the plan. Nothing is
