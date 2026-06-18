@@ -1168,11 +1168,16 @@ async def _run_trailing_gates_if_build_complete(
         # `import <app>` resolve to an empty src package, so the tests can never
         # import the app. The gate suite can pass (or find no test gate) while the
         # build is unrunnable — so fail loud into GATE_FAILURES.md for the fix loop.
+        from .build_deps import detect_undeclared_test_deps
         from .build_layout import detect_import_layout_conflicts
 
         layout_conflicts = detect_import_layout_conflicts(gate_dir)
+        # Undeclared test-dep guard (#611f): tests that import a package not in
+        # the project deps (e.g. TestClient → httpx) ImportError at runtime even
+        # when the app is fine — fail loud so the fix loop declares the dep.
+        dep_conflicts = detect_undeclared_test_deps(gate_dir)
         marker = spec_dir / "GATE_FAILURES.md"
-        if failures or layout_conflicts:
+        if failures or layout_conflicts or dep_conflicts:
             lines = [f"# Gate failures\n\nSummary: {summary}\n"]
             for r in failures:
                 lines.append(
@@ -1181,10 +1186,18 @@ async def _run_trailing_gates_if_build_complete(
             if layout_conflicts:
                 lines.append("\n## build layout (#601)\n\n")
                 lines.extend(f"- {c}\n" for c in layout_conflicts)
+            if dep_conflicts:
+                lines.append("\n## undeclared test dependencies (#611f)\n\n")
+                lines.extend(f"- {c}\n" for c in dep_conflicts)
             marker.write_text("".join(lines), encoding="utf-8")
+            extra = []
+            if layout_conflicts:
+                extra.append(f"{len(layout_conflicts)} layout conflict(s)")
+            if dep_conflicts:
+                extra.append(f"{len(dep_conflicts)} undeclared dep(s)")
             print_status(
                 f"Trailing gates failed: {summary}"
-                + (f" + {len(layout_conflicts)} layout conflict(s)" if layout_conflicts else ""),
+                + (f" + {', '.join(extra)}" if extra else ""),
                 "warning",
             )
         else:
