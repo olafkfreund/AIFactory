@@ -65,18 +65,18 @@ The "works" rows in the table below are validated by the live-cluster smoke test
 
 | Workload | Status | Validated by |
 |---|---|---|
-| `git clone`, `git pull`, `git push` | ✅ works | `test_git_clone_works_under_gvisor` |
-| `curl`, `wget` HTTPS calls | ✅ works | `test_curl_https_works_under_gvisor` |
-| `npm install`, `pnpm install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
-| `python -m pip install` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
-| `apt-get install` inside a Dockerfile build | ✅ works (overlayfs translation handled by runsc) | manual |
-| `pytest`, `jest`, `go test` | ✅ works | `test_bash_allowlist_compatibility_matrix` |
-| Workspace PVC read/write | ✅ works | `test_workspace_pvc_mount_works_under_gvisor` |
-| Outbound HTTPS egress | ✅ works | `test_outbound_https_works_under_gvisor` |
-| `docker build` (DinD) inside the agent | ❌ **not supported** — gVisor blocks nested-container syscalls. Use buildah or kaniko instead. | not tested (expected failure) |
-| `tcpdump`, `wireshark` | ❌ blocked — by design, BPF programs cross the sandbox boundary. | not tested (expected failure) |
-| Direct `/dev/kvm` access | ❌ blocked — VM-in-pod workloads are out of scope for AIFactory anyway. | not tested (expected failure) |
-| Profiler tools using `perf_event_open` | ⚠️ partial — most counters work; PMU access is filtered. | not tested |
+| `git clone`, `git pull`, `git push` | works | `test_git_clone_works_under_gvisor` |
+| `curl`, `wget` HTTPS calls | works | `test_curl_https_works_under_gvisor` |
+| `npm install`, `pnpm install` | works | `test_bash_allowlist_compatibility_matrix` |
+| `python -m pip install` | works | `test_bash_allowlist_compatibility_matrix` |
+| `apt-get install` inside a Dockerfile build | works (overlayfs translation handled by runsc) | manual |
+| `pytest`, `jest`, `go test` | works | `test_bash_allowlist_compatibility_matrix` |
+| Workspace PVC read/write | works | `test_workspace_pvc_mount_works_under_gvisor` |
+| Outbound HTTPS egress | works | `test_outbound_https_works_under_gvisor` |
+| `docker build` (DinD) inside the agent | **not supported** — gVisor blocks nested-container syscalls. Use buildah or kaniko instead. | not tested (expected failure) |
+| `tcpdump`, `wireshark` | blocked — by design, BPF programs cross the sandbox boundary. | not tested (expected failure) |
+| Direct `/dev/kvm` access | blocked — VM-in-pod workloads are out of scope for AIFactory anyway. | not tested (expected failure) |
+| Profiler tools using `perf_event_open` | partial — most counters work; PMU access is filtered. | not tested |
 
 ### Compatibility validation
 

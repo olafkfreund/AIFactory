@@ -30,18 +30,18 @@ You **don't** need it for:
 
 | Aspect | v1.1 status |
 |--------|-------------|
-| HTTP request spans (FastAPI auto-instrumentation) | ✅ |
-| DB call spans (SQLAlchemy + asyncpg) | ✅ |
-| Outbound httpx spans | ✅ |
-| Redis pub/sub spans | ✅ |
-| Agent phase spans (`task:phase:coding`, etc.) | ✅ |
-| Cross-replica trace continuity (Redis envelope carries `traceparent`) | ✅ |
-| Agent-subprocess trace continuity (`TRACEPARENT` env var) | ✅ (context only — agent doesn't export) |
-| Per-worker OTel metrics (`gen_ai.*`, `worker.duration_ms`) from the web-server | ✅ (#567) |
-| Sampling configuration (ParentBased + ratio) | ✅ |
-| Trace-aware logs (request_id = trace_id when in span) | ✅ |
-| Per-MCP-server spans inside the agent | ❌ (v1.2 — needs SDK changes) |
-| Custom OTel processors (TailSampling, etc.) | ❌ (set via OTel SDK env vars) |
+| HTTP request spans (FastAPI auto-instrumentation) | Supported |
+| DB call spans (SQLAlchemy + asyncpg) | Supported |
+| Outbound httpx spans | Supported |
+| Redis pub/sub spans | Supported |
+| Agent phase spans (`task:phase:coding`, etc.) | Supported |
+| Cross-replica trace continuity (Redis envelope carries `traceparent`) | Supported |
+| Agent-subprocess trace continuity (`TRACEPARENT` env var) | Supported (context only — agent doesn't export) |
+| Per-worker OTel metrics (`gen_ai.*`, `worker.duration_ms`) from the web-server | Supported (#567) |
+| Sampling configuration (ParentBased + ratio) | Supported |
+| Trace-aware logs (request_id = trace_id when in span) | Supported |
+| Per-MCP-server spans inside the agent | Not yet (v1.2 — needs SDK changes) |
+| Custom OTel processors (TailSampling, etc.) | Not yet (set via OTel SDK env vars) |
 
 ## How it works
 

@@ -29,11 +29,11 @@ You **don't** need it for:
 
 | Aspect | v1.1 status |
 |---|---|
-| `broadcast_event`, `send_to_user`, `send_to_org` cross-replica | ✅ Works — fan-out via Redis |
-| Task progress / log / status events | ✅ Works — they use the functions above |
-| Agent-spawned events from any replica | ✅ Works — see above |
-| Terminal WS streams (`/ws/terminal/*`) | ⚠️ **Stateful per-replica** — needs ingress sticky-cookie (see below) |
-| Workspace storage across replicas | ⚠️ Separate spec (Epic #35 #40 S3 half) |
+| `broadcast_event`, `send_to_user`, `send_to_org` cross-replica | Works — fan-out via Redis |
+| Task progress / log / status events | Works — they use the functions above |
+| Agent-spawned events from any replica | Works — see above |
+| Terminal WS streams (`/ws/terminal/*`) | **Stateful per-replica** — needs ingress sticky-cookie (see below) |
+| Workspace storage across replicas | Separate spec (Epic #35 #40 S3 half) |
 
 ## Enable in AIFactory
 
