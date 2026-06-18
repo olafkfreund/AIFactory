@@ -146,6 +146,57 @@ def mount_oracle(worktree: Path, project_dir: Path) -> Path:
     return oracle
 
 
+# Protocol-conformant parity-harness stub (RFC-0010): reads JSON input vectors,
+# emits JSON results, so TFactory's differential lane can run the new impl against
+# the legacy oracle. The coder fills in the dispatch to the rewritten functions.
+_PARITY_HARNESS_RS = """\
+// RFC-0010 parity harness — TFactory's equivalence lane runs this against the
+// same golden corpus as the legacy oracle. Protocol: read a JSON array of input
+// vectors from argv[1] (a file) or stdin, write a JSON array of results to
+// stdout: [{"id","module","output"}] or [{"id","error":"<ErrorClass>"}].
+//
+// TODO(coder): dispatch each vector's {module, function, args} to the rewritten
+// function and serialise its output (or the error class on failure).
+fn main() {
+    eprintln!("parity_harness stub — implement vector dispatch (RFC-0010)");
+    std::process::exit(2);
+}
+"""
+
+_TARGET_HARNESS = {"rust": ("src/bin/parity_harness.rs", _PARITY_HARNESS_RS)}
+
+
+def render_migration_brief(contract: dict[str, Any], briefs: list[ModuleBrief]) -> str:
+    """A markdown brief the coder finds at the worktree root.
+
+    States the rewrite rules and the per-module source→target mapping, so the
+    coder generates the target language against the read-only oracle instead of
+    editing it in place.
+    """
+    source = (contract.get("environment") or {}).get("source_language", "the source")
+    target = resolve_generation_language(contract) or "the target language"
+    lines = [
+        "# RFC-0010 migration brief",
+        "",
+        f"This is a **language migration: {source} -> {target}**. Generate the new",
+        f"implementation in **{target}**. Do **not** edit the legacy source.",
+        "",
+        "## Rules",
+        f"- The legacy source is mounted **read-only** at `{ORACLE_DIRNAME}/` — it is the",
+        "  behavioral reference (oracle). Read it; never modify it.",
+        f"- Write only the target files listed below (in {target}).",
+        "- Each module's behavior must match the oracle: TFactory runs both over the",
+        "  same golden corpus and asserts parity (the `equivalence` lane).",
+        "- Implement the generated `parity_harness` so the equivalence lane can run",
+        "  the new code over the corpus (read JSON vectors, emit JSON results).",
+        "",
+        "## Modules to rewrite (source -> target)",
+    ]
+    for b in briefs:
+        lines.append(f"- `{b.source_module}` -> `{b.target_module}`")
+    return "\n".join(lines) + "\n"
+
+
 def scaffold_target(worktree: Path, contract: dict[str, Any]) -> list[Path]:
     """Create the target crate/dir skeleton + stub files for each target module.
 
@@ -168,6 +219,14 @@ def scaffold_target(worktree: Path, contract: dict[str, Any]) -> list[Path]:
             crate_root.mkdir(parents=True, exist_ok=True)
             cargo.write_text(_CARGO_TOML.format(crate=crate), encoding="utf-8")
             created.append(cargo)
+        # Scaffold the protocol-conformant parity-harness stub TFactory invokes.
+        rel, body = _TARGET_HARNESS.get(lang, (None, None))
+        if rel:
+            harness = crate_root / rel
+            if not harness.exists():
+                harness.parent.mkdir(parents=True, exist_ok=True)
+                harness.write_text(body, encoding="utf-8")
+                created.append(harness)
     for tgt in mm.values():
         fp = Path(worktree) / tgt
         if not fp.exists():
@@ -192,9 +251,15 @@ def prepare_migration_workspace(
         return {}
     oracle = mount_oracle(worktree, project_dir)
     created = scaffold_target(worktree, contract)
+    briefs = module_briefs(contract, oracle_root=oracle)
+    # Drop the rewrite brief at the worktree root so the coder encounters it.
+    brief_path = Path(worktree) / "MIGRATION_BRIEF.md"
+    brief_path.write_text(render_migration_brief(contract, briefs), encoding="utf-8")
+    created.append(brief_path)
     return {
         "oracle_root": str(oracle),
         "target_language": resolve_generation_language(contract),
         "scaffolded": [str(p) for p in created],
-        "briefs": [vars(b) for b in module_briefs(contract, oracle_root=oracle)],
+        "brief": str(brief_path),
+        "briefs": [vars(b) for b in briefs],
     }

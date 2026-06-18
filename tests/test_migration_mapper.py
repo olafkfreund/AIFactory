@@ -111,3 +111,35 @@ def test_prepare_is_noop_for_non_migration(tmp_path: Path):
         mm.prepare_migration_workspace(tmp_path, tmp_path, {"change_mode": "modify"})
         == {}
     )
+
+
+# ── coder brief + parity-harness scaffold (Gap 1b) ──────────────────────
+
+
+def test_render_migration_brief_states_rules_and_modules():
+    briefs = mm.module_briefs(_contract())
+    text = mm.render_migration_brief(_contract(), briefs)
+    assert "python -> rust" in text
+    assert "read-only" in text and ".aifactory/oracle" in text
+    assert "pay/refund.py` -> `rust/port/src/pay/refund.rs" in text
+
+
+def test_scaffold_creates_parity_harness_stub(tmp_path: Path):
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    created = mm.scaffold_target(worktree, _contract())
+    harness = worktree / "rust" / "port" / "src" / "bin" / "parity_harness.rs"
+    assert harness.is_file() and "parity harness" in harness.read_text().lower()
+    assert harness in created
+
+
+def test_prepare_writes_brief_at_worktree_root(tmp_path: Path):
+    project = tmp_path / "proj"
+    (project / "pay").mkdir(parents=True)
+    (project / "pay" / "refund.py").write_text("def refund(a):\n    return a\n")
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    summary = mm.prepare_migration_workspace(worktree, project, _contract())
+    brief = worktree / "MIGRATION_BRIEF.md"
+    assert brief.is_file() and summary["brief"] == str(brief)
+    assert "do **not** edit the legacy source" in brief.read_text().lower()
