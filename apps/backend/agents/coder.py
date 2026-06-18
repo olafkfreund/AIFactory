@@ -1164,15 +1164,29 @@ async def _run_trailing_gates_if_build_complete(
         results = await run_gates(gate_dir, gates)
         summary = summarize_gates(results)
         failures = failing_gates(results)
+        # Build-layout guard (#601): a root-vs-src import-shadowing layout makes
+        # `import <app>` resolve to an empty src package, so the tests can never
+        # import the app. The gate suite can pass (or find no test gate) while the
+        # build is unrunnable — so fail loud into GATE_FAILURES.md for the fix loop.
+        from .build_layout import detect_import_layout_conflicts
+
+        layout_conflicts = detect_import_layout_conflicts(gate_dir)
         marker = spec_dir / "GATE_FAILURES.md"
-        if failures:
+        if failures or layout_conflicts:
             lines = [f"# Gate failures\n\nSummary: {summary}\n"]
             for r in failures:
                 lines.append(
                     f"\n## {r.name} (exit {r.exit_code})\n\n```\n{r.output_tail}\n```\n"
                 )
+            if layout_conflicts:
+                lines.append("\n## build layout (#601)\n\n")
+                lines.extend(f"- {c}\n" for c in layout_conflicts)
             marker.write_text("".join(lines), encoding="utf-8")
-            print_status(f"Trailing gates failed: {summary}", "warning")
+            print_status(
+                f"Trailing gates failed: {summary}"
+                + (f" + {len(layout_conflicts)} layout conflict(s)" if layout_conflicts else ""),
+                "warning",
+            )
         else:
             if marker.exists():
                 marker.unlink()  # clear any stale failures from a prior run
