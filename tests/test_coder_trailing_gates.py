@@ -10,9 +10,9 @@ the fix: gates are detected+run in the worktree, the run is once-only, and a
 
 from pathlib import Path
 
-import pytest
 import agents.gate_runner as gate_runner
 import implementation_plan.plan as ipp
+import pytest
 from agents.coder import _run_trailing_gates_if_build_complete
 
 
