@@ -1040,6 +1040,9 @@ def task_to_dict(task: Task) -> dict:
         "description": task.description,
         "status": map_backend_status_to_frontend(task.status),
         "phase": task.phase,
+        # RFC-0001 correlation: surface the upstream GitHub issue so the cockpit
+        # threads this build with its PFactory plan + TFactory test.
+        "githubIssueNumber": task.github_issue,
         "subtasks": [
             {
                 "id": s.id,
