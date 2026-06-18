@@ -179,6 +179,11 @@ class Task(TaskBase):
     review_reason: str | None = Field(
         None, description="Reason for human review (e.g., 'plan_review')"
     )
+    github_issue: int | None = Field(
+        None,
+        description="Upstream GitHub issue number (RFC-0001 correlation key) from "
+        "PFactory provenance; lets the cockpit thread plan→code→test.",
+    )
 
 
 class TaskList(BaseModel):
@@ -466,6 +471,7 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         "archivedAt": None,
         "archivedInVersion": None,
         "reviewReason": None,
+        "github_issue": None,
     }
 
     # Try to load requirements.json for title/description (most accurate source)
@@ -477,6 +483,11 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                 metadata["title"] = requirements["title"]
             if "description" in requirements:
                 metadata["description"] = requirements["description"]
+            # RFC-0001 correlation: surface the upstream GitHub issue so the
+            # cockpit threads this task with its PFactory plan + TFactory test.
+            prov = requirements.get("provenance")
+            if isinstance(prov, dict) and prov.get("issue_number") is not None:
+                metadata["github_issue"] = prov.get("issue_number")
         except (json.JSONDecodeError, KeyError):
             pass
 
@@ -828,6 +839,7 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
         branch_name=metadata["branch_name"],
         metadata=task_metadata,
         review_reason=metadata.get("reviewReason"),
+        github_issue=metadata.get("github_issue"),
     )
 
 
