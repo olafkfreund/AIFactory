@@ -13,6 +13,10 @@ from datetime import datetime
 from .enums import SubtaskStatus
 from .verification import Verification
 
+# Subtask.service values that belong to a downstream PARR stage (TFactory tests,
+# CI pipeline) rather than the AIFactory coding agent. See Subtask.is_handoff.
+_HANDOFF_SERVICES = frozenset({"testing", "cicd"})
+
 
 @dataclass
 class Subtask:
@@ -56,6 +60,21 @@ class Subtask:
 
     # Self-Critique
     critique_result: dict | None = None  # Results from self-critique before completion
+
+    @property
+    def is_handoff(self) -> bool:
+        """True when this subtask belongs to a downstream PARR stage, not the
+        AIFactory coder.
+
+        PFactory's decomposition can emit ``testing`` / ``cicd`` children (it
+        tags them via ``service``). Those are TFactory's / the CI pipeline's job,
+        not work the coding agent should attempt — left in the coder's queue they
+        get a "SESSION 2" that fails (no committable output), which falsely marks
+        the whole coding phase ``failed`` even though the implementation work is
+        complete. The coder skips these and they don't block coding completion;
+        the full contract still carries them to TFactory via the handoff.
+        """
+        return (self.service or "").lower() in _HANDOFF_SERVICES
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
