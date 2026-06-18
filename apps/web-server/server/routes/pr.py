@@ -197,6 +197,20 @@ async def create_pr_from_task(
             timeout=10,
         )
 
+    # Authenticate git via the gh credential helper before pushing (#540).
+    # The deployed pod has a gh token but no git credential config, so a raw
+    # `git push` over HTTPS fails with "could not read Username for
+    # https://github.com". `gh auth setup-git` wires gh as the credential
+    # helper — same fix as pr_endgame.create_pr / agent_service. Best-effort:
+    # a failure here surfaces as the existing push error below, not a new mode.
+    subprocess.run(
+        ["gh", "auth", "setup-git"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
     # Push the branch to remote
     # Use --force-with-lease after successful rebase (rebase rewrites history)
     push_cmd = ["git", "push", "-u", "origin", worktree_branch]
