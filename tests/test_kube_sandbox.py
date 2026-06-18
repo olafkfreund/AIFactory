@@ -115,6 +115,7 @@ def test_kube_backend_error_is_gate_failure(monkeypatch):
 
 # --- RFC-0005: real container exit code (not the Job's synthetic 0/1) ---
 from types import SimpleNamespace  # noqa: E402
+
 from core.kube_sandbox import _exit_code_from_pod  # noqa: E402
 
 

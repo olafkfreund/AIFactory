@@ -608,10 +608,10 @@ def test_handoff_subtasks_do_not_block_coding_completion():
     """A plan whose only-pending subtasks are testing/cicd (service-tagged) is
     coding-complete: the coder skips them (TFactory/CI own them) and they must
     not falsely mark coding failed."""
-    from implementation_plan.subtask import Subtask
+    from implementation_plan.enums import PhaseType, SubtaskStatus, WorkflowType
     from implementation_plan.phase import Phase
     from implementation_plan.plan import ImplementationPlan
-    from implementation_plan.enums import SubtaskStatus, PhaseType, WorkflowType
+    from implementation_plan.subtask import Subtask
 
     impl = Phase(
         phase=1, name="Implementation", type=PhaseType.IMPLEMENTATION,
