@@ -53,7 +53,6 @@ function HeroBanner() {
 
 const FEATURES = [
   {
-    icon: '🔒',
     title: 'Runs in your perimeter',
     body:
       'Self-hosted on your own Kubernetes via the Helm chart (or docker-compose on a laptop). ' +
@@ -61,7 +60,6 @@ const FEATURES = [
       'ship code to a third-party cloud.',
   },
   {
-    icon: '📝',
     title: 'Spec-first, review-gated',
     body:
       'Every run starts from a written spec with acceptance criteria. You approve the plan ' +
@@ -69,7 +67,6 @@ const FEATURES = [
       'No unsupervised black box, no vibe-code to clean up.',
   },
   {
-    icon: '🧾',
     title: 'Auditable by design',
     body:
       'Every action is journaled in a hash-chained audit log; every spec, plan, and QA report ' +
@@ -77,7 +74,6 @@ const FEATURES = [
       'auditor actually ask for — SOC2 / ISO evidence in the enterprise build.',
   },
   {
-    icon: '🔀',
     title: 'No vendor lock-in',
     body:
       'Route each phase to the right model — Claude, OpenAI, Gemini, Codex, or a local Ollama / ' +
@@ -85,7 +81,6 @@ const FEATURES = [
       'depend on a single vendor.',
   },
   {
-    icon: '🖥️',
     title: 'Isolated + observable',
     body:
       'Each task runs in its own git worktree — nothing touches your tree until you merge. ' +
@@ -93,7 +88,6 @@ const FEATURES = [
       'Attach), with OpenTelemetry tracing across every boundary.',
   },
   {
-    icon: '🛰️',
     title: 'MCP control plane',
     body:
       '27 MCP tools across stdio + HTTP+SSE transports. Drive AIFactory from Claude Code, ' +
@@ -118,7 +112,6 @@ function FeatureGrid() {
             key={f.title}
             className="feature-card reveal-on-scroll"
             style={{animationDelay: `${i * 80}ms`}}>
-            <div className="feature-icon" aria-hidden="true">{f.icon}</div>
             <Heading as="h3">{f.title}</Heading>
             <p>{f.body}</p>
           </div>
@@ -131,6 +124,17 @@ function FeatureGrid() {
 // ─── Recently shipped — auto-running "what's new" timeline ──────────────
 
 const RECENT = [
+  {
+    when: 'June 2026',
+    title: 'Factory-line integration + parallel build executor',
+    body:
+      'AIFactory now builds from a signed Task Contract (the planned acceptance ' +
+      'criteria from PFactory) and hands the built branch + deployed URL to TFactory, ' +
+      'which verifies it with visible evidence. Independent subtasks build in parallel ' +
+      'with per-worker token, cost, and progress tracking.',
+    link: '/task-contract',
+    linkText: 'See the contract →',
+  },
   {
     when: 'May 2026',
     title: 'MCP Control-Plane Epic shipped',

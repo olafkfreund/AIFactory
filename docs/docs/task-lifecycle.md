@@ -37,16 +37,16 @@ create task ─▶ SPEC (3–8 phases) ─▶ PLAN (implementation_plan.json)
 
 | Field | Type | Req? | Notes |
 |---|---|---|---|
-| `title` | str | ✅ | Task title |
-| `description` | str | ✅ | Task description (full; not truncated) |
-| `complexity` | `simple`\|`standard`\|`complex` | ⬜ | Forces tier; else AI-assessed |
-| `auto_continue` | bool | ⬜ | Default `true` — spec→plan→build in one run |
-| `parallel` | bool | ⬜ | Enable parallel waves (→ `task_metadata.json`) |
-| `workers` | int | ⬜ | Max concurrent subtasks (default 3) |
-| `model` | str | ⬜ | Model override (shorthand or full id) |
-| `mode` | `quick`\|`full` | ⬜ | Default `full`; auto-`quick` for `simple` |
-| `baseBranch` | str | ⬜ | Git base for the worktree |
-| `provenance` | object | ⬜ | Upstream traceability (see below) |
+| `title` | str | Yes | Task title |
+| `description` | str | Yes | Task description (full; not truncated) |
+| `complexity` | `simple`\|`standard`\|`complex` | No | Forces tier; else AI-assessed |
+| `auto_continue` | bool | No | Default `true` — spec→plan→build in one run |
+| `parallel` | bool | No | Enable parallel waves (→ `task_metadata.json`) |
+| `workers` | int | No | Max concurrent subtasks (default 3) |
+| `model` | str | No | Model override (shorthand or full id) |
+| `mode` | `quick`\|`full` | No | Default `full`; auto-`quick` for `simple` |
+| `baseBranch` | str | No | Git base for the worktree |
+| `provenance` | object | No | Upstream traceability (see below) |
 
 **`POST /api/tasks/from-plan`** — `FromPlanRequest`: ingest a **signed**
 `implementation_plan.json` and skip the spec pipeline. See
@@ -133,10 +133,10 @@ The single place execution options live (`apps/backend/phase_config.py`
 
 | Level | Field | Notes |
 |---|---|---|
-| Plan | `feature`✅, `workflow_type`✅, `phases`✅ | `services_involved`, `final_acceptance`, `required_commands`, status fields |
-| Phase | `phase`✅, `name`✅, `subtasks`✅ | `type`, `depends_on` (int or slug), `parallel_safe` |
-| Subtask | `id`✅, `description`✅ | `status`, `depends_on`, `files_to_create`/`files_to_modify`, `model`, `patterns_from`, `verification`, `required_commands` |
-| Verification | `type`✅ | `command`/`api`/`browser`/`component`/`manual`/`none`/`e2e` + `run`/`url`/`method`/`expect_*`/`scenario` |
+| Plan | `feature`, `workflow_type`, `phases` (all required) | `services_involved`, `final_acceptance`, `required_commands`, status fields |
+| Phase | `phase`, `name`, `subtasks` (all required) | `type`, `depends_on` (int or slug), `parallel_safe` |
+| Subtask | `id`, `description` (both required) | `status`, `depends_on`, `files_to_create`/`files_to_modify`, `model`, `patterns_from`, `verification`, `required_commands` |
+| Verification | `type` (required) | `command`/`api`/`browser`/`component`/`manual`/`none`/`e2e` + `run`/`url`/`method`/`expect_*`/`scenario` |
 
 - `depends_on` accepts integer phase numbers **or** planner slugs
   (`"phase-2-modules"`) — resolved to a phase number by the executor.
