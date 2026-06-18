@@ -979,14 +979,6 @@ async def create_and_run_task(
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
-    # No explicit provenance object: derive the GitHub issue from the signed
-    # contract's correlation_key (RFC-0001). PFactory's fast path carries the
-    # issue number there, so the PFactory→issue→spec→test chain threads in the
-    # cockpit (CFactory reads githubIssueNumber off the task row).
-    if "provenance" not in requirements and isinstance(request.plan, dict):
-        corr = request.plan.get("correlation_key")
-        if corr is not None and str(corr).isdigit():
-            requirements["provenance"] = {"issue_number": int(corr)}
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Persist execution options so the spec→plan→build auto-continue honors them
@@ -1109,6 +1101,22 @@ async def create_from_trusted_plan(
                 "reasons": result.reasons,
             },
         )
+
+    # RFC-0001 correlation: ingest stamped {approved_by, trusted_plan} provenance;
+    # also record the GitHub issue number from the contract's correlation_key so
+    # the task list exposes Task.github_issue and the cockpit threads plan→code→test.
+    corr = request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    if corr is not None and str(corr).isdigit():
+        req_file = spec_dir / "requirements.json"
+        try:
+            reqs = json.loads(req_file.read_text())
+            prov = reqs.get("provenance")
+            prov = prov if isinstance(prov, dict) else {}
+            prov.setdefault("issue_number", int(corr))
+            reqs["provenance"] = prov
+            req_file.write_text(json.dumps(reqs, indent=2))
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
 
     # Honor the contract's execution profile when the HTTP request doesn't
     # override it: a v2 contract carries parallel/workers in its `execution`
