@@ -118,6 +118,28 @@ def _pvc_subpath(workdir: str | None, data_root: str) -> str | None:
     return norm[len(root) :]
 
 
+def _exit_code_from_pod(pod: object, *, job_succeeded: bool) -> tuple[bool, int]:
+    """(succeeded, exit_code) from a Job pod's terminated container state.
+
+    RFC-0005: a k8s Job only exposes a boolean succeeded/failed, which collapses
+    every non-zero exit to "failed" and loses the real status — so a gate would
+    report a synthetic 0/1 instead of the command's true exit code. Read the
+    first container's terminated ``exit_code`` when available; fall back to the
+    Job flag (synthetic 0/1) when the pod/state is missing. Pure + testable.
+    """
+    try:
+        statuses = pod.status.container_statuses or []  # type: ignore[attr-defined]
+        terminated = (
+            statuses[0].state.terminated if statuses and statuses[0].state else None
+        )
+        if terminated is not None and terminated.exit_code is not None:
+            code = int(terminated.exit_code)
+            return code == 0, code
+    except Exception:  # noqa: BLE001 — best-effort; keep the Job-flag fallback
+        pass
+    return job_succeeded, (0 if job_succeeded else 1)
+
+
 class KubeJobSandbox:
     def __init__(
         self,
@@ -185,16 +207,20 @@ class KubeJobSandbox:
                 self.namespace, label_selector=f"job-name={name}"
             )
             output = ""
+            succeeded, exit_code = succeeded, (0 if succeeded else 1)
             if pods.items:
+                pod = pods.items[0]
                 try:
                     output = await core.read_namespaced_pod_log(
-                        pods.items[0].metadata.name, self.namespace
+                        pod.metadata.name, self.namespace
                     )
                 except Exception as exc:  # noqa: BLE001
                     output = f"(log unavailable: {exc})"
-            return RunResult(
-                succeeded, 0 if succeeded else 1, (output or "").strip(), []
-            )
+                # Prefer the container's REAL exit code over the Job's
+                # succeeded/failed flag (RFC-0005): the flag collapses every
+                # non-zero to "failed" and loses the actual status.
+                succeeded, exit_code = _exit_code_from_pod(pod, job_succeeded=succeeded)
+            return RunResult(succeeded, exit_code, (output or "").strip(), [])
         finally:
             try:
                 await batch.delete_namespaced_job(
