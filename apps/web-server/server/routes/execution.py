@@ -979,6 +979,14 @@ async def create_and_run_task(
         prov = request.provenance.model_dump(exclude_none=True, exclude_defaults=True)
         if prov:
             requirements["provenance"] = prov
+    # No explicit provenance object: derive the GitHub issue from the signed
+    # contract's correlation_key (RFC-0001). PFactory's fast path carries the
+    # issue number there, so the PFactory→issue→spec→test chain threads in the
+    # cockpit (CFactory reads githubIssueNumber off the task row).
+    if "provenance" not in requirements and isinstance(request.plan, dict):
+        corr = request.plan.get("correlation_key")
+        if corr is not None and str(corr).isdigit():
+            requirements["provenance"] = {"issue_number": int(corr)}
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Persist execution options so the spec→plan→build auto-continue honors them
