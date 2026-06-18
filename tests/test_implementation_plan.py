@@ -600,3 +600,37 @@ class TestChunkCritique:
 
         assert chunk.critique_result is not None
         assert chunk.critique_result["score"] == 8
+
+
+# --- RFC-0008 #616: testing/cicd subtasks are handoff, not coder work ---
+
+def test_handoff_subtasks_do_not_block_coding_completion():
+    """A plan whose only-pending subtasks are testing/cicd (service-tagged) is
+    coding-complete: the coder skips them (TFactory/CI own them) and they must
+    not falsely mark coding failed."""
+    from implementation_plan.subtask import Subtask
+    from implementation_plan.phase import Phase
+    from implementation_plan.plan import ImplementationPlan
+    from implementation_plan.enums import SubtaskStatus, PhaseType, WorkflowType
+
+    impl = Phase(
+        phase=1, name="Implementation", type=PhaseType.IMPLEMENTATION,
+        subtasks=[Subtask(id="C1", description="impl", status=SubtaskStatus.COMPLETED)],
+    )
+    testing = Phase(
+        phase=2, name="Testing", type=PhaseType.INTEGRATION,
+        subtasks=[
+            Subtask(id="TEST", description="set up testing", service="testing"),
+            Subtask(id="CICD", description="set up ci", service="cicd"),
+        ],
+    )
+    assert testing.subtasks[0].is_handoff and testing.subtasks[1].is_handoff
+    assert impl.is_complete()
+    assert testing.is_complete()                 # all-handoff phase doesn't block
+    assert testing.get_pending_subtasks() == []  # coder skips handoff work
+
+    plan = ImplementationPlan(
+        feature="x", workflow_type=WorkflowType.FEATURE, phases=[impl, testing]
+    )
+    assert plan.get_next_subtask() is None       # nothing left for the coder
+    assert plan.get_progress()["is_complete"] is True
