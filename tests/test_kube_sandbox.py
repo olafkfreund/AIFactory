@@ -111,3 +111,28 @@ def test_kube_backend_error_is_gate_failure(monkeypatch):
     monkeypatch.setattr(ks, "KubeJobSandbox", Boom)
     code, out = _select_runner()(["x"], Path("/w"))
     assert code == 1 and "kube-sandbox error" in out
+
+
+# --- RFC-0005: real container exit code (not the Job's synthetic 0/1) ---
+from types import SimpleNamespace  # noqa: E402
+from core.kube_sandbox import _exit_code_from_pod  # noqa: E402
+
+
+def _pod(exit_code):
+    term = SimpleNamespace(exit_code=exit_code) if exit_code is not None else None
+    state = SimpleNamespace(terminated=term)
+    cs = SimpleNamespace(state=state)
+    return SimpleNamespace(status=SimpleNamespace(container_statuses=[cs]))
+
+
+def test_exit_code_reads_real_container_code():
+    # Job flag says succeeded, but the container actually exited 2 → report 2.
+    assert _exit_code_from_pod(_pod(2), job_succeeded=True) == (False, 2)
+    # Real zero exit → succeeded True.
+    assert _exit_code_from_pod(_pod(0), job_succeeded=False) == (True, 0)
+
+
+def test_exit_code_falls_back_to_job_flag_when_no_terminated_state():
+    # No terminated state available → synthetic fallback from the Job flag.
+    assert _exit_code_from_pod(_pod(None), job_succeeded=True) == (True, 0)
+    assert _exit_code_from_pod(SimpleNamespace(status=SimpleNamespace(container_statuses=None)), job_succeeded=False) == (False, 1)
