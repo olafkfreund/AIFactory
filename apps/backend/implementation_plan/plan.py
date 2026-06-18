@@ -154,7 +154,11 @@ class ImplementationPlan:
         Note: Preserves human_review/review status when it represents plan approval stage
         (all subtasks pending but user needs to approve the plan before coding starts).
         """
-        all_subtasks = [s for p in self.phases for s in p.subtasks]
+        # Status is judged over coder-owned subtasks only — handoff subtasks
+        # (testing/cicd, see Subtask.is_handoff) are TFactory's / CI's job and are
+        # never implemented by the coder, so counting them would pin the task in
+        # 'in_progress' forever and never reach ai_review/human_review.
+        all_subtasks = [s for p in self.phases for s in p.subtasks if not s.is_handoff]
 
         if not all_subtasks:
             # No subtasks yet - stay in backlog/pending
