@@ -89,12 +89,24 @@ class Phase:
         )
 
     def is_complete(self) -> bool:
-        """Check if all subtasks in this phase are done."""
-        return all(s.status == SubtaskStatus.COMPLETED for s in self.subtasks)
+        """Check if all coder-owned subtasks in this phase are done.
+
+        Handoff subtasks (testing/cicd — TFactory's / CI's job, see
+        Subtask.is_handoff) are never implemented by the coder, so they must not
+        block phase completion or the coding phase is falsely marked failed."""
+        return all(
+            s.status == SubtaskStatus.COMPLETED
+            for s in self.subtasks
+            if not s.is_handoff
+        )
 
     def get_pending_subtasks(self) -> list[Subtask]:
-        """Get subtasks that can be worked on."""
-        return [s for s in self.subtasks if s.status == SubtaskStatus.PENDING]
+        """Get subtasks the coder can work on (excludes downstream handoff work)."""
+        return [
+            s
+            for s in self.subtasks
+            if s.status == SubtaskStatus.PENDING and not s.is_handoff
+        ]
 
     # Backwards compatibility alias
     def get_pending_chunks(self) -> list[Subtask]:

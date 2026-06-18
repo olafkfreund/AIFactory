@@ -154,7 +154,11 @@ class ImplementationPlan:
         Note: Preserves human_review/review status when it represents plan approval stage
         (all subtasks pending but user needs to approve the plan before coding starts).
         """
-        all_subtasks = [s for p in self.phases for s in p.subtasks]
+        # Status is judged over coder-owned subtasks only — handoff subtasks
+        # (testing/cicd, see Subtask.is_handoff) are TFactory's / CI's job and are
+        # never implemented by the coder, so counting them would pin the task in
+        # 'in_progress' forever and never reach ai_review/human_review.
+        all_subtasks = [s for p in self.phases for s in p.subtasks if not s.is_handoff]
 
         if not all_subtasks:
             # No subtasks yet - stay in backlog/pending
@@ -260,6 +264,17 @@ class ImplementationPlan:
 
         completed_phases = sum(1 for p in self.phases if p.is_complete())
 
+        # Completion is judged over coder-owned subtasks only: handoff subtasks
+        # (testing/cicd — TFactory's / CI's job, see Subtask.is_handoff) are never
+        # implemented by the coder, so counting them would leave the build forever
+        # "incomplete" and falsely mark coding failed.
+        coder_subtasks = [
+            s for p in self.phases for s in p.subtasks if not s.is_handoff
+        ]
+        coder_done = sum(
+            1 for s in coder_subtasks if s.status == SubtaskStatus.COMPLETED
+        )
+
         return {
             "total_phases": len(self.phases),
             "completed_phases": completed_phases,
@@ -269,7 +284,7 @@ class ImplementationPlan:
             "percent_complete": round(100 * done_subtasks / total_subtasks, 1)
             if total_subtasks > 0
             else 0,
-            "is_complete": done_subtasks == total_subtasks and failed_subtasks == 0,
+            "is_complete": coder_done == len(coder_subtasks) and failed_subtasks == 0,
         }
 
     def get_status_summary(self) -> str:
