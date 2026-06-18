@@ -25,18 +25,18 @@ You **don't** need it for:
 
 | Aspect | v1.1 status |
 |--------|-------------|
-| HMAC-SHA256 daily anchor signed with KMS-wrapped key | ✅ |
-| Versioned signing keys (KMS rotation doesn't invalidate prior anchors) | ✅ |
-| Anchors interleaved into NDJSON export | ✅ |
-| Offline verifier helper (`verify_anchored_export`) | ✅ |
-| Three-tier data classification (public / internal / confidential) | ✅ |
-| Classification tampering detected at anchor-verify time | ✅ |
-| Access-review export (`/api/admin/access-review`) | ✅ |
-| `users.last_login_at` updated on every successful login | ✅ |
-| Kubernetes CronJob OR in-process asyncio scheduler | ✅ |
-| External anchor publication (S3 WORM / RFC 3161 TSA / Sigstore) | ❌ (v1.2) |
-| Asymmetric signatures for public verification | ❌ (v1.2) |
-| Per-event signing | ❌ (intentional — daily granularity matches retention) |
+| HMAC-SHA256 daily anchor signed with KMS-wrapped key | Yes |
+| Versioned signing keys (KMS rotation doesn't invalidate prior anchors) | Yes |
+| Anchors interleaved into NDJSON export | Yes |
+| Offline verifier helper (`verify_anchored_export`) | Yes |
+| Three-tier data classification (public / internal / confidential) | Yes |
+| Classification tampering detected at anchor-verify time | Yes |
+| Access-review export (`/api/admin/access-review`) | Yes |
+| `users.last_login_at` updated on every successful login | Yes |
+| Kubernetes CronJob OR in-process asyncio scheduler | Yes |
+| External anchor publication (S3 WORM / RFC 3161 TSA / Sigstore) | No (v1.2) |
+| Asymmetric signatures for public verification | No (v1.2) |
+| Per-event signing | No (intentional — daily granularity matches retention) |
 
 ## How it works
 
@@ -142,12 +142,12 @@ A clean verification proves: every row's `prev_hash` correctly chains to the pre
 
 | Threat | Defended? |
 |--------|-----------|
-| DB read-replica replayed forward | ✅ Anchor mismatch |
-| Insertion / deletion of audit rows | ✅ Chain break detected |
-| Mutation of row content | ✅ Chain break detected |
-| Flipping a `confidential` row to `public` to leak past export filter | ✅ Classifications hash mismatch |
-| DB admin re-signing entire chain (no HMAC key access) | ✅ Anchor mismatch |
-| DB admin who ALSO has the unwrapped HMAC key | ❌ Out of scope. v1.2 external pub (S3 WORM / RFC 3161 TSA / Sigstore) closes this by writing anchors to a target the admin can't rewrite. |
+| DB read-replica replayed forward | Defended — anchor mismatch |
+| Insertion / deletion of audit rows | Defended — chain break detected |
+| Mutation of row content | Defended — chain break detected |
+| Flipping a `confidential` row to `public` to leak past export filter | Defended — classifications hash mismatch |
+| DB admin re-signing entire chain (no HMAC key access) | Defended — anchor mismatch |
+| DB admin who ALSO has the unwrapped HMAC key | Out of scope. v1.2 external pub (S3 WORM / RFC 3161 TSA / Sigstore) closes this by writing anchors to a target the admin can't rewrite. |
 
 Operationally: keep the KMS-wrapped key Secret separate from DB admin access. If the same human has both, the anchor is policy evidence, not cryptographic proof.
 

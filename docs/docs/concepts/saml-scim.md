@@ -25,22 +25,22 @@ You **don't** need it for:
 
 | Aspect | v1.1 status |
 |--------|-------------|
-| SAML 2.0 Web SSO (SP-init + IdP-init) | ✅ |
-| `python3-saml` (OneLogin) wrapper with hard-coded XSW / strict defences | ✅ |
-| SP signing cert + optional encrypted-assertion decryption | ✅ |
-| IdP federation-metadata refresh (4-hour periodic, 48-hour stale-warn) | ✅ |
-| SCIM 2.0 full CRUD on Users + Groups (POST / GET / PATCH / PUT / DELETE) | ✅ |
-| SCIM soft-delete + 404-on-GET (Azure AD sync compat) | ✅ |
-| SCIM filter subset: `eq` on `userName` / `externalId` / `active` | ✅ |
-| Per-assertion-TTL replay defence (not blanket 5-min LRU) | ✅ |
-| HMAC-signed RelayState (SP-init CSRF defence) | ✅ |
-| Cross-IdP collision guard (OIDC ↔ SAML auto-link rejection) | ✅ |
-| Login-page IdP discovery dropdown | ✅ |
-| SAML Single Logout (SLO) | ✅ opt-in (`saml.slo.enabled=true`, v1.2 #209) |
-| Per-tenant SAML IdP routing | ❌ (v1.2, ships with #36 tenant isolation) |
-| Just-in-time provisioning via SAML alone (no SCIM) | ❌ (decision #4 — SCIM provisions first) |
-| OAuth client-credentials grant for SCIM | ❌ (decision #3 — static Bearer in v1.1) |
-| FedRAMP / FIPS-mode crypto enforcement | ❌ (operator picks PEM; we don't enforce FIPS) |
+| SAML 2.0 Web SSO (SP-init + IdP-init) | Supported |
+| `python3-saml` (OneLogin) wrapper with hard-coded XSW / strict defences | Supported |
+| SP signing cert + optional encrypted-assertion decryption | Supported |
+| IdP federation-metadata refresh (4-hour periodic, 48-hour stale-warn) | Supported |
+| SCIM 2.0 full CRUD on Users + Groups (POST / GET / PATCH / PUT / DELETE) | Supported |
+| SCIM soft-delete + 404-on-GET (Azure AD sync compat) | Supported |
+| SCIM filter subset: `eq` on `userName` / `externalId` / `active` | Supported |
+| Per-assertion-TTL replay defence (not blanket 5-min LRU) | Supported |
+| HMAC-signed RelayState (SP-init CSRF defence) | Supported |
+| Cross-IdP collision guard (OIDC ↔ SAML auto-link rejection) | Supported |
+| Login-page IdP discovery dropdown | Supported |
+| SAML Single Logout (SLO) | Supported, opt-in (`saml.slo.enabled=true`, v1.2 #209) |
+| Per-tenant SAML IdP routing | Not yet (v1.2, ships with #36 tenant isolation) |
+| Just-in-time provisioning via SAML alone (no SCIM) | No (decision #4 — SCIM provisions first) |
+| OAuth client-credentials grant for SCIM | No (decision #3 — static Bearer in v1.1) |
+| FedRAMP / FIPS-mode crypto enforcement | No (operator picks PEM; we don't enforce FIPS) |
 
 ## How it fits together
 
@@ -337,15 +337,15 @@ This closes the hijack-via-unverified-email attack: an attacker who controls a G
 
 | Threat | Defended? |
 |--------|-----------|
-| Unsigned `<Assertion>` (signed-Response-only IdP) | ✅ `wantAssertionsSigned=True` rejects |
-| XML Signature Wrapping (XSW) | ✅ `strict=True` hard-coded, never operator-configurable |
-| Replay of captured assertion within its `NotOnOrAfter` window | ✅ Per-assertion-TTL replay cache |
-| SP-init CSRF (attacker triggers `/saml/login` then steals the assertion) | ✅ HMAC-signed RelayState |
-| Open-redirect via IdP-init `return_to` | ✅ Validator enforces scheme + host match `spEntityId` |
-| Cross-IdP email hijack (OIDC-linked GitHub account + corp SAML email) | ✅ Cross-IdP collision guard → 409 |
-| Stolen SCIM Bearer token | ❌ Rotate the token + restart pod. Out of scope: per-request signing. |
-| IdP admin who can mint assertions | ❌ Out of scope by definition — IdP is the trust root |
-| DB admin who can edit `users.email` to claim someone else's account | ❌ Out of scope — separate concern; see audit-anchor for tamper detection |
+| Unsigned `<Assertion>` (signed-Response-only IdP) | Defended — `wantAssertionsSigned=True` rejects |
+| XML Signature Wrapping (XSW) | Defended — `strict=True` hard-coded, never operator-configurable |
+| Replay of captured assertion within its `NotOnOrAfter` window | Defended — per-assertion-TTL replay cache |
+| SP-init CSRF (attacker triggers `/saml/login` then steals the assertion) | Defended — HMAC-signed RelayState |
+| Open-redirect via IdP-init `return_to` | Defended — validator enforces scheme + host match `spEntityId` |
+| Cross-IdP email hijack (OIDC-linked GitHub account + corp SAML email) | Defended — cross-IdP collision guard → 409 |
+| Stolen SCIM Bearer token | Not defended — rotate the token + restart pod. Out of scope: per-request signing. |
+| IdP admin who can mint assertions | Not defended — out of scope by definition; IdP is the trust root |
+| DB admin who can edit `users.email` to claim someone else's account | Not defended — out of scope; separate concern; see audit-anchor for tamper detection |
 
 ## See also
 

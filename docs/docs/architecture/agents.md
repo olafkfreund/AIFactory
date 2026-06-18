@@ -48,11 +48,11 @@ Defined in `apps/backend/core/client.py::create_client()`:
 
 | Tool | Planner | Coder | QA Reviewer | QA Fixer |
 |---|---|---|---|---|
-| Read | ✓ | ✓ | ✓ | ✓ |
-| Edit / Write | — | ✓ | — | ✓ |
-| Bash (allowlisted) | — | ✓ | — | ✓ |
-| WebSearch / WebFetch | — | ✓ | ✓ | — |
-| MCP servers | ✓ | ✓ | ✓ | ✓ |
+| Read | Yes | Yes | Yes | Yes |
+| Edit / Write | No | Yes | No | Yes |
+| Bash (allowlisted) | No | Yes | No | Yes |
+| WebSearch / WebFetch | No | Yes | Yes | No |
+| MCP servers | Yes | Yes | Yes | Yes |
 
 The Planner can read but never write code. The QA Reviewer can read but never write — only the Fixer applies changes the Reviewer requests.
 

@@ -30,6 +30,6 @@ The environment variable always wins, so you can force solo mode on (or off) for
 
 ## When to use it
 
-- ✅ Small, low-risk jobs: a one-file fix, a quick script, a smoke-test spec.
-- ✅ Token-sensitive runs where the full four-session pipeline is overkill.
-- ❌ Anything you want an independent QA pass on — keep the default pipeline.
+- Good fit — small, low-risk jobs: a one-file fix, a quick script, a smoke-test spec.
+- Good fit — token-sensitive runs where the full four-session pipeline is overkill.
+- Not a fit — anything you want an independent QA pass on; keep the default pipeline.

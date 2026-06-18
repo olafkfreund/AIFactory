@@ -34,7 +34,7 @@ The `claude` subprocess looks for credentials in this order (`apps/backend/core/
 1. `CLAUDE_CODE_OAUTH_TOKEN` env var — **inference-only, gets rejected by Remote Control**
 2. `ANTHROPIC_AUTH_TOKEN` env var — also limited
 3. AIFactory profiles (`~/.aifactory/claude-profiles.json`)
-4. **`~/.claude/.credentials.json`** — produced by `claude auth login`, full-scope ✓
+4. **`~/.claude/.credentials.json`** — produced by `claude auth login`, full-scope
 
 When a task has `enableRemoteControl: true`, `agent_service` removes vars (1) and (2) from the spawned subprocess's env, forcing the chain through to (4). The operator must therefore make sure (4) exists on the AIFactory host.
 
@@ -91,10 +91,10 @@ The credentials file in the Secret is full-scope — anyone holding it can use y
 
 Anti-patterns to avoid:
 
-- ❌ Baking credentials into the container image
-- ❌ Storing in plain `values.yaml` and checking that into git
-- ❌ Sharing across multiple AIFactory installs (rotate per install)
-- ❌ Using a personal account's credentials for shared deployments — use a dedicated service account
+- Baking credentials into the container image
+- Storing in plain `values.yaml` and checking that into git
+- Sharing across multiple AIFactory installs (rotate per install)
+- Using a personal account's credentials for shared deployments — use a dedicated service account
 
 ## Limits (from Anthropic's docs)
 

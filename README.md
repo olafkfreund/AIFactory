@@ -17,7 +17,7 @@
 [Roadmap](https://aifactory.freundcloud.com/roadmap) ·
 [Contributing](https://aifactory.freundcloud.com/contributing)
 
-**📖 New here? Start at the docs → [aifactory.freundcloud.com](https://aifactory.freundcloud.com)** — guided demo, screenshots, architecture, and the full getting-started guide.
+**New here? Start at the docs → [aifactory.freundcloud.com](https://aifactory.freundcloud.com)** — guided demo, screenshots, architecture, and the full getting-started guide.
 
 </div>
 
@@ -27,15 +27,26 @@
 
 AIFactory turns GitHub issues into shipping code via a coordinated **planner / coder / QA** agent pipeline. You bring an issue (or a one-line task description) — AIFactory writes a spec, plans the work, codes it in an isolated git worktree, validates against the spec's acceptance criteria, and hands you back a merge-ready branch.
 
+It also runs standalone or as the **build node of the Factory line**: [PFactory](https://pfactory.freundcloud.com/) plans and governs the work and emits a signed Task Contract; **AIFactory builds it**; [TFactory](https://tfactory.freundcloud.com/) verifies the result against the declared acceptance criteria and the deployed URL; CFactory watches all four. The contract that was approved is the contract AIFactory builds.
+
 You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive — or open the task in **Mission Control**, a full-page three-pane workspace (plan · live activity + console · preview / files / review). See [`docs/docs/concepts/mission-control-workspace.md`](docs/docs/concepts/mission-control-workspace.md).
 
-> **🚀 What's new (May 2026)** — three more epics closed on top of the May MCP shipset:
+> **Where we are (June 2026, v3.6.x)** — recent work on top of the enterprise and
+> MCP shipsets:
 >
-> - **Delegation (#92)** — hand the coder phase off to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps the planning + governance. Hybrid only: planner runs on Claude, the structured plan lands as a comment on the issue, then the provider's agent codes. See [`docs/docs/concepts/delegation.md`](docs/docs/concepts/delegation.md).
+> - **Parallel build executor + per-worker observability** — independent subtasks
+>   build concurrently, each worker's tokens, cost, and progress tracked and shown
+>   live; honest completion accounting (a failed plan-load no longer reads as a
+>   successful build).
+> - **Factory-line integration** — AIFactory ingests a signed Task Contract (with
+>   the planned acceptance criteria) from PFactory and hands the built branch plus
+>   its deployed URL to TFactory, which verifies it with visible screenshot and
+>   recording evidence. One correlation key threads the whole run.
+> - **Delegation (#92)** — hand the coder phase off to **GitHub Copilot Coding Agent** or **GitLab Duo Workflow** while AIFactory keeps the planning and governance. Hybrid only: the planner runs on Claude, the structured plan lands as a comment on the issue, then the provider's agent codes. See [`docs/docs/concepts/delegation.md`](docs/docs/concepts/delegation.md).
 > - **Portal-managed Git clones (#82)** — point the portal at a Git URL, it clones into a workspace root (laptop default `~/.aifactory/workspaces/`, Helm-templated PVC on K8s). Stored Personal Access Tokens encrypted at rest. Required for SaaS / Kubernetes deployments. See [`docs/docs/concepts/portal-clones.md`](docs/docs/concepts/portal-clones.md).
 > - **Scoped MCP API keys (#154)** — replace the host-wide admin token at `~/.aifactory/.token` with per-developer scope-gated `acw_` keys. Mint via **Settings → API Keys**, drop in `$AIFACTORY_MCP_KEY`, done. Legacy admin token still works as a wildcard fallback. See [`docs/docs/concepts/mcp-stdio-keys.md`](docs/docs/concepts/mcp-stdio-keys.md).
 >
-> Earlier May 2026 shipset (still current): **27 MCP tools** across stdio + remote HTTP+SSE transports, the **`/handover` skill** for Claude Code, **default MCP servers** that auto-enable per project, and **Remote Control** wiring for `claude.ai/code` on any device.
+> Also current: a large catalog of **MCP tools** across stdio + remote HTTP+SSE transports, the **`/handover` skill** for Claude Code, **default MCP servers** that auto-enable per project, and **Remote Control** for `claude.ai/code` on any device.
 >
 > See [`guides/HANDOVER_WORKFLOW.md`](guides/HANDOVER_WORKFLOW.md) for the developer flow, [`guides/CLAUDE_CODE_MCP_TOOLS.md`](guides/CLAUDE_CODE_MCP_TOOLS.md) for the stdio tool catalog, and [`guides/REMOTE_MCP_SERVER.md`](guides/REMOTE_MCP_SERVER.md) for the HTTP+SSE server (Cursor / Continue.dev / non-Claude clients).
 
