@@ -97,6 +97,17 @@ spec:
                   name: {{ .Values.kms.fernetKeyRef.name }}
                   key: {{ .Values.kms.fernetKeyRef.key }}
             {{- end }}
+            {{- if ne .Values.sandbox.agent.mode "off" }}
+            # Agent OS sandbox (#363 AC1): bubblewrap around each agent bash
+            # command — RW only the worktree, everything else RO. Runs
+            # unprivileged in-pod; PID isolation is opt-in (needs privilege).
+            - name: AIFACTORY_AGENT_SANDBOX
+              value: {{ .Values.sandbox.agent.mode | quote }}
+            {{- if .Values.sandbox.agent.pidNamespace }}
+            - name: AIFACTORY_AGENT_SANDBOX_PIDNS
+              value: "1"
+            {{- end }}
+            {{- end }}
             {{- if ne .Values.security.egress.policy "off" }}
             # Agent egress control (#363 AC3): command-layer allowlist over the
             # bash hook — complements the NetworkPolicy with per-host filtering

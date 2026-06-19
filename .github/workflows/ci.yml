@@ -81,6 +81,17 @@ jobs:
             sleep 1
           done
 
+      # bubblewrap powers the agent OS sandbox (#363). Installed here so the
+      # sandbox-escape corpus exercises a real bwrap boundary instead of
+      # skipping. Ubuntu 24.04 restricts unprivileged user namespaces via
+      # AppArmor (bwrap can't create namespaces under that), so relax it — the
+      # `|| true` keeps older kernels without the knob green.
+      - name: Install bubblewrap (agent OS sandbox, #363)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
       - name: Pytest (skip slow)
         env:
           GRAPHITI_ENABLED: "false"

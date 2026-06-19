@@ -90,6 +90,33 @@ class TestWrapped:
         assert out[0] == "/usr/bin/bwrap"
 
 
+class TestPidNamespace:
+    """#363 AC1: PID isolation is opt-in so the default runs unprivileged in-pod.
+
+    A fresh /proc (required by --unshare-pid) can't be mounted in an unprivileged
+    k8s pod, which is what kept the sandbox inert on k3d. By default we keep the
+    host PID namespace + a read-only /proc; --unshare-pid is opt-in.
+    """
+
+    def test_default_has_no_pid_namespace(self, monkeypatch, bwrap_present):
+        monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "fs")
+        monkeypatch.delenv("AIFACTORY_AGENT_SANDBOX_PIDNS", raising=False)
+        out = sandbox.build_sandboxed_command(CMD, ROOT)
+        assert "--unshare-pid" not in out
+        # /proc is exposed read-only (not a fresh procfs mount).
+        assert _has_triplet(out, "--ro-bind-try", "/proc", "/proc")
+        assert "--proc" not in out
+
+    def test_pidns_opt_in_uses_fresh_proc(self, monkeypatch, bwrap_present):
+        monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "fs")
+        monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX_PIDNS", "1")
+        out = sandbox.build_sandboxed_command(CMD, ROOT)
+        assert "--unshare-pid" in out
+        assert "--proc" in out and out[out.index("--proc") + 1] == "/proc"
+        # The opt-in path does NOT also read-only-bind the host /proc.
+        assert not _has_triplet(out, "--ro-bind-try", "/proc", "/proc")
+
+
 def _pair(args, flag):
     i = args.index(flag)
     return (args[i + 1], args[i + 2])

@@ -15,10 +15,18 @@ they flip to real assertions when implemented.
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 from core.auth import get_agent_env_blanks
 from security.egress import check_egress
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "web-server"))
+from server.services.sandbox import build_sandboxed_command  # noqa: E402
 
 
 def _bash(command: str, cwd: str = "/tmp") -> dict:
@@ -98,18 +106,61 @@ def test_ac4_unknown_binary_blocked():
     assert out.get("decision") == "block"
 
 
-# ── AC1 — OS isolation (the remaining work) ──────────────────────────────────
-# These need a live OS sandbox (bwrap/namespaces or gVisor) around bash. On the
-# deployed k3d cluster bwrap is disabled (can't mount /proc), so there is no OS
-# boundary there today — only the pod + allowlist. Unskip + make these live
-# assertions once AC1 lands (gVisor as the enforced on-cluster boundary).
+# ── AC1 — OS isolation (now enforced via an unprivileged bwrap sandbox) ───────
+# The sandbox keeps the host PID namespace + a read-only /proc by default, which
+# runs unprivileged in-pod (k3d included) — the fresh-/proc requirement of
+# --unshare-pid was what previously made bwrap inert on-cluster. These drive a
+# real command through build_sandboxed_command and assert the filesystem
+# boundary holds. They skip only where no usable OS sandbox exists (no bwrap, or
+# an env whose shell isn't on the read-only system binds, e.g. a Nix dev box).
 
 
-@pytest.mark.skip(reason="#363 AC1: needs a live OS sandbox (bwrap off on k3d) to enforce + prove")
+def _run_sandboxed(shell_cmd: str, worktree: str) -> subprocess.CompletedProcess:
+    cmd = build_sandboxed_command(["/bin/sh", "-c", shell_cmd], worktree, mode="fs")
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+
+def _sandbox_usable() -> bool:
+    """True only when bwrap can actually exec a trivial command here."""
+    if shutil.which("bwrap") is None:
+        return False
+    with tempfile.TemporaryDirectory() as wt:
+        try:
+            return _run_sandboxed("true", wt).returncode == 0
+        except Exception:
+            return False
+
+
+_NEEDS_SANDBOX = pytest.mark.skipif(
+    not _sandbox_usable(),
+    reason="#363 AC1: no usable bwrap OS sandbox in this environment",
+)
+
+
+@_NEEDS_SANDBOX
 def test_ac1_write_outside_worktree_rejected():
-    raise AssertionError("implement against a live sandbox")
+    with tempfile.TemporaryDirectory() as wt:
+        # /usr is read-only inside the sandbox → a write there must fail outright.
+        marker = "/usr/pwned_escape_363"
+        r = _run_sandboxed(f"echo pwned > {marker}", wt)
+        assert r.returncode != 0, "write to a read-only system dir was not rejected"
+        assert not Path(marker).exists(), "write escaped the sandbox onto the host"
+        # And writing into the worktree itself still works (not a blanket denial).
+        ok = _run_sandboxed("echo hi > ./in_worktree && cat ./in_worktree", wt)
+        assert ok.returncode == 0 and "hi" in ok.stdout
 
 
-@pytest.mark.skip(reason="#363 AC1: needs a live OS sandbox to prove host-secret files are unreadable")
+@_NEEDS_SANDBOX
 def test_ac1_read_host_secret_file_rejected():
-    raise AssertionError("implement against a live sandbox")
+    # A host secret OUTSIDE the worktree and outside the read-only system binds
+    # is simply not present in the sandbox mount namespace → unreadable.
+    secret_dir = tempfile.mkdtemp()
+    try:
+        secret = Path(secret_dir) / "token"
+        secret.write_text("TOPSECRET-363")
+        with tempfile.TemporaryDirectory() as wt:
+            r = _run_sandboxed(f"cat {secret}", wt)
+        assert r.returncode != 0, "host secret file was readable inside the sandbox"
+        assert "TOPSECRET-363" not in r.stdout
+    finally:
+        shutil.rmtree(secret_dir, ignore_errors=True)
