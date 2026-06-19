@@ -147,6 +147,16 @@ Implement the story, ensuring EVERY acceptance criterion is satisfied.
 - [ ] Used specified tech stack
 - [ ] Referenced patterns from similar code
 
+**Declare EVERY dependency you import — runtime AND test (#611).** A package
+your code or tests `import` must be in the project's dependency manifest
+(`requirements.txt` / `pyproject.toml` / `package.json` / `Cargo.toml` / …), or
+the artifact won't install and the suite won't run on a clean machine. The
+trap that shipped an unrunnable build: a FastAPI test using `TestClient` needs
+**`httpx`**, which is NOT pulled in by `fastapi` — it must be listed explicitly.
+Test-only deps (e.g. `httpx`, `pytest`, `pytest-asyncio`) belong in the manifest
+too (a `test`/`dev` group is fine). After implementing, re-read your test
+imports and confirm each third-party one is declared.
+
 ### STEP 7: VERIFY AGAINST ACCEPTANCE CRITERIA
 
 **Before marking the story as complete**, test EACH acceptance criterion:
