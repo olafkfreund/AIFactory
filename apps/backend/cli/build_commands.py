@@ -138,9 +138,35 @@ def handle_build_command(
 
     print()
 
-    # Validate environment
+    # Validate environment (credential presence + spec.md, etc.)
     if not validate_environment(spec_dir):
         sys.exit(1)
+
+    # Auth pre-flight (#611 / RFC-0008 §3.2a): a live, generation-free probe of
+    # the provider credential before the (expensive) build. Catches an expired
+    # token that is *present* but invalid — the silent-empty-build failure from
+    # the 2026-06-18 taskboard demo. Mode via AIFACTORY_AUTH_PREFLIGHT:
+    # off / warn (default, never blocks) / enforce (abort on a definitive 401).
+    from core.auth_preflight import preflight_mode, run_auth_preflight
+
+    _pf_mode = preflight_mode()
+    if _pf_mode != "off":
+        for _r in run_auth_preflight([planning_model, coding_model, qa_model]):
+            if _r.status == "ok":
+                print(f"Auth pre-flight: {_r.provider} OK")
+            elif _r.is_auth_failure:
+                print(f"Auth pre-flight: {_r.provider} FAILED — {_r.detail}")
+                if _pf_mode == "enforce":
+                    print(
+                        "Aborting before build (AIFACTORY_AUTH_PREFLIGHT=enforce). "
+                        "Rotate/refresh the credential and retry."
+                    )
+                    sys.exit(1)
+            elif _r.status == "inconclusive":
+                print(
+                    f"Auth pre-flight: {_r.provider} inconclusive "
+                    f"({_r.detail}) — proceeding"
+                )
 
     # Check human review approval
     review_state = ReviewState.load(spec_dir)
