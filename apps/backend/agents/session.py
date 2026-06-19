@@ -41,6 +41,7 @@ from ui import (
 from .base import sanitize_error_message
 from .memory_manager import save_session_memory
 from .utils import (
+    commit_uncommitted_changes,
     find_subtask_in_plan,
     get_commit_count,
     get_latest_commit,
@@ -116,13 +117,27 @@ async def post_session_processing(
 
     subtask_status = subtask.get("status", "pending")
 
-    # Check for new commits
+    # Check for new commits — the agent's OWN commits, which drive completion.
     commit_after = get_latest_commit(project_dir)
     commit_count_after = get_commit_count(project_dir)
     new_commits = commit_count_after - commit_count_before
 
     print_key_value("Subtask status", subtask_status)
     print_key_value("New commits", str(new_commits))
+
+    # Safety-net commit (#611 g): if the agent wrote files but left them
+    # uncommitted, capture them now — BEFORE the bookkeeping below that can abort
+    # (e.g. LLM insight extraction) and lose the work on worktree teardown. This
+    # only PRESERVES files; it deliberately does not count toward `new_commits`
+    # / completion, so an unconfirmed subtask is still retried (with its work
+    # safely committed) rather than being silently marked done.
+    safety_commit = commit_uncommitted_changes(project_dir, subtask_id)
+    if safety_commit:
+        print_status(
+            f"Safety-net committed uncommitted agent changes: {safety_commit[:8]}",
+            "info",
+        )
+        commit_after = safety_commit  # capture for good-commit rollback recording
 
     # Fallback: if agent didn't update status but made commits, force-mark as completed
     if subtask_status == "pending" and new_commits > 0:

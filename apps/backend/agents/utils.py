@@ -44,6 +44,51 @@ def get_commit_count(project_dir: Path) -> int:
         return 0
 
 
+def commit_uncommitted_changes(
+    project_dir: Path, subtask_id: str | None = None
+) -> str | None:
+    """Safety-net commit of any uncommitted agent-written changes (#611 g).
+
+    The coding agent commits its own work, but if it finishes with files written
+    and NOT committed, a later post-run bookkeeping step that aborts (or a
+    worktree teardown) can lose that work — the 2026-06-18 demo nearly lost
+    ``app/main.py`` this way. This stages everything in the worktree and commits
+    it so the work survives regardless of what bookkeeping does next.
+
+    Fully defensive: returns the new commit hash, or ``None`` when there was
+    nothing to commit or the commit could not be made (never raises).
+    """
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if not status.stdout.strip():
+            return None  # clean tree — agent already committed everything
+
+        subprocess.run(
+            ["git", "add", "-A"], cwd=project_dir, capture_output=True,
+            text=True, check=True,
+        )
+        msg = "chore(agent): safety-net commit of uncommitted session changes"
+        if subtask_id:
+            msg += f" [{subtask_id}]"
+        subprocess.run(
+            ["git", "commit", "-m", msg],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return get_latest_commit(project_dir)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        logger.warning("safety-net commit failed in %s: %s", project_dir, exc)
+        return None
+
+
 def load_implementation_plan(spec_dir: Path) -> dict | None:
     """Load the implementation plan JSON."""
     plan_file = spec_dir / "implementation_plan.json"
