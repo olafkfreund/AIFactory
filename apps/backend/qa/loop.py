@@ -10,6 +10,7 @@ import time as time_module
 from pathlib import Path
 
 from core.client import create_client
+from core.provider_failover import DeadlineBudget, next_provider, should_failover
 from debug import debug, debug_error, debug_section, debug_success, debug_warning
 from phase_config import (
     get_phase_model,
@@ -269,6 +270,15 @@ async def run_qa_validation_loop(
     consecutive_errors = 0
     last_error_context = None  # Track error for self-correction feedback
 
+    # Provider failover (#611 c): when a provider stalls (MAX_CONSECUTIVE_ERRORS
+    # without progress) we rotate to the next provider in the chain instead of
+    # escalating, bounded by an overall deadline. `qa_provider_override` forces
+    # the chosen provider for subsequent iterations; `failover_used` tracks the
+    # providers already burned.
+    qa_provider_override: str | None = None
+    failover_used: set[str] = set()
+    failover_deadline = DeadlineBudget()
+
     while qa_iteration < MAX_QA_ITERATIONS:
         qa_iteration += 1
         iteration_start = time_module.time()
@@ -302,7 +312,9 @@ async def run_qa_validation_loop(
         # Run QA reviewer with phase-specific model and thinking budget
         qa_model = get_phase_model(spec_dir, "qa", model)
         qa_thinking_budget = get_phase_thinking_budget(spec_dir, "qa")
-        qa_provider_name = infer_provider_from_model(qa_model)
+        qa_provider_name = qa_provider_override or infer_provider_from_model(qa_model)
+        if qa_provider_override:
+            failover_used.add(qa_provider_override)
         # Strip provider prefix if present (e.g., "ollama:llama3.2" → "llama3.2")
         actual_qa_model = qa_model.split(":", 1)[1] if ":" in qa_model and qa_provider_name == "ollama" else qa_model
         debug(
@@ -583,6 +595,37 @@ async def run_qa_validation_loop(
 
             # Check if we've hit max consecutive errors
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                # Provider failover (#611 c): before escalating, try the next
+                # provider in the chain — but only for failover-worthy errors
+                # (not auth/model/quota faults a different provider can't fix)
+                # and only while the overall deadline holds.
+                current_provider = qa_provider_override or infer_provider_from_model(
+                    get_phase_model(spec_dir, "qa", model)
+                )
+                failover_used.add(current_provider)
+                candidate = next_provider(current_provider, failover_used)
+                if (
+                    should_failover(response)
+                    and not failover_deadline.expired()
+                    and candidate is not None
+                ):
+                    print(
+                        f"\n🔁 QA provider '{current_provider}' stalled "
+                        f"({consecutive_errors} errors). Failing over to "
+                        f"'{candidate}' (deadline {failover_deadline.remaining():.0f}s left)."
+                    )
+                    debug_warning(
+                        "qa_loop",
+                        "Provider failover",
+                        from_provider=current_provider,
+                        to_provider=candidate,
+                        deadline_remaining=f"{failover_deadline.remaining():.0f}s",
+                    )
+                    qa_provider_override = candidate
+                    consecutive_errors = 0
+                    last_error_context = None
+                    continue
+
                 debug_error(
                     "qa_loop",
                     f"Max consecutive errors ({MAX_CONSECUTIVE_ERRORS}) reached - escalating to human",
