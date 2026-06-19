@@ -87,6 +87,19 @@ sandbox:
     # under a different name (e.g. some platforms use "runsc" directly).
     runtimeClassName: gvisor
 
+  # Agent OS sandbox (#363) — wraps each agent bash command in bubblewrap:
+  # read-write only the active worktree, everything else read-only, private
+  # IPC/UTS + tmpfs /tmp. Runs unprivileged in-pod (k3d included). Pure
+  # passthrough if bwrap is absent.
+  #   "fs"     — filesystem + namespace isolation, network intact (default).
+  #   "strict" — fs plus no egress (needs an outbound proxy; air-gapped only).
+  #   "off"    — no OS sandbox (hook + env-scrub still apply).
+  agent:
+    mode: "fs"
+    # PID-namespace isolation needs a fresh /proc, which an unprivileged pod
+    # can't mount — leave off unless the host grants the capability.
+    pidNamespace: false
+
 service:
   type: ClusterIP
   port: 80

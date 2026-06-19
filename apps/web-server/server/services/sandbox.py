@@ -8,16 +8,24 @@ module adds an opt-in bubblewrap (``bwrap``) sandbox around the agent
 subprocess: read-write only the active worktree, read-only system dirs, private
 PID/IPC/UTS namespaces and ``/tmp``.
 
-It is **off by default** and a pure passthrough when disabled or when ``bwrap``
-is not installed, so wiring it into the spawn path is zero-risk until an
-operator opts in via ``AIFACTORY_AGENT_SANDBOX``:
+It is a pure passthrough when disabled or when ``bwrap`` is not installed, so
+wiring it into the spawn path is safe everywhere. Mode is set via
+``AIFACTORY_AGENT_SANDBOX``:
 
-- unset / ``off`` → no sandbox (default).
+- unset / ``off`` → no sandbox.
 - ``fs``          → filesystem + namespace isolation; network left intact (the
   agent must reach Claude and the control-plane API).
 - ``strict``      → ``fs`` plus ``--unshare-net`` (no egress). Opt-in; breaks
   outbound connectivity unless a proxy is provided — for air-gapped/proxied
   deployments only.
+
+PID-namespace isolation (``--unshare-pid`` + a fresh ``/proc``) needs privileges
+an unprivileged Kubernetes pod (e.g. k3d) does not have — there it fails the
+spawn outright, which is why the sandbox was previously inert on-cluster
+(#363 AC1). It is a hardening *bonus*, not required for the filesystem boundary,
+so the default keeps the host PID namespace with a read-only ``/proc`` and runs
+unprivileged in-pod. Set ``AIFACTORY_AGENT_SANDBOX_PIDNS=1`` to opt into PID
+isolation on privileged hosts.
 """
 
 from __future__ import annotations
@@ -39,6 +47,21 @@ def _mode() -> str:
 
 def _bwrap_path() -> str | None:
     return shutil.which("bwrap")
+
+
+def _pidns_enabled() -> bool:
+    """Opt into PID-namespace isolation (needs privilege; off on unprivileged k3d).
+
+    The fresh ``/proc`` that ``--unshare-pid`` requires can't be mounted in an
+    unprivileged pod, so this is off by default and only enabled where the host
+    grants the capability via ``AIFACTORY_AGENT_SANDBOX_PIDNS``.
+    """
+    return (os.environ.get("AIFACTORY_AGENT_SANDBOX_PIDNS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def is_enabled() -> bool:
@@ -67,13 +90,19 @@ def build_sandboxed_command(
     args: list[str] = [
         bwrap,
         "--die-with-parent",
-        "--unshare-pid",
         "--unshare-ipc",
         "--unshare-uts",
-        "--proc", "/proc",
         "--dev", "/dev",
         "--tmpfs", "/tmp",
     ]
+    # PID isolation needs a fresh /proc, which requires privilege the
+    # unprivileged in-pod path lacks. Default: keep the host PID namespace with a
+    # read-only /proc (tools still read /proc/self, cpuinfo, etc.); opt into full
+    # PID isolation only where the host allows it.
+    if _pidns_enabled():
+        args += ["--unshare-pid", "--proc", "/proc"]
+    else:
+        args += ["--ro-bind-try", "/proc", "/proc"]
     for d in _SYSTEM_RO_DIRS:
         args += ["--ro-bind-try", d, d]
     # Read-write ONLY the active worktree, and start there.
