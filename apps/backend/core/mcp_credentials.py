@@ -35,6 +35,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 OPERATOR_CONFIG_PATH = Path.home() / ".aifactory" / "mcp-credentials.json"
+# RFC-0013 (#644): operator-declared MCP servers (the deployment-metrics MCP and
+# any extra env-MCPs). Same env-reference posture as mcp-credentials.json — it
+# names env vars, it does NOT store secrets, and secrets never reach argv.
+OPERATOR_MCP_SERVERS_PATH = Path.home() / ".aifactory" / "mcp-servers.json"
 K8S_SERVICE_ACCOUNT_TOKEN = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 
@@ -54,33 +58,107 @@ class CredentialStatus:
     env_vars: dict[str, str] = field(default_factory=dict)
 
 
-@lru_cache(maxsize=1)
-def _load_operator_config() -> dict:
-    """Read ~/.aifactory/mcp-credentials.json if present.
+def _read_perm_safe_json(path: Path) -> dict:
+    """Read a JSON config that must be 0600-or-stricter, else refuse.
 
-    Cached for the lifetime of the process. Refuses to read with looser perms
-    than 0600 — same posture Claude Code takes for ~/.claude/.credentials.json.
-    Returns an empty dict if the file is missing, unreadable, or perm-checked
-    out.
+    Same posture Claude Code takes for ~/.claude/.credentials.json: anything with
+    group/other read bits is unsafe (these files name credential env vars).
+    Returns an empty dict if the file is missing, unreadable, or perm-checked out.
     """
-    if not OPERATOR_CONFIG_PATH.exists():
+    if not path.exists():
         return {}
-
     try:
-        mode = OPERATOR_CONFIG_PATH.stat().st_mode & 0o777
-        # 0o600 is the strictest; anything looser (group/other read) is unsafe
+        mode = path.stat().st_mode & 0o777
         if mode & 0o077:
             logger.warning(
                 "Refusing to read %s with permissions %o (must be 0600 or stricter)",
-                OPERATOR_CONFIG_PATH,
+                path,
                 mode,
             )
             return {}
-        with OPERATOR_CONFIG_PATH.open(encoding="utf-8") as fh:
-            return json.load(fh)
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Failed to read %s: %s", OPERATOR_CONFIG_PATH, exc)
+        logger.warning("Failed to read %s: %s", path, exc)
         return {}
+
+
+@lru_cache(maxsize=1)
+def _load_operator_config() -> dict:
+    """Read ~/.aifactory/mcp-credentials.json if present (perm-safe, cached)."""
+    return _read_perm_safe_json(OPERATOR_CONFIG_PATH)
+
+
+@lru_cache(maxsize=1)
+def _load_operator_mcp_servers() -> dict:
+    """Read ~/.aifactory/mcp-servers.json if present (perm-safe, cached).
+
+    RFC-0013 (#644). Shape (an open object; unknown keys ignored)::
+
+        {
+          "servers": {
+            "deployment-metrics": {
+              "command": "python3",
+              "args": ["/opt/aifactory/deployment_metrics_stub.py"],
+              "markers": [],            // capability flags; [] == always-on
+              "agents": ["planner", "coder", "qa_reviewer"],
+              "env": {"DORA_PROVIDER": "DORA_PROVIDER"},  // name -> env-var NAME
+              "docs_url": "..."
+            }
+          }
+        }
+
+    ``env`` maps a target env-var name to the NAME of an env var to read at build
+    time — secrets are resolved from the process environment, never stored here
+    and never placed on argv. Returns ``{}`` when absent / unreadable.
+    """
+    return _read_perm_safe_json(OPERATOR_MCP_SERVERS_PATH)
+
+
+def get_operator_mcp_servers() -> dict[str, dict]:
+    """Return the operator-declared MCP servers keyed by id.
+
+    Only well-formed entries (a dict with a non-empty string ``command``, or an
+    ``http`` transport with a ``url``) are returned; anything malformed is
+    dropped with a warning so a bad config degrades rather than crashes.
+    """
+    raw = _load_operator_mcp_servers().get("servers")
+    if not isinstance(raw, dict):
+        return {}
+    servers: dict[str, dict] = {}
+    for server_id, spec in raw.items():
+        if not isinstance(server_id, str) or not isinstance(spec, dict):
+            logger.warning("Skipping malformed MCP server entry: %r", server_id)
+            continue
+        transport = str(spec.get("transport", "stdio")).strip().lower()
+        if transport == "http":
+            if not str(spec.get("url", "")).strip():
+                logger.warning("Skipping http MCP server %r with no url", server_id)
+                continue
+        elif not str(spec.get("command", "")).strip():
+            logger.warning("Skipping stdio MCP server %r with no command", server_id)
+            continue
+        servers[server_id] = spec
+    return servers
+
+
+def resolve_operator_mcp_env(spec: dict) -> dict[str, str]:
+    """Resolve an operator server's ``env`` map (name -> env-var NAME) to values.
+
+    Reads each referenced env var from the process environment. Unset/empty
+    references are omitted (degrade, never fabricate). Secrets are therefore
+    passed via the subprocess environment — never via argv.
+    """
+    env_map = spec.get("env")
+    if not isinstance(env_map, dict):
+        return {}
+    resolved: dict[str, str] = {}
+    for target_name, env_ref in env_map.items():
+        value = _resolve_env(str(env_ref)) if env_ref else None
+        if value is not None:
+            resolved[str(target_name)] = value
+    return resolved
 
 
 def _resolve_env(env_name: str | None) -> str | None:
@@ -137,9 +215,7 @@ def _probe_gitlab() -> CredentialStatus:
     env_vars = {"GITLAB_PERSONAL_ACCESS_TOKEN": token}
     if instance_url:
         env_vars["GITLAB_API_URL"] = instance_url
-    return CredentialStatus(
-        available=True, source=f"env:{token_env}", env_vars=env_vars
-    )
+    return CredentialStatus(available=True, source=f"env:{token_env}", env_vars=env_vars)
 
 
 def _probe_azure_devops() -> CredentialStatus:
@@ -252,9 +328,7 @@ def _probe_azure() -> CredentialStatus:
     # Azure CLI cache — `az login` populates ~/.azure/
     az_profile = Path.home() / ".azure" / "azureProfile.json"
     if az_profile.is_file():
-        return CredentialStatus(
-            available=True, source="file:~/.azure/azureProfile.json"
-        )
+        return CredentialStatus(available=True, source="file:~/.azure/azureProfile.json")
 
     # Managed Identity is host-side and not probe-able without an API call;
     # the MCP server's MSAL layer will discover it at startup. We treat
@@ -268,16 +342,12 @@ def _probe_azure() -> CredentialStatus:
 def _probe_gcp() -> CredentialStatus:
     op = _load_operator_config().get("gcp") or {}
 
-    creds_path = op.get("credentialsPath") or _resolve_env(
-        "GOOGLE_APPLICATION_CREDENTIALS"
-    )
+    creds_path = op.get("credentialsPath") or _resolve_env("GOOGLE_APPLICATION_CREDENTIALS")
     if _file_exists(creds_path):
         return CredentialStatus(
             available=True,
             source=f"file:{creds_path}",
-            env_vars={
-                "GOOGLE_APPLICATION_CREDENTIALS": str(Path(creds_path).expanduser())
-            },
+            env_vars={"GOOGLE_APPLICATION_CREDENTIALS": str(Path(creds_path).expanduser())},
         )
 
     # gcloud ADC default location
@@ -292,6 +362,27 @@ def _probe_gcp() -> CredentialStatus:
     return CredentialStatus(False, "none")
 
 
+def _probe_deployment_metrics() -> CredentialStatus:
+    """Credential status for the RFC-0013 deployment-metrics MCP (#644).
+
+    Honest by construction: AIFactory does not ship a runnable deployment-metrics
+    MCP server (the hub's ``deployment_metrics_stub.py`` is a reference *library*,
+    not a stdio server). The server is therefore available ONLY when the operator
+    declares a real one in ~/.aifactory/mcp-servers.json. When declared, its
+    ``env`` references are resolved here so the subprocess gets secrets via the
+    environment, never argv. Absent that, ``available=False`` — and the contract's
+    ``dora_context`` honestly reports unavailable (degrade, never fabricate).
+    """
+    spec = get_operator_mcp_servers().get("deployment-metrics")
+    if not spec:
+        return CredentialStatus(False, "none")
+    return CredentialStatus(
+        available=True,
+        source="operator-config",
+        env_vars=resolve_operator_mcp_env(spec),
+    )
+
+
 _PROBES: dict[str, callable] = {
     "github": _probe_github,
     "gitlab": _probe_gitlab,
@@ -300,6 +391,7 @@ _PROBES: dict[str, callable] = {
     "aws": _probe_aws,
     "azure": _probe_azure,
     "gcp": _probe_gcp,
+    "deployment_metrics": _probe_deployment_metrics,
 }
 
 
@@ -316,5 +408,6 @@ def get_credential_status(provider: str) -> CredentialStatus:
 
 
 def reset_cache() -> None:
-    """Drop the cached operator config. Test/CLI helper — not used at runtime."""
+    """Drop the cached operator configs. Test/CLI helper — not used at runtime."""
     _load_operator_config.cache_clear()
+    _load_operator_mcp_servers.cache_clear()
