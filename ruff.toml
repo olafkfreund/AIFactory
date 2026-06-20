@@ -11,6 +11,19 @@
 # standard those carve-outs are a ratchet backlog (#652), never a permanent
 # loosening, and may only shrink over time (tighten-only).
 
+# Vendored verification-core copies (Factory#158): byte-exact mirrors of the
+# Factory hub canonical (scripts/), governed by the byte-exact drift gate
+# (verification-core-drift workflow), NOT this repo's style bar. The repo-wide
+# formatter here defaults to line-length 88; the hub canonical is formatted at
+# line-length 100, so reformatting these under this config would diverge from
+# the canonical and break the drift gate. Excluded for the same reason the hub
+# excludes its shared/factory-github vendored mirror. (The diff-scoped strict
+# ratchet still lints them via standards/ruff.toml at the fleet line-length.)
+extend-exclude = [
+    "apps/backend/core/factory_sandbox.py",
+    "apps/backend/core/nix_provisioner.py",
+]
+
 [lint]
 # Enable common rule sets
 select = [

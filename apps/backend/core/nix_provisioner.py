@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# VENDORED from Factory hub scripts/nix_provisioner.py (RFC-0005 Tier A).
-# Keep in sync with the hub; do not diverge. Pure stdlib, no AIFactory deps.
 """nix_provisioner — RFC-0005 Tier A (Nix) materialization, shared across the fleet.
 
 Turns an RFC-0005 `environment` manifest (the contract `$defs.environment` block)
@@ -28,6 +26,7 @@ Run directly for the self-tests: `python3 scripts/nix_provisioner.py`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 
@@ -91,6 +90,52 @@ class Manifest:
         )
 
 
+# RFC-0005 §3.2 provisioning tiers. Resolved from the manifest's
+# provisioning.method; the value is the engine that materializes the env.
+_TIER_BY_METHOD = {
+    "nix": "nix",  # Tier A — hermetic Nix flake (preferred)
+    "image": "catalog",  # Tier B — prebuilt catalog image by (language, version)
+    "catalog": "catalog",
+    "build": "build",  # Tier C — on-demand build, content-addressed + cached
+    "on-demand": "build",
+    "setup": "setup",  # Tier D — in-container setup script (last resort)
+}
+
+
+def resolve_tier(env: dict) -> str:
+    """Resolve the provisioning tier (RFC-0005 §3.2) for a contract environment.
+
+    Returns one of ``nix`` | ``catalog`` | ``build`` | ``setup``. Defaults to
+    ``nix`` — the hermetic, content-addressed, any-toolchain tier — so an
+    unrecognised method degrades to the reproducible path rather than failing.
+    """
+    method = (Manifest.from_contract(env).provisioning_method or "nix").lower()
+    return _TIER_BY_METHOD.get(method, "nix")
+
+
+def manifest_digest(env: dict, *, length: int = 16) -> str:
+    """Content-addressed digest of a manifest's *environment-defining* fields.
+
+    This is the cache key / image tag that makes Tier B/C "second run is instant"
+    explicit: two manifests that describe the same toolchain (same language,
+    toolchain versions, system_packages, network class, browser need) hash to the
+    same value — regardless of build/verify *commands*, which don't change the
+    environment. (Tier A's Nix store content-addresses the build itself; this is
+    the manifest-level key the image tiers need.) Deterministic + pure.
+    """
+    m = Manifest.from_contract(env)
+    key = {
+        "language": (m.language or "").lower(),
+        "toolchain": {k: str(v) for k, v in sorted(m.toolchain.items())},
+        "system_packages": sorted(p.lower() for p in m.system_packages),
+        "network": m.network or "",
+        "browser": _needs_browser(m),
+        "nixpkgs": DEFAULT_NIXPKGS if resolve_tier(env) == "nix" else "",
+    }
+    blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:length]
+
+
 def _needs_browser(m: Manifest) -> bool:
     """A browser lane is implied by a browser system package or a playwright/
     chromium reference in the verify commands or proof checks."""
@@ -148,8 +193,7 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
     env_lines = ""
     if browser:
         let_lines = (
-            "\n      fontsConf = pkgs.makeFontsConf "
-            "{ fontDirectories = [ pkgs.dejavu_fonts ]; };"
+            "\n      fontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };"
         )
         env_lines = (
             "\n        # Nix-provided, version-matched browsers — no network "
@@ -259,9 +303,7 @@ def _test() -> None:
     assert "python313.withPackages" in flake, flake
     assert "playwright-test" in flake and "nodejs_22" in flake, flake
     assert "PLAYWRIGHT_BROWSERS_PATH" in flake, flake
-    assert "pkgs.chromium" not in flake, (
-        "bare chromium must be dropped for the pw stack"
-    )
+    assert "pkgs.chromium" not in flake, "bare chromium must be dropped for the pw stack"
     assert "fastapi" in flake and "pytest" in flake, flake  # web+test libs inferred
     # fonts: headless chromium needs them to render text in a minimal container.
     assert "dejavu_fonts" in flake and "FONTCONFIG_FILE" in flake, flake
