@@ -177,6 +177,15 @@ class Settings(BaseSettings):
     # Task execution
     MAX_CONCURRENT_TASKS: int = 5
 
+    # Subprocess monitor tunables (#651) — surfaced on the pydantic-settings
+    # boundary so the agent monitor loop has no bare magic constants. Defaults
+    # preserve the previously hardcoded behaviour: poll/sync every 3s while a
+    # task runs, and auto-continue a finished-but-incomplete build at most 10
+    # times before giving up. Override with APP_AGENT_MONITOR_SYNC_INTERVAL /
+    # APP_AGENT_MAX_CONTINUATION_ROUNDS.
+    AGENT_MONITOR_SYNC_INTERVAL: float = 3.0
+    AGENT_MAX_CONTINUATION_ROUNDS: int = 10
+
     # rmux Live Agent Console (Epic #44). Set APP_RMUX_ENABLED=true to surface
     # the live "Agent Console" tab. Honored by rmux/integration.is_enabled()
     # alongside the AIFACTORY_RMUX_ENABLED env var. Keep false on the
