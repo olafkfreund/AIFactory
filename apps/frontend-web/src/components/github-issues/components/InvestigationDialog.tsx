@@ -81,6 +81,7 @@ export function InvestigationDialog({
         isMounted = false;
       };
     }
+    return undefined;
   }, [open, selectedIssue, projectId]);
 
   const toggleComment = (commentId: number) => {

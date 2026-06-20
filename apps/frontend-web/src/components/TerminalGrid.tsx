@@ -189,6 +189,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
       }, 50);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [isActive, terminals.length]);
 
   // Handle keyboard shortcut for new terminal (only when this view is active)
