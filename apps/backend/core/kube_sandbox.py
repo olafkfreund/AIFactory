@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from typing import Any
 
 from core.factory_sandbox import RunResult  # reuse the shared result shape
 
@@ -61,20 +62,20 @@ def build_job_manifest(
     when ``nix_store_pvc`` is None, leaving cold-fetch behavior unchanged.
     """
     command = " && ".join(commands)
-    container = {
+    container: dict[str, Any] = {
         "name": "gate",
         "image": image,
         "command": ["bash", "-c", command],
         "resources": {"limits": {"cpu": cpus, "memory": memory}},
     }
-    pod_spec = {
+    pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,  # the gate needs no k8s API
         "imagePullSecrets": [{"name": image_pull_secret}],
         "containers": [container],
     }
-    volumes: list[dict] = []
-    mounts: list[dict] = []
+    volumes: list[dict[str, Any]] = []
+    mounts: list[dict[str, Any]] = []
     if repo_pvc:
         container["workingDir"] = workdir
         mounts.append(
