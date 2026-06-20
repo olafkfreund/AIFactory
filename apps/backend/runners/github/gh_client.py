@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -163,7 +164,7 @@ class GHClient:
                     stdout, stderr = await asyncio.wait_for(
                         proc.communicate(), timeout=timeout
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Kill the hung process
                     try:
                         proc.kill()
@@ -764,7 +765,7 @@ class GHClient:
             try:
                 all_reviews = json.loads(reviews_result.stdout)
                 # Filter reviews submitted after the timestamp
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 # Parse since_timestamp, handling both naive and aware formats
                 since_dt = datetime.fromisoformat(
@@ -772,7 +773,7 @@ class GHClient:
                 )
                 # Ensure since_dt is timezone-aware (assume UTC if naive)
                 if since_dt.tzinfo is None:
-                    since_dt = since_dt.replace(tzinfo=timezone.utc)
+                    since_dt = since_dt.replace(tzinfo=UTC)
 
                 for review in all_reviews:
                     submitted_at = review.get("submitted_at", "")
@@ -783,7 +784,7 @@ class GHClient:
                             )
                             # Ensure review_dt is also timezone-aware
                             if review_dt.tzinfo is None:
-                                review_dt = review_dt.replace(tzinfo=timezone.utc)
+                                review_dt = review_dt.replace(tzinfo=UTC)
                             if review_dt > since_dt:
                                 reviews.append(review)
                         except ValueError:
@@ -1077,7 +1078,6 @@ class GHClient:
 
         # No blob data available - return all files and commits
         logger.warning(
-            "No reviewed_file_blobs available for blob comparison. "
-            "Returning all PR files."
+            "No reviewed_file_blobs available for blob comparison. Returning all PR files."
         )
         return pr_files, pr_commits

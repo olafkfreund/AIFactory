@@ -556,8 +556,7 @@ def rate_limited(
                         limiter.max_retry_delay,
                     )
                     print(
-                        f"[RateLimit] Retry {attempt + 1}/{max_retries} "
-                        f"after {delay:.1f}s: {e}",
+                        f"[RateLimit] Retry {attempt + 1}/{max_retries} after {delay:.1f}s: {e}",
                         flush=True,
                     )
                     await asyncio.sleep(delay)

@@ -8,8 +8,9 @@ Implements the GitProvider protocol for GitLab using standard HTTP/REST APIs.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -500,12 +501,21 @@ class GitLabProvider:
             project_numeric_id = self._project_id
 
         # Build a "goal" string the Duo agent can use as its prompt. The
-        # AIFactory enrichment comment (posted by delegation_runner BEFORE
-        # this call) already lives on the issue, so a short reference is
-        # sufficient — the Duo agent will read the issue context itself.
+        # per-service enrichment comment (posted by that service's
+        # delegation_runner BEFORE this call) already lives on the issue, so a
+        # short reference is sufficient — the Duo agent will read the issue
+        # context itself. The service name is the one genuine per-service
+        # identity in this otherwise-shared layer (Factory#157): each repo names
+        # *itself* ("AIFactory"/"PFactory"/"TFactory"). Rather than fork the
+        # file per service, it is parameterised via FACTORY_SERVICE_NAME so the
+        # canonical stays byte-identical across the fleet and each service
+        # supplies its own identity at runtime. The default is deliberately
+        # neutral and behaviour-equivalent — the Duo agent reads the issue
+        # regardless of the exact wording.
+        service_name = os.environ.get("FACTORY_SERVICE_NAME", "the Factory")
         goal = (
             f"Implement the change requested in issue #{issue_iid}. "
-            "See the AIFactory enrichment comment on the issue for the "
+            f"See the {service_name} enrichment comment on the issue for the "
             "structured implementation plan."
         )
 
@@ -705,8 +715,8 @@ class GitLabProvider:
 
     def _parse_datetime(self, val: str | None) -> datetime:
         if not val:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
         try:
             return datetime.fromisoformat(val.replace("Z", "+00:00"))
         except Exception:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
