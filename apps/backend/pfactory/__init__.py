@@ -26,7 +26,7 @@ from .tfactory_client import (
     send_handoff,
     tfactory_config,
 )
-from .tiers import Tier, classify_tier, tier_for
+from .tiers import Tier, classify_tier, resolve_low_tier_model, tier_for
 
 __all__ = [
     "CODER",
@@ -34,6 +34,7 @@ __all__ = [
     "Classification",
     "Tier",
     "classify_tier",
+    "resolve_low_tier_model",
     "tier_for",
     "build_handoff_payload",
     "load_tfactory_block",

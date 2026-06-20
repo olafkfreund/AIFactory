@@ -19,14 +19,28 @@ canonical tier survives a round-trip through any tracker.
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import urllib.request
 from enum import Enum
 
 __all__ = [
     "Tier",
     "classify_tier",
     "tier_for",
+    "resolve_low_tier_model",
     "TIER_LABEL_PREFIX",
 ]
+
+logger = logging.getLogger(__name__)
+
+# Model the low tier falls back to when no local Ollama is reachable.
+_HAIKU_FALLBACK = "haiku"
+# Default Ollama endpoint when neither env var is set.
+_DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# Short timeout — the low tier must not block intake waiting on a dead Ollama.
+_PROBE_TIMEOUT_S = 1.5
 
 TIER_LABEL_PREFIX = "factory:"
 
@@ -113,3 +127,58 @@ def tier_for(classification: object, change_mode: str | None = None) -> Tier:
     if isinstance(change_mode, str) and change_mode.strip().lower() == _MIGRATION:
         return Tier.HARD
     return tier
+
+
+def _ollama_base_url() -> str:
+    """Resolve the Ollama base URL from env (``OLLAMA_BASE_URL`` then
+    ``OLLAMA_API_URL``), falling back to localhost."""
+    for var in ("OLLAMA_BASE_URL", "OLLAMA_API_URL"):
+        val = os.environ.get(var)
+        if val and val.strip():
+            return val.strip().rstrip("/")
+    return _DEFAULT_OLLAMA_URL
+
+
+def _probe_ollama_models(base_url: str) -> list[str]:
+    """Return the list of model names from ``GET {base_url}/api/tags``.
+
+    Returns an empty list on any error (unreachable, timeout, malformed JSON).
+    Never raises — the low tier must degrade to haiku, not crash intake.
+    """
+    url = f"{base_url}/api/tags"
+    try:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:  # noqa: S310
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 — defensive: any failure => fallback
+        logger.debug("Ollama probe failed at %s: %s", url, exc)
+        return []
+    if not isinstance(payload, dict):
+        return []
+    models = payload.get("models")
+    if not isinstance(models, list):
+        return []
+    names: list[str] = []
+    for m in models:
+        name = m.get("name") if isinstance(m, dict) else None
+        if isinstance(name, str) and name.strip():
+            names.append(name.strip())
+    return names
+
+
+def resolve_low_tier_model() -> str:
+    """Pick the model id for the low tier: local Ollama if reachable, else haiku.
+
+    Probes the Ollama ``/api/tags`` endpoint (short timeout) and, if at least
+    one model is available, returns ``ollama:<first model>`` — which
+    ``phase_config.infer_provider_from_model`` already routes to the Ollama
+    provider. Otherwise returns ``"haiku"``. Defensive: never raises.
+    """
+    try:
+        models = _probe_ollama_models(_ollama_base_url())
+    except Exception as exc:  # noqa: BLE001 — belt-and-braces, never raise
+        logger.debug("resolve_low_tier_model fell back to haiku: %s", exc)
+        return _HAIKU_FALLBACK
+    if models:
+        return f"ollama:{models[0]}"
+    return _HAIKU_FALLBACK
