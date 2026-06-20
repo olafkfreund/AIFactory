@@ -369,6 +369,83 @@ class JobStateStore:
                 if lifecycle_state in ("done", "failed", "stuck"):
                     row.ended_at = _now()
 
+    async def set_worker_ref(
+        self, job_id: str, worker_ref: dict[str, Any]
+    ) -> None:
+        """Record the execution-unit reference for a job (RFC-0016 #671).
+
+        Used by the kubejob build backend after it creates the k8s Job, so the
+        reconcile-by-poll + reaper loops can find the Job (namespace + job_name)
+        for a ``running`` row. No-op when the row is gone.
+        """
+        from ..database.models import JobState
+
+        async with self._session_factory() as session:
+            async with session.begin():
+                row = await session.get(JobState, job_id)
+                if row is not None:
+                    row.worker_ref = worker_ref
+
+    async def get_state(self, job_id: str) -> dict[str, Any] | None:
+        """Read a job-state row's salient fields (reconcile-by-poll, #671).
+
+        Returns ``None`` when the row is absent. Used by the kubejob backend's
+        polling reconcile to detect a terminal transition the Job wrote (so a
+        missed completion event never strands the control plane).
+        """
+        from ..database.models import JobState
+
+        async with self._session_factory() as session:
+            row = await session.get(JobState, job_id)
+            if row is None:
+                return None
+            return {
+                "job_id": row.job_id,
+                "lifecycle_state": row.lifecycle_state,
+                "worker_ref": dict(row.worker_ref or {}),
+                "result": row.result,
+                "error": row.error,
+                "updated_at": row.updated_at,
+            }
+
+    async def get_active_kubejobs(self) -> list[dict[str, Any]]:
+        """Active (``running``) rows whose worker is a k8s Job (#671 reaper).
+
+        Returns ``{job_id, job_name, namespace, updated_at}`` for each running
+        build executed as a k8s Job, so the reaper can check whether the Job
+        still exists / has exceeded its deadline and, if it vanished without a
+        terminal write, mark the row failed (never strand a build).
+        """
+        from ..database.models import JobState
+
+        out: list[dict[str, Any]] = []
+        async with self._session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(JobState).where(
+                            JobState.service == SERVICE,
+                            JobState.lifecycle_state == "running",
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for row in rows:
+                ref = dict(row.worker_ref or {})
+                if ref.get("kind") != "k8s-job":
+                    continue
+                out.append(
+                    {
+                        "job_id": row.job_id,
+                        "job_name": ref.get("job_name"),
+                        "namespace": ref.get("namespace"),
+                        "updated_at": row.updated_at,
+                    }
+                )
+        return out
+
     async def increment_attempt(self, job_id: str) -> None:
         """Bump the RFC-0008 failover/restart attempt counter."""
         from ..database.models import JobState

@@ -173,6 +173,25 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0011 intake poller disabled (AIFACTORY_INTAKE_POLLER unset)")
 
+    # RFC-0016 #671 control/execution split: when builds run as k8s Jobs
+    # (AIFACTORY_BUILD_BACKEND=kubejob), the control plane reconciles by polling
+    # Postgres + reaps vanished Jobs on an interval, so a missed completion event
+    # never strands a build. Off by default — no-op for the in-pod subprocess
+    # backend (the loop is only started when the kubejob backend is enabled).
+    from .services.build_backend import kubejob_enabled as _kubejob_enabled
+
+    app.state.kubejob_reconcile_stop = None
+    app.state.kubejob_reconcile_task = None
+    if _kubejob_enabled():
+        kj_stop = _asyncio.Event()
+        app.state.kubejob_reconcile_stop = kj_stop
+        app.state.kubejob_reconcile_task = _asyncio.create_task(
+            get_agent_service().kubejob_reconcile_loop(stop=kj_stop)
+        )
+        logger.info("RFC-0016 #671 kubejob build backend enabled — reconcile loop started")
+    else:
+        logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
+
     yield
 
     # Shutdown
@@ -191,6 +210,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.intake_poller_task, timeout=5.0)
         except (_asyncio.TimeoutError, _asyncio.CancelledError):
             app.state.intake_poller_task.cancel()
+    if app.state.kubejob_reconcile_task is not None:
+        app.state.kubejob_reconcile_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.kubejob_reconcile_task, timeout=5.0)
+        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+            app.state.kubejob_reconcile_task.cancel()
 
 
 def _read_app_version() -> str:
