@@ -117,3 +117,49 @@ jobs:
 
       - name: Ruff format check (apps/backend)
         run: ruff format --check apps/backend
+
+  config-drift:
+    name: shared-baseline drift gate (blocking)
+    runs-on: ubuntu-latest
+    # Confirms the vendored standards/ copies still match the Factory hub
+    # baseline at the pinned SHA (standards/.hub-sha). Per the standard the
+    # vendored copies must stay byte-identical to the hub (Factory#154); local
+    # tighten-only overrides live in the root ruff.toml, never in standards/.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aifactory
+
+      - name: Read pinned hub SHA
+        id: pin
+        run: echo "sha=$(cat aifactory/standards/.hub-sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out hub standards at the pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: ${{ steps.pin.outputs.sha }}
+          path: factory-hub
+          # If Factory is private, a token with read access is needed here.
+        continue-on-error: true
+        id: hub
+
+      - name: Diff vendored configs against the pinned hub baseline
+        if: steps.hub.outcome == 'success'
+        run: |
+          set -e
+          # Vendored copies carry a header above the body; compare the rule body
+          # only by stripping leading comment/blank lines from both sides.
+          strip() { grep -vE '^[[:space:]]*([#;]|$)' "$1"; }
+          for f in ruff.toml mypy.ini .editorconfig; do
+            if ! diff <(strip "aifactory/standards/$f") <(strip "factory-hub/standards/$f"); then
+              echo "DRIFT: aifactory/standards/$f diverged from the pinned hub baseline (standards/$f)."
+              echo "Re-vendor from the hub and bump standards/.hub-sha, or justify a tighten-only override in the root ruff.toml."
+              exit 1
+            fi
+          done
+          echo "No drift: vendored configs match the pinned hub baseline."
+
+      - name: Hub unavailable (private repo / no token)
+        if: steps.hub.outcome != 'success'
+        run: echo "Hub checkout unavailable; skipping drift diff (configure a read token to enforce)."
