@@ -17,7 +17,6 @@ Key Design:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import shutil
@@ -44,6 +43,13 @@ try:
     from .category_utils import map_category
     from .pydantic_models import ParallelOrchestratorResponse
     from .sdk_utils import process_sdk_stream
+    from .specialist_reviewer import (
+        ORCHESTRATOR_SPECIALISTS,
+        build_specialist_agents,
+        deduplicate_findings,
+        generate_finding_id,
+        load_github_prompt,
+    )
 except (ImportError, ValueError, SystemError):
     from context_gatherer import PRContext, _validate_git_ref
     from core.client import create_client
@@ -59,6 +65,13 @@ except (ImportError, ValueError, SystemError):
     from services.category_utils import map_category
     from services.pydantic_models import ParallelOrchestratorResponse
     from services.sdk_utils import process_sdk_stream
+    from services.specialist_reviewer import (
+        ORCHESTRATOR_SPECIALISTS,
+        build_specialist_agents,
+        deduplicate_findings,
+        generate_finding_id,
+        load_github_prompt,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -117,13 +130,7 @@ class ParallelOrchestratorReviewer:
 
     def _load_prompt(self, filename: str) -> str:
         """Load a prompt file from the prompts/github directory."""
-        prompt_file = (
-            Path(__file__).parent.parent.parent.parent / "prompts" / "github" / filename
-        )
-        if prompt_file.exists():
-            return prompt_file.read_text(encoding="utf-8")
-        logger.warning(f"Prompt file not found: {prompt_file}")
-        return ""
+        return load_github_prompt(filename)
 
     def _create_pr_worktree(self, head_sha: str, pr_number: int) -> Path:
         """Create a temporary worktree at the PR head commit.
@@ -324,79 +331,13 @@ class ParallelOrchestratorReviewer:
         """
         Define specialist agents for the SDK.
 
-        Each agent has:
-        - description: When the orchestrator should invoke this agent
-        - prompt: System prompt for the agent
-        - tools: Tools the agent can use (read-only for PR review)
-        - model: "inherit" = use same model as orchestrator (user's choice)
+        Delegates to the shared, data-driven registry
+        (``ORCHESTRATOR_SPECIALISTS``); each spec carries its description,
+        prompt file, fallback prompt, read-only tools, and ``model="inherit"``.
 
         Returns AgentDefinition dataclass instances as required by the SDK.
         """
-        # Load agent prompts from files
-        security_prompt = self._load_prompt("pr_security_agent.md")
-        quality_prompt = self._load_prompt("pr_quality_agent.md")
-        logic_prompt = self._load_prompt("pr_logic_agent.md")
-        codebase_fit_prompt = self._load_prompt("pr_codebase_fit_agent.md")
-        ai_triage_prompt = self._load_prompt("pr_ai_triage.md")
-
-        return {
-            "security-reviewer": AgentDefinition(
-                description=(
-                    "Security specialist. Use for OWASP Top 10, authentication, "
-                    "injection, cryptographic issues, and sensitive data exposure. "
-                    "Invoke when PR touches auth, API endpoints, user input, database queries, "
-                    "or file operations."
-                ),
-                prompt=security_prompt
-                or "You are a security expert. Find vulnerabilities.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "quality-reviewer": AgentDefinition(
-                description=(
-                    "Code quality expert. Use for complexity, duplication, error handling, "
-                    "maintainability, and pattern adherence. Invoke when PR has complex logic, "
-                    "large functions, or significant business logic changes."
-                ),
-                prompt=quality_prompt
-                or "You are a code quality expert. Find quality issues.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "logic-reviewer": AgentDefinition(
-                description=(
-                    "Logic and correctness specialist. Use for algorithm verification, "
-                    "edge cases, state management, and race conditions. Invoke when PR has "
-                    "algorithmic changes, data transformations, concurrent operations, or bug fixes."
-                ),
-                prompt=logic_prompt
-                or "You are a logic expert. Find correctness issues.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "codebase-fit-reviewer": AgentDefinition(
-                description=(
-                    "Codebase consistency expert. Use for naming conventions, ecosystem fit, "
-                    "architectural alignment, and avoiding reinvention. Invoke when PR introduces "
-                    "new patterns, large additions, or code that might duplicate existing functionality."
-                ),
-                prompt=codebase_fit_prompt
-                or "You are a codebase expert. Check for consistency.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "ai-triage-reviewer": AgentDefinition(
-                description=(
-                    "AI comment validator. Use for triaging comments from CodeRabbit, "
-                    "Gemini Code Assist, Cursor, Greptile, and other AI reviewers. "
-                    "Invoke when PR has existing AI review comments that need validation."
-                ),
-                prompt=ai_triage_prompt
-                or "You are an AI triage expert. Validate AI comments.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-        }
+        return build_specialist_agents(ORCHESTRATOR_SPECIALISTS, self._load_prompt)
 
     def _build_orchestrator_prompt(self, context: PRContext) -> str:
         """Build full prompt for orchestrator with PR context."""
@@ -576,10 +517,9 @@ The SDK will run invoked agents in parallel automatically.
         Returns:
             PRReviewFinding instance
         """
-        finding_id = hashlib.md5(
-            f"{finding_data.file}:{finding_data.line}:{finding_data.title}".encode(),
-            usedforsecurity=False,
-        ).hexdigest()[:12]
+        finding_id = generate_finding_id(
+            finding_data.file, finding_data.line, finding_data.title
+        )
 
         category = map_category(finding_data.category)
 
@@ -961,10 +901,11 @@ The SDK will run invoked agents in parallel automatically.
         Returns:
             PRReviewFinding instance
         """
-        finding_id = hashlib.md5(
-            f"{f_data.get('file', 'unknown')}:{f_data.get('line', 0)}:{f_data.get('title', 'Untitled')}".encode(),
-            usedforsecurity=False,
-        ).hexdigest()[:12]
+        finding_id = generate_finding_id(
+            f_data.get("file", "unknown"),
+            f_data.get("line", 0),
+            f_data.get("title", "Untitled"),
+        )
 
         category = map_category(f_data.get("category", "quality"))
 
@@ -1017,17 +958,8 @@ The SDK will run invoked agents in parallel automatically.
     def _deduplicate_findings(
         self, findings: list[PRReviewFinding]
     ) -> list[PRReviewFinding]:
-        """Remove duplicate findings."""
-        seen = set()
-        unique = []
-
-        for f in findings:
-            key = (f.file, f.line, f.title.lower().strip())
-            if key not in seen:
-                seen.add(key)
-                unique.append(f)
-
-        return unique
+        """Remove duplicate findings (delegates to the shared helper)."""
+        return deduplicate_findings(findings)
 
     def _generate_verdict(
         self, findings: list[PRReviewFinding]

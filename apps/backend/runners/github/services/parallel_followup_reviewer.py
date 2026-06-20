@@ -18,7 +18,6 @@ Key Design:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -43,6 +42,14 @@ try:
     from .category_utils import map_category
     from .pydantic_models import ParallelFollowupResponse
     from .sdk_utils import process_sdk_stream
+    from .specialist_reviewer import (
+        FOLLOWUP_SPECIALISTS,
+        build_specialist_agents,
+        deduplicate_findings,
+        generate_finding_id,
+        load_github_prompt,
+        map_severity,
+    )
 except (ImportError, ValueError, SystemError):
     from core.client import create_client
     from gh_client import GHClient
@@ -57,6 +64,14 @@ except (ImportError, ValueError, SystemError):
     from services.category_utils import map_category
     from services.pydantic_models import ParallelFollowupResponse
     from services.sdk_utils import process_sdk_stream
+    from services.specialist_reviewer import (
+        FOLLOWUP_SPECIALISTS,
+        build_specialist_agents,
+        deduplicate_findings,
+        generate_finding_id,
+        load_github_prompt,
+        map_severity,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -64,18 +79,10 @@ logger = logging.getLogger(__name__)
 # Check if debug mode is enabled
 DEBUG_MODE = os.environ.get("DEBUG", "").lower() in ("true", "1", "yes")
 
-# Severity mapping for AI responses
-_SEVERITY_MAPPING = {
-    "critical": ReviewSeverity.CRITICAL,
-    "high": ReviewSeverity.HIGH,
-    "medium": ReviewSeverity.MEDIUM,
-    "low": ReviewSeverity.LOW,
-}
-
 
 def _map_severity(severity_str: str) -> ReviewSeverity:
-    """Map severity string to ReviewSeverity enum."""
-    return _SEVERITY_MAPPING.get(severity_str.lower(), ReviewSeverity.MEDIUM)
+    """Map severity string to ReviewSeverity enum (delegates to shared helper)."""
+    return map_severity(severity_str)
 
 
 class ParallelFollowupReviewer:
@@ -130,80 +137,17 @@ class ParallelFollowupReviewer:
 
     def _load_prompt(self, filename: str) -> str:
         """Load a prompt file from the prompts/github directory."""
-        prompt_file = (
-            Path(__file__).parent.parent.parent.parent / "prompts" / "github" / filename
-        )
-        if prompt_file.exists():
-            return prompt_file.read_text(encoding="utf-8")
-        logger.warning(f"Prompt file not found: {prompt_file}")
-        return ""
+        return load_github_prompt(filename)
 
     def _define_specialist_agents(self) -> dict[str, AgentDefinition]:
         """
         Define specialist agents for follow-up review.
 
-        Each agent has:
-        - description: When the orchestrator should invoke this agent
-        - prompt: System prompt for the agent
-        - tools: Tools the agent can use (read-only for PR review)
-        - model: "inherit" = use same model as orchestrator (user's choice)
+        Delegates to the shared, data-driven registry
+        (``FOLLOWUP_SPECIALISTS``); each spec carries its description, prompt
+        file, fallback prompt, read-only tools, and ``model="inherit"``.
         """
-        # Load agent prompts from files
-        resolution_prompt = self._load_prompt("pr_followup_resolution_agent.md")
-        newcode_prompt = self._load_prompt("pr_followup_newcode_agent.md")
-        comment_prompt = self._load_prompt("pr_followup_comment_agent.md")
-        validator_prompt = self._load_prompt("pr_finding_validator.md")
-
-        return {
-            "resolution-verifier": AgentDefinition(
-                description=(
-                    "Resolution verification specialist. Use to verify whether previous "
-                    "findings have been addressed. Analyzes diffs to determine if issues "
-                    "are truly fixed, partially fixed, or still unresolved. "
-                    "Invoke when: There are previous findings to verify."
-                ),
-                prompt=resolution_prompt
-                or "You verify whether previous findings are resolved.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "new-code-reviewer": AgentDefinition(
-                description=(
-                    "New code analysis specialist. Reviews code added since last review "
-                    "for security, logic, quality issues, and regressions. "
-                    "Invoke when: There are substantial code changes (>50 lines diff) or "
-                    "changes to security-sensitive areas."
-                ),
-                prompt=newcode_prompt or "You review new code for issues.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "comment-analyzer": AgentDefinition(
-                description=(
-                    "Comment and feedback analyst. Processes contributor comments and "
-                    "AI tool reviews (CodeRabbit, Cursor, Gemini, etc.) to identify "
-                    "unanswered questions and valid concerns. "
-                    "Invoke when: There are comments or formal reviews since last review."
-                ),
-                prompt=comment_prompt or "You analyze comments and feedback.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-            "finding-validator": AgentDefinition(
-                description=(
-                    "Finding re-investigation specialist. Re-investigates unresolved findings "
-                    "to validate they are actually real issues, not false positives. "
-                    "Actively reads the code at the finding location with fresh eyes. "
-                    "Can confirm findings as valid OR dismiss them as false positives. "
-                    "CRITICAL: Invoke for ALL unresolved findings after resolution-verifier runs. "
-                    "Invoke when: There are findings marked as unresolved that need validation."
-                ),
-                prompt=validator_prompt
-                or "You validate whether unresolved findings are real issues.",
-                tools=["Read", "Grep", "Glob"],
-                model="inherit",
-            ),
-        }
+        return build_specialist_agents(FOLLOWUP_SPECIALISTS, self._load_prompt)
 
     def _format_previous_findings(self, context: FollowupReviewContext) -> str:
         """Format previous findings for the prompt."""
@@ -805,22 +749,14 @@ The SDK will run invoked agents in parallel automatically.
         }
 
     def _generate_finding_id(self, file: str, line: int, title: str) -> str:
-        """Generate a unique finding ID."""
-        content = f"{file}:{line}:{title}"
-        return f"FU-{hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:8].upper()}"
+        """Generate a unique finding ID (delegates to the shared helper)."""
+        return generate_finding_id(file, line, title, prefix="FU-")
 
     def _deduplicate_findings(
         self, findings: list[PRReviewFinding]
     ) -> list[PRReviewFinding]:
-        """Remove duplicate findings."""
-        seen = set()
-        unique = []
-        for f in findings:
-            key = (f.file, f.line, f.title.lower().strip())
-            if key not in seen:
-                seen.add(key)
-                unique.append(f)
-        return unique
+        """Remove duplicate findings (delegates to the shared helper)."""
+        return deduplicate_findings(findings)
 
     def _generate_summary(
         self,
