@@ -122,6 +122,8 @@ root, not in the spec directory.
     # RFC-0012 / RFC-0013: the solo agent is coder + QA in one flow, so surface
     # both the team's house standards and the deployment context to it.
     spec_context += get_house_standards_context(spec_dir)
+    # RFC-0015: honour the per-project constitution (enforceable clauses = hard).
+    spec_context += get_constitution_context(spec_dir)
     spec_context += get_deployment_context(spec_dir)
     return spec_context + prompt
 
@@ -170,6 +172,9 @@ The project root is the parent of aifactory/. All code goes in the project root,
 
     # RFC-0012: surface the team's house standards so the coder follows them.
     spec_context += get_house_standards_context(spec_dir)
+
+    # RFC-0015: honour the per-project constitution (enforceable clauses = hard).
+    spec_context += get_constitution_context(spec_dir)
 
     # RFC-0013: surface the deployment context (scans, gates, dry-run policy).
     spec_context += get_deployment_context(spec_dir)
@@ -335,6 +340,100 @@ def get_house_standards_context(spec_dir: Path) -> str:
         for ref in dict.fromkeys(techdocs):
             lines.append(f"  - `{ref}`")
     lines += ["", "---", "", ""]
+    return "\n".join(lines)
+
+
+def get_constitution_context(spec_dir: Path) -> str:
+    """Render the RFC-0015 §3.1 constitution as a prompt block.
+
+    Reads the signed Task Contract (``context/task_contract.json``, falling back
+    to ``implementation_plan.json``) and surfaces
+    ``epic_context.constitution`` so the coder / QA agents HONOUR the project's
+    human-authored governing principles. Mirrors the RFC-0012 house-standards
+    injection pattern (``get_house_standards_context``).
+
+    Principles tagged ``enforceable: true`` are rendered as HARD requirements
+    (must-follow, not advisory); the ``standards_conformance`` gate enforces the
+    same clauses, closing spec-kit's soft-enforcement gap. Advisory principles
+    are still injected so the agent has the full context.
+
+    Degrades silently to "" when no constitution was retrieved (``available``
+    false, no principles, or the block is absent) — RFC-0015 retrieval degrades,
+    never fakes, and the absent case leaves today's behaviour unchanged.
+    """
+    contract = None
+    for rel in ("context/task_contract.json", "implementation_plan.json"):
+        path = spec_dir / rel
+        if path.exists():
+            try:
+                contract = json.loads(path.read_text())
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+    if not isinstance(contract, dict):
+        return ""
+
+    epic_context = contract.get("epic_context")
+    constitution = (
+        epic_context.get("constitution") if isinstance(epic_context, dict) else None
+    )
+    if not isinstance(constitution, dict) or not constitution.get("available"):
+        return ""
+
+    principles = [
+        p
+        for p in constitution.get("principles", [])
+        if isinstance(p, dict) and str(p.get("text", "")).strip()
+    ]
+    if not principles:
+        return ""
+
+    # ids tagged enforceable; honour the per-principle flag and the top-level
+    # enforceable_ids list (a principle is hard if either marks it so).
+    enforceable_ids = {
+        str(i) for i in constitution.get("enforceable_ids", []) if str(i).strip()
+    }
+
+    def _is_hard(principle: dict[str, object]) -> bool:
+        return bool(principle.get("enforceable")) or (
+            str(principle.get("id", "")) in enforceable_ids
+        )
+
+    hard = [p for p in principles if _is_hard(p)]
+    advisory = [p for p in principles if not _is_hard(p)]
+
+    source = str(constitution.get("source", "")).strip()
+    lines = [
+        "## PROJECT CONSTITUTION (RFC-0015 — GOVERNING PRINCIPLES)",
+        "",
+        "This project has a human-authored constitution. Honour every principle. "
+        "Clauses marked HARD REQUIREMENT are non-negotiable must-follows (not "
+        "advisory): the `standards_conformance` gate fails the build when a hard "
+        "clause is ignored.",
+        "",
+    ]
+    if source:
+        lines += [f"_Source: `{source}`_", ""]
+
+    if hard:
+        lines.append("### HARD REQUIREMENTS (must follow)")
+        for p in hard:
+            pid = str(p.get("id", "")).strip()
+            prefix = f"[{pid}] " if pid else ""
+            lines.append(
+                f"- 🚨 **HARD REQUIREMENT** — {prefix}{str(p['text']).strip()}"
+            )
+        lines.append("")
+
+    if advisory:
+        lines.append("### Advisory principles (follow where applicable)")
+        for p in advisory:
+            pid = str(p.get("id", "")).strip()
+            prefix = f"[{pid}] " if pid else ""
+            lines.append(f"- {prefix}{str(p['text']).strip()}")
+        lines.append("")
+
+    lines += ["---", "", ""]
     return "\n".join(lines)
 
 
@@ -644,6 +743,8 @@ The project root is: `{project_dir}`
 
 """
             spec_context += get_house_standards_context(spec_dir)
+            # RFC-0015: honour the per-project constitution in QA review.
+            spec_context += get_constitution_context(spec_dir)
             spec_context += get_deployment_context(spec_dir)
             return spec_context + base_prompt
 
@@ -706,6 +807,10 @@ The project root is: `{project_dir}`
 
     # RFC-0012: surface the team's house standards so QA checks against them.
     spec_context += get_house_standards_context(spec_dir)
+
+    # RFC-0015: honour the per-project constitution so QA verifies enforceable
+    # (hard) clauses, not just advisory ones.
+    spec_context += get_constitution_context(spec_dir)
 
     # RFC-0013: surface the deployment context so QA verifies scans/gates and
     # the dry-run deploy policy.
