@@ -8,6 +8,7 @@ MCP is operator-supplied (not an auto-launched built-in default).
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import core.mcp_credentials as mc
@@ -17,7 +18,7 @@ from core.mcp_credentials import CredentialStatus
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mc, "OPERATOR_MCP_SERVERS_PATH", home / "mcp-servers.json")
@@ -27,19 +28,19 @@ def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mc.reset_cache()
 
 
-def _write_servers(payload: dict) -> None:
+def _write_servers(payload: dict[str, object]) -> None:
     path = mc.OPERATOR_MCP_SERVERS_PATH
     path.write_text(json.dumps(payload))
     path.chmod(0o600)
 
 
-def test_no_operator_config_no_extra_entries():
+def test_no_operator_config_no_extra_entries() -> None:
     assert mcp_catalog.operator_catalog_entries() == {}
     # deployment-metrics is NOT a built-in auto-launched default.
     assert "deployment-metrics" not in [e.id for e in mcp_catalog.CATALOG]
 
 
-def test_operator_stdio_entry_materialized():
+def test_operator_stdio_entry_materialized() -> None:
     _write_servers(
         {
             "servers": {
@@ -62,21 +63,25 @@ def test_operator_stdio_entry_materialized():
     assert entry.credential_provider == "deployment_metrics"
 
 
-def test_operator_entry_visible_through_lookup():
+def test_operator_entry_visible_through_lookup() -> None:
     _write_servers({"servers": {"deployment-metrics": {"command": "datadog-mcp"}}})
     assert mcp_catalog.is_catalog_server("deployment-metrics") is True
     assert mcp_catalog.get_catalog_entry("deployment-metrics") is not None
     assert "deployment-metrics" in mcp_catalog.catalog_ids()
 
 
-def test_operator_overrides_builtin_by_id():
+def test_operator_overrides_builtin_by_id() -> None:
     # An operator may override a built-in (e.g. github) by id.
-    _write_servers({"servers": {"github": {"command": "my-github-mcp", "args": ["--x"]}}})
+    _write_servers(
+        {"servers": {"github": {"command": "my-github-mcp", "args": ["--x"]}}}
+    )
     entry = mcp_catalog.get_catalog_entry("github")
     assert entry.launcher_command == "my-github-mcp"
 
 
-def test_secrets_resolved_into_config_env_not_argv(monkeypatch: pytest.MonkeyPatch):
+def test_secrets_resolved_into_config_env_not_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DORA_TOKEN", "topsecret")
     _write_servers(
         {
@@ -92,7 +97,9 @@ def test_secrets_resolved_into_config_env_not_argv(monkeypatch: pytest.MonkeyPat
     )
     entry = mcp_catalog.get_catalog_entry("deployment-metrics")
     creds = CredentialStatus(
-        available=True, source="operator-config", env_vars={"DATADOG_API_KEY": "topsecret"}
+        available=True,
+        source="operator-config",
+        env_vars={"DATADOG_API_KEY": "topsecret"},
     )
     config = entry.build_server_config(creds, read_only=True)
     # Secret lands in env, never on argv.
@@ -100,7 +107,7 @@ def test_secrets_resolved_into_config_env_not_argv(monkeypatch: pytest.MonkeyPat
     assert "topsecret" not in json.dumps(config["args"])
 
 
-def test_http_operator_entry():
+def test_http_operator_entry() -> None:
     _write_servers(
         {
             "servers": {
@@ -117,7 +124,7 @@ def test_http_operator_entry():
     assert config == {"type": "http", "url": "https://dora.example/mcp"}
 
 
-def test_builtins_still_present():
+def test_builtins_still_present() -> None:
     # Back-compat: the V1 built-ins remain.
     ids = mcp_catalog.catalog_ids()
     for builtin in ("github", "kubernetes", "aws", "azure"):

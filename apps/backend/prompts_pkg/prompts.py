@@ -291,7 +291,9 @@ def get_house_standards_context(spec_dir: Path) -> str:
         return ""
 
     epic_context = contract.get("epic_context")
-    house = epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    house = (
+        epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    )
     if not isinstance(house, dict) or not house.get("available"):
         return ""
     sources = [s for s in house.get("sources", []) if isinstance(s, dict)]
@@ -686,13 +688,19 @@ The project root is: `{project_dir}`
     # Add capability summary for transparency
     active_caps = [k for k, v in capabilities.items() if v]
     if active_caps:
-        spec_context += "Based on project analysis, the following capabilities were detected:\n"
+        spec_context += (
+            "Based on project analysis, the following capabilities were detected:\n"
+        )
         for cap in active_caps:
-            cap_name = cap.replace("is_", "").replace("has_", "").replace("_", " ").title()
+            cap_name = (
+                cap.replace("is_", "").replace("has_", "").replace("_", " ").title()
+            )
             spec_context += f"- {cap_name}\n"
         spec_context += "\nRelevant validation tools have been included below.\n\n"
     else:
-        spec_context += "No special project capabilities detected. Using standard validation.\n\n"
+        spec_context += (
+            "No special project capabilities detected. Using standard validation.\n\n"
+        )
 
     spec_context += "---\n\n"
 
@@ -704,14 +712,14 @@ The project root is: `{project_dir}`
     spec_context += get_deployment_context(spec_dir)
 
     # Find injection point in base prompt (after PHASE 4, before PHASE 5)
-    injection_marker = "<!-- PROJECT-SPECIFIC VALIDATION TOOLS WILL BE INJECTED HERE -->"
+    injection_marker = (
+        "<!-- PROJECT-SPECIFIC VALIDATION TOOLS WILL BE INJECTED HERE -->"
+    )
 
     if mcp_sections and injection_marker in base_prompt:
         # Replace marker with actual MCP tool sections
         mcp_content = "\n\n---\n\n## PROJECT-SPECIFIC VALIDATION TOOLS\n\n"
-        mcp_content += (
-            "The following validation tools are available based on your project type:\n\n"
-        )
+        mcp_content += "The following validation tools are available based on your project type:\n\n"
         mcp_content += "\n\n---\n\n".join(mcp_sections)
         mcp_content += "\n\n---\n"
 

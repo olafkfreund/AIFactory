@@ -76,7 +76,9 @@ logger = logging.getLogger(__name__)
 # the March 2026 GA announcement. Other GCP-specific servers (e.g. BigQuery
 # Explorer, Cloud Run Deployer) remain in private preview as of 2026-05;
 # operators can override the endpoint to use them when they GA.
-_GCP_MCP_DEFAULT_ENDPOINT = "https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp"
+_GCP_MCP_DEFAULT_ENDPOINT = (
+    "https://cloudaicompanion.googleapis.com/v1/extensions/default/mcp"
+)
 
 
 def _get_gcp_mcp_endpoint() -> str:
@@ -358,7 +360,9 @@ def _operator_entry(server_id: str, spec: dict) -> MCPCatalogEntry | None:
     # Operator entries authenticate via a per-server credential provider so the
     # subprocess gets secrets through the environment. Default to the server id
     # (the deployment-metrics probe keys off "deployment_metrics").
-    credential_provider = str(spec.get("credential_provider", server_id.replace("-", "_"))).strip()
+    credential_provider = str(
+        spec.get("credential_provider", server_id.replace("-", "_"))
+    ).strip()
 
     if transport == "http":
         url = str(spec.get("url", "")).strip()

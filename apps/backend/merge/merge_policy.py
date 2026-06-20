@@ -148,7 +148,9 @@ def deployment_block_reasons(
 
     prod_class = str(deployment.get("production_classification", "")).strip().lower()
     if prod_class == "production":
-        reasons.append("production change is VAL-4 / never autonomous (human-approval required)")
+        reasons.append(
+            "production change is VAL-4 / never autonomous (human-approval required)"
+        )
 
     required_gates = _str_set(deployment.get("system_gates"))
     have = _str_set(satisfied_gates)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 
 import core.mcp_credentials as mc
@@ -16,7 +17,7 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Point the operator config paths at a tmp dir and reset caches."""
     home = tmp_path / "home"
     home.mkdir()
@@ -27,17 +28,19 @@ def _isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mc.reset_cache()
 
 
-def _write_servers(path: Path, payload: dict, *, mode: int = 0o600) -> None:
+def _write_servers(
+    path: Path, payload: dict[str, object], *, mode: int = 0o600
+) -> None:
     path.write_text(json.dumps(payload))
     path.chmod(mode)
 
 
-def test_no_config_returns_empty():
+def test_no_config_returns_empty() -> None:
     assert mc.get_operator_mcp_servers() == {}
     assert mc.get_credential_status("deployment_metrics").available is False
 
 
-def test_declared_stdio_server_is_returned():
+def test_declared_stdio_server_is_returned() -> None:
     _write_servers(
         mc.OPERATOR_MCP_SERVERS_PATH,
         {
@@ -57,7 +60,9 @@ def test_declared_stdio_server_is_returned():
     assert status.source == "operator-config"
 
 
-def test_env_is_resolved_from_environment_not_stored(monkeypatch: pytest.MonkeyPatch):
+def test_env_is_resolved_from_environment_not_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("MY_DORA_TOKEN", "s3cr3t")
     _write_servers(
         mc.OPERATOR_MCP_SERVERS_PATH,
@@ -78,7 +83,7 @@ def test_env_is_resolved_from_environment_not_stored(monkeypatch: pytest.MonkeyP
     assert "s3cr3t" not in json.dumps(spec.get("args", []))
 
 
-def test_unset_env_reference_is_omitted():
+def test_unset_env_reference_is_omitted() -> None:
     _write_servers(
         mc.OPERATOR_MCP_SERVERS_PATH,
         {
@@ -95,7 +100,7 @@ def test_unset_env_reference_is_omitted():
     assert status.env_vars == {}  # unset reference dropped, degrade not fabricate
 
 
-def test_malformed_entries_are_skipped():
+def test_malformed_entries_are_skipped() -> None:
     _write_servers(
         mc.OPERATOR_MCP_SERVERS_PATH,
         {
@@ -111,27 +116,31 @@ def test_malformed_entries_are_skipped():
     assert set(servers) == {"good"}
 
 
-def test_loose_permissions_refused():
+def test_loose_permissions_refused() -> None:
     path = mc.OPERATOR_MCP_SERVERS_PATH
     _write_servers(path, {"servers": {"x": {"command": "foo"}}}, mode=0o644)
     # group/other-readable => refused.
     assert mc.get_operator_mcp_servers() == {}
 
 
-def test_http_server_requires_url():
+def test_http_server_requires_url() -> None:
     _write_servers(
         mc.OPERATOR_MCP_SERVERS_PATH,
-        {"servers": {"remote": {"transport": "http", "url": "https://dora.example/mcp"}}},
+        {
+            "servers": {
+                "remote": {"transport": "http", "url": "https://dora.example/mcp"}
+            }
+        },
     )
     assert "remote" in mc.get_operator_mcp_servers()
 
 
-def test_existing_probes_unaffected():
+def test_existing_probes_unaffected() -> None:
     # Sanity: an unrelated unknown provider still returns unavailable.
     assert mc.get_credential_status("nonsense").available is False
 
 
-def test_world_readable_mask_matches_0600():
+def test_world_readable_mask_matches_0600() -> None:
     # Guard the perm check logic itself.
     path = mc.OPERATOR_MCP_SERVERS_PATH
     _write_servers(path, {"servers": {"x": {"command": "foo"}}}, mode=0o600)
