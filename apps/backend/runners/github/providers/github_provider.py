@@ -206,6 +206,30 @@ class GitHubProvider:
         except Exception:
             return False
 
+    async def enable_auto_merge(
+        self,
+        pr_number: int,
+        merge_method: str = "squash",
+    ) -> bool:
+        """Enable GitHub auto-merge (RFC-0011 low tier: auto-merge-when-green).
+
+        Uses ``gh pr merge --auto``: GitHub merges the PR automatically once the
+        required status checks pass. Requires auto-merge to be enabled on the
+        repo (Settings -> Allow auto-merge).
+        """
+        cmd = ["pr", "merge", str(pr_number), "--auto"]
+        if merge_method == "merge":
+            cmd.append("--merge")
+        elif merge_method == "rebase":
+            cmd.append("--rebase")
+        else:
+            cmd.append("--squash")
+        try:
+            await self._gh_client.run(cmd)
+            return True
+        except Exception:
+            return False
+
     # -------------------------------------------------------------------------
     # Issue Operations
     # -------------------------------------------------------------------------

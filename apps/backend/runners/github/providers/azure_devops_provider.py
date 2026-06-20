@@ -274,6 +274,19 @@ class AzureDevOpsProvider:
             resp = await client.patch(url, json={"status": "abandoned"})
             return resp.status_code == 200
 
+    async def enable_auto_merge(
+        self, pr_number: int, merge_method: str = "squash"
+    ) -> bool:
+        """Not yet implemented for Azure DevOps (RFC-0011 #637).
+
+        ADO's auto-complete (completionOptions on the PR) maps here, but is
+        deferred — the low-tier auto-merge fast path is GitHub-first for now.
+        """
+        raise NotImplementedError(
+            "enable_auto_merge is not implemented for the Azure DevOps provider "
+            "yet; use the merge_policy decision + manual/CI completion for ADO PRs."
+        )
+
     # -------------------------------------------------------------------------
     # Issue (Work Item) Operations
     # -------------------------------------------------------------------------
