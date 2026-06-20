@@ -639,6 +639,64 @@ class AgentService:
         # can never race on the same freed slot. Single event loop, no busy-wait.
         self._admission_lock = asyncio.Lock()
         self._task_queue: deque[QueuedTask] = deque()
+        # RFC-0016 #668 durable job state. When DATABASE_URL is set the cap +
+        # FIFO queue + running set are backed by Postgres (survives restart,
+        # multi-replica safe via SELECT ... FOR UPDATE). When unset we keep the
+        # in-memory deque above and log that it is NOT multi-replica safe. The
+        # in-process ``running_tasks`` dict is ALWAYS the authority for killing
+        # this replica's own subprocesses; the store is the cross-replica gate.
+        from .job_state_store import store_enabled
+        self._store_enabled: bool = store_enabled()
+        self._job_store: Any = None  # lazily built (needs the DB engine)
+        if self._store_enabled:
+            _log.info(
+                "[AgentService] RFC-0016 durable job-state store ENABLED "
+                "(DATABASE_URL set) — cap/queue backed by Postgres."
+            )
+        else:
+            _log.warning(
+                "[AgentService] RFC-0016 durable job-state store DISABLED "
+                "(DATABASE_URL unset) — using IN-MEMORY admission cap/queue. "
+                "This is single-pod dev only and is NOT multi-replica safe; "
+                "the cap/queue will NOT survive a restart."
+            )
+
+    def _store(self) -> Any:
+        """Lazily build + cache the durable job-state store (RFC-0016 #668)."""
+        if self._job_store is None:
+            from .job_state_store import JobStateStore
+            self._job_store = JobStateStore()
+        return self._job_store
+
+    def _make_spawn_args(self, **kwargs: Any) -> Any:
+        """Build a JSON-portable SpawnArgs from start/queue kwargs (#668)."""
+        from .job_state_store import SpawnArgs
+        project_path = kwargs.pop("project_path")
+        return SpawnArgs(project_path=str(project_path), **kwargs)
+
+    def _read_correlation_key(
+        self, project_path: Path, spec_id: str
+    ) -> str | None:
+        """Read the upstream GitHub issue number for the correlation key (#612).
+
+        Threads ``requirements.json -> provenance.issue_number`` into the
+        durable job-state row so a build is joinable across PFactory/TFactory/
+        CFactory. Best-effort: returns None when the spec has no provenance.
+        """
+        try:
+            req_file = (
+                project_path / ".aifactory" / "specs" / spec_id
+                / "requirements.json"
+            )
+            if not req_file.exists():
+                return None
+            req = json.loads(req_file.read_text())
+            prov = req.get("provenance")
+            if isinstance(prov, dict) and prov.get("issue_number") is not None:
+                return str(prov["issue_number"])
+        except (OSError, ValueError):
+            pass
+        return None
 
     @property
     def backend_path(self) -> Path:
@@ -1777,17 +1835,73 @@ class AgentService:
         """
         from .process_monitor import monitor_process
 
+        # RFC-0016 #668: capture the spec_dir BEFORE the monitor runs, because
+        # the monitor pops ``_spec_dirs[task_id]`` during its terminal cleanup —
+        # we still need it afterwards to read the control-plane status and map
+        # it to a durable terminal lifecycle_state (never-overclaim).
+        spec_dir_hint = self._spec_dirs.get(task_id)
+        if spec_dir_hint is None and project_path is not None and spec_id:
+            spec_dir_hint = project_path / ".aifactory" / "specs" / spec_id
+
         await monitor_process(
             self, task_id, proc, project_path, spec_id, cmd, env
         )
 
-        # RFC-0016 #668: a build just exited (or this monitor instance handed
-        # off to a failover/continuation restart). Either way, try to fill any
-        # free slot from the FIFO queue. ``_drain_queue`` is slot-count driven
-        # and lock-guarded, so it is a safe no-op when a restart kept the task
-        # in ``running_tasks`` (count unchanged) and only admits when a slot
-        # genuinely freed.
+        # A build just exited (or this monitor instance handed off to a
+        # failover/continuation restart). Free the durable slot first (so the
+        # cap reflects reality before we drain), then try to fill any free slot
+        # from the FIFO queue. ``_drain_queue`` is slot-count driven and
+        # lock-guarded, so it is a safe no-op when a restart kept the task in
+        # ``running_tasks`` (count unchanged) and only admits when a slot freed.
+        await self._free_durable_slot_on_exit(task_id, spec_dir_hint)
         await self._drain_queue()
+
+    async def _free_durable_slot_on_exit(
+        self, task_id: str, spec_dir: Path | None = None
+    ) -> None:
+        """Move a finished build's durable row out of ``running`` (RFC-0016 #668).
+
+        Called after the process monitor returns. If the task is still in
+        ``running_tasks`` the monitor handed off to a failover/continuation
+        restart (same slot, still running) — leave the row ``running``. Only
+        when the subprocess is truly gone do we record the terminal state so
+        the cap frees up. The terminal lifecycle mirrors the control-plane
+        status the monitor just wrote (review_pending/human_review → ``review``;
+        failures → ``failed``). Best-effort: never breaks the exit path.
+        """
+        if not self._store_enabled:
+            return
+        if task_id in self.running_tasks:
+            # Restart/continuation kept the slot — not terminal yet.
+            return
+        # Map the control-plane status (task_control.json) to a lifecycle_state.
+        lifecycle = "done"
+        error: str | None = None
+        try:
+            if spec_dir is None:
+                spec_dir = self._spec_dirs.get(task_id)
+            if spec_dir is not None:
+                ctrl = task_control.read_control(spec_dir)
+                status = (ctrl.get("status") or "").lower()
+                reason = (ctrl.get("review_reason") or "").lower()
+                if status in ("failed",) or reason in ("errors", "invalid_plan"):
+                    lifecycle = "failed"
+                    error = reason or "build failed"
+                elif status in ("human_review", "ai_review", "review_pending"):
+                    lifecycle = "review"
+                elif status == "done":
+                    lifecycle = "done"
+        except Exception:  # noqa: BLE001 - status read is best-effort
+            _log.debug(
+                "[AgentService] could not read control status for %s on exit",
+                task_id, exc_info=True,
+            )
+        try:
+            await self._store().mark_terminal(task_id, lifecycle, error=error)
+        except Exception:  # noqa: BLE001 - never break the exit/drain path
+            _log.exception(
+                "[AgentService] could not free durable slot for %s", task_id
+            )
 
     async def _update_plan_status(
         self,
@@ -2570,6 +2684,25 @@ class AgentService:
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
 
+        # RFC-0016 #668: durable, multi-replica-safe path. The store decides
+        # admit-vs-queue under SELECT ... FOR UPDATE so two replicas can't
+        # exceed the cap or double-start the same job_id. The in-memory path
+        # below is the single-pod-dev fallback (no DATABASE_URL).
+        if self._store_enabled:
+            return await self._start_task_execution_durable(
+                task_id=task_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                auto_continue=auto_continue,
+                base_branch=base_branch,
+                mode=mode,
+                force=force,
+                user_id=user_id,
+                stop_after_planning=stop_after_planning,
+                parallel=parallel,
+                workers=workers,
+            )
+
         async with self._admission_lock:
             cap = self._concurrency_cap()
             # cap <= 0 => unlimited (back-compat). Otherwise admit immediately
@@ -2620,6 +2753,77 @@ class AgentService:
         await self._mark_task_queued(task_id, project_path, spec_id)
         return None
 
+    async def _start_task_execution_durable(  # noqa: PLR0913 - parity with start_task_execution
+        self,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        auto_continue: bool,
+        base_branch: str | None,
+        mode: str | None,
+        force: bool,
+        user_id: str,
+        stop_after_planning: bool,
+        parallel: bool | None,
+        workers: int | None,
+    ) -> asyncio.subprocess.Process | None:
+        """Postgres-backed admit-or-queue (RFC-0016 #668).
+
+        Asks the durable store to grant a slot or queue the build inside a
+        ``SELECT ... FOR UPDATE`` transaction (cap read from live Postgres
+        counts, not memory). On ``"started"`` it spawns the subprocess exactly
+        as the in-memory path does; on ``"queued"`` it marks the build queued
+        and returns ``None``. A duplicate active ``job_id`` raises ``ValueError``
+        (→ 409), preserving the per-task guard across replicas + restarts.
+        """
+        spawn_args = self._make_spawn_args(
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=auto_continue,
+            base_branch=base_branch,
+            mode=mode,
+            force=force,
+            user_id=user_id,
+            stop_after_planning=stop_after_planning,
+            parallel=parallel,
+            workers=workers,
+        )
+        correlation_key = self._read_correlation_key(project_path, spec_id)
+        cap = self._concurrency_cap()
+
+        # ValueError (already running/queued) propagates to the 409 mapping.
+        outcome = await self._store().admit(
+            task_id, spawn_args, cap, correlation_key=correlation_key
+        )
+
+        if outcome == "started":
+            # The store reserved the slot durably; now spawn the real process.
+            # If the spawn itself fails, free the durable slot so it isn't
+            # leaked (a stuck "running" row would shrink the cap forever).
+            try:
+                return await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+            except Exception:
+                await self._store().mark_terminal(
+                    task_id, "failed", error="spawn failed during admission"
+                )
+                raise
+
+        # outcome == "queued": park + surface the queued status for the cockpit.
+        await self._mark_task_queued(task_id, project_path, spec_id)
+        return None
+
     async def _mark_task_queued(
         self, task_id: str, project_path: Path, spec_id: str
     ) -> None:
@@ -2653,6 +2857,10 @@ class AgentService:
         a failed spawn drops that task and moves on (no busy-wait, no requeue
         loop). Never raises — it runs in the monitor's teardown path.
         """
+        if self._store_enabled:
+            await self._drain_queue_durable()
+            return
+
         async with self._admission_lock:
             cap = self._concurrency_cap()
             while self._task_queue and (cap <= 0 or len(self.running_tasks) < cap):
@@ -2684,6 +2892,63 @@ class AgentService:
                     _log.exception(
                         "[AgentService] failed to start queued task %s — dropping",
                         qt.task_id,
+                    )
+
+    async def _drain_queue_durable(self) -> None:
+        """Promote queued builds into freed slots via the durable store (#668).
+
+        The store's ``drain`` runs the same SELECT ... FOR UPDATE + advisory
+        lock as ``admit``, so a finishing build in this replica and a fresh
+        admit in another can't both claim the freed slot. Each promoted row
+        comes back already flipped to ``running`` in Postgres; we then spawn the
+        local subprocess. A spawn failure frees the durable slot (marks the row
+        failed) so a slot is never leaked. Never raises (monitor teardown path).
+        """
+        cap = self._concurrency_cap()
+        try:
+            promoted = await self._store().drain(cap)
+        except Exception:  # noqa: BLE001 - drain must not break the exit monitor
+            _log.exception("[AgentService] durable drain failed")
+            return
+
+        for task_id, spawn_args in promoted:
+            # Skip a row we already run locally (a restart-recovery row, or a
+            # task started out of band) — the store flipped it to running but
+            # this replica owns the live subprocess.
+            if task_id in self.running_tasks:
+                continue
+            try:
+                await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=Path(spawn_args.project_path),
+                    spec_id=spawn_args.spec_id,
+                    auto_continue=spawn_args.auto_continue,
+                    base_branch=spawn_args.base_branch,
+                    mode=spawn_args.mode,
+                    force=spawn_args.force,
+                    user_id=spawn_args.user_id,
+                    stop_after_planning=spawn_args.stop_after_planning,
+                    parallel=spawn_args.parallel,
+                    workers=spawn_args.workers,
+                )
+                _log.info(
+                    "[AgentService] Dequeued + started %s (durable store)",
+                    task_id,
+                )
+            except Exception:  # noqa: BLE001 - one bad spawn must not stall the queue
+                _log.exception(
+                    "[AgentService] failed to start queued task %s — "
+                    "freeing durable slot",
+                    task_id,
+                )
+                try:
+                    await self._store().mark_terminal(
+                        task_id, "failed", error="spawn failed on dequeue"
+                    )
+                except Exception:  # noqa: BLE001
+                    _log.exception(
+                        "[AgentService] could not free durable slot for %s",
+                        task_id,
                     )
 
     async def _spawn_task_execution(
@@ -3097,7 +3362,22 @@ class AgentService:
         if task_id not in self.running_tasks:
             # RFC-0016 #668: a task can be parked in the admission queue rather
             # than running. Stopping it just removes it from the queue (no
-            # process to kill) so it never auto-starts later.
+            # process to kill) so it never auto-starts later. With the durable
+            # store the queued row may live in Postgres (queued on another
+            # replica, or after a restart), so check there too.
+            if self._store_enabled:
+                try:
+                    if await self._store().remove_queued(task_id):
+                        logger.info(
+                            f"[AgentService] Removed queued task {task_id} "
+                            "from durable admission queue"
+                        )
+                        return True
+                except Exception:  # noqa: BLE001 - never break stop on a store hiccup
+                    logger.warning(
+                        "[AgentService] durable remove_queued failed for %s",
+                        task_id, exc_info=True,
+                    )
             if any(q.task_id == task_id for q in self._task_queue):
                 async with self._admission_lock:
                     self._task_queue = deque(
@@ -3170,6 +3450,21 @@ class AgentService:
         self._task_rate_limits.pop(task_id, None)
         self._task_user_ids.pop(task_id, None)
 
+        # RFC-0016 #668: free the durable slot for a user-stopped build. The
+        # store-terminal write is idempotent, so the exit monitor's own
+        # ``_free_durable_slot_on_exit`` after the killed process reaps is a
+        # harmless no-op. Best-effort; never breaks the stop path.
+        if self._store_enabled:
+            try:
+                await self._store().mark_terminal(
+                    task_id, "failed", error="stopped by user"
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[AgentService] could not free durable slot on stop for %s",
+                    task_id, exc_info=True,
+                )
+
         # Emit human_review with errors reason (not just FAILED phase)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._emit_progress(TaskProgress(
@@ -3209,6 +3504,40 @@ class AgentService:
             ))
 
         return return_code
+
+    async def reconcile_on_startup(self) -> dict[str, int]:
+        """Reconstruct in-flight admission state after a restart (RFC-0016 #668).
+
+        A fresh control-plane replica calls this on boot so the cap/queue
+        reflect Postgres rather than an empty in-memory dict (concurrency
+        conventions §1 durability rule). It does NOT re-spawn subprocesses
+        here — the build subprocesses live in whichever pod started them; a
+        Phase-2 (k8s Job) reaper handles orphans. What it does:
+
+          * surfaces the durable running/queued counts to the log, and
+          * drains any queued rows into now-free slots (e.g. the replica that
+            owned a running build died, freeing capacity).
+
+        Returns ``{"running": n, "queued": m}`` for observability/tests.
+        No-op (returns zeros) in the in-memory fallback mode.
+        """
+        if not self._store_enabled:
+            return {"running": 0, "queued": 0}
+        try:
+            state = await self._store().reconstruct()
+        except Exception:  # noqa: BLE001 - startup must not crash on a store hiccup
+            _log.exception("[AgentService] startup reconcile failed")
+            return {"running": 0, "queued": 0}
+        running = len(state.get("running", []))
+        queued = len(state.get("queued", []))
+        _log.info(
+            "[AgentService] RFC-0016 startup reconcile: %d running, %d queued "
+            "(durable store)",
+            running, queued,
+        )
+        # Fill any slots freed by a dead replica's running builds.
+        await self._drain_queue()
+        return {"running": running, "queued": queued}
 
     def is_running(self, task_id: str) -> bool:
         """Check if a task is currently running."""

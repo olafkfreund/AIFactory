@@ -99,6 +99,17 @@ async def lifespan(app: FastAPI):
     # Initialize database (creates tables if needed)
     await init_db()
 
+    # RFC-0016 #668: reconstruct durable admission state (cap/queue) from
+    # Postgres so a restarted/new replica doesn't start from an empty
+    # in-memory view. No-op when DATABASE_URL is unset (in-memory fallback).
+    try:
+        from .services.agent_service import get_agent_service
+        await get_agent_service().reconcile_on_startup()
+    except Exception:
+        logger.warning(
+            "RFC-0016 startup reconcile failed (non-fatal)", exc_info=True
+        )
+
     # Initialize skills service singleton once at startup
     init_skills_service()
     logger.info("SkillsService initialized")
