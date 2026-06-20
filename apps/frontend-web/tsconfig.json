@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
+    "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
@@ -12,9 +12,18 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    // TODO(#648): still to close toward standards/tsconfig.base.json (deferred to
+    //   keep this PR small and `tsc --noEmit` green without mass-rewriting components):
+    //     noUnusedLocals:true       (~47 unused-import/type errors across ~25 files)
+    //     noUnusedParameters:true
+    //     noUncheckedIndexedAccess:true   (~163 errors)
+    //     exactOptionalPropertyTypes:true
+    //     verbatimModuleSyntax:true
+    //   plus the compilerOptions snapshot test requested in #648.
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitAny": false,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {

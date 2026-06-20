@@ -185,6 +185,7 @@ export function PRDetail({
       const timer = setTimeout(() => setPostSuccess(null), 3000);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [postSuccess]);
 
   // Auto-expand logs section when review starts

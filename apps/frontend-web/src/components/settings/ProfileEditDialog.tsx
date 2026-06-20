@@ -91,6 +91,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
       }, 5000);
       return () => clearTimeout(timeoutId);
     }
+    return undefined;
   }, [testConnectionResult]);
 
   // Cleanup AbortController when dialog closes or unmounts
