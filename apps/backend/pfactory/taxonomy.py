@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .tiers import Tier, classify_tier
+
 __all__ = [
     "Classification",
     "classify_labels",
@@ -54,6 +56,7 @@ class Classification:
     plan_type: str | None  # first plan-type:* value, prefix stripped
     priority: str | None  # first priority:* value (e.g. "p1"), prefix stripped
     sev: str | None  # first sev:* value, prefix stripped
+    tier: Tier | None  # RFC-0011 difficulty tier (highest-wins), None if unlabelled
 
 
 def _normalize(labels: object) -> list[str]:
@@ -114,6 +117,7 @@ def classify_labels(labels: object) -> Classification:
         plan_type=_first(_PLAN_TYPE_PREFIX),
         priority=_first(_PRIORITY_PREFIX),
         sev=_first(_SEV_PREFIX),
+        tier=classify_tier(names),
     )
 
 

@@ -26,11 +26,15 @@ from .tfactory_client import (
     send_handoff,
     tfactory_config,
 )
+from .tiers import Tier, classify_tier, tier_for
 
 __all__ = [
     "CODER",
     "TFACTORY",
     "Classification",
+    "Tier",
+    "classify_tier",
+    "tier_for",
     "build_handoff_payload",
     "load_tfactory_block",
     "classify_labels",
