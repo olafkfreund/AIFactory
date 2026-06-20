@@ -648,6 +648,11 @@ class AgentService:
         from .job_state_store import store_enabled
         self._store_enabled: bool = store_enabled()
         self._job_store: Any = None  # lazily built (needs the DB engine)
+        # RFC-0016 #671 control/execution split. When AIFACTORY_BUILD_BACKEND=
+        # kubejob the build runs as a k8s Job (run.py) instead of an in-pod
+        # subprocess; this backend dispatches the Job + reconciles/reaps it.
+        # Lazily built (needs the store). Default OFF — see _kubejob_backend_enabled.
+        self._kubejob_build_backend: Any = None
         if self._store_enabled:
             _log.info(
                 "[AgentService] RFC-0016 durable job-state store ENABLED "
@@ -2797,10 +2802,23 @@ class AgentService:
         )
 
         if outcome == "started":
-            # The store reserved the slot durably; now spawn the real process.
-            # If the spawn itself fails, free the durable slot so it isn't
-            # leaked (a stuck "running" row would shrink the cap forever).
+            # The store reserved the slot durably; now start the real execution
+            # unit. RFC-0016 #671: the control/execution split picks the backend
+            # by env — ``kubejob`` dispatches a k8s Job that runs run.py, default
+            # ``subprocess`` keeps today's in-pod behaviour. Either way, if the
+            # start itself fails, free the durable slot so it isn't leaked (a
+            # stuck "running" row would shrink the cap forever).
             try:
+                if self._kubejob_backend_enabled():
+                    await self._dispatch_build_job(
+                        task_id=task_id,
+                        project_path=project_path,
+                        spec_id=spec_id,
+                        correlation_key=correlation_key,
+                    )
+                    # No in-pod Process — the Job owns execution and reports its
+                    # own terminal state; the control plane reconciles by poll.
+                    return None
                 return await self._spawn_task_execution(
                     task_id=task_id,
                     project_path=project_path,
@@ -2823,6 +2841,188 @@ class AgentService:
         # outcome == "queued": park + surface the queued status for the cockpit.
         await self._mark_task_queued(task_id, project_path, spec_id)
         return None
+
+    def _kubejob_backend_enabled(self) -> bool:
+        """True when builds run as a k8s Job (RFC-0016 #671 control/exec split).
+
+        Env-gated, default OFF (``AIFACTORY_BUILD_BACKEND=subprocess``). The
+        kubejob backend requires the durable store (it reconciles by polling
+        Postgres + reaps via worker_ref), so when it is requested WITHOUT a
+        DATABASE_URL we log loudly and fall back to the in-pod subprocess rather
+        than silently stranding builds with no reconcile loop.
+        """
+        from .build_backend import kubejob_enabled
+
+        if not kubejob_enabled():
+            return False
+        if not self._store_enabled:
+            _log.warning(
+                "[AgentService] AIFACTORY_BUILD_BACKEND=kubejob requires the "
+                "durable job-state store (DATABASE_URL) for reconcile/reap — "
+                "it is unset; falling back to the in-pod subprocess backend."
+            )
+            return False
+        return True
+
+    def _build_backend(self) -> Any:
+        """Lazily build + cache the k8s-Job build backend (RFC-0016 #671)."""
+        if getattr(self, "_kubejob_build_backend", None) is None:
+            from .build_backend import KubeJobBuildBackend
+            self._kubejob_build_backend = KubeJobBuildBackend(self._store())
+        return self._kubejob_build_backend
+
+    async def _dispatch_build_job(
+        self,
+        *,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        correlation_key: str | None,
+    ) -> None:
+        """Dispatch a k8s Job that runs run.py for this build (RFC-0016 #671).
+
+        The durable slot is already reserved (the row is ``running`` with
+        ``worker_ref={kind:subprocess}``); the backend overwrites worker_ref
+        with the k8s-job reference so the reconcile-by-poll + reaper loops can
+        find the Job. The Job flips the row to its terminal state when it
+        finishes — we do not block on it. Surfaces the coding status so the
+        cockpit shows the build moving even though no in-pod process exists.
+        """
+        await self._build_backend().dispatch(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            correlation_key=correlation_key,
+        )
+        try:
+            await self._safe_emit_task_status(task_id, "in_progress")
+        except Exception:  # noqa: BLE001 - status emit must not break dispatch
+            _log.debug(
+                "[AgentService] coding status emit raised after Job dispatch "
+                "(ignored)", exc_info=True,
+            )
+
+    async def reconcile_kubejob_builds(self) -> dict[str, str]:
+        """Reconcile k8s-Job builds from durable state (RFC-0016 #671).
+
+        The conventions' reconcile-by-poll: for each ``running`` k8s-job row,
+        observe whether the Job wrote a terminal lifecycle_state and, if so,
+        drain any freed slot. A missed completion event therefore never strands
+        a build. Returns ``{job_id: terminal_state}`` for builds that reached a
+        terminal state this pass. No-op unless the kubejob backend is enabled.
+        """
+        out: dict[str, str] = {}
+        if not self._kubejob_backend_enabled():
+            return out
+        try:
+            rows = await self._store().get_active_kubejobs()
+        except Exception:  # noqa: BLE001 - reconcile must never crash the loop
+            _log.exception("[AgentService] kubejob reconcile: store read failed")
+            return out
+        backend = self._build_backend()
+        for row in rows:
+            job_id = row["job_id"]
+            try:
+                terminal = await backend.reconcile_by_poll(job_id)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[AgentService] kubejob reconcile failed for %s", job_id
+                )
+                continue
+            if terminal is not None:
+                out[job_id] = terminal
+        if out:
+            # Builds finished → fill freed slots from the FIFO queue.
+            await self._drain_queue()
+        return out
+
+    async def kubejob_reconcile_loop(
+        self, *, stop: "asyncio.Event", interval_seconds: float = 15.0
+    ) -> None:
+        """Periodic reconcile-by-poll + reaper for k8s-Job builds (#671).
+
+        Started from the app lifespan only when the kubejob backend is enabled.
+        Each tick polls Postgres for terminal transitions the Jobs wrote
+        (so a missed completion event never strands a build) and reaps vanished
+        Jobs. Never raises — a bad tick is logged and the loop continues.
+        """
+        _log.info(
+            "[AgentService] kubejob reconcile loop started (interval=%.0fs)",
+            interval_seconds,
+        )
+        while not stop.is_set():
+            try:
+                await self.reconcile_kubejob_builds()
+                await self.reap_kubejob_builds()
+            except Exception:  # noqa: BLE001 - loop must survive a bad tick
+                _log.exception("[AgentService] kubejob reconcile tick failed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+            except asyncio.TimeoutError:
+                pass
+        _log.info("[AgentService] kubejob reconcile loop stopped")
+
+    async def reap_kubejob_builds(
+        self, *, deadline_seconds: int | None = None
+    ) -> list[str]:
+        """Reap stranded k8s-Job builds (RFC-0016 #671 reaper).
+
+        Marks a ``running`` k8s-job row ``failed`` when its Job disappears /
+        exceeds the deadline without a terminal write, then drains. Returns the
+        reaped job_ids. No-op unless the kubejob backend is enabled.
+        """
+        if not self._kubejob_backend_enabled():
+            return []
+        try:
+            reaped = await self._build_backend().reap_vanished_jobs(
+                deadline_seconds=deadline_seconds
+            )
+        except Exception:  # noqa: BLE001 - reaper must never crash the loop
+            _log.exception("[AgentService] kubejob reaper failed")
+            return []
+        if reaped:
+            await self._drain_queue()
+        return reaped
+
+    async def _stop_kubejob_build(self, task_id: str) -> bool:
+        """Stop a build running as a k8s Job (RFC-0016 #671).
+
+        Deletes the Job (best-effort) and marks the durable row failed so the
+        slot frees and the reconcile/reaper loops don't keep watching it.
+        Returns True when a running k8s-job row was found + stopped.
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] could not read state to stop kubejob %s",
+                task_id, exc_info=True,
+            )
+            return False
+        if state is None or state.get("lifecycle_state") != "running":
+            return False
+        if (state.get("worker_ref") or {}).get("kind") != "k8s-job":
+            return False
+        try:
+            await self._build_backend().delete_job(task_id)
+        except Exception:  # noqa: BLE001 - delete is best-effort; row mark below frees the slot
+            _log.warning(
+                "[AgentService] could not delete k8s Job for %s (ignored)",
+                task_id, exc_info=True,
+            )
+        try:
+            await self._store().mark_terminal(
+                task_id, "failed", error="stopped by user"
+            )
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] could not free durable slot on kubejob stop %s",
+                task_id, exc_info=True,
+            )
+        await self._safe_emit_task_status(task_id, "human_review", "errors")
+        await self._drain_queue()
+        _log.info("[AgentService] Stopped k8s-Job build %s", task_id)
+        return True
 
     async def _mark_task_queued(
         self, task_id: str, project_path: Path, spec_id: str
@@ -3387,6 +3587,11 @@ class AgentService:
                     f"[AgentService] Removed queued task {task_id} from admission queue"
                 )
                 return True
+            # RFC-0016 #671: a build may run as a k8s Job (no in-pod process to
+            # signal). Stopping it deletes the Job + frees the durable slot.
+            if self._kubejob_backend_enabled():
+                if await self._stop_kubejob_build(task_id):
+                    return True
             logger.info(f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)")
             return False
 
