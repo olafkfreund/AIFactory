@@ -23,6 +23,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 # Bootstrap sys.path so the shared module and its `models` dependency resolve
 # regardless of the directory pytest is invoked from.
 _GITHUB_DIR = Path(__file__).resolve().parent
@@ -49,23 +51,23 @@ class _Finding:
 # ---------------------------------------------------------------------------
 
 
-def test_map_severity_known_values():
+def test_map_severity_known_values() -> None:
     assert sr.map_severity("critical") == ReviewSeverity.CRITICAL
     assert sr.map_severity("high") == ReviewSeverity.HIGH
     assert sr.map_severity("medium") == ReviewSeverity.MEDIUM
     assert sr.map_severity("low") == ReviewSeverity.LOW
 
 
-def test_map_severity_is_case_insensitive():
+def test_map_severity_is_case_insensitive() -> None:
     assert sr.map_severity("HIGH") == ReviewSeverity.HIGH
     assert sr.map_severity("Critical") == ReviewSeverity.CRITICAL
 
 
-def test_map_severity_unknown_defaults_to_medium():
+def test_map_severity_unknown_defaults_to_medium() -> None:
     assert sr.map_severity("bogus") == ReviewSeverity.MEDIUM
 
 
-def test_map_severity_custom_default():
+def test_map_severity_custom_default() -> None:
     # The follow-up comment path historically defaulted some entries to LOW.
     assert sr.map_severity("bogus", default=ReviewSeverity.LOW) == ReviewSeverity.LOW
 
@@ -75,13 +77,13 @@ def test_map_severity_custom_default():
 # ---------------------------------------------------------------------------
 
 
-def test_generate_finding_id_orchestrator_format():
+def test_generate_finding_id_orchestrator_format() -> None:
     """No prefix -> lower-case 12-char md5 digest (orchestrator format)."""
     digest = hashlib.md5(b"a.py:3:Title", usedforsecurity=False).hexdigest()
     assert sr.generate_finding_id("a.py", 3, "Title") == digest[:12]
 
 
-def test_generate_finding_id_followup_format():
+def test_generate_finding_id_followup_format() -> None:
     """FU- prefix -> upper-case 8-char digest (follow-up format)."""
     digest = hashlib.md5(b"a.py:3:Title", usedforsecurity=False).hexdigest()
     assert (
@@ -90,7 +92,7 @@ def test_generate_finding_id_followup_format():
     )
 
 
-def test_generate_finding_id_is_deterministic():
+def test_generate_finding_id_is_deterministic() -> None:
     a = sr.generate_finding_id("x.py", 1, "T")
     b = sr.generate_finding_id("x.py", 1, "T")
     assert a == b
@@ -101,7 +103,7 @@ def test_generate_finding_id_is_deterministic():
 # ---------------------------------------------------------------------------
 
 
-def test_deduplicate_findings_drops_same_key():
+def test_deduplicate_findings_drops_same_key() -> None:
     findings = [
         _Finding("a.py", 1, "Bug"),
         _Finding("a.py", 1, "bug"),  # title compared case-insensitively
@@ -114,13 +116,13 @@ def test_deduplicate_findings_drops_same_key():
     assert unique[1].file == "b.py"
 
 
-def test_deduplicate_findings_preserves_order():
+def test_deduplicate_findings_preserves_order() -> None:
     findings = [_Finding("c.py", 9, "Z"), _Finding("a.py", 1, "A")]
     unique = sr.deduplicate_findings(findings)
     assert [f.file for f in unique] == ["c.py", "a.py"]
 
 
-def test_deduplicate_findings_empty():
+def test_deduplicate_findings_empty() -> None:
     assert sr.deduplicate_findings([]) == []
 
 
@@ -129,11 +131,13 @@ def test_deduplicate_findings_empty():
 # ---------------------------------------------------------------------------
 
 
-def test_load_github_prompt_missing_returns_empty():
+def test_load_github_prompt_missing_returns_empty() -> None:
     assert sr.load_github_prompt("definitely-not-a-real-prompt-file.md") == ""
 
 
-def test_load_github_prompt_reads_existing(tmp_path, monkeypatch):
+def test_load_github_prompt_reads_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sample = tmp_path / "sample.md"
     sample.write_text("hello prompt", encoding="utf-8")
     monkeypatch.setattr(sr, "_PROMPTS_GITHUB_DIR", tmp_path)
@@ -145,7 +149,7 @@ def test_load_github_prompt_reads_existing(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_orchestrator_roster_names():
+def test_orchestrator_roster_names() -> None:
     agents = sr.build_specialist_agents(sr.ORCHESTRATOR_SPECIALISTS)
     assert set(agents) == {
         "security-reviewer",
@@ -156,7 +160,7 @@ def test_orchestrator_roster_names():
     }
 
 
-def test_followup_roster_names():
+def test_followup_roster_names() -> None:
     agents = sr.build_specialist_agents(sr.FOLLOWUP_SPECIALISTS)
     assert set(agents) == {
         "resolution-verifier",
@@ -166,7 +170,7 @@ def test_followup_roster_names():
     }
 
 
-def test_built_agents_are_read_only_and_inherit_model():
+def test_built_agents_are_read_only_and_inherit_model() -> None:
     agents = sr.build_specialist_agents(sr.ORCHESTRATOR_SPECIALISTS)
     for agent in agents.values():
         assert agent.tools == ["Read", "Grep", "Glob"]
@@ -174,7 +178,7 @@ def test_built_agents_are_read_only_and_inherit_model():
         assert agent.description  # non-empty
 
 
-def test_build_agents_uses_fallback_when_prompt_missing():
+def test_build_agents_uses_fallback_when_prompt_missing() -> None:
     # The default loader returns "" for unknown files, so the fallback prompt
     # must be used verbatim.
     spec = sr.SpecialistAgentSpec(
@@ -187,7 +191,7 @@ def test_build_agents_uses_fallback_when_prompt_missing():
     assert agents["x"].prompt == "FALLBACK"
 
 
-def test_build_agents_prefers_loaded_prompt():
+def test_build_agents_prefers_loaded_prompt() -> None:
     spec = sr.SpecialistAgentSpec(
         name="x",
         description="d",
