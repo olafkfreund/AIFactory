@@ -4,6 +4,7 @@ Task management routes.
 Handles CRUD operations for tasks (specs) within projects.
 """
 
+import ast
 import json
 import re
 import shutil
@@ -458,6 +459,124 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
     return plan, plan_file
 
 
+# Keys preferred (in order) when collapsing a stringified mapping down to a
+# single readable line for the cockpit Overview.
+_DESC_PREFERRED_KEYS = (
+    "description",
+    "summary",
+    "brief",
+    "text",
+    "title",
+    "epic_title",
+    "plan_id",
+)
+
+# Matches an embedded ``Correlation epic #{...}`` run where a whole dict was
+# str()-ed into otherwise-clean prose. Non-greedy + DOTALL so it collapses a
+# multi-line dict body while leaving the surrounding prose intact.
+_CORRELATION_EPIC_DICT_RE = re.compile(r"Correlation epic #\{.*?\}", re.DOTALL)
+
+# Best-effort extraction of a plan_id out of such an embedded dict run.
+_PLAN_ID_RE = re.compile(r"['\"]plan_id['\"]\s*:\s*['\"]([^'\"]+)['\"]")
+
+# Max length of the single-line fallback when a stringified mapping cannot be
+# parsed, so the cockpit never receives a wall of (collapsed) dict text.
+_FALLBACK_MAX_LEN = 200
+
+
+def _collapse_correlation_epic(desc: str) -> str:
+    """Collapse an embedded ``Correlation epic #{...dict...}`` run.
+
+    Replaces the ``#{...}`` blob with ``#<plan_id>`` when a plan_id can be
+    found, otherwise with a bare ``Correlation epic`` reference. Prose around
+    the blob is preserved.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        plan_match = _PLAN_ID_RE.search(match.group(0))
+        if plan_match:
+            return f"Correlation epic #{plan_match.group(1)}"
+        return "Correlation epic"
+
+    return _CORRELATION_EPIC_DICT_RE.sub(_replace, desc)
+
+
+def _looks_like_stringified_mapping(stripped: str) -> bool:
+    """Conservatively detect a value that is a whole dict str()-ed to text.
+
+    Requires the value to both start with ``{`` and end with ``}`` and contain
+    a mapping-style ``key:`` separator (``':`` for Python reprs / single-quoted
+    JSON, or ``": `` for JSON). Prose with a stray brace is left untouched.
+    """
+    return (
+        stripped.startswith("{")
+        and stripped.endswith("}")
+        and ("':" in stripped or '": ' in stripped)
+    )
+
+
+def _summarize_mapping(mapping: dict) -> str:
+    """Pick a short readable string out of a parsed mapping.
+
+    Prefers a human-readable field (description/summary/brief/text), then a
+    title-like field, then plan_id. Only ever returns a scalar string value —
+    never anything dict/list-shaped — so the cockpit cannot render dict guts.
+    """
+    for key in _DESC_PREFERRED_KEYS:
+        value = mapping.get(key)
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def _clean_task_description(desc: str) -> str:
+    """Defensive guard so the cockpit Overview never renders dict guts.
+
+    The common case (normal markdown / prose) is returned unchanged. This is a
+    belt-and-suspenders product guard against upstream data that str()-ed a
+    whole plan/epic dict into the task description (see aifactory-demo#206,
+    AIFactory#612). It never raises.
+    """
+    if not isinstance(desc, str):
+        return desc
+
+    stripped = desc.strip()
+    if not stripped:
+        return desc
+
+    # Case 1: the entire description IS a stringified dict/JSON mapping.
+    if _looks_like_stringified_mapping(stripped):
+        parsed: object = None
+        for loader in (json.loads, ast.literal_eval):
+            try:
+                parsed = loader(stripped)
+            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+                continue
+            else:
+                break
+
+        if isinstance(parsed, dict):
+            summary = _summarize_mapping(parsed)
+            if summary:
+                return summary
+
+        # Parsing failed (or yielded nothing usable): collapse to a single
+        # line, strip the outer braces, and truncate so no multi-line dict
+        # guts ever reach the renderer.
+        flattened = " ".join(stripped.strip("{}").split())
+        if len(flattened) > _FALLBACK_MAX_LEN:
+            flattened = flattened[:_FALLBACK_MAX_LEN].rstrip() + "…"
+        return flattened
+
+    # Case 2: clean prose that merely embeds a ``Correlation epic #{...}`` run.
+    if "Correlation epic #{" in desc:
+        return _collapse_correlation_epic(desc)
+
+    return desc
+
+
 def load_spec_metadata(spec_dir: Path) -> dict:
     """Load metadata for a spec from its files."""
     metadata = {
@@ -482,7 +601,9 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             if "title" in requirements:
                 metadata["title"] = requirements["title"]
             if "description" in requirements:
-                metadata["description"] = requirements["description"]
+                metadata["description"] = _clean_task_description(
+                    requirements["description"]
+                )
             # RFC-0001 correlation: surface the upstream GitHub issue so the
             # cockpit threads this task with its PFactory plan + TFactory test.
             prov = requirements.get("provenance")
@@ -505,7 +626,7 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             paragraphs = re.split(r"\n\n+", content)
             for p in paragraphs[1:]:  # Skip title
                 if p.strip() and not p.startswith("#"):
-                    metadata["description"] = p.strip()
+                    metadata["description"] = _clean_task_description(p.strip())
                     break
 
     # Try to load task_logs.json for active phase status (most accurate)
