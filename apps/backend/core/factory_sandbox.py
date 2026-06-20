@@ -119,9 +119,7 @@ class FactorySandbox:
                 )
             except FileNotFoundError as e:
                 raise SandboxError(f"runtime {self.binary!r} not executable: {e}")
-            return RunResult(
-                p.returncode == 0, p.returncode, (p.stdout + p.stderr).strip(), argv
-            )
+            return RunResult(p.returncode == 0, p.returncode, (p.stdout + p.stderr).strip(), argv)
 
 
 def container_backend(image: str, workdir: str | None = None, **kw):
