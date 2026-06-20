@@ -22,6 +22,11 @@
 extend-exclude = [
     "apps/backend/core/factory_sandbox.py",
     "apps/backend/core/nix_provisioner.py",
+    # RFC-0014 (#664): byte-exact mirror of the hub canonical
+    # scripts/cost_router_core.py, formatted at the fleet line-length (100). The
+    # AIFactory-native budget logic that consumes it lives in
+    # budget_enforcement.py, which IS linted here.
+    "apps/backend/core/cost_router_core.py",
 ]
 
 [lint]

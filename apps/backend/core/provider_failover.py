@@ -23,6 +23,8 @@ import os
 import time
 from collections.abc import Iterable
 
+from core import runtime_gating
+
 # Default order mirrors providers.factory._TOOL_FALLBACK_ORDER (tool-capable,
 # generally-available providers). Overridable via env for operators who run a
 # different mix.
@@ -78,15 +80,45 @@ def failover_chain(primary: str, env: dict[str, str] | None = None) -> tuple[str
     return tuple(out)
 
 
+def enabled_failover_chain(
+    primary: str, env: dict[str, str] | None = None
+) -> tuple[str, ...]:
+    """The failover chain filtered to RFC-0014 operator-enabled runtimes.
+
+    Failover must never reach for a runtime the operator has not enabled (that
+    would spend on a gated runtime behind the operator's back). ``claude`` is
+    always enabled, so the chain can never become empty; the primary is kept even
+    when not allowlisted (the caller already chose it deliberately and gating is
+    enforced at selection time by ``providers.factory.get_runtime_provider``).
+    """
+    allow = runtime_gating.operator_allowlist(env)
+    primary_name = (primary or "").strip().lower()
+    out: list[str] = []
+    for name in failover_chain(primary, env):
+        if name == primary_name or name in allow:
+            out.append(name)
+    return tuple(out)
+
+
 def next_provider(
     primary: str,
     used: Iterable[str],
     env: dict[str, str] | None = None,
+    *,
+    gated: bool = False,
 ) -> str | None:
     """Return the next provider in the chain not already in ``used``, or
-    ``None`` when the chain is exhausted (caller should escalate)."""
+    ``None`` when the chain is exhausted (caller should escalate).
+
+    When ``gated`` is True (RFC-0014 §6), the chain is filtered to operator-enabled
+    runtimes so failover never reaches for a runtime the operator has not enabled.
+    Default False preserves the pre-RFC-0014 behaviour for existing callers.
+    """
     used_set = {(u or "").strip().lower() for u in used}
-    for candidate in failover_chain(primary, env):
+    chain = (
+        enabled_failover_chain(primary, env) if gated else failover_chain(primary, env)
+    )
+    for candidate in chain:
         if candidate not in used_set:
             return candidate
     return None
