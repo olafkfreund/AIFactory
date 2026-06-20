@@ -133,7 +133,7 @@ class Logger {
   private sanitizeData(data: unknown): unknown {
     // Prevent circular references and limit depth
     try {
-      return JSON.parse(JSON.stringify(data, (key, value) => {
+      return JSON.parse(JSON.stringify(data, (_key, value) => {
         // Skip functions
         if (typeof value === 'function') return '[Function]';
         // Skip large arrays

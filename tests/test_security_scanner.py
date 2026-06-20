@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
-from security_scanner import (
+from analysis.security_scanner import (
     HAS_SECRETS_SCANNER,
     SecurityScanner,
     SecurityScanResult,

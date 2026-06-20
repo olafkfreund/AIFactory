@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -117,18 +117,22 @@ def rotate_root(
     # (same reason as in data_key_manager.py).
     from ..database.models import KmsDataKey
 
-    started_at = datetime.utcnow()
+    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     report = RotationReport(started_at=started_at, new_kms_key_id=new_kms_key_id)
 
     offset = 0
     while True:
         with Session(sync_engine) as session:
-            batch = session.execute(
-                select(KmsDataKey)
-                .order_by(KmsDataKey.id)
-                .offset(offset)
-                .limit(batch_size)
-            ).scalars().all()
+            batch = (
+                session.execute(
+                    select(KmsDataKey)
+                    .order_by(KmsDataKey.id)
+                    .offset(offset)
+                    .limit(batch_size)
+                )
+                .scalars()
+                .all()
+            )
 
             if not batch:
                 break
@@ -145,22 +149,20 @@ def rotate_root(
                     new_wrapped = new_backend.encrypt(plaintext)
                     row.wrapped_key = new_wrapped
                     row.kms_key_id = new_kms_key_id
-                    row.rotated_at = datetime.utcnow()
+                    row.rotated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     session.add(row)
                     report.rotated_count += 1
                 except Exception as exc:
                     # Capture and continue — one bad row mustn't abort
                     # the entire rotation. Operators address the failed
                     # rows in a follow-up run.
-                    logger.exception(
-                        "rotation failed for org_id=%s", row.org_id
-                    )
+                    logger.exception("rotation failed for org_id=%s", row.org_id)
                     report.error_count += 1
                     report.errors.append((row.org_id, repr(exc)))
 
             session.commit()
             offset += len(batch)
 
-    report.finished_at = datetime.utcnow()
+    report.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
     logger.info(report.summary())
     return report

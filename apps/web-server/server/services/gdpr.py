@@ -37,7 +37,7 @@ import hashlib
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +54,9 @@ def _hash_user_id(user_id: str) -> str:
     return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:36]
 
 
-def _redact_details_json(s: str | None, original_user_id: str, hashed: str) -> str | None:
+def _redact_details_json(
+    s: str | None, original_user_id: str, hashed: str
+) -> str | None:
     """Replace any literal occurrence of the original user_id with the
     hashed value inside the JSON blob. Also blanks `email` / `name`
     / `ip` fields if present."""
@@ -87,6 +89,7 @@ def _redact_details_json(s: str | None, original_user_id: str, hashed: str) -> s
         if isinstance(o, list):
             return [_walk(x) for x in o]
         return o
+
     return json.dumps(_walk(obj))
 
 
@@ -121,9 +124,7 @@ async def erase_user(db: AsyncSession, user_id: str) -> dict:
     hashed = _hash_user_id(user_id)
 
     # 2. Anonymize audit_logs. Update both user_id and details_json.
-    audit_result = await db.execute(
-        select(AuditLog).where(AuditLog.user_id == user_id)
-    )
+    audit_result = await db.execute(select(AuditLog).where(AuditLog.user_id == user_id))
     audit_rows = list(audit_result.scalars())
     for row in audit_rows:
         row.user_id = hashed
@@ -155,21 +156,21 @@ async def erase_user(db: AsyncSession, user_id: str) -> dict:
     prev_hash_for_next = GENESIS
     for row in all_rows_result.scalars():
         row.prev_hash = prev_hash_for_next
-        prev_hash_for_next = compute_hash(
-            prev_hash_for_next, row_as_mapping(row)
-        )
+        prev_hash_for_next = compute_hash(prev_hash_for_next, row_as_mapping(row))
 
     # 5. Tombstone the user row.
     user.email = None
     user.name = None
     user.avatar_url = None
-    user.gdpr_erased_at = datetime.utcnow()
+    user.gdpr_erased_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     await db.commit()
     logger.info(
         "GDPR erasure complete for user_id=%s — %d audit rows anonymized, "
         "%d email accounts deleted",
-        user_id, len(audit_rows), len(ea_rows),
+        user_id,
+        len(audit_rows),
+        len(ea_rows),
     )
 
     return {

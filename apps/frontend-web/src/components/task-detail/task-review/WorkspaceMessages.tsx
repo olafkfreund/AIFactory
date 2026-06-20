@@ -1,4 +1,4 @@
-import { AlertCircle, GitMerge, Loader2, Trash2, Check, FileText, Eye } from 'lucide-react';
+import { AlertCircle, GitMerge, Loader2, Check, FileText, Eye } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '../../ui/button';
 import { persistTaskStatus } from '../../../stores/task-store';
@@ -150,7 +150,7 @@ interface StagedInProjectMessageProps {
 /**
  * Displays message when changes have already been staged in the main project
  */
-export function StagedInProjectMessage({ task, projectPath, hasWorktree = false, onClose }: StagedInProjectMessageProps) {
+export function StagedInProjectMessage({ task, projectPath: _projectPath, hasWorktree = false, onClose }: StagedInProjectMessageProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -241,7 +241,7 @@ interface ReviewPlanReminderProps {
 /**
  * Displays a friendly reminder to review the implementation plan when coding hasn't started
  */
-export function ReviewPlanReminder({ task }: ReviewPlanReminderProps) {
+export function ReviewPlanReminder({ task: _task }: ReviewPlanReminderProps) {
   return (
     <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-4">
       <h3 className="font-medium text-sm text-foreground mb-2 flex items-center gap-2">

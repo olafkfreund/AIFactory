@@ -32,9 +32,6 @@ export function TaskClarificationWizard({
   open,
   onOpenChange,
   taskId,
-  taskTitle,
-  taskDescription,
-  projectId,
 }: TaskClarificationWizardProps) {
   const { t } = useTranslation(['common']);
 

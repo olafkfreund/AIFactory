@@ -49,7 +49,6 @@ interface BatchReviewWizardProps {
 export function BatchReviewWizard({
   isOpen,
   onClose,
-  projectId,
   onStartAnalysis,
   onApproveBatches,
   analysisProgress,

@@ -152,9 +152,7 @@ Scope = BroadcastScope | UserScope | OrgScope
 # ---------------------------------------------------------------------------
 
 
-def _serialize_envelope(
-    scope: Scope, event_type: str, payload: dict
-) -> str:
+def _serialize_envelope(scope: Scope, event_type: str, payload: dict) -> str:
     """Build the JSON envelope published to Redis."""
     if isinstance(scope, BroadcastScope):
         scope_obj: dict = {"kind": "broadcast"}
@@ -189,6 +187,7 @@ def _try_traceparent() -> str | None:
     OTel-not-installed or no-active-span → None."""
     try:
         from ..observability.tracing import get_current_traceparent
+
         return get_current_traceparent()
     except Exception:
         return None
@@ -244,7 +243,9 @@ def _parse_envelope(raw: bytes | str) -> tuple[str, Scope, str, dict] | None:
     elif kind == "org" and isinstance(scope_raw.get("org_id"), str):
         scope = OrgScope(org_id=scope_raw["org_id"])
     else:
-        logger.warning("Dropped event-bus envelope with unknown scope kind: %r", scope_raw)
+        logger.warning(
+            "Dropped event-bus envelope with unknown scope kind: %r", scope_raw
+        )
         return None
 
     return source, scope, event_type, payload
@@ -300,9 +301,7 @@ async def deliver_local(scope: Scope, event_type: str, payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def publish_event(
-    scope: Scope, event_type: str, payload: dict
-) -> None:
+async def publish_event(scope: Scope, event_type: str, payload: dict) -> None:
     """Deliver to local clients immediately, then publish to Redis if configured.
 
     Local delivery happens FIRST and synchronously. A Redis outage
@@ -324,9 +323,7 @@ async def publish_event(
         envelope = _serialize_envelope(scope, event_type, payload)
         await redis_client.publish(settings.REDIS_CHANNEL, envelope)
     except Exception:
-        logger.debug(
-            "Failed to publish event %r to Redis", event_type, exc_info=True
-        )
+        logger.debug("Failed to publish event %r to Redis", event_type, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +348,7 @@ def _get_redis_publisher():
         return None
     if _redis_publisher is None:
         import redis.asyncio as redis_asyncio
+
         _redis_publisher = redis_asyncio.from_url(
             settings.REDIS_URL, decode_responses=True
         )
@@ -393,8 +391,8 @@ async def stop_redis_subscriber() -> None:
     if _redis_publisher is not None:
         try:
             await _redis_publisher.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - best-effort shutdown; log and degrade
+            logger.debug("Redis publisher close failed during shutdown", exc_info=True)
         _redis_publisher = None
 
 
@@ -415,9 +413,7 @@ async def _subscriber_loop() -> None:
             pubsub = client.pubsub()
             await pubsub.subscribe(settings.REDIS_CHANNEL)
             backoff = _RECONNECT_BACKOFF_MIN  # reset after a healthy connect
-            logger.info(
-                "Subscribed to Redis channel %r", settings.REDIS_CHANNEL
-            )
+            logger.info("Subscribed to Redis channel %r", settings.REDIS_CHANNEL)
 
             async for message in pubsub.listen():
                 if message.get("type") != "message":
@@ -428,7 +424,8 @@ async def _subscriber_loop() -> None:
             raise
         except Exception:
             logger.warning(
-                "Redis subscriber dropped — reconnecting in %.1fs", backoff,
+                "Redis subscriber dropped — reconnecting in %.1fs",
+                backoff,
                 exc_info=True,
             )
             try:
@@ -457,7 +454,10 @@ async def _dispatch_envelope(raw: bytes | str | None) -> None:
     traceparent = _extract_traceparent_from_raw(raw)
     if traceparent:
         await _dispatch_with_trace_context(
-            traceparent, scope, event_type, payload,
+            traceparent,
+            scope,
+            event_type,
+            payload,
         )
     else:
         await deliver_local(scope, event_type, payload)
@@ -478,13 +478,16 @@ def _extract_traceparent_from_raw(raw: bytes | str) -> str | None:
             tp = trace.get("traceparent")
             if isinstance(tp, str) and tp:
                 return tp
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - malformed frame; trace extraction is best-effort
+        logger.debug("Failed to extract traceparent from event frame", exc_info=True)
     return None
 
 
 async def _dispatch_with_trace_context(
-    traceparent: str, scope: Scope, event_type: str, payload: dict,
+    traceparent: str,
+    scope: Scope,
+    event_type: str,
+    payload: dict,
 ) -> None:
     """Open a child ``event_bus.deliver`` span linked to the
     publisher's span via the W3C TraceContext propagator, then run

@@ -12,16 +12,14 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     // TODO(#648): still to close toward standards/tsconfig.base.json (deferred to
-    //   keep this PR small and `tsc --noEmit` green without mass-rewriting components):
-    //     noUnusedLocals:true       (~47 unused-import/type errors across ~25 files)
-    //     noUnusedParameters:true
-    //     noUncheckedIndexedAccess:true   (~163 errors)
+    //   keep this PR green without mass-rewriting components — each is a large,
+    //   behaviour-touching change best done as its own ratcheted PR):
+    //     noUncheckedIndexedAccess:true   (~163 errors, mostly array/record indexing)
     //     exactOptionalPropertyTypes:true
     //     verbatimModuleSyntax:true
-    //   plus the compilerOptions snapshot test requested in #648.
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,

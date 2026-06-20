@@ -70,13 +70,13 @@ export function PRDetail({
   reviewProgress,
   isReviewing,
   initialNewCommitsCheck,
-  isActive = false,
+  isActive: _isActive = false,
   onRunReview,
   onRunFollowupReview,
   onCheckNewCommits,
   onCancelReview,
   onPostReview,
-  onPostComment,
+  onPostComment: _onPostComment,
   onApprovePR,
   onMergePR,
   onAssignPR: _onAssignPR,
@@ -127,10 +127,6 @@ export function PRDetail({
       setSelectedFindingIds(new Set(allFindings));
     }
   }, [reviewResult, postedFindingIds]);
-
-  // Check for new commits after any review has been completed
-  // This allows detecting new work pushed after ANY review (initial or follow-up)
-  const hasPostedFindings = postedFindingIds.size > 0 || reviewResult?.hasPostedFindings;
 
   const checkForNewCommits = useCallback(async () => {
     // Prevent duplicate concurrent calls using ref (avoids callback recreation)

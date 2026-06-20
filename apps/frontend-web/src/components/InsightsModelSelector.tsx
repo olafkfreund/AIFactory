@@ -42,7 +42,7 @@ export function InsightsModelSelector({
 
   const currentProvider = currentConfig?.provider || 'claude';
 
-  const handleSelectProviderModel = useCallback((provider: InsightsProvider, modelId: string, modelLabel: string) => {
+  const handleSelectProviderModel = useCallback((provider: InsightsProvider, modelId: string, _modelLabel: string) => {
     onConfigChange({
       provider,
       profileId: 'custom',

@@ -29,18 +29,6 @@ const PHASE_COLORS: Record<ExecutionPhase, { color: string; bgColor: string }> =
 };
 
 // Phase label translation keys
-const PHASE_LABEL_KEYS: Record<ExecutionPhase, string> = {
-  idle: 'execution.phases.idle',
-  spec_creation: 'execution.phases.planning',  // Spec creation shows as "Planning"
-  planning: 'execution.phases.planning',
-  plan_review: 'execution.phases.planReview',  // Waiting for human approval
-  coding: 'execution.phases.coding',
-  qa_review: 'execution.phases.reviewing',
-  qa_fixing: 'execution.phases.fixing',
-  complete: 'execution.phases.complete',
-  failed: 'execution.phases.failed',
-};
-
 // Phase to progress status translation key mapping
 const PHASE_PROGRESS_STATUS_KEYS: Record<ExecutionPhase, string> = {
   idle: 'execution.progressStatus.idle',
@@ -129,7 +117,6 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
   const showSubtaskProgress = hasLiveProgress || phase === 'coding' || (totalSubtasks > 0 && !isIndeterminatePhase);
 
   const colors = PHASE_COLORS[phase] || PHASE_COLORS.idle;
-  const phaseLabel = t(PHASE_LABEL_KEYS[phase] || PHASE_LABEL_KEYS.idle);
   const phaseProgressStatus = t(PHASE_PROGRESS_STATUS_KEYS[phase] || PHASE_PROGRESS_STATUS_KEYS.idle);
   const activeEntries = getActivePhaseEntries();
 

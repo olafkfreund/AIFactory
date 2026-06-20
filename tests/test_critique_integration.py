@@ -15,7 +15,7 @@ from pathlib import Path
 # Add aifactory directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
-from critique import (
+from spec.critique import (
     CritiqueResult,
     format_critique_summary,
     generate_critique_prompt,

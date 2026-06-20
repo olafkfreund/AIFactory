@@ -79,9 +79,7 @@ async def broadcast_event(event_type: str, payload: dict):
 
 async def send_to_user(user_id: str, event_type: str, payload: dict):
     """Send an event to a specific user (all their connections)."""
-    await event_bus.publish_event(
-        UserScope(user_id=user_id), event_type, payload
-    )
+    await event_bus.publish_event(UserScope(user_id=user_id), event_type, payload)
 
 
 async def send_to_org(org_id: str, event_type: str, payload: dict):
@@ -121,9 +119,7 @@ async def events_websocket(websocket: WebSocket):
 
             async with async_session_factory() as session:
                 result = await session.execute(
-                    select(OrgMember.org_id).where(
-                        OrgMember.user_id == user_info["id"]
-                    )
+                    select(OrgMember.org_id).where(OrgMember.user_id == user_info["id"])
                 )
                 client.org_ids = {row[0] for row in result.all()}
         except Exception:
@@ -147,8 +143,8 @@ async def events_websocket(websocket: WebSocket):
 
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - log the unexpected drop, then clean up in finally
+        logger.warning("Events WebSocket closed unexpectedly", exc_info=True)
     finally:
         unregister_client(websocket)
 
@@ -160,42 +156,61 @@ async def events_websocket(websocket: WebSocket):
 
 async def emit_task_progress(task_id: str, progress: dict):
     import logging
-    logging.getLogger(__name__).info(f"[WebSocket] Emitting task:progress - taskId: {task_id}, percentage: {progress.get('percentage', 'N/A')}%")
+
+    logging.getLogger(__name__).info(
+        f"[WebSocket] Emitting task:progress - taskId: {task_id}, percentage: {progress.get('percentage', 'N/A')}%"
+    )
     await broadcast_event("task:progress", {"taskId": task_id, **progress})
 
 
 async def emit_task_error(task_id: str, error: str):
     import logging
-    logging.getLogger(__name__).info(f"[WebSocket] Emitting task:error - taskId: {task_id}, error: {error[:100]}...")
+
+    logging.getLogger(__name__).info(
+        f"[WebSocket] Emitting task:error - taskId: {task_id}, error: {error[:100]}..."
+    )
     await broadcast_event("task:error", {"taskId": task_id, "error": error})
 
 
 async def emit_task_status(task_id: str, status: str, review_reason: str | None = None):
     import logging
+
     payload = {"taskId": task_id, "status": status}
     if review_reason:
         payload["reviewReason"] = review_reason
-        logging.getLogger(__name__).info(f"[WebSocket] Emitting task:status - taskId: {task_id}, status: {status}, reviewReason: {review_reason}")
+        logging.getLogger(__name__).info(
+            f"[WebSocket] Emitting task:status - taskId: {task_id}, status: {status}, reviewReason: {review_reason}"
+        )
     else:
-        logging.getLogger(__name__).info(f"[WebSocket] Emitting task:status - taskId: {task_id}, status: {status}")
+        logging.getLogger(__name__).info(
+            f"[WebSocket] Emitting task:status - taskId: {task_id}, status: {status}"
+        )
     await broadcast_event("task:status", payload)
 
 
 async def emit_task_log(task_id: str, log: str):
     import logging
+
     # Only log the first 50 chars to avoid flooding logs with full log content
-    log_preview = log[:50].replace('\n', '\\n') if len(log) > 50 else log.replace('\n', '\\n')
-    logging.getLogger(__name__).debug(f"[WebSocket] Emitting task:log - taskId: {task_id}, log: {log_preview}...")
+    log_preview = (
+        log[:50].replace("\n", "\\n") if len(log) > 50 else log.replace("\n", "\\n")
+    )
+    logging.getLogger(__name__).debug(
+        f"[WebSocket] Emitting task:log - taskId: {task_id}, log: {log_preview}..."
+    )
     await broadcast_event("task:log", {"taskId": task_id, "log": log})
 
 
 async def emit_task_update(task_id: str, task_data: dict):
     """Emit task data update for frontend to refresh task card."""
     import logging
+
     exec_progress = task_data.get("executionProgress", {})
     phase = exec_progress.get("phase", "N/A") if exec_progress else "N/A"
     progress = exec_progress.get("phaseProgress", "N/A") if exec_progress else "N/A"
-    logging.getLogger(__name__).info(f"[WebSocket] Emitting task:update - taskId: {task_id}, phase: {phase}, progress: {progress}%")
+    logging.getLogger(__name__).info(
+        f"[WebSocket] Emitting task:update - taskId: {task_id}, phase: {phase}, progress: {progress}%"
+    )
     await broadcast_event("task:update", {"taskId": task_id, **task_data})
 
 
@@ -208,15 +223,20 @@ async def emit_insights_chunk(project_id: str, chunk: str):
 
 
 async def emit_insights_status(project_id: str, status: str):
-    await broadcast_event("insights:status", {"projectId": project_id, "status": status})
+    await broadcast_event(
+        "insights:status", {"projectId": project_id, "status": status}
+    )
 
 
 async def emit_profile_switch(task_id: str, switch_data: dict):
     """Emit profile switch event for reactive failover."""
     import logging
+
     from_profile = switch_data.get("fromProfile", "N/A")
     to_profile = switch_data.get("toProfile", "N/A")
-    logging.getLogger(__name__).info(f"[WebSocket] Emitting task:profile-switch - taskId: {task_id}, from: {from_profile}, to: {to_profile}")
+    logging.getLogger(__name__).info(
+        f"[WebSocket] Emitting task:profile-switch - taskId: {task_id}, from: {from_profile}, to: {to_profile}"
+    )
     await broadcast_event("task:profile-switch", {"taskId": task_id, **switch_data})
 
 
@@ -237,8 +257,13 @@ async def emit_task_logs_stream(spec_id: str, chunk: dict):
             - subtask_id: (optional) Current subtask identifier
     """
     import logging
+
     chunk_type = chunk.get("type", "unknown")
-    content_preview = chunk.get("content", "")[:50].replace('\n', '\\n') if chunk.get("content") else ""
+    content_preview = (
+        chunk.get("content", "")[:50].replace("\n", "\\n")
+        if chunk.get("content")
+        else ""
+    )
     logging.getLogger(__name__).debug(
         f"[WebSocket] Emitting task-logs:stream - specId: {spec_id}, "
         f"type: {chunk_type}, content: {content_preview}..."
@@ -246,7 +271,9 @@ async def emit_task_logs_stream(spec_id: str, chunk: dict):
     await broadcast_event("task-logs:stream", {"specId": spec_id, "chunk": chunk})
 
 
-async def emit_subtask_update(task_id: str, subtask_id: str, status: str, previous_status: str | None = None):
+async def emit_subtask_update(
+    task_id: str, subtask_id: str, status: str, previous_status: str | None = None
+):
     """Emit a subtask status change event for granular real-time updates.
 
     This event is emitted when an individual subtask's status changes, allowing
@@ -260,6 +287,7 @@ async def emit_subtask_update(task_id: str, subtask_id: str, status: str, previo
         previous_status: The previous status (optional, for logging/debugging)
     """
     import logging
+
     logger = logging.getLogger(__name__)
     if previous_status:
         logger.info(
@@ -271,9 +299,12 @@ async def emit_subtask_update(task_id: str, subtask_id: str, status: str, previo
             f"[WebSocket] Emitting task:subtask-update - taskId: {task_id}, "
             f"subtaskId: {subtask_id}, status: {status}"
         )
-    await broadcast_event("task:subtask-update", {
-        "taskId": task_id,
-        "subtaskId": subtask_id,
-        "status": status,
-        "previousStatus": previous_status,
-    })
+    await broadcast_event(
+        "task:subtask-update",
+        {
+            "taskId": task_id,
+            "subtaskId": subtask_id,
+            "status": status,
+            "previousStatus": previous_status,
+        },
+    )
