@@ -13,6 +13,7 @@ import re
 import shutil
 import signal
 import sys
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -617,6 +618,17 @@ class AgentService:
         self._task_current_phases: dict[str, TaskPhase] = {}
         # Track which Claude profile each task is using (for reactive failover)
         self._task_profiles: dict[str, dict] = {}
+        # RFC-0016 #670 Claude token pool. Admission control (#672) runs MULTIPLE
+        # builds concurrently in one pod; without a pool they all draw the SAME
+        # token and collide on one rate limit. The pool hands DISTINCT creds when
+        # several are configured and shares the single one otherwise (no change
+        # for the 1-token case). Lazily built on first checkout so test/runtime
+        # changes to the profiles file / env are picked up. The build is guarded
+        # by _token_pool_build_lock so concurrent first-checkouts don't each
+        # construct a private pool (which would all hand out the same LRU
+        # credential — the very collision this fixes).
+        self._token_pool: Any = None
+        self._token_pool_build_lock = threading.Lock()
         # Track rate limit detection per task to allow reactive failover
         self._task_rate_limits: dict[str, bool] = {}
         # Track previous subtask statuses per task for granular change detection
@@ -830,6 +842,76 @@ class AgentService:
 
         logger.warning("[AgentService] No Claude token found")
         return (None, None, None)
+
+    def _get_token_pool(self) -> Any:
+        """Lazily build the Claude token pool (RFC-0016 #670).
+
+        Double-checked locking: concurrent first-checkouts must share ONE pool,
+        else each thread would build a private pool and they'd all hand out the
+        same LRU credential.
+        """
+        if self._token_pool is None:
+            with self._token_pool_build_lock:
+                if self._token_pool is None:
+                    from ..paths import get_data_file
+                    from .claude_token_pool import ClaudeTokenPool
+
+                    self._token_pool = ClaudeTokenPool.from_sources(
+                        self.settings.PROJECTS_DATA_DIR,
+                        legacy_profiles_file=get_data_file("claude-profiles.json"),
+                    )
+                    _log.info(
+                        "[AgentService] Claude token pool built with %d distinct "
+                        "credential(s)",
+                        self._token_pool.size,
+                    )
+        return self._token_pool
+
+    def _resolve_claude_token_pooled(
+        self, task_id: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Check a DISTINCT credential out of the pool for ``task_id``.
+
+        Concurrent builds get distinct tokens when several are configured; the
+        single shared token otherwise (identical to the legacy single-token
+        behaviour). The env-override token (CLAUDE_CODE_OAUTH_TOKEN) keeps its
+        legacy precedence — but is also poolable when multiple are configured.
+
+        Falls back to the legacy resolver if the pool is empty (e.g. a token
+        source the pool can't see). The checked-out credential is returned to
+        the pool by :meth:`_release_task_credential` when the build ends.
+        """
+        try:
+            pool = self._get_token_pool()
+            if not pool.is_empty():
+                cred = pool.checkout(task_id)
+                if cred is not None:
+                    return (cred.token, cred.profile_id, cred.profile_name)
+        except Exception:  # noqa: BLE001 - pool must never break a build start
+            _log.warning(
+                "[AgentService] token pool checkout failed; falling back to "
+                "single-token resolver",
+                exc_info=True,
+            )
+        # Fallback: legacy single-token resolution (no pool tracking to release).
+        return self._resolve_claude_token()
+
+    def _release_task_credential(self, task_id: str) -> None:
+        """Return a build's pooled credential when it ends. Idempotent/no-raise.
+
+        Also pops ``_task_profiles[task_id]`` so this can stand in for the bare
+        ``_task_profiles.pop`` calls at every task-terminal site.
+        """
+        try:
+            if self._token_pool is not None:
+                self._token_pool.release(task_id)
+        except Exception:  # noqa: BLE001
+            _log.debug(
+                "[AgentService] token pool release raised for %s (ignored)",
+                task_id,
+                exc_info=True,
+            )
+        self._task_profiles.pop(task_id, None)
 
     def _is_early_failure(self, spec_dir: Path, exit_code: int) -> bool:
         """Check if task failure is an early failure (no logs written).
@@ -2531,8 +2613,9 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 
-        # Get OAuth token with profile tracking
-        token, profile_id, profile_name = self._resolve_claude_token()
+        # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
+        # credentials; returned to the pool when this build ends.
+        token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
             logger.info(
@@ -3325,8 +3408,9 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 
-        # Get OAuth token with profile tracking
-        token, profile_id, profile_name = self._resolve_claude_token()
+        # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
+        # credentials; returned to the pool when this build ends.
+        token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
             logger.info(f"[AgentService] Using Claude profile: {profile_name} ({profile_id})")
@@ -3651,7 +3735,8 @@ class AgentService:
         self._task_subtask_states.pop(task_id, None)
         self._spec_dirs.pop(task_id, None)
         self._task_current_phases.pop(task_id, None)
-        self._task_profiles.pop(task_id, None)
+        # #670: return the pooled Claude credential AND pop _task_profiles.
+        self._release_task_credential(task_id)
         self._task_rate_limits.pop(task_id, None)
         self._task_user_ids.pop(task_id, None)
 
