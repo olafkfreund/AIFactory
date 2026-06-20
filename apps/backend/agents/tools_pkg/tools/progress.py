@@ -40,7 +40,9 @@ def create_progress_tools(
     if not SDK_TOOLS_AVAILABLE:
         return []
 
-    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    get_spec_dir: Callable[[], Path] = (
+        spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    )
 
     tools = []
 

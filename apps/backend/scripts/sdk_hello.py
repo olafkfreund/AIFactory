@@ -70,7 +70,9 @@ def resolve_token() -> str:
         if token:
             return token
 
-    raise RuntimeError("No OAuth token found (env, profiles, or ~/.claude/oauth_token).")
+    raise RuntimeError(
+        "No OAuth token found (env, profiles, or ~/.claude/oauth_token)."
+    )
 
 
 async def main():

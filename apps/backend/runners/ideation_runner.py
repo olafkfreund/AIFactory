@@ -43,11 +43,11 @@ from ideation.generator import IDEATION_TYPE_LABELS, IDEATION_TYPES
 
 # Re-export for backward compatibility
 __all__ = [
-    "IdeationOrchestrator",
-    "IdeationConfig",
-    "IdeationPhaseResult",
     "IDEATION_TYPES",
     "IDEATION_TYPE_LABELS",
+    "IdeationConfig",
+    "IdeationOrchestrator",
+    "IdeationPhaseResult",
 ]
 
 

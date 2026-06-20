@@ -8,7 +8,9 @@ from pathlib import Path
 from prompts_pkg.prompts import get_house_standards_context
 
 
-def _write_contract(spec_dir: Path, contract: dict, *, where: str = "context/task_contract.json") -> None:
+def _write_contract(
+    spec_dir: Path, contract: dict, *, where: str = "context/task_contract.json"
+) -> None:
     path = spec_dir / where
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(contract))
@@ -63,7 +65,10 @@ def test_unavailable_standards_returns_empty(tmp_path: Path):
 
 
 def test_no_sources_returns_empty(tmp_path: Path):
-    _write_contract(tmp_path, {"epic_context": {"house_standards": {"available": True, "sources": []}}})
+    _write_contract(
+        tmp_path,
+        {"epic_context": {"house_standards": {"available": True, "sources": []}}},
+    )
     assert get_house_standards_context(tmp_path) == ""
 
 

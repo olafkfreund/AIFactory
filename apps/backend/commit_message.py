@@ -289,9 +289,7 @@ def generate_commit_message_sync(
     spec_dir = _safe_spec_dir(project_dir, spec_name)
 
     # Get context from spec files
-    spec_context = (
-        _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
-    )
+    spec_context = _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
 
     # Override with provided github_issue
     if github_issue:
@@ -365,9 +363,7 @@ async def generate_commit_message(
     spec_dir = _safe_spec_dir(project_dir, spec_name)
 
     # Get context from spec files
-    spec_context = (
-        _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
-    )
+    spec_context = _get_spec_context(spec_dir) if spec_dir and spec_dir.exists() else {}
 
     # Override with provided github_issue
     if github_issue:

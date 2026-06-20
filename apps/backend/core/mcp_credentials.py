@@ -137,7 +137,9 @@ def _probe_gitlab() -> CredentialStatus:
     env_vars = {"GITLAB_PERSONAL_ACCESS_TOKEN": token}
     if instance_url:
         env_vars["GITLAB_API_URL"] = instance_url
-    return CredentialStatus(available=True, source=f"env:{token_env}", env_vars=env_vars)
+    return CredentialStatus(
+        available=True, source=f"env:{token_env}", env_vars=env_vars
+    )
 
 
 def _probe_azure_devops() -> CredentialStatus:
@@ -172,7 +174,9 @@ def _probe_kubernetes() -> CredentialStatus:
     env_kubeconfig = _resolve_env("KUBECONFIG")
     if env_kubeconfig and any(_file_exists(p) for p in env_kubeconfig.split(":")):
         return CredentialStatus(
-            available=True, source="env:KUBECONFIG", env_vars={"KUBECONFIG": env_kubeconfig}
+            available=True,
+            source="env:KUBECONFIG",
+            env_vars={"KUBECONFIG": env_kubeconfig},
         )
 
     # 3. Default ~/.kube/config
@@ -248,7 +252,9 @@ def _probe_azure() -> CredentialStatus:
     # Azure CLI cache — `az login` populates ~/.azure/
     az_profile = Path.home() / ".azure" / "azureProfile.json"
     if az_profile.is_file():
-        return CredentialStatus(available=True, source="file:~/.azure/azureProfile.json")
+        return CredentialStatus(
+            available=True, source="file:~/.azure/azureProfile.json"
+        )
 
     # Managed Identity is host-side and not probe-able without an API call;
     # the MCP server's MSAL layer will discover it at startup. We treat
@@ -262,12 +268,16 @@ def _probe_azure() -> CredentialStatus:
 def _probe_gcp() -> CredentialStatus:
     op = _load_operator_config().get("gcp") or {}
 
-    creds_path = op.get("credentialsPath") or _resolve_env("GOOGLE_APPLICATION_CREDENTIALS")
+    creds_path = op.get("credentialsPath") or _resolve_env(
+        "GOOGLE_APPLICATION_CREDENTIALS"
+    )
     if _file_exists(creds_path):
         return CredentialStatus(
             available=True,
             source=f"file:{creds_path}",
-            env_vars={"GOOGLE_APPLICATION_CREDENTIALS": str(Path(creds_path).expanduser())},
+            env_vars={
+                "GOOGLE_APPLICATION_CREDENTIALS": str(Path(creds_path).expanduser())
+            },
         )
 
     # gcloud ADC default location

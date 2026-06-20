@@ -19,8 +19,17 @@ _EXTRA_CMD_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 # grant privilege-escalation or host-control commands.
 _EXTRA_CMD_DENY = frozenset(
     {
-        "sudo", "su", "doas", "pkexec", "shutdown", "reboot", "halt",
-        "poweroff", "mkfs", "fdisk", "dd",
+        "sudo",
+        "su",
+        "doas",
+        "pkexec",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+        "mkfs",
+        "fdisk",
+        "dd",
     }
 )
 

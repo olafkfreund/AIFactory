@@ -54,10 +54,10 @@ def extract_commands(command_string: str) -> list[str]:
         except ValueError:
             # Complex quoting (heredocs, command substitution) — can't tokenize fully.
             # Fallback: extract leading command name from the raw segment.
-            match = re.match(r'^\s*(?:\w+=\S*\s+)*(\S+)', segment)
+            match = re.match(r"^\s*(?:\w+=\S*\s+)*(\S+)", segment)
             if match:
                 cmd = os.path.basename(match.group(1))
-                if cmd and not cmd.startswith('-'):
+                if cmd and not cmd.startswith("-"):
                     commands.append(cmd)
             continue
 

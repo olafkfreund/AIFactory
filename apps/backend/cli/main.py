@@ -221,7 +221,7 @@ Environment Variables:
             "session appears in claude.ai/code's session list under this "
             "name so the user can drive the same conversation from any "
             "device. Requires a full-scope claude auth login on the host "
-            "(see CLAUDE.md \"Remote Control\" section)."
+            '(see CLAUDE.md "Remote Control" section).'
         ),
     )
 
@@ -337,9 +337,7 @@ def main() -> None:
         # skips per-project marker resolution (otherwise it'd scan the CWD,
         # which is rarely what an operator running mcp-doctor wants — they
         # want to see "what would work on this machine" first).
-        explicit_project = (
-            project_dir if args.project_dir is not None else None
-        )
+        explicit_project = project_dir if args.project_dir is not None else None
         rc = handle_mcp_doctor_command(explicit_project)
         sys.exit(rc)
 

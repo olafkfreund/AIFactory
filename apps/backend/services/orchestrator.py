@@ -325,7 +325,7 @@ class ServiceOrchestrator:
         except subprocess.TimeoutExpired:
             result.errors.append("docker-compose startup timed out")
         except Exception as e:
-            result.errors.append(f"Error starting services: {str(e)}")
+            result.errors.append(f"Error starting services: {e!s}")
 
         return result
 
@@ -350,7 +350,7 @@ class ServiceOrchestrator:
                     self._processes[service.name] = proc
                     result.services_started.append(service.name)
                 except Exception as e:
-                    result.errors.append(f"Failed to start {service.name}: {str(e)}")
+                    result.errors.append(f"Failed to start {service.name}: {e!s}")
                     result.services_failed.append(service.name)
 
         # Wait for services to be ready

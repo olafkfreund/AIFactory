@@ -284,7 +284,9 @@ def get_house_standards_context(spec_dir: Path) -> str:
         return ""
 
     epic_context = contract.get("epic_context")
-    house = epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    house = (
+        epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    )
     if not isinstance(house, dict) or not house.get("available"):
         return ""
     sources = [s for s in house.get("sources", []) if isinstance(s, dict)]

@@ -116,7 +116,7 @@ class RequirementsPhaseMixin:
             validator.create_empty_hints(
                 self.spec_dir,
                 enabled=True,
-                reason=f"Error: {str(e)}",
+                reason=f"Error: {e!s}",
             )
             return PhaseResult(
                 "historical_context", True, [str(hints_file)], [str(e)], 0

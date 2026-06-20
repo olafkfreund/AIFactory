@@ -591,7 +591,7 @@ class PRContextGatherer:
         try:
             return await self.gh_client.pr_diff(self.pr_number)
         except PRTooLargeError as e:
-            print(f"[Context] Warning: {str(e)}", flush=True)
+            print(f"[Context] Warning: {e!s}", flush=True)
             print(
                 "[Context] Skipping full diff - will use individual file patches",
                 flush=True,

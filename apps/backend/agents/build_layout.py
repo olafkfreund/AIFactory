@@ -24,16 +24,16 @@ __all__ = ["detect_import_layout_conflicts"]
 def _src_on_import_path(pyproject: dict) -> bool:
     """True if pyproject puts ``src`` on the import path (pytest or setuptools)."""
     tool = pyproject.get("tool") or {}
-    pytest_paths = (((tool.get("pytest") or {}).get("ini_options") or {}).get(
+    pytest_paths = ((tool.get("pytest") or {}).get("ini_options") or {}).get(
         "pythonpath"
-    ) or [])
+    ) or []
     if isinstance(pytest_paths, str):
         pytest_paths = [pytest_paths]
     if any(str(p).strip().strip("/.") == "src" for p in pytest_paths):
         return True
-    where = (((tool.get("setuptools") or {}).get("packages") or {}).get("find") or {}).get(
-        "where"
-    ) or []
+    where = (
+        ((tool.get("setuptools") or {}).get("packages") or {}).get("find") or {}
+    ).get("where") or []
     if isinstance(where, str):
         where = [where]
     return any(str(w).strip().strip("/.") == "src" for w in where)

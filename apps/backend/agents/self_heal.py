@@ -85,7 +85,9 @@ async def run_with_self_heal(
 
     if escalate_immediately and escalate_immediately():
         events.append({"event": "escalate_immediate", "label": label})
-        logger.info("[self-heal] %s escalated immediately (security/destructive)", label)
+        logger.info(
+            "[self-heal] %s escalated immediately (security/destructive)", label
+        )
         return SelfHealOutcome(ESCALATED_IMMEDIATE, attempts=0, events=events)
 
     checkpoint = snapshot(label) if snapshot else None
@@ -105,8 +107,12 @@ async def run_with_self_heal(
                 logger.info("[self-heal] %s passed on attempt %d", label, n)
                 return SelfHealOutcome(SUCCESS, attempts=n, events=events)
             failures = list(getattr(result, "failures", []) or [])
-            events.append({"event": "verify_failed", "attempt": n, "failures": failures})
-            logger.info("[self-heal] %s verify failed on attempt %d: %s", label, n, failures)
+            events.append(
+                {"event": "verify_failed", "attempt": n, "failures": failures}
+            )
+            logger.info(
+                "[self-heal] %s verify failed on attempt %d: %s", label, n, failures
+            )
 
         # Diagnose before the next attempt (not after the last one).
         if diagnose and n < max_attempts:
@@ -120,8 +126,12 @@ async def run_with_self_heal(
         rolled_back = bool(rollback(checkpoint))
         events.append({"event": "rollback", "label": label, "ok": rolled_back})
     events.append({"event": "escalate", "label": label, "attempts": max_attempts})
-    logger.info("[self-heal] %s exhausted %d attempts → escalate (rolled_back=%s)",
-                label, max_attempts, rolled_back)
+    logger.info(
+        "[self-heal] %s exhausted %d attempts → escalate (rolled_back=%s)",
+        label,
+        max_attempts,
+        rolled_back,
+    )
     return SelfHealOutcome(
         ESCALATED, attempts=max_attempts, rolled_back=rolled_back, events=events
     )

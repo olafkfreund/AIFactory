@@ -27,13 +27,13 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
-    "tfactory_config",
     "build_handoff_payload",
-    "send_handoff",
-    "load_tfactory_block",
     "load_task_contract",
-    "wants_auto_handoff",
+    "load_tfactory_block",
     "maybe_auto_handoff_tfactory",
+    "send_handoff",
+    "tfactory_config",
+    "wants_auto_handoff",
 ]
 
 # (url, json_payload, headers) -> {"status": int, "ok": bool, "body": str}

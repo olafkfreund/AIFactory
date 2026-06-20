@@ -379,6 +379,6 @@ __all__ = [
     "get_provider",
     "get_qa_llm_provider",
     "get_tool_fallback_provider",
-    "list_providers",
     "list_provider_aliases",
+    "list_providers",
 ]

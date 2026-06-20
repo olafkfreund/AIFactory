@@ -194,12 +194,16 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                     timeout=float(self._timeout),
                 )
             except asyncio.TimeoutError:
-                yield AssistantMessage(content=[TextBlock(
-                    text=(
-                        f"[OpenAI-compatible request timed out after "
-                        f"{self._timeout}s on turn {turn + 1}]"
-                    )
-                )])
+                yield AssistantMessage(
+                    content=[
+                        TextBlock(
+                            text=(
+                                f"[OpenAI-compatible request timed out after "
+                                f"{self._timeout}s on turn {turn + 1}]"
+                            )
+                        )
+                    ]
+                )
                 return
 
             # OpenAI shape: choices[0].message
@@ -207,14 +211,18 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
             if not isinstance(choices, list) or not choices:
                 err = response_data.get("error")
                 detail = err or response_data
-                yield AssistantMessage(content=[TextBlock(
-                    text=f"[OpenAI-compatible API returned no choices: {detail}]"
-                )])
+                yield AssistantMessage(
+                    content=[
+                        TextBlock(
+                            text=f"[OpenAI-compatible API returned no choices: {detail}]"
+                        )
+                    ]
+                )
                 return
 
-            message = choices[0].get("message", {}) if isinstance(
-                choices[0], dict
-            ) else {}
+            message = (
+                choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+            )
             content_text = (message.get("content") or "").strip()
             tool_calls = message.get("tool_calls")
 
@@ -231,13 +239,17 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                     fn = tc.get("function") or {}
                     tool_name = fn.get("name") or ""
                     tool_args = self._parse_tool_args(fn.get("arguments"))
-                    tool_call_id = tc.get("id") or f"call_{turn}_{len(normalized_calls)}"
+                    tool_call_id = (
+                        tc.get("id") or f"call_{turn}_{len(normalized_calls)}"
+                    )
 
-                    normalized_calls.append({
-                        "id": tool_call_id,
-                        "name": tool_name,
-                        "args": tool_args,
-                    })
+                    normalized_calls.append(
+                        {
+                            "id": tool_call_id,
+                            "name": tool_name,
+                            "args": tool_args,
+                        }
+                    )
                     assistant_blocks.append(
                         ToolUseBlock(name=tool_name, input=tool_args)
                     )
@@ -254,20 +266,20 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                         call["name"],
                         json.dumps(call["args"], default=str)[:200],
                     )
-                    result = await self._executor.execute(
-                        call["name"], call["args"]
-                    )
+                    result = await self._executor.execute(call["name"], call["args"])
                     tool_result_blocks.append(result)
 
                     result_content = result.content
                     if isinstance(result_content, list):
                         result_content = "\n".join(str(r) for r in result_content)
 
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "content": str(result_content),
-                    })
+                    tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call["id"],
+                            "content": str(result_content),
+                        }
+                    )
 
                 yield UserMessage(content=tool_result_blocks)
 
@@ -295,9 +307,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
             else:
                 # No tool calls — final response
                 if not assistant_blocks:
-                    assistant_blocks.append(
-                        TextBlock(text="(no output from server)")
-                    )
+                    assistant_blocks.append(TextBlock(text="(no output from server)"))
                 yield AssistantMessage(content=assistant_blocks)
                 return
 
@@ -305,12 +315,16 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
             "OpenAICompatibleAgenticProvider: max turns (%d) reached, stopping",
             self._max_turns,
         )
-        yield AssistantMessage(content=[TextBlock(
-            text=(
-                f"[Reached maximum of {self._max_turns} tool-calling turns. "
-                "Stopping.]"
-            )
-        )])
+        yield AssistantMessage(
+            content=[
+                TextBlock(
+                    text=(
+                        f"[Reached maximum of {self._max_turns} tool-calling turns. "
+                        "Stopping.]"
+                    )
+                )
+            ]
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -347,9 +361,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 return {}
         return {}
 
-    def _build_payload(
-        self, messages: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """Construct the JSON body for ``/v1/chat/completions``."""
         body: dict[str, Any] = {
             "model": self._model,
@@ -369,9 +381,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         headers.update(self._extra_headers)
         return headers
 
-    def _http_post(
-        self, url: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _http_post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         body_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,

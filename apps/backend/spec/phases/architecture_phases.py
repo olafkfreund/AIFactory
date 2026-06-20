@@ -62,11 +62,7 @@ class ArchitecturePhaseMixin:
                 LogPhase.PLANNING,
             )
             return PhaseResult(
-                "architecture",
-                False,
-                [],
-                ["requirements.json not found"],
-                0
+                "architecture", False, [], ["requirements.json not found"], 0
             )
 
         # Load spec.md if exists (may not exist yet in pipeline)
@@ -98,21 +94,11 @@ class ArchitecturePhaseMixin:
 
         if not success:
             error_detail = response_text[:500] if response_text else "No error details"
-            self.ui.print_status(f"Architecture generation failed: {error_detail}", "error")
+            self.ui.print_status(
+                f"Architecture generation failed: {error_detail}", "error"
+            )
             self.task_logger.log(
                 f"Architecture generation failed: {error_detail}",
-                LogEntryType.ERROR,
-                LogPhase.PLANNING,
-            )
-            return PhaseResult("architecture", False, [], [f"Agent execution failed: {error_detail}"], 1)
-
-        # Verify architecture.md was created
-        if not architecture_file.exists():
-            self.ui.print_status(
-                "architecture.md not created by agent", "error"
-            )
-            self.task_logger.log(
-                "Architecture document was not created",
                 LogEntryType.ERROR,
                 LogPhase.PLANNING,
             )
@@ -120,8 +106,20 @@ class ArchitecturePhaseMixin:
                 "architecture",
                 False,
                 [],
-                ["architecture.md not created"],
-                1
+                [f"Agent execution failed: {error_detail}"],
+                1,
+            )
+
+        # Verify architecture.md was created
+        if not architecture_file.exists():
+            self.ui.print_status("architecture.md not created by agent", "error")
+            self.task_logger.log(
+                "Architecture document was not created",
+                LogEntryType.ERROR,
+                LogPhase.PLANNING,
+            )
+            return PhaseResult(
+                "architecture", False, [], ["architecture.md not created"], 1
             )
 
         self.ui.print_status("Architecture document created successfully", "success")

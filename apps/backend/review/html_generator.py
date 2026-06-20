@@ -40,7 +40,9 @@ def extract_overview_from_spec(spec_content: str) -> str:
         return first_para
 
     # Fallback: try to extract from first heading content
-    first_content = re.search(r"^#[^#].*?\n\n(.*?)(?=\n##|\Z)", spec_content, re.DOTALL | re.MULTILINE)
+    first_content = re.search(
+        r"^#[^#].*?\n\n(.*?)(?=\n##|\Z)", spec_content, re.DOTALL | re.MULTILINE
+    )
     if first_content:
         text = first_content.group(1).strip()
         if len(text) > 300:
@@ -65,26 +67,20 @@ def extract_success_criteria(spec_content: str) -> list[str]:
     criteria_match = re.search(
         r"## Success Criteria\s*\n(.*?)(?=\n##|\Z)",
         spec_content,
-        re.DOTALL | re.IGNORECASE
+        re.DOTALL | re.IGNORECASE,
     )
 
     if criteria_match:
         criteria_text = criteria_match.group(1)
         # Extract checkbox items or list items
         checkbox_items = re.findall(
-            r"^\s*[-*]\s*\[[ x]\]\s*(.+)$",
-            criteria_text,
-            re.MULTILINE
+            r"^\s*[-*]\s*\[[ x]\]\s*(.+)$", criteria_text, re.MULTILINE
         )
         if checkbox_items:
             criteria = checkbox_items
         else:
             # Try regular list items
-            list_items = re.findall(
-                r"^\s*[-*]\s+(.+)$",
-                criteria_text,
-                re.MULTILINE
-            )
+            list_items = re.findall(r"^\s*[-*]\s+(.+)$", criteria_text, re.MULTILINE)
             criteria = list_items
 
     return criteria[:10]  # Limit to first 10
@@ -99,11 +95,7 @@ def extract_workflow_type(spec_content: str) -> str:
     Returns:
         Workflow type string or "standard"
     """
-    workflow_match = re.search(
-        r"\*\*Type\*\*:\s*(\w+)",
-        spec_content,
-        re.IGNORECASE
-    )
+    workflow_match = re.search(r"\*\*Type\*\*:\s*(\w+)", spec_content, re.IGNORECASE)
     if workflow_match:
         return workflow_match.group(1).lower()
     return "standard"
@@ -242,7 +234,9 @@ def generate_html_plan_review(spec_dir: Path, output_path: Path | None = None) -
         "progress": calculate_progress(plan),
         "phases": phases,
         "success_criteria": success_criteria,
-        "created_at": requirements.get("created_at", metadata.get("created_at", "Unknown")),
+        "created_at": requirements.get(
+            "created_at", metadata.get("created_at", "Unknown")
+        ),
         "services_involved": plan.get("services_involved", []),
         "recommended_workers": parallelism.get("recommended_workers"),
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

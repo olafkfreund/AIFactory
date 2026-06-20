@@ -31,12 +31,12 @@ from pfactory.tiers import Tier, classify_tier, tier_for
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "QUEUED_LABEL",
     "FAILED_LABEL",
+    "QUEUED_LABEL",
     "TIER_LABELS",
-    "RepoConfig",
-    "PollerDeps",
     "IntakeIssue",
+    "PollerDeps",
+    "RepoConfig",
     "TerminalIntakeError",
     "poll_once",
     "process_issue",
@@ -141,7 +141,9 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
         else:
             deps.route_low_medium(cfg, issue, tier)
     except TerminalIntakeError as exc:
-        logger.error("intake terminal failure on %s#%s: %s", cfg.repo, issue.number, exc)
+        logger.error(
+            "intake terminal failure on %s#%s: %s", cfg.repo, issue.number, exc
+        )
         _safe(deps.apply_label, cfg, issue.number, FAILED_LABEL)
         _safe(
             deps.comment,
@@ -153,7 +155,9 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
     except Exception as exc:  # noqa: BLE001 — transient: retry next tick
         logger.warning(
             "intake transient failure on %s#%s (will retry): %s",
-            cfg.repo, issue.number, exc,
+            cfg.repo,
+            issue.number,
+            exc,
         )
         _safe(deps.unmark_processed, cfg.repo, issue.number)
         return "transient"

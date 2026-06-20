@@ -103,16 +103,33 @@ def _create_qa_reviewer_provider(
     if normalised in {"codex", "codex-cli", "openai-codex"}:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
-    if normalised in {"antigravity", "antigravity-cli", "gemini", "gemini-cli", "google"}:
+    if normalised in {
+        "antigravity",
+        "antigravity-cli",
+        "gemini",
+        "gemini-cli",
+        "google",
+    }:
         return get_qa_llm_provider(provider_name, model=model, working_dir=project_dir)
 
     # openai-compatible needs base_url + api_key from the saved llm_endpoint row.
     # get_provider_extra_kwargs returns {model, base_url, api_key} which we
     # spread into the constructor.
     if normalised in {
-        "openai-compatible", "openai", "openai-api", "oai",
-        "lm-studio", "lmstudio", "vllm", "openrouter", "together",
-        "together-ai", "groq", "localai", "anyscale", "studio",
+        "openai-compatible",
+        "openai",
+        "openai-api",
+        "oai",
+        "lm-studio",
+        "lmstudio",
+        "vllm",
+        "openrouter",
+        "together",
+        "together-ai",
+        "groq",
+        "localai",
+        "anyscale",
+        "studio",
     }:
         extra = get_provider_extra_kwargs("openai-compatible", model)
         return get_qa_llm_provider(provider_name, **extra)
@@ -316,7 +333,11 @@ async def run_qa_validation_loop(
         if qa_provider_override:
             failover_used.add(qa_provider_override)
         # Strip provider prefix if present (e.g., "ollama:llama3.2" → "llama3.2")
-        actual_qa_model = qa_model.split(":", 1)[1] if ":" in qa_model and qa_provider_name == "ollama" else qa_model
+        actual_qa_model = (
+            qa_model.split(":", 1)[1]
+            if ":" in qa_model and qa_provider_name == "ollama"
+            else qa_model
+        )
         debug(
             "qa_loop",
             "Creating provider for QA reviewer session...",
@@ -395,11 +416,11 @@ async def run_qa_validation_loop(
             # rejects an un-started or already-terminal cycle, so this can only
             # succeed when the reviewer provably engaged.
             try:
-                resolve_review(
-                    spec_dir, cycle_id=review_cycle.cycle_id, approved=True
-                )
+                resolve_review(spec_dir, cycle_id=review_cycle.cycle_id, approved=True)
             except Exception as exc:  # pragma: no cover - defensive
-                debug_warning("qa_loop", f"Review-cycle resolve (approved) skipped: {exc}")
+                debug_warning(
+                    "qa_loop", f"Review-cycle resolve (approved) skipped: {exc}"
+                )
 
             # Record successful iteration
             debug_success(
@@ -436,12 +457,11 @@ async def run_qa_validation_loop(
 
             # Resolve this review cycle exactly once (changes_requested).
             try:
-                resolve_review(
-                    spec_dir, cycle_id=review_cycle.cycle_id, approved=False
-                )
+                resolve_review(spec_dir, cycle_id=review_cycle.cycle_id, approved=False)
             except Exception as exc:  # pragma: no cover - defensive
                 debug_warning(
-                    "qa_loop", f"Review-cycle resolve (changes_requested) skipped: {exc}"
+                    "qa_loop",
+                    f"Review-cycle resolve (changes_requested) skipped: {exc}",
                 )
 
             debug_warning(

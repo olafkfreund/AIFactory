@@ -247,7 +247,7 @@ class GHClient:
                 # Unexpected error
                 logger.error(f"Unexpected error in gh command: {e}")
                 if attempt == self.max_retries:
-                    raise GHCommandError(f"gh {args[0]} failed: {str(e)}")
+                    raise GHCommandError(f"gh {args[0]} failed: {e!s}")
                 else:
                     # Retry on unexpected errors too
                     backoff_delay = 2 ** (attempt - 1)

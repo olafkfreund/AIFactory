@@ -134,16 +134,24 @@ class RecoveryManager:
         error_lower = error.lower()
 
         build_errors = [
-            "syntax error", "compilation error", "module not found",
-            "import error", "cannot find module", "unexpected token",
-            "indentation error", "parse error",
+            "syntax error",
+            "compilation error",
+            "module not found",
+            "import error",
+            "cannot find module",
+            "unexpected token",
+            "indentation error",
+            "parse error",
         ]
         if any(be in error_lower for be in build_errors):
             return FailureType.BROKEN_BUILD
 
         verification_errors = [
-            "verification failed", "expected", "assertion",
-            "test failed", "status code",
+            "verification failed",
+            "expected",
+            "assertion",
+            "test failed",
+            "status code",
         ]
         if any(ve in error_lower for ve in verification_errors):
             return FailureType.VERIFICATION_FAILED
@@ -233,8 +241,20 @@ class RecoveryManager:
         recent_attempts = attempts[-3:] if len(attempts) >= 3 else attempts
 
         stop_words = {
-            "with", "using", "the", "a", "an", "and", "or", "but",
-            "in", "on", "at", "to", "for", "trying",
+            "with",
+            "using",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "trying",
         }
         current_keywords = set(
             word for word in current_approach.lower().split() if word not in stop_words
@@ -388,7 +408,9 @@ class RecoveryManager:
                             stuck_note = f"Marked as stuck: {reason}"
                             existing_output = subtask.get("actual_output", "")
                             subtask["actual_output"] = (
-                                f"{stuck_note}\n{existing_output}" if existing_output else stuck_note
+                                f"{stuck_note}\n{existing_output}"
+                                if existing_output
+                                else stuck_note
                             )
                             updated = True
                             break
@@ -430,9 +452,7 @@ class RecoveryManager:
                 hints.append(f"  Error: {attempt['error'][:100]}")
 
         if len(attempts) >= 2:
-            hints.append(
-                "\nIMPORTANT: Try a DIFFERENT approach than previous attempts"
-            )
+            hints.append("\nIMPORTANT: Try a DIFFERENT approach than previous attempts")
             hints.append(
                 "Consider: different library, different pattern, or simpler implementation"
             )
@@ -458,6 +478,7 @@ class RecoveryManager:
 
 
 # Module-level utility functions
+
 
 def check_and_recover(
     spec_dir: Path, project_dir: Path, subtask_id: str, error: str | None = None

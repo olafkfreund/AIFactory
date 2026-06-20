@@ -70,8 +70,11 @@ def commit_uncommitted_changes(
             return None  # clean tree — agent already committed everything
 
         subprocess.run(
-            ["git", "add", "-A"], cwd=project_dir, capture_output=True,
-            text=True, check=True,
+            ["git", "add", "-A"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         msg = "chore(agent): safety-net commit of uncommitted session changes"
         if subtask_id:

@@ -143,7 +143,9 @@ def classify_review_tier(
     # High-risk or low-confidence → blocking gate before coding.
     if high_risk or low_confidence:
         if low_confidence:
-            reasons.append(f"planner confidence {confidence} < {LOW_CONFIDENCE_THRESHOLD}")
+            reasons.append(
+                f"planner confidence {confidence} < {LOW_CONFIDENCE_THRESHOLD}"
+            )
         return ReviewAssessment(BLOCKING, pre_merge_gate, reasons, high_risk_files)
 
     # Solo or trivial → auto.

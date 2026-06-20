@@ -588,7 +588,9 @@ class WorktreeManager:
             _diff = self._run_git(["diff", f"{self.base_branch}...{info.branch}"])
             _decision = security_pre_merge_gate_sync(_diff.stdout or "")
             if _decision is not None and _decision.blocked:
-                print(f"Security gate BLOCKED merge of {info.branch}: {_decision.summary}")
+                print(
+                    f"Security gate BLOCKED merge of {info.branch}: {_decision.summary}"
+                )
                 logger.error(
                     f"Security pre-merge gate blocked merge for spec '{spec_name}'",
                     extra={"branch": info.branch, "summary": _decision.summary},
@@ -646,9 +648,17 @@ class WorktreeManager:
         status = self._run_git(["status", "--porcelain"])
         if status.returncode == 0 and status.stdout.strip():
             stash = self._run_git(
-                ["stash", "push", "--include-untracked", "-m", f"aifactory pre-merge {spec_name}"]
+                [
+                    "stash",
+                    "push",
+                    "--include-untracked",
+                    "-m",
+                    f"aifactory pre-merge {spec_name}",
+                ]
             )
-            stashed = stash.returncode == 0 and "No local changes" not in (stash.stdout or "")
+            stashed = stash.returncode == 0 and "No local changes" not in (
+                stash.stdout or ""
+            )
             if stashed:
                 logger.info(f"Stashed pre-merge working-tree changes for '{spec_name}'")
 

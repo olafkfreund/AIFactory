@@ -69,8 +69,8 @@ def target_escapes_worktree(path_str: str, root: str | None) -> bool:
 
 
 __all__ = [
-    "set_worktree_root",
-    "reset_worktree_root",
     "get_worktree_root",
+    "reset_worktree_root",
+    "set_worktree_root",
     "target_escapes_worktree",
 ]

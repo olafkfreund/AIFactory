@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -67,19 +68,26 @@ class SecurityReport:
 # (severity, category, compiled pattern). Conservative — aimed at obvious,
 # newly-introduced issues to keep false positives low.
 _STATIC_RULES: list[tuple[str, str, re.Pattern[str]]] = [
-    ("critical", "secret:private-key",
-     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----")),
+    (
+        "critical",
+        "secret:private-key",
+        re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"),
+    ),
     ("critical", "secret:aws-access-key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("high", "secret:hardcoded",
-     re.compile(r"(?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token|token)"
-                r"\s*[:=]\s*['\"][^'\"]{6,}['\"]")),
+    (
+        "high",
+        "secret:hardcoded",
+        re.compile(
+            r"(?i)(?:password|passwd|secret|api[_-]?key|access[_-]?token|token)"
+            r"\s*[:=]\s*['\"][^'\"]{6,}['\"]"
+        ),
+    ),
     ("high", "injection:eval", re.compile(r"\beval\s*\(")),
     ("high", "injection:exec", re.compile(r"(?<![A-Za-z_.])exec\s*\(")),
     ("high", "injection:os-system", re.compile(r"\bos\.system\s*\(")),
     ("high", "injection:shell-true", re.compile(r"shell\s*=\s*True")),
     ("medium", "deserialize:pickle", re.compile(r"\bpickle\.loads?\s*\(")),
-    ("medium", "deserialize:yaml-unsafe",
-     re.compile(r"yaml\.load\s*\((?![^)]*Safe)")),
+    ("medium", "deserialize:yaml-unsafe", re.compile(r"yaml\.load\s*\((?![^)]*Safe)")),
     ("medium", "tls:verify-disabled", re.compile(r"verify\s*=\s*False")),
     ("low", "config:debug-on", re.compile(r"(?i)\bdebug\s*=\s*True\b")),
 ]

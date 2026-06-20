@@ -469,7 +469,9 @@ def seed_profile_with_plan_commands(
     try:
         plan = json.loads(Path(plan_path).read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("plan-commands seed skipped: cannot read %s (%s)", plan_path, exc)
+        logger.warning(
+            "plan-commands seed skipped: cannot read %s (%s)", plan_path, exc
+        )
         return []
 
     granted, rejected = grantable_commands_from_plan(plan)

@@ -1,0 +1,119 @@
+name: cq-ratchet
+
+# Diff-scoped code-quality ratchet (Factory coding standards, section 4.6).
+#
+# Holds NEW and TOUCHED Python to the full fleet-wide strict bar
+# (standards/ruff.toml + standards/mypy.ini, vendored from the Factory hub)
+# WITHOUT turning the legacy tree red:
+#   * ruff runs against the strict baseline per changed file and fails only if a
+#     changed file's strict-violation COUNT increased vs the base branch
+#     (scripts/cq_ratchet.py). A touched file's existing legacy violations are
+#     tolerated; adding one is not. Count (not line) scoping is used so a pure
+#     `ruff format` reflow of legacy lines cannot trip the gate.
+#   * mypy --strict runs on the changed files (file-scoped; new code must type).
+#   * ruff format --check is enforced repo-wide (the tree is formatter-clean as
+#     of cq-phase0).
+# Adopting issues: #647, #652.
+#
+# Intended to be BLOCKING under branch protection. The pre-existing lenient
+# repo-wide `ruff check` in ci.yml stays as-is for the legacy backlog.
+
+on:
+  pull_request:
+    branches: [dev, main, "feat/**", "release/**"]
+
+concurrency:
+  group: cq-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pin the toolchain (standards 4.5). Matches the ruff-pre-commit hook so local
+  # and CI agree byte-for-byte on lint + format.
+  RUFF_VERSION: "0.14.10"
+
+jobs:
+  ratchet:
+    name: ratchet (ruff + mypy on changed Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need the merge base to diff against
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps (for mypy import resolution) + pinned ruff
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+          uv pip install "ruff==${RUFF_VERSION}"
+
+      - name: Fetch PR base
+        run: git fetch --no-tags origin "${{ github.base_ref }}"
+
+      - name: Ruff (strict baseline, per-file no-regression ratchet)
+        run: |
+          apps/backend/.venv/bin/python scripts/cq_ratchet.py \
+            --base "origin/${{ github.base_ref }}" \
+            --ruff apps/backend/.venv/bin/ruff \
+            --config standards/ruff.toml \
+            --paths 'apps/backend/**/*.py'
+
+      - name: Mypy --strict (shared baseline, NEW files only)
+        run: |
+          set -euo pipefail
+          # mypy cannot be line-scoped, and the legacy tree is only partially
+          # annotated, so gating every TOUCHED file under --strict would turn a
+          # formatting-only PR instantly red (the exact whole-repo-strict trap
+          # the standard's ratchet exists to avoid). We therefore gate only
+          # NET-NEW Python modules (--diff-filter=A): a brand-new module must
+          # fully type, while touched legacy files are left to the (non-blocking)
+          # whole-repo mypy job in ci.yml until annotated. This still ratchets
+          # the bar forward — no new untyped module can land.
+          FILES=$(git diff --name-only --diff-filter=A \
+            "origin/${{ github.base_ref }}...HEAD" -- 'apps/backend/**/*.py' \
+            | while read -r f; do [ -f "$f" ] && echo "$f"; done)
+          if [ -z "$FILES" ]; then
+            echo "cq-ratchet: no NEW Python files to type-check"; exit 0
+          fi
+          echo "Type-checking NEW file(s) against standards/mypy.ini:"
+          echo "$FILES"
+          # --ignore-missing-imports keeps the diff-scoped run from failing on
+          # third-party stubs the new file imports but does not own; the strict
+          # bar still applies to the file's own annotations.
+          apps/backend/.venv/bin/mypy \
+            --config-file standards/mypy.ini \
+            --ignore-missing-imports \
+            --follow-imports=silent \
+            $FILES
+
+  format-check:
+    name: ruff format --check (repo-wide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned ruff
+        run: pip install "ruff==${RUFF_VERSION}"
+
+      - name: Ruff format check (apps/backend)
+        run: ruff format --check apps/backend

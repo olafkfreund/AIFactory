@@ -22,11 +22,11 @@ from dataclasses import dataclass
 from .tiers import Tier, classify_tier
 
 __all__ = [
+    "TAXONOMY_VERSION",
     "Classification",
     "classify_labels",
     "classify_requirements",
     "is_governed_requirements",
-    "TAXONOMY_VERSION",
 ]
 
 TAXONOMY_VERSION = "v1"

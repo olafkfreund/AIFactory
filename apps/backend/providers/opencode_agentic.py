@@ -464,7 +464,9 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
                 raise RuntimeError(f"OpenCode CLI error: {error_detail}")
 
         if stderr_text:
-            logger.warning("OpenCode CLI stderr (first 500 chars): %s", stderr_text[:500])
+            logger.warning(
+                "OpenCode CLI stderr (first 500 chars): %s", stderr_text[:500]
+            )
 
         response_text = stdout_text if stdout_text else "(no output from OpenCode CLI)"
         yield AssistantMessage(content=[TextBlock(text=response_text)])

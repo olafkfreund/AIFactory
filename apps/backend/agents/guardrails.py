@@ -36,9 +36,9 @@ from enum import Enum
 
 __all__ = [
     "Decision",
-    "ToolCallSignature",
     "GuardrailVerdict",
     "ToolCallGuardrailController",
+    "ToolCallSignature",
     "signature_for",
 ]
 

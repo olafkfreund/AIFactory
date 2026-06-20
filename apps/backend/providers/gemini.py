@@ -20,7 +20,7 @@ from providers.antigravity import (  # noqa: F401
 __all__ = [
     "AntigravityCLIProvider",
     "GeminiCLIProvider",
+    "_emit_sunset_warning",
     "get_antigravity_binary",
     "get_gemini_binary",
-    "_emit_sunset_warning",
 ]

@@ -65,9 +65,7 @@ class ProjectAnalyzer:
 
         # Get roadmap context if enabled
         if self.include_roadmap:
-            roadmap_path = (
-                self.project_dir / ".aifactory" / "roadmap" / "roadmap.json"
-            )
+            roadmap_path = self.project_dir / ".aifactory" / "roadmap" / "roadmap.json"
             if roadmap_path.exists():
                 try:
                     with open(roadmap_path) as f:

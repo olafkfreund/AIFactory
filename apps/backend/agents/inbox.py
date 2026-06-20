@@ -38,7 +38,9 @@ _LOCK_TIMEOUT_SECONDS = 5.0
 
 def _inbox_path(spec_dir: Path, recipient: str) -> Path:
     name = Path(recipient or DEFAULT_RECIPIENT).name
-    safe = "".join(c for c in name if c.isalnum() or c in ("-", "_")) or DEFAULT_RECIPIENT
+    safe = (
+        "".join(c for c in name if c.isalnum() or c in ("-", "_")) or DEFAULT_RECIPIENT
+    )
     return Path(spec_dir) / "inbox" / f"{safe}.json"
 
 
@@ -113,7 +115,9 @@ def _write_atomic(inbox_path: Path, messages: list[dict[str, Any]]) -> None:
 def has_pending(spec_dir: Path, recipient: str = DEFAULT_RECIPIENT) -> bool:
     """Cheap check for any unread message (no mutation)."""
     try:
-        return any(not m.get("read", False) for m in _read(_inbox_path(spec_dir, recipient)))
+        return any(
+            not m.get("read", False) for m in _read(_inbox_path(spec_dir, recipient))
+        )
     except (OSError, json.JSONDecodeError):
         return False
 

@@ -26,11 +26,11 @@ import urllib.request
 from enum import Enum
 
 __all__ = [
+    "TIER_LABEL_PREFIX",
     "Tier",
     "classify_tier",
-    "tier_for",
     "resolve_low_tier_model",
-    "TIER_LABEL_PREFIX",
+    "tier_for",
 ]
 
 logger = logging.getLogger(__name__)

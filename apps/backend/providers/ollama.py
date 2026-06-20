@@ -122,6 +122,7 @@ class OllamaProvider(BaseLLMProvider):
         # budget / rate-limit / allowlist / audit. Zero behavior change
         # when the env var is unset.
         from ._gateway import resolve_base_url
+
         self._base_url = resolve_base_url(base_url).rstrip("/")
         self._timeout = timeout
         self._extra_options: dict[str, Any] = extra_options or {}
@@ -151,9 +152,7 @@ class OllamaProvider(BaseLLMProvider):
                     prompt builder (may be several kB of text).
         """
         self._pending_prompt = prompt
-        logger.debug(
-            "OllamaProvider: prompt stored (length=%d)", len(prompt)
-        )
+        logger.debug("OllamaProvider: prompt stored (length=%d)", len(prompt))
 
     def receive_response(self) -> AsyncIterator[Any]:
         """Return an async generator that calls the Ollama REST API.
@@ -282,9 +281,7 @@ class OllamaProvider(BaseLLMProvider):
         try:
             return json.loads(raw.decode("utf-8", errors="replace"))
         except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"Ollama API returned invalid JSON: {exc}"
-            ) from exc
+            raise RuntimeError(f"Ollama API returned invalid JSON: {exc}") from exc
 
     @staticmethod
     def _extract_content(response_data: dict[str, Any]) -> str:
@@ -362,9 +359,7 @@ class OllamaProvider(BaseLLMProvider):
         Raises:
             RuntimeError: If the Ollama server cannot be reached.
         """
-        logger.debug(
-            "OllamaProvider: verifying connection to %s", self._base_url
-        )
+        logger.debug("OllamaProvider: verifying connection to %s", self._base_url)
         await asyncio.to_thread(self._verify_connection)
         logger.debug("OllamaProvider: connection verified")
         return self

@@ -490,7 +490,9 @@ def _write_spec_md_from_plan(spec_dir: Path, plan: dict) -> None:
 
     feature = str(plan.get("feature") or "Trusted plan").strip()
     workflow = str(plan.get("workflow_type") or "feature").strip()
-    envelope = plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
+    envelope = (
+        plan.get(APPROVAL_KEY) if isinstance(plan.get(APPROVAL_KEY), dict) else {}
+    )
     approved_by = str(envelope.get("approved_by") or "authority").strip()
 
     lines: list[str] = [

@@ -115,7 +115,9 @@ class CodebaseAnalyzer(SubAgent):
             )
 
         if not entry_points:
-            recommendations.append("No clear entry points found - review project structure")
+            recommendations.append(
+                "No clear entry points found - review project structure"
+            )
 
         return SubAgentResult(
             success=True,
@@ -158,7 +160,8 @@ class CodebaseAnalyzer(SubAgent):
                     d
                     for d in dirs
                     if not d.startswith(".")
-                    and d not in ["node_modules", "__pycache__", "dist", "build", ".git"]
+                    and d
+                    not in ["node_modules", "__pycache__", "dist", "build", ".git"]
                 ]
 
                 depth = len(Path(root).relative_to(self.project_dir).parts)
@@ -213,7 +216,10 @@ class CodebaseAnalyzer(SubAgent):
 
                 with open(package_json) as f:
                     pkg = json.load(f)
-                    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                    deps = {
+                        **pkg.get("dependencies", {}),
+                        **pkg.get("devDependencies", {}),
+                    }
                     if "react" in deps and "React" not in tech_stack:
                         tech_stack.append("React")
                     if "next" in deps:
@@ -257,7 +263,8 @@ class CodebaseAnalyzer(SubAgent):
                     d
                     for d in dirs
                     if not d.startswith(".")
-                    and d not in ["node_modules", "__pycache__", "dist", "build", ".git"]
+                    and d
+                    not in ["node_modules", "__pycache__", "dist", "build", ".git"]
                 ]
 
                 depth = len(Path(root).relative_to(self.project_dir).parts)

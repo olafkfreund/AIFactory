@@ -20,6 +20,7 @@ from typing import Optional
 try:
     from integrations.bmad.complexity_detector import Track
     from integrations.bmad.track_config import get_phases_for_track
+
     BMAD_AVAILABLE = True
 except ImportError:
     BMAD_AVAILABLE = False
@@ -58,7 +59,9 @@ class ComplexityAssessment:
     needs_self_critique: bool = False
 
     # BMad Method integration
-    track: Optional['Track'] = None  # Planning track (Quick Flow / Standard / Enterprise)
+    track: Optional["Track"] = (
+        None  # Planning track (Quick Flow / Standard / Enterprise)
+    )
     bmad_level: int | None = None  # BMad complexity level (0-4)
 
     def phases_to_run(self) -> list[str]:
