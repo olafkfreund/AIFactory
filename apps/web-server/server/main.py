@@ -144,6 +144,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)")
 
+    # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
+    # default — only runs when AIFACTORY_INTAKE_POLLER is set. Polls the
+    # configured repos for factory:* labels and routes by difficulty tier with
+    # two-guard (SQLite + factory:queued) exactly-once idempotency.
+    from .services import intake_poller as _intake
+
+    app.state.intake_poller_stop = None
+    app.state.intake_poller_task = None
+    if _intake.poller_enabled():
+        intake_stop = _asyncio.Event()
+        app.state.intake_poller_stop = intake_stop
+        app.state.intake_poller_task = _asyncio.create_task(
+            _intake.poller_loop(stop=intake_stop)
+        )
+        logger.info("RFC-0011 intake poller enabled")
+    else:
+        logger.info("RFC-0011 intake poller disabled (AIFACTORY_INTAKE_POLLER unset)")
+
     yield
 
     # Shutdown
@@ -156,6 +174,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (_asyncio.TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.intake_poller_task is not None:
+        app.state.intake_poller_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.intake_poller_task, timeout=5.0)
+        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+            app.state.intake_poller_task.cancel()
 
 
 def _read_app_version() -> str:
