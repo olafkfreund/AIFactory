@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Github, Gitlab, RefreshCw, KeyRound, Loader2, CheckCircle2, AlertCircle, User, Lock, Globe, ChevronDown, GitBranch } from 'lucide-react';
+import { Github, Gitlab, RefreshCw, KeyRound, Loader2, CheckCircle2, AlertCircle, User, ChevronDown, GitBranch } from 'lucide-react';
 import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { Switch } from '../../ui/switch';
@@ -22,12 +22,6 @@ function debugLog(message: string, data?: unknown) {
       console.warn(`[GitHubIntegration] ${message}`);
     }
   }
-}
-
-interface GitHubRepo {
-  fullName: string;
-  description: string | null;
-  isPrivate: boolean;
 }
 
 interface GitHubIntegrationProps {
@@ -105,9 +99,6 @@ export function GitHubIntegration({
 
   const [authMode, setAuthMode] = useState<'manual' | 'oauth' | 'oauth-success'>('manual');
   const [oauthUsername, setOauthUsername] = useState<string | null>(null);
-  const [repos, setRepos] = useState<GitHubRepo[]>([]);
-  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
-  const [reposError, setReposError] = useState<string | null>(null);
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
   // Branch selection state
@@ -239,28 +230,6 @@ export function GitHubIntegration({
     }
   };
 
-  const fetchUserRepos = async () => {
-    debugLog('Fetching user repositories...');
-    setIsLoadingRepos(true);
-    setReposError(null);
-
-    try {
-      const result = await window.API.listGitHubUserRepos();
-      debugLog('listGitHubUserRepos result:', result);
-
-      if (result.success && result.data?.repos) {
-        setRepos(result.data.repos);
-        debugLog('Loaded repos:', result.data.repos.length);
-      } else {
-        setReposError(result.error || 'Failed to load repositories');
-      }
-    } catch (err) {
-      debugLog('Error fetching repos:', err);
-      setReposError(err instanceof Error ? err.message : 'Failed to load repositories');
-    } finally {
-      setIsLoadingRepos(false);
-    }
-  };
 
   if (!envConfig) {
     debugLog('No envConfig, returning null');
@@ -286,11 +255,6 @@ export function GitHubIntegration({
 
   const handleSwitchToOAuth = () => {
     setAuthMode('oauth');
-  };
-
-  const handleSelectRepo = (repoFullName: string) => {
-    debugLog('Selected repo:', repoFullName);
-    updateEnvConfig({ githubRepo: repoFullName });
   };
 
   return (
@@ -617,156 +581,6 @@ export function GitHubIntegration({
             onToggle={(checked) => updateEnvConfig({ githubAutoSync: checked })}
           />
         </>
-      )}
-    </div>
-  );
-}
-
-interface RepositoryDropdownProps {
-  repos: GitHubRepo[];
-  selectedRepo: string;
-  isLoading: boolean;
-  error: string | null;
-  onSelect: (repoFullName: string) => void;
-  onRefresh: () => void;
-  onManualEntry: () => void;
-}
-
-function RepositoryDropdown({
-  repos,
-  selectedRepo,
-  isLoading,
-  error,
-  onSelect,
-  onRefresh,
-  onManualEntry
-}: RepositoryDropdownProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [filter, setFilter] = useState('');
-
-  const filteredRepos = repos.filter(repo => {
-    const name = repo.fullName || '';
-    return name.toLowerCase().includes(filter.toLowerCase()) ||
-      (repo.description?.toLowerCase().includes(filter.toLowerCase()));
-  });
-
-  const selectedRepoData = repos.find(r => r.fullName === selectedRepo);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium text-foreground">Repository</Label>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="h-7 px-2"
-          >
-            <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onManualEntry}
-            className="h-7 text-xs"
-          >
-            Enter Manually
-          </Button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 text-xs text-destructive">
-          <AlertCircle className="h-3 w-3" />
-          {error}
-        </div>
-      )}
-
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          disabled={isLoading}
-          className="w-full flex items-center justify-between px-3 py-2 text-sm border border-input rounded-md bg-background hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
-        >
-          {isLoading ? (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading repositories...
-            </span>
-          ) : selectedRepo ? (
-            <span className="flex items-center gap-2">
-              {selectedRepoData?.isPrivate ? (
-                <Lock className="h-3 w-3 text-muted-foreground" />
-              ) : (
-                <Globe className="h-3 w-3 text-muted-foreground" />
-              )}
-              {selectedRepo}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">Select a repository...</span>
-          )}
-          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        </button>
-
-        {isOpen && !isLoading && (
-          <div className="absolute z-50 w-full mt-1 bg-popover border border-border rounded-md shadow-lg max-h-64 overflow-hidden">
-            {/* Search filter */}
-            <div className="p-2 border-b border-border">
-              <Input
-                placeholder="Search repositories..."
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                className="h-8 text-sm"
-                autoFocus
-              />
-            </div>
-
-            {/* Repository list */}
-            <div className="max-h-48 overflow-y-auto">
-              {filteredRepos.length === 0 ? (
-                <div className="px-3 py-4 text-sm text-muted-foreground text-center">
-                  {filter ? 'No matching repositories' : 'No repositories found'}
-                </div>
-              ) : (
-                filteredRepos.map((repo) => (
-                  <button
-                    key={repo.fullName}
-                    type="button"
-                    onClick={() => {
-                      onSelect(repo.fullName);
-                      setIsOpen(false);
-                      setFilter('');
-                    }}
-                    className={`w-full px-3 py-2 text-left hover:bg-accent flex items-start gap-2 ${
-                      repo.fullName === selectedRepo ? 'bg-accent' : ''
-                    }`}
-                  >
-                    {repo.isPrivate ? (
-                      <Lock className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                    ) : (
-                      <Globe className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{repo.fullName}</p>
-                      {repo.description && (
-                        <p className="text-xs text-muted-foreground truncate">{repo.description}</p>
-                      )}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {selectedRepo && (
-        <p className="text-xs text-muted-foreground">
-          Selected: <code className="px-1 bg-muted rounded">{selectedRepo}</code>
-        </p>
       )}
     </div>
   );

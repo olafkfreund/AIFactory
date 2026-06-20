@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Plus,
-  Trash2,
   Columns3,
   Terminal,
   FolderOpen,
@@ -40,7 +39,6 @@ import {
 import { cn } from '../lib/utils';
 import {
   useProjectStore,
-  removeProject,
   initializeProject
 } from '../stores/project-store';
 import { useSettingsStore } from '../stores/settings-store';
@@ -49,7 +47,7 @@ import { AddProjectModal } from './AddProjectModal';
 import { AIFactoryLogo } from './AIFactoryLogo';
 import { GitSetupModal } from './GitSetupModal';
 import { RateLimitIndicator } from './RateLimitIndicator';
-import type { Project, AutoBuildVersionInfo, GitStatus, ProjectEnvConfig } from '../shared/types';
+import type { Project, GitStatus, ProjectEnvConfig } from '../shared/types';
 
 export type SidebarView = 'kanban' | 'terminals' | 'editor' | 'context' | 'github-issues' | 'github-prs' | 'changelog' | 'insights' | 'worktrees' | 'agent-tools' | 'skills';
 
@@ -80,16 +78,8 @@ const baseNavItems: NavItem[] = [
   { id: 'context', labelKey: 'navigation:items.context', icon: BookOpen }
 ];
 
-// GitHub nav items shown when GitHub is enabled
-const githubNavItems: NavItem[] = [
-  { id: 'github-issues', labelKey: 'navigation:items.githubIssues', icon: Github },
-  { id: 'github-prs', labelKey: 'navigation:items.githubPRs', icon: GitPullRequest }
-];
-
 export function Sidebar({
-  onSettingsClick,
   onNewTaskClick,
-  onOpenOnboarding,
   activeView = 'kanban',
   onViewChange
 }: SidebarProps) {
@@ -229,10 +219,6 @@ export function Sidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId]);
 
-  const handleAddProject = () => {
-    setShowAddProjectModal(true);
-  };
-
   const handleProjectAdded = (project: Project, needsInit: boolean) => {
     if (needsInit) {
       setPendingProject(project);
@@ -289,13 +275,6 @@ export function Sidebar({
       }
     }
   };
-
-  const _handleRemoveProject = async (projectId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    await removeProject(projectId);
-  };
-
 
   const handleNavClick = (view: SidebarView) => {
     onViewChange?.(view);

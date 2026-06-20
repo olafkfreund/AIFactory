@@ -142,7 +142,7 @@ export function WorkspaceStatus({
   onCreatePR,
   isCreatingPR = false,
   onAbortMerge,
-  onClose,
+  onClose: _onClose,
   onSwitchToTerminals,
   onOpenInbuiltTerminal
 }: WorkspaceStatusProps) {

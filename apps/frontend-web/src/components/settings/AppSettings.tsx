@@ -10,7 +10,6 @@ import {
   KeyRound,
   Bell,
   Settings2,
-  Github,
   GitBranch,
   Database,
   Sparkles,

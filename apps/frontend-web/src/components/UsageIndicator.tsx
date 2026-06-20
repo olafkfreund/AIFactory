@@ -5,7 +5,7 @@
  * Shows detailed breakdown on hover.
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Activity, TrendingUp, AlertCircle } from 'lucide-react';
 import {
   Tooltip,

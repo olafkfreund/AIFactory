@@ -61,7 +61,7 @@ function AuthOptionCard({ icon, title, description, onClick, variant = 'default'
  * AC Coverage:
  * - AC1: Displays first-run screen with two clear options
  */
-export function AuthChoiceStep({ onNext, onBack, onSkip, onAPIKeyPathComplete }: AuthChoiceStepProps) {
+export function AuthChoiceStep({ onNext, onBack: _onBack, onSkip, onAPIKeyPathComplete }: AuthChoiceStepProps) {
   const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   const profiles = useSettingsStore((state) => state.profiles);
 

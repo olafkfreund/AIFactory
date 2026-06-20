@@ -19,7 +19,6 @@ import {
 import type {
   AppSettings,
   FeatureModelConfig,
-  FeatureThinkingConfig,
   ThinkingLevel
 } from '../../shared/types';
 

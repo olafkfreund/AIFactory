@@ -173,7 +173,6 @@ describe('<AgentConsole>', () => {
     // The mocked XTerm.onData was registered with a callback the
     // component owns.  Pull it out and invoke it directly to simulate
     // a keystroke; verify WS.send is NOT called.
-    const xterm = (require('@xterm/xterm') as any).Terminal;
     // The component instantiates a NEW XTerm via `new Terminal(...)` —
     // each test's instance is the most recent.  We rely on the
     // `onData` mock having been called with the component's callback;

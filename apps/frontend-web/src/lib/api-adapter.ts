@@ -6,7 +6,7 @@
  */
 
 import { get, post, put, del, patch } from './api-client';
-import { wsManager, terminalWs, taskLogsWs, taskProgressWs } from './websocket';
+import { wsManager, terminalWs } from './websocket';
 import { createLogger } from './logger';
 import type { API, TabState } from '../shared/types';
 

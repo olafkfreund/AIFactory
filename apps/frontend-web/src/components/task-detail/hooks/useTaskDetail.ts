@@ -63,8 +63,6 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   } | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   const [showConflictDialog, setShowConflictDialog] = useState(false);
-  const [isResolvingConflicts, setIsResolvingConflicts] = useState(false);
-  const [isResolvingUncommitted, setIsResolvingUncommitted] = useState(false);
   const [isAbortingMerge, setIsAbortingMerge] = useState(false);
   const [mergeStep, setMergeStep] = useState<'idle' | 'resolving_uncommitted' | 'resolving_git_conflicts' | 'merging'>('idle');
 
@@ -437,48 +435,6 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     }
   }, [task.id, task.specId]);
 
-  // Resolve conflicts with AI
-  // Detects if this is a git merge in progress (files with conflict markers)
-  // vs a three-way merge preview, and calls the appropriate endpoint
-  const resolveConflictsWithAI = useCallback(async () => {
-    setIsResolvingConflicts(true);
-    try {
-      // Check if there's a git merge in progress with conflict markers
-      const hasGitMergeInProgress = mergePreview?.gitConflicts?.mergeInProgress;
-
-      let result;
-      if (hasGitMergeInProgress) {
-        // Use the new git merge conflict resolution endpoint
-        // This handles files that already have <<<<<<< conflict markers
-        console.log('[useTaskDetail] Using git merge conflict resolution (merge in progress)');
-        result = await window.API.resolveGitMergeConflicts(task.id);
-      } else {
-        // Use the standard three-way merge conflict resolution
-        console.log('[useTaskDetail] Using standard worktree conflict resolution');
-        result = await window.API.resolveWorktreeConflicts(task.id, { useAI: true });
-      }
-
-      if (result.success && result.data) {
-        console.log('[useTaskDetail] Conflict resolution result:', result.data);
-        // Reset cache and reload both merge preview and worktree status
-        // This ensures UI reflects the post-merge state (no conflicts, no uncommitted changes)
-        hasLoadedPreviewRef.current = null;
-        await Promise.all([
-          loadMergePreview(),
-          loadWorktreeStatus()
-        ]);
-      } else {
-        console.error('[useTaskDetail] Conflict resolution failed:', result.error);
-        setWorkspaceError(result.error || 'Failed to resolve conflicts');
-      }
-    } catch (err) {
-      console.error('[useTaskDetail] Failed to resolve conflicts:', err);
-      setWorkspaceError(err instanceof Error ? err.message : 'Failed to resolve conflicts');
-    } finally {
-      setIsResolvingConflicts(false);
-    }
-  }, [task.id, loadMergePreview, loadWorktreeStatus, mergePreview?.gitConflicts?.mergeInProgress]);
-
   // Abort a stuck merge
   const abortMerge = useCallback(async () => {
     setIsAbortingMerge(true);
@@ -501,31 +457,6 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       setWorkspaceError(err instanceof Error ? err.message : 'Failed to abort merge');
     } finally {
       setIsAbortingMerge(false);
-    }
-  }, [task.id, loadMergePreview, loadWorktreeStatus]);
-
-  // Resolve uncommitted conflicts with AI
-  const resolveUncommittedConflicts = useCallback(async () => {
-    setIsResolvingUncommitted(true);
-    try {
-      const result = await window.API.resolveUncommittedConflicts(task.id);
-      if (result.success && result.data) {
-        console.log('[useTaskDetail] Uncommitted conflict resolution result:', result.data);
-        // Reset cache and reload both merge preview and worktree status
-        hasLoadedPreviewRef.current = null;
-        await Promise.all([
-          loadMergePreview(),
-          loadWorktreeStatus()
-        ]);
-      } else {
-        console.error('[useTaskDetail] Failed to resolve uncommitted conflicts:', result.error);
-        setWorkspaceError(result.error || 'Failed to resolve uncommitted conflicts');
-      }
-    } catch (err) {
-      console.error('[useTaskDetail] Failed to resolve uncommitted conflicts:', err);
-      setWorkspaceError(err instanceof Error ? err.message : 'Failed to resolve uncommitted conflicts');
-    } finally {
-      setIsResolvingUncommitted(false);
     }
   }, [task.id, loadMergePreview, loadWorktreeStatus]);
 

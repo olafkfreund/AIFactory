@@ -4,7 +4,6 @@ import {
   useSyncStatusStore,
   loadGitHubIssues,
   checkGitHubConnection,
-  type IssueFilterState
 } from '../../../stores/github/index';
 import type { FilterState } from '../types';
 

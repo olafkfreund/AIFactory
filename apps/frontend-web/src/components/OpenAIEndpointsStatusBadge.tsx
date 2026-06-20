@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, X, Loader2, RefreshCw, Globe, Activity } from 'lucide-react';
+import { Check, X, Loader2, Globe, Activity } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   Popover,

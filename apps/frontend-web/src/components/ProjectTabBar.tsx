@@ -36,7 +36,6 @@ export function ProjectTabBar({
   onSettingsClick,
   onOpenOnboarding,
 }: ProjectTabBarProps) {
-  const allProjects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
   const selectProject = useProjectStore((state) => state.selectProject);
   const theme = useSettingsStore((state) => state.settings.theme);

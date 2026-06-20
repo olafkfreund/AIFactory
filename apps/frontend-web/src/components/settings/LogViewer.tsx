@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { logger, LogEntry, LogLevel } from '../../lib/logger';
+import { logger, LogEntry } from '../../lib/logger';
 import { get, del } from '../../lib/api-client';
 import { getAuthHeaders } from '../../lib/auth';
 import { Button } from '../ui/button';

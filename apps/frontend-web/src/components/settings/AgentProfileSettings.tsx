@@ -45,7 +45,6 @@ export function AgentProfileSettings() {
   const { t } = useTranslation('settings');
   const settings = useSettingsStore((state) => state.settings);
   const selectedProfileId = settings.selectedAgentProfile || 'auto';
-  const llmOpenaiBaseUrl = settings.llmOpenaiBaseUrl;
   const [showPhaseConfig, setShowPhaseConfig] = useState(selectedProfileId === 'auto');
   const [ollamaModels, setOllamaModels] = useState<{ value: string; label: string }[]>([]);
   const [openaiEndpointModels, setOpenaiEndpointModels] = useState<{ value: string; label: string }[]>([]);
