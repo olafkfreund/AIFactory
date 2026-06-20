@@ -281,6 +281,19 @@ class GitLabProvider:
             )
             return resp.status_code == 200
 
+    async def enable_auto_merge(
+        self, pr_number: int, merge_method: str = "squash"
+    ) -> bool:
+        """Not yet implemented for GitLab (RFC-0011 #637).
+
+        GitLab's "merge when pipeline succeeds" maps here, but is deferred — the
+        low-tier auto-merge fast path is GitHub-first for now.
+        """
+        raise NotImplementedError(
+            "enable_auto_merge is not implemented for the GitLab provider yet; "
+            "use the merge_policy decision + manual/CI merge for GitLab MRs."
+        )
+
     # -------------------------------------------------------------------------
     # Issue Operations
     # -------------------------------------------------------------------------
