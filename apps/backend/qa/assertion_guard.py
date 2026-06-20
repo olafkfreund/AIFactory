@@ -25,11 +25,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 __all__ = [
-    "count_assertions",
-    "snapshot_test_assertions",
-    "guard_assertion_manifest",
     "AssertionViolation",
     "GuardReport",
+    "count_assertions",
+    "guard_assertion_manifest",
+    "snapshot_test_assertions",
 ]
 
 # Test files we account for, across the stacks AIFactory builds in.

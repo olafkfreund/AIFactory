@@ -23,4 +23,4 @@ from providers.opencode_agentic import OpenCodeAgenticProvider
 # Text-only callers get the same adapter — ``opencode run`` returns text fine.
 OpenCodeProvider = OpenCodeAgenticProvider
 
-__all__ = ["OpenCodeProvider", "OpenCodeAgenticProvider"]
+__all__ = ["OpenCodeAgenticProvider", "OpenCodeProvider"]

@@ -372,9 +372,7 @@ class GitHubProvider:
             return
 
         owner, name = self._repo.split("/", 1)
-        wants_copilot = any(
-            a.strip().lower() == self._COPILOT_ALIAS for a in assignees
-        )
+        wants_copilot = any(a.strip().lower() == self._COPILOT_ALIAS for a in assignees)
         regular_logins = [
             a for a in assignees if a.strip().lower() != self._COPILOT_ALIAS
         ]
@@ -392,9 +390,7 @@ class GitHubProvider:
           }
         }
         """
-        actors_resp = await self._graphql(
-            actors_query, {"owner": owner, "name": name}
-        )
+        actors_resp = await self._graphql(actors_query, {"owner": owner, "name": name})
         repo_node = actors_resp.get("data", {}).get("repository") or {}
         nodes = (
             repo_node.get("suggestedActors", {}).get("nodes", []) if repo_node else []
@@ -449,10 +445,7 @@ class GitHubProvider:
             {"owner": owner, "name": name, "number": issue_number},
         )
         assignable_id = (
-            issue_resp.get("data", {})
-            .get("repository", {})
-            .get("issue", {})
-            .get("id")
+            issue_resp.get("data", {}).get("repository", {}).get("issue", {}).get("id")
         )
         if not assignable_id:
             return
@@ -468,9 +461,7 @@ class GitHubProvider:
             {"assignableId": assignable_id, "actorIds": actor_ids},
         )
 
-    async def _graphql(
-        self, query: str, variables: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Run a GraphQL query/mutation via `gh api graphql`.
 
         Encodes variables for `gh api graphql`: `-f` for raw strings,

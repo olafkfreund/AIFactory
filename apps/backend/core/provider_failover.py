@@ -67,9 +67,7 @@ def configured_chain(env: dict[str, str] | None = None) -> tuple[str, ...]:
     return parsed or _DEFAULT_CHAIN
 
 
-def failover_chain(
-    primary: str, env: dict[str, str] | None = None
-) -> tuple[str, ...]:
+def failover_chain(primary: str, env: dict[str, str] | None = None) -> tuple[str, ...]:
     """Ordered providers to try for a phase: ``primary`` first, then the
     configured chain, de-duplicated and lower-cased."""
     out: list[str] = []

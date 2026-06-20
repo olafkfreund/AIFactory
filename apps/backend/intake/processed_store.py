@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "db_path",
-    "mark_processed",
-    "unmark_processed",
     "is_processed",
+    "mark_processed",
     "processed_count",
+    "unmark_processed",
 ]
 
 _SCHEMA = """

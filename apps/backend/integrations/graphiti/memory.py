@@ -180,18 +180,18 @@ async def test_provider_configuration() -> dict:
 
 # Re-export all public APIs for backward compatibility
 __all__ = [
+    "EPISODE_TYPE_CODEBASE_DISCOVERY",
+    "EPISODE_TYPE_GOTCHA",
+    "EPISODE_TYPE_HISTORICAL_CONTEXT",
+    "EPISODE_TYPE_PATTERN",
+    "EPISODE_TYPE_QA_RESULT",
+    "EPISODE_TYPE_SESSION_INSIGHT",
+    "EPISODE_TYPE_TASK_OUTCOME",
+    "MAX_CONTEXT_RESULTS",
     "GraphitiMemory",
     "GroupIdMode",
     "get_graphiti_memory",
     "is_graphiti_enabled",
     "test_graphiti_connection",
     "test_provider_configuration",
-    "MAX_CONTEXT_RESULTS",
-    "EPISODE_TYPE_SESSION_INSIGHT",
-    "EPISODE_TYPE_CODEBASE_DISCOVERY",
-    "EPISODE_TYPE_PATTERN",
-    "EPISODE_TYPE_GOTCHA",
-    "EPISODE_TYPE_TASK_OUTCOME",
-    "EPISODE_TYPE_QA_RESULT",
-    "EPISODE_TYPE_HISTORICAL_CONTEXT",
 ]

@@ -37,9 +37,7 @@ class ImplementationPlanValidator:
 
         if not plan_file.exists():
             errors.append("implementation_plan.json not found")
-            fixes.append(
-                f"Run: python aifactory/planner.py --spec-dir {self.spec_dir}"
-            )
+            fixes.append(f"Run: python aifactory/planner.py --spec-dir {self.spec_dir}")
             return ValidationResult(False, "plan", errors, warnings, fixes)
 
         try:
@@ -74,8 +72,8 @@ class ImplementationPlanValidator:
             errors.append(
                 f"'phases' must be a JSON list of phase objects, got "
                 f"{type(phases).__name__}. Restructure as: "
-                f"\"phases\": [{{ \"phase\": 1, \"name\": \"...\", "
-                f"\"subtasks\": [...] }}, ...]"
+                f'"phases": [{{ "phase": 1, "name": "...", '
+                f'"subtasks": [...] }}, ...]'
             )
             fixes.append(
                 "Rewrite 'phases' as a list of objects, each with phase/name/subtasks fields."
@@ -91,9 +89,7 @@ class ImplementationPlanValidator:
                         f"Phase {i + 1}: expected a JSON object with "
                         f"phase/name/subtasks fields, got {type(phase).__name__}"
                     )
-                    fixes.append(
-                        f"Replace phases[{i}] with a phase object."
-                    )
+                    fixes.append(f"Replace phases[{i}] with a phase object.")
                     continue
                 phase_errors = self._validate_phase(phase, i)
                 errors.extend(phase_errors)

@@ -227,7 +227,9 @@ class ReviewCycle:
         """True once the current cycle has reached a terminal state."""
         return self.state in _TERMINAL_STATES
 
-    def is_untouched(self, *, timeout_seconds: float, now: datetime | None = None) -> bool:
+    def is_untouched(
+        self, *, timeout_seconds: float, now: datetime | None = None
+    ) -> bool:
         """Detect a ``review_requested`` that never transitioned to
         ``review_started`` within ``timeout_seconds``.
 
@@ -457,8 +459,7 @@ def record_redrive(
         raise ReviewCycleError("No review cycle exists; call request_review first")
     if cycle_id != cycle.cycle_id:
         raise StaleCycleError(
-            f"Re-drive for cycle {cycle_id} rejected: current cycle is "
-            f"{cycle.cycle_id}"
+            f"Re-drive for cycle {cycle_id} rejected: current cycle is {cycle.cycle_id}"
         )
     cycle.redrive_attempts += 1
     cycle.last_redrive_at = (at or datetime.now(timezone.utc)).isoformat()
@@ -515,9 +516,7 @@ def redrive_untouched_review(
     :func:`qa.review_redrive.process_untouched_review`, which injects the inbox
     and control-plane writers so this state-only module stays dependency-free.
     """
-    cycle = detect_untouched_review(
-        spec_dir, timeout_seconds=timeout_seconds, now=now
-    )
+    cycle = detect_untouched_review(spec_dir, timeout_seconds=timeout_seconds, now=now)
     if cycle is None:
         return None
 
@@ -537,20 +536,20 @@ def redrive_untouched_review(
 
 
 __all__ = [
-    "REVIEW_CYCLE_FILE",
     "DEFAULT_UNTOUCHED_TIMEOUT_SECONDS",
+    "REVIEW_CYCLE_FILE",
     "CycleState",
     "EngagementProof",
+    "InvalidTransitionError",
     "ReviewCycle",
     "ReviewCycleError",
-    "InvalidTransitionError",
     "StaleCycleError",
     "cycle_file_path",
-    "load_cycle",
-    "request_review",
-    "record_started",
-    "resolve_review",
-    "record_redrive",
     "detect_untouched_review",
+    "load_cycle",
+    "record_redrive",
+    "record_started",
     "redrive_untouched_review",
+    "request_review",
+    "resolve_review",
 ]

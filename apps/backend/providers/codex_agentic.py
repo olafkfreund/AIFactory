@@ -73,6 +73,7 @@ def _is_account_default(model: str | None) -> bool:
         return True
     return model.strip().lower() in _ACCOUNT_DEFAULT_MODELS
 
+
 # MCP protocol constants
 _MCP_PROTOCOL_VERSION = "2024-11-05"
 _CLIENT_INFO = {"name": "aifactory", "version": "1.0"}

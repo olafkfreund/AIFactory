@@ -45,7 +45,9 @@ def create_subtask_tools(
     # Normalise Path -> lambda once at factory build time; tool handlers
     # invoke get_spec_dir() per call so the standalone server picks up
     # AIFACTORY_SPEC_DIR changes between calls.
-    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    get_spec_dir: Callable[[], Path] = (
+        spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    )
 
     tools = []
 

@@ -241,7 +241,7 @@ class BatchValidator:
                 batch_id=batch_id,
                 is_valid=True,
                 confidence=0.5,
-                reasoning=f"Validation error (assuming valid): {str(e)}",
+                reasoning=f"Validation error (assuming valid): {e!s}",
                 suggested_splits=None,
                 common_theme=themes[0] if themes else "",
             )

@@ -392,9 +392,7 @@ class SpecOrchestrator:
         # Translate BMad phase names to internal names
         # BMad uses: "spec", "plan", "validate", "tech_spec"
         # Internal uses: "spec_writing", "planning", "validation", "quick_spec"
-        translated_phases = [
-            PHASE_NAME_MAP.get(p, p) for p in all_phases_to_run
-        ]
+        translated_phases = [PHASE_NAME_MAP.get(p, p) for p in all_phases_to_run]
 
         phases_to_run = [
             p for p in translated_phases if p not in ["discovery", "requirements"]
@@ -406,9 +404,7 @@ class SpecOrchestrator:
             error_msg = f"Unknown phases in pipeline: {unknown_phases}"
             print_status(error_msg, "error")
             task_logger.log(error_msg, LogEntryType.ERROR, LogPhase.PLANNING)
-            task_logger.end_phase(
-                LogPhase.PLANNING, success=False, message=error_msg
-            )
+            task_logger.end_phase(LogPhase.PLANNING, success=False, message=error_msg)
             return False
 
         print()
@@ -420,7 +416,6 @@ class SpecOrchestrator:
 
         phases_executed = ["discovery", "requirements", "complexity_assessment"]
         for phase_name in phases_to_run:
-
             result = await run_phase(phase_name, all_phases[phase_name])
             results.append(result)
             phases_executed.append(phase_name)
@@ -639,7 +634,10 @@ class SpecOrchestrator:
             self._load_requirements_dict(),
         )
 
-        if bmad_assessment and bmad_assessment.confidence >= self.BMAD_CONFIDENCE_THRESHOLD:
+        if (
+            bmad_assessment
+            and bmad_assessment.confidence >= self.BMAD_CONFIDENCE_THRESHOLD
+        ):
             # BMad detection succeeded with high confidence
             self._print_bmad_assessment_info(bmad_assessment)
             task_logger.log(
@@ -656,7 +654,7 @@ class SpecOrchestrator:
             print_status(
                 f"BMad confidence ({bmad_assessment.confidence:.0%}) below threshold "
                 f"({self.BMAD_CONFIDENCE_THRESHOLD:.0%}), falling back to AI...",
-                "info"
+                "info",
             )
             task_logger.log(
                 f"BMad confidence {bmad_assessment.confidence:.0%} < {self.BMAD_CONFIDENCE_THRESHOLD:.0%}, "
@@ -692,7 +690,9 @@ class SpecOrchestrator:
             "success",
         )
         print_key_value("BMad Level", f"{assessment.bmad_level}")
-        print_key_value("Track", assessment.track.display_name if assessment.track else "N/A")
+        print_key_value(
+            "Track", assessment.track.display_name if assessment.track else "N/A"
+        )
         print_key_value("Confidence", f"{assessment.confidence:.0%}")
         print_key_value("Reasoning", assessment.reasoning)
 
@@ -771,11 +771,13 @@ class SpecOrchestrator:
             self.assessment.bmad_level = bmad_assessment.bmad_level
             # Update signals to include BMad info
             if self.assessment.signals:
-                self.assessment.signals.update({
-                    "bmad_level": bmad_assessment.bmad_level,
-                    "track": bmad_assessment.track.value,
-                    "track_display_name": bmad_assessment.track.display_name,
-                })
+                self.assessment.signals.update(
+                    {
+                        "bmad_level": bmad_assessment.bmad_level,
+                        "track": bmad_assessment.track.value,
+                        "track_display_name": bmad_assessment.track.display_name,
+                    }
+                )
 
     def _save_track_to_requirements(self, requirements_file: Path) -> None:
         """Save track information to requirements.json.

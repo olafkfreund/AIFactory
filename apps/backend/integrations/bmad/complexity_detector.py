@@ -12,6 +12,7 @@ from pathlib import Path
 
 class Track(Enum):
     """Planning track types based on BMad Method."""
+
     QUICK_FLOW = "quick_flow"
     STANDARD = "standard"
     ENTERPRISE = "enterprise"
@@ -22,7 +23,7 @@ class Track(Enum):
         names = {
             Track.QUICK_FLOW: "Quick Flow",
             Track.STANDARD: "Standard",
-            Track.ENTERPRISE: "Enterprise"
+            Track.ENTERPRISE: "Enterprise",
         }
         return names.get(self, self.value)
 
@@ -32,7 +33,7 @@ class Track(Enum):
         descriptions = {
             Track.QUICK_FLOW: "Fast iteration for simple tasks (3 phases, 5-15 min)",
             Track.STANDARD: "Comprehensive planning for features (6-7 phases, hours)",
-            Track.ENTERPRISE: "Full planning with compliance (8+ phases, days)"
+            Track.ENTERPRISE: "Full planning with compliance (8+ phases, days)",
         }
         return descriptions.get(self, "")
 
@@ -42,7 +43,7 @@ class Track(Enum):
         counts = {
             Track.QUICK_FLOW: "3 phases",
             Track.STANDARD: "6-7 phases",
-            Track.ENTERPRISE: "8+ phases"
+            Track.ENTERPRISE: "8+ phases",
         }
         return counts.get(self, "")
 
@@ -50,6 +51,7 @@ class Track(Enum):
 @dataclass
 class ComplexityResult:
     """Result of complexity detection analysis."""
+
     level: int  # 0-4
     track: Track
     phases: list[str]
@@ -80,10 +82,33 @@ class ComplexityDetector:
     # Keyword patterns from BMad project-levels.yaml
     LEVEL_KEYWORDS = {
         0: ["fix", "bug", "typo", "small change", "quick update", "patch"],
-        1: ["simple", "basic", "small feature", "add", "minor", "game", "script", "tool", "util"],
+        1: [
+            "simple",
+            "basic",
+            "small feature",
+            "add",
+            "minor",
+            "game",
+            "script",
+            "tool",
+            "util",
+        ],
         2: ["dashboard", "several features", "admin panel", "medium", "crud", "form"],
-        3: ["platform", "integration", "complex system", "microservice", "distributed", "multi-service architecture"],
-        4: ["enterprise", "multi-tenant", "multiple products", "ecosystem", "large scale"],
+        3: [
+            "platform",
+            "integration",
+            "complex system",
+            "microservice",
+            "distributed",
+            "multi-service architecture",
+        ],
+        4: [
+            "enterprise",
+            "multi-tenant",
+            "multiple products",
+            "ecosystem",
+            "large scale",
+        ],
     }
 
     # Story count ranges from BMad project-levels.yaml
@@ -179,7 +204,9 @@ class ComplexityDetector:
                 # Both methods agree - high confidence (0.95)
                 base_level = keyword_level
                 base_stories = estimated_stories
-                base_reasoning = f"Keyword and story analysis agree on Level {keyword_level}"
+                base_reasoning = (
+                    f"Keyword and story analysis agree on Level {keyword_level}"
+                )
                 base_confidence = 0.95
             else:
                 # Keyword takes priority but lower confidence due to disagreement
@@ -204,7 +231,9 @@ class ComplexityDetector:
         if floor > base_level:
             return self._build_result(
                 level=floor,
-                estimated_stories=max(base_stories, self._estimate_stories_from_level(floor)),
+                estimated_stories=max(
+                    base_stories, self._estimate_stories_from_level(floor)
+                ),
                 reasoning=(
                     f"Raised to Level {floor} by structural breadth ({floor_reason}); "
                     f"base analysis suggested Level {base_level}"
@@ -324,7 +353,7 @@ class ComplexityDetector:
         for level in level_order:
             keywords = self.LEVEL_KEYWORDS[level]
             for keyword in keywords:
-                if re.search(r'\b' + re.escape(keyword) + r'\b', task_lower):
+                if re.search(r"\b" + re.escape(keyword) + r"\b", task_lower):
                     return level
 
         return None
@@ -343,8 +372,16 @@ class ComplexityDetector:
 
         # Count feature indicators
         feature_indicators = [
-            "feature", "functionality", "component", "page", "screen",
-            "module", "service", "endpoint", "api", "database"
+            "feature",
+            "functionality",
+            "component",
+            "page",
+            "screen",
+            "module",
+            "service",
+            "endpoint",
+            "api",
+            "database",
         ]
         indicator_count = sum(
             task_description.lower().count(indicator)
@@ -398,31 +435,31 @@ class ComplexityDetector:
             return (
                 Track.QUICK_FLOW,
                 "Atomic change - Quick Flow is sufficient (discovery, tech-spec, validate)",
-                []
+                [],
             )
         elif level == 1:
             return (
                 Track.QUICK_FLOW,
                 "Small feature - Quick Flow provides fast iteration",
-                [Track.STANDARD]  # Can opt for Standard if more planning needed
+                [Track.STANDARD],  # Can opt for Standard if more planning needed
             )
         elif level == 2:
             return (
                 Track.STANDARD,
                 "Medium project - Standard track balances planning and speed",
-                [Track.QUICK_FLOW, Track.ENTERPRISE]  # Can go faster or more thorough
+                [Track.QUICK_FLOW, Track.ENTERPRISE],  # Can go faster or more thorough
             )
         elif level == 3:
             return (
                 Track.STANDARD,
                 "Complex system - Standard track with architecture phase",
-                [Track.ENTERPRISE]  # Can opt for Enterprise if compliance needed
+                [Track.ENTERPRISE],  # Can opt for Enterprise if compliance needed
             )
         else:  # level == 4
             return (
                 Track.ENTERPRISE,
                 "Enterprise scale - Full planning with security and compliance",
-                [Track.STANDARD]  # Can opt for Standard if willing to skip some phases
+                [Track.STANDARD],  # Can opt for Standard if willing to skip some phases
             )
 
     def _get_phases_for_level(self, level: int, track: Track) -> list[str]:
@@ -441,10 +478,25 @@ class ComplexityDetector:
         if track == Track.STANDARD:
             if level <= 2:
                 # No architecture for level 2
-                return ["discovery", "requirements", "context", "spec", "plan", "validate"]
+                return [
+                    "discovery",
+                    "requirements",
+                    "context",
+                    "spec",
+                    "plan",
+                    "validate",
+                ]
             else:
                 # Architecture required for level 3
-                return ["discovery", "requirements", "architecture", "context", "spec", "plan", "validate"]
+                return [
+                    "discovery",
+                    "requirements",
+                    "architecture",
+                    "context",
+                    "spec",
+                    "plan",
+                    "validate",
+                ]
 
         if track == Track.ENTERPRISE:
             # Full pipeline with security and devops
@@ -456,18 +508,14 @@ class ComplexityDetector:
                 "context",
                 "spec",
                 "plan",
-                "validate"
+                "validate",
             ]
 
         # Default fallback
         return ["discovery", "requirements", "context", "spec", "plan", "validate"]
 
     def _build_result(
-        self,
-        level: int,
-        estimated_stories: int,
-        reasoning: str,
-        confidence: float
+        self, level: int, estimated_stories: int, reasoning: str, confidence: float
     ) -> ComplexityResult:
         """Build a ComplexityResult from detected level."""
         track, track_rationale, alternative_tracks = self._select_track(level)
@@ -483,5 +531,5 @@ class ComplexityDetector:
             reasoning=f"{config['title']}: {reasoning}",
             confidence=confidence,
             track_rationale=track_rationale,
-            alternative_tracks=alternative_tracks
+            alternative_tracks=alternative_tracks,
         )

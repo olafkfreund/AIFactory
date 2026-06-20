@@ -182,9 +182,7 @@ async def run_parallel_phase(
         progressed = False
         for subtask, run_res in zip(wave, run_results):
             if isinstance(run_res, BaseException):
-                logger.error(
-                    "[parallel] subtask %s raised: %s", subtask.id, run_res
-                )
+                logger.error("[parallel] subtask %s raised: %s", subtask.id, run_res)
                 _mark_failed(subtask, failed_ids, str(run_res))
                 continue
             if not run_res.success:
@@ -198,9 +196,7 @@ async def run_parallel_phase(
 
             merged = await merge_subtask(subtask, run_res)
             if not merged:
-                logger.error(
-                    "[parallel] subtask %s merge-back failed", subtask.id
-                )
+                logger.error("[parallel] subtask %s merge-back failed", subtask.id)
                 _mark_failed(subtask, failed_ids, "merge failed")
                 continue
 

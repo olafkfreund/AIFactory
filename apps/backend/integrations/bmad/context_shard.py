@@ -81,7 +81,10 @@ def _find_section_by_anchor(lines: list[str], anchor: str) -> list[str]:
             heading_normalized = heading_text.lower()
 
             # Check if this matches our anchor
-            if anchor_normalized in heading_normalized or heading_normalized in anchor_normalized:
+            if (
+                anchor_normalized in heading_normalized
+                or heading_normalized in anchor_normalized
+            ):
                 in_section = True
                 section_level = level
                 section_lines = [line]

@@ -163,7 +163,9 @@ def process_untouched_review(
             "cycle_id": cycle.cycle_id,
             "recipient": recipient,
             "inbox_dir": str(inbox_dir),
-            "delivered": bool(result.get("delivered")) if isinstance(result, dict) else None,
+            "delivered": bool(result.get("delivered"))
+            if isinstance(result, dict)
+            else None,
             "messageId": result.get("messageId") if isinstance(result, dict) else None,
             "redrive_attempts": updated.redrive_attempts,
         }
@@ -188,7 +190,7 @@ def process_untouched_review(
 
 
 __all__ = [
-    "REVIEWER_RECIPIENT",
     "DEFAULT_ESCALATE_AFTER_STRIKES",
+    "REVIEWER_RECIPIENT",
     "process_untouched_review",
 ]

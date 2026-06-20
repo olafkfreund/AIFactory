@@ -131,9 +131,7 @@ class CodexCLIProvider(BaseLLMProvider):
                     prompt builder (may be several kB of text).
         """
         self._pending_prompt = prompt
-        logger.debug(
-            "CodexCLIProvider: prompt stored (length=%d)", len(prompt)
-        )
+        logger.debug("CodexCLIProvider: prompt stored (length=%d)", len(prompt))
 
     def receive_response(self) -> AsyncIterator[Any]:
         """Return an async generator that runs the Codex CLI subprocess.
@@ -180,9 +178,7 @@ class CodexCLIProvider(BaseLLMProvider):
         cmd = self._build_command()
         cwd = str(self._working_dir) if self._working_dir else None
 
-        logger.debug(
-            "CodexCLIProvider: spawning subprocess cmd=%r cwd=%r", cmd, cwd
-        )
+        logger.debug("CodexCLIProvider: spawning subprocess cmd=%r cwd=%r", cmd, cwd)
 
         proc: asyncio.subprocess.Process | None = None
         try:
@@ -225,9 +221,7 @@ class CodexCLIProvider(BaseLLMProvider):
         # A non-zero exit with no stdout is a fatal error.
         if proc.returncode != 0 and not stdout_text:
             error_detail = stderr_text or f"exit code {proc.returncode}"
-            raise RuntimeError(
-                f"Codex CLI exited with an error: {error_detail}"
-            )
+            raise RuntimeError(f"Codex CLI exited with an error: {error_detail}")
 
         # Log stderr as a warning when present but non-fatal.
         if stderr_text:

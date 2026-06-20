@@ -14,9 +14,9 @@ execution; this module just runs them per-unit and shapes the verdict. The
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from .gate_runner import (
     Gate,

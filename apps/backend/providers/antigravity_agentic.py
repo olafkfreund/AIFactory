@@ -78,7 +78,7 @@ def _resolve_model(model: str | None) -> str:
         return ""
     m = model.strip()
     if m.startswith("antigravity:"):
-        m = m[len("antigravity:"):].strip()
+        m = m[len("antigravity:") :].strip()
         return m or _DEFAULT_MODEL
     if m in _PROVIDER_SELECTORS:
         return _DEFAULT_MODEL

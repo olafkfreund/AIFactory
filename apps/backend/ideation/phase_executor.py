@@ -124,7 +124,7 @@ class PhaseExecutor:
         for i, result in enumerate(results):
             ideation_type = self.enabled_types[i]
             if isinstance(result, Exception):
-                errors.append(f"{ideation_type}: {str(result)}")
+                errors.append(f"{ideation_type}: {result!s}")
                 hints_by_type[ideation_type] = []
             else:
                 hints_by_type[ideation_type] = result

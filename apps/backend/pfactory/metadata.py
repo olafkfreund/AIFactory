@@ -35,8 +35,8 @@ import re
 from pathlib import Path
 
 __all__ = [
-    "parse_pfactory_meta",
     "load_pfactory_metadata",
+    "parse_pfactory_meta",
     "render_pfactory_context",
 ]
 

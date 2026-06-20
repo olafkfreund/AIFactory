@@ -28,16 +28,16 @@ from .script_runner import ScriptRunner
 from .types import IdeationConfig, IdeationPhaseResult
 
 __all__ = [
-    "IdeationOrchestrator",
-    "IdeationConfig",
-    "IdeationPhaseResult",
-    "IdeationGenerator",
-    "ProjectAnalyzer",
     "IdeaPrioritizer",
-    "IdeationFormatter",
+    "IdeationConfig",
     "IdeationConfigManager",
-    "PhaseExecutor",
-    "ProjectIndexPhase",
+    "IdeationFormatter",
+    "IdeationGenerator",
+    "IdeationOrchestrator",
+    "IdeationPhaseResult",
     "OutputStreamer",
+    "PhaseExecutor",
+    "ProjectAnalyzer",
+    "ProjectIndexPhase",
     "ScriptRunner",
 ]

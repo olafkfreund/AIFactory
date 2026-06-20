@@ -124,17 +124,11 @@ class TechnicalEvaluator(SubAgent):
                 f"Address {len(security_concerns)} security concerns"
             )
         if performance_concerns:
-            recommendations.append(
-                "Consider performance implications"
-            )
+            recommendations.append("Consider performance implications")
         if scalability_concerns:
-            recommendations.append(
-                "Plan for scalability challenges"
-            )
+            recommendations.append("Plan for scalability challenges")
         if alternative_recommendations:
-            recommendations.append(
-                "Review alternative approaches"
-            )
+            recommendations.append("Review alternative approaches")
 
         recommendations.extend(best_practices[:3])  # Top 3 best practices
 
@@ -387,9 +381,7 @@ class TechnicalEvaluator(SubAgent):
 
             # Simple heuristic evaluation
             if "simpler" in alt_lower or "easier" in alt_lower:
-                evaluations.append(
-                    f"Alternative {i}: {alt} - May reduce complexity"
-                )
+                evaluations.append(f"Alternative {i}: {alt} - May reduce complexity")
             elif "proven" in alt_lower or "established" in alt_lower:
                 evaluations.append(
                     f"Alternative {i}: {alt} - Lower risk, established solution"
@@ -417,9 +409,7 @@ class TechnicalEvaluator(SubAgent):
         parts.append(f"Risk level: {risk_assessment['level']}")
 
         if risk_assessment["factors"]:
-            parts.append(
-                f"Risk factors: {', '.join(risk_assessment['factors'][:3])}"
-            )
+            parts.append(f"Risk factors: {', '.join(risk_assessment['factors'][:3])}")
 
         if pros:
             parts.append(f"Advantages: {len(pros)} identified")

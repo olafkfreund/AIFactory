@@ -49,8 +49,9 @@ class Artifact:
 class ArtifactWriter:
     """Writes build artifacts + a manifest, mirrored to the source spec."""
 
-    def __init__(self, spec_dir: Path, source_spec_dir: Path | None = None,
-                 now: Any = None) -> None:
+    def __init__(
+        self, spec_dir: Path, source_spec_dir: Path | None = None, now: Any = None
+    ) -> None:
         self.spec_dir = Path(spec_dir)
         self.source_spec_dir = Path(source_spec_dir) if source_spec_dir else None
         self._now = now or (lambda: datetime.now().isoformat())
@@ -61,7 +62,9 @@ class ArtifactWriter:
             dirs.append(self.source_spec_dir)
         return dirs
 
-    def write(self, kind: str, title: str, content: str, *, name: str | None = None) -> Artifact:
+    def write(
+        self, kind: str, title: str, content: str, *, name: str | None = None
+    ) -> Artifact:
         """Write/overwrite an artifact markdown file and update the manifest."""
         stem = name or kind
         rel = f"{ARTIFACTS_DIRNAME}/{stem}.md"

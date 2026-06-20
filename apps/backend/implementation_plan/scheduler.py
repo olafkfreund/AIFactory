@@ -114,9 +114,7 @@ def validate_dependencies(subtasks: list[Any]) -> list[str]:
             if dep == s.id:
                 errors.append(f"Subtask '{s.id}' depends on itself")
             elif dep not in ids:
-                errors.append(
-                    f"Subtask '{s.id}' depends on unknown subtask '{dep}'"
-                )
+                errors.append(f"Subtask '{s.id}' depends on unknown subtask '{dep}'")
 
     # Cycle detection via DFS over known edges (ignore unknown deps already flagged)
     WHITE, GREY, BLACK = 0, 1, 2
@@ -129,7 +127,7 @@ def validate_dependencies(subtasks: list[Any]) -> list[str]:
             if dep not in by_id:
                 continue  # unknown dep already reported
             if color[dep] == GREY:
-                cycle = stack[stack.index(dep):] + [dep]
+                cycle = stack[stack.index(dep) :] + [dep]
                 errors.append("Dependency cycle: " + " -> ".join(cycle))
             elif color[dep] == WHITE:
                 visit(dep, stack)

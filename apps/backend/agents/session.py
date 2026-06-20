@@ -53,7 +53,11 @@ logger = logging.getLogger(__name__)
 
 
 def _append_build_progress(
-    spec_dir: Path, subtask_id: str, subtask: dict, session_num: int, commit_hash: str | None
+    spec_dir: Path,
+    subtask_id: str,
+    subtask: dict,
+    session_num: int,
+    commit_hash: str | None,
 ) -> None:
     """Append a completed subtask line to build-progress.txt."""
     progress_file = spec_dir / "build-progress.txt"
@@ -231,7 +235,9 @@ async def post_session_processing(
         # Append to build-progress.txt for frontend visibility
         _append_build_progress(spec_dir, subtask_id, subtask, session_num, commit_after)
         if source_spec_dir:
-            _append_build_progress(source_spec_dir, subtask_id, subtask, session_num, commit_after)
+            _append_build_progress(
+                source_spec_dir, subtask_id, subtask, session_num, commit_after
+            )
 
         return True
 

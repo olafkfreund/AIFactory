@@ -13,9 +13,9 @@ from .roadmap_runner import main as run_roadmap
 from .spec_runner import main as run_spec
 
 __all__ = [
-    "run_spec",
-    "run_roadmap",
+    "run_ai_analyzer",
     "run_ideation",
     "run_insights",
-    "run_ai_analyzer",
+    "run_roadmap",
+    "run_spec",
 ]

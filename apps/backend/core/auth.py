@@ -60,6 +60,7 @@ def headless_prefer_api_key() -> bool:
         "on",
     )
 
+
 # Environment variables to pass through to SDK subprocess
 # NOTE: ANTHROPIC_API_KEY is excluded here by default (prevents silent API
 # billing); it is added dynamically by get_sdk_env_vars() only when
@@ -109,17 +110,34 @@ _AGENT_ENV_KEEP: set[str] = {
 _AGENT_ENV_DENY_EXACT: set[str] = {
     # AIFactory's own control-plane secrets — an agent with these could call the
     # web-server as admin or forge tokens.
-    "API_TOKEN", "APP_API_TOKEN", "JWT_SECRET", "APP_JWT_SECRET",
-    "DATABASE_URL", "APP_DATABASE_URL",
+    "API_TOKEN",
+    "APP_API_TOKEN",
+    "JWT_SECRET",
+    "APP_JWT_SECRET",
+    "DATABASE_URL",
+    "APP_DATABASE_URL",
     # Provider API keys (the agent authenticates via OAuth, not these).
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-    "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "VOYAGE_API_KEY",
-    "MISTRAL_API_KEY", "DEEPSEEK_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "TOGETHER_API_KEY",
+    "OPENROUTER_API_KEY",
+    "VOYAGE_API_KEY",
+    "MISTRAL_API_KEY",
+    "DEEPSEEK_API_KEY",
     # Cloud + secrets-manager credentials.
-    "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SESSION_TOKEN",
-    "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CLIENT_SECRET", "VAULT_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SESSION_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AZURE_CLIENT_SECRET",
+    "VAULT_TOKEN",
     # Integrations.
-    "LINEAR_API_KEY", "GITHUB_TOKEN", "GH_TOKEN",
+    "LINEAR_API_KEY",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
 }
 
 # Generic secret-bearing names (any host var matching is neutralized).

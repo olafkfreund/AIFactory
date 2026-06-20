@@ -86,7 +86,8 @@ class ClaudeProvider(BaseLLMProvider):
         effort_level: str | None = None,
         fast_mode: bool = False,
         thinking_level: str | None = None,
-        working_dir: Path | None = None,  # Alias for project_dir (compat with other providers)
+        working_dir: Path
+        | None = None,  # Alias for project_dir (compat with other providers)
         **_kwargs: Any,  # Ignore unknown kwargs from factory
     ) -> None:
         # Accept working_dir as alias for project_dir

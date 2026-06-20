@@ -16,4 +16,4 @@ This module is organized into several submodules for better maintainability:
 from .executor import PhaseExecutor
 from .models import MAX_RETRIES, PhaseResult
 
-__all__ = ["PhaseExecutor", "PhaseResult", "MAX_RETRIES"]
+__all__ = ["MAX_RETRIES", "PhaseExecutor", "PhaseResult"]

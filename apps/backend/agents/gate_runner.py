@@ -214,8 +214,13 @@ def _nix_wrap(command: list[str], *, mount: str = "/work") -> list[str]:
     """
     inner = shlex.join(command)
     return [
-        "nix", "develop", f"path:{mount}#default",
-        "--command", "bash", "-c", inner,
+        "nix",
+        "develop",
+        f"path:{mount}#default",
+        "--command",
+        "bash",
+        "-c",
+        inner,
     ]
 
 

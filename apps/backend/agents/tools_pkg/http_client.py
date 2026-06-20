@@ -173,7 +173,7 @@ async def request(method: str, path: str, **kwargs: Any) -> dict[str, Any] | lis
     # hits the scope-gated proxy. Paths already under the proxy prefix
     # pass through unchanged (allows future direct callers / tests).
     if path.startswith("/api/") and not path.startswith(f"{MCP_PROXY_PREFIX}/"):
-        path = MCP_PROXY_PREFIX + path[len("/api"):]
+        path = MCP_PROXY_PREFIX + path[len("/api") :]
 
     client = await _state.get_client()
     base = _state.base_url()
@@ -206,9 +206,7 @@ async def request(method: str, path: str, **kwargs: Any) -> dict[str, Any] | lis
     if response.status_code == 404:
         # Tools may want to differentiate "no such resource" from other
         # errors; surface a structured message but stay a single line.
-        raise MCPHTTPError(
-            f"Resource not found at {method} {path} (HTTP 404)"
-        )
+        raise MCPHTTPError(f"Resource not found at {method} {path} (HTTP 404)")
     if response.status_code >= 500:
         body = response.text[:500]
         raise MCPHTTPError(
