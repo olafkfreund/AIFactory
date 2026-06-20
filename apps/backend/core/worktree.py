@@ -20,10 +20,41 @@ import os
 import re
 import shutil
 import subprocess
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import Literal
+
+fcntl: ModuleType | None
+try:  # pragma: no cover - platform dependent
+    import fcntl as _fcntl
+
+    fcntl = _fcntl
+except ImportError:  # pragma: no cover - non-POSIX
+    fcntl = None
 
 logger = logging.getLogger(__name__)
+
+# Cross-process serialization of git mutations on the SHARED base repo.
+#
+# Admission control (#672) lets MULTIPLE independent builds run concurrently in
+# one pod, each constructing its own WorktreeManager against the SAME
+# project_dir/.git. `git worktree add` / `branch -D` / `worktree remove` /
+# `merge` / `commit` all mutate that shared .git (.git/worktrees, refs, the
+# index) and take git's own index.lock — but each build is a separate process,
+# so the per-build asyncio locks (e.g. parallel_integration's create_lock) do
+# NOT serialize across builds. Two concurrent builds can then collide on
+# index-lock contention or corrupt refs.
+#
+# We serialize those mutations on a single per-repo flock sentinel. The lock is
+# bounded (timeout -> clear error) so a wedged holder can't hang a build
+# forever, and the sentinel is intentionally never unlinked (deleting an flock
+# target races concurrent holders — same rationale as agents/inbox.py).
+_GIT_LOCK_TIMEOUT_SECONDS = float(os.getenv("AIFACTORY_GIT_LOCK_TIMEOUT", "120"))
+_GIT_LOCK_FILENAME = "aifactory-worktree.lock"
 
 # Build/test artifacts that must never be committed — committing them makes
 # concurrent parallel coders collide on merge-back (binary .coverage conflicts,
@@ -77,6 +108,55 @@ class WorktreeError(Exception):
     pass
 
 
+class _BaseRepoGitLock:
+    """Exclusive cross-process flock on the shared base repo's .git.
+
+    All concurrent builds that share a base repo agree on one sentinel file
+    (``<git-common-dir>/aifactory-worktree.lock``) and take an exclusive
+    ``fcntl.flock`` on it, so the actual git mutations queue instead of racing
+    the shared index/refs. Bounded by ``timeout``; the sentinel is never
+    unlinked (deleting an flock target races concurrent holders).
+    """
+
+    def __init__(
+        self, lock_path: Path | str, timeout: float = _GIT_LOCK_TIMEOUT_SECONDS
+    ):
+        self._lock_path = Path(lock_path)
+        self._timeout = timeout
+        self._fd: int | None = None
+
+    def __enter__(self) -> "_BaseRepoGitLock":
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        if fcntl is None:  # pragma: no cover - non-POSIX: degrade to no-op lock
+            return self
+        start = time.monotonic()
+        while True:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return self
+            except (BlockingIOError, OSError):
+                if time.monotonic() - start >= self._timeout:
+                    os.close(self._fd)
+                    self._fd = None
+                    raise WorktreeError(
+                        f"Timed out after {self._timeout:.0f}s waiting for the "
+                        f"base-repo git lock ({self._lock_path}). Another build "
+                        f"is holding it, or a previous build wedged."
+                    ) from None
+                time.sleep(0.02)
+
+    def __exit__(self, *_exc: object) -> Literal[False]:
+        if self._fd is not None:
+            try:
+                if fcntl is not None:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+        return False
+
+
 @dataclass
 class WorktreeInfo:
     """Information about a spec's worktree."""
@@ -109,6 +189,39 @@ class WorktreeManager:
         self.base_branch = base_branch or self._detect_base_branch()
         self.worktrees_dir = project_dir / ".aifactory" / "worktrees" / "tasks"
         self._merge_lock = asyncio.Lock()
+        self._git_lock_path = self._resolve_git_lock_path()
+
+    def _resolve_git_lock_path(self) -> Path:
+        """Path to the per-base-repo git mutation sentinel.
+
+        Lives in the git COMMON dir so every linked worktree and every
+        concurrent build that shares this base repo lands on the same sentinel
+        (a worktree's ``.git`` file points back here). Falls back to
+        ``project_dir/.git`` if resolution fails.
+        """
+        try:
+            # Route through _run_git (not a raw subprocess) so we don't add a
+            # new subprocess call site to the strict-ruff baseline.
+            result = self._run_git(["rev-parse", "--git-common-dir"])
+            if result.returncode == 0 and result.stdout.strip():
+                git_dir = Path(result.stdout.strip())
+                if not git_dir.is_absolute():
+                    git_dir = (self.project_dir / git_dir).resolve()
+                return git_dir / _GIT_LOCK_FILENAME
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("git-common-dir resolution failed: %s", exc)
+        return self.project_dir / ".git" / _GIT_LOCK_FILENAME
+
+    @contextmanager
+    def _base_repo_git_lock(self) -> Iterator[None]:
+        """Serialize cross-process git mutations on the shared base repo.
+
+        Wrap any operation that touches the shared ``.git`` (index, refs,
+        ``.git/worktrees``) so concurrent builds queue briefly instead of
+        racing git's index.lock. Bounded; raises WorktreeError on timeout.
+        """
+        with _BaseRepoGitLock(self._git_lock_path):
+            yield
 
     def _ensure_not_bare(self) -> None:
         """Guarantee the primary checkout is not marked as a bare repository.
@@ -443,25 +556,38 @@ class WorktreeManager:
                 f"  git branch -m {conflicting_branch} {conflicting_branch}-backup"
             )
 
-        # Remove existing if present (from crashed previous run or pre-created directory)
-        if worktree_path.exists():
-            # Check if it's a real worktree (has .git file)
-            git_path = worktree_path / ".git"
-            if git_path.exists() and git_path.is_file():
-                # Real worktree - use git worktree remove
-                self._run_git(["worktree", "remove", "--force", str(worktree_path)])
-            else:
-                # Not a real worktree (e.g., pre-created by agent_service)
-                # Just delete the directory
-                shutil.rmtree(worktree_path, ignore_errors=True)
+        # Serialize the shared-.git mutations below across CONCURRENT BUILDS:
+        # `worktree remove`, `branch -D`, and `worktree add` all take git's
+        # index.lock and rewrite .git/worktrees + refs. Two builds racing here
+        # (now possible under admission control #672) hit index-lock contention
+        # or corrupt refs. The lock is per-base-repo and bounded.
+        with self._base_repo_git_lock():
+            # Remove existing if present (from crashed previous run or pre-created directory)
+            if worktree_path.exists():
+                # Check if it's a real worktree (has .git file)
+                git_path = worktree_path / ".git"
+                if git_path.exists() and git_path.is_file():
+                    # Real worktree - use git worktree remove
+                    self._run_git(["worktree", "remove", "--force", str(worktree_path)])
+                else:
+                    # Not a real worktree (e.g., pre-created by agent_service)
+                    # Just delete the directory
+                    shutil.rmtree(worktree_path, ignore_errors=True)
 
-        # Delete branch if it exists (from previous attempt)
-        self._run_git(["branch", "-D", branch_name])
+            # Delete branch if it exists (from previous attempt)
+            self._run_git(["branch", "-D", branch_name])
 
-        # Create worktree with new branch from base
-        result = self._run_git(
-            ["worktree", "add", "-b", branch_name, str(worktree_path), self.base_branch]
-        )
+            # Create worktree with new branch from base
+            result = self._run_git(
+                [
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch_name,
+                    str(worktree_path),
+                    self.base_branch,
+                ]
+            )
 
         if result.returncode != 0:
             raise WorktreeError(
@@ -527,35 +653,38 @@ class WorktreeManager:
         worktree_path = self.get_worktree_path(spec_name)
         branch_name = self.get_branch_name(spec_name)
 
-        if worktree_path.exists():
-            result = self._run_git(
-                ["worktree", "remove", "--force", str(worktree_path)]
-            )
-            if result.returncode == 0:
-                print(f"Removed worktree: {worktree_path.name}")
-                logger.info(
-                    f"Removed worktree for spec '{spec_name}'",
-                    extra={
-                        "worktree_path": str(worktree_path),
-                    },
+        # Same shared-.git mutations as create_worktree (remove/branch -D/prune);
+        # serialize across concurrent builds on the per-base-repo lock.
+        with self._base_repo_git_lock():
+            if worktree_path.exists():
+                result = self._run_git(
+                    ["worktree", "remove", "--force", str(worktree_path)]
                 )
-            else:
-                print(f"Warning: Could not remove worktree: {result.stderr}")
-                logger.warning(
-                    "Could not remove worktree via git, falling back to rmtree",
-                    extra={
-                        "worktree_path": str(worktree_path),
-                        "error": result.stderr,
-                    },
-                )
-                shutil.rmtree(worktree_path, ignore_errors=True)
+                if result.returncode == 0:
+                    print(f"Removed worktree: {worktree_path.name}")
+                    logger.info(
+                        f"Removed worktree for spec '{spec_name}'",
+                        extra={
+                            "worktree_path": str(worktree_path),
+                        },
+                    )
+                else:
+                    print(f"Warning: Could not remove worktree: {result.stderr}")
+                    logger.warning(
+                        "Could not remove worktree via git, falling back to rmtree",
+                        extra={
+                            "worktree_path": str(worktree_path),
+                            "error": result.stderr,
+                        },
+                    )
+                    shutil.rmtree(worktree_path, ignore_errors=True)
 
-        if delete_branch:
-            self._run_git(["branch", "-D", branch_name])
-            print(f"Deleted branch: {branch_name}")
-            logger.info(f"Deleted branch '{branch_name}'")
+            if delete_branch:
+                self._run_git(["branch", "-D", branch_name])
+                print(f"Deleted branch: {branch_name}")
+                logger.info(f"Deleted branch '{branch_name}'")
 
-        self._run_git(["worktree", "prune"])
+            self._run_git(["worktree", "prune"])
 
     def merge_worktree(
         self, spec_name: str, delete_after: bool = False, no_commit: bool = False
@@ -620,6 +749,29 @@ class WorktreeManager:
                 },
             )
 
+        # The body below mutates the SHARED base repo (checkout/stash/merge on
+        # its working tree, index, HEAD and refs). Under admission control
+        # (#672) another concurrent build could be doing `git worktree add` or
+        # its own merge against the same .git at the same instant → index.lock
+        # contention / ref corruption. Serialize on the per-base-repo lock.
+        # delete_after (worktree/branch removal) re-enters the lock via
+        # remove_worktree, so it stays OUTSIDE this block (flock is not
+        # reentrant across separate fds in one process).
+        with self._base_repo_git_lock():
+            merged = self._do_merge_locked(spec_name, info, no_commit)
+
+        if not merged:
+            return False
+
+        if delete_after:
+            self.remove_worktree(spec_name, delete_branch=True)
+
+        return True
+
+    def _do_merge_locked(
+        self, spec_name: str, info: WorktreeInfo, no_commit: bool
+    ) -> bool:
+        """Perform the base-repo mutating merge. Caller MUST hold the git lock."""
         # Clean up internal auto-generated files that can block merge/checkout.
         # These are untracked files created by agents that would collide with
         # the same untracked files coming from the worktree branch.
@@ -734,9 +886,6 @@ class WorktreeManager:
                     "base_branch": self.base_branch,
                 },
             )
-
-        if delete_after:
-            self.remove_worktree(spec_name, delete_branch=True)
 
         return True
 
