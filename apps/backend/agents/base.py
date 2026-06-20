@@ -8,6 +8,13 @@ Shared imports, types, and constants used across agent modules.
 import logging
 import re
 
+# Canonical fleet secret-redaction layer (vendored byte-for-byte from the Factory
+# hub; epic Factory#154, issue Factory#161). We layer the AIFactory-specific
+# redactions below ON TOP of this superset so this function gains the hub's
+# coverage (GitHub PATs, AWS keys, Slack tokens, PEM private keys, URL userinfo,
+# Authorization/PRIVATE-TOKEN header values) without losing any prior behaviour.
+from factory_common.secrets import redact as redact_fleet_secrets
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -62,11 +69,18 @@ def sanitize_error_message(error_message: str, max_length: int = 500) -> str:
     if not error_message:
         return ""
 
-    # Redact patterns that look like API keys or tokens
+    # Step 1: apply the canonical fleet redaction first (the superset pattern
+    # table). This catches credential shapes the AIFactory-specific rules below
+    # never covered - GitHub/GitLab PATs, AWS access keys, Slack tokens, PEM
+    # private keys, URL userinfo, and Authorization:/PRIVATE-TOKEN: header values
+    # - replacing them with the fleet ***REDACTED*** placeholder.
+    sanitized = redact_fleet_secrets(error_message)
+
+    # Step 2: layer the AIFactory-specific redactions (preserved verbatim, with
+    # their original placeholder strings) for the shapes the fleet table does not
+    # target: provider sk-/key- API keys and bare token=/secret=/Bearer values.
     # Pattern: sk-... (OpenAI/Anthropic keys like sk-ant-api03-...)
-    sanitized = re.sub(
-        r"\bsk-[a-zA-Z0-9._\-]{20,}\b", "[REDACTED_API_KEY]", error_message
-    )
+    sanitized = re.sub(r"\bsk-[a-zA-Z0-9._\-]{20,}\b", "[REDACTED_API_KEY]", sanitized)
 
     # Pattern: key-... (generic API keys)
     sanitized = re.sub(r"\bkey-[a-zA-Z0-9._\-]{20,}\b", "[REDACTED_API_KEY]", sanitized)
