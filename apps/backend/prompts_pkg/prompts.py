@@ -164,6 +164,9 @@ The project root is the parent of aifactory/. All code goes in the project root,
 
 """
 
+    # RFC-0012: surface the team's house standards so the coder follows them.
+    spec_context += get_house_standards_context(spec_dir)
+
     # Check for recovery context (stuck subtasks, retry hints)
     recovery_context = _get_recovery_context(spec_dir)
     if recovery_context:
@@ -255,6 +258,75 @@ Subtasks with previous attempts:
 
     except (OSError, json.JSONDecodeError):
         return ""
+
+
+def get_house_standards_context(spec_dir: Path) -> str:
+    """Render the RFC-0012 house standards as a prompt block.
+
+    Reads the signed Task Contract (``context/task_contract.json``, falling back
+    to ``implementation_plan.json``) and surfaces
+    ``epic_context.house_standards`` so the coder / QA agents FOLLOW the team's
+    own conventions (linters, build managers, golden-path guides) instead of
+    generic defaults. Degrades silently to "" when no standards were retrieved —
+    RFC-0012 retrieval is best-effort, but the standards_conformance gate fails
+    the build if a *retrieved* standard is then ignored.
+    """
+    contract = None
+    for rel in ("context/task_contract.json", "implementation_plan.json"):
+        path = spec_dir / rel
+        if path.exists():
+            try:
+                contract = json.loads(path.read_text())
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+    if not isinstance(contract, dict):
+        return ""
+
+    epic_context = contract.get("epic_context")
+    house = epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    if not isinstance(house, dict) or not house.get("available"):
+        return ""
+    sources = [s for s in house.get("sources", []) if isinstance(s, dict)]
+    if not sources:
+        return ""
+
+    tools: list[str] = []
+    version_managers: list[str] = []
+    techdocs: list[str] = []
+    lifecycle = None
+    for src in sources:
+        conv = src.get("conventions")
+        if isinstance(conv, dict):
+            tools += [str(t) for t in conv.get("code_quality_tools", []) or []]
+            version_managers += [str(t) for t in conv.get("version_managers", []) or []]
+        techdocs += [str(r) for r in src.get("techdocs_refs", []) or []]
+        lifecycle = lifecycle or src.get("lifecycle")
+
+    lines = [
+        "## HOUSE STANDARDS (RFC-0012 — FOLLOW THESE)",
+        "",
+        "This team has its own standards. Follow them over generic defaults. The "
+        "`standards_conformance` gate fails the build when a retrieved standard is "
+        "ignored (e.g. a declared lint/type tool that is never run).",
+        "",
+    ]
+    if tools:
+        lines.append(
+            f"- **Code-quality tools (use and run these):** {', '.join(dict.fromkeys(tools))}"
+        )
+    if version_managers:
+        lines.append(
+            f"- **Version / build managers:** {', '.join(dict.fromkeys(version_managers))}"
+        )
+    if lifecycle:
+        lines.append(f"- **Component lifecycle:** {lifecycle}")
+    if techdocs:
+        lines.append("- **Consult these team guides (TechDocs) before coding:**")
+        for ref in dict.fromkeys(techdocs):
+            lines.append(f"  - `{ref}`")
+    lines += ["", "---", "", ""]
+    return "\n".join(lines)
 
 
 def get_followup_planner_prompt(spec_dir: Path) -> str:
@@ -399,6 +471,7 @@ The project root is: `{project_dir}`
 ---
 
 """
+            spec_context += get_house_standards_context(spec_dir)
             return spec_context + base_prompt
 
     # Load base QA reviewer prompt (full mode with MCP tools)
@@ -457,6 +530,9 @@ The project root is: `{project_dir}`
         )
 
     spec_context += "---\n\n"
+
+    # RFC-0012: surface the team's house standards so QA checks against them.
+    spec_context += get_house_standards_context(spec_dir)
 
     # Find injection point in base prompt (after PHASE 4, before PHASE 5)
     injection_marker = (
