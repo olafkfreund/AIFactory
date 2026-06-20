@@ -7,11 +7,13 @@ enabling task execution with real-time streaming of logs and progress.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
 import signal
 import sys
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -28,6 +30,10 @@ from ..websockets.events import (
     emit_task_update,
 )
 from . import task_control
+
+# Module-level logger for the admission-control paths (RFC-0016 #668). The rest
+# of this (legacy) module still uses local ``import logging`` inside methods.
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Tenant Isolation Mode — namespace routing (Epic #35 #36 PR-2)
@@ -252,6 +258,28 @@ class TaskProgress:
     sequence_number: int = 0  # For frontend out-of-order detection
     started_at: str | None = None  # Task start time for UI display
     data: dict = field(default_factory=dict)
+
+
+@dataclass
+class QueuedTask:
+    """A build admitted to the concurrency queue (RFC-0016 #668).
+
+    Holds the full set of arguments needed to start the build later, when a
+    running slot frees up. Captured verbatim from ``start_task_execution`` so
+    a dequeued task spawns identically to one that was admitted immediately.
+    """
+
+    task_id: str
+    project_path: Path
+    spec_id: str
+    auto_continue: bool
+    base_branch: str | None
+    mode: str | None
+    force: bool
+    user_id: str
+    stop_after_planning: bool
+    parallel: bool | None
+    workers: int | None
 
 
 @dataclass
@@ -603,6 +631,14 @@ class AgentService:
         # the kanban detail view scroll the agent's narrative in real time
         # rather than waiting for full-page reload (Tier B auto-reload).
         self._task_build_progress_offset: dict[str, int] = {}
+        # Admission control (RFC-0016 #668). A global concurrency cap keyed off
+        # ``settings.MAX_CONCURRENT_TASKS``. Builds admitted while at the cap are
+        # parked FIFO in ``_task_queue`` and auto-started when a running build
+        # finishes (drained from the subprocess-exit monitor). The lock
+        # serialises the count-check + spawn + dequeue so admit and exit-callback
+        # can never race on the same freed slot. Single event loop, no busy-wait.
+        self._admission_lock = asyncio.Lock()
+        self._task_queue: deque[QueuedTask] = deque()
 
     @property
     def backend_path(self) -> Path:
@@ -1745,6 +1781,14 @@ class AgentService:
             self, task_id, proc, project_path, spec_id, cmd, env
         )
 
+        # RFC-0016 #668: a build just exited (or this monitor instance handed
+        # off to a failover/continuation restart). Either way, try to fill any
+        # free slot from the FIFO queue. ``_drain_queue`` is slot-count driven
+        # and lock-guarded, so it is a safe no-op when a restart kept the task
+        # in ``running_tasks`` (count unchanged) and only admits when a slot
+        # genuinely freed.
+        await self._drain_queue()
+
     async def _update_plan_status(
         self,
         project_path: Path,
@@ -2475,7 +2519,174 @@ class AgentService:
             pass
         return None, None
 
-    async def start_task_execution(
+    def _concurrency_cap(self) -> int:
+        """Global concurrent-build cap (RFC-0016 #668).
+
+        Reads ``settings.MAX_CONCURRENT_TASKS`` (env override
+        ``APP_MAX_CONCURRENT_TASKS``). A value <= 0 means *unlimited* — the
+        previous behaviour before this cap existed — so existing deployments
+        that set 0 keep oversubscribing exactly as before. Default is 5.
+        """
+        try:
+            return int(self.settings.MAX_CONCURRENT_TASKS)
+        except (TypeError, ValueError):
+            return 5
+
+    async def start_task_execution(  # noqa: PLR0913 - public API parity with _spawn_task_execution
+        self,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        auto_continue: bool = True,
+        base_branch: str | None = None,
+        mode: str | None = "full",
+        force: bool = False,
+        user_id: str = "",
+        stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
+    ) -> asyncio.subprocess.Process | None:
+        """Admit a build: start it now, or queue it when at the concurrency cap.
+
+        Admission control (RFC-0016 #668). Behaviour:
+
+        * The per-task "already running" guard is preserved — re-starting the
+          SAME ``task_id`` still raises ``ValueError`` (the route maps this to a
+          409). The cap below is across DIFFERENT task_ids.
+        * Below the cap (or cap <= 0 = unlimited): spawn immediately and return
+          the ``Process``, exactly as before.
+        * At the cap: the task is NOT rejected and the event loop is NOT
+          blocked. It is parked FIFO in ``_task_queue``, marked ``queued`` in
+          the control-plane store (so the cockpit/poller can see it), and
+          auto-started when a running build finishes (see ``_drain_queue``).
+          Returns ``None`` to signal "queued, not started".
+
+        See ``_spawn_task_execution`` for the full argument semantics.
+        """
+        # Per-task guard stays OUTSIDE the admission lock so a duplicate start of
+        # the same running task still fast-fails with 409 regardless of the cap.
+        if task_id in self.running_tasks:
+            raise ValueError(f"Task {task_id} is already running")
+        if any(q.task_id == task_id for q in self._task_queue):
+            raise ValueError(f"Task {task_id} is already queued")
+
+        async with self._admission_lock:
+            cap = self._concurrency_cap()
+            # cap <= 0 => unlimited (back-compat). Otherwise admit immediately
+            # only when strictly below the cap.
+            if cap <= 0 or len(self.running_tasks) < cap:
+                return await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+
+            # At the cap — park FIFO and mark queued. Do not start, do not 409.
+            self._task_queue.append(
+                QueuedTask(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+            )
+            _log.info(
+                "[AgentService] At concurrency cap (%d running, cap=%d) — "
+                "queued task %s (position %d)",
+                len(self.running_tasks),
+                cap,
+                task_id,
+                len(self._task_queue),
+            )
+
+        # Mark queued + emit OUTSIDE the lock (I/O + WS fan-out): the task is
+        # already safely parked in the queue, so releasing the lock first keeps
+        # admissions snappy and avoids holding it across non-admission work.
+        await self._mark_task_queued(task_id, project_path, spec_id)
+        return None
+
+    async def _mark_task_queued(
+        self, task_id: str, project_path: Path, spec_id: str
+    ) -> None:
+        """Persist + emit the ``queued`` status for a parked build (#668)."""
+        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        try:
+            task_control.write_control(
+                spec_dir,
+                status="queued",
+                clear_review_reason=True,
+                updated_by="web_server",
+            )
+        except OSError as e:
+            _log.warning(
+                "[AgentService] could not persist queued status for %s: %s", task_id, e
+            )
+        try:
+            await emit_task_status(task_id, "queued")
+        except Exception:  # noqa: BLE001 - status emit must not break admission
+            _log.debug(
+                "[AgentService] queued status emit raised (ignored)", exc_info=True
+            )
+
+    async def _drain_queue(self) -> None:
+        """Start queued builds FIFO while there is free capacity (#668).
+
+        Called from the subprocess-exit monitor after a build finishes so a
+        freed slot pulls the next queued task. Guarded by the admission lock so
+        it can never race with ``start_task_execution`` on the same slot. Each
+        spawn happens under the lock, keeping ``running_tasks`` counting exact;
+        a failed spawn drops that task and moves on (no busy-wait, no requeue
+        loop). Never raises — it runs in the monitor's teardown path.
+        """
+        async with self._admission_lock:
+            cap = self._concurrency_cap()
+            while self._task_queue and (cap <= 0 or len(self.running_tasks) < cap):
+                qt = self._task_queue.popleft()
+                # Skip a task that was started/stopped out of band while queued.
+                if qt.task_id in self.running_tasks:
+                    continue
+                try:
+                    await self._spawn_task_execution(
+                        task_id=qt.task_id,
+                        project_path=qt.project_path,
+                        spec_id=qt.spec_id,
+                        auto_continue=qt.auto_continue,
+                        base_branch=qt.base_branch,
+                        mode=qt.mode,
+                        force=qt.force,
+                        user_id=qt.user_id,
+                        stop_after_planning=qt.stop_after_planning,
+                        parallel=qt.parallel,
+                        workers=qt.workers,
+                    )
+                    _log.info(
+                        "[AgentService] Dequeued + started %s (%d running, %d queued)",
+                        qt.task_id,
+                        len(self.running_tasks),
+                        len(self._task_queue),
+                    )
+                except Exception:  # noqa: BLE001 - one bad spawn must not stall the queue
+                    _log.exception(
+                        "[AgentService] failed to start queued task %s — dropping",
+                        qt.task_id,
+                    )
+
+    async def _spawn_task_execution(
         self,
         task_id: str,
         project_path: Path,
@@ -2489,7 +2700,10 @@ class AgentService:
         parallel: bool | None = None,
         workers: int | None = None,
     ) -> asyncio.subprocess.Process:
-        """Start task execution (run.py).
+        """Spawn task execution (run.py) — the real subprocess start.
+
+        Admission/queueing is handled by ``start_task_execution``; by the time
+        this runs a slot has already been reserved under the admission lock.
 
         Args:
             mode: "quick" for simplified prompts (~70% fewer tokens), "full" for comprehensive prompts.
@@ -2881,6 +3095,18 @@ class AgentService:
         import logging
         logger = logging.getLogger(__name__)
         if task_id not in self.running_tasks:
+            # RFC-0016 #668: a task can be parked in the admission queue rather
+            # than running. Stopping it just removes it from the queue (no
+            # process to kill) so it never auto-starts later.
+            if any(q.task_id == task_id for q in self._task_queue):
+                async with self._admission_lock:
+                    self._task_queue = deque(
+                        q for q in self._task_queue if q.task_id != task_id
+                    )
+                logger.info(
+                    f"[AgentService] Removed queued task {task_id} from admission queue"
+                )
+                return True
             logger.info(f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)")
             return False
 
@@ -2991,6 +3217,14 @@ class AgentService:
     def get_running_tasks(self) -> list[str]:
         """Get list of running task IDs."""
         return list(self.running_tasks.keys())
+
+    def is_queued(self, task_id: str) -> bool:
+        """Check if a task is parked in the admission queue (RFC-0016 #668)."""
+        return any(q.task_id == task_id for q in self._task_queue)
+
+    def get_queued_tasks(self) -> list[str]:
+        """Get queued task IDs in FIFO order (RFC-0016 #668)."""
+        return [q.task_id for q in self._task_queue]
 
 
 # Global service instance

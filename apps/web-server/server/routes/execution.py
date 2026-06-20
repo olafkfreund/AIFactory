@@ -726,7 +726,7 @@ async def start_task(
         )
 
     try:
-        await agent_service.start_task_execution(
+        proc = await agent_service.start_task_execution(
             task_id=task_id,
             project_path=project_path,
             spec_id=spec_id,
@@ -738,27 +738,39 @@ async def start_task(
             parallel=effective_parallel,
             workers=effective_workers,
         )
-
-        # Persist status to implementation_plan.json for page refresh survival
-        # This ensures the task shows as "in_progress" even after browser refresh
-        try:
-            if implementation_plan.exists():
-                plan = json.loads(implementation_plan.read_text())
-                plan["status"] = "in_progress"
-                implementation_plan.write_text(json.dumps(plan, indent=2))
-                logger.info(
-                    f"[StartTask] Persisted status=in_progress to {implementation_plan}"
-                )
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"[StartTask] Failed to persist status: {e}")
-
-        # Emit status change for real-time frontend update
-        await emit_task_status(task_id, "in_progress")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start task: {str(e)}",
         )
+
+    # RFC-0016 #668: a None return means the build was admitted to the
+    # concurrency queue (at the global cap) rather than started immediately.
+    # It is NOT a failure — the queued status is already persisted/emitted by
+    # the service, and the exit monitor auto-starts it FIFO when a slot frees.
+    if proc is None:
+        return {
+            "success": True,
+            "task_id": task_id,
+            "status": "queued",
+            "message": "Task queued — at concurrency cap, will start when a slot frees",
+        }
+
+    # Persist status to implementation_plan.json for page refresh survival
+    # This ensures the task shows as "in_progress" even after browser refresh
+    try:
+        if implementation_plan.exists():
+            plan = json.loads(implementation_plan.read_text())
+            plan["status"] = "in_progress"
+            implementation_plan.write_text(json.dumps(plan, indent=2))
+            logger.info(
+                f"[StartTask] Persisted status=in_progress to {implementation_plan}"
+            )
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"[StartTask] Failed to persist status: {e}")
+
+    # Emit status change for real-time frontend update
+    await emit_task_status(task_id, "in_progress")
 
     return {
         "success": True,

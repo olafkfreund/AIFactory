@@ -174,7 +174,10 @@ class Settings(BaseSettings):
     DEFAULT_SHELL: str = "/bin/bash"
     MAX_TERMINALS: int = 20
 
-    # Task execution
+    # Task execution. Global cap on concurrently RUNNING builds, enforced by
+    # AgentService admission control (RFC-0016 #668): at the cap, new builds are
+    # queued FIFO instead of oversubscribing the pod. Env override
+    # APP_MAX_CONCURRENT_TASKS; a value <= 0 means unlimited (pre-cap behaviour).
     MAX_CONCURRENT_TASKS: int = 5
 
     # Subprocess monitor tunables (#651) — surfaced on the pydantic-settings
