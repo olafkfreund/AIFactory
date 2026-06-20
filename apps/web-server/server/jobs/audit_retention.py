@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,11 +40,9 @@ from ..database.models import AuditLog
 logger = logging.getLogger(__name__)
 
 
-async def run_retention(
-    db: AsyncSession, *, as_of: datetime | None = None
-) -> dict:
+async def run_retention(db: AsyncSession, *, as_of: datetime | None = None) -> dict:
     """Delete rows where retention_until <= ``as_of``. Returns a summary."""
-    now = as_of or datetime.utcnow()
+    now = as_of or datetime.now(timezone.utc).replace(tzinfo=None)
     # Count first so the summary can report a clean before/after.
     count_q = select(func.count(AuditLog.id)).where(
         AuditLog.retention_until.is_not(None),
@@ -66,7 +64,9 @@ async def run_retention(
 
     logger.info(
         "audit retention: as_of=%s deleted=%d remaining=%d",
-        now.isoformat(), expired_count, remaining,
+        now.isoformat(),
+        expired_count,
+        remaining,
     )
     return {
         "as_of": now.isoformat(),

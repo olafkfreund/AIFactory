@@ -8,7 +8,7 @@ separate from automated task spec worktrees.
 import json
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -84,12 +84,17 @@ class TerminalWorktreeService:
         # Create the worktree
         if create_git_branch:
             # Create worktree with new branch
-            self._run_git_command([
-                "git", "worktree", "add",
-                "-b", branch_name,
-                str(worktree_path),
-                base_branch
-            ])
+            self._run_git_command(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-b",
+                    branch_name,
+                    str(worktree_path),
+                    base_branch,
+                ]
+            )
         else:
             # Create worktree directory without git branch (just a regular directory)
             worktree_path.mkdir(parents=True, exist_ok=True)
@@ -101,7 +106,8 @@ class TerminalWorktreeService:
             "branch": branch_name,
             "baseBranch": base_branch,
             "taskId": task_id,
-            "createdAt": datetime.utcnow().isoformat() + "Z",
+            "createdAt": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            + "Z",
             "terminalId": terminal_id,
         }
 
@@ -167,6 +173,7 @@ class TerminalWorktreeService:
                 # If git worktree remove fails, force remove the directory
                 if worktree_path.exists():
                     import shutil
+
                     shutil.rmtree(worktree_path)
 
             # Delete branch if requested
@@ -185,6 +192,7 @@ class TerminalWorktreeService:
             # Just remove the directory if it's not a git worktree
             if worktree_path.exists():
                 import shutil
+
                 shutil.rmtree(worktree_path)
 
         # Remove from config
@@ -221,7 +229,9 @@ class TerminalWorktreeService:
             raise ValueError("Worktree name cannot be empty")
 
         if len(name) > self.MAX_NAME_LENGTH:
-            raise ValueError(f"Worktree name cannot exceed {self.MAX_NAME_LENGTH} characters")
+            raise ValueError(
+                f"Worktree name cannot exceed {self.MAX_NAME_LENGTH} characters"
+            )
 
         if not self.WORKTREE_NAME_PATTERN.match(name):
             raise ValueError(
@@ -299,16 +309,14 @@ class TerminalWorktreeService:
         try:
             result = self._run_git_command(
                 ["git", "rev-parse", "--verify", f"refs/heads/{branch_name}"],
-                check=False
+                check=False,
             )
             return result.returncode == 0
         except subprocess.CalledProcessError:
             return False
 
     def _run_git_command(
-        self,
-        cmd: List[str],
-        check: bool = True
+        self, cmd: List[str], check: bool = True
     ) -> subprocess.CompletedProcess:
         """Run a git command in the project directory.
 
@@ -323,9 +331,5 @@ class TerminalWorktreeService:
             subprocess.CalledProcessError: If check=True and command fails
         """
         return subprocess.run(
-            cmd,
-            cwd=self.project_path,
-            capture_output=True,
-            check=check,
-            text=True
+            cmd, cwd=self.project_path, capture_output=True, check=check, text=True
         )

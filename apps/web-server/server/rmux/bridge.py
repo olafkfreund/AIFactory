@@ -69,7 +69,12 @@ router = APIRouter(prefix="/api/tasks", tags=["rmux Live Console"])
 # token, for which ``authenticate_websocket`` returns ``None``. Normalize that
 # to an explicit service-principal user so the shared authz/audit path treats
 # it consistently with the REST middleware (#322).
-_WS_SERVICE_PRINCIPAL = {"id": "default", "email": None, "role": "admin", "is_service": True}
+_WS_SERVICE_PRINCIPAL = {
+    "id": "default",
+    "email": None,
+    "role": "admin",
+    "is_service": True,
+}
 
 
 async def _authorize_console(
@@ -109,6 +114,7 @@ async def _read_fifo_chunks(fifo_path: Path, chunk: int = 4096):
     loop never stalls on a slow pane.  Opening in binary mode preserves
     ANSI escape bytes intact for xterm.js.
     """
+
     def _open_blocking():
         return open(fifo_path, "rb", buffering=0)
 
@@ -164,7 +170,9 @@ class AttachRequest(BaseModel):
     """
 
     connection_id: str = Field(
-        ..., min_length=1, max_length=64,
+        ...,
+        min_length=1,
+        max_length=64,
         description="UUID v4 from the WS handshake's `connected` frame",
     )
 
@@ -353,7 +361,8 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
         except Exception:
             logger.warning(
                 "agent-console reader crashed for %s",
-                state.spec_id, exc_info=True,
+                state.spec_id,
+                exc_info=True,
             )
 
     async def _writer_listener():
@@ -369,18 +378,25 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
                 if state.attached_connection_id != cid:
                     logger.debug(
                         "dropping read-only WS input for %s (attached=%s, this=%s)",
-                        state.spec_id, state.attached_connection_id, cid,
+                        state.spec_id,
+                        state.attached_connection_id,
+                        cid,
                     )
                     continue
                 # Forward.  Convert bytes→str if necessary; rmux
                 # send-keys accepts ESC sequences as raw text on stdin.
-                payload = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
+                payload = (
+                    data.decode("utf-8", errors="replace")
+                    if isinstance(data, bytes)
+                    else data
+                )
                 try:
                     await wrapper.send_keys(state.session_name, payload)
                 except RmuxError:
                     logger.warning(
                         "send-keys failed for %s (session gone?)",
-                        state.spec_id, exc_info=True,
+                        state.spec_id,
+                        exc_info=True,
                     )
         except WebSocketDisconnect:
             return
@@ -402,5 +418,5 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
                 state.attached_connection_id = None
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - socket already gone; closing is best-effort
+            logger.debug("WebSocket close failed during bridge teardown", exc_info=True)

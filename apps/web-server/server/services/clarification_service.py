@@ -26,7 +26,11 @@ def _parse_clarification_json(raw: str) -> dict:
     cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.MULTILINE)
     cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
 
-    safe_default = {"questions": [], "skip": True, "skipReason": "Could not analyze task."}
+    safe_default = {
+        "questions": [],
+        "skip": True,
+        "skipReason": "Could not analyze task.",
+    }
 
     # Attempt 1: direct parse
     try:
@@ -47,7 +51,7 @@ def _parse_clarification_json(raw: str) -> dict:
                 depth -= 1
                 if depth == 0:
                     try:
-                        parsed = json.loads(cleaned[start:i + 1])
+                        parsed = json.loads(cleaned[start : i + 1])
                         if isinstance(parsed, dict):
                             return _validate_response(parsed)
                     except json.JSONDecodeError:
@@ -69,18 +73,26 @@ def _validate_response(parsed: dict) -> dict:
             if isinstance(q, dict) and q.get("question"):
                 # Parse options (2-4 string choices)
                 raw_options = q.get("options", [])
-                options = [str(o).strip() for o in raw_options if isinstance(o, str) and o.strip()][:4]
-                valid_questions.append({
-                    "id": str(q.get("id", f"q{i + 1}")),
-                    "question": str(q["question"]).strip(),
-                    "options": options,
-                })
+                options = [
+                    str(o).strip()
+                    for o in raw_options
+                    if isinstance(o, str) and o.strip()
+                ][:4]
+                valid_questions.append(
+                    {
+                        "id": str(q.get("id", f"q{i + 1}")),
+                        "question": str(q["question"]).strip(),
+                        "options": options,
+                    }
+                )
             elif isinstance(q, str):
-                valid_questions.append({
-                    "id": f"q{i + 1}",
-                    "question": q.strip(),
-                    "options": [],
-                })
+                valid_questions.append(
+                    {
+                        "id": f"q{i + 1}",
+                        "question": q.strip(),
+                        "options": [],
+                    }
+                )
 
     # If no valid questions and not explicitly skipped, skip anyway
     if not valid_questions and not skip:
@@ -147,7 +159,11 @@ async def generate_clarification_questions(
     """
     from .insights_providers import get_provider
 
-    safe_default = {"questions": [], "skip": True, "skipReason": "Could not analyze task."}
+    safe_default = {
+        "questions": [],
+        "skip": True,
+        "skipReason": "Could not analyze task.",
+    }
 
     prompt = CLARIFICATION_PROMPT.format(title=title, description=description)
 
@@ -158,6 +174,7 @@ async def generate_clarification_questions(
 
     # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
     from ..utils.subprocess_env import make_subprocess_env
+
     env = make_subprocess_env()
     env["PYTHONUNBUFFERED"] = "1"
     env.pop("CLAUDECODE", None)
@@ -169,8 +186,12 @@ async def generate_clarification_questions(
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
             logger.info(f"[ClarificationService] Using profile: {profile_name}")
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 - token resolution is optional; degrade to ambient creds
+        logger.warning(
+            "[ClarificationService] Could not resolve Claude OAuth token; "
+            "falling back to ambient credentials",
+            exc_info=True,
+        )
 
     logger.info(f"[ClarificationService] Generating questions for: {title[:80]}")
 

@@ -7,12 +7,15 @@ and PTY processes on the server.
 
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..auth import verify_websocket_token
 from ..pty.manager import get_pty_manager
 from ..pty.session import create_pty_reader
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -37,40 +40,46 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
     session = manager.get_session(terminal_id)
 
     if session is None:
-        await websocket.send_json({
-            "type": "error",
-            "message": f"Terminal {terminal_id} not found",
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": f"Terminal {terminal_id} not found",
+            }
+        )
         await websocket.close(code=4004)
         return
 
     if not session.is_alive():
-        await websocket.send_json({
-            "type": "error",
-            "message": "Terminal process has exited",
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "Terminal process has exited",
+            }
+        )
         await websocket.close(code=4004)
         return
 
     # Send connection confirmation
-    await websocket.send_json({
-        "type": "connected",
-        "terminal_id": terminal_id,
-        "cols": session.cols,
-        "rows": session.rows,
-    })
+    await websocket.send_json(
+        {
+            "type": "connected",
+            "terminal_id": terminal_id,
+            "cols": session.cols,
+            "rows": session.rows,
+        }
+    )
 
     async def send_output(data: str):
         """Send PTY output to WebSocket."""
         try:
             await websocket.send_text(data)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - client may have disconnected; drop output
+            logger.debug(
+                "Failed to send PTY output to terminal WebSocket", exc_info=True
+            )
 
     # Start reader task
-    reader_task = asyncio.create_task(
-        create_pty_reader(session, send_output)
-    )
+    reader_task = asyncio.create_task(create_pty_reader(session, send_output))
 
     try:
         while True:
@@ -93,11 +102,13 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                                 cols = data.get("cols", 80)
                                 rows = data.get("rows", 24)
                                 session.resize(cols, rows)
-                                await websocket.send_json({
-                                    "type": "resized",
-                                    "cols": cols,
-                                    "rows": rows,
-                                })
+                                await websocket.send_json(
+                                    {
+                                        "type": "resized",
+                                        "cols": cols,
+                                        "rows": rows,
+                                    }
+                                )
                                 continue
 
                             elif msg_type == "ping":
@@ -122,13 +133,18 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                 break
 
     except Exception as e:
+        logger.warning("Terminal WebSocket loop failed: %s", e, exc_info=True)
         try:
-            await websocket.send_json({
-                "type": "error",
-                "message": str(e),
-            })
-        except Exception:
-            pass
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": str(e),
+                }
+            )
+        except Exception:  # noqa: BLE001 - client gone; can't deliver the error frame
+            logger.debug(
+                "Failed to send error frame to terminal WebSocket", exc_info=True
+            )
 
     finally:
         # Cancel reader task
@@ -147,12 +163,16 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                     try:
                         # ptyprocess provides exitstatus after process exits
                         exit_code = session._pty.exitstatus or 0
-                    except Exception:
-                        pass
-                await websocket.send_json({
-                    "type": "exit",
-                    "code": exit_code,
-                    "message": "Terminal process exited",
-                })
-            except Exception:
-                pass
+                    except Exception:  # noqa: BLE001 - exitstatus unavailable; default to 0
+                        logger.debug("Could not read PTY exit status", exc_info=True)
+                await websocket.send_json(
+                    {
+                        "type": "exit",
+                        "code": exit_code,
+                        "message": "Terminal process exited",
+                    }
+                )
+            except Exception:  # noqa: BLE001 - client gone; can't deliver the exit frame
+                logger.debug(
+                    "Failed to send exit frame to terminal WebSocket", exc_info=True
+                )

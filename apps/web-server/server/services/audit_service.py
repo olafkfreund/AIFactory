@@ -32,7 +32,7 @@ Usage::
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -151,7 +151,9 @@ async def log_audit_event(
         )
 
         # Default retention: 13 months (SOC2 12mo + buffer).
-        retention_until = datetime.utcnow() + timedelta(days=395)
+        retention_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            days=395
+        )
 
         entry = AuditLog(
             user_id=user_id,

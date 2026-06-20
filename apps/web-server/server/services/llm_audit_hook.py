@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # The PII redactor lives in apps/backend/services. The web-server
@@ -274,9 +274,14 @@ async def write_llm_call_audit(
         if extra_details:
             # Redact operator-passed extras too (defence in depth —
             # callers shouldn't be the source of audit-row PII).
-            details.update(redactor.redact_dict(extra_details) if hasattr(
-                redactor, "redact_dict",
-            ) else extra_details)
+            details.update(
+                redactor.redact_dict(extra_details)
+                if hasattr(
+                    redactor,
+                    "redact_dict",
+                )
+                else extra_details
+            )
 
         async with async_session_factory() as session:
             # Hash-chain wiring per audit_service.log_audit_event.
@@ -297,7 +302,8 @@ async def write_llm_call_audit(
                 resource_type="llm",
                 resource_id=model,
                 details_json=json.dumps(details, default=str),
-                retention_until=datetime.utcnow() + timedelta(days=_RETENTION_DAYS),
+                retention_until=datetime.now(timezone.utc).replace(tzinfo=None)
+                + timedelta(days=_RETENTION_DAYS),
                 prev_hash=prev_hash_value,
                 # Per design §5 — LLM prompts/responses are
                 # confidential-tier (the LLM has seen secret data in
@@ -314,7 +320,9 @@ async def write_llm_call_audit(
         logger.warning(
             "llm_audit_hook: failed to write LLM-call audit "
             "(action=%s model=%s); the LLM call already completed",
-            action, model, exc_info=True,
+            action,
+            model,
+            exc_info=True,
         )
 
 
