@@ -38,6 +38,7 @@ from .routes import (
     email,
     execution,
     files,
+    from_issue,
     copilot_mcp,
     git,
     git_credentials,
@@ -320,6 +321,9 @@ def create_app() -> FastAPI:
     # before tasks.router, whose catch-all GET /{task_id} would otherwise
     # shadow specific paths like GET /api/tasks/running (returned 400 on /running).
     app.include_router(execution.router, prefix="/api/tasks", tags=["Task Execution"])
+    # RFC-0011 label-driven intake: POST /api/tasks/from-issue. Registered
+    # before tasks.router so its specific path isn't shadowed by the catch-all.
+    app.include_router(from_issue.router, prefix="/api/tasks", tags=["Intake"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
     app.include_router(cli_accounts_routes.router, prefix="/api/settings", tags=["CLI Accounts"])
