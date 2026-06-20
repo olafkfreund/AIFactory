@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -552,8 +552,8 @@ class AzureDevOpsProvider:
 
     def _parse_datetime(self, val: str | None) -> datetime:
         if not val:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
         try:
             return datetime.fromisoformat(val.replace("Z", "+00:00"))
         except Exception:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
