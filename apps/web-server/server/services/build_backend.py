@@ -14,13 +14,19 @@ Default OFF. The backend is selected by ``AIFACTORY_BUILD_BACKEND``:
 Design (apis/concurrency-conventions.md §3 + the proven ``kube_sandbox`` shape):
 
 * The Job manifest comes from the shared, byte-identical ``job_dispatch`` builder
-  (vendored at ``core/job_dispatch.py``): thin nix-base image, ``aifactory-sandbox``
-  SA, warm ``/nix/store`` PVC, the task worktree co-mounted at ``/work``,
-  ``restartPolicy=Never``/``backoffLimit=0`` (a retry is a new attempt), TTL GC,
-  and ``activeDeadlineSeconds``.
+  (vendored at ``core/job_dispatch.py``): the **AIFactory runtime image**
+  (``_resolve_build_image`` — NOT the thin nix gate substrate, see #671 below),
+  ``aifactory-sandbox`` SA, warm ``/nix/store`` PVC, the task worktree co-mounted
+  at ``/work``, ``restartPolicy=Never``/``backoffLimit=0`` (a retry is a new
+  attempt), TTL GC, and ``activeDeadlineSeconds``.
 * The Job runs ``run.py`` for the spec (NOT wrapped in ``nix develop`` here — the
   contract's per-task env wrapping is run.py's own concern; the dispatch wraps the
-  *entrypoint*, not the build commands).
+  *entrypoint*, not the build commands). Because the entrypoint is a plain
+  ``bash -c "python run.py …"``, the Job image MUST ship bash + python + run.py +
+  the agent SDK — i.e. the aifactory image, resolved from ``AIFACTORY_BUILD_IMAGE``
+  / the downward-API ``AIFACTORY_IMAGE`` (the #671 fix: the thin nix gate image
+  has no bash/python on PATH outside ``nix develop`` → StartError, no logs).
+  ``AIFACTORY_SANDBOX_IMAGE`` stays the thin nix image for gates and is untouched.
 * The Job writes its own job-state row (``running`` → terminal) + artifacts; the
   control plane **reconciles by polling Postgres** (``reconcile_by_poll``), so a
   missed completion event never strands a build.
@@ -58,9 +64,33 @@ BACKEND_KUBEJOB = "kubejob"
 _DEFAULT_BACKEND = BACKEND_SUBPROCESS
 
 # Env coordinates reused from the shipped gate substrate (gate_runner.py) so the
-# build Job lands on the same SA / data PVC / warm store / namespace / image.
+# build Job lands on the same SA / data PVC / warm store / namespace.
 _ENV_BACKEND = "AIFACTORY_BUILD_BACKEND"
-_ENV_IMAGE = "AIFACTORY_SANDBOX_IMAGE"
+# Build-Job image (#671 defect fix). The build Job runs run.py via a plain
+# ``bash -c "python run.py …"`` entrypoint (nix_develop=False), so it needs an
+# image that actually ships bash + python + run.py + the agent SDK — i.e. the
+# AIFactory runtime image itself, NOT the thin ``tfactory-runner-nix`` gate
+# substrate (which has no bash/python on PATH outside a ``nix develop`` shell;
+# the build Job pod hits StartError on it and run.py never runs).
+#
+# Resolution precedence (first non-empty wins):
+#   1. AIFACTORY_BUILD_IMAGE  — explicit operator override for the build Job ONLY.
+#   2. AIFACTORY_IMAGE        — the running Deployment's own image ref, injected by
+#                               the chart (the pod can't read its own image from
+#                               the downward API, so the chart sets this to the
+#                               resolved aifactory image). This makes the build
+#                               Job default to the exact image the control plane
+#                               runs — guaranteed python-capable.
+#   3. DEFAULT_NIX_IMAGE      — last-resort fallback (logged WARNING): keeps the
+#                               manifest buildable in dev/test where neither var
+#                               is set. A real cluster always sets one of the
+#                               above; this image cannot run the plain entrypoint.
+#
+# AIFACTORY_SANDBOX_IMAGE is deliberately NOT consulted here: it is shared with
+# the gate substrate (gate_runner.py) and must stay the thin nix image so gates
+# keep working. Repointing it would break gates; the build needs its own image.
+_ENV_BUILD_IMAGE = "AIFACTORY_BUILD_IMAGE"
+_ENV_RUNNING_IMAGE = "AIFACTORY_IMAGE"
 _ENV_REPO_PVC = "AIFACTORY_SANDBOX_REPO_PVC"
 _ENV_NIX_STORE_PVC = "AIFACTORY_NIX_STORE_PVC"
 _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
@@ -120,6 +150,36 @@ def _worktree_subpath(data_root: str, project_path: Path, spec_id: str) -> str |
     return norm[len(root):]
 
 
+def _resolve_build_image(default_nix_image: str) -> str:
+    """Resolve the image for the run.py BUILD Job (#671 defect fix).
+
+    See ``_ENV_BUILD_IMAGE`` for the precedence rationale. The build Job runs a
+    plain ``bash -c "python run.py …"`` entrypoint, so it must land on a
+    python-capable image (the aifactory runtime), never the thin nix gate image.
+
+    * ``AIFACTORY_BUILD_IMAGE``  — explicit build-only override.
+    * ``AIFACTORY_IMAGE``        — the running Deployment's own image (chart-set).
+    * ``default_nix_image``      — last-resort fallback; logs a WARNING because
+      the thin nix image cannot execute the plain entrypoint outside ``nix
+      develop``. Reached only in dev/test where no image env is configured.
+    """
+    build_image = os.environ.get(_ENV_BUILD_IMAGE, "").strip()
+    if build_image:
+        return build_image
+    running_image = os.environ.get(_ENV_RUNNING_IMAGE, "").strip()
+    if running_image:
+        return running_image
+    _log.warning(
+        "[build_backend] neither %s nor %s set — falling back to %r for the "
+        "build Job. This thin nix image has no bash/python outside `nix "
+        "develop` and CANNOT run the run.py entrypoint; set %s (or the "
+        "downward-API %s) to the aifactory runtime image.",
+        _ENV_BUILD_IMAGE, _ENV_RUNNING_IMAGE, default_nix_image,
+        _ENV_BUILD_IMAGE, _ENV_RUNNING_IMAGE,
+    )
+    return default_nix_image
+
+
 def build_run_py_job_manifest(
     *,
     task_id: str,
@@ -131,22 +191,26 @@ def build_run_py_job_manifest(
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
     Pure (no cluster access) so it is unit-testable. Delegates the manifest
-    shape to the shared ``job_dispatch`` builder (thin nix-base image, SA, warm
-    store, worktree co-mount, no-retry, TTL, deadline) and supplies the
-    AIFactory-specific entrypoint:
+    shape to the shared ``job_dispatch`` builder (SA, warm store, worktree
+    co-mount, no-retry, TTL, deadline) and supplies the AIFactory-specific
+    entrypoint:
 
         python run.py --spec <spec_id> --project-dir /work --auto-continue --force
 
-    The build commands are NOT nix-develop-wrapped here (``nix_develop=False``):
-    run.py drives its own per-task env materialization; we only need the build
-    *entrypoint* to run on the nix-base substrate with the worktree available.
+    The image is the AIFactory runtime image (``_resolve_build_image``), NOT the
+    thin nix gate substrate: the entrypoint is a plain ``bash -c "python run.py
+    …"`` (``nix_develop=False``), so it needs an image with bash + python +
+    run.py + the agent SDK. run.py drives its own per-task env materialization;
+    toolchains come from Nix at build time via run.py's own paths, not from the
+    Job substrate. (Using the thin nix image here was the #671 defect: the pod
+    hit StartError because bash/python aren't on PATH outside ``nix develop``.)
     """
     # Deferred import: the vendored builder lives on the backend path (core.*),
     # added to sys.path at startup. Resolve it lazily so pure web-server import
     # paths (and tests that don't need it) stay clean.
     from core.job_dispatch import DEFAULT_NIX_IMAGE, JobSpec, build_job_manifest
 
-    image = os.environ.get(_ENV_IMAGE, "").strip() or None
+    image = _resolve_build_image(DEFAULT_NIX_IMAGE)
     repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
     nix_store_pvc = os.environ.get(_ENV_NIX_STORE_PVC, "").strip() or None
     data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
@@ -167,7 +231,8 @@ def build_run_py_job_manifest(
     # The build entrypoint: run.py against the co-mounted worktree at /work.
     # Mirrors agent_service._spawn_task_execution's headless invocation. NOT
     # nix-develop-wrapped (nix_develop=False) — run.py drives its own per-task
-    # env; we only need it to run on the nix-base substrate with the worktree.
+    # env; the entrypoint just needs an interpreter, which the aifactory build
+    # image (resolved above) provides.
     commands = [
         "python run.py "
         f"--spec {spec_id} --project-dir /work --auto-continue --force"
@@ -178,7 +243,7 @@ def build_run_py_job_manifest(
         job_id=task_id,
         commands=commands,
         correlation_key=correlation_key,
-        image=image or DEFAULT_NIX_IMAGE,
+        image=image,
         service_account=service_account,
         data_pvc=repo_pvc if worktree_subpath is not None else None,
         worktree_subpath=worktree_subpath,

@@ -84,6 +84,17 @@ spec:
             # this restores its original wording ("AIFactory") at runtime.
             - name: FACTORY_SERVICE_NAME
               value: "AIFactory"
+            # AIFACTORY_IMAGE: this Deployment's own resolved image ref. The pod
+            # cannot read its own container image from the downward API, so the
+            # chart injects it here. The RFC-0016 #671 build Job (run.py as a
+            # k8s Job, AIFACTORY_BUILD_BACKEND=kubejob) defaults its Job image to
+            # this value so the build runs on a python-capable image — NOT the
+            # thin nix gate substrate (AIFACTORY_SANDBOX_IMAGE), which has no
+            # bash/python outside `nix develop` and StartErrors the build pod.
+            # Override per-deployment with AIFACTORY_BUILD_IMAGE if the build
+            # should use a different image than the control plane.
+            - name: AIFACTORY_IMAGE
+              value: {{ include "aifactory.image" . | quote }}
             # DATABASE_URL: produced by ExternalSecret OR by an
             # out-of-band Secret named values.postgres.externalSecretName.
             - name: DATABASE_URL
