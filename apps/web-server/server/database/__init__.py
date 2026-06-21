@@ -12,6 +12,7 @@ from .models import (
     Base,
     EmailAccount,
     GitCredential,
+    JobState,
     LLMEndpoint,
     Organization,
     OrgMember,
@@ -35,5 +36,6 @@ __all__ = [
     "AuditLog",
     "EmailAccount",
     "GitCredential",
+    "JobState",
     "LLMEndpoint",
 ]

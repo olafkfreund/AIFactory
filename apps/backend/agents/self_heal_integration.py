@@ -43,6 +43,7 @@ def is_self_heal_enabled(env: dict | None = None) -> bool:
 # Item 1 — self-heal wrapper around one subtask attempt
 # ---------------------------------------------------------------------------
 
+
 async def self_heal_subtask(
     *,
     label: str,
@@ -84,8 +85,12 @@ async def self_heal_subtask(
 # Item 2 — review-tier assessment (recorded; gates only when enabled)
 # ---------------------------------------------------------------------------
 
+
 def assess_review_tier(
-    plan: dict, *, trusted: bool = False, solo: bool = False,
+    plan: dict,
+    *,
+    trusted: bool = False,
+    solo: bool = False,
     confidence: float | None = None,
 ):
     """Classify the plan's review tier (always safe to call). Returns the
@@ -103,6 +108,7 @@ def assess_review_tier(
 # ---------------------------------------------------------------------------
 # Item 3 — security review before merge
 # ---------------------------------------------------------------------------
+
 
 async def security_pre_merge_gate(
     diff_text: str,
@@ -143,6 +149,7 @@ def security_pre_merge_gate_sync(
 # ---------------------------------------------------------------------------
 # Item 4 — artifact emission
 # ---------------------------------------------------------------------------
+
 
 def emit_plan_artifact(
     spec_dir: Path, plan: dict, *, source_spec_dir: Path | None = None

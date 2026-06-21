@@ -208,7 +208,7 @@ class SecurityScanner:
                 )
 
         except Exception as e:
-            result.scan_errors.append(f"Secrets scan error: {str(e)}")
+            result.scan_errors.append(f"Secrets scan error: {e!s}")
 
     def _run_sast_scans(self, project_dir: Path, result: SecurityScanResult) -> None:
         """Run SAST tools based on project type."""
@@ -291,7 +291,7 @@ class SecurityScanner:
         except FileNotFoundError:
             result.scan_errors.append("Bandit not found")
         except Exception as e:
-            result.scan_errors.append(f"Bandit error: {str(e)}")
+            result.scan_errors.append(f"Bandit error: {e!s}")
 
     def _run_dependency_audits(
         self, project_dir: Path, result: SecurityScanResult
@@ -357,7 +357,7 @@ class SecurityScanner:
         except FileNotFoundError:
             pass  # npm not available
         except Exception as e:
-            result.scan_errors.append(f"npm audit error: {str(e)}")
+            result.scan_errors.append(f"npm audit error: {e!s}")
 
     def _run_pip_audit(self, project_dir: Path, result: SecurityScanResult) -> None:
         """Run pip-audit for Python projects (if available)."""

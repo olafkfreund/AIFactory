@@ -42,6 +42,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from core import runtime_gating
+
 if TYPE_CHECKING:
     from providers import BaseLLMProvider
 
@@ -168,6 +170,63 @@ def _instantiate(module_path: str, class_name: str, **kwargs: Any) -> BaseLLMPro
 # ---------------------------------------------------------------------------
 # Phase-aware factory (new)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# RFC-0014 §6 runtime gating (operator allowlist + contract opt-in)
+# ---------------------------------------------------------------------------
+
+# Map an RFC-0014 `execution.runtime` to the canonical provider name the registry
+# builds. The two "speed-up" runtimes (claude-subagents / dynamic-workflow) are
+# orchestration *modes* over the Claude provider, so they map to "claude"; the
+# gating layer (core.runtime_gating) is what makes them manual-enable only.
+_RUNTIME_TO_PROVIDER: dict[str, str] = {
+    "claude": "claude",
+    "codex": "codex",
+    "antigravity": "antigravity",
+    "ollama": "ollama",
+    "ollama-cloud": "ollama",
+    "claude-subagents": "claude",
+    "dynamic-workflow": "claude",
+}
+
+
+def runtime_to_provider(runtime: str) -> str:
+    """Resolve an RFC-0014 runtime name to the canonical provider it builds.
+
+    Unknown runtimes pass through unchanged so an already-canonical provider name
+    (or a future runtime) still resolves via the normal alias path.
+    """
+    return _RUNTIME_TO_PROVIDER.get((runtime or "").strip().lower(), runtime)
+
+
+def get_runtime_provider(
+    execution: dict[str, Any] | None,
+    phase: str,
+    *,
+    env: dict[str, str] | None = None,
+    **kwargs: Any,
+) -> BaseLLMProvider:
+    """Build a provider for the contract's gated ``execution.runtime`` (RFC-0014 §6).
+
+    Resolves and *gates* the runtime via ``core.runtime_gating``: ``claude`` is
+    always available; every other runtime requires BOTH the operator allowlist
+    (``AIFACTORY_RUNTIMES``) AND the contract opt-in. A contract that names an
+    un-enabled runtime raises ``RuntimeNotEnabledError`` (never a silent fallback
+    to claude — a cost/behaviour change is always explicit).
+
+    Back-compat: callers that still pass a provider name directly keep using
+    ``get_provider``; this is the new contract-driven entry point.
+    """
+    runtime = runtime_gating.resolve_runtime(execution, env)
+    provider_name = runtime_to_provider(runtime)
+    logger.info(
+        "get_runtime_provider: runtime=%r -> provider=%r phase=%r",
+        runtime,
+        provider_name,
+        phase,
+    )
+    return get_provider(provider_name, phase=phase, **kwargs)
 
 
 def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvider:
@@ -378,7 +437,9 @@ def get_tool_fallback_provider(
 __all__ = [
     "get_provider",
     "get_qa_llm_provider",
+    "get_runtime_provider",
     "get_tool_fallback_provider",
-    "list_providers",
     "list_provider_aliases",
+    "list_providers",
+    "runtime_to_provider",
 ]

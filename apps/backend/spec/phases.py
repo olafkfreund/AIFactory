@@ -11,4 +11,4 @@ Import from this module for backward compatibility.
 # Re-export from the phases subpackage for backward compatibility
 from .phases import MAX_RETRIES, PhaseExecutor, PhaseResult
 
-__all__ = ["PhaseExecutor", "PhaseResult", "MAX_RETRIES"]
+__all__ = ["MAX_RETRIES", "PhaseExecutor", "PhaseResult"]

@@ -7,11 +7,14 @@ enabling task execution with real-time streaming of logs and progress.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
 import signal
 import sys
+import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,14 +24,17 @@ from typing import Any
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from . import task_control
 from ..websockets.events import (
     emit_subtask_update,
     emit_task_logs_stream,
     emit_task_status,
     emit_task_update,
 )
+from . import task_control
 
+# Module-level logger for the admission-control paths (RFC-0016 #668). The rest
+# of this (legacy) module still uses local ``import logging`` inside methods.
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Tenant Isolation Mode — namespace routing (Epic #35 #36 PR-2)
@@ -253,6 +259,28 @@ class TaskProgress:
     sequence_number: int = 0  # For frontend out-of-order detection
     started_at: str | None = None  # Task start time for UI display
     data: dict = field(default_factory=dict)
+
+
+@dataclass
+class QueuedTask:
+    """A build admitted to the concurrency queue (RFC-0016 #668).
+
+    Holds the full set of arguments needed to start the build later, when a
+    running slot frees up. Captured verbatim from ``start_task_execution`` so
+    a dequeued task spawns identically to one that was admitted immediately.
+    """
+
+    task_id: str
+    project_path: Path
+    spec_id: str
+    auto_continue: bool
+    base_branch: str | None
+    mode: str | None
+    force: bool
+    user_id: str
+    stop_after_planning: bool
+    parallel: bool | None
+    workers: int | None
 
 
 @dataclass
@@ -590,6 +618,17 @@ class AgentService:
         self._task_current_phases: dict[str, TaskPhase] = {}
         # Track which Claude profile each task is using (for reactive failover)
         self._task_profiles: dict[str, dict] = {}
+        # RFC-0016 #670 Claude token pool. Admission control (#672) runs MULTIPLE
+        # builds concurrently in one pod; without a pool they all draw the SAME
+        # token and collide on one rate limit. The pool hands DISTINCT creds when
+        # several are configured and shares the single one otherwise (no change
+        # for the 1-token case). Lazily built on first checkout so test/runtime
+        # changes to the profiles file / env are picked up. The build is guarded
+        # by _token_pool_build_lock so concurrent first-checkouts don't each
+        # construct a private pool (which would all hand out the same LRU
+        # credential — the very collision this fixes).
+        self._token_pool: Any = None
+        self._token_pool_build_lock = threading.Lock()
         # Track rate limit detection per task to allow reactive failover
         self._task_rate_limits: dict[str, bool] = {}
         # Track previous subtask statuses per task for granular change detection
@@ -604,6 +643,82 @@ class AgentService:
         # the kanban detail view scroll the agent's narrative in real time
         # rather than waiting for full-page reload (Tier B auto-reload).
         self._task_build_progress_offset: dict[str, int] = {}
+        # Admission control (RFC-0016 #668). A global concurrency cap keyed off
+        # ``settings.MAX_CONCURRENT_TASKS``. Builds admitted while at the cap are
+        # parked FIFO in ``_task_queue`` and auto-started when a running build
+        # finishes (drained from the subprocess-exit monitor). The lock
+        # serialises the count-check + spawn + dequeue so admit and exit-callback
+        # can never race on the same freed slot. Single event loop, no busy-wait.
+        self._admission_lock = asyncio.Lock()
+        self._task_queue: deque[QueuedTask] = deque()
+        # RFC-0016 #668 durable job state. When DATABASE_URL is set the cap +
+        # FIFO queue + running set are backed by Postgres (survives restart,
+        # multi-replica safe via SELECT ... FOR UPDATE). When unset we keep the
+        # in-memory deque above and log that it is NOT multi-replica safe. The
+        # in-process ``running_tasks`` dict is ALWAYS the authority for killing
+        # this replica's own subprocesses; the store is the cross-replica gate.
+        from .job_state_store import store_enabled
+        self._store_enabled: bool = store_enabled()
+        self._job_store: Any = None  # lazily built (needs the DB engine)
+        # RFC-0016 #671 control/execution split. When AIFACTORY_BUILD_BACKEND=
+        # kubejob the build runs as a k8s Job (run.py) instead of an in-pod
+        # subprocess; this backend dispatches the Job + reconciles/reaps it.
+        # Lazily built (needs the store). Default OFF — see _kubejob_backend_enabled.
+        self._kubejob_build_backend: Any = None
+        # RFC-0017 #680 Job-native log streaming. Per-task background tasks that
+        # follow each build Job's pod logs into the cockpit + rmux sinks (the
+        # in-pod path's two log sinks). Cancelled when the build reaches a
+        # terminal state (reconcile) or is stopped. Keyed by task_id.
+        self._kubejob_log_streamers: dict[str, asyncio.Task[Any]] = {}
+        if self._store_enabled:
+            _log.info(
+                "[AgentService] RFC-0016 durable job-state store ENABLED "
+                "(DATABASE_URL set) — cap/queue backed by Postgres."
+            )
+        else:
+            _log.warning(
+                "[AgentService] RFC-0016 durable job-state store DISABLED "
+                "(DATABASE_URL unset) — using IN-MEMORY admission cap/queue. "
+                "This is single-pod dev only and is NOT multi-replica safe; "
+                "the cap/queue will NOT survive a restart."
+            )
+
+    def _store(self) -> Any:
+        """Lazily build + cache the durable job-state store (RFC-0016 #668)."""
+        if self._job_store is None:
+            from .job_state_store import JobStateStore
+            self._job_store = JobStateStore()
+        return self._job_store
+
+    def _make_spawn_args(self, **kwargs: Any) -> Any:
+        """Build a JSON-portable SpawnArgs from start/queue kwargs (#668)."""
+        from .job_state_store import SpawnArgs
+        project_path = kwargs.pop("project_path")
+        return SpawnArgs(project_path=str(project_path), **kwargs)
+
+    def _read_correlation_key(
+        self, project_path: Path, spec_id: str
+    ) -> str | None:
+        """Read the upstream GitHub issue number for the correlation key (#612).
+
+        Threads ``requirements.json -> provenance.issue_number`` into the
+        durable job-state row so a build is joinable across PFactory/TFactory/
+        CFactory. Best-effort: returns None when the spec has no provenance.
+        """
+        try:
+            req_file = (
+                project_path / ".aifactory" / "specs" / spec_id
+                / "requirements.json"
+            )
+            if not req_file.exists():
+                return None
+            req = json.loads(req_file.read_text())
+            prov = req.get("provenance")
+            if isinstance(prov, dict) and prov.get("issue_number") is not None:
+                return str(prov["issue_number"])
+        except (OSError, ValueError):
+            pass
+        return None
 
     @property
     def backend_path(self) -> Path:
@@ -633,8 +748,10 @@ class AgentService:
                     await callback(log)
                 else:
                     callback(log)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - one bad callback must not break log fan-out
+                logging.getLogger(__name__).debug(
+                    "[AgentService] log callback raised (ignored)", exc_info=True
+                )
 
     def _get_next_sequence_number(self, task_id: str) -> int:
         """Get the next sequence number for a task (for out-of-order detection)."""
@@ -730,6 +847,76 @@ class AgentService:
 
         logger.warning("[AgentService] No Claude token found")
         return (None, None, None)
+
+    def _get_token_pool(self) -> Any:
+        """Lazily build the Claude token pool (RFC-0016 #670).
+
+        Double-checked locking: concurrent first-checkouts must share ONE pool,
+        else each thread would build a private pool and they'd all hand out the
+        same LRU credential.
+        """
+        if self._token_pool is None:
+            with self._token_pool_build_lock:
+                if self._token_pool is None:
+                    from ..paths import get_data_file
+                    from .claude_token_pool import ClaudeTokenPool
+
+                    self._token_pool = ClaudeTokenPool.from_sources(
+                        self.settings.PROJECTS_DATA_DIR,
+                        legacy_profiles_file=get_data_file("claude-profiles.json"),
+                    )
+                    _log.info(
+                        "[AgentService] Claude token pool built with %d distinct "
+                        "credential(s)",
+                        self._token_pool.size,
+                    )
+        return self._token_pool
+
+    def _resolve_claude_token_pooled(
+        self, task_id: str
+    ) -> tuple[str | None, str | None, str | None]:
+        """Check a DISTINCT credential out of the pool for ``task_id``.
+
+        Concurrent builds get distinct tokens when several are configured; the
+        single shared token otherwise (identical to the legacy single-token
+        behaviour). The env-override token (CLAUDE_CODE_OAUTH_TOKEN) keeps its
+        legacy precedence — but is also poolable when multiple are configured.
+
+        Falls back to the legacy resolver if the pool is empty (e.g. a token
+        source the pool can't see). The checked-out credential is returned to
+        the pool by :meth:`_release_task_credential` when the build ends.
+        """
+        try:
+            pool = self._get_token_pool()
+            if not pool.is_empty():
+                cred = pool.checkout(task_id)
+                if cred is not None:
+                    return (cred.token, cred.profile_id, cred.profile_name)
+        except Exception:  # noqa: BLE001 - pool must never break a build start
+            _log.warning(
+                "[AgentService] token pool checkout failed; falling back to "
+                "single-token resolver",
+                exc_info=True,
+            )
+        # Fallback: legacy single-token resolution (no pool tracking to release).
+        return self._resolve_claude_token()
+
+    def _release_task_credential(self, task_id: str) -> None:
+        """Return a build's pooled credential when it ends. Idempotent/no-raise.
+
+        Also pops ``_task_profiles[task_id]`` so this can stand in for the bare
+        ``_task_profiles.pop`` calls at every task-terminal site.
+        """
+        try:
+            if self._token_pool is not None:
+                self._token_pool.release(task_id)
+        except Exception:  # noqa: BLE001
+            _log.debug(
+                "[AgentService] token pool release raised for %s (ignored)",
+                task_id,
+                exc_info=True,
+            )
+        self._task_profiles.pop(task_id, None)
 
     def _is_early_failure(self, spec_dir: Path, exit_code: int) -> bool:
         """Check if task failure is an early failure (no logs written).
@@ -1255,8 +1442,10 @@ class AgentService:
                     await callback(progress)
                 else:
                     callback(progress)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - one bad callback must not break progress fan-out
+                logging.getLogger(__name__).debug(
+                    "[AgentService] progress callback raised (ignored)", exc_info=True
+                )
 
     def _parse_phase_event(self, line: str) -> dict | None:
         """Parse phase event from agent output.
@@ -1319,10 +1508,15 @@ class AgentService:
         _rmux_spec = task_id.split(":", 1)[1] if ":" in task_id else task_id
         _rmux_feed = None
         try:
-            from ..rmux.integration import is_enabled as _rmux_on, feed_if_enabled as _rmux_feed_fn
+            from ..rmux.integration import feed_if_enabled as _rmux_feed_fn
+            from ..rmux.integration import is_enabled as _rmux_on
             if _rmux_on():
                 _rmux_feed = _rmux_feed_fn
-        except Exception:
+        except Exception:  # noqa: BLE001 - rmux integration is optional; degrade to no mirror
+            logger.debug(
+                "[AgentService] rmux integration unavailable; Live Console mirror disabled",
+                exc_info=True,
+            )
             _rmux_feed = None
 
         async for line_bytes in stream:
@@ -1330,8 +1524,11 @@ class AgentService:
             if _rmux_feed is not None:
                 try:
                     _rmux_feed(_rmux_spec, line_bytes.replace(b"\n", b"\r\n"))
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001 - Live Console mirror is best-effort
+                    logger.debug(
+                        "[AgentService] rmux Live Console feed raised (ignored)",
+                        exc_info=True,
+                    )
 
             line = line_bytes.decode("utf-8", errors="replace").rstrip()
 
@@ -1722,666 +1919,81 @@ class AgentService:
     ) -> None:
         """Monitor subprocess and clean up when it finishes.
 
-        Also periodically syncs files from worktree to main spec dir if project_path and spec_id are provided.
-        Supports profile failover on early failures when cmd and env are provided.
+        Thin delegator: the ~670-line body now lives in
+        ``services/process_monitor.monitor_process`` (#649). Kept here so the
+        public call sites (``self._monitor_process(...)``) and the recursive
+        failover/continuation restarts are unchanged. Imported lazily to avoid
+        an import cycle (process_monitor imports names from this module).
         """
-        import logging
-        logger = logging.getLogger(__name__)
+        from .process_monitor import monitor_process
 
+        # RFC-0016 #668: capture the spec_dir BEFORE the monitor runs, because
+        # the monitor pops ``_spec_dirs[task_id]`` during its terminal cleanup —
+        # we still need it afterwards to read the control-plane status and map
+        # it to a durable terminal lifecycle_state (never-overclaim).
+        spec_dir_hint = self._spec_dirs.get(task_id)
+        if spec_dir_hint is None and project_path is not None and spec_id:
+            spec_dir_hint = project_path / ".aifactory" / "specs" / spec_id
+
+        await monitor_process(
+            self, task_id, proc, project_path, spec_id, cmd, env
+        )
+
+        # A build just exited (or this monitor instance handed off to a
+        # failover/continuation restart). Free the durable slot first (so the
+        # cap reflects reality before we drain), then try to fill any free slot
+        # from the FIFO queue. ``_drain_queue`` is slot-count driven and
+        # lock-guarded, so it is a safe no-op when a restart kept the task in
+        # ``running_tasks`` (count unchanged) and only admits when a slot freed.
+        await self._free_durable_slot_on_exit(task_id, spec_dir_hint)
+        await self._drain_queue()
+
+    async def _free_durable_slot_on_exit(
+        self, task_id: str, spec_dir: Path | None = None
+    ) -> None:
+        """Move a finished build's durable row out of ``running`` (RFC-0016 #668).
+
+        Called after the process monitor returns. If the task is still in
+        ``running_tasks`` the monitor handed off to a failover/continuation
+        restart (same slot, still running) — leave the row ``running``. Only
+        when the subprocess is truly gone do we record the terminal state so
+        the cap frees up. The terminal lifecycle mirrors the control-plane
+        status the monitor just wrote (review_pending/human_review → ``review``;
+        failures → ``failed``). Best-effort: never breaks the exit path.
+        """
+        if not self._store_enabled:
+            return
+        if task_id in self.running_tasks:
+            # Restart/continuation kept the slot — not terminal yet.
+            return
+        # Map the control-plane status (task_control.json) to a lifecycle_state.
+        lifecycle = "done"
+        error: str | None = None
         try:
-            # Periodic sync loop (every 3 seconds) while process is running
-            sync_interval = 3.0
-
-            rate_limit_forced_restart = False
-            return_code: int | None = None
-
-            while True:
-                # Check if process has finished
-                try:
-                    return_code = await asyncio.wait_for(proc.wait(), timeout=sync_interval)
-                    # Process finished
-                    break
-                except asyncio.TimeoutError:
-                    # Process still running, sync files
-                    if project_path and spec_id:
-                        await self._sync_worktree_files(project_path, spec_id, task_id)
-
-                        # #260: re-drive a peer review that was requested but
-                        # never started — first an inbox nudge to the running
-                        # reviewer, then escalation to human_review. Idempotent
-                        # within its back-off window; never raises.
-                        try:
-                            from . import review_redrive_service
-
-                            await asyncio.to_thread(
-                                review_redrive_service.check_review_obligation,
-                                project_path,
-                                spec_id,
-                            )
-                        except Exception as redrive_exc:  # noqa: BLE001
-                            logger.debug(
-                                f"[AgentService] review re-drive check skipped: {redrive_exc}"
-                            )
-
-                    # Fix Bug #3: For spec creation, check if review checkpoint reached while process is running
-                    if project_path and not spec_id:
-                        # Detect if spec_runner created plan_review.html (review checkpoint reached)
-                        # Parse spec_id from task_id (format: "project_id:spec_id")
-                        detected_spec_id = None
-                        if ":" in task_id:
-                            _, detected_spec_id = task_id.split(":", 1)
-
-                        if detected_spec_id:
-                            detected_spec_dir = project_path / ".aifactory" / "specs" / detected_spec_id
-                            plan_review_file = detected_spec_dir / "plan_review.html"
-
-                            # Check if plan_review.html exists (indicates review checkpoint reached)
-                            if plan_review_file.exists():
-                                # Check if we've already emitted PLAN_REVIEW for this task
-                                current_phase = self._task_current_phases.get(task_id)
-                                if current_phase != TaskPhase.PLAN_REVIEW:
-                                    logger.info(f"[AgentService] Detected review checkpoint for {detected_spec_id} (plan_review.html exists)")
-
-                                    # Update plan status to human_review
-                                    await self._update_plan_status(project_path, detected_spec_id, "human_review", task_id)
-
-                                    # Emit PLAN_REVIEW phase (maps to "human_review" status) — plan_review always scales to 20%
-                                    await self._emit_progress(
-                                        TaskProgress(
-                                            task_id=task_id,
-                                            phase=TaskPhase.PLAN_REVIEW,
-                                            message="Spec created - waiting for human approval",
-                                            percentage=100,
-                                        ),
-                                        previous_phase=TaskPhase.SPEC_CREATION,  # Enable status event emission
-                                    )
-
-                                    # Mark phase as emitted
-                                    self._task_current_phases[task_id] = TaskPhase.PLAN_REVIEW
-                                    logger.info(f"[AgentService] Emitted PLAN_REVIEW status for {task_id}")
-
-                    # If we detect a rate limit and failover is enabled, don't wait for the process to exit.
-                    if cmd and env:
-                        profile_info = self._task_profiles.get(task_id, {})
-                        attempt = profile_info.get("attempt", 1)
-                        rate_limit_detected = self._task_rate_limits.get(task_id, False)
-
-                        if (
-                            rate_limit_detected
-                            and attempt == 1
-                            and self._should_retry_with_failover()
-                        ):
-                            logger.warning(
-                                f"[AgentService] Rate limit detected for {task_id} while running; terminating process to trigger profile failover"
-                            )
-                            rate_limit_forced_restart = True
-                            try:
-                                proc.terminate()
-                            except Exception:
-                                pass
-                            try:
-                                return_code = await proc.wait()
-                            except Exception:
-                                return_code = 1
-                            break
-
-            if return_code is None:
-                return_code = 1
-            if rate_limit_forced_restart and return_code == 0:
-                # Ensure we trigger the retry path.
-                return_code = 1
-
-            # Process exited - do final sync
-            if project_path and spec_id:
-                await self._sync_worktree_files(project_path, spec_id, task_id)
-
-            exit_model = self._task_profiles.get(task_id, {}).get("model", "unknown")
-            logger.info(f"[AgentService] [Model: {exit_model}] Task {task_id} process exited with code {return_code}")
-
-            # Early model fallback: if a non-Claude model failed, retry with Sonnet
-            # before any other processing (spec detection, plan status, etc.)
-            if return_code != 0 and cmd and env:
-                _fb_info = self._task_profiles.get(task_id, {})
-                _fb_model = _fb_info.get("model", "")
-                _fb_attempt = _fb_info.get("attempt", 1)
-                _fb_is_non_claude = (
-                    _fb_model
-                    and not _fb_model.startswith("claude-")
-                    and _fb_model not in ("haiku", "sonnet", "opus", "opus-1m")
-                )
-                logger.info(f"[AgentService] Fallback check: model={_fb_model!r}, attempt={_fb_attempt}, is_non_claude={_fb_is_non_claude}, cmd={'yes' if cmd else 'no'}, env={'yes' if env else 'no'}")
-                if _fb_is_non_claude and _fb_attempt <= 1:
-                    new_proc = await self._retry_task_with_fallback_model(
-                        task_id, project_path, spec_id, cmd, env
-                    )
-                    if new_proc:
-                        self._task_rate_limits.pop(task_id, None)
-                        self.running_tasks[task_id] = new_proc
-
-                        log_writer = None
-                        main_log_writer = None
-                        if task_id in self._task_log_writers:
-                            log_writer, main_log_writer = self._task_log_writers[task_id]
-
-                        asyncio.create_task(
-                            self._process_output(
-                                task_id, new_proc.stdout, is_stderr=False,
-                                log_writer=log_writer, spec_id=spec_id,
-                            )
-                        )
-                        asyncio.create_task(
-                            self._process_output(
-                                task_id, new_proc.stderr, is_stderr=True,
-                                log_writer=log_writer, spec_id=spec_id,
-                            )
-                        )
-                        asyncio.create_task(
-                            self._monitor_process(
-                                task_id, new_proc, project_path, spec_id,
-                                cmd=None, env=None
-                            )
-                        )
-                        logger.info(f"[AgentService] Task {task_id} restarted with fallback model (sonnet)")
-                        return
-
-            # Special case: Spec creation (project_path provided, spec_id is None)
-            # Need to detect the created spec_id and check if it requires review
-            if project_path and not spec_id:
-                logger.info("[AgentService] Spec creation completed, detecting created spec...")
-                try:
-                    specs_dir = project_path / ".aifactory" / "specs"
-                    if specs_dir.exists():
-                        # Find the newest spec directory (just created)
-                        spec_dirs = sorted(
-                            [d for d in specs_dir.iterdir() if d.is_dir()],
-                            key=lambda d: d.stat().st_mtime,
-                            reverse=True
-                        )
-                        if spec_dirs:
-                            detected_spec_dir = spec_dirs[0]
-                            detected_spec_id = detected_spec_dir.name
-                            logger.info(f"[AgentService] Detected created spec: {detected_spec_id}")
-
-                            # Check if this spec requires review
-                            review_state_file = detected_spec_dir / "review_state.json"
-                            if review_state_file.exists():
-                                review_data = json.loads(review_state_file.read_text())
-                                if not review_data.get("approved", False):
-                                    # Spec creation completed, now waiting for review
-                                    logger.info(f"[AgentService] Spec {detected_spec_id} requires human review")
-
-                                    # Update plan status to human_review
-                                    await self._update_plan_status(project_path, detected_spec_id, "human_review", task_id)
-
-                                    # Clean up tracking data
-                                    if task_id in self.running_tasks:
-                                        del self.running_tasks[task_id]
-                                    self._task_sequence_numbers.pop(task_id, None)
-                                    self._last_emitted_task_update.pop(task_id, None)
-                                    self._task_start_times.pop(task_id, None)
-                                    self._task_current_phases.pop(task_id, None)
-                                    self._task_profiles.pop(task_id, None)
-                                    self._task_subtask_states.pop(task_id, None)
-
-                                    # Emit PLAN_REVIEW phase (maps to "human_review" status) — plan_review always scales to 20%
-                                    await self._emit_progress(
-                                        TaskProgress(
-                                            task_id=task_id,
-                                            phase=TaskPhase.PLAN_REVIEW,
-                                            message="Spec created - waiting for human approval",
-                                            percentage=100,
-                                        ),
-                                        previous_phase=TaskPhase.SPEC_CREATION,  # Enable status event emission
-                                    )
-
-                                    logger.info(f"[AgentService] Spec {detected_spec_id} transitioned to PLAN_REVIEW phase")
-                                    return  # Exit early - not a failure
-
-                            # If we reach here, spec was created but doesn't need review
-                            # Auto-start task execution immediately
-                            logger.info(f"[AgentService] Spec {detected_spec_id} created successfully (no review required) — auto-starting execution")
-
-                            # Clean up tracking data from spec creation
-                            if task_id in self.running_tasks:
-                                del self.running_tasks[task_id]
-                            self._task_sequence_numbers.pop(task_id, None)
-                            self._last_emitted_task_update.pop(task_id, None)
-                            self._task_start_times.pop(task_id, None)
-                            self._task_current_phases.pop(task_id, None)
-                            self._task_profiles.pop(task_id, None)
-                            self._task_rate_limits.pop(task_id, None)
-                            self._task_subtask_states.pop(task_id, None)
-
-                            # Auto-start task execution
-                            try:
-                                _par, _wrk = self._read_parallel_opts(
-                                    project_path, detected_spec_id
-                                )
-                                await self.start_task_execution(
-                                    task_id=task_id,
-                                    project_path=project_path,
-                                    spec_id=detected_spec_id,
-                                    auto_continue=True,
-                                    parallel=_par,
-                                    workers=_wrk,
-                                )
-                                logger.info(f"[AgentService] Task execution auto-started for {detected_spec_id}")
-                            except Exception as exec_err:
-                                logger.error(f"[AgentService] Failed to auto-start execution for {detected_spec_id}: {exec_err}")
-                                # Fall back to human_review status so user can start manually
-                                await self._update_plan_status(project_path, detected_spec_id, "completed", task_id)
-                            return  # Exit early
-                except Exception as e:
-                    logger.warning(f"[AgentService] Failed to detect created spec: {e}")
-                    # Fall through to normal completion handling
-
-            # Check if task is waiting for review (can exit with code 0 or 1)
-            # Code 0: auto_continue mode (web UI) - exits cleanly after saving review state
-            # Code 1: CLI mode - exits with error when blocked (legacy behavior)
-            if project_path and spec_id:
-                spec_dir = project_path / ".aifactory" / "specs" / spec_id
-                review_state_file = spec_dir / "review_state.json"
-
-                # If review_state.json exists with approved=false, task is waiting for human review
-                if review_state_file.exists():
-                    try:
-                        review_data = json.loads(review_state_file.read_text())
-                        if not review_data.get("approved", False):
-                            # This is NOT a failure - it's waiting for human review!
-                            logger.info(f"[AgentService] Task {task_id} awaiting human review (not a failure)")
-
-                            # Get actual phase BEFORE cleanup
-                            actual_phase = self._get_current_phase(task_id)
-
-                            # Finalize log writers for the phase we were in
-                            if task_id in self._task_log_writers:
-                                log_writer, main_log_writer = self._task_log_writers[task_id]
-                                if spec_id:
-                                    log_writer.finalize(spec_id, actual_phase)
-                                    log_writer.set_phase_status(spec_id, actual_phase, "completed")
-                                    main_log_writer.finalize(spec_id, actual_phase)
-                                    main_log_writer.set_phase_status(spec_id, actual_phase, "completed")
-                                del self._task_log_writers[task_id]
-
-                            # Update plan status to human_review
-                            await self._update_plan_status(project_path, spec_id, "human_review", task_id)
-
-                            # Clean up tracking data
-                            if task_id in self.running_tasks:
-                                del self.running_tasks[task_id]
-                            self._task_sequence_numbers.pop(task_id, None)
-                            self._last_emitted_task_update.pop(task_id, None)
-                            self._task_start_times.pop(task_id, None)
-                            self._task_current_phases.pop(task_id, None)
-                            self._task_profiles.pop(task_id, None)
-                            self._task_subtask_states.pop(task_id, None)
-                            self._spec_dirs.pop(task_id, None)
-
-                            # Determine emit phase based on what phase the task was actually in
-                            # If task was coding/QA, it finished implementation → show 100% progress
-                            # If task was still planning, it just finished planning → show 20% progress
-                            if actual_phase in (TaskPhase.CODING, TaskPhase.QA_REVIEW, TaskPhase.QA_FIXING, TaskPhase.COMPLETED):
-                                emit_phase = TaskPhase.COMPLETED
-                                emit_message = "Task completed - waiting for human review"
-                                emit_overall = 100
-                            else:
-                                emit_phase = TaskPhase.PLAN_REVIEW
-                                emit_message = "Plan created - waiting for human approval"
-                                emit_overall = None  # Let scale_progress handle it (20%)
-
-                            await self._emit_progress(
-                                TaskProgress(
-                                    task_id=task_id,
-                                    phase=emit_phase,
-                                    message=emit_message,
-                                    percentage=100,
-                                    overall_progress=emit_overall,
-                                ),
-                                previous_phase=actual_phase,  # Enable status event emission
-                            )
-
-                            logger.info(f"[AgentService] Task {task_id} transitioned to {emit_phase.value} phase (was {actual_phase.value})")
-                            return  # Exit early - not a failure
-
-                    except (json.JSONDecodeError, OSError) as e:
-                        logger.debug(f"[AgentService] Could not read review_state.json: {e}")
-                        # Fall through to treat as actual failure
-
-            # Check for early failure and attempt profile failover
-            if return_code != 0 and project_path and spec_id and cmd and env:
-                spec_dir = project_path / ".aifactory" / "specs" / spec_id
-
-                # Check if this is an early failure (no logs written)
-                is_early = self._is_early_failure(spec_dir, return_code)
-                rate_limit_detected = self._task_rate_limits.get(task_id, False)
-
-                # Check if we should retry (settings enabled + first attempt)
-                profile_info = self._task_profiles.get(task_id, {})
-                attempt = profile_info.get("attempt", 1)
-                should_retry = (
-                    (is_early or rate_limit_detected)
-                    and attempt == 1  # Only retry once
-                    and self._should_retry_with_failover()
-                )
-
-                if should_retry:
-                    failed_profile_id = profile_info.get("profileId")
-                    reason = "rate_limit" if rate_limit_detected else "early_failure"
-                    logger.info(f"[AgentService] {reason.replace('_', ' ')} detected for {task_id}, attempting profile failover")
-
-                    # Attempt retry with different profile
-                    if not failed_profile_id:
-                        logger.warning(f"[AgentService] No failed profile recorded for {task_id}; cannot failover")
-                        new_proc = None
-                    else:
-                        new_proc = await self._retry_task_with_profile(
-                            task_id, project_path, spec_id, cmd, env, failed_profile_id, reason
-                        )
-
-                    if new_proc:
-                        # Clear the flag for the new attempt so it can detect rate limits again.
-                        self._task_rate_limits.pop(task_id, None)
-
-                        # Update running task reference
-                        self.running_tasks[task_id] = new_proc
-
-                        # Get log writers for output processing
-                        log_writer = None
-                        main_log_writer = None
-                        if task_id in self._task_log_writers:
-                            log_writer, main_log_writer = self._task_log_writers[task_id]
-
-                        # Restart output processing for new subprocess
-                        asyncio.create_task(
-                            self._process_output(
-                                task_id,
-                                new_proc.stdout,
-                                is_stderr=False,
-                                log_writer=log_writer,
-                                spec_id=spec_id,
-                            )
-                        )
-                        asyncio.create_task(
-                            self._process_output(
-                                task_id,
-                                new_proc.stderr,
-                                is_stderr=True,
-                                log_writer=log_writer,
-                                spec_id=spec_id,
-                            )
-                        )
-
-                        # Restart monitoring for new subprocess (without cmd/env to prevent infinite retry)
-                        asyncio.create_task(
-                            self._monitor_process(
-                                task_id,
-                                new_proc,
-                                project_path,
-                                spec_id,
-                                cmd=None,  # Prevent second retry
-                                env=None   # Prevent second retry
-                            )
-                        )
-
-                        logger.info(f"[AgentService] Task {task_id} restarted with alternate profile")
-                        return  # Exit this monitor instance
-                    else:
-                        logger.warning(f"[AgentService] No alternate profile available for task {task_id}, trying model fallback")
-
-
-            # If stop_task() already handled cleanup, skip duplicate processing
-            if task_id in self._task_stopped:
-                self._task_stopped.discard(task_id)
-                logger.info(f"[AgentService] Task {task_id} was stopped by user, skipping _monitor_process cleanup")
-                return
-
-            # Get actual phase BEFORE cleanup (needed for proper status emission)
-            actual_phase = self._get_current_phase(task_id)
-
-            # Issue #287: a clean process exit (return_code == 0) does NOT mean
-            # the build succeeded. The coder loop exits 0 even when every
-            # subtask failed/stuck and no code was produced. Treat a finished
-            # build that made zero progress (0 completed + >=1 failed/stuck) as
-            # a FAILED build so it lands in human_review + reviewReason
-            # "errors" (needs attention) instead of being masked as
-            # "completed". Builds with at least one completed subtask keep the
-            # genuine success / partial-review path untouched.
-            build_succeeded = return_code == 0
-            if build_succeeded and spec_id and project_path:
-                plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
-                if plan_file.exists():
-                    try:
-                        if is_failed_build(json.loads(plan_file.read_text())):
-                            build_succeeded = False
-                            logger.warning(
-                                f"[AgentService] Build {spec_id} exited cleanly but no "
-                                f"subtask completed and at least one failed — marking "
-                                f"the build as FAILED (needs attention), not completed."
-                            )
-                    except (json.JSONDecodeError, OSError) as e:
-                        logger.warning(f"[AgentService] Could not evaluate build success for {spec_id}: {e}")
-
-            final_status = "completed" if build_succeeded else "failed"
-
-            # Finalize and clean up log writers
-            if task_id in self._task_log_writers:
-                log_writer, main_log_writer = self._task_log_writers[task_id]
-
-                # Finalize both log writers - set status on the phase the task was actually in
-                if spec_id:
-                    log_writer.finalize(spec_id, actual_phase)
-                    log_writer.set_phase_status(spec_id, actual_phase, final_status)
-                    main_log_writer.finalize(spec_id, actual_phase)
-                    main_log_writer.set_phase_status(spec_id, actual_phase, final_status)
-
-                del self._task_log_writers[task_id]
-                logger.debug(f"[AgentService] Finalized task logs for {task_id}")
-
-            # Auto-continuation: if process exited successfully but subtasks remain,
-            # restart execution instead of marking as completed (max 10 continuation rounds)
-            if return_code == 0 and spec_id and project_path and cmd and env:
-                plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
-                if plan_file.exists():
-                    try:
-                        plan_data = json.loads(plan_file.read_text())
-                        pending_count = 0
-                        completed_count = 0
-                        total_count = 0
-                        for phase in plan_data.get("phases", []):
-                            for subtask in phase.get("subtasks", []):
-                                total_count += 1
-                                st = subtask.get("status", "pending")
-                                if st in ("pending", "in_progress"):
-                                    pending_count += 1
-                                elif st == "completed":
-                                    completed_count += 1
-
-                        # Track continuation rounds to prevent infinite loops
-                        continuation_key = f"_continuation_{task_id}"
-                        round_num = getattr(self, continuation_key, 0) + 1
-
-                        if pending_count > 0 and round_num <= 10:
-                            setattr(self, continuation_key, round_num)
-                            logger.info(
-                                f"[AgentService] Auto-continuation round {round_num}: "
-                                f"{completed_count}/{total_count} subtasks done, "
-                                f"{pending_count} remaining for {spec_id}"
-                            )
-
-                            # Clean up current run tracking
-                            if task_id in self.running_tasks:
-                                del self.running_tasks[task_id]
-                            self._task_sequence_numbers.pop(task_id, None)
-                            self._last_emitted_task_update.pop(task_id, None)
-                            self._task_start_times.pop(task_id, None)
-                            self._task_current_phases.pop(task_id, None)
-                            self._task_profiles.pop(task_id, None)
-                            self._task_rate_limits.pop(task_id, None)
-                            self._task_subtask_states.pop(task_id, None)
-                            if task_id in self._task_log_writers:
-                                log_writer, main_log_writer = self._task_log_writers[task_id]
-                                if spec_id:
-                                    actual_phase_for_logs = self._get_current_phase(task_id)
-                                    log_writer.finalize(spec_id, actual_phase_for_logs)
-                                    main_log_writer.finalize(spec_id, actual_phase_for_logs)
-                                del self._task_log_writers[task_id]
-
-                            # Restart execution
-                            try:
-                                _par, _wrk = self._read_parallel_opts(
-                                    project_path, spec_id
-                                )
-                                await self.start_task_execution(
-                                    task_id=task_id,
-                                    project_path=project_path,
-                                    spec_id=spec_id,
-                                    auto_continue=True,
-                                    parallel=_par,
-                                    workers=_wrk,
-                                )
-                                logger.info(f"[AgentService] Auto-continuation started for {spec_id} (round {round_num})")
-                                return  # Exit this monitor — new monitor will take over
-                            except Exception as e:
-                                logger.error(f"[AgentService] Auto-continuation failed for {spec_id}: {e}")
-                                # Fall through to normal completion
-                        elif pending_count > 0 and round_num > 10:
-                            logger.warning(
-                                f"[AgentService] Auto-continuation limit reached (10 rounds) for {spec_id}, "
-                                f"{pending_count} subtasks still pending"
-                            )
-                        else:
-                            # All subtasks done — clean up continuation tracker
-                            if hasattr(self, continuation_key):
-                                delattr(self, continuation_key)
-                            logger.info(f"[AgentService] All {total_count} subtasks completed for {spec_id}")
-                    except (json.JSONDecodeError, OSError) as e:
-                        logger.warning(f"[AgentService] Could not check subtask status for auto-continuation: {e}")
-
-            # Update implementation_plan.json status for frontend display.
-            # emit_events=False (Issue #14): the subsequent _emit_progress
-            # call at lines ~1830/1856 is the SINGLE canonical terminal
-            # emission. Letting _update_plan_status also emit produced the
-            # 5-event flurry + phase:N/A blip — kept the file write here,
-            # moved the WebSocket events to the explicit _emit_progress.
-            if spec_id and project_path:
-                status = "completed" if build_succeeded else "failed"
-                logger.info(f"[AgentService._monitor_process] About to call _update_plan_status: spec_id={spec_id}, status={status}, task_id={task_id}, project_path={project_path}")
-                await self._update_plan_status(
-                    project_path, spec_id, status, task_id, emit_events=False
-                )
-                logger.info("[AgentService._monitor_process] _update_plan_status call completed")
-
-            # Send email/in-app notifications on task completion or failure
-            _notif_user_id = self._task_user_ids.pop(task_id, "")
-
-            # Emit completion/failure progress with previous_phase to trigger status event
-            # NOTE: Cleanup is deferred until AFTER these emissions so _emit_progress
-            # can still read _spec_dirs (for plan file), _task_sequence_numbers, and _task_start_times
-            # Use build_succeeded (not raw return_code): a clean exit with no
-            # successful subtask (Issue #287) is emitted as FAILED so the
-            # frontend lands in human_review + "errors" (needs attention)
-            # rather than human_review + "completed".
-            if build_succeeded:
-                await self._emit_progress(
-                    TaskProgress(
-                        task_id=task_id,
-                        phase=TaskPhase.COMPLETED,
-                        message="Task completed successfully",
-                        percentage=100,
-                        overall_progress=100,
-                    ),
-                    previous_phase=actual_phase,  # Enable status event emission
-                )
-                if _notif_user_id:
-                    try:
-                        from .notification_service import notification_service
-                        _proj_name = project_path.name if project_path else ""
-                        _proj_id = task_id.split(":")[0] if ":" in task_id else ""
-                        await notification_service.notify(
-                            user_id=_notif_user_id,
-                            type="task_complete",
-                            title=f"Task completed: {spec_id}",
-                            message=f"Task {spec_id} in project {_proj_name} completed successfully.",
-                            data={"task_id": task_id, "project_id": _proj_id},
-                        )
-                    except Exception:
-                        logger.debug("Failed to send task completion notification", exc_info=True)
-            else:
-                if return_code == 0:
-                    fail_message = "Build finished but no subtask completed — needs attention"
-                    logger.error(
-                        f"[AgentService] Task {task_id} exited cleanly but produced no "
-                        f"completed subtasks — treating as failed build (#287)"
-                    )
-                else:
-                    fail_message = f"Task failed with exit code {return_code}"
-                    logger.error(f"[AgentService] Task {task_id} failed with exit code {return_code}")
-                await self._emit_progress(
-                    TaskProgress(
-                        task_id=task_id,
-                        phase=TaskPhase.FAILED,
-                        message=fail_message,
-                    ),
-                    previous_phase=actual_phase,  # Enable status event emission
-                )
-                if _notif_user_id:
-                    try:
-                        from .notification_service import notification_service
-                        _proj_name = project_path.name if project_path else ""
-                        _proj_id = task_id.split(":")[0] if ":" in task_id else ""
-                        await notification_service.notify(
-                            user_id=_notif_user_id,
-                            type="task_failed",
-                            title=f"Task failed: {spec_id}",
-                            message=f"Task {spec_id} in project {_proj_name} failed: {fail_message}.",
-                            data={"task_id": task_id, "project_id": _proj_id},
-                        )
-                    except Exception:
-                        logger.debug("Failed to send task failure notification", exc_info=True)
-
-            # Epic #44 R1 — reap the rmux session if the feature was on.
-            # Idempotent + no-op when flag is unset, so safe on every path.
-            from ..rmux.integration import reap_if_enabled as _rmux_reap
-            _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
-            try:
-                await _rmux_reap(_reap_spec_id)
-            except Exception:
-                logger.warning(f"[AgentService] rmux reap hook raised (ignored); spec_id={_reap_spec_id}")
-
-            # Clean up tracking data AFTER all emissions are complete
-            # This must happen after _emit_progress so it can still read
-            # _spec_dirs, _task_sequence_numbers, and _task_start_times
-            if task_id in self.running_tasks:
-                del self.running_tasks[task_id]
-            self._task_sequence_numbers.pop(task_id, None)
-            self._last_emitted_task_update.pop(task_id, None)
-            self._task_start_times.pop(task_id, None)
-            self._task_current_phases.pop(task_id, None)
-            self._task_profiles.pop(task_id, None)
-            self._task_rate_limits.pop(task_id, None)
-            self._task_subtask_states.pop(task_id, None)
-            self._spec_dirs.pop(task_id, None)
-        except asyncio.CancelledError:
-            # Task was cancelled, cleanup already handled by stop_task
-            pass
-        except Exception as e:
-            # Unexpected error, ensure cleanup
-            if task_id in self.running_tasks:
-                del self.running_tasks[task_id]
-            self._task_sequence_numbers.pop(task_id, None)
-            self._last_emitted_task_update.pop(task_id, None)
-            self._task_start_times.pop(task_id, None)
-            self._task_current_phases.pop(task_id, None)
-            self._task_user_ids.pop(task_id, None)
-            self._task_profiles.pop(task_id, None)
-            self._task_rate_limits.pop(task_id, None)
-            self._task_subtask_states.pop(task_id, None)
-            self._spec_dirs.pop(task_id, None)
-            await self._emit_progress(TaskProgress(
-                task_id=task_id,
-                phase=TaskPhase.FAILED,
-                message=f"Task monitoring error: {e}",
-            ))
+            if spec_dir is None:
+                spec_dir = self._spec_dirs.get(task_id)
+            if spec_dir is not None:
+                ctrl = task_control.read_control(spec_dir)
+                status = (ctrl.get("status") or "").lower()
+                reason = (ctrl.get("review_reason") or "").lower()
+                if status in ("failed",) or reason in ("errors", "invalid_plan"):
+                    lifecycle = "failed"
+                    error = reason or "build failed"
+                elif status in ("human_review", "ai_review", "review_pending"):
+                    lifecycle = "review"
+                elif status == "done":
+                    lifecycle = "done"
+        except Exception:  # noqa: BLE001 - status read is best-effort
+            _log.debug(
+                "[AgentService] could not read control status for %s on exit",
+                task_id, exc_info=True,
+            )
+        try:
+            await self._store().mark_terminal(task_id, lifecycle, error=error)
+        except Exception:  # noqa: BLE001 - never break the exit/drain path
+            _log.exception(
+                "[AgentService] could not free durable slot for %s", task_id
+            )
 
     async def _update_plan_status(
         self,
@@ -3006,8 +2618,9 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 
-        # Get OAuth token with profile tracking
-        token, profile_id, profile_name = self._resolve_claude_token()
+        # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
+        # credentials; returned to the pool when this build ends.
+        token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
             logger.info(
@@ -3113,7 +2726,647 @@ class AgentService:
             pass
         return None, None
 
-    async def start_task_execution(
+    def _concurrency_cap(self) -> int:
+        """Global concurrent-build cap (RFC-0016 #668).
+
+        Reads ``settings.MAX_CONCURRENT_TASKS`` (env override
+        ``APP_MAX_CONCURRENT_TASKS``). A value <= 0 means *unlimited* — the
+        previous behaviour before this cap existed — so existing deployments
+        that set 0 keep oversubscribing exactly as before. Default is 5.
+        """
+        try:
+            return int(self.settings.MAX_CONCURRENT_TASKS)
+        except (TypeError, ValueError):
+            return 5
+
+    async def start_task_execution(  # noqa: PLR0913 - public API parity with _spawn_task_execution
+        self,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        auto_continue: bool = True,
+        base_branch: str | None = None,
+        mode: str | None = "full",
+        force: bool = False,
+        user_id: str = "",
+        stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
+    ) -> asyncio.subprocess.Process | None:
+        """Admit a build: start it now, or queue it when at the concurrency cap.
+
+        Admission control (RFC-0016 #668). Behaviour:
+
+        * The per-task "already running" guard is preserved — re-starting the
+          SAME ``task_id`` still raises ``ValueError`` (the route maps this to a
+          409). The cap below is across DIFFERENT task_ids.
+        * Below the cap (or cap <= 0 = unlimited): spawn immediately and return
+          the ``Process``, exactly as before.
+        * At the cap: the task is NOT rejected and the event loop is NOT
+          blocked. It is parked FIFO in ``_task_queue``, marked ``queued`` in
+          the control-plane store (so the cockpit/poller can see it), and
+          auto-started when a running build finishes (see ``_drain_queue``).
+          Returns ``None`` to signal "queued, not started".
+
+        See ``_spawn_task_execution`` for the full argument semantics.
+        """
+        # Per-task guard stays OUTSIDE the admission lock so a duplicate start of
+        # the same running task still fast-fails with 409 regardless of the cap.
+        if task_id in self.running_tasks:
+            raise ValueError(f"Task {task_id} is already running")
+        if any(q.task_id == task_id for q in self._task_queue):
+            raise ValueError(f"Task {task_id} is already queued")
+
+        # RFC-0016 #668: durable, multi-replica-safe path. The store decides
+        # admit-vs-queue under SELECT ... FOR UPDATE so two replicas can't
+        # exceed the cap or double-start the same job_id. The in-memory path
+        # below is the single-pod-dev fallback (no DATABASE_URL).
+        if self._store_enabled:
+            return await self._start_task_execution_durable(
+                task_id=task_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                auto_continue=auto_continue,
+                base_branch=base_branch,
+                mode=mode,
+                force=force,
+                user_id=user_id,
+                stop_after_planning=stop_after_planning,
+                parallel=parallel,
+                workers=workers,
+            )
+
+        async with self._admission_lock:
+            cap = self._concurrency_cap()
+            # cap <= 0 => unlimited (back-compat). Otherwise admit immediately
+            # only when strictly below the cap.
+            if cap <= 0 or len(self.running_tasks) < cap:
+                return await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+
+            # At the cap — park FIFO and mark queued. Do not start, do not 409.
+            self._task_queue.append(
+                QueuedTask(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+            )
+            _log.info(
+                "[AgentService] At concurrency cap (%d running, cap=%d) — "
+                "queued task %s (position %d)",
+                len(self.running_tasks),
+                cap,
+                task_id,
+                len(self._task_queue),
+            )
+
+        # Mark queued + emit OUTSIDE the lock (I/O + WS fan-out): the task is
+        # already safely parked in the queue, so releasing the lock first keeps
+        # admissions snappy and avoids holding it across non-admission work.
+        await self._mark_task_queued(task_id, project_path, spec_id)
+        return None
+
+    async def _start_task_execution_durable(  # noqa: PLR0913 - parity with start_task_execution
+        self,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        auto_continue: bool,
+        base_branch: str | None,
+        mode: str | None,
+        force: bool,
+        user_id: str,
+        stop_after_planning: bool,
+        parallel: bool | None,
+        workers: int | None,
+    ) -> asyncio.subprocess.Process | None:
+        """Postgres-backed admit-or-queue (RFC-0016 #668).
+
+        Asks the durable store to grant a slot or queue the build inside a
+        ``SELECT ... FOR UPDATE`` transaction (cap read from live Postgres
+        counts, not memory). On ``"started"`` it spawns the subprocess exactly
+        as the in-memory path does; on ``"queued"`` it marks the build queued
+        and returns ``None``. A duplicate active ``job_id`` raises ``ValueError``
+        (→ 409), preserving the per-task guard across replicas + restarts.
+        """
+        spawn_args = self._make_spawn_args(
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=auto_continue,
+            base_branch=base_branch,
+            mode=mode,
+            force=force,
+            user_id=user_id,
+            stop_after_planning=stop_after_planning,
+            parallel=parallel,
+            workers=workers,
+        )
+        correlation_key = self._read_correlation_key(project_path, spec_id)
+        cap = self._concurrency_cap()
+
+        # ValueError (already running/queued) propagates to the 409 mapping.
+        outcome = await self._store().admit(
+            task_id, spawn_args, cap, correlation_key=correlation_key
+        )
+
+        if outcome == "started":
+            # The store reserved the slot durably; now start the real execution
+            # unit. RFC-0016 #671: the control/execution split picks the backend
+            # by env — ``kubejob`` dispatches a k8s Job that runs run.py, default
+            # ``subprocess`` keeps today's in-pod behaviour. Either way, if the
+            # start itself fails, free the durable slot so it isn't leaked (a
+            # stuck "running" row would shrink the cap forever).
+            try:
+                if self._kubejob_backend_enabled():
+                    await self._dispatch_build_job(
+                        task_id=task_id,
+                        project_path=project_path,
+                        spec_id=spec_id,
+                        correlation_key=correlation_key,
+                    )
+                    # No in-pod Process — the Job owns execution and reports its
+                    # own terminal state; the control plane reconciles by poll.
+                    return None
+                return await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=project_path,
+                    spec_id=spec_id,
+                    auto_continue=auto_continue,
+                    base_branch=base_branch,
+                    mode=mode,
+                    force=force,
+                    user_id=user_id,
+                    stop_after_planning=stop_after_planning,
+                    parallel=parallel,
+                    workers=workers,
+                )
+            except Exception:
+                await self._store().mark_terminal(
+                    task_id, "failed", error="spawn failed during admission"
+                )
+                raise
+
+        # outcome == "queued": park + surface the queued status for the cockpit.
+        await self._mark_task_queued(task_id, project_path, spec_id)
+        return None
+
+    def _kubejob_backend_enabled(self) -> bool:
+        """True when builds run as a k8s Job (RFC-0016 #671 control/exec split).
+
+        Env-gated, default OFF (``AIFACTORY_BUILD_BACKEND=subprocess``). The
+        kubejob backend requires the durable store (it reconciles by polling
+        Postgres + reaps via worker_ref), so when it is requested WITHOUT a
+        DATABASE_URL we log loudly and fall back to the in-pod subprocess rather
+        than silently stranding builds with no reconcile loop.
+        """
+        from .build_backend import kubejob_enabled
+
+        if not kubejob_enabled():
+            return False
+        if not self._store_enabled:
+            _log.warning(
+                "[AgentService] AIFACTORY_BUILD_BACKEND=kubejob requires the "
+                "durable job-state store (DATABASE_URL) for reconcile/reap — "
+                "it is unset; falling back to the in-pod subprocess backend."
+            )
+            return False
+        return True
+
+    def _build_backend(self) -> Any:
+        """Lazily build + cache the k8s-Job build backend (RFC-0016 #671)."""
+        if getattr(self, "_kubejob_build_backend", None) is None:
+            from .build_backend import KubeJobBuildBackend
+            self._kubejob_build_backend = KubeJobBuildBackend(self._store())
+        return self._kubejob_build_backend
+
+    async def _dispatch_build_job(
+        self,
+        *,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        correlation_key: str | None,
+    ) -> None:
+        """Dispatch a k8s Job that runs run.py for this build (RFC-0016 #671).
+
+        The durable slot is already reserved (the row is ``running`` with
+        ``worker_ref={kind:subprocess}``); the backend overwrites worker_ref
+        with the k8s-job reference so the reconcile-by-poll + reaper loops can
+        find the Job. The Job flips the row to its terminal state when it
+        finishes — we do not block on it. Surfaces the coding status so the
+        cockpit shows the build moving even though no in-pod process exists.
+        """
+        await self._build_backend().dispatch(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            correlation_key=correlation_key,
+        )
+        # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
+        # Job pod's logs, exactly as the in-pod subprocess path does — the
+        # prerequisite to making kubejob the default. Best-effort: any failure
+        # here never affects dispatch or reconcile.
+        await self._start_kubejob_log_stream(
+            task_id=task_id, project_path=project_path, spec_id=spec_id
+        )
+        try:
+            await self._safe_emit_task_status(task_id, "in_progress")
+        except Exception:  # noqa: BLE001 - status emit must not break dispatch
+            _log.debug(
+                "[AgentService] coding status emit raised after Job dispatch "
+                "(ignored)", exc_info=True,
+            )
+
+    async def _start_kubejob_log_stream(
+        self, *, task_id: str, project_path: Path, spec_id: str
+    ) -> None:
+        """Start Job-native log streaming for a dispatched build (#680).
+
+        Creates the passive rmux session (so the Live Console pane FIFO exists
+        for viewers, mirroring the in-pod path's ``create_if_enabled``) and
+        spawns a background task that follows the build Job's pod logs into the
+        cockpit log sink + the rmux feed. The Job ref (namespace/job_name) is
+        read from the durable worker_ref the backend just wrote. Wholly
+        best-effort — never raises, never blocks dispatch.
+        """
+        ref = await self._kubejob_worker_ref(task_id)
+        if ref is None:
+            return
+        namespace, job_name = ref
+
+        # Passive rmux session so the WS bridge has a pane FIFO to stream from.
+        try:
+            from ..rmux.integration import create_if_enabled as _rmux_create
+
+            project_id = task_id.split(":", 1)[0] if ":" in task_id else None
+            await _rmux_create(spec_id, project_path, "", project_id=project_id)
+        except Exception:  # noqa: BLE001 - rmux session is optional; degrade
+            _log.debug(
+                "[AgentService] rmux create for kubejob build raised (ignored); "
+                "spec_id=%s", spec_id, exc_info=True,
+            )
+
+        from .build_log_stream import KubeJobLogStreamer
+
+        async def _cockpit_sink(line: str) -> None:
+            await self._emit_log(
+                TaskLog(task_id=task_id, content=line, source="stdout", level="info")
+            )
+
+        rmux_feed = self._kubejob_rmux_feed()
+        streamer = KubeJobLogStreamer(log_sink=_cockpit_sink, rmux_feed=rmux_feed)
+
+        async def _run_stream() -> None:
+            try:
+                await streamer.stream(
+                    namespace=namespace, job_name=job_name, spec_id=spec_id
+                )
+            finally:
+                self._kubejob_log_streamers.pop(task_id, None)
+
+        self._cancel_kubejob_log_stream(task_id)
+        self._kubejob_log_streamers[task_id] = asyncio.create_task(
+            _run_stream(), name=f"kubejob-log-stream-{task_id}"
+        )
+
+    async def _kubejob_worker_ref(self, task_id: str) -> tuple[str, str] | None:
+        """Read (namespace, job_name) from the build's durable worker_ref (#680).
+
+        Returns None when the row/ref is missing or not a k8s-job — Job-native
+        log streaming is simply skipped (the build is unaffected).
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001 - store read failure → skip streaming
+            _log.debug(
+                "[AgentService] worker_ref read failed for %s (no log stream)",
+                task_id, exc_info=True,
+            )
+            return None
+        if not state:
+            return None
+        ref = state.get("worker_ref") or {}
+        if ref.get("kind") != "k8s-job":
+            return None
+        namespace = ref.get("namespace")
+        job_name = ref.get("job_name")
+        if not namespace or not job_name:
+            return None
+        return str(namespace), str(job_name)
+
+    @staticmethod
+    def _kubejob_rmux_feed() -> Any:
+        """Return the rmux feed callable, or None when rmux is off (#680)."""
+        try:
+            from ..rmux.integration import feed_if_enabled as _feed
+            from ..rmux.integration import is_enabled as _on
+
+            return _feed if _on() else None
+        except Exception:  # noqa: BLE001 - rmux integration optional
+            return None
+
+    def _cancel_kubejob_log_stream(self, task_id: str) -> None:
+        """Cancel + drop a build's Job-native log streamer if present (#680)."""
+        streamer = self._kubejob_log_streamers.pop(task_id, None)
+        if streamer is not None and not streamer.done():
+            streamer.cancel()
+
+    async def _reap_kubejob_console(self, task_id: str) -> None:
+        """Reap the passive rmux pane created for a kubejob build (#680).
+
+        ``spec_id`` is the suffix of the composite ``task_id``. No-op + never
+        raises when rmux is off or no session exists.
+        """
+        spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+        try:
+            from ..rmux.integration import reap_if_enabled as _rmux_reap
+
+            await _rmux_reap(spec_id)
+        except Exception:  # noqa: BLE001 - console reap is best-effort
+            _log.debug(
+                "[AgentService] rmux reap for kubejob build raised (ignored); "
+                "spec_id=%s", spec_id, exc_info=True,
+            )
+
+    async def reconcile_kubejob_builds(self) -> dict[str, str]:
+        """Reconcile k8s-Job builds from durable state (RFC-0016 #671).
+
+        The conventions' reconcile-by-poll: for each ``running`` k8s-job row,
+        observe whether the Job wrote a terminal lifecycle_state and, if so,
+        drain any freed slot. A missed completion event therefore never strands
+        a build. Returns ``{job_id: terminal_state}`` for builds that reached a
+        terminal state this pass. No-op unless the kubejob backend is enabled.
+        """
+        out: dict[str, str] = {}
+        if not self._kubejob_backend_enabled():
+            return out
+        try:
+            rows = await self._store().get_active_kubejobs()
+        except Exception:  # noqa: BLE001 - reconcile must never crash the loop
+            _log.exception("[AgentService] kubejob reconcile: store read failed")
+            return out
+        backend = self._build_backend()
+        for row in rows:
+            job_id = row["job_id"]
+            try:
+                terminal = await backend.reconcile_by_poll(job_id)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[AgentService] kubejob reconcile failed for %s", job_id
+                )
+                continue
+            if terminal is not None:
+                out[job_id] = terminal
+                # RFC-0017 #680: the Job is terminal → its pod log stream is
+                # ending; cancel the streamer + reap the rmux pane so we don't
+                # leak the background task or the console FIFO.
+                self._cancel_kubejob_log_stream(job_id)
+                await self._reap_kubejob_console(job_id)
+        if out:
+            # Builds finished → fill freed slots from the FIFO queue.
+            await self._drain_queue()
+        return out
+
+    async def kubejob_reconcile_loop(
+        self, *, stop: "asyncio.Event", interval_seconds: float = 15.0
+    ) -> None:
+        """Periodic reconcile-by-poll + reaper for k8s-Job builds (#671).
+
+        Started from the app lifespan only when the kubejob backend is enabled.
+        Each tick polls Postgres for terminal transitions the Jobs wrote
+        (so a missed completion event never strands a build) and reaps vanished
+        Jobs. Never raises — a bad tick is logged and the loop continues.
+        """
+        _log.info(
+            "[AgentService] kubejob reconcile loop started (interval=%.0fs)",
+            interval_seconds,
+        )
+        while not stop.is_set():
+            try:
+                await self.reconcile_kubejob_builds()
+                await self.reap_kubejob_builds()
+            except Exception:  # noqa: BLE001 - loop must survive a bad tick
+                _log.exception("[AgentService] kubejob reconcile tick failed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
+            except asyncio.TimeoutError:
+                pass
+        _log.info("[AgentService] kubejob reconcile loop stopped")
+
+    async def reap_kubejob_builds(
+        self, *, deadline_seconds: int | None = None
+    ) -> list[str]:
+        """Reap stranded k8s-Job builds (RFC-0016 #671 reaper).
+
+        Marks a ``running`` k8s-job row ``failed`` when its Job disappears /
+        exceeds the deadline without a terminal write, then drains. Returns the
+        reaped job_ids. No-op unless the kubejob backend is enabled.
+        """
+        if not self._kubejob_backend_enabled():
+            return []
+        try:
+            reaped = await self._build_backend().reap_vanished_jobs(
+                deadline_seconds=deadline_seconds
+            )
+        except Exception:  # noqa: BLE001 - reaper must never crash the loop
+            _log.exception("[AgentService] kubejob reaper failed")
+            return []
+        if reaped:
+            await self._drain_queue()
+        return reaped
+
+    async def _stop_kubejob_build(self, task_id: str) -> bool:
+        """Stop a build running as a k8s Job (RFC-0016 #671).
+
+        Deletes the Job (best-effort) and marks the durable row failed so the
+        slot frees and the reconcile/reaper loops don't keep watching it.
+        Returns True when a running k8s-job row was found + stopped.
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] could not read state to stop kubejob %s",
+                task_id, exc_info=True,
+            )
+            return False
+        if state is None or state.get("lifecycle_state") != "running":
+            return False
+        if (state.get("worker_ref") or {}).get("kind") != "k8s-job":
+            return False
+        # RFC-0017 #680: stop the Job-native log streamer + reap the console
+        # pane before deleting the Job (the pod log stream is about to vanish).
+        self._cancel_kubejob_log_stream(task_id)
+        await self._reap_kubejob_console(task_id)
+        try:
+            await self._build_backend().delete_job(task_id)
+        except Exception:  # noqa: BLE001 - delete is best-effort; row mark below frees the slot
+            _log.warning(
+                "[AgentService] could not delete k8s Job for %s (ignored)",
+                task_id, exc_info=True,
+            )
+        try:
+            await self._store().mark_terminal(
+                task_id, "failed", error="stopped by user"
+            )
+        except Exception:  # noqa: BLE001
+            _log.warning(
+                "[AgentService] could not free durable slot on kubejob stop %s",
+                task_id, exc_info=True,
+            )
+        await self._safe_emit_task_status(task_id, "human_review", "errors")
+        await self._drain_queue()
+        _log.info("[AgentService] Stopped k8s-Job build %s", task_id)
+        return True
+
+    async def _mark_task_queued(
+        self, task_id: str, project_path: Path, spec_id: str
+    ) -> None:
+        """Persist + emit the ``queued`` status for a parked build (#668)."""
+        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        try:
+            task_control.write_control(
+                spec_dir,
+                status="queued",
+                clear_review_reason=True,
+                updated_by="web_server",
+            )
+        except OSError as e:
+            _log.warning(
+                "[AgentService] could not persist queued status for %s: %s", task_id, e
+            )
+        try:
+            await emit_task_status(task_id, "queued")
+        except Exception:  # noqa: BLE001 - status emit must not break admission
+            _log.debug(
+                "[AgentService] queued status emit raised (ignored)", exc_info=True
+            )
+
+    async def _drain_queue(self) -> None:
+        """Start queued builds FIFO while there is free capacity (#668).
+
+        Called from the subprocess-exit monitor after a build finishes so a
+        freed slot pulls the next queued task. Guarded by the admission lock so
+        it can never race with ``start_task_execution`` on the same slot. Each
+        spawn happens under the lock, keeping ``running_tasks`` counting exact;
+        a failed spawn drops that task and moves on (no busy-wait, no requeue
+        loop). Never raises — it runs in the monitor's teardown path.
+        """
+        if self._store_enabled:
+            await self._drain_queue_durable()
+            return
+
+        async with self._admission_lock:
+            cap = self._concurrency_cap()
+            while self._task_queue and (cap <= 0 or len(self.running_tasks) < cap):
+                qt = self._task_queue.popleft()
+                # Skip a task that was started/stopped out of band while queued.
+                if qt.task_id in self.running_tasks:
+                    continue
+                try:
+                    await self._spawn_task_execution(
+                        task_id=qt.task_id,
+                        project_path=qt.project_path,
+                        spec_id=qt.spec_id,
+                        auto_continue=qt.auto_continue,
+                        base_branch=qt.base_branch,
+                        mode=qt.mode,
+                        force=qt.force,
+                        user_id=qt.user_id,
+                        stop_after_planning=qt.stop_after_planning,
+                        parallel=qt.parallel,
+                        workers=qt.workers,
+                    )
+                    _log.info(
+                        "[AgentService] Dequeued + started %s (%d running, %d queued)",
+                        qt.task_id,
+                        len(self.running_tasks),
+                        len(self._task_queue),
+                    )
+                except Exception:  # noqa: BLE001 - one bad spawn must not stall the queue
+                    _log.exception(
+                        "[AgentService] failed to start queued task %s — dropping",
+                        qt.task_id,
+                    )
+
+    async def _drain_queue_durable(self) -> None:
+        """Promote queued builds into freed slots via the durable store (#668).
+
+        The store's ``drain`` runs the same SELECT ... FOR UPDATE + advisory
+        lock as ``admit``, so a finishing build in this replica and a fresh
+        admit in another can't both claim the freed slot. Each promoted row
+        comes back already flipped to ``running`` in Postgres; we then spawn the
+        local subprocess. A spawn failure frees the durable slot (marks the row
+        failed) so a slot is never leaked. Never raises (monitor teardown path).
+        """
+        cap = self._concurrency_cap()
+        try:
+            promoted = await self._store().drain(cap)
+        except Exception:  # noqa: BLE001 - drain must not break the exit monitor
+            _log.exception("[AgentService] durable drain failed")
+            return
+
+        for task_id, spawn_args in promoted:
+            # Skip a row we already run locally (a restart-recovery row, or a
+            # task started out of band) — the store flipped it to running but
+            # this replica owns the live subprocess.
+            if task_id in self.running_tasks:
+                continue
+            try:
+                await self._spawn_task_execution(
+                    task_id=task_id,
+                    project_path=Path(spawn_args.project_path),
+                    spec_id=spawn_args.spec_id,
+                    auto_continue=spawn_args.auto_continue,
+                    base_branch=spawn_args.base_branch,
+                    mode=spawn_args.mode,
+                    force=spawn_args.force,
+                    user_id=spawn_args.user_id,
+                    stop_after_planning=spawn_args.stop_after_planning,
+                    parallel=spawn_args.parallel,
+                    workers=spawn_args.workers,
+                )
+                _log.info(
+                    "[AgentService] Dequeued + started %s (durable store)",
+                    task_id,
+                )
+            except Exception:  # noqa: BLE001 - one bad spawn must not stall the queue
+                _log.exception(
+                    "[AgentService] failed to start queued task %s — "
+                    "freeing durable slot",
+                    task_id,
+                )
+                try:
+                    await self._store().mark_terminal(
+                        task_id, "failed", error="spawn failed on dequeue"
+                    )
+                except Exception:  # noqa: BLE001
+                    _log.exception(
+                        "[AgentService] could not free durable slot for %s",
+                        task_id,
+                    )
+
+    async def _spawn_task_execution(
         self,
         task_id: str,
         project_path: Path,
@@ -3127,7 +3380,10 @@ class AgentService:
         parallel: bool | None = None,
         workers: int | None = None,
     ) -> asyncio.subprocess.Process:
-        """Start task execution (run.py).
+        """Spawn task execution (run.py) — the real subprocess start.
+
+        Admission/queueing is handled by ``start_task_execution``; by the time
+        this runs a slot has already been reserved under the admission lock.
 
         Args:
             mode: "quick" for simplified prompts (~70% fewer tokens), "full" for comprehensive prompts.
@@ -3284,8 +3540,9 @@ class AgentService:
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load project .env: {e}")
 
-        # Get OAuth token with profile tracking
-        token, profile_id, profile_name = self._resolve_claude_token()
+        # Get OAuth token from the pool (#670) so concurrent builds draw DISTINCT
+        # credentials; returned to the pool when this build ends.
+        token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
             logger.info(f"[AgentService] Using Claude profile: {profile_name} ({profile_id})")
@@ -3348,8 +3605,11 @@ class AgentService:
                 _rc_proj = _rc_projs.get(_rc_pid, {})
                 if (_rc_proj.get("settings") or {}).get("remoteControlByDefault"):
                     _rc_enabled = True
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - default-remote-control probe is best-effort
+                logger.debug(
+                    "[AgentService] remoteControlByDefault probe failed (ignored)",
+                    exc_info=True,
+                )
 
         if _rc_enabled:
             _rc_session_name = f"AIFactory: {spec_id}"
@@ -3516,6 +3776,38 @@ class AgentService:
         import logging
         logger = logging.getLogger(__name__)
         if task_id not in self.running_tasks:
+            # RFC-0016 #668: a task can be parked in the admission queue rather
+            # than running. Stopping it just removes it from the queue (no
+            # process to kill) so it never auto-starts later. With the durable
+            # store the queued row may live in Postgres (queued on another
+            # replica, or after a restart), so check there too.
+            if self._store_enabled:
+                try:
+                    if await self._store().remove_queued(task_id):
+                        logger.info(
+                            f"[AgentService] Removed queued task {task_id} "
+                            "from durable admission queue"
+                        )
+                        return True
+                except Exception:  # noqa: BLE001 - never break stop on a store hiccup
+                    logger.warning(
+                        "[AgentService] durable remove_queued failed for %s",
+                        task_id, exc_info=True,
+                    )
+            if any(q.task_id == task_id for q in self._task_queue):
+                async with self._admission_lock:
+                    self._task_queue = deque(
+                        q for q in self._task_queue if q.task_id != task_id
+                    )
+                logger.info(
+                    f"[AgentService] Removed queued task {task_id} from admission queue"
+                )
+                return True
+            # RFC-0016 #671: a build may run as a k8s Job (no in-pod process to
+            # signal). Stopping it deletes the Job + frees the durable slot.
+            if self._kubejob_backend_enabled():
+                if await self._stop_kubejob_build(task_id):
+                    return True
             logger.info(f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)")
             return False
 
@@ -3575,9 +3867,25 @@ class AgentService:
         self._task_subtask_states.pop(task_id, None)
         self._spec_dirs.pop(task_id, None)
         self._task_current_phases.pop(task_id, None)
-        self._task_profiles.pop(task_id, None)
+        # #670: return the pooled Claude credential AND pop _task_profiles.
+        self._release_task_credential(task_id)
         self._task_rate_limits.pop(task_id, None)
         self._task_user_ids.pop(task_id, None)
+
+        # RFC-0016 #668: free the durable slot for a user-stopped build. The
+        # store-terminal write is idempotent, so the exit monitor's own
+        # ``_free_durable_slot_on_exit`` after the killed process reaps is a
+        # harmless no-op. Best-effort; never breaks the stop path.
+        if self._store_enabled:
+            try:
+                await self._store().mark_terminal(
+                    task_id, "failed", error="stopped by user"
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "[AgentService] could not free durable slot on stop for %s",
+                    task_id, exc_info=True,
+                )
 
         # Emit human_review with errors reason (not just FAILED phase)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
@@ -3619,6 +3927,40 @@ class AgentService:
 
         return return_code
 
+    async def reconcile_on_startup(self) -> dict[str, int]:
+        """Reconstruct in-flight admission state after a restart (RFC-0016 #668).
+
+        A fresh control-plane replica calls this on boot so the cap/queue
+        reflect Postgres rather than an empty in-memory dict (concurrency
+        conventions §1 durability rule). It does NOT re-spawn subprocesses
+        here — the build subprocesses live in whichever pod started them; a
+        Phase-2 (k8s Job) reaper handles orphans. What it does:
+
+          * surfaces the durable running/queued counts to the log, and
+          * drains any queued rows into now-free slots (e.g. the replica that
+            owned a running build died, freeing capacity).
+
+        Returns ``{"running": n, "queued": m}`` for observability/tests.
+        No-op (returns zeros) in the in-memory fallback mode.
+        """
+        if not self._store_enabled:
+            return {"running": 0, "queued": 0}
+        try:
+            state = await self._store().reconstruct()
+        except Exception:  # noqa: BLE001 - startup must not crash on a store hiccup
+            _log.exception("[AgentService] startup reconcile failed")
+            return {"running": 0, "queued": 0}
+        running = len(state.get("running", []))
+        queued = len(state.get("queued", []))
+        _log.info(
+            "[AgentService] RFC-0016 startup reconcile: %d running, %d queued "
+            "(durable store)",
+            running, queued,
+        )
+        # Fill any slots freed by a dead replica's running builds.
+        await self._drain_queue()
+        return {"running": running, "queued": queued}
+
     def is_running(self, task_id: str) -> bool:
         """Check if a task is currently running."""
         return task_id in self.running_tasks
@@ -3626,6 +3968,14 @@ class AgentService:
     def get_running_tasks(self) -> list[str]:
         """Get list of running task IDs."""
         return list(self.running_tasks.keys())
+
+    def is_queued(self, task_id: str) -> bool:
+        """Check if a task is parked in the admission queue (RFC-0016 #668)."""
+        return any(q.task_id == task_id for q in self._task_queue)
+
+    def get_queued_tasks(self) -> list[str]:
+        """Get queued task IDs in FIFO order (RFC-0016 #668)."""
+        return [q.task_id for q in self._task_queue]
 
 
 # Global service instance

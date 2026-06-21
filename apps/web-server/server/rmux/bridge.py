@@ -69,7 +69,12 @@ router = APIRouter(prefix="/api/tasks", tags=["rmux Live Console"])
 # token, for which ``authenticate_websocket`` returns ``None``. Normalize that
 # to an explicit service-principal user so the shared authz/audit path treats
 # it consistently with the REST middleware (#322).
-_WS_SERVICE_PRINCIPAL = {"id": "default", "email": None, "role": "admin", "is_service": True}
+_WS_SERVICE_PRINCIPAL = {
+    "id": "default",
+    "email": None,
+    "role": "admin",
+    "is_service": True,
+}
 
 
 async def _authorize_console(
@@ -109,6 +114,7 @@ async def _read_fifo_chunks(fifo_path: Path, chunk: int = 4096):
     loop never stalls on a slow pane.  Opening in binary mode preserves
     ANSI escape bytes intact for xterm.js.
     """
+
     def _open_blocking():
         return open(fifo_path, "rb", buffering=0)
 
@@ -150,6 +156,49 @@ def _resolve_state_or_404(spec_id: str) -> SessionState:
     return state
 
 
+def _local_state(spec_id: str) -> SessionState | None:
+    """Return the pod-local session for ``spec_id`` (with composite fallback)."""
+    registry = get_registry()
+    state = registry.get_state(spec_id)
+    if state is None and ":" in spec_id:
+        state = registry.get_state(spec_id.split(":", 1)[1])
+    return state
+
+
+async def _resolve_remote_pane(spec_id: str) -> dict | None:
+    """Resolve a session this pod doesn't host from the shared Redis index (#681).
+
+    Returns the index entry (spec_id / session_name / project_id / passive) when
+    a OTHER replica registered it, else None. No-op → None when Redis is off, so
+    single-replica behaviour is unchanged.
+    """
+    from . import redis_transport
+
+    if not redis_transport.redis_enabled():
+        return None
+    entry = await redis_transport.get_pane(spec_id)
+    if entry is None and ":" in spec_id:
+        entry = await redis_transport.get_pane(spec_id.split(":", 1)[1])
+    return entry
+
+
+def _remote_authz_state(spec_id: str, entry: dict | None) -> SessionState:
+    """Build a minimal ``SessionState`` for a remote pane, for authz only (#681).
+
+    Carries the ``project_id`` from the shared index so ``_authorize_console``
+    keys on the session's real project exactly as for a local session. The
+    ``fifo_path`` is unused on the remote path (bytes come from Redis pub/sub).
+    """
+    entry = entry or {}
+    return SessionState(
+        spec_id=str(entry.get("spec_id") or spec_id),
+        session_name=str(entry.get("session_name") or f"aifactory-task-{spec_id}"),
+        fifo_path=Path("/nonexistent"),
+        project_id=entry.get("project_id"),
+        passive=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Request models
 # ---------------------------------------------------------------------------
@@ -164,7 +213,9 @@ class AttachRequest(BaseModel):
     """
 
     connection_id: str = Field(
-        ..., min_length=1, max_length=64,
+        ...,
+        min_length=1,
+        max_length=64,
         description="UUID v4 from the WS handshake's `connected` frame",
     )
 
@@ -314,17 +365,23 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
     # Legacy-token callers authenticate as the service principal (None).
     user = ws_user if ws_user is not None else _WS_SERVICE_PRINCIPAL
 
-    try:
-        state = _resolve_state_or_404(spec_id)
-    except HTTPException:
-        await websocket.accept()
-        await websocket.close(code=4004, reason="no rmux session for spec_id")
-        return
+    # Prefer the pod-local session (FIFO path, today's behaviour). RFC-0017 #681:
+    # if it isn't local, fall back to the shared Redis index — the session may be
+    # owned by another replica; we then stream its bytes over Redis pub/sub. Both
+    # paths authorize against the session's real project (#322).
+    state = _local_state(spec_id)
+    remote: dict | None = None
+    if state is None:
+        remote = await _resolve_remote_pane(spec_id)
+        if remote is None:
+            await websocket.accept()
+            await websocket.close(code=4004, reason="no rmux session for spec_id")
+            return
 
-    # Authorize read-only streaming against the session's real project.
+    authz_state = state if state is not None else _remote_authz_state(spec_id, remote)
     async with async_session_factory() as db:
         try:
-            await _authorize_console(user, state, db, minimum_role="viewer")
+            await _authorize_console(user, authz_state, db, minimum_role="viewer")
         except HTTPException:
             await websocket.accept()
             await websocket.close(code=4003, reason="forbidden")
@@ -341,22 +398,44 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
     wrapper = registry.wrapper
 
     # Spawn two concurrent tasks:
-    #  - reader: pump FIFO bytes → WS (always running)
-    #  - writer_listener: receive WS frames; if attach is held by us,
-    #    forward to send-keys.  Otherwise drop.
+    #  - reader: pump pane bytes → WS (always running). Local sessions read the
+    #    FIFO; a remote session (RFC-0017 #681 — owned by another replica)
+    #    streams bytes from the shared Redis pub/sub channel instead.
+    #  - writer_listener: receive WS frames; if attach is held by us, forward to
+    #    send-keys. Remote sessions are read-only (no local rmux pane to target),
+    #    exactly like passive sessions.
     async def _reader():
         try:
-            async for chunk in _read_fifo_chunks(state.fifo_path):
-                await websocket.send_bytes(chunk)
+            if state is not None:
+                async for chunk in _read_fifo_chunks(state.fifo_path):
+                    await websocket.send_bytes(chunk)
+            else:
+                from . import redis_transport
+
+                async for chunk in redis_transport.subscribe_pane_bytes(spec_id):
+                    await websocket.send_bytes(chunk)
         except WebSocketDisconnect:
             return
         except Exception:
             logger.warning(
                 "agent-console reader crashed for %s",
-                state.spec_id, exc_info=True,
+                authz_state.spec_id,
+                exc_info=True,
             )
 
     async def _writer_listener():
+        # Remote (Redis-streamed) sessions have no local rmux pane to send keys
+        # to — read-only, like passive sessions. Just drain inbound frames so the
+        # socket close is observed.
+        if state is None:
+            try:
+                while True:
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        return
+            except WebSocketDisconnect:
+                return
+            return
         try:
             while True:
                 msg = await websocket.receive()
@@ -369,18 +448,25 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
                 if state.attached_connection_id != cid:
                     logger.debug(
                         "dropping read-only WS input for %s (attached=%s, this=%s)",
-                        state.spec_id, state.attached_connection_id, cid,
+                        state.spec_id,
+                        state.attached_connection_id,
+                        cid,
                     )
                     continue
                 # Forward.  Convert bytes→str if necessary; rmux
                 # send-keys accepts ESC sequences as raw text on stdin.
-                payload = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
+                payload = (
+                    data.decode("utf-8", errors="replace")
+                    if isinstance(data, bytes)
+                    else data
+                )
                 try:
                     await wrapper.send_keys(state.session_name, payload)
                 except RmuxError:
                     logger.warning(
                         "send-keys failed for %s (session gone?)",
-                        state.spec_id, exc_info=True,
+                        state.spec_id,
+                        exc_info=True,
                     )
         except WebSocketDisconnect:
             return
@@ -396,11 +482,13 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
             t.cancel()
     finally:
         # Release attach mode if this connection held it — otherwise
-        # the next attach POST would 409 forever.
-        async with state.lock:
-            if state.attached_connection_id == cid:
-                state.attached_connection_id = None
+        # the next attach POST would 409 forever. Only the local session carries
+        # attach state; a remote (Redis-streamed) session has nothing to release.
+        if state is not None:
+            async with state.lock:
+                if state.attached_connection_id == cid:
+                    state.attached_connection_id = None
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - socket already gone; closing is best-effort
+            logger.debug("WebSocket close failed during bridge teardown", exc_info=True)

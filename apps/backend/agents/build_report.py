@@ -44,7 +44,9 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def compute_speedup(parallel_wall_s: float, serial_baseline_s: float | None) -> float | None:
+def compute_speedup(
+    parallel_wall_s: float, serial_baseline_s: float | None
+) -> float | None:
     """Speedup = serial baseline / parallel wall-clock (None if not computable)."""
     if not serial_baseline_s or parallel_wall_s <= 0:
         return None
@@ -68,9 +70,7 @@ def _wave_summary(parallel_report: dict[str, Any] | None) -> dict[str, Any]:
         "parallel": bool(parallel_report.get("parallel", True)),
         "workers_max": parallel_report.get("workers_max", 1),
         "total_waves": parallel_report.get("total_waves", len(waves)),
-        "observed_max_concurrency": parallel_report.get(
-            "observed_max_concurrency", 1
-        ),
+        "observed_max_concurrency": parallel_report.get("observed_max_concurrency", 1),
         "parallel_wall_s": wall,
         "waves": [
             {
@@ -131,7 +131,9 @@ def build_report(
         "observed_max_concurrency": waves["observed_max_concurrency"],
         "parallel_wall_s": waves["parallel_wall_s"],
         "serial_baseline_s": serial_baseline_s,
-        "speedup_vs_serial": compute_speedup(waves["parallel_wall_s"], serial_baseline_s),
+        "speedup_vs_serial": compute_speedup(
+            waves["parallel_wall_s"], serial_baseline_s
+        ),
         "waves": waves["waves"],
         "cost_usd": cost["cost_usd"],
         "total_tokens": cost["total_tokens"],

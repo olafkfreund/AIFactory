@@ -19,7 +19,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       isAuthenticated: false,
       isLoading: false,
       error: null,
@@ -100,7 +100,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'aifactory-auth',
-      partialize: (state) => ({
+      partialize: () => ({
         // Don't persist isAuthenticated - always re-check on load
       }),
     }

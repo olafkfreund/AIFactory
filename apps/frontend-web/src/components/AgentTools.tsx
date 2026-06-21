@@ -17,7 +17,6 @@ import {
   ChevronRight,
   CheckCircle2,
   Circle,
-  Monitor,
   Globe,
   ListChecks,
   Info,
@@ -30,7 +29,6 @@ import {
   Terminal,
   Loader2,
   RefreshCw,
-  AlertTriangle,
   Lock
 } from 'lucide-react';
 import { useState, useMemo, useEffect, useCallback } from 'react';
@@ -46,7 +44,7 @@ import {
 } from './ui/dialog';
 import { useSettingsStore } from '../stores/settings-store';
 import { useProjectStore } from '../stores/project-store';
-import type { ProjectEnvConfig, AgentMcpOverrides, AgentMcpOverride, CustomMcpServer, McpHealthCheckResult, McpHealthStatus } from '../shared/types';
+import type { ProjectEnvConfig, AgentMcpOverride, CustomMcpServer, McpHealthCheckResult } from '../shared/types';
 import { CustomMcpDialog } from './CustomMcpDialog';
 import { useTranslation } from 'react-i18next';
 import {

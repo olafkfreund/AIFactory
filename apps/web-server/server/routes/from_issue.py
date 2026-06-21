@@ -1,0 +1,258 @@
+"""Governed tier-driven ingest from a labelled issue (RFC-0011, #635).
+
+``POST /api/tasks/from-issue`` is the endpoint the label poller (and the GH
+Actions ``aifactory-task.yml`` fast path, which referenced a non-existent
+``/from-github-issue``) call to turn a labelled issue into a build.
+
+Flow:
+  1. Resolve the issue body + labels — either from the request ``payload`` /
+     ``labels`` directly, or by fetching via the project's ``GitProvider``
+     (provider-agnostic: GitHub / GitLab / Azure DevOps).
+  2. Classify the RFC-0011 difficulty tier (``classify_tier`` / ``tier_for``),
+     forcing ``hard`` for a ``migration`` rewrite.
+  3. Build the tier ``execution`` block (model / skip_planning / review_tier /
+     complexity / autonomy_tier) via ``intake.build_execution_block``.
+  4. Create a spec (mirroring ``import_github_issues``), apply the execution
+     profile to ``task_metadata.json`` (reusing ``apply_execution_profile`` from
+     the trusted-plan path), stamp the issue number for RFC-0001 correlation,
+     and start the build.
+
+Low/medium ride the skip-planning fast path; hard keeps full planning. Heavy
+deps (the agent SDK) are imported lazily so the module stays unit-testable.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
+
+# Add the backend dir to sys.path so backend seams resolve (mirrors execution.py).
+_BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+from intake import build_execution_block  # noqa: E402 — needs sys.path above
+from pfactory.tiers import classify_tier, tier_for  # noqa: E402
+from trusted_plan import apply_execution_profile  # noqa: E402
+
+router = APIRouter()
+
+
+class FromIssueRequest(BaseModel):
+    """Request to ingest a labelled issue as a tier-driven build."""
+
+    project_id: str = Field(..., description="Target AIFactory project id")
+    provider: str | None = Field(
+        None, description="Git provider hint (github|gitlab|azure_devops)"
+    )
+    repo: str | None = Field(None, description="owner/repo (informational)")
+    issue_number: int | None = Field(
+        None, description="Issue/work-item number to fetch via the provider"
+    )
+    payload: dict | None = Field(
+        None, description="Pre-fetched issue dict (title/body/labels); skips fetch"
+    )
+    labels: list[str] | None = Field(
+        None, description="Label names override (e.g. from a webhook)"
+    )
+    change_mode: str | None = Field(
+        None, description="change-mode; 'migration' forces the hard tier"
+    )
+    auto_continue: bool = Field(True, description="Auto-continue to next phase")
+    base_branch: str | None = Field(None, description="Base branch for the worktree")
+
+
+def _normalize_issue(payload: dict | None) -> dict:
+    """Pull title/body/number/labels/url out of a provider/gh issue dict."""
+    payload = payload or {}
+    raw_labels = payload.get("labels") or []
+    label_names = [
+        lbl.get("name", "") if isinstance(lbl, dict) else str(lbl)
+        for lbl in raw_labels
+    ]
+    return {
+        "number": payload.get("number"),
+        "title": payload.get("title", "") or "",
+        "body": payload.get("body", "") or "",
+        "url": payload.get("url", "") or payload.get("htmlUrl", "") or "",
+        "state": (payload.get("state", "") or "").lower(),
+        "labels": [name for name in label_names if name],
+    }
+
+
+async def _fetch_issue_via_provider(project_id: str, issue_number: int) -> dict:
+    """Fetch an issue through the project's GitProvider (provider-agnostic)."""
+    from .github import _get_project_provider
+
+    provider = _get_project_provider(project_id)
+    issue = await provider.fetch_issue(issue_number)
+    return {
+        "number": issue.number,
+        "title": issue.title,
+        "body": issue.body,
+        "url": issue.url,
+        "state": issue.state,
+        "labels": list(issue.labels),
+    }
+
+
+def _write_spec(
+    project_path: Path,
+    spec_id: str,
+    issue: dict,
+    execution: dict,
+    tier_value: str,
+) -> Path:
+    """Create the spec dir, write requirements.json + apply the execution profile."""
+    specs_dir = project_path / ".aifactory" / "specs"
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    spec_dir = specs_dir / spec_id
+    spec_dir.mkdir(parents=True, exist_ok=True)
+
+    requirements: dict = {
+        "title": issue.get("title") or f"Issue #{issue.get('number')}",
+        "description": issue.get("body", ""),
+        "source": "rfc0011-intake",
+        "created_at": datetime.now().isoformat(),
+        "intake": {"tier": tier_value, "autonomy_tier": tier_value},
+        "githubIssue": {
+            "number": issue.get("number"),
+            "url": issue.get("url", ""),
+            "state": issue.get("state", ""),
+            "labels": issue.get("labels", []),
+        },
+    }
+    # RFC-0001 correlation: stamp the issue number on first write so the cockpit
+    # threads plan->code->test instead of minting an orphan card.
+    number = issue.get("number")
+    if isinstance(number, int):
+        requirements["provenance"] = {"issue_number": number}
+
+    (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Reuse the trusted-plan execution-profile writer: maps the snake_case
+    # execution block into task_metadata.json (model/skipPlanning/reviewTier/...).
+    apply_execution_profile(spec_dir, {"execution": execution})
+    return spec_dir
+
+
+@router.post("/from-issue")
+async def create_from_issue(request: FromIssueRequest):
+    """Ingest a labelled issue and start a tier-driven governed build."""
+    from .tasks import get_next_spec_id
+
+    projects_path = _resolve_project_path(request.project_id)
+    if projects_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {request.project_id} not found",
+        )
+
+    # 1. Resolve the issue: explicit payload wins; otherwise fetch via provider.
+    if request.payload is not None:
+        issue = _normalize_issue(request.payload)
+    elif request.issue_number is not None:
+        try:
+            fetched = await _fetch_issue_via_provider(
+                request.project_id, request.issue_number
+            )
+        except Exception as exc:  # noqa: BLE001 — surface a clean 502
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to fetch issue #{request.issue_number}: {exc}",
+            ) from exc
+        issue = _normalize_issue(fetched)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide either payload or issue_number",
+        )
+
+    # Label override (e.g. from a webhook) takes precedence over the issue's own.
+    if request.labels is not None:
+        issue["labels"] = list(request.labels)
+
+    # 2. Classify the tier (highest-wins), migration forces hard.
+    labelled_tier = classify_tier(issue["labels"])
+
+    class _Carrier:
+        tier = labelled_tier
+
+    tier = tier_for(_Carrier(), change_mode=request.change_mode)
+
+    # 3. Build the tier execution block.
+    execution = build_execution_block(tier, change_mode=request.change_mode)
+
+    # 4. Create the spec + apply the profile + start the build.
+    project_path = projects_path
+    spec_id = get_next_spec_id(project_path, issue["title"] or "intake-task")
+    _write_spec(project_path, spec_id, issue, execution, tier.value)
+
+    task_id = f"{request.project_id}:{spec_id}"
+    await _start_build(
+        task_id=task_id,
+        project_path=project_path,
+        spec_id=spec_id,
+        execution=execution,
+        auto_continue=request.auto_continue,
+        base_branch=request.base_branch,
+    )
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "spec_id": spec_id,
+        "tier": tier.value,
+        "execution": execution,
+        "issue_number": issue.get("number"),
+        "message": f"Ingested issue as {tier.value}-tier build ({execution['model']}).",
+    }
+
+
+def _resolve_project_path(project_id: str) -> Path | None:
+    """Resolve a project id to its filesystem path (lazy import of projects)."""
+    from .projects import load_projects
+
+    projects = load_projects()
+    if project_id not in projects:
+        return None
+    return Path(projects[project_id]["path"])
+
+
+async def _start_build(
+    *,
+    task_id: str,
+    project_path: Path,
+    spec_id: str,
+    execution: dict,
+    auto_continue: bool,
+    base_branch: str | None,
+) -> None:
+    """Start the build via the agent service (lazy import; heavy SDK deps)."""
+    from ..services.agent_service import get_agent_service
+    from ..websockets.events import emit_task_status
+
+    agent_service = get_agent_service()
+    # skip_planning fast path => force past the plan-review gate; hard keeps it.
+    skip_planning = bool(execution.get("skip_planning"))
+    try:
+        await agent_service.start_task_execution(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=auto_continue,
+            base_branch=base_branch,
+            mode="full",
+            force=skip_planning,
+        )
+        await emit_task_status(task_id, "in_progress")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start build from issue: {exc}",
+        ) from exc

@@ -66,7 +66,8 @@ def resolve_base_url(native_default: str) -> str:
     if gateway:
         logger.debug(
             "provider routing via LiteLLM gateway: %s (native default was %s)",
-            gateway, native_default,
+            gateway,
+            native_default,
         )
         return gateway
     return native_default

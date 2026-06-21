@@ -30,7 +30,7 @@ import { useSettingsStore } from '../../stores/settings-store';
 import { ModelSearchableSelect } from './ModelSearchableSelect';
 import { useToast } from '../../hooks/use-toast';
 import { isValidUrl, isValidApiKey } from '../../lib/profile-utils';
-import type { APIProfile, ProfileFormData, TestConnectionResult } from '../../shared/types/profile';
+import type { APIProfile, ProfileFormData } from '../../shared/types/profile';
 import { maskApiKey } from '../../lib/profile-utils';
 
 interface ProfileEditDialogProps {
@@ -91,6 +91,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
       }, 5000);
       return () => clearTimeout(timeoutId);
     }
+    return undefined;
   }, [testConnectionResult]);
 
   // Cleanup AbortController when dialog closes or unmounts

@@ -174,8 +174,20 @@ class Settings(BaseSettings):
     DEFAULT_SHELL: str = "/bin/bash"
     MAX_TERMINALS: int = 20
 
-    # Task execution
+    # Task execution. Global cap on concurrently RUNNING builds, enforced by
+    # AgentService admission control (RFC-0016 #668): at the cap, new builds are
+    # queued FIFO instead of oversubscribing the pod. Env override
+    # APP_MAX_CONCURRENT_TASKS; a value <= 0 means unlimited (pre-cap behaviour).
     MAX_CONCURRENT_TASKS: int = 5
+
+    # Subprocess monitor tunables (#651) — surfaced on the pydantic-settings
+    # boundary so the agent monitor loop has no bare magic constants. Defaults
+    # preserve the previously hardcoded behaviour: poll/sync every 3s while a
+    # task runs, and auto-continue a finished-but-incomplete build at most 10
+    # times before giving up. Override with APP_AGENT_MONITOR_SYNC_INTERVAL /
+    # APP_AGENT_MAX_CONTINUATION_ROUNDS.
+    AGENT_MONITOR_SYNC_INTERVAL: float = 3.0
+    AGENT_MAX_CONTINUATION_ROUNDS: int = 10
 
     # rmux Live Agent Console (Epic #44). Set APP_RMUX_ENABLED=true to surface
     # the live "Agent Console" tab. Honored by rmux/integration.is_enabled()

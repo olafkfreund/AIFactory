@@ -214,8 +214,13 @@ def _nix_wrap(command: list[str], *, mount: str = "/work") -> list[str]:
     """
     inner = shlex.join(command)
     return [
-        "nix", "develop", f"path:{mount}#default",
-        "--command", "bash", "-c", inner,
+        "nix",
+        "develop",
+        f"path:{mount}#default",
+        "--command",
+        "bash",
+        "-c",
+        inner,
     ]
 
 
@@ -232,10 +237,21 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
 
     repo_pvc = os.environ.get("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data") or None
     data_root = os.environ.get("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    # RFC-0016 #197: opt-in warm /nix/store PVC so the toolchain closure persists
+    # across Nix Jobs instead of cold-fetching each run. Absent/empty → cold
+    # behavior (no mount), so nothing breaks if the PVC is not provisioned.
+    nix_store_pvc = os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None
+    if nix_store_pvc:
+        logger.info("[gate] warm Nix store PVC %s mounted at /nix", nix_store_pvc)
 
     def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
         try:
-            res = KubeJobSandbox(image, repo_pvc=repo_pvc, data_root=data_root).run(
+            res = KubeJobSandbox(
+                image,
+                repo_pvc=repo_pvc,
+                data_root=data_root,
+                nix_store_pvc=nix_store_pvc,
+            ).run(
                 [shlex.join(_nix_wrap(command))],
                 workdir=str(cwd),
                 timeout=GATE_TIMEOUT_SECONDS,

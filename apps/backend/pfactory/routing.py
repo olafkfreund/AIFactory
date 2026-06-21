@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from .taxonomy import Classification
 
-__all__ = ["priority_rank", "routing_target", "CODER", "TFACTORY", "UNRANKED"]
+__all__ = ["CODER", "TFACTORY", "UNRANKED", "priority_rank", "routing_target"]
 
 CODER = "coder"
 TFACTORY = "tfactory"

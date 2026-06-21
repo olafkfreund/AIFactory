@@ -118,7 +118,7 @@ def _resolve_model(model: str | None) -> str:
         return ""
     m = model.strip()
     if m.startswith("antigravity:"):
-        m = m[len("antigravity:"):].strip()
+        m = m[len("antigravity:") :].strip()
         return m or _DEFAULT_MODEL
     return _DEFAULT_MODEL if m in _PROVIDER_SELECTORS else m
 
@@ -136,7 +136,10 @@ def get_antigravity_binary(custom_path: str | None = None) -> str:
     if shutil.which("antigravity"):
         return "antigravity"
     from pathlib import Path
-    custom_path_default = Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+
+    custom_path_default = (
+        Path.home() / ".gemini" / "antigravity-cli" / "bin" / "antigravity"
+    )
     if custom_path_default.exists():
         return str(custom_path_default)
     if shutil.which("gemini"):
@@ -229,9 +232,7 @@ class AntigravityCLIProvider(BaseLLMProvider):
                     prompt builder (may be several kB of text).
         """
         self._pending_prompt = prompt
-        logger.debug(
-            "AntigravityCLIProvider: prompt stored (length=%d)", len(prompt)
-        )
+        logger.debug("AntigravityCLIProvider: prompt stored (length=%d)", len(prompt))
 
     def receive_response(self) -> AsyncIterator[Any]:
         """Return an async generator that runs the Antigravity CLI subprocess.
@@ -268,8 +269,14 @@ class AntigravityCLIProvider(BaseLLMProvider):
         # Resolve the executable path early so callers get a clear error
         # message rather than a confusing FileNotFoundError from asyncio.
         resolved_binary = get_antigravity_binary(self._antigravity_path)
-        resolved_path = shutil.which(resolved_binary) if not resolved_binary.startswith("/") else resolved_binary
-        if resolved_path is None or (resolved_binary.startswith("/") and not Path(resolved_binary).exists()):
+        resolved_path = (
+            shutil.which(resolved_binary)
+            if not resolved_binary.startswith("/")
+            else resolved_binary
+        )
+        if resolved_path is None or (
+            resolved_binary.startswith("/") and not Path(resolved_binary).exists()
+        ):
             raise RuntimeError(
                 f"Antigravity CLI executable not found: '{self._antigravity_path}'. "
                 "Install the Antigravity CLI or pass the correct path via "
@@ -324,9 +331,7 @@ class AntigravityCLIProvider(BaseLLMProvider):
         # A non-zero exit with no stdout is a fatal error.
         if proc.returncode != 0 and not stdout_text:
             error_detail = stderr_text or f"exit code {proc.returncode}"
-            raise RuntimeError(
-                f"Antigravity CLI exited with an error: {error_detail}"
-            )
+            raise RuntimeError(f"Antigravity CLI exited with an error: {error_detail}")
 
         # Log stderr as a warning when present but non-fatal.
         if stderr_text:

@@ -177,7 +177,8 @@ class ModificationTracker:
                 check=True,
             )
             changed_files = [
-                f for f in result.stdout.strip().split("\n")
+                f
+                for f in result.stdout.strip().split("\n")
                 if f
                 and Path(f).name not in IGNORED_FILES
                 and not any(f.startswith(p) for p in IGNORED_PREFIXES)

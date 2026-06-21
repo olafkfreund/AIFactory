@@ -144,7 +144,7 @@ def generate_task_title(task_description: str, max_length: int = 60) -> str:
 
     # Truncate if needed
     if len(title) > max_length:
-        title = title[:max_length - 3] + "..."
+        title = title[: max_length - 3] + "..."
 
     return title
 
@@ -202,7 +202,9 @@ def create_quick_spec_from_template(
                         "service": "main",
                         "status": "pending",
                         "files_to_create": [],
-                        "files_to_modify": [file_path] if file_path != "[file-to-modify]" else [],
+                        "files_to_modify": [file_path]
+                        if file_path != "[file-to-modify]"
+                        else [],
                         "patterns_from": [],
                         "verification": {
                             "type": "manual",
@@ -276,8 +278,8 @@ def get_optimized_thinking_budget(complexity: str) -> int:
 
 # Export main functions
 __all__ = [
-    "match_quick_template",
     "create_quick_spec_from_template",
-    "should_use_template_mode",
     "get_optimized_thinking_budget",
+    "match_quick_template",
+    "should_use_template_mode",
 ]

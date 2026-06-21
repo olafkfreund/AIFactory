@@ -21,8 +21,8 @@ from .service_analyzer import ServiceAnalyzer
 
 # Re-export main classes
 __all__ = [
-    "ServiceAnalyzer",
     "ProjectAnalyzer",
+    "ServiceAnalyzer",
     "analyze_project",
     "analyze_service",
 ]

@@ -732,7 +732,9 @@ async def extract_session_insights_bulk(
                 recovery_manager=c.get("recovery_manager"),
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("gather_extraction_inputs failed for %s: %s", subtask_id, exc)
+            logger.warning(
+                "gather_extraction_inputs failed for %s: %s", subtask_id, exc
+            )
             entries_by_id[subtask_id] = {"skip_reason": "gather_failed"}
             continue
 
@@ -758,7 +760,9 @@ async def extract_session_insights_bulk(
     # Submit + poll.
     try:
         batch_id = await submit_batch(requests, api_key=api_key)
-        logger.info("Bulk extraction batch submitted: %s (%d requests)", batch_id, len(requests))
+        logger.info(
+            "Bulk extraction batch submitted: %s (%d requests)", batch_id, len(requests)
+        )
         batch_results = await await_batch(
             batch_id, api_key=api_key, timeout=_bulk_timeout()
         )
@@ -816,9 +820,7 @@ async def extract_session_insights_bulk(
     # Handle entries that were pre-skipped (no changes / gather failure).
     for c in completions:
         if c["subtask_id"] not in out:
-            out[c["subtask_id"]] = _get_generic_insights(
-                c["subtask_id"], c["success"]
-            )
+            out[c["subtask_id"]] = _get_generic_insights(c["subtask_id"], c["success"])
 
     return out
 

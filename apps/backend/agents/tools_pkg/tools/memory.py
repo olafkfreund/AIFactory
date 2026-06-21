@@ -40,7 +40,9 @@ def create_memory_tools(
     if not SDK_TOOLS_AVAILABLE:
         return []
 
-    get_spec_dir: Callable[[], Path] = spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    get_spec_dir: Callable[[], Path] = (
+        spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
+    )
 
     tools = []
 
@@ -295,7 +297,7 @@ def create_memory_tools(
                 "content": [
                     {
                         "type": "text",
-                        "text": f"❌ Error testing Graphiti memory: {str(e)}",
+                        "text": f"❌ Error testing Graphiti memory: {e!s}",
                     }
                 ]
             }

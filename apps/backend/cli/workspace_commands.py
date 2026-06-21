@@ -335,9 +335,7 @@ def handle_list_worktrees_command(project_dir: Path) -> None:
         print("  To review:  python aifactory/run.py --spec <name> --review")
         print("  To discard: python aifactory/run.py --spec <name> --discard")
         print()
-        print(
-            "  To cleanup all worktrees: python aifactory/run.py --cleanup-worktrees"
-        )
+        print("  To cleanup all worktrees: python aifactory/run.py --cleanup-worktrees")
     print()
 
 

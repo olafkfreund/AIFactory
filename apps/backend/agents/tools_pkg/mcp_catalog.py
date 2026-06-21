@@ -47,11 +47,14 @@ PR for issue #168. Google Cloud AI Companion MCP went GA in March 2026.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.mcp_credentials import CredentialStatus
+from core.mcp_credentials import CredentialStatus, get_operator_mcp_servers
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Default GCP MCP endpoint (GA, March 2026).
@@ -323,21 +326,113 @@ CATALOG: list[MCPCatalogEntry] = [
         docs_url="https://cloud.google.com/gemini/docs/codeassist/mcp-overview",
     ),
 ]
+# ---- RFC-0013: deployment-metrics MCP (#644) ---------------------------
+#
+# The deployment-metrics MCP (best-effort DORA: deploy_history / dora_metrics)
+# is deliberately NOT a built-in auto-launched default. The hub's
+# ``deployment_metrics_stub.py`` is the dependency-free *reference provider*
+# (a function library used by tests/fixtures), not a runnable stdio MCP server,
+# so AIFactory does not pretend to launch one. A REAL deployment-metrics MCP
+# server is registered by the operator via ~/.aifactory/mcp-servers.json and is
+# surfaced through ``operator_catalog_entries()`` (see below). Absent that, there
+# is no server — and the contract's ``dora_context`` honestly reports
+# ``available: false`` (degrade, never fabricate).
 
 
 _CATALOG_BY_ID: dict[str, MCPCatalogEntry] = {entry.id: entry for entry in CATALOG}
 
 
+def _operator_entry(server_id: str, spec: dict) -> MCPCatalogEntry | None:
+    """Build a catalog entry from one ~/.aifactory/mcp-servers.json server spec.
+
+    Env (secrets) are resolved into the SDK config dict at build time via the
+    ``credential_provider`` chain, NOT here and NEVER onto argv. Returns None if
+    the spec is unusable.
+    """
+    transport = str(spec.get("transport", "stdio")).strip().lower()
+    markers = [str(m) for m in spec.get("markers", []) if str(m).strip()]
+    agents = [str(a) for a in spec.get("agents", []) if str(a).strip()] or [
+        "planner",
+        "coder",
+        "qa_reviewer",
+    ]
+    docs_url = str(spec.get("docs_url", "")).strip()
+    # Operator entries authenticate via a per-server credential provider so the
+    # subprocess gets secrets through the environment. Default to the server id
+    # (the deployment-metrics probe keys off "deployment_metrics").
+    credential_provider = str(
+        spec.get("credential_provider", server_id.replace("-", "_"))
+    ).strip()
+
+    if transport == "http":
+        url = str(spec.get("url", "")).strip()
+        if not url:
+            return None
+        return MCPCatalogEntry(
+            id=server_id,
+            transport="http",
+            http_endpoint=url,
+            marker_capability_keys=markers,
+            credential_provider=credential_provider,
+            default_for_agents=agents,
+            docs_url=docs_url,
+        )
+
+    command = str(spec.get("command", "")).strip()
+    if not command:
+        return None
+    args = [str(a) for a in spec.get("args", [])]
+    return MCPCatalogEntry(
+        id=server_id,
+        launcher_command=command,
+        launcher_args=args,
+        marker_capability_keys=markers,
+        credential_provider=credential_provider,
+        default_for_agents=agents,
+        docs_url=docs_url,
+    )
+
+
+def operator_catalog_entries() -> dict[str, MCPCatalogEntry]:
+    """Materialize operator-declared MCP servers (RFC-0013 #644).
+
+    Read from ~/.aifactory/mcp-servers.json. These OVERRIDE the built-in catalog
+    by id (so an operator can swap the bundled deployment-metrics stub for a real
+    GitHub Deployments / Argo CD / Datadog provider with no code change).
+    Evaluated at call time so a config change does not require a restart.
+    """
+    entries: dict[str, MCPCatalogEntry] = {}
+    for server_id, spec in get_operator_mcp_servers().items():
+        entry = _operator_entry(server_id, spec)
+        if entry is None:
+            logger.warning("Skipping unusable operator MCP server %r", server_id)
+            continue
+        entries[server_id] = entry
+    return entries
+
+
+def _effective_catalog() -> dict[str, MCPCatalogEntry]:
+    """Built-in catalog with operator entries overlaid (operator wins by id)."""
+    merged = dict(_CATALOG_BY_ID)
+    merged.update(operator_catalog_entries())
+    return merged
+
+
 def get_catalog_entry(server_id: str) -> MCPCatalogEntry | None:
-    """Lookup helper for client.py / models.py / mcp_doctor CLI."""
-    return _CATALOG_BY_ID.get(server_id)
+    """Lookup helper for client.py / models.py / mcp_doctor CLI.
+
+    Operator-declared servers (and overrides) take precedence over built-ins.
+    """
+    return _effective_catalog().get(server_id)
 
 
 def is_catalog_server(server_id: str) -> bool:
-    """Cheap "do we ship this server?" check used by name-mapping in models.py."""
-    return server_id in _CATALOG_BY_ID
+    """Cheap "do we ship/declare this server?" check used by models.py."""
+    return server_id in _effective_catalog()
 
 
 def catalog_ids() -> list[str]:
-    """Stable ordering — matches CATALOG list above."""
-    return [entry.id for entry in CATALOG]
+    """Stable ordering — built-ins first, then operator-only additions."""
+    builtin = [entry.id for entry in CATALOG]
+    extra = [sid for sid in operator_catalog_entries() if sid not in _CATALOG_BY_ID]
+    return builtin + extra

@@ -20,13 +20,13 @@ from agents.tools_pkg.registry import (  # noqa: F401
 )
 
 __all__ = [
+    "TOOL_GET_BUILD_PROGRESS",
+    "TOOL_GET_SESSION_CONTEXT",
+    "TOOL_RECORD_DISCOVERY",
+    "TOOL_RECORD_GOTCHA",
+    "TOOL_UPDATE_QA_STATUS",
+    "TOOL_UPDATE_SUBTASK_STATUS",
     "create_magestic_ai_mcp_server",
     "get_allowed_tools",
     "is_tools_available",
-    "TOOL_UPDATE_SUBTASK_STATUS",
-    "TOOL_GET_BUILD_PROGRESS",
-    "TOOL_RECORD_DISCOVERY",
-    "TOOL_RECORD_GOTCHA",
-    "TOOL_GET_SESSION_CONTEXT",
-    "TOOL_UPDATE_QA_STATUS",
 ]

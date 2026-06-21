@@ -1,0 +1,159 @@
+name: cq-ratchet
+
+# Diff-scoped code-quality ratchet (Factory coding standards, section 4.6).
+#
+# Holds NEW and TOUCHED Python to the full fleet-wide strict bar
+# (standards/ruff.toml + standards/mypy.ini, vendored from the Factory hub)
+# WITHOUT turning the legacy tree red:
+#   * ruff runs against the strict baseline per changed file and fails only if a
+#     changed file's strict-violation COUNT increased vs the base branch
+#     (scripts/cq_ratchet.py). A touched file's existing legacy violations are
+#     tolerated; adding one is not. Count (not line) scoping is used so a pure
+#     `ruff format` reflow of legacy lines cannot trip the gate.
+#   * mypy --strict runs per changed file and fails only if a changed file's
+#     error COUNT increased vs the base branch (#647). Touched legacy files keep
+#     their existing type debt; net-new type errors fail. Same count-scoped
+#     no-regression contract as the ruff ratchet above.
+#   * ruff format --check is enforced repo-wide (the tree is formatter-clean as
+#     of cq-phase0).
+# Adopting issues: #647, #652.
+#
+# Intended to be BLOCKING under branch protection. The pre-existing lenient
+# repo-wide `ruff check` in ci.yml stays as-is for the legacy backlog.
+
+on:
+  pull_request:
+    branches: [dev, main, "feat/**", "release/**"]
+
+concurrency:
+  group: cq-ratchet-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pin the toolchain (standards 4.5). Matches the ruff-pre-commit hook so local
+  # and CI agree byte-for-byte on lint + format.
+  RUFF_VERSION: "0.14.10"
+
+jobs:
+  ratchet:
+    name: ratchet (ruff + mypy on changed Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need the merge base to diff against
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Install deps (for mypy import resolution) + pinned ruff
+        working-directory: apps/backend
+        run: |
+          uv venv
+          uv pip install -r requirements.txt
+          uv pip install -r ../web-server/requirements.txt
+          uv pip install -r ../../tests/requirements-test.txt
+          uv pip install "ruff==${RUFF_VERSION}"
+
+      - name: Fetch PR base
+        run: git fetch --no-tags origin "${{ github.base_ref }}"
+
+      - name: Ruff (strict baseline, per-file no-regression ratchet)
+        run: |
+          apps/backend/.venv/bin/python scripts/cq_ratchet.py \
+            --base "origin/${{ github.base_ref }}" \
+            --ruff apps/backend/.venv/bin/ruff \
+            --config standards/ruff.toml \
+            --paths 'apps/backend/**/*.py'
+
+      - name: Mypy --strict (shared baseline, per-file no-regression ratchet)
+        run: |
+          # mypy cannot be line-scoped and the legacy tree is only partially
+          # annotated, so gating every TOUCHED file under --strict at error
+          # severity would turn a formatting-only PR instantly red (the exact
+          # whole-repo-strict trap the standard's ratchet exists to avoid).
+          # Instead we count mypy --strict errors per changed file base-vs-head
+          # and fail only if a touched file's error COUNT increased — the same
+          # no-regression contract the ruff ratchet uses (#647). A new untyped
+          # module (before=0) cannot land any errors; a touched legacy file
+          # keeps its existing debt but may not add to it. Cleaning type errors
+          # only ever lowers the count, which is always allowed.
+          apps/backend/.venv/bin/python scripts/cq_ratchet.py \
+            --tool mypy \
+            --base "origin/${{ github.base_ref }}" \
+            --mypy apps/backend/.venv/bin/mypy \
+            --config standards/mypy.ini \
+            --paths 'apps/backend/**/*.py'
+
+  format-check:
+    name: ruff format --check (repo-wide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned ruff
+        run: pip install "ruff==${RUFF_VERSION}"
+
+      - name: Ruff format check (apps/backend)
+        run: ruff format --check apps/backend
+
+  config-drift:
+    name: shared-baseline drift gate (blocking)
+    runs-on: ubuntu-latest
+    # Confirms the vendored standards/ copies still match the Factory hub
+    # baseline at the pinned SHA (standards/.hub-sha). Per the standard the
+    # vendored copies must stay byte-identical to the hub (Factory#154); local
+    # tighten-only overrides live in the root ruff.toml, never in standards/.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aifactory
+
+      - name: Read pinned hub SHA
+        id: pin
+        run: echo "sha=$(cat aifactory/standards/.hub-sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out hub standards at the pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: ${{ steps.pin.outputs.sha }}
+          path: factory-hub
+          # If Factory is private, a token with read access is needed here.
+        continue-on-error: true
+        id: hub
+
+      - name: Diff vendored configs against the pinned hub baseline
+        if: steps.hub.outcome == 'success'
+        run: |
+          set -e
+          # Vendored copies carry a header above the body; compare the rule body
+          # only by stripping leading comment/blank lines from both sides.
+          strip() { grep -vE '^[[:space:]]*([#;]|$)' "$1"; }
+          for f in ruff.toml mypy.ini .editorconfig; do
+            if ! diff <(strip "aifactory/standards/$f") <(strip "factory-hub/standards/$f"); then
+              echo "DRIFT: aifactory/standards/$f diverged from the pinned hub baseline (standards/$f)."
+              echo "Re-vendor from the hub and bump standards/.hub-sha, or justify a tighten-only override in the root ruff.toml."
+              exit 1
+            fi
+          done
+          echo "No drift: vendored configs match the pinned hub baseline."
+
+      - name: Hub unavailable (private repo / no token)
+        if: steps.hub.outcome != 'success'
+        run: echo "Hub checkout unavailable; skipping drift diff (configure a read token to enforce)."

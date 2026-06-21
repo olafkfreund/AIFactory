@@ -31,12 +31,12 @@ from pathlib import Path
 
 __all__ = [
     "MUTATING_TOOLS",
-    "ledger_enabled",
     "MutationLedger",
     "git_checkpoint",
+    "ledger_enabled",
+    "mutation_target",
     "rollback_to",
     "verify_turn",
-    "mutation_target",
 ]
 
 # Tools that can change the tree. Bash is included (it can `rm`/`mv`/write).

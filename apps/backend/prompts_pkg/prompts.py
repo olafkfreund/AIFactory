@@ -119,6 +119,12 @@ root, not in the spec directory.
 ---
 
 """
+    # RFC-0012 / RFC-0013: the solo agent is coder + QA in one flow, so surface
+    # both the team's house standards and the deployment context to it.
+    spec_context += get_house_standards_context(spec_dir)
+    # RFC-0015: honour the per-project constitution (enforceable clauses = hard).
+    spec_context += get_constitution_context(spec_dir)
+    spec_context += get_deployment_context(spec_dir)
     return spec_context + prompt
 
 
@@ -163,6 +169,15 @@ The project root is the parent of aifactory/. All code goes in the project root,
 ---
 
 """
+
+    # RFC-0012: surface the team's house standards so the coder follows them.
+    spec_context += get_house_standards_context(spec_dir)
+
+    # RFC-0015: honour the per-project constitution (enforceable clauses = hard).
+    spec_context += get_constitution_context(spec_dir)
+
+    # RFC-0013: surface the deployment context (scans, gates, dry-run policy).
+    spec_context += get_deployment_context(spec_dir)
 
     # Check for recovery context (stuck subtasks, retry hints)
     recovery_context = _get_recovery_context(spec_dir)
@@ -255,6 +270,334 @@ Subtasks with previous attempts:
 
     except (OSError, json.JSONDecodeError):
         return ""
+
+
+def get_house_standards_context(spec_dir: Path) -> str:
+    """Render the RFC-0012 house standards as a prompt block.
+
+    Reads the signed Task Contract (``context/task_contract.json``, falling back
+    to ``implementation_plan.json``) and surfaces
+    ``epic_context.house_standards`` so the coder / QA agents FOLLOW the team's
+    own conventions (linters, build managers, golden-path guides) instead of
+    generic defaults. Degrades silently to "" when no standards were retrieved —
+    RFC-0012 retrieval is best-effort, but the standards_conformance gate fails
+    the build if a *retrieved* standard is then ignored.
+    """
+    contract = None
+    for rel in ("context/task_contract.json", "implementation_plan.json"):
+        path = spec_dir / rel
+        if path.exists():
+            try:
+                contract = json.loads(path.read_text())
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+    if not isinstance(contract, dict):
+        return ""
+
+    epic_context = contract.get("epic_context")
+    house = (
+        epic_context.get("house_standards") if isinstance(epic_context, dict) else None
+    )
+    if not isinstance(house, dict) or not house.get("available"):
+        return ""
+    sources = [s for s in house.get("sources", []) if isinstance(s, dict)]
+    if not sources:
+        return ""
+
+    tools: list[str] = []
+    version_managers: list[str] = []
+    techdocs: list[str] = []
+    lifecycle = None
+    for src in sources:
+        conv = src.get("conventions")
+        if isinstance(conv, dict):
+            tools += [str(t) for t in conv.get("code_quality_tools", []) or []]
+            version_managers += [str(t) for t in conv.get("version_managers", []) or []]
+        techdocs += [str(r) for r in src.get("techdocs_refs", []) or []]
+        lifecycle = lifecycle or src.get("lifecycle")
+
+    lines = [
+        "## HOUSE STANDARDS (RFC-0012 — FOLLOW THESE)",
+        "",
+        "This team has its own standards. Follow them over generic defaults. The "
+        "`standards_conformance` gate fails the build when a retrieved standard is "
+        "ignored (e.g. a declared lint/type tool that is never run).",
+        "",
+    ]
+    if tools:
+        lines.append(
+            f"- **Code-quality tools (use and run these):** {', '.join(dict.fromkeys(tools))}"
+        )
+    if version_managers:
+        lines.append(
+            f"- **Version / build managers:** {', '.join(dict.fromkeys(version_managers))}"
+        )
+    if lifecycle:
+        lines.append(f"- **Component lifecycle:** {lifecycle}")
+    if techdocs:
+        lines.append("- **Consult these team guides (TechDocs) before coding:**")
+        for ref in dict.fromkeys(techdocs):
+            lines.append(f"  - `{ref}`")
+    lines += ["", "---", "", ""]
+    return "\n".join(lines)
+
+
+def get_constitution_context(spec_dir: Path) -> str:
+    """Render the RFC-0015 §3.1 constitution as a prompt block.
+
+    Reads the signed Task Contract (``context/task_contract.json``, falling back
+    to ``implementation_plan.json``) and surfaces
+    ``epic_context.constitution`` so the coder / QA agents HONOUR the project's
+    human-authored governing principles. Mirrors the RFC-0012 house-standards
+    injection pattern (``get_house_standards_context``).
+
+    Principles tagged ``enforceable: true`` are rendered as HARD requirements
+    (must-follow, not advisory); the ``standards_conformance`` gate enforces the
+    same clauses, closing spec-kit's soft-enforcement gap. Advisory principles
+    are still injected so the agent has the full context.
+
+    Degrades silently to "" when no constitution was retrieved (``available``
+    false, no principles, or the block is absent) — RFC-0015 retrieval degrades,
+    never fakes, and the absent case leaves today's behaviour unchanged.
+    """
+    contract = None
+    for rel in ("context/task_contract.json", "implementation_plan.json"):
+        path = spec_dir / rel
+        if path.exists():
+            try:
+                contract = json.loads(path.read_text())
+                break
+            except (OSError, json.JSONDecodeError):
+                continue
+    if not isinstance(contract, dict):
+        return ""
+
+    epic_context = contract.get("epic_context")
+    constitution = (
+        epic_context.get("constitution") if isinstance(epic_context, dict) else None
+    )
+    if not isinstance(constitution, dict) or not constitution.get("available"):
+        return ""
+
+    principles = [
+        p
+        for p in constitution.get("principles", [])
+        if isinstance(p, dict) and str(p.get("text", "")).strip()
+    ]
+    if not principles:
+        return ""
+
+    # ids tagged enforceable; honour the per-principle flag and the top-level
+    # enforceable_ids list (a principle is hard if either marks it so).
+    enforceable_ids = {
+        str(i) for i in constitution.get("enforceable_ids", []) if str(i).strip()
+    }
+
+    def _is_hard(principle: dict[str, object]) -> bool:
+        return bool(principle.get("enforceable")) or (
+            str(principle.get("id", "")) in enforceable_ids
+        )
+
+    hard = [p for p in principles if _is_hard(p)]
+    advisory = [p for p in principles if not _is_hard(p)]
+
+    source = str(constitution.get("source", "")).strip()
+    lines = [
+        "## PROJECT CONSTITUTION (RFC-0015 — GOVERNING PRINCIPLES)",
+        "",
+        "This project has a human-authored constitution. Honour every principle. "
+        "Clauses marked HARD REQUIREMENT are non-negotiable must-follows (not "
+        "advisory): the `standards_conformance` gate fails the build when a hard "
+        "clause is ignored.",
+        "",
+    ]
+    if source:
+        lines += [f"_Source: `{source}`_", ""]
+
+    if hard:
+        lines.append("### HARD REQUIREMENTS (must follow)")
+        for p in hard:
+            pid = str(p.get("id", "")).strip()
+            prefix = f"[{pid}] " if pid else ""
+            lines.append(
+                f"- 🚨 **HARD REQUIREMENT** — {prefix}{str(p['text']).strip()}"
+            )
+        lines.append("")
+
+    if advisory:
+        lines.append("### Advisory principles (follow where applicable)")
+        for p in advisory:
+            pid = str(p.get("id", "")).strip()
+            prefix = f"[{pid}] " if pid else ""
+            lines.append(f"- {prefix}{str(p['text']).strip()}")
+        lines.append("")
+
+    lines += ["---", "", ""]
+    return "\n".join(lines)
+
+
+def _load_contract(spec_dir: Path) -> dict | None:
+    """Read the signed Task Contract for ``spec_dir``.
+
+    Tries ``context/task_contract.json`` first, then ``implementation_plan.json``
+    (same resolution order as ``get_house_standards_context``). Returns the
+    parsed dict, or None when absent / unreadable. Never raises.
+    """
+    for rel in ("context/task_contract.json", "implementation_plan.json"):
+        path = spec_dir / rel
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                return data
+    return None
+
+
+def _deployment_names(deployment: dict, key: str) -> list[str]:
+    """Return the de-duplicated, stripped string list at ``deployment[key]``."""
+    raw = deployment.get(key)
+    if not isinstance(raw, list):
+        return []
+    return list(dict.fromkeys(str(v).strip() for v in raw if str(v).strip()))
+
+
+def _deployment_summary_lines(deployment: dict) -> list[str]:
+    """Render the one-line-per-field summary of the deployment block."""
+    fields = [
+        ("Risk class", str(deployment.get("risk_class", "")).strip()),
+        ("CI system", str(deployment.get("ci_system", "")).strip()),
+        ("Deploy system", str(deployment.get("deploy_system", "")).strip()),
+        (
+            "Target environments",
+            ", ".join(_deployment_names(deployment, "deploy_target_environments")),
+        ),
+        (
+            "Highest blast-radius class",
+            str(deployment.get("production_classification", "")).strip(),
+        ),
+    ]
+    lines = [f"- **{label}:** {value}" for label, value in fields if value]
+
+    required_scans = _deployment_names(deployment, "required_scans")
+    if required_scans:
+        lines.append(
+            "- **Required scans (these MUST run before deploy — add them to the "
+            f"pipeline):** {', '.join(required_scans)}"
+        )
+    system_gates = _deployment_names(deployment, "system_gates")
+    if system_gates:
+        lines.append(
+            "- **System gates (must pass before deploy; do not bypass):** "
+            f"{', '.join(system_gates)}"
+        )
+    return lines
+
+
+def _deployment_pipeline_lines(deployment: dict) -> list[str]:
+    """Render the needs_pipeline scaffolding instruction, or [] when not needed."""
+    if not deployment.get("needs_pipeline"):
+        return []
+    ci_system = str(deployment.get("ci_system", "")).strip()
+    lines = [
+        "",
+        "### Pipeline required (`needs_pipeline=true`)",
+        "No usable CI/CD pipeline exists for this change. Scaffold one from "
+        "the team's golden-path template via the Backstage scaffolder MCP "
+        "(`scaffolder_execute-template`), then extend it. The pipeline MUST "
+        "include build, the required scans above, and the deploy stage(s).",
+    ]
+    suggestion = _golden_path_template_for(ci_system)
+    if suggestion:
+        lines.append(
+            f"- **Suggested golden-path template:** `{suggestion}` "
+            f"(matched to ci_system=`{ci_system or 'unknown'}`)."
+        )
+    return lines
+
+
+def _deployment_verification_lines(deployment: dict) -> list[str]:
+    """Render the dry-run deploy-verification policy, or [] when absent."""
+    dv = deployment.get("deploy_verification")
+    if not isinstance(dv, dict) or not dv:
+        return []
+    bits = [
+        b
+        for b in (
+            str(dv.get("target_level", "")).strip(),
+            str(dv.get("mode", "")).strip(),
+        )
+        if b
+    ]
+    if not bits:
+        return []
+    return [
+        "",
+        "### Deploy verification policy (DRY-RUN by design)",
+        f"- Target level / mode: {' / '.join(bits)}.",
+        "- Prove the deploy WOULD work (lint / `helm template` / "
+        "`terraform plan` / `--dry-run`). Do NOT run a production apply: "
+        "that is VAL-4 and is held behind a human-approval gate.",
+    ]
+
+
+def get_deployment_context(spec_dir: Path) -> str:
+    """Render the RFC-0013 ``deployment`` block as a prompt block (#643).
+
+    Reads the signed Task Contract and surfaces ``deployment`` so the coder / QA
+    agents PLAN FOR HOW THE CHANGE SHIPS, not just what it does: the required
+    pre-deploy scans they must wire in, the system gates that must pass, and the
+    DRY-RUN deploy-verification policy (production is VAL-4 and NEVER applied
+    autonomously). Degrades silently to "" when there is no deployment block —
+    a library change or docs PR keeps the prior behavior.
+    """
+    contract = _load_contract(spec_dir)
+    if contract is None:
+        return ""
+
+    deployment = contract.get("deployment")
+    if not isinstance(deployment, dict) or not deployment:
+        return ""
+
+    lines = [
+        "## DEPLOYMENT CONTEXT (RFC-0013 — PLAN FOR HOW IT SHIPS)",
+        "",
+        "This change has a delivery dimension. Honor it: wire in the required "
+        "scans and respect the system gates below. Deploy verification is "
+        "DRY-RUN by policy and **production is never applied autonomously**.",
+        "",
+    ]
+    lines += _deployment_summary_lines(deployment)
+    lines += _deployment_pipeline_lines(deployment)
+    lines += _deployment_verification_lines(deployment)
+
+    if str(deployment.get("production_classification", "")).strip() == "production":
+        lines += [
+            "",
+            "**Production path:** this change reaches production. It is VAL-4 and "
+            "NEVER deployed autonomously — a human authorizes the real apply.",
+        ]
+
+    lines += ["", "---", "", ""]
+    return "\n".join(lines)
+
+
+def _golden_path_template_for(ci_system: str) -> str:
+    """Map a discovered ``ci_system`` to a golden-path scaffolder template ref.
+
+    Returns the Backstage template reference the coder should pass to
+    ``scaffolder_execute-template``, or "" when the CI system is unknown (then
+    the coder picks from the catalog). These names mirror the fleet golden-path
+    templates; an operator override is out of scope for this safe core.
+    """
+    mapping = {
+        "github-actions": "template:default/ci-cd-github-actions",
+        "gitlab-ci": "template:default/ci-cd-gitlab-ci",
+        "azure-pipelines": "template:default/ci-cd-azure-pipelines",
+    }
+    return mapping.get((ci_system or "").strip().lower(), "")
 
 
 def get_followup_planner_prompt(spec_dir: Path) -> str:
@@ -399,6 +742,10 @@ The project root is: `{project_dir}`
 ---
 
 """
+            spec_context += get_house_standards_context(spec_dir)
+            # RFC-0015: honour the per-project constitution in QA review.
+            spec_context += get_constitution_context(spec_dir)
+            spec_context += get_deployment_context(spec_dir)
             return spec_context + base_prompt
 
     # Load base QA reviewer prompt (full mode with MCP tools)
@@ -457,6 +804,17 @@ The project root is: `{project_dir}`
         )
 
     spec_context += "---\n\n"
+
+    # RFC-0012: surface the team's house standards so QA checks against them.
+    spec_context += get_house_standards_context(spec_dir)
+
+    # RFC-0015: honour the per-project constitution so QA verifies enforceable
+    # (hard) clauses, not just advisory ones.
+    spec_context += get_constitution_context(spec_dir)
+
+    # RFC-0013: surface the deployment context so QA verifies scans/gates and
+    # the dry-run deploy policy.
+    spec_context += get_deployment_context(spec_dir)
 
     # Find injection point in base prompt (after PHASE 4, before PHASE 5)
     injection_marker = (

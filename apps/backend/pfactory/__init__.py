@@ -26,22 +26,27 @@ from .tfactory_client import (
     send_handoff,
     tfactory_config,
 )
+from .tiers import Tier, classify_tier, resolve_low_tier_model, tier_for
 
 __all__ = [
     "CODER",
     "TFACTORY",
     "Classification",
+    "Tier",
     "build_handoff_payload",
-    "load_tfactory_block",
     "classify_labels",
     "classify_requirements",
+    "classify_tier",
     "extract_child_issue_numbers",
     "is_governed_requirements",
     "load_pfactory_metadata",
+    "load_tfactory_block",
     "parse_pfactory_meta",
     "priority_rank",
     "render_pfactory_context",
+    "resolve_low_tier_model",
     "routing_target",
     "send_handoff",
     "tfactory_config",
+    "tier_for",
 ]

@@ -52,7 +52,9 @@ def _dep_declared(dist: str, blob: str) -> bool:
     """True if ``dist`` appears as a declared dependency token in ``blob``."""
     # Match the distribution name as a whole token (so `httpx` matches but a
     # substring like `httpxy` does not), tolerant of version specifiers/extras.
-    return re.search(rf"(^|[^a-z0-9_-]){re.escape(dist)}([^a-z0-9_-]|$)", blob) is not None
+    return (
+        re.search(rf"(^|[^a-z0-9_-]){re.escape(dist)}([^a-z0-9_-]|$)", blob) is not None
+    )
 
 
 def detect_undeclared_test_deps(project_dir: Path | str) -> list[str]:

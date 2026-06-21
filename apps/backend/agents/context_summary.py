@@ -31,8 +31,8 @@ __all__ = [
     "SECTIONS",
     "build_active_task_summary",
     "should_refresh",
-    "write_active_context",
     "summary_enabled",
+    "write_active_context",
 ]
 
 # The 9-section template (Hermes' "Active Task" shape, adapted to AIFactory).

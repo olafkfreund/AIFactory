@@ -269,7 +269,7 @@ class BatchProcessor:
 
                     # Get Claude's actual reasoning from comparisons
                     claude_reasoning = "No similar issues found."
-                    if issue_num in reasoning_dict and reasoning_dict[issue_num]:
+                    if reasoning_dict.get(issue_num):
                         # Get reasoning from any comparison
                         other_issues = list(reasoning_dict[issue_num].keys())
                         if other_issues:

@@ -66,9 +66,12 @@ def test_no_pid_is_noop():
 
 
 def test_build_spawn_uses_new_session():
-    # The build spawn must request a new session so a process group exists to kill.
+    # The build spawn must request a new session so a process group exists to
+    # kill. Admission control (RFC-0016 #668) split start_task_execution into a
+    # thin admission wrapper plus _spawn_task_execution, which now owns the
+    # asyncio.create_subprocess_exec call — so inspect the spawn-bearing method.
     import inspect
-    src = inspect.getsource(AgentService.start_task_execution)
+    src = inspect.getsource(AgentService._spawn_task_execution)
     assert "start_new_session=True" in src
 
 

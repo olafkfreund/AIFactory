@@ -23,15 +23,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Awaitable, Callable
 
 __all__ = [
     "apply_correction",
-    "write_fix_request",
-    "record_handback",
     "check_fix_cycle_assertions",
+    "record_handback",
+    "write_fix_request",
 ]
 
 Fixer = Callable[[Path], Awaitable[dict]]

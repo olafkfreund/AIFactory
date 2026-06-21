@@ -7,4 +7,4 @@ A modular system for running AI-powered analysis on codebases using Claude Agent
 from .models import AnalysisResult, AnalyzerType
 from .runner import AIAnalyzerRunner
 
-__all__ = ["AIAnalyzerRunner", "AnalyzerType", "AnalysisResult"]
+__all__ = ["AIAnalyzerRunner", "AnalysisResult", "AnalyzerType"]

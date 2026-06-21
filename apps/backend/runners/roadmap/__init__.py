@@ -9,4 +9,4 @@ It orchestrates multiple phases to analyze projects and generate strategic featu
 from .models import RoadmapConfig, RoadmapPhaseResult
 from .orchestrator import RoadmapOrchestrator
 
-__all__ = ["RoadmapConfig", "RoadmapPhaseResult", "RoadmapOrchestrator"]
+__all__ = ["RoadmapConfig", "RoadmapOrchestrator", "RoadmapPhaseResult"]

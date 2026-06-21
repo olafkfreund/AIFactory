@@ -1,0 +1,71 @@
+name: verification-core drift gate
+
+# Blocking drift gate for the vendored verification-core layer (Factory#158,
+# epic Factory#154).
+#
+# AIFactory hand-vendors two modules from the Factory hub's canonical
+# verification-core surface (scripts/):
+#   apps/backend/core/factory_sandbox.py   (unprivileged-sandbox helper)
+#   apps/backend/core/nix_provisioner.py   (RFC-0005 per-task Nix env)
+#
+# These copies MUST stay byte-identical to the hub canonical. This job checks out
+# the hub at a PINNED SHA and runs the hub's own drift gate
+# (scripts/check_verification_core_drift.py) against this checkout. A byte
+# mismatch fails the build.
+#
+# To intentionally change a vendored module: land the change in the hub canonical
+# first (CODEOWNERS-reviewed), re-vendor it here byte-for-byte, and bump
+# HUB_PIN_SHA below. Never edit a vendored copy to satisfy a local style bar —
+# the copies are governed by this byte-exact gate, not the repo style config
+# (they are excluded from ruff format/lint in ruff.toml for the same reason).
+
+on:
+  pull_request:
+    branches: [dev, main, "feat/**", "release/**"]
+    paths:
+      - "apps/backend/core/factory_sandbox.py"
+      - "apps/backend/core/nix_provisioner.py"
+      - ".github/workflows/verification-core-drift.yml"
+  push:
+    branches: [dev, main]
+
+concurrency:
+  group: vcore-drift-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned Factory hub commit carrying the canonical verification-core modules.
+  # Bump deliberately when re-vendoring (see header).
+  HUB_PIN_SHA: "4065c697f1045d8fa20ce90e8fed35c59fde8ad5"
+
+jobs:
+  drift:
+    name: vendored copies match the hub canonical (byte-exact)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this service
+        uses: actions/checkout@v4
+        with:
+          path: service
+
+      - name: Check out the Factory hub canonical at the pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: ${{ env.HUB_PIN_SHA }}
+          path: factory-hub
+          # If the Factory hub is private, provide a read token here.
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the hub drift gate against this service (blocking)
+        run: |
+          python factory-hub/scripts/check_verification_core_drift.py \
+            --canonical factory-hub/scripts \
+            --service aifactory \
+            --root service

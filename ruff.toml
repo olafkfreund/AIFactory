@@ -1,4 +1,33 @@
-# Ruff configuration for MagesticAI
+# Ruff configuration for AIFactory.
+#
+# The fleet-wide strict baseline (full select set, mypy, complexity caps) lives,
+# pinned and vendored, in `standards/` — see standards/README.md. That baseline
+# is consumed by the DIFF-SCOPED ratchet job (.github/workflows/cq-ratchet.yml),
+# which holds new/touched code to the full bar (Factory standards 4.6).
+#
+# This file is the REPO-WIDE config used by the (blocking) `ruff check` in
+# ci.yml. The whole tree cannot pass the strict baseline yet (thousands of legacy
+# violations), so this config keeps documented legacy carve-outs. Per the
+# standard those carve-outs are a ratchet backlog (#652), never a permanent
+# loosening, and may only shrink over time (tighten-only).
+
+# Vendored verification-core copies (Factory#158): byte-exact mirrors of the
+# Factory hub canonical (scripts/), governed by the byte-exact drift gate
+# (verification-core-drift workflow), NOT this repo's style bar. The repo-wide
+# formatter here defaults to line-length 88; the hub canonical is formatted at
+# line-length 100, so reformatting these under this config would diverge from
+# the canonical and break the drift gate. Excluded for the same reason the hub
+# excludes its shared/factory-github vendored mirror. (The diff-scoped strict
+# ratchet still lints them via standards/ruff.toml at the fleet line-length.)
+extend-exclude = [
+    "apps/backend/core/factory_sandbox.py",
+    "apps/backend/core/nix_provisioner.py",
+    # RFC-0014 (#664): byte-exact mirror of the hub canonical
+    # scripts/cost_router_core.py, formatted at the fleet line-length (100). The
+    # AIFactory-native budget logic that consumes it lives in
+    # budget_enforcement.py, which IS linted here.
+    "apps/backend/core/cost_router_core.py",
+]
 
 [lint]
 # Enable common rule sets
@@ -21,7 +50,10 @@ ignore = [
     "C401",   # unnecessary generator
     "C416",   # unnecessary list comprehension
     "E402",   # module level import not at top of file
-    "F841",   # local variable assigned but never used
+    # F841 (unused local variable) is NO LONGER blanket-ignored (Factory coding
+    # standards section 1.10). It is enforced repo-wide; the handful of legacy
+    # hotspots that still trip it are carved out per-file in the "legacy F841
+    # ratchet backlog" block below and must be cleaned when next touched.
     "W293",   # blank line contains whitespace
     "B007",   # loop control variable not used
     "F821",   # undefined name (forward refs in type hints used as strings)
@@ -47,6 +79,36 @@ ignore = [
 
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]  # unused imports in __init__.py
+
+# --- legacy F841 ratchet backlog -------------------------------------------
+# The blanket F841 ignore was dropped (Factory standards 1.10). The safe,
+# auto-fixable cases were cleaned in the cq-phase0 pass; the assignments listed
+# here have a side-effect-bearing RHS (function call / constructor) so ruff
+# cannot remove them mechanically and removing them by hand risks dropping the
+# call. They are tracked as a ratchet backlog (#652) and must be resolved when
+# the file is next touched. The diff-scoped ratchet job (cq-ratchet.yml) and the
+# shared baseline both enforce F841 with NO carve-out, so no NEW F841 can land.
+"apps/backend/agents/parallel_integration.py" = ["F841"]
+"apps/backend/analysis/ci_discovery.py" = ["F841"]
+"apps/backend/cli/mcp_commands.py" = ["F841"]
+"apps/backend/context/builder.py" = ["F841"]
+"apps/backend/core/workspace/display.py" = ["F841"]
+"apps/backend/core/workspace/finalization.py" = ["F841"]
+"apps/backend/integrations/bmad/subagents/requirements_analyst.py" = ["F841"]
+"apps/backend/integrations/graphiti/providers_pkg/validators.py" = ["F841"]
+"apps/backend/memory/graphiti_helpers.py" = ["F841"]
+"apps/backend/merge/file_merger.py" = ["F841"]
+"apps/backend/merge/merge_pipeline.py" = ["F841"]
+"apps/backend/merge/semantic_analysis/js_analyzer.py" = ["F841"]
+"apps/backend/planner_lib/generators.py" = ["F841"]
+"apps/backend/prompts_pkg/prompt_generator.py" = ["F841"]
+"apps/backend/runners/github/services/parallel_followup_reviewer.py" = ["F841"]
+"apps/backend/runners/github/services/parallel_orchestrator_reviewer.py" = ["F841"]
+"apps/backend/runners/github/test_context_gatherer.py" = ["F841"]
+"apps/backend/runners/github/test_rate_limiter.py" = ["F841"]
+"apps/backend/services/orchestrator.py" = ["F841"]
+"apps/backend/spec/pipeline/orchestrator.py" = ["F841"]
+"apps/backend/ui/statusline.py" = ["F841"]
 
 # --- SDK-ban exemptions (TID251) -------------------------------------------
 # Adapter / transport / agent-bearing trees that LEGITIMATELY use the SDK.
@@ -83,6 +145,7 @@ ignore = [
     "E722",   # bare except (acceptable in test cleanup)
     "F401",   # unused imports (availability checks)
     "F811",   # redefined-while-unused (pytest fixture argument shadowing)
+    "F841",   # unused locals (tests often bind for clarity / future assertions)
     "TID251", # tests may import the agent SDK directly
 ]
 "test_*.py" = ["F401", "F811"]

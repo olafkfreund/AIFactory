@@ -30,12 +30,16 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
           REPO: ${{ github.repository }}
+          # The AIFactory project id this repo maps to (set as a repo secret).
+          AIFACTORY_PROJECT_ID: ${{ secrets.AIFACTORY_PROJECT_ID }}
         run: |
           if [ -n "$AIFACTORY_URL" ]; then
-            curl -sf -X POST "$AIFACTORY_URL/api/tasks/from-github-issue" \
+            # RFC-0011 governed tier-driven ingest (#635). The poller is the
+            # primary intake; this is the GH-Actions-on-label fast path.
+            curl -sf -X POST "$AIFACTORY_URL/api/tasks/from-issue" \
               -H "Authorization: Bearer $AIFACTORY_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"issue_number\": $ISSUE_NUMBER, \"repo\": \"$REPO\"}"
+              -d "{\"project_id\": \"$AIFACTORY_PROJECT_ID\", \"provider\": \"github\", \"repo\": \"$REPO\", \"issue_number\": $ISSUE_NUMBER}"
           else
             gh issue comment "$ISSUE_NUMBER" \
               --body "🏭 **AIFactory**: Issue queued for import. Set the \`AIFACTORY_URL\` repository secret to automate task creation."

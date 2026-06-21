@@ -55,6 +55,41 @@ def test_manifest_co_mounts_worktree_via_pvc_subpath():
     assert vm["readOnly"] is False
 
 
+def test_manifest_no_nix_store_mount_by_default():
+    # RFC-0016 #197: cold behavior unchanged when no warm-store PVC named.
+    m = build_job_manifest("fsbx-abc", "img", ["nix --version"])
+    t = m["spec"]["template"]["spec"]
+    assert "initContainers" not in t
+    assert "volumes" not in t
+
+
+def test_manifest_mounts_warm_nix_store_with_seed_init():
+    # RFC-0016 #197: the whole /nix tree is served from the warm-store PVC, and a
+    # seed initContainer populates it from the image on first use.
+    m = build_job_manifest(
+        "fsbx-abc",
+        "ghcr.io/olafkfreund/tfactory-runner-nix:latest",
+        ["nix develop path:/work#default -c go build ./..."],
+        repo_pvc="aifactory-data",
+        repo_subpath="ws/proj/.aifactory/worktrees/tasks/t",
+        nix_store_pvc="aifactory-nix-store",
+    )
+    t = m["spec"]["template"]["spec"]
+    # store volume present alongside the repo co-mount
+    vols = {v["name"]: v for v in t["volumes"]}
+    assert vols["nix-store"]["persistentVolumeClaim"]["claimName"] == "aifactory-nix-store"
+    assert "repo" in vols
+    # gate container mounts the warm store at /nix
+    mounts = {vm["name"]: vm for vm in t["containers"][0]["volumeMounts"]}
+    assert mounts["nix-store"]["mountPath"] == "/nix"
+    # seed init container copies the image's /nix into the empty PVC at /warm
+    init = t["initContainers"][0]
+    assert init["name"] == "seed-nix-store"
+    assert init["image"] == "ghcr.io/olafkfreund/tfactory-runner-nix:latest"
+    assert init["volumeMounts"][0]["mountPath"] == "/warm"
+    assert "/warm/store" in init["command"][-1]
+
+
 def test_pvc_subpath_strips_data_root():
     root = "/home/nonroot/.aifactory"
     wt = root + "/workspaces/proj/.aifactory/worktrees/tasks/spec-x"

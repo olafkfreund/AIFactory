@@ -104,8 +104,7 @@ class CopilotAgenticProvider(BaseLLMProvider):
         resolved_model = _strip_copilot_prefix(model).strip() if model else ""
         if resolved_model and resolved_model not in _KNOWN_MODELS:
             logger.warning(
-                "CopilotAgenticProvider: model %r is not one of %s; "
-                "falling back to %s",
+                "CopilotAgenticProvider: model %r is not one of %s; falling back to %s",
                 resolved_model,
                 sorted(_KNOWN_MODELS),
                 _DEFAULT_MODEL,
@@ -157,7 +156,9 @@ class CopilotAgenticProvider(BaseLLMProvider):
     async def _run_copilot(self) -> AsyncGenerator[Any, None]:
         """Spawn the Copilot CLI, return its final output as a message block."""
         if not self._pending_prompt:
-            logger.warning("CopilotAgenticProvider.receive_response() called before query()")
+            logger.warning(
+                "CopilotAgenticProvider.receive_response() called before query()"
+            )
             return
 
         resolved_path = (
@@ -176,7 +177,9 @@ class CopilotAgenticProvider(BaseLLMProvider):
 
         cmd = self._build_command()
         cwd = str(self._working_dir) if self._working_dir else None
-        logger.debug("CopilotAgenticProvider: spawning model=%s cwd=%r", self._model, cwd)
+        logger.debug(
+            "CopilotAgenticProvider: spawning model=%s cwd=%r", self._model, cwd
+        )
 
         proc: asyncio.subprocess.Process | None = None
         try:
@@ -219,7 +222,9 @@ class CopilotAgenticProvider(BaseLLMProvider):
             raise RuntimeError(f"GitHub Copilot CLI error: {error_detail}")
 
         if stderr_text:
-            logger.warning("Copilot CLI stderr (first 500 chars): %s", stderr_text[:500])
+            logger.warning(
+                "Copilot CLI stderr (first 500 chars): %s", stderr_text[:500]
+            )
 
         response_text = stdout_text if stdout_text else "(no output from Copilot CLI)"
         yield AssistantMessage(content=[TextBlock(text=response_text)])

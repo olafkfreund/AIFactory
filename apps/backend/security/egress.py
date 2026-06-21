@@ -26,10 +26,28 @@ import re
 
 # Commands that initiate outbound network connections. Names only — matched
 # against the parsed command list, so `mycurl` or `curler` won't trip it.
-EGRESS_COMMANDS: frozenset[str] = frozenset({
-    "curl", "wget", "nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp",
-    "ftp", "ftps", "tftp", "rsync", "socat", "lynx", "links", "aria2c", "httpie",
-})
+EGRESS_COMMANDS: frozenset[str] = frozenset(
+    {
+        "curl",
+        "wget",
+        "nc",
+        "ncat",
+        "netcat",
+        "telnet",
+        "ssh",
+        "scp",
+        "sftp",
+        "ftp",
+        "ftps",
+        "tftp",
+        "rsync",
+        "socat",
+        "lynx",
+        "links",
+        "aria2c",
+        "httpie",
+    }
+)
 
 _TRUTHY = {"deny", "allowlist"}
 

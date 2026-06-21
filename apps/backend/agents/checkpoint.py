@@ -81,7 +81,9 @@ class Checkpointer:
         # Drop untracked files/dirs the failed unit created (e.g. half-written
         # modules) so the restored state is exactly the checkpoint.
         self._git("clean", "-fd")
-        logger.info("[checkpoint] rolled back to %s (%s)", checkpoint.label, checkpoint.ref[:8])
+        logger.info(
+            "[checkpoint] rolled back to %s (%s)", checkpoint.label, checkpoint.ref[:8]
+        )
         return True
 
     def latest(self) -> Checkpoint | None:

@@ -138,9 +138,35 @@ def handle_build_command(
 
     print()
 
-    # Validate environment
+    # Validate environment (credential presence + spec.md, etc.)
     if not validate_environment(spec_dir):
         sys.exit(1)
+
+    # Auth pre-flight (#611 / RFC-0008 §3.2a): a live, generation-free probe of
+    # the provider credential before the (expensive) build. Catches an expired
+    # token that is *present* but invalid — the silent-empty-build failure from
+    # the 2026-06-18 taskboard demo. Mode via AIFACTORY_AUTH_PREFLIGHT:
+    # off / warn (default, never blocks) / enforce (abort on a definitive 401).
+    from core.auth_preflight import preflight_mode, run_auth_preflight
+
+    _pf_mode = preflight_mode()
+    if _pf_mode != "off":
+        for _r in run_auth_preflight([planning_model, coding_model, qa_model]):
+            if _r.status == "ok":
+                print(f"Auth pre-flight: {_r.provider} OK")
+            elif _r.is_auth_failure:
+                print(f"Auth pre-flight: {_r.provider} FAILED — {_r.detail}")
+                if _pf_mode == "enforce":
+                    print(
+                        "Aborting before build (AIFACTORY_AUTH_PREFLIGHT=enforce). "
+                        "Rotate/refresh the credential and retry."
+                    )
+                    sys.exit(1)
+            elif _r.status == "inconclusive":
+                print(
+                    f"Auth pre-flight: {_r.provider} inconclusive "
+                    f"({_r.detail}) — proceeding"
+                )
 
     # Check human review approval
     review_state = ReviewState.load(spec_dir)
@@ -239,6 +265,31 @@ def handle_build_command(
         if localized_spec_dir:
             spec_dir = localized_spec_dir
 
+        # RFC-0010: for a language migration, mount the legacy source as a
+        # read-only reference oracle and scaffold the target crate/dir, so the
+        # coder generates in the target language against the original instead of
+        # editing it in place. No-op + never fatal for non-migration builds.
+        try:
+            from core.migration_mapper import (
+                is_migration,
+                load_contract,
+                prepare_migration_workspace,
+            )
+
+            _contract = load_contract(spec_dir)
+            if is_migration(_contract):
+                summary = prepare_migration_workspace(
+                    working_dir, project_dir, _contract
+                )
+                print_status(
+                    f"RFC-0010 migration: target={summary.get('target_language')}, "
+                    f"oracle mounted, "
+                    f"{len(summary.get('scaffolded', []))} target file(s) scaffolded",
+                    "progress",
+                )
+        except Exception as exc:  # noqa: BLE001 — migration prep must not break a build
+            debug("run.py", "migration workspace prep skipped", error=str(exc))
+
     # Run the autonomous agent
     debug_section("run.py", "Starting Build Execution")
     debug(
@@ -329,20 +380,25 @@ def handle_build_command(
 
         elif not skip_qa and is_qa_approved(spec_dir):
             # QA was pre-approved by coder agent - emit phase events for proper logging
-            emit_phase(ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100)
+            emit_phase(
+                ExecutionPhase.QA_REVIEW, "QA pre-approved by coder agent", progress=100
+            )
 
             print("\n" + "=" * 70)
             print("  QA PRE-APPROVED BY CODER")
             print("=" * 70)
             print("\nThe coder agent has validated all acceptance criteria.")
-            print("Implementation meets requirements - no additional QA review needed.\n")
+            print(
+                "Implementation meets requirements - no additional QA review needed.\n"
+            )
 
             emit_phase(ExecutionPhase.COMPLETE, "QA validation passed (pre-approved)")
 
             # Sync implementation plan to main project
             if sync_plan_to_source(spec_dir, source_spec_dir):
                 debug_info(
-                    "run.py", "Implementation plan synced to main project after pre-approved QA"
+                    "run.py",
+                    "Implementation plan synced to main project after pre-approved QA",
                 )
 
         # Post-build finalization (only for isolated sequential mode)

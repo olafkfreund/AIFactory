@@ -25,7 +25,9 @@ from .prompt_generator import (
 # Import all functions from prompts
 from .prompts import (
     get_coding_prompt,
+    get_deployment_context,
     get_followup_planner_prompt,
+    get_house_standards_context,
     get_planner_prompt,
     get_qa_fixer_prompt,
     get_qa_reviewer_prompt,
@@ -48,6 +50,8 @@ __all__ = [
     "get_qa_reviewer_prompt",
     "get_qa_fixer_prompt",
     "get_solo_prompt",
+    "get_house_standards_context",
+    "get_deployment_context",
     "is_first_run",
     # project_context functions
     "load_project_index",

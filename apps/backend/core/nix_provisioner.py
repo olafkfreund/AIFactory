@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# VENDORED from Factory hub scripts/nix_provisioner.py (RFC-0005 Tier A).
-# Keep in sync with the hub; do not diverge. Pure stdlib, no AIFactory deps.
 """nix_provisioner — RFC-0005 Tier A (Nix) materialization, shared across the fleet.
 
 Turns an RFC-0005 `environment` manifest (the contract `$defs.environment` block)
@@ -28,6 +26,7 @@ Run directly for the self-tests: `python3 scripts/nix_provisioner.py`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 
@@ -91,12 +90,56 @@ class Manifest:
         )
 
 
+# RFC-0005 §3.2 provisioning tiers. Resolved from the manifest's
+# provisioning.method; the value is the engine that materializes the env.
+_TIER_BY_METHOD = {
+    "nix": "nix",  # Tier A — hermetic Nix flake (preferred)
+    "image": "catalog",  # Tier B — prebuilt catalog image by (language, version)
+    "catalog": "catalog",
+    "build": "build",  # Tier C — on-demand build, content-addressed + cached
+    "on-demand": "build",
+    "setup": "setup",  # Tier D — in-container setup script (last resort)
+}
+
+
+def resolve_tier(env: dict) -> str:
+    """Resolve the provisioning tier (RFC-0005 §3.2) for a contract environment.
+
+    Returns one of ``nix`` | ``catalog`` | ``build`` | ``setup``. Defaults to
+    ``nix`` — the hermetic, content-addressed, any-toolchain tier — so an
+    unrecognised method degrades to the reproducible path rather than failing.
+    """
+    method = (Manifest.from_contract(env).provisioning_method or "nix").lower()
+    return _TIER_BY_METHOD.get(method, "nix")
+
+
+def manifest_digest(env: dict, *, length: int = 16) -> str:
+    """Content-addressed digest of a manifest's *environment-defining* fields.
+
+    This is the cache key / image tag that makes Tier B/C "second run is instant"
+    explicit: two manifests that describe the same toolchain (same language,
+    toolchain versions, system_packages, network class, browser need) hash to the
+    same value — regardless of build/verify *commands*, which don't change the
+    environment. (Tier A's Nix store content-addresses the build itself; this is
+    the manifest-level key the image tiers need.) Deterministic + pure.
+    """
+    m = Manifest.from_contract(env)
+    key = {
+        "language": (m.language or "").lower(),
+        "toolchain": {k: str(v) for k, v in sorted(m.toolchain.items())},
+        "system_packages": sorted(p.lower() for p in m.system_packages),
+        "network": m.network or "",
+        "browser": _needs_browser(m),
+        "nixpkgs": DEFAULT_NIXPKGS if resolve_tier(env) == "nix" else "",
+    }
+    blob = json.dumps(key, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:length]
+
+
 def _needs_browser(m: Manifest) -> bool:
     """A browser lane is implied by a browser system package or a playwright/
     chromium reference in the verify commands or proof checks."""
-    hay = " ".join(
-        m.system_packages + m.verify_commands + m.proof_verify
-    ).lower()
+    hay = " ".join(m.system_packages + m.verify_commands + m.proof_verify).lower()
     return any(t in hay for t in ("playwright", "chromium", "browser"))
 
 
@@ -112,10 +155,7 @@ _DROP_SYSTEM_PKGS = {"chromium", "playwright", "browser", "playwright-driver"}
 
 
 def _system_pkg_attrs(m: Manifest) -> list[str]:
-    return [
-        p for p in m.system_packages
-        if p.lower() not in _DROP_SYSTEM_PKGS
-    ]
+    return [p for p in m.system_packages if p.lower() not in _DROP_SYSTEM_PKGS]
 
 
 def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
@@ -153,11 +193,10 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
     env_lines = ""
     if browser:
         let_lines = (
-            "\n      fontsConf = pkgs.makeFontsConf "
-            "{ fontDirectories = [ pkgs.dejavu_fonts ]; };"
+            "\n      fontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };"
         )
         env_lines = (
-            '\n        # Nix-provided, version-matched browsers — no network '
+            "\n        # Nix-provided, version-matched browsers — no network "
             "download.\n"
             '        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers}";\n'
             '        PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";\n'
@@ -208,8 +247,12 @@ def _python_libs(m: Manifest) -> list[str]:
 
 
 def nix_develop_argv(
-    flake_dir: str, commands: list[str], *, binary: str = "nix",
-    attr: str = "default", path_ref: bool = False,
+    flake_dir: str,
+    commands: list[str],
+    *,
+    binary: str = "nix",
+    attr: str = "default",
+    path_ref: bool = False,
 ) -> list[str]:
     """argv that materializes `flake_dir`'s devShell and runs `commands` in it.
 
@@ -228,8 +271,13 @@ def nix_develop_argv(
     joined = " && ".join(commands)
     ref = f"path:{flake_dir}#{attr}" if path_ref else f"{flake_dir}#{attr}"
     return [
-        binary, "develop", ref,
-        "--command", "bash", "-c", joined,
+        binary,
+        "develop",
+        ref,
+        "--command",
+        "bash",
+        "-c",
+        joined,
     ]
 
 
@@ -274,8 +322,11 @@ def _test() -> None:
     assert "pytest" in f2, f2
 
     # 3. system packages pass through (minus browser drops).
-    env_sys = {"language": "python", "system_packages": ["pkg-config", "openssl"],
-               "verify_commands": ["pytest"]}
+    env_sys = {
+        "language": "python",
+        "system_packages": ["pkg-config", "openssl"],
+        "verify_commands": ["pytest"],
+    }
     f3 = generate_flake(env_sys)
     assert "pkgs.pkg-config" in f3 and "pkgs.openssl" in f3, f3
 
@@ -306,6 +357,7 @@ def _test() -> None:
     print("nix_provisioner self-tests: passed")
     # Emit a sample for eyeballing when run with --print.
     import sys
+
     if "--print" in sys.argv:
         print("\n--- sample generated flake (browser manifest) ---\n")
         print(flake)

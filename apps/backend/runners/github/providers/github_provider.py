@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # Import from parent package or direct import
@@ -206,6 +206,30 @@ class GitHubProvider:
         except Exception:
             return False
 
+    async def enable_auto_merge(
+        self,
+        pr_number: int,
+        merge_method: str = "squash",
+    ) -> bool:
+        """Enable GitHub auto-merge (RFC-0011 low tier: auto-merge-when-green).
+
+        Uses ``gh pr merge --auto``: GitHub merges the PR automatically once the
+        required status checks pass. Requires auto-merge to be enabled on the
+        repo (Settings -> Allow auto-merge).
+        """
+        cmd = ["pr", "merge", str(pr_number), "--auto"]
+        if merge_method == "merge":
+            cmd.append("--merge")
+        elif merge_method == "rebase":
+            cmd.append("--rebase")
+        else:
+            cmd.append("--squash")
+        try:
+            await self._gh_client.run(cmd)
+            return True
+        except Exception:  # noqa: BLE001 - best-effort; non-fatal
+            return False
+
     # -------------------------------------------------------------------------
     # Issue Operations
     # -------------------------------------------------------------------------
@@ -348,9 +372,7 @@ class GitHubProvider:
             return
 
         owner, name = self._repo.split("/", 1)
-        wants_copilot = any(
-            a.strip().lower() == self._COPILOT_ALIAS for a in assignees
-        )
+        wants_copilot = any(a.strip().lower() == self._COPILOT_ALIAS for a in assignees)
         regular_logins = [
             a for a in assignees if a.strip().lower() != self._COPILOT_ALIAS
         ]
@@ -368,9 +390,7 @@ class GitHubProvider:
           }
         }
         """
-        actors_resp = await self._graphql(
-            actors_query, {"owner": owner, "name": name}
-        )
+        actors_resp = await self._graphql(actors_query, {"owner": owner, "name": name})
         repo_node = actors_resp.get("data", {}).get("repository") or {}
         nodes = (
             repo_node.get("suggestedActors", {}).get("nodes", []) if repo_node else []
@@ -425,10 +445,7 @@ class GitHubProvider:
             {"owner": owner, "name": name, "number": issue_number},
         )
         assignable_id = (
-            issue_resp.get("data", {})
-            .get("repository", {})
-            .get("issue", {})
-            .get("id")
+            issue_resp.get("data", {}).get("repository", {}).get("issue", {}).get("id")
         )
         if not assignable_id:
             return
@@ -444,9 +461,7 @@ class GitHubProvider:
             {"assignableId": assignable_id, "actorIds": actor_ids},
         )
 
-    async def _graphql(
-        self, query: str, variables: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         """Run a GraphQL query/mutation via `gh api graphql`.
 
         Encodes variables for `gh api graphql`: `-f` for raw strings,
@@ -652,11 +667,11 @@ class GitHubProvider:
     def _parse_datetime(self, dt_str: str | None) -> datetime:
         """Parse ISO datetime string."""
         if not dt_str:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
         try:
             return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         except (ValueError, AttributeError):
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
 
     def _parse_reviewers(self, review_requests: list | None) -> list[str]:
         """Parse review requests into list of usernames."""

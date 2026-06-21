@@ -1097,3 +1097,88 @@ class TenantState(Base):
             f"<TenantState org_id={self.org_id!r} "
             f"mode={self.isolation_mode!r}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Job state (RFC-0016 #668) — durable, multi-replica-safe build state
+# ---------------------------------------------------------------------------
+
+
+class JobState(Base):
+    """One row per in-flight or completed PARR job (RFC-0016 Phase 1).
+
+    Conforms to ``apis/job-state.schema.json`` in the Factory hub. For
+    AIFactory every row is ``service='aifactory'`` and ``kind='build'``.
+    This table replaces the per-pod in-memory ``running_tasks`` dict + FIFO
+    ``QueuedTask`` deque in ``services/agent_service.py`` so that:
+
+      * the admission cap + queue survive a web-server restart, and
+      * two control-plane replicas reading the same Postgres cannot exceed
+        ``MAX_CONCURRENT_TASKS`` or double-start the same ``job_id`` (the
+        slot grant runs inside a ``SELECT ... FOR UPDATE`` transaction —
+        see ``services/job_state_store.py``).
+
+    ``job_id`` is the AIFactory ``task_id`` (``project_id:spec_id``).
+    ``correlation_key`` threads the upstream GitHub issue
+    (``requirements.json -> provenance.issue_number``, #612) across the
+    fleet. Large payloads (workspaces, diffs) are NEVER inlined here — only
+    references / small terminal result dicts.
+    """
+
+    __tablename__ = "job_states"
+    __table_args__ = (
+        # The admission cap counts active rows for one service; index the
+        # filter columns so the FOR UPDATE count stays cheap as history grows.
+        Index("ix_job_states_service_lifecycle", "service", "lifecycle_state"),
+        Index("ix_job_states_correlation_key", "correlation_key"),
+    )
+
+    # schema_version is a const "1" in the contract; stored so a future
+    # breaking bump is detectable per-row.
+    schema_version: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="1", server_default="1",
+    )
+    # PK = the service-assigned job id (AIFactory task_id "project:spec").
+    job_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # Upstream GitHub issue number (RFC-0001 correlation). Null until known.
+    correlation_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True,
+    )
+    service: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="aifactory",
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="build",
+    )
+    # Canonical lifecycle: queued | running | review | done | failed | stuck.
+    lifecycle_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    service_status: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+    )
+    phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attempt: Mapped[int] = mapped_column(
+        nullable=False, default=1, server_default="1",
+    )
+    # admission{enqueued_at, queue_position, started_at} per the schema.
+    admission: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # worker_ref{kind="subprocess"|"k8s-job", ...}. Phase 1 = subprocess.
+    worker_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Persisted args needed to (re)spawn a queued/running build on drain or
+    # restart-recovery. Small JSON (paths + flags), never a blob.
+    spawn_args: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), onupdate=func.now(),
+    )
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return (
+            f"<JobState job_id={self.job_id!r} "
+            f"state={self.lifecycle_state!r} attempt={self.attempt}>"
+        )

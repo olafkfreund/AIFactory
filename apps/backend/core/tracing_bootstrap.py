@@ -98,9 +98,7 @@ def init_agent_tracing() -> None:
         # critically the trace_id is preserved so log lines that
         # interpolate it (via structlog or similar) carry the parent
         # trace's identifier.
-        service_name = os.environ.get(
-            "OTEL_SERVICE_NAME_AGENT", "aifactory-agent"
-        )
+        service_name = os.environ.get("OTEL_SERVICE_NAME_AGENT", "aifactory-agent")
         provider = TracerProvider(
             resource=Resource.create({"service.name": service_name})
         )
@@ -120,7 +118,8 @@ def init_agent_tracing() -> None:
 
         logger.info(
             "agent OTel bootstrap: inherited TRACEPARENT=%s service=%s",
-            traceparent, service_name,
+            traceparent,
+            service_name,
         )
         _initialized = True
     except Exception:

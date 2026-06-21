@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowUpCircle,
@@ -32,7 +32,7 @@ export function CLIAccountCard({
   status,
   isLoading,
   onImport,
-  onStartLogin,
+  onStartLogin: _onStartLogin,
   onRemove,
   onInstall,
   onRefresh,
@@ -43,7 +43,6 @@ export function CLIAccountCard({
   const [isInstalling, setIsInstalling] = useState(false);
   const [loginTerminalId, setLoginTerminalId] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const terminalRef = useRef<HTMLDivElement>(null);
 
   const Icon = cli === 'codex' ? OpenAIIcon : GeminiIcon;
   const cliName = t(`integrations.${cli}.name`);

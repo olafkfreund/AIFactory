@@ -6,7 +6,6 @@ import {
   Key,
   Loader2,
   CheckCircle2,
-  AlertCircle,
   ChevronRight,
   Sparkles,
   Plus,
@@ -36,7 +35,7 @@ import {
 } from './ui/select';
 import { GitHubOAuthFlow } from './project-settings/GitHubOAuthFlow';
 import { ClaudeOAuthFlow } from './project-settings/ClaudeOAuthFlow';
-import type { Project, ProjectSettings } from '../shared/types';
+import type { Project } from '../shared/types';
 
 interface GitHubSetupModalProps {
   open: boolean;

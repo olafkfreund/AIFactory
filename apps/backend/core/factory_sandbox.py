@@ -50,10 +50,18 @@ class FactorySandbox:
     REPO_MOUNT = "/work"
     SCRATCH_MOUNT = "/scratch"
 
-    def __init__(self, image: str, *, binary: str | None = None,
-                 network: str = "none", cpus: float = 2, memory: str = "2g",
-                 pids_limit: int = 512, read_only_rootfs: bool = True,
-                 repo_rw: bool = False):
+    def __init__(
+        self,
+        image: str,
+        *,
+        binary: str | None = None,
+        network: str = "none",
+        cpus: float = 2,
+        memory: str = "2g",
+        pids_limit: int = 512,
+        read_only_rootfs: bool = True,
+        repo_rw: bool = False,
+    ):
         self.image = image
         self.binary = binary or detect_runtime()
         self.network = network
@@ -61,46 +69,67 @@ class FactorySandbox:
         self.read_only_rootfs = read_only_rootfs
         self.repo_rw = repo_rw
 
-    def _argv(self, command: str, workdir: str | None, scratch: str,
-              network: str | None) -> list[str]:
-        argv = [self.binary, "run", "--rm",
-                "--network", network or self.network,
-                "--cpus", str(self.cpus),
-                "--memory", str(self.memory),
-                "--pids-limit", str(self.pids_limit)]
+    def _argv(
+        self, command: str, workdir: str | None, scratch: str, network: str | None
+    ) -> list[str]:
+        argv = [
+            self.binary,
+            "run",
+            "--rm",
+            "--network",
+            network or self.network,
+            "--cpus",
+            str(self.cpus),
+            "--memory",
+            str(self.memory),
+            "--pids-limit",
+            str(self.pids_limit),
+        ]
         if workdir:
             mode = "rw" if self.repo_rw else "ro"
             argv += ["-v", f"{workdir}:{self.REPO_MOUNT}:{mode}"]
-        argv += ["-v", f"{scratch}:{self.SCRATCH_MOUNT}:rw",
-                 "-w", (self.REPO_MOUNT if workdir else self.SCRATCH_MOUNT)]
+        argv += [
+            "-v",
+            f"{scratch}:{self.SCRATCH_MOUNT}:rw",
+            "-w",
+            (self.REPO_MOUNT if workdir else self.SCRATCH_MOUNT),
+        ]
         if self.read_only_rootfs:
             argv += ["--read-only", "--tmpfs", "/tmp:rw,size=64m"]
         argv += [self.image, "bash", "-c", command]
         return argv
 
-    def run(self, commands: list[str], *, workdir: str | None = None,
-            network: str | None = None, timeout: int = 600,
-            dry_run: bool = False) -> RunResult:
+    def run(
+        self,
+        commands: list[str],
+        *,
+        workdir: str | None = None,
+        network: str | None = None,
+        timeout: int = 600,
+        dry_run: bool = False,
+    ) -> RunResult:
         command = " && ".join(commands)
         with tempfile.TemporaryDirectory(prefix="factory-scratch-") as scratch:
             argv = self._argv(command, workdir, scratch, network)
             if dry_run:
                 return RunResult(True, 0, "(dry-run)", argv)
             try:
-                p = subprocess.run(argv, capture_output=True, text=True,
-                                   timeout=timeout, check=False)
+                p = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=timeout, check=False
+                )
             except FileNotFoundError as e:
                 raise SandboxError(f"runtime {self.binary!r} not executable: {e}")
-            return RunResult(p.returncode == 0, p.returncode,
-                             (p.stdout + p.stderr).strip(), argv)
+            return RunResult(p.returncode == 0, p.returncode, (p.stdout + p.stderr).strip(), argv)
 
 
 def container_backend(image: str, workdir: str | None = None, **kw):
     """#74-runner backend: (level, commands) -> (ok, output), each in a fresh container."""
     sb = FactorySandbox(image, **kw)
+
     def run(level: str, commands: list[str]):
         res = sb.run(commands, workdir=workdir)
         return res.ok, res.output
+
     return run
 
 
@@ -113,12 +142,15 @@ def _test() -> None:
     assert r.argv[:3] == ["podman", "run", "--rm"], r.argv
     assert "--network none" in a and "--cpus 2" in a and "--pids-limit 512" in a, a
     assert "--read-only" in a and "/tmp:rw,size=64m" in a, a
-    assert "/repo:/work:ro" in a, a            # repo ro by default
+    assert "/repo:/work:ro" in a, a  # repo ro by default
     assert a.endswith("img:latest bash -c echo hi && echo bye"), a
 
     # repo_rw flips the mount to rw (coder build path).
-    a2 = " ".join(FactorySandbox("img", binary="docker", repo_rw=True)
-                  .run(["x"], workdir="/repo", dry_run=True).argv)
+    a2 = " ".join(
+        FactorySandbox("img", binary="docker", repo_rw=True)
+        .run(["x"], workdir="/repo", dry_run=True)
+        .argv
+    )
     assert "/repo:/work:rw" in a2 and a2.split()[0] == "docker", a2
 
     # restricted network opt-in.

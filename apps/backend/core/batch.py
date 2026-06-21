@@ -132,7 +132,9 @@ def _parse_individual_response(item: Any) -> BatchResult:
         usage: dict[str, Any] = {
             "input_tokens": usage_obj.input_tokens,
             "output_tokens": usage_obj.output_tokens,
-            "cache_read_input_tokens": getattr(usage_obj, "cache_read_input_tokens", None),
+            "cache_read_input_tokens": getattr(
+                usage_obj, "cache_read_input_tokens", None
+            ),
             "cache_creation_input_tokens": getattr(
                 usage_obj, "cache_creation_input_tokens", None
             ),
@@ -219,8 +221,7 @@ async def submit_batch(
     from anthropic import AsyncAnthropic
 
     sdk_requests = [
-        {"custom_id": r.custom_id, "params": _build_params(r)}
-        for r in requests
+        {"custom_id": r.custom_id, "params": _build_params(r)} for r in requests
     ]
 
     client = AsyncAnthropic(api_key=_resolve_api_key(api_key))
@@ -348,7 +349,7 @@ def extract_savings(results: list[BatchResult]) -> dict[str, Any]:
 __all__ = [
     "BatchRequest",
     "BatchResult",
-    "submit_batch",
     "await_batch",
     "extract_savings",
+    "submit_batch",
 ]

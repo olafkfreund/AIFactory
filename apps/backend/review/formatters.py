@@ -36,6 +36,7 @@ from .state import ReviewState, get_review_status_summary
 # HTML generation (optional import)
 try:
     from .html_generator import generate_html_plan_review, open_in_browser
+
     HTML_AVAILABLE = True
 except ImportError:
     HTML_AVAILABLE = False
@@ -358,7 +359,9 @@ def offer_html_plan_view(spec_dir: Path, auto_open: bool = False) -> bool:
                 content.append(success("Opened in your default browser"))
             else:
                 content.append(warning("Could not open browser automatically"))
-                content.append(f"{muted('Open manually:')} file://{html_path.absolute()}")
+                content.append(
+                    f"{muted('Open manually:')} file://{html_path.absolute()}"
+                )
         else:
             content.append(f"{muted('To view:')} file://{html_path.absolute()}")
 

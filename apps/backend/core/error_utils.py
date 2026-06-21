@@ -12,10 +12,10 @@ import logging
 import random
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import Message
@@ -287,10 +287,7 @@ def decide_rate_limit_resume(
         return ResumeDecision(
             should_resume=False,
             wait_seconds=0.0,
-            reason=(
-                f"max retries exceeded (attempt {attempt} > "
-                f"{policy.max_retries})"
-            ),
+            reason=(f"max retries exceeded (attempt {attempt} > {policy.max_retries})"),
         )
 
     base = max(cooldown_seconds, policy.min_cooldown_seconds)
@@ -389,7 +386,7 @@ async def safe_receive_messages(
             if msg_type == "SystemMessage":
                 subtype = getattr(msg, "subtype", "")
                 if subtype.startswith("unknown_"):
-                    original_type = subtype[len("unknown_"):]
+                    original_type = subtype[len("unknown_") :]
                     if "rate_limit" in original_type:
                         data = getattr(msg, "data", {})
                         retry_after = data.get("retry_after") or data.get(

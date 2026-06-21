@@ -38,6 +38,7 @@ from .routes import (
     email,
     execution,
     files,
+    from_issue,
     copilot_mcp,
     git,
     git_credentials,
@@ -98,6 +99,17 @@ async def lifespan(app: FastAPI):
     # Initialize database (creates tables if needed)
     await init_db()
 
+    # RFC-0016 #668: reconstruct durable admission state (cap/queue) from
+    # Postgres so a restarted/new replica doesn't start from an empty
+    # in-memory view. No-op when DATABASE_URL is unset (in-memory fallback).
+    try:
+        from .services.agent_service import get_agent_service
+        await get_agent_service().reconcile_on_startup()
+    except Exception:
+        logger.warning(
+            "RFC-0016 startup reconcile failed (non-fatal)", exc_info=True
+        )
+
     # Initialize skills service singleton once at startup
     init_skills_service()
     logger.info("SkillsService initialized")
@@ -143,18 +155,74 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)")
 
+    # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
+    # default — only runs when AIFACTORY_INTAKE_POLLER is set. Polls the
+    # configured repos for factory:* labels and routes by difficulty tier with
+    # two-guard (SQLite + factory:queued) exactly-once idempotency.
+    from .services import intake_poller as _intake
+
+    app.state.intake_poller_stop = None
+    app.state.intake_poller_task = None
+    if _intake.poller_enabled():
+        intake_stop = _asyncio.Event()
+        app.state.intake_poller_stop = intake_stop
+        app.state.intake_poller_task = _asyncio.create_task(
+            _intake.poller_loop(stop=intake_stop)
+        )
+        logger.info("RFC-0011 intake poller enabled")
+    else:
+        logger.info("RFC-0011 intake poller disabled (AIFACTORY_INTAKE_POLLER unset)")
+
+    # RFC-0016 #671 control/execution split: when builds run as k8s Jobs
+    # (AIFACTORY_BUILD_BACKEND=kubejob), the control plane reconciles by polling
+    # Postgres + reaps vanished Jobs on an interval, so a missed completion event
+    # never strands a build. Off by default — no-op for the in-pod subprocess
+    # backend (the loop is only started when the kubejob backend is enabled).
+    from .services.build_backend import kubejob_enabled as _kubejob_enabled
+
+    app.state.kubejob_reconcile_stop = None
+    app.state.kubejob_reconcile_task = None
+    if _kubejob_enabled():
+        kj_stop = _asyncio.Event()
+        app.state.kubejob_reconcile_stop = kj_stop
+        app.state.kubejob_reconcile_task = _asyncio.create_task(
+            get_agent_service().kubejob_reconcile_loop(stop=kj_stop)
+        )
+        logger.info("RFC-0016 #671 kubejob build backend enabled — reconcile loop started")
+    else:
+        logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
+
     yield
 
     # Shutdown
     logger.info("Shutting down Magestic AI Web Server...")
     if settings.REDIS_URL:
         await event_bus.stop_redis_subscriber()
+        # RFC-0017 #681: close the rmux Redis-transport client too (no-op off).
+        try:
+            from .rmux import redis_transport as _rmux_redis
+
+            await _rmux_redis.close()
+        except Exception:  # noqa: BLE001 - best-effort shutdown
+            logger.debug("rmux redis_transport close failed", exc_info=True)
     if app.state.outbox_relay_task is not None:
         app.state.outbox_relay_stop.set()
         try:
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (_asyncio.TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.intake_poller_task is not None:
+        app.state.intake_poller_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.intake_poller_task, timeout=5.0)
+        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+            app.state.intake_poller_task.cancel()
+    if app.state.kubejob_reconcile_task is not None:
+        app.state.kubejob_reconcile_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.kubejob_reconcile_task, timeout=5.0)
+        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+            app.state.kubejob_reconcile_task.cancel()
 
 
 def _read_app_version() -> str:
@@ -320,6 +388,9 @@ def create_app() -> FastAPI:
     # before tasks.router, whose catch-all GET /{task_id} would otherwise
     # shadow specific paths like GET /api/tasks/running (returned 400 on /running).
     app.include_router(execution.router, prefix="/api/tasks", tags=["Task Execution"])
+    # RFC-0011 label-driven intake: POST /api/tasks/from-issue. Registered
+    # before tasks.router so its specific path isn't shadowed by the catch-all.
+    app.include_router(from_issue.router, prefix="/api/tasks", tags=["Intake"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
     app.include_router(cli_accounts_routes.router, prefix="/api/settings", tags=["CLI Accounts"])
