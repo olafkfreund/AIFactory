@@ -297,6 +297,10 @@ async def test_dispatch_records_worker_ref(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    # This test exercises worker_ref recording, not worktree population; stub the
+    # pre-dispatch population (covered by its own tests below) so it doesn't try to
+    # run real git / import the backend workspace package.
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
     store = await _make_store(tmp_path / "d.db")
     # Reserve the slot first (admit makes the row running w/ subprocess ref).
     await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
@@ -414,3 +418,202 @@ async def test_delete_job_issues_delete(tmp_path: Path) -> None:
     fake = _FakeBatch(existing={"k6"})
     assert await backend.delete_job("p:s6", batch=fake) is True
     assert fake.deleted == [("factory", "k6")]
+
+
+# --------------------------------------------------------------------------- #
+# 6. Pre-dispatch worktree population (#671 build-worktree defect)
+# --------------------------------------------------------------------------- #
+#
+# The build Job co-mounts the data-PVC worktree subPath at /work, but that subPath
+# was never populated — the Job saw an empty stub and run.py exited
+# ``Spec '<id>' not found``. The control plane (sharing the same single-node data
+# PVC) must create + populate the worktree (git worktree + the materialized spec,
+# reusing the in-pod path) BEFORE the Job is created. These tests use a FAKE
+# ``core.workspace`` module so no real git runs.
+
+
+class _FakeWorkspaceModule:
+    """Stand-in for the backend ``core.workspace`` package.
+
+    Records the ``setup_workspace`` call and (faithfully to the real ISOLATED
+    path) creates the worktree dir + copies the spec into it on disk, so a test
+    can assert the populated path matches the Job's /work subPath.
+    """
+
+    class WorkspaceMode:
+        ISOLATED = "isolated"
+        DIRECT = "direct"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def setup_workspace(
+        self,
+        project_dir: Path,
+        spec_name: str,
+        mode: str,
+        source_spec_dir: Path | None = None,
+    ) -> tuple[Path, Any, Path | None]:
+        self.calls.append(
+            {
+                "project_dir": Path(project_dir),
+                "spec_name": spec_name,
+                "mode": mode,
+                "source_spec_dir": source_spec_dir,
+            }
+        )
+        # Mirror create_worktree's path layout + copy_spec_to_worktree's effect.
+        worktree = Path(project_dir) / ".aifactory" / "worktrees" / "tasks" / spec_name
+        localized = worktree / ".aifactory" / "specs" / spec_name
+        localized.mkdir(parents=True, exist_ok=True)
+        if source_spec_dir is not None and Path(source_spec_dir).exists():
+            (localized / "spec.md").write_text(
+                (Path(source_spec_dir) / "spec.md").read_text()
+            )
+        return worktree, object(), localized
+
+
+def _install_fake_workspace(monkeypatch: pytest.MonkeyPatch) -> _FakeWorkspaceModule:
+    fake = _FakeWorkspaceModule()
+    monkeypatch.setitem(sys.modules, "core.workspace", fake)
+    return fake
+
+
+def _author_spec(project_path: Path, spec_id: str) -> Path:
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
+    return spec_dir
+
+
+def test_populate_build_worktree_materializes_spec_via_inpod_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # project under the data root → the Job WILL co-mount /work, so the control
+    # plane must populate that subPath before dispatch.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    fake = _install_fake_workspace(monkeypatch)
+
+    project_path = tmp_path / "workspaces" / "proj-7"
+    _author_spec(project_path, "077-feat")
+
+    populated = bb.populate_build_worktree(project_path, "077-feat")
+
+    # Reused the in-pod preparation: ISOLATED mode + the authored spec dir.
+    assert len(fake.calls) == 1
+    call = fake.calls[0]
+    assert call["mode"] == fake.WorkspaceMode.ISOLATED
+    assert call["project_dir"] == project_path
+    assert call["spec_name"] == "077-feat"
+    assert call["source_spec_dir"] == project_path / ".aifactory" / "specs" / "077-feat"
+
+    # The populated worktree carries the materialized spec (the very thing run.py's
+    # find_spec needs at /work/.aifactory/specs/<id>/spec.md).
+    assert populated is not None
+    spec_in_worktree = (
+        Path(populated) / ".aifactory" / "specs" / "077-feat" / "spec.md"
+    )
+    assert spec_in_worktree.exists()
+
+
+def test_populated_worktree_matches_job_work_subpath(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The path the control plane populates MUST equal the subPath the Job mounts
+    # at /work — otherwise the Job still sees an empty /work.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    _install_fake_workspace(monkeypatch)
+
+    project_path = tmp_path / "workspaces" / "proj-8"
+    _author_spec(project_path, "088-feat")
+
+    populated = bb.populate_build_worktree(project_path, "088-feat")
+    assert populated is not None
+
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-8:088-feat", project_path=project_path, spec_id="088-feat",
+    )
+    c = m["spec"]["template"]["spec"]["containers"][0]
+    work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
+    # PVC subPath is data-root-relative; the populated worktree is absolute. The
+    # Job mounts <data_root>/<subPath> at /work, which must be the populated path.
+    assert str(tmp_path / work_mt["subPath"]) == populated
+
+
+def test_populate_skips_when_outside_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A project outside the PVC root → the Job has no /work co-mount, so there is
+    # nothing (and no shared PVC) to populate; population is a no-op.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", "/home/nonroot/.aifactory")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    fake = _install_fake_workspace(monkeypatch)
+
+    project_path = tmp_path / "laptop" / "myproj"
+    _author_spec(project_path, "099-feat")
+
+    assert bb.populate_build_worktree(project_path, "099-feat") is None
+    assert fake.calls == []  # never touched the in-pod path
+
+
+def test_populate_raises_when_spec_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No authored spec under the project → fail loudly BEFORE dispatch rather than
+    # launch a Job that will hit the very "Spec not found" this fix prevents.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    _install_fake_workspace(monkeypatch)
+
+    project_path = tmp_path / "workspaces" / "proj-9"
+    project_path.mkdir(parents=True, exist_ok=True)  # no spec dir
+
+    with pytest.raises(FileNotFoundError):
+        bb.populate_build_worktree(project_path, "100-missing")
+
+
+async def test_dispatch_populates_worktree_before_job_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # End-to-end ordering: dispatch() populates the worktree (spec present) BEFORE
+    # create_namespaced_job is called. A batch fake records when the Job is created
+    # and asserts the spec already exists on disk at that moment.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    _install_fake_workspace(monkeypatch)
+
+    project_path = tmp_path / "workspaces" / "proj-10"
+    _author_spec(project_path, "110-feat")
+
+    spec_in_worktree = (
+        project_path / ".aifactory" / "worktrees" / "tasks" / "110-feat"
+        / ".aifactory" / "specs" / "110-feat" / "spec.md"
+    )
+
+    class _OrderingBatch(_FakeBatch):
+        def __init__(self) -> None:
+            super().__init__()
+            self.spec_present_at_create: bool | None = None
+
+        async def create_namespaced_job(self, namespace: str, manifest: dict) -> None:
+            # The worktree MUST already be populated by the time the Job is born.
+            self.spec_present_at_create = spec_in_worktree.exists()
+            await super().create_namespaced_job(namespace, manifest)
+
+    store = await _make_store(tmp_path / "ord.db")
+    await store.admit("proj-10:110-feat", _spawn_args("110-feat"), cap=2)
+    backend = bb.KubeJobBuildBackend(store)
+    fake = _OrderingBatch()
+
+    await backend.dispatch(
+        task_id="proj-10:110-feat",
+        project_path=project_path,
+        spec_id="110-feat",
+        batch=fake,
+    )
+
+    assert fake.spec_present_at_create is True
+    assert spec_in_worktree.exists()
