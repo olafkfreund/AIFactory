@@ -129,6 +129,99 @@ _DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
 # The worktree a build runs in (mirrors agent_service._spawn_task_execution).
 _WORKTREE_TEMPLATE = ".aifactory/worktrees/tasks/{spec_id}"
 
+# -- build Job environment (#671 OAuth-env defect) --------------------------- #
+#
+# A dispatched build Job is a FRESH pod: it inherits NONE of the control-plane
+# pod's ``os.environ``. The in-pod subprocess path, by contrast, runs run.py with
+# ~37 env vars (``make_subprocess_env`` + the explicit overrides in
+# ``agent_service._spawn_task_execution`` + the pooled OAuth token). Without
+# mirroring that env into the Job container, run.py started but died
+# ``Error: No OAuth token found`` (cli/utils.validate_environment): the Job had
+# only JOB_ID + FACTORY_SERVICE.
+#
+# This builds the build-only env the Job needs, mirroring the in-pod construction:
+#   * The pooled OAuth token (``CLAUDE_CODE_OAUTH_TOKEN``) — the critical fix,
+#     resolved by the CALLER from the same token pool the in-pod path uses (#670)
+#     so concurrent Jobs draw DISTINCT tokens. Passed in, never read here.
+#   * The provider/runtime SDK env the agent legitimately needs — the SAME
+#     allowlist core/auth.py keeps for the agent subprocess (``_AGENT_ENV_KEEP``:
+#     ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / model overrides / SDK behaviour)
+#     — but ONLY when present in the control-plane env (a fresh Job shouldn't get
+#     empty placeholders).
+#   * GITHUB_TOKEN / GH_TOKEN when present — run.py uses these for the PR endgame,
+#     exactly as the in-pod build does. (run.py re-applies core/auth.py's agent
+#     scrubbing to its OWN agent sub-subprocess, so this mirrors in-pod scope.)
+#   * The fixed non-interactive build env the in-pod path sets verbatim
+#     (CLAUDE_CODE_ENTRYPOINT/CI/PYTHONUNBUFFERED/PYTHONIOENCODING).
+#
+# Deliberately EXCLUDED to keep the Job scoped to the build env (no unrelated
+# secret leak): ANTHROPIC_API_KEY* (AIFactory's OAuth-only policy — never bill the
+# direct-API account), and control-plane secrets run.py doesn't use (DATABASE_URL,
+# JWT_SECRET, API_TOKEN, …; run.py writes no job-state row, so it needs no DB URL).
+#
+# SECURITY (#599 class): every value goes into the Job container ``env`` (via the
+# shared job_dispatch builder, which renders extra_env as ``{name,value}`` list
+# entries — NOT into ``command``/argv), so the token is never ps-visible in the
+# pod's argv. There is no chart-managed Secret carrying the OAuth token to point a
+# ``secretKeyRef`` at — the token only exists as a runtime-resolved value in the
+# control plane (the pool resolves it from the profiles file on the data PVC / env
+# / file at dispatch time), so it is injected as a resolved ``env`` literal. It is
+# kept out of argv and out of logs; the literal lives only in the Job manifest /
+# the Job pod's env (the same trust boundary the in-pod subprocess env already
+# crosses), and the Job is TTL-GC'd shortly after it finishes.
+
+# Fixed non-interactive build env — byte-identical to the explicit overrides the
+# in-pod path sets in agent_service._spawn_task_execution.
+_FIXED_BUILD_ENV: dict[str, str] = {
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "CLAUDE_CODE_ENTRYPOINT": "cli",
+    "CI": "true",
+}
+
+# Provider/runtime env to propagate WHEN PRESENT in the control-plane env. Mirrors
+# core/auth.py::_AGENT_ENV_KEEP (the SDK passthrough the agent legitimately needs)
+# plus GITHUB_TOKEN/GH_TOKEN for run.py's PR endgame. ANTHROPIC_API_KEY is NOT
+# here — OAuth-only policy (subprocess_env._STRIP_VARS).
+_PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "NO_PROXY",
+    "DISABLE_TELEMETRY",
+    "DISABLE_COST_WARNINGS",
+    "API_TIMEOUT_MS",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+)
+
+
+def build_job_env(oauth_token: str | None) -> dict[str, str]:
+    """Resolve the env the build Job container needs (#671 OAuth-env defect).
+
+    Mirrors the in-pod env construction so the Job behaves like the in-pod build:
+    the pooled OAuth token (passed in by the caller — see module note above),
+    the fixed non-interactive build env, and the provider/runtime SDK env that is
+    actually present in the control-plane environment. Pure + side-effect free so
+    it is unit-testable with a mocked ``os.environ``.
+
+    The OAuth token is the load-bearing fix: a fresh Job pod has no credential
+    source on PATH, so without ``CLAUDE_CODE_OAUTH_TOKEN`` run.py dies
+    ``No OAuth token found``. ``ANTHROPIC_API_KEY`` is never included (OAuth-only
+    policy); control-plane secrets run.py doesn't use are never included (scope).
+    """
+    env: dict[str, str] = dict(_FIXED_BUILD_ENV)
+    for name in _PASSTHROUGH_BUILD_ENV:
+        val = os.environ.get(name)
+        if val:  # only propagate real values; never empty placeholders
+            env[name] = val
+    if oauth_token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    return env
+
 # Terminal lifecycle states the Job may write (apis/job-state.schema.json). A
 # build that reaches one of these is done from the control plane's view.
 _TERMINAL_STATES = ("done", "failed", "stuck", "review")
@@ -442,13 +535,14 @@ class KubeJobBuildBackend:
 
     # -- dispatch -----------------------------------------------------------
 
-    async def dispatch(
+    async def dispatch(  # noqa: PLR0913 - all keyword-only dispatch coordinates
         self,
         *,
         task_id: str,
         project_path: Path,
         spec_id: str,
         correlation_key: str | None = None,
+        oauth_token: str | None = None,
         batch: Any = None,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
@@ -465,6 +559,14 @@ class KubeJobBuildBackend:
         data PVC, so the worktree + materialized spec we write here are exactly
         what the Job reads. Without this the Job saw an empty stub and run.py
         exited ``Spec '<id>' not found``. See ``populate_build_worktree``.
+
+        ``oauth_token`` is the pooled Claude credential (#670) the CALLER checked
+        out for this task, so concurrent Jobs draw DISTINCT tokens — it (plus the
+        provider/runtime SDK env present on the control plane) is injected into
+        the Job container env (#671 OAuth-env defect): a fresh Job pod inherits
+        none of the control-plane env, so without it run.py started but died
+        ``No OAuth token found``. See ``build_job_env``. Injected via the
+        container ``env`` (never argv) so the token is not ps-visible.
         """
         # #671: create + populate the worktree (git worktree + spec) the SAME way
         # the in-pod path does, at the subPath the manifest co-mounts at /work,
@@ -472,11 +574,16 @@ class KubeJobBuildBackend:
         # dangling Job pointed at an unpopulated /work.
         populate_build_worktree(project_path, spec_id)
 
+        # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
+        # pooled token + the SDK passthrough). Goes into container env, NOT argv.
+        extra_env = build_job_env(oauth_token)
+
         manifest = build_run_py_job_manifest(
             task_id=task_id,
             project_path=project_path,
             spec_id=spec_id,
             correlation_key=correlation_key,
+            extra_env=extra_env,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]
