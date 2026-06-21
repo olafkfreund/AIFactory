@@ -13,6 +13,15 @@ Default OFF. The backend is selected by ``AIFACTORY_BUILD_BACKEND``:
 
 Design (apis/concurrency-conventions.md §3 + the proven ``kube_sandbox`` shape):
 
+* Before the Job is created, the control plane POPULATES the per-task worktree
+  (``populate_build_worktree`` — ``git worktree add`` + the spec materialized,
+  reusing the in-pod ``core.workspace.setup_workspace`` path) at the data-PVC
+  subPath the Job co-mounts at ``/work``. The control plane and the Job pod share
+  the same single-node data PVC (RWO, co-mounted by subPath), so the worktree we
+  write is exactly what the Job reads. Without it the Job saw an empty stub and
+  run.py exited ``Spec '<id>' not found`` (#671). The RFC-0017 #207 pack/unpack is
+  the multi-node path (PVC not shared); on this shared-PVC cluster, populating
+  before dispatch is correct and simplest.
 * The Job manifest comes from the shared, byte-identical ``job_dispatch`` builder
   (vendored at ``core/job_dispatch.py``): the **AIFactory runtime image**
   (``_resolve_build_image`` — NOT the thin nix gate substrate, see #671 below),
@@ -51,6 +60,7 @@ intact) — deliberately NOT flipped in this change.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from pathlib import Path
@@ -301,6 +311,107 @@ def build_run_py_job_manifest(
     return build_job_manifest(spec)
 
 
+def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
+    """Where the authored spec lives in the project (mirrors the in-pod path).
+
+    The in-pod build resolves the spec under ``<project>/.aifactory/specs/<id>``
+    (``cli.utils.find_spec`` / ``agent_service._spawn_task_execution``), copies it
+    into the worktree, and runs run.py from there. The build Job needs the SAME
+    source dir to materialize into the co-mounted worktree before dispatch.
+    """
+    return project_path / ".aifactory" / "specs" / spec_id
+
+
+def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
+    """Create + populate the per-task build worktree BEFORE the Job is created.
+
+    THE #671 build-worktree defect fix. The kubejob dispatch co-mounts the data
+    PVC's worktree subPath (``.aifactory/worktrees/tasks/<id>``) at the Job's
+    ``/work``, but that subPath was never populated: the Job saw an EMPTY STUB
+    (only ``.aifactory/.gitignore_checked`` + ``.gitignore``, no git checkout and
+    no ``.aifactory/specs/<id>/spec.md``), so run.py exited
+    ``Spec '<id>' not found / No specs found``.
+
+    The in-pod subprocess path runs ``run.py --project-dir <real project>``: run.py
+    itself calls ``core.workspace.setup.setup_workspace`` →
+    ``WorktreeManager.create_worktree`` (``git worktree add``) +
+    ``copy_spec_to_worktree`` to build a REAL worktree with the spec inside. The
+    Job path instead runs ``run.py --project-dir /work`` where ``/work`` is *only*
+    the worktree subPath — so nothing ever populates it.
+
+    Shared-PVC reasoning: on this single-node cluster the control-plane pod and the
+    Job pod share the SAME data PVC (RWO, co-mounted by subPath), so the control
+    plane can populate the worktree on disk and the Job will see it through the
+    same PVC. We therefore reuse the EXACT in-pod preparation
+    (``setup_workspace`` in ISOLATED mode, ``source_spec_dir`` = the authored spec
+    dir) here, before ``create_namespaced_job``. The worktree it creates lands at
+    ``<project>/.aifactory/worktrees/tasks/<id>`` — byte-for-byte the subPath the
+    manifest co-mounts at ``/work`` (see ``_worktree_subpath`` /
+    ``WorktreeManager.get_worktree_path``) — so the Job then sees a populated
+    ``/work`` and run.py finds the spec.
+
+    (The RFC-0017 #207 workspace pack/unpack is the MULTI-NODE path, for clusters
+    where the PVC is NOT shared between control plane and Job; on this shared-PVC
+    single-node cluster, populating before dispatch is the correct + simplest fix
+    and avoids a pack/unpack round-trip entirely.)
+
+    Returns the absolute worktree path that was populated (for logging/tests), or
+    ``None`` when the worktree is outside the data PVC (dev/test on a laptop, where
+    the manifest also skips the co-mount — there is nothing to populate). Reusing
+    the in-pod code means materialization stays identical to the subprocess path;
+    we do NOT reinvent worktree creation or spec copying here.
+    """
+    data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
+    repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
+    # Only populate when the Job will actually co-mount the worktree (same gate the
+    # manifest uses): no PVC / outside the data root → no /work mount → nothing to
+    # populate (and no shared PVC to populate it on).
+    if repo_pvc is None or _worktree_subpath(data_root, project_path, spec_id) is None:
+        _log.info(
+            "[build_backend] worktree for %s is outside the data PVC — skipping "
+            "pre-dispatch population (the Job has no /work co-mount)",
+            spec_id,
+        )
+        return None
+
+    # Deferred resolution: core.workspace lives on the backend path (added to
+    # sys.path at startup), exactly like core.job_dispatch above. importlib keeps
+    # the seam untyped-Any so the web-server's own typecheck doesn't trip on the
+    # backend package (mirrors the prior #671 fixes' import discipline).
+    workspace: Any = importlib.import_module("core.workspace")
+    setup_workspace: Any = workspace.setup_workspace
+    workspace_mode: Any = workspace.WorkspaceMode
+
+    source_spec_dir = _spec_source_dir(project_path, spec_id)
+    if not source_spec_dir.exists():
+        # The spec must already be authored under the project before a build can
+        # run. Fail loudly rather than dispatch a Job that will hit the very
+        # "Spec not found" this fix exists to prevent.
+        raise FileNotFoundError(
+            f"[build_backend] cannot dispatch build for {spec_id}: authored spec "
+            f"dir {source_spec_dir} does not exist (nothing to materialize into "
+            "the build worktree)"
+        )
+
+    # ISOLATED mode → git worktree add + copy the spec into the worktree, the
+    # identical preparation run.py does in-pod. setup_workspace returns
+    # (working_dir, manager, localized_spec_dir); we only need the side effects on
+    # disk (the Job reads them via the shared PVC), so the tuple is discarded.
+    working_dir, _manager, _localized = setup_workspace(
+        project_path,
+        spec_id,
+        workspace_mode.ISOLATED,
+        source_spec_dir=source_spec_dir,
+    )
+    populated = str(working_dir)
+    _log.info(
+        "[build_backend] populated build worktree for %s at %s (spec materialized "
+        "from %s) before Job dispatch",
+        spec_id, populated, source_spec_dir,
+    )
+    return populated
+
+
 class KubeJobBuildBackend:
     """Dispatch + reconcile + reap the run.py Job (RFC-0016 #671).
 
@@ -347,7 +458,20 @@ class KubeJobBuildBackend:
         overwrite worker_ref with the k8s-job reference so the reconcile/reaper
         loops can find the Job. The Job itself flips the row to its terminal
         state when it finishes; we never block on it here.
+
+        Before the Job is created we POPULATE the per-task worktree at the
+        data-PVC subPath the Job co-mounts at ``/work`` (#671 build-worktree
+        defect): the control plane and the Job pod share the same single-node
+        data PVC, so the worktree + materialized spec we write here are exactly
+        what the Job reads. Without this the Job saw an empty stub and run.py
+        exited ``Spec '<id>' not found``. See ``populate_build_worktree``.
         """
+        # #671: create + populate the worktree (git worktree + spec) the SAME way
+        # the in-pod path does, at the subPath the manifest co-mounts at /work,
+        # BEFORE the Job exists. Done first so a population failure never leaves a
+        # dangling Job pointed at an unpopulated /work.
+        populate_build_worktree(project_path, spec_id)
+
         manifest = build_run_py_job_manifest(
             task_id=task_id,
             project_path=project_path,
