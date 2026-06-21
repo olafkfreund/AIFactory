@@ -103,14 +103,19 @@ def _spawn_args(spec_id: str) -> SpawnArgs:
 # --------------------------------------------------------------------------- #
 
 
-def test_manifest_runs_run_py_on_nix_base_with_mounts(
+def test_manifest_runs_run_py_on_build_image_with_mounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Worktree under the data root so it gets co-mounted; warm store + SA set.
+    # The build image defaults to the running aifactory image (AIFACTORY_IMAGE,
+    # chart-injected) — NOT the thin nix gate substrate (#671 fix).
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
-    monkeypatch.delenv("AIFACTORY_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    # Even if the gate substrate var is set, the build must NOT pick it up.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", DEFAULT_NIX_IMAGE)
 
     project_path = Path(_DATA_ROOT) / "workspaces" / "proj-1"
     m = bb.build_run_py_job_manifest(
@@ -129,9 +134,14 @@ def test_manifest_runs_run_py_on_nix_base_with_mounts(
     assert pod["automountServiceAccountToken"] is False
 
     c = pod["containers"][0]
-    assert c["image"] == DEFAULT_NIX_IMAGE  # thin nix-base default
+    # The build runs on the aifactory runtime image (python-capable), NOT the
+    # thin nix gate image — that was the #671 StartError defect.
+    assert c["image"] == "ghcr.io/dataseeek/aifactory:1.2.3"
+    assert c["image"] != DEFAULT_NIX_IMAGE
     cmd = c["command"][2]
-    # run.py entrypoint against the co-mounted worktree, NOT nix-develop-wrapped.
+    # The entrypoint is a plain interpreter invocation that only works on a
+    # python-capable image: bash -c "python run.py …", NOT nix-develop-wrapped.
+    assert c["command"][:2] == ["bash", "-c"]
     assert "python run.py" in cmd
     assert "--spec 042-go-hello" in cmd
     assert "--project-dir /work" in cmd
@@ -149,8 +159,12 @@ def test_manifest_runs_run_py_on_nix_base_with_mounts(
     assert {"JOB_ID", "CORRELATION_KEY", "FACTORY_SERVICE"} <= env_names
 
 
-def test_manifest_image_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/acme/custom:tag")
+def test_manifest_build_image_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    # AIFACTORY_BUILD_IMAGE is the explicit build-only override and beats both
+    # the downward-API AIFACTORY_IMAGE and the gate AIFACTORY_SANDBOX_IMAGE.
+    monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "ghcr.io/acme/custom:tag")
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", DEFAULT_NIX_IMAGE)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
         task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
@@ -158,6 +172,37 @@ def test_manifest_image_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert m["spec"]["template"]["spec"]["containers"][0]["image"] == (
         "ghcr.io/acme/custom:tag"
     )
+
+
+def test_manifest_ignores_sandbox_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The build Job must NEVER use AIFACTORY_SANDBOX_IMAGE (the shared thin nix
+    # gate substrate) — that is the #671 defect. With only the gate var set and
+    # no build/running image, it falls back to DEFAULT_NIX_IMAGE *via the logged
+    # fallback*, not by consulting the sandbox var.
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    monkeypatch.delenv("AIFACTORY_IMAGE", raising=False)
+    monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/acme/should-not-leak:tag")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    m = bb.build_run_py_job_manifest(
+        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+    )
+    image = m["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image != "ghcr.io/acme/should-not-leak:tag"
+    assert image == DEFAULT_NIX_IMAGE  # safe fallback, never the gate image
+
+
+def test_resolve_build_image_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Direct unit coverage of the resolver precedence + safe fallback.
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    monkeypatch.delenv("AIFACTORY_IMAGE", raising=False)
+    # 3) neither set -> logged fallback to the given default.
+    assert bb._resolve_build_image("fallback:img") == "fallback:img"
+    # 2) AIFACTORY_IMAGE (downward-API) wins over the fallback.
+    monkeypatch.setenv("AIFACTORY_IMAGE", "running:img")
+    assert bb._resolve_build_image("fallback:img") == "running:img"
+    # 1) AIFACTORY_BUILD_IMAGE (explicit override) wins over everything.
+    monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "build:img")
+    assert bb._resolve_build_image("fallback:img") == "build:img"
 
 
 def test_manifest_outside_data_root_has_no_worktree_mount(
