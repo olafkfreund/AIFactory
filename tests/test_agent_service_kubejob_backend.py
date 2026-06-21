@@ -118,3 +118,77 @@ async def test_kubejob_falls_back_to_subprocess_without_store(
     service = AgentService()
     service._store_enabled = False
     assert service._kubejob_backend_enabled() is False
+
+
+async def test_dispatch_build_job_forwards_pooled_oauth_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #671 OAuth-env defect: _dispatch_build_job resolves the build's credential
+    # from the SAME pool the in-pod path uses and forwards it to the backend's
+    # dispatch (which injects it into the Job container env). A fresh Job pod has
+    # no credential source, so this is the load-bearing fix.
+    service = await _make_service(tmp_path / "tok.db")
+
+    monkeypatch.setattr(
+        service, "_resolve_claude_token_pooled",
+        lambda _tid: ("pooled-tok", "prof-1", "Profile One"),
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _FakeBackend:
+        async def dispatch(self, **kw: Any) -> str:
+            captured.update(kw)
+            return "factory-aifactory-job"
+
+    monkeypatch.setattr(service, "_build_backend", lambda: _FakeBackend())
+    monkeypatch.setattr(
+        service, "_start_kubejob_log_stream",
+        lambda **_kw: _noop(),
+    )
+    monkeypatch.setattr(service, "_safe_emit_task_status", _noop_status)
+
+    await service._dispatch_build_job(
+        task_id="p:s1", project_path=tmp_path, spec_id="s1", correlation_key="9",
+    )
+
+    assert captured["oauth_token"] == "pooled-tok"
+    assert captured["task_id"] == "p:s1"
+
+
+async def test_dispatch_build_job_releases_token_on_dispatch_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the Job dispatch raises, the pooled credential is returned immediately
+    # (the Job will never run, so a reaper would never fire to release it).
+    service = await _make_service(tmp_path / "tokerr.db")
+
+    monkeypatch.setattr(
+        service, "_resolve_claude_token_pooled",
+        lambda _tid: ("pooled-tok", "prof-1", "Profile One"),
+    )
+    released: list[str] = []
+    monkeypatch.setattr(
+        service, "_release_task_credential", lambda tid: released.append(tid)
+    )
+
+    class _BoomBackend:
+        async def dispatch(self, **_kw: Any) -> str:
+            raise RuntimeError("cluster down")
+
+    monkeypatch.setattr(service, "_build_backend", lambda: _BoomBackend())
+
+    with pytest.raises(RuntimeError, match="cluster down"):
+        await service._dispatch_build_job(
+            task_id="p:s1", project_path=tmp_path, spec_id="s1",
+            correlation_key="9",
+        )
+    assert released == ["p:s1"]
+
+
+async def _noop() -> None:
+    return None
+
+
+async def _noop_status(*_a: Any, **_kw: Any) -> None:
+    return None

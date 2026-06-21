@@ -264,6 +264,106 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
 
 
 # --------------------------------------------------------------------------- #
+# 1b. Build Job env (#671 OAuth-env defect)
+# --------------------------------------------------------------------------- #
+
+
+def test_build_job_env_injects_oauth_token_and_fixed_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The load-bearing fix: a fresh Job pod has no credential source, so the
+    # pooled OAuth token MUST be injected (else run.py dies 'No OAuth token
+    # found'). The fixed non-interactive build env mirrors the in-pod overrides.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-tok-123"
+    assert env["CLAUDE_CODE_ENTRYPOINT"] == "cli"
+    assert env["CI"] == "true"
+    assert env["PYTHONUNBUFFERED"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_build_job_env_propagates_present_provider_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Provider/runtime SDK env mirrors core/auth.py's agent-keep allowlist, but
+    # ONLY when present on the control plane (no empty placeholders), plus
+    # GITHUB_TOKEN for run.py's PR endgame.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gw.example/v1")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "proxy-tok")
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-tok")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-x")
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["ANTHROPIC_BASE_URL"] == "https://gw.example/v1"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-tok"
+    assert env["GITHUB_TOKEN"] == "gh-tok"
+    assert env["ANTHROPIC_MODEL"] == "claude-x"
+    # Unset passthrough vars are omitted, not blanked.
+    assert "GH_TOKEN" not in env
+    assert "NO_PROXY" not in env
+
+
+def test_build_job_env_never_includes_anthropic_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # OAuth-only policy: ANTHROPIC_API_KEY must NEVER reach the build Job (it
+    # would silently bill the direct-API account). It is not in the passthrough
+    # allowlist, so even when set on the control plane it is dropped.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-not-leak")
+    monkeypatch.setenv("DATABASE_URL", "postgres://secret/should-not-leak")
+    env = bb.build_job_env("oauth-tok-123")
+    assert "ANTHROPIC_API_KEY" not in env
+    # Control-plane secrets run.py doesn't use are scoped out too.
+    assert "DATABASE_URL" not in env
+
+
+def test_build_job_env_without_token_omits_oauth_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No token resolved → no CLAUDE_CODE_OAUTH_TOKEN key (rather than an empty
+    # one that would mask the 'no token' condition). Fixed env still present.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env = bb.build_job_env(None)
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+    assert env["CI"] == "true"
+
+
+def test_manifest_carries_oauth_env_in_container_not_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # SECURITY (#599 class): the OAuth token + provider env must land in the
+    # container `env` list, NEVER in `command`/argv (ps-visible). The manifest
+    # builder threads extra_env through the shared job_dispatch builder.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    monkeypatch.setenv("GITHUB_TOKEN", "gh-tok")
+    extra_env = bb.build_job_env("oauth-tok-xyz")
+    m = bb.build_run_py_job_manifest(
+        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        extra_env=extra_env,
+    )
+    c = m["spec"]["template"]["spec"]["containers"][0]
+    env_by_name = {e["name"]: e["value"] for e in c["env"]}
+    assert env_by_name["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-tok-xyz"
+    assert env_by_name["GITHUB_TOKEN"] == "gh-tok"
+    assert env_by_name["CI"] == "true"
+    # The token must NOT appear anywhere in the argv (command).
+    argv = " ".join(c["command"])
+    assert "oauth-tok-xyz" not in argv
+    assert "gh-tok" not in argv
+    # Every env entry is a {name,value} pair (literal env), none via argv.
+    assert all("name" in e and "value" in e for e in c["env"])
+
+
+# --------------------------------------------------------------------------- #
 # 2. Backend selection by env
 # --------------------------------------------------------------------------- #
 
@@ -323,6 +423,37 @@ async def test_dispatch_records_worker_ref(
         "namespace": "factory",
         "job_name": job_name,
     }
+
+
+async def test_dispatch_injects_oauth_token_into_job_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #671 OAuth-env defect: the token the caller resolved from the pool must
+    # land in the created Job's container env (not argv) so run.py finds it.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(bb, "populate_build_worktree", lambda *_a, **_k: None)
+    store = await _make_store(tmp_path / "d.db")
+    await store.admit("p:s1", _spawn_args("s1"), cap=2, correlation_key="9")
+
+    backend = bb.KubeJobBuildBackend(store)
+    fake = _FakeBatch()
+    await backend.dispatch(
+        task_id="p:s1",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "p",
+        spec_id="s1",
+        correlation_key="9",
+        oauth_token="pooled-token-abc",
+        batch=fake,
+    )
+
+    manifest = fake.created[0][1]
+    c = manifest["spec"]["template"]["spec"]["containers"][0]
+    env_by_name = {e["name"]: e["value"] for e in c["env"]}
+    assert env_by_name["CLAUDE_CODE_OAUTH_TOKEN"] == "pooled-token-abc"
+    # Never in argv (security #599 class).
+    assert "pooled-token-abc" not in " ".join(c["command"])
 
 
 # --------------------------------------------------------------------------- #
