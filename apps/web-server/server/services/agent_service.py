@@ -2975,13 +2975,47 @@ class AgentService:
         find the Job. The Job flips the row to its terminal state when it
         finishes — we do not block on it. Surfaces the coding status so the
         cockpit shows the build moving even though no in-pod process exists.
+
+        #671 OAuth-env defect: a dispatched Job is a fresh pod that inherits none
+        of the control-plane env, so we resolve the build's credential from the
+        SAME token pool the in-pod path uses (#670) — concurrent Jobs draw
+        DISTINCT tokens — and hand it to the backend, which injects it (plus the
+        provider/runtime SDK env) into the Job container env (never argv). Without
+        it run.py started but died ``No OAuth token found``. The pooled credential
+        is released when the Job reaches a terminal state (reconcile / reap /
+        stop), mirroring the subprocess path's _release_task_credential.
         """
-        await self._build_backend().dispatch(
-            task_id=task_id,
-            project_path=project_path,
-            spec_id=spec_id,
-            correlation_key=correlation_key,
-        )
+        # Pooled credential checkout (#670) — distinct token per concurrent Job.
+        token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
+        if token:
+            self._task_profiles[task_id] = {
+                "profileId": profile_id,
+                "profileName": profile_name,
+                "attempt": 1,
+            }
+            _log.info(
+                "[AgentService] kubejob build %s using Claude profile %s (%s)",
+                task_id, profile_name, profile_id,
+            )
+        else:
+            _log.warning(
+                "[AgentService] no Claude OAuth token available for kubejob "
+                "build %s — run.py will fail with 'No OAuth token found'",
+                task_id,
+            )
+        try:
+            await self._build_backend().dispatch(
+                task_id=task_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                correlation_key=correlation_key,
+                oauth_token=token,
+            )
+        except Exception:
+            # Dispatch failed → the Job will never run, so return the credential
+            # now rather than leaking it until a reaper that never fires.
+            self._release_task_credential(task_id)
+            raise
         # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
         # Job pod's logs, exactly as the in-pod subprocess path does — the
         # prerequisite to making kubejob the default. Best-effort: any failure
@@ -3142,6 +3176,9 @@ class AgentService:
                 # leak the background task or the console FIFO.
                 self._cancel_kubejob_log_stream(job_id)
                 await self._reap_kubejob_console(job_id)
+                # #671 OAuth-env: return the pooled credential checked out at
+                # dispatch now that the Job is done (mirrors the subprocess path).
+                self._release_task_credential(job_id)
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
@@ -3192,6 +3229,9 @@ class AgentService:
             _log.exception("[AgentService] kubejob reaper failed")
             return []
         if reaped:
+            # #671 OAuth-env: return each reaped build's pooled credential.
+            for job_id in reaped:
+                self._release_task_credential(job_id)
             await self._drain_queue()
         return reaped
 
@@ -3234,6 +3274,8 @@ class AgentService:
                 "[AgentService] could not free durable slot on kubejob stop %s",
                 task_id, exc_info=True,
             )
+        # #671 OAuth-env: return the pooled credential checked out at dispatch.
+        self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._drain_queue()
         _log.info("[AgentService] Stopped k8s-Job build %s", task_id)
