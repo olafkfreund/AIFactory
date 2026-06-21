@@ -97,6 +97,13 @@ _ENV_DATA_ROOT = "AIFACTORY_DATA_ROOT"
 _ENV_NAMESPACE = "AIFACTORY_SANDBOX_NAMESPACE"
 _ENV_SERVICE_ACCOUNT = "AIFACTORY_BUILD_SA"
 _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
+# Where run.py lives inside the build image. This is the SAME var the in-pod
+# path resolves (config.Settings.BACKEND_PATH is bound to APP_BACKEND_PATH), so
+# the Job entrypoint references the identical run.py the in-pod subprocess does
+# (agent_service._spawn_task_execution: ``self.backend_path / "run.py"``). The
+# build Job runs on the aifactory runtime image (#671/#685), so this env is
+# present in the Job container exactly as it is in the control-plane pod.
+_ENV_BACKEND_PATH = "APP_BACKEND_PATH"
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -104,6 +111,10 @@ _DEFAULT_DATA_ROOT = "/home/nonroot/.aifactory"
 _DEFAULT_NAMESPACE = "factory"
 _DEFAULT_SERVICE_ACCOUNT = "aifactory-sandbox"
 _DEFAULT_DEADLINE_SECONDS = 6 * 3600  # a full build is long-lived
+# Default backend dir = the image's project layout (Dockerfile sets
+# APP_BACKEND_PATH=/home/projects/MagesticAI/apps/backend). Only used as a
+# fallback when the env is somehow unset; the image always sets it.
+_DEFAULT_BACKEND_PATH = "/home/projects/MagesticAI/apps/backend"
 
 # The worktree a build runs in (mirrors agent_service._spawn_task_execution).
 _WORKTREE_TEMPLATE = ".aifactory/worktrees/tasks/{spec_id}"
@@ -180,6 +191,26 @@ def _resolve_build_image(default_nix_image: str) -> str:
     return default_nix_image
 
 
+def _resolve_run_py_path() -> str:
+    """Resolve the ABSOLUTE path to run.py inside the build image (#671 defect).
+
+    The build Job co-mounts the worktree at ``/work`` and runs there, but run.py
+    does NOT live in the worktree — it lives in the backend dir baked into the
+    image (``APP_BACKEND_PATH``). A bare ``python run.py`` from ``/work`` fails
+    with ``can't open file '/work/run.py': [Errno 2]`` because run.py isn't
+    there. Using the absolute backend path makes run.py resolvable while keeping
+    ``--project-dir /work`` as the project the build operates on — mirroring the
+    in-pod invocation ``[sys.executable, self.backend_path / "run.py", …]`` in
+    ``agent_service._spawn_task_execution``.
+    """
+    backend_path = (
+        os.environ.get(_ENV_BACKEND_PATH, "").strip() or _DEFAULT_BACKEND_PATH
+    )
+    # PurePosix join: the Job container is Linux regardless of where the manifest
+    # is built, so always emit a forward-slash path.
+    return f"{backend_path.rstrip('/')}/run.py"
+
+
 def build_run_py_job_manifest(
     *,
     task_id: str,
@@ -195,7 +226,17 @@ def build_run_py_job_manifest(
     co-mount, no-retry, TTL, deadline) and supplies the AIFactory-specific
     entrypoint:
 
-        python run.py --spec <spec_id> --project-dir /work --auto-continue --force
+        python <backend>/run.py --spec <spec_id> --project-dir /work \
+            --auto-continue --force
+
+    run.py is referenced by its ABSOLUTE path inside the image
+    (``_resolve_run_py_path`` → ``APP_BACKEND_PATH``), NOT a bare ``run.py``
+    resolved against the ``/work`` worktree — run.py lives in the image's backend
+    dir, not the co-mounted worktree, so ``python run.py`` from ``/work`` died
+    with ``can't open file '/work/run.py'`` (#671). ``--project-dir /work`` keeps
+    the build operating on the worktree. This mirrors the in-pod invocation
+    ``[sys.executable, self.backend_path / "run.py", "--spec", …, "--project-dir",
+    …]`` in ``agent_service._spawn_task_execution``.
 
     The image is the AIFactory runtime image (``_resolve_build_image``), NOT the
     thin nix gate substrate: the entrypoint is a plain ``bash -c "python run.py
@@ -228,14 +269,18 @@ def build_run_py_job_manifest(
         _worktree_subpath(data_root, project_path, spec_id) if repo_pvc else None
     )
 
-    # The build entrypoint: run.py against the co-mounted worktree at /work.
-    # Mirrors agent_service._spawn_task_execution's headless invocation. NOT
+    # The build entrypoint: run.py (absolute path in the image) against the
+    # co-mounted worktree at /work. Mirrors agent_service._spawn_task_execution's
+    # headless invocation argv shape (run.py abs path, --spec, --project-dir,
+    # --auto-continue, --force). run.py lives in the image's backend dir, NOT the
+    # worktree, so it MUST be referenced absolutely — a bare ``run.py`` resolved
+    # against /work died with ``can't open file '/work/run.py'`` (#671). NOT
     # nix-develop-wrapped (nix_develop=False) — run.py drives its own per-task
     # env; the entrypoint just needs an interpreter, which the aifactory build
     # image (resolved above) provides.
+    run_py = _resolve_run_py_path()
     commands = [
-        "python run.py "
-        f"--spec {spec_id} --project-dir /work --auto-continue --force"
+        f"python {run_py} --spec {spec_id} --project-dir /work --auto-continue --force"
     ]
 
     spec = JobSpec(

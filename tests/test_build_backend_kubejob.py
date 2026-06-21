@@ -116,6 +116,8 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
     # Even if the gate substrate var is set, the build must NOT pick it up.
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", DEFAULT_NIX_IMAGE)
+    # Unset so run.py resolves to the image-default backend path deterministically.
+    monkeypatch.delenv("APP_BACKEND_PATH", raising=False)
 
     project_path = Path(_DATA_ROOT) / "workspaces" / "proj-1"
     m = bb.build_run_py_job_manifest(
@@ -140,9 +142,16 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     assert c["image"] != DEFAULT_NIX_IMAGE
     cmd = c["command"][2]
     # The entrypoint is a plain interpreter invocation that only works on a
-    # python-capable image: bash -c "python run.py …", NOT nix-develop-wrapped.
+    # python-capable image: bash -c "python <abs>/run.py …", NOT
+    # nix-develop-wrapped.
     assert c["command"][:2] == ["bash", "-c"]
-    assert "python run.py" in cmd
+    # run.py is referenced by its ABSOLUTE image path (default image layout
+    # here, since APP_BACKEND_PATH is unset) — NOT a bare ``run.py`` that would
+    # resolve against the /work worktree (the #671 ``can't open file
+    # '/work/run.py'`` defect). The build still operates on /work via
+    # --project-dir.
+    assert "python /home/projects/MagesticAI/apps/backend/run.py" in cmd
+    assert "python run.py " not in cmd  # never a bare run.py against /work
     assert "--spec 042-go-hello" in cmd
     assert "--project-dir /work" in cmd
     assert "nix develop" not in cmd
@@ -203,6 +212,41 @@ def test_resolve_build_image_precedence(monkeypatch: pytest.MonkeyPatch) -> None
     # 1) AIFACTORY_BUILD_IMAGE (explicit override) wins over everything.
     monkeypatch.setenv("AIFACTORY_BUILD_IMAGE", "build:img")
     assert bb._resolve_build_image("fallback:img") == "build:img"
+
+
+def test_resolve_run_py_path_is_absolute(monkeypatch: pytest.MonkeyPatch) -> None:
+    # run.py must be referenced by its ABSOLUTE image path (#671): a bare
+    # ``run.py`` resolved against the /work worktree died with ``can't open file
+    # '/work/run.py'`` because run.py lives in the image backend dir, not /work.
+    # Unset → the image-default backend layout (Dockerfile APP_BACKEND_PATH).
+    monkeypatch.delenv("APP_BACKEND_PATH", raising=False)
+    assert (
+        bb._resolve_run_py_path()
+        == "/home/projects/MagesticAI/apps/backend/run.py"
+    )
+    # APP_BACKEND_PATH (the SAME var the in-pod path resolves) is honored, and a
+    # trailing slash never doubles up.
+    monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend/")
+    assert bb._resolve_run_py_path() == "/opt/backend/run.py"
+    monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend")
+    assert bb._resolve_run_py_path() == "/opt/backend/run.py"
+
+
+def test_manifest_run_py_path_honours_backend_path_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Job entrypoint uses the resolved absolute run.py path, NOT a bare
+    # ``run.py`` against /work, while keeping --project-dir /work.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend")
+    m = bb.build_run_py_job_manifest(
+        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+    )
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "python /opt/backend/run.py " in cmd
+    assert "python run.py " not in cmd  # never bare against /work
+    assert "--project-dir /work" in cmd
 
 
 def test_manifest_outside_data_root_has_no_worktree_mount(
