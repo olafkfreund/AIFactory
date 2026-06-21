@@ -11,6 +11,20 @@ Single-replica AIFactory is the default — laptop installs, dev environments, a
 
 v1.1 closes that gap with an opt-in Redis pub/sub bridge that fan-outs events across all replicas. With Redis on, you can scale to `replicaCount: N` (or enable the HPA up to `maxReplicas: N`) and every replica's WebSocket clients receive every event — regardless of which replica fired it.
 
+## Concurrency model (RFC-0016 / RFC-0017)
+
+Event fan-out is necessary but not sufficient for true concurrency. Three further pieces make the control plane safe to run as `replicaCount: N` and able to run many builds at once:
+
+- **Durable, shared job-state (RFC-0016).** The admission cap, the FIFO queue and the running set are stored in **Postgres**, not in process memory, with a per-service advisory lock that serializes the admission decision across every replica. Two replicas can't both think they're under the cap and over-admit. This is opt-in: the durable store activates only when a real shared `DATABASE_URL` is configured — single-instance SQLite installs are unchanged.
+- **Admission control + queue (RFC-0016).** A concurrency cap with a FIFO queue in front of it. Submit more work than the cap allows and the overflow queues, so the cluster is never overwhelmed. With the queue durable, **KEDA** can scale the deployment on queue depth (we have proven a 1→3 scale-out under load).
+- **Redis-backed rmux transport (RFC-0017 #681).** The live console used to assume the build ran as a subprocess of the pod your websocket landed on. With multiple replicas your websocket can hit a different replica than the build. The rmux transport now runs over **Redis**, so any replica can serve any session's live console. This is the multi-replica-correct successor to the per-replica terminal pinning described below.
+
+## Execution model: in-pod today, Job-native converging
+
+By default the full coder loop (`run.py`) runs as an **in-pod asyncio subprocess** of the web-server pod (`AIFACTORY_BUILD_BACKEND=subprocess`). RFC-0016 / RFC-0017 add an opt-in **Kubernetes Job** backend (`AIFACTORY_BUILD_BACKEND=kubejob`) that dispatches each build as its own Job, with **Job-native log streaming** (#680) feeding the same two log sinks the in-pod path uses — so the Logs tab looks identical either way.
+
+**Status (honest):** the Job-native mechanisms are merged and the backend selector reports the flip as READY, but the **default is still `subprocess` (in-pod)**, and the verify path still runs on its safe in-pod defaults. The default flips (#671, #466) are converging through real bugs (most recently: the build Job's `/work` has no `.git`; verify needs an end-to-end re-validation), not live. Job-native execution is opt-in until it has earned the flip on real work.
+
 ## When you need this
 
 You want multi-replica when **any** of these apply:

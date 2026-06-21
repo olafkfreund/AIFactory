@@ -1,16 +1,34 @@
 /**
  * AIFactory screenshot capture for the docs site.
  *
- * Drives the running portal at http://localhost:3100 via Playwright
- * (headless Chromium) and saves ~14 PNGs to docs/static/img/screenshots/.
+ * Drives a running portal via Playwright (headless Chromium) and saves a
+ * curated set of PNGs to docs/static/img/screenshots/.
+ *
+ * Auth + navigation (proven recipe against the live portal):
+ *   1. The portal gates on a login screen. The reliable path is to type the
+ *      API token into the `#token` field and click "Login". localStorage
+ *      pre-seeding alone does NOT work — the route guard redirects to /login
+ *      before the auth store hydrates, and a hard navigation to a deep route
+ *      bounces back to /login. So we log in once via the form.
+ *   2. After login the app keeps auth only for *in-SPA* navigation. We never
+ *      `page.goto` a deep route after login — all view changes go through the
+ *      in-app nav buttons and the project switcher (a `[role=combobox]`).
+ *   3. To change project we open the combobox and pick the project by name,
+ *      not by URL.
  *
  * Run with:
- *   1. Start the portal stack: web-server on :3101, vite dev on :3100
- *   2. Run the demo: ./scripts/demo.sh --yolo  (seeds 3 tasks)
- *   3. npm -w apps/frontend-web run capture-screenshots
+ *   AIFACTORY_PORTAL_URL=https://aifactory.freundcloud.org.uk \
+ *   AIFACTORY_PROJECT=olafkfreund-aifactory-demo \
+ *   AIFACTORY_FAILED_PROJECT=factory-demo-taskboard \
+ *   PLAYWRIGHT_CHROMIUM_EXECUTABLE=<chrome path> \
+ *   npm -w apps/frontend-web run capture-screenshots
  *
- * The script is intentionally tolerant — if a view 404s or a selector
- * misses, it logs a warning and continues, capturing what it can.
+ * Token is read from ~/.aifactory/.token (mint from the cluster secret
+ * factory-secrets/APP_API_TOKEN). Chromium falls back to the Nix
+ * google-chrome-stable when the Playwright-bundled binary is unavailable.
+ *
+ * The script is intentionally tolerant — if a view or selector misses it
+ * logs a warning and continues, capturing what it can.
  */
 
 import {chromium, type Browser, type Page} from '@playwright/test';
@@ -18,14 +36,18 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 
 const PORTAL_URL = process.env.AIFACTORY_PORTAL_URL ?? 'http://localhost:3100';
-// Jump straight to a project's board instead of the picker.
-const PROJECT_ID =
-  process.env.AIFACTORY_PROJECT_ID ?? 'f7ac8d99-b913-4c6f-afce-f8376e29c98c';
-const TOKEN_FILE = path.join(
-  process.env.HOME ?? '/root',
-  '.aifactory',
-  '.token'
-);
+
+// A project whose lane holds completed / human-review (success-path) tasks
+// plus a running one.
+const PROJECT = process.env.AIFACTORY_PROJECT ?? 'olafkfreund-aifactory-demo';
+
+// A project that has a task in an error / failed state, for the "failed run"
+// shots.
+const FAILED_PROJECT =
+  process.env.AIFACTORY_FAILED_PROJECT ?? 'factory-demo-taskboard';
+
+const TOKEN_FILE = path.join(process.env.HOME ?? '/root', '.aifactory', '.token');
+
 const OUT_DIR = path.resolve(
   __dirname,
   '..',
@@ -35,46 +57,44 @@ const OUT_DIR = path.resolve(
   'screenshots'
 );
 
-interface Shot {
-  name: string;
-  description: string;
-  capture: (page: Page) => Promise<void>;
-}
+const CARD_SELECTOR = '.rounded-xl.border.bg-card';
 
 // ---------- helpers ----------
 
 function loadToken(): string {
   if (!fs.existsSync(TOKEN_FILE)) {
     throw new Error(
-      `Token not found at ${TOKEN_FILE}. Start the portal once to create it.`
+      `Token not found at ${TOKEN_FILE}. ` +
+        `Mint it: kubectl get secret factory-secrets -n factory ` +
+        `-o jsonpath='{.data.APP_API_TOKEN}' | base64 -d > ${TOKEN_FILE}`
     );
   }
   return fs.readFileSync(TOKEN_FILE, 'utf-8').trim();
 }
 
+const TOKEN = loadToken();
+
 async function shoot(page: Page, name: string): Promise<void> {
-  const outPath = path.join(OUT_DIR, name);
-  await page.screenshot({path: outPath, fullPage: false});
+  await page.screenshot({path: path.join(OUT_DIR, name), fullPage: false});
   // eslint-disable-next-line no-console
-  console.log(`  ✓ ${name}`);
+  console.log(`  + ${name}`);
 }
 
-async function withFallback(
-  name: string,
-  fn: () => Promise<void>
-): Promise<void> {
+async function withFallback(name: string, fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
   } catch (e) {
-    console.warn(`  ⚠ ${name} failed: ${(e as Error).message}`);
+    console.warn(`  ! ${name} failed: ${(e as Error).message}`);
   }
 }
 
-/**
- * After a full page load the app shows a ~2s animated LoadingScreen
- * ("Preparing your workspace…") before the board renders. Wait for it to
- * clear so subsequent selectors resolve against the real UI.
- */
+function onLoginScreen(page: Page): Promise<boolean> {
+  return page
+    .locator('#token')
+    .isVisible({timeout: 1500})
+    .catch(() => false);
+}
+
 async function waitForApp(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle').catch(() => {});
   await page
@@ -83,257 +103,106 @@ async function waitForApp(page: Page): Promise<void> {
       {timeout: 10_000}
     )
     .catch(() => {});
-  await page.waitForTimeout(800);
+  await page.waitForTimeout(700);
 }
 
-// ---------- shot definitions ----------
+async function login(page: Page): Promise<void> {
+  await page.goto(`${PORTAL_URL}/login`);
+  await page.waitForTimeout(1200);
+  if (await onLoginScreen(page)) {
+    await page.locator('#token').fill(TOKEN);
+    await page
+      .getByRole('button', {name: /^login$/i})
+      .first()
+      .click();
+    await page.waitForTimeout(2500);
+  }
+  await waitForApp(page);
+}
 
-const SHOTS: Shot[] = [
-  {
-    name: '01-welcome.png',
-    description: 'Welcome screen with the project list',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      await shoot(page, '01-welcome.png');
-    },
-  },
-  {
-    name: '02-onboarding-providers.png',
-    description: 'Onboarding wizard — provider choice step',
-    capture: async (page) => {
-      // Try opening Settings → Agent Profile as a proxy for the
-      // provider-choice surface (the onboarding wizard runs once).
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      const settings = page.getByRole('button', {name: /settings/i}).first();
-      if (await settings.isVisible({timeout: 3000})) {
-        await settings.click();
-        await page.waitForTimeout(500);
-        await shoot(page, '02-onboarding-providers.png');
-      }
-    },
-  },
-  {
-    name: '03-kanban.png',
-    description: 'Kanban board with seeded demo tasks',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      // Click first project card if Welcome screen is showing
-      const projectCard = page
-        .locator('[data-testid^="project-card-"]')
-        .first();
-      if (await projectCard.isVisible({timeout: 3000})) {
-        await projectCard.click();
-        await waitForApp(page);
-      }
-      await shoot(page, '03-kanban.png');
-    },
-  },
-  {
-    name: '04-task-create-wizard.png',
-    description: 'Task creation wizard, step 1',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      // The "+ Task" button lives at the bottom of the sidebar (label "Task").
-      const newTaskBtn = page
-        .getByRole('button', {name: /^\s*(new task|create task|task)\s*$/i})
-        .last();
-      if (await newTaskBtn.isVisible({timeout: 5000})) {
-        await newTaskBtn.click();
-        await page.waitForTimeout(900);
-        await shoot(page, '04-task-create-wizard.png');
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(400);
-      }
-    },
-  },
-  {
-    name: '05-task-detail-overview.png',
-    description: 'Task detail modal — overview tab (completed task)',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      // Prefer a completed task (rich plan/logs/files); fall back to any card.
-      let card = page
-        .locator('.task-card-enhanced')
-        .filter({hasText: /Tic-Tac-Toe/i})
-        .first();
-      if (!(await card.isVisible({timeout: 3000}).catch(() => false))) {
-        card = page.locator('.task-card-enhanced').first();
-      }
-      if (await card.isVisible({timeout: 3000})) {
-        await card.click();
-        await page.waitForTimeout(1200);
-        await shoot(page, '05-task-detail-overview.png');
-      }
-    },
-  },
-  {
-    name: '06-task-detail-plan.png',
-    description: 'Plan / subtasks tab',
-    capture: async (page) => {
-      // Tabs (in order): overview, subtasks, logs, files, agent-console.
-      const tab = page.getByRole('tab').nth(1); // subtasks = the plan
-      if (await tab.isVisible({timeout: 3000})) {
-        await tab.click();
-        await page.waitForTimeout(800);
-        await shoot(page, '06-task-detail-plan.png');
-      }
-    },
-  },
-  {
-    name: '07-task-detail-logs.png',
-    description: 'Phase logs',
-    capture: async (page) => {
-      const tab = page.getByRole('tab').nth(2); // logs
-      if (await tab.isVisible({timeout: 3000})) {
-        await tab.click();
-        await page.waitForTimeout(800);
-        await shoot(page, '07-task-detail-logs.png');
-      }
-    },
-  },
-  {
-    name: '08-task-detail-files.png',
-    description: 'Files tab',
-    capture: async (page) => {
-      const tab = page.getByRole('tab', {name: /files/i}).first();
-      if (await tab.isVisible({timeout: 3000})) {
-        await tab.click();
-        await page.waitForTimeout(1200);
-        await shoot(page, '08-task-detail-files.png');
-      }
-      // Close the detail modal before the live-console shot reopens another.
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(400);
-    },
-  },
-  {
-    name: '09-live-agent-console.png',
-    description: 'Live Agent Console (running task)',
-    capture: async (page) => {
-      // Open a task that is actively building so the Live Console tab renders.
-      let card = page
-        .locator('.task-card-enhanced')
-        .filter({hasText: /version|healthz|status|endpoint/i})
-        .first();
-      if (!(await card.isVisible({timeout: 3000}).catch(() => false))) {
-        card = page.locator('.task-card-enhanced').first();
-      }
-      await card.click();
-      await page.waitForTimeout(1000);
-      const consoleTab = page
-        .getByRole('tab', {name: /live console|agent console/i})
-        .first();
-      if (await consoleTab.isVisible({timeout: 3000})) {
-        await consoleTab.click();
-        await page.waitForTimeout(2500); // give the WS/PTY time to connect
-        await shoot(page, '09-live-agent-console.png');
-      } else {
-        console.warn(
-          '  ⚠ Live Console tab not visible — task may not be running.'
-        );
-      }
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(400);
-    },
-  },
-  {
-    name: '10-terminal-grid.png',
-    description: 'Multi-pane terminal grid',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      const terminalsNav = page.getByRole('button', {name: /terminal/i}).first();
-      if (await terminalsNav.isVisible({timeout: 3000})) {
-        await terminalsNav.click();
-        await page.waitForTimeout(1500);
-        await shoot(page, '10-terminal-grid.png');
-      }
-    },
-  },
-  {
-    name: '11-github-issues-sync.png',
-    description: 'GitHub Issues view',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      const githubNav = page
-        .getByRole('button', {name: /github\s*issues/i})
-        .first();
-      if (await githubNav.isVisible({timeout: 3000})) {
-        await githubNav.click();
-        await page.waitForTimeout(1500);
-        await shoot(page, '11-github-issues-sync.png');
-      }
-    },
-  },
-  {
-    name: '12-settings-llm-providers.png',
-    description: 'LLM Providers settings',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      const settings = page.getByRole('button', {name: /settings/i}).first();
-      if (await settings.isVisible({timeout: 3000})) {
-        await settings.click();
-        await page.waitForTimeout(700);
-        const llm = page
-          .getByRole('button', {name: /llm providers/i})
-          .first();
-        if (await llm.isVisible({timeout: 2000})) {
-          await llm.click();
-          await page.waitForTimeout(700);
-        }
-        await shoot(page, '12-settings-llm-providers.png');
-      }
-    },
-  },
-  {
-    name: '13-settings-mcp-servers.png',
-    description: 'MCP servers settings',
-    capture: async (page) => {
-      // Settings dialog should still be open from shot 12.
-      const mcp = page.getByRole('button', {name: /^\s*mcp/i}).first();
-      if (await mcp.isVisible({timeout: 2000})) {
-        await mcp.click();
-        await page.waitForTimeout(700);
-        await shoot(page, '13-settings-mcp-servers.png');
-      }
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(400);
-    },
-  },
-  {
-    name: '14-insights-chat.png',
-    description: 'Insights / chat',
-    capture: async (page) => {
-      await page.goto(PORTAL_URL);
-      await waitForApp(page);
-      const chatNav = page
-        .getByRole('button', {name: /^\s*(chat|insights)\s*$/i})
-        .first();
-      if (await chatNav.isVisible({timeout: 3000})) {
-        await chatNav.click();
-        await page.waitForTimeout(1200);
-        await shoot(page, '14-insights-chat.png');
-      }
-    },
-  },
-];
+async function currentProject(page: Page): Promise<string> {
+  return (
+    (await page.getByRole('combobox').first().textContent().catch(() => '')) ?? ''
+  ).trim();
+}
+
+/** Switch the active project via the in-app combobox (no navigation). */
+async function selectProject(page: Page, name: string): Promise<void> {
+  if ((await currentProject(page)).includes(name)) {
+    return;
+  }
+  const combo = page.getByRole('combobox').first();
+  await combo.click();
+  await page.waitForTimeout(800);
+  const opt = page.getByRole('option', {name: new RegExp(name, 'i')}).first();
+  if (await opt.isVisible({timeout: 2500}).catch(() => false)) {
+    await opt.click();
+    await page.waitForTimeout(2500);
+    await waitForApp(page);
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+}
+
+async function clickNav(page: Page, re: RegExp): Promise<boolean> {
+  const btn = page.getByRole('button', {name: re}).first();
+  if (await btn.isVisible({timeout: 3000}).catch(() => false)) {
+    await btn.click();
+    await page.waitForTimeout(1300);
+    return true;
+  }
+  return false;
+}
+
+async function openFirstTask(page: Page): Promise<boolean> {
+  const card = page.locator(CARD_SELECTOR).first();
+  if (!(await card.isVisible({timeout: 4000}).catch(() => false))) {
+    return false;
+  }
+  const heading = card.locator('h3').first();
+  const target = (await heading.isVisible({timeout: 1500}).catch(() => false))
+    ? heading
+    : card;
+  await target.click();
+  await page.waitForTimeout(1500);
+  return page
+    .locator('[role="dialog"]')
+    .first()
+    .isVisible({timeout: 3000})
+    .catch(() => false);
+}
+
+async function clickTab(page: Page, re: RegExp): Promise<boolean> {
+  const tab = page.getByRole('tab', {name: re}).first();
+  if (await tab.isVisible({timeout: 3000}).catch(() => false)) {
+    await tab.click();
+    await page.waitForTimeout(900);
+    return true;
+  }
+  return false;
+}
+
+/** Click a left-rail entry inside the Settings dialog by its label. */
+async function settingsSection(page: Page, re: RegExp): Promise<boolean> {
+  const item = page.getByText(re).first();
+  if (await item.isVisible({timeout: 2500}).catch(() => false)) {
+    await item.click();
+    await page.waitForTimeout(700);
+    return true;
+  }
+  return false;
+}
+
+async function closeDialog(page: Page): Promise<void> {
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(500);
+}
 
 // ---------- main ----------
 
 async function main(): Promise<void> {
   fs.mkdirSync(OUT_DIR, {recursive: true});
 
-  const token = loadToken();
-
-  // On NixOS the Playwright-bundled chromium/headless-shell isn't provided;
-  // use the system Chrome (matches record-portal-walkthrough.ts).
   const browser: Browser = await chromium.launch({
     headless: true,
     executablePath:
@@ -342,35 +211,131 @@ async function main(): Promise<void> {
   });
   const context = await browser.newContext({
     viewport: {width: 1440, height: 900},
-    // Inject token so the portal is pre-authenticated
-    extraHTTPHeaders: {Authorization: `Bearer ${token}`},
-    storageState: {
-      cookies: [],
-      origins: [
-        {
-          origin: PORTAL_URL,
-          localStorage: [
-            // Canonical token key the app reads (see src/lib/auth.ts → 'aifactory-token').
-            {name: 'aifactory-token', value: token},
-            {name: 'aifactory.token', value: token},
-            {name: 'aifactory-theme', value: 'dark'},
-            // Land directly on a project's board (see project-store.ts).
-            {name: 'lastSelectedProjectId', value: PROJECT_ID},
-            // Skip the onboarding wizard on subsequent shots
-            {name: 'aifactory.onboarding.completed', value: 'true'},
-          ],
-        },
-      ],
-    },
   });
-
   const page = await context.newPage();
 
-  console.log(`Capturing ${SHOTS.length} screenshots to ${OUT_DIR}`);
+  console.log(`Capturing screenshots to ${OUT_DIR}`);
 
-  for (const shot of SHOTS) {
-    await withFallback(shot.name, () => shot.capture(page));
+  // --- 01 login (captured before authenticating) ---
+  await withFallback('01-login.png', async () => {
+    await page.goto(`${PORTAL_URL}/login`);
+    await waitForApp(page);
+    if (await onLoginScreen(page)) {
+      await shoot(page, '01-login.png');
+    }
+  });
+
+  // --- authenticate once; everything after is in-SPA ---
+  await login(page);
+  await selectProject(page, PROJECT);
+
+  await withFallback('02-kanban-board.png', async () => {
+    await clickNav(page, /^\s*tasks\s*$/i);
+    await shoot(page, '02-kanban-board.png');
+  });
+
+  await withFallback('03-task-create.png', async () => {
+    const taskBtn = page.getByRole('button', {name: /^\s*task\s*$/i}).last();
+    if (await taskBtn.isVisible({timeout: 4000}).catch(() => false)) {
+      await taskBtn.click();
+      await page.waitForTimeout(1100);
+      await shoot(page, '03-task-create.png');
+      await closeDialog(page);
+    }
+  });
+
+  // Task detail: open once, walk the tabs while it stays open.
+  await withFallback('04-task-detail-overview.png', async () => {
+    if (await openFirstTask(page)) {
+      await shoot(page, '04-task-detail-overview.png');
+    }
+  });
+  await withFallback('05-task-detail-subtasks.png', async () => {
+    if (await clickTab(page, /subtasks/i)) {
+      await shoot(page, '05-task-detail-subtasks.png');
+    }
+  });
+  await withFallback('06-task-detail-logs.png', async () => {
+    if (await clickTab(page, /^logs$/i)) {
+      await shoot(page, '06-task-detail-logs.png');
+    }
+  });
+  await withFallback('07-task-detail-files.png', async () => {
+    if (await clickTab(page, /^files$/i)) {
+      await page.waitForTimeout(700);
+      await shoot(page, '07-task-detail-files.png');
+    }
+  });
+  await withFallback('08-task-detail-observability.png', async () => {
+    if (await clickTab(page, /observability/i)) {
+      await page.waitForTimeout(1200);
+      await shoot(page, '08-task-detail-observability.png');
+    }
+    await closeDialog(page);
+  });
+
+  // Failed / error project.
+  await withFallback('09-failed-task-board.png', async () => {
+    await selectProject(page, FAILED_PROJECT);
+    await clickNav(page, /^\s*tasks\s*$/i);
+    await shoot(page, '09-failed-task-board.png');
+  });
+  await withFallback('10-failed-task-detail.png', async () => {
+    if (await openFirstTask(page)) {
+      await page.waitForTimeout(700);
+      await shoot(page, '10-failed-task-detail.png');
+      if (await clickTab(page, /^logs$/i)) {
+        await shoot(page, '11-failed-task-logs.png');
+      }
+      await closeDialog(page);
+    }
+  });
+
+  // Back to the demo project for the remaining feature views.
+  await selectProject(page, PROJECT);
+
+  const navShots: Array<[string, RegExp]> = [
+    ['12-files.png', /^\s*files\s*$/i],
+    ['13-chat.png', /^\s*chat\s*$/i],
+    ['14-terminal.png', /^\s*terminal\s*$/i],
+    ['15-mcp.png', /^\s*mcp\s*$/i],
+    ['16-skills.png', /^\s*skills\s*$/i],
+    ['17-worktrees.png', /worktrees/i],
+    ['18-index-memory.png', /index\s*&?\s*memory/i],
+    ['19-github-issues.png', /github\s*issues/i],
+    ['20-github-prs.png', /github\s*prs/i],
+  ];
+  for (const [name, re] of navShots) {
+    await withFallback(name, async () => {
+      if (await clickNav(page, re)) {
+        await page.waitForTimeout(700);
+        await shoot(page, name);
+      }
+    });
   }
+
+  // Settings dialog sections.
+  await withFallback('21-settings-agent.png', async () => {
+    await clickNav(page, /^\s*tasks\s*$/i);
+    const gear = page.locator('button[aria-label="Project settings"]').first();
+    if (await gear.isVisible({timeout: 4000}).catch(() => false)) {
+      await gear.click();
+      await page.waitForTimeout(1100);
+      await settingsSection(page, /^Agent Settings$/i);
+      await shoot(page, '21-settings-agent.png');
+    }
+  });
+  await withFallback('22-settings-llm-providers.png', async () => {
+    if (await settingsSection(page, /^LLM Providers$/i)) {
+      await shoot(page, '22-settings-llm-providers.png');
+    }
+  });
+  await withFallback('23-settings-integrations.png', async () => {
+    if (await settingsSection(page, /^Integrations$/i)) {
+      await shoot(page, '23-settings-integrations.png');
+    }
+    await closeDialog(page);
+  });
 
   await browser.close();
   console.log('\nDone. Screenshots saved to:', OUT_DIR);

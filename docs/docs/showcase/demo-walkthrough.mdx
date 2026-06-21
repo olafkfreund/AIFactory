@@ -13,7 +13,7 @@ A step-by-step tour of `./scripts/demo.sh` with screenshots.
 
 The script closes any leftover issues on `olafkfreund/aifactory-demo` and seeds three fresh ones.
 
-> _Screenshot: `screenshots/11-github-issues-sync.png` — Phase D will capture this against the running portal._
+> _Screenshot: `screenshots/19-github-issues.png` — Phase D will capture this against the running portal._
 
 ## Step 2 — Register the repo
 
@@ -26,7 +26,7 @@ curl -X POST http://localhost:3101/api/projects \
 
 The portal returns a UUID project-id and renders the project on the Welcome screen.
 
-> _Screenshot: `screenshots/01-welcome.png`_
+> _Screenshot: `screenshots/01-login.png`_
 
 ## Step 3 — Import issues → backlog tasks
 
@@ -38,7 +38,7 @@ curl -X POST "http://localhost:3101/api/projects/$PROJECT_ID/github/import" \
 
 The web-server creates three spec directories under `.aifactory/specs/`. Each task appears in the Kanban backlog column with the issue title.
 
-> _Screenshot: `screenshots/03-kanban.png`_
+> _Screenshot: `screenshots/02-kanban-board.png`_
 
 ## Step 4 — Drive Claude Code from the terminal
 
@@ -53,7 +53,7 @@ Ask Claude:
 
 Claude reads, edits, and saves. The portal's task-detail view reflects the changes in real time via the 3-second worktree sync.
 
-> _Screenshot: `screenshots/06-task-detail-plan.png`_
+> _Screenshot: `screenshots/05-task-detail-subtasks.png`_
 
 ## Step 5 — Kick off an autonomous build
 
@@ -67,7 +67,7 @@ curl -X POST "http://localhost:3101/api/tasks/$TASK_ID/recover" \
 
 The agent runs. Open the **Live Console** tab on the task to watch.
 
-> _Screenshot: `screenshots/09-live-agent-console.png`_
+> _Screenshot: `screenshots/08-task-detail-observability.png`_
 
 ## Step 6 — Review and merge
 
@@ -75,4 +75,4 @@ When the QA reviewer approves, click **Merge** in the task detail panel. The por
 
 Done. Three GitHub issues → three commits on your branch. The agent did the work, you reviewed.
 
-> _Screenshot: `screenshots/08-task-detail-files.png` (showing the final diff)_
+> _Screenshot: `screenshots/07-task-detail-files.png` (showing the final diff)_

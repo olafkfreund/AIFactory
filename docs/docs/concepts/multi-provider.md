@@ -66,6 +66,15 @@ The backend's `phase_config.infer_provider_from_model()` parses the model string
 - **Per profile** — Settings → Agent Profile (create reusable profiles)
 - **Per endpoint** — Settings → LLM Providers (register your endpoints, API keys are encrypted at rest)
 
+## How credentials reach the agent (in-pod vs Job)
+
+Whichever provider you pick, the agent process needs that provider's credential — a Claude OAuth token, an API key, or a CLI login. *How* the credential is delivered depends on the execution backend:
+
+- **In-pod (default).** The coder loop runs as a subprocess of the web-server pod and inherits the pod's environment and mounted secrets directly. Credentials are already present in the process the web-server spawns.
+- **Job-native (opt-in, converging).** When the build runs as its own Kubernetes Job, nothing is inherited — the build environment has to be **injected explicitly** into the Job: the Claude OAuth token and the SDK env are passed into the `run.py` Job (#688), and the Job's worktree is populated before dispatch (#687). This is one of the reasons the Job-native default flip is still converging (see [Multi-replica → Execution model](./multi-replica#execution-model-in-pod-today-job-native-converging)); moving execution across a process boundary means every credential the in-pod path inherited for free has to be made explicit.
+
+Multiple Claude subscriptions can be pooled so concurrent builds rotate across them on rate limits (RFC-0016 #670), and registered API keys are encrypted at rest.
+
 ## Local models: sizing & hardware
 
 Local (Ollama) coding is **free and offline**, but unlike a one-shot chat it has to drive a
