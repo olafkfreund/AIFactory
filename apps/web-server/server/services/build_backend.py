@@ -33,6 +33,14 @@ This module keeps cluster I/O (apply/watch/delete) thin and isolated so it is
 unit-testable with a mocked k8s client — no real cluster is needed for tests.
 The pure manifest builder + backend selection + reconcile + reaper are all
 exercised against fakes.
+
+RFC-0017 #680: the dispatched Job's logs are now streamed Job-native into the
+cockpit log stream + the rmux Live Agent Console (``build_log_stream`` +
+``AgentService._start_kubejob_log_stream``), matching the in-pod path's two log
+sinks. That removes the only remaining reason kubejob isn't the default. The
+default flip (``AIFACTORY_BUILD_BACKEND=kubejob``, RFC-0016 #671) is now READY
+pending a live validation run (a real build green Job-native with the console
+intact) — deliberately NOT flipped in this change.
 """
 
 from __future__ import annotations

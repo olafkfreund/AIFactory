@@ -665,6 +665,11 @@ class AgentService:
         # subprocess; this backend dispatches the Job + reconciles/reaps it.
         # Lazily built (needs the store). Default OFF — see _kubejob_backend_enabled.
         self._kubejob_build_backend: Any = None
+        # RFC-0017 #680 Job-native log streaming. Per-task background tasks that
+        # follow each build Job's pod logs into the cockpit + rmux sinks (the
+        # in-pod path's two log sinks). Cancelled when the build reaches a
+        # terminal state (reconcile) or is stopped. Keyed by task_id.
+        self._kubejob_log_streamers: dict[str, asyncio.Task[Any]] = {}
         if self._store_enabled:
             _log.info(
                 "[AgentService] RFC-0016 durable job-state store ENABLED "
@@ -2977,12 +2982,130 @@ class AgentService:
             spec_id=spec_id,
             correlation_key=correlation_key,
         )
+        # RFC-0017 #680: feed the cockpit log stream + rmux Live Console from the
+        # Job pod's logs, exactly as the in-pod subprocess path does — the
+        # prerequisite to making kubejob the default. Best-effort: any failure
+        # here never affects dispatch or reconcile.
+        await self._start_kubejob_log_stream(
+            task_id=task_id, project_path=project_path, spec_id=spec_id
+        )
         try:
             await self._safe_emit_task_status(task_id, "in_progress")
         except Exception:  # noqa: BLE001 - status emit must not break dispatch
             _log.debug(
                 "[AgentService] coding status emit raised after Job dispatch "
                 "(ignored)", exc_info=True,
+            )
+
+    async def _start_kubejob_log_stream(
+        self, *, task_id: str, project_path: Path, spec_id: str
+    ) -> None:
+        """Start Job-native log streaming for a dispatched build (#680).
+
+        Creates the passive rmux session (so the Live Console pane FIFO exists
+        for viewers, mirroring the in-pod path's ``create_if_enabled``) and
+        spawns a background task that follows the build Job's pod logs into the
+        cockpit log sink + the rmux feed. The Job ref (namespace/job_name) is
+        read from the durable worker_ref the backend just wrote. Wholly
+        best-effort — never raises, never blocks dispatch.
+        """
+        ref = await self._kubejob_worker_ref(task_id)
+        if ref is None:
+            return
+        namespace, job_name = ref
+
+        # Passive rmux session so the WS bridge has a pane FIFO to stream from.
+        try:
+            from ..rmux.integration import create_if_enabled as _rmux_create
+
+            project_id = task_id.split(":", 1)[0] if ":" in task_id else None
+            await _rmux_create(spec_id, project_path, "", project_id=project_id)
+        except Exception:  # noqa: BLE001 - rmux session is optional; degrade
+            _log.debug(
+                "[AgentService] rmux create for kubejob build raised (ignored); "
+                "spec_id=%s", spec_id, exc_info=True,
+            )
+
+        from .build_log_stream import KubeJobLogStreamer
+
+        async def _cockpit_sink(line: str) -> None:
+            await self._emit_log(
+                TaskLog(task_id=task_id, content=line, source="stdout", level="info")
+            )
+
+        rmux_feed = self._kubejob_rmux_feed()
+        streamer = KubeJobLogStreamer(log_sink=_cockpit_sink, rmux_feed=rmux_feed)
+
+        async def _run_stream() -> None:
+            try:
+                await streamer.stream(
+                    namespace=namespace, job_name=job_name, spec_id=spec_id
+                )
+            finally:
+                self._kubejob_log_streamers.pop(task_id, None)
+
+        self._cancel_kubejob_log_stream(task_id)
+        self._kubejob_log_streamers[task_id] = asyncio.create_task(
+            _run_stream(), name=f"kubejob-log-stream-{task_id}"
+        )
+
+    async def _kubejob_worker_ref(self, task_id: str) -> tuple[str, str] | None:
+        """Read (namespace, job_name) from the build's durable worker_ref (#680).
+
+        Returns None when the row/ref is missing or not a k8s-job — Job-native
+        log streaming is simply skipped (the build is unaffected).
+        """
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001 - store read failure → skip streaming
+            _log.debug(
+                "[AgentService] worker_ref read failed for %s (no log stream)",
+                task_id, exc_info=True,
+            )
+            return None
+        if not state:
+            return None
+        ref = state.get("worker_ref") or {}
+        if ref.get("kind") != "k8s-job":
+            return None
+        namespace = ref.get("namespace")
+        job_name = ref.get("job_name")
+        if not namespace or not job_name:
+            return None
+        return str(namespace), str(job_name)
+
+    @staticmethod
+    def _kubejob_rmux_feed() -> Any:
+        """Return the rmux feed callable, or None when rmux is off (#680)."""
+        try:
+            from ..rmux.integration import feed_if_enabled as _feed
+            from ..rmux.integration import is_enabled as _on
+
+            return _feed if _on() else None
+        except Exception:  # noqa: BLE001 - rmux integration optional
+            return None
+
+    def _cancel_kubejob_log_stream(self, task_id: str) -> None:
+        """Cancel + drop a build's Job-native log streamer if present (#680)."""
+        streamer = self._kubejob_log_streamers.pop(task_id, None)
+        if streamer is not None and not streamer.done():
+            streamer.cancel()
+
+    async def _reap_kubejob_console(self, task_id: str) -> None:
+        """Reap the passive rmux pane created for a kubejob build (#680).
+
+        ``spec_id`` is the suffix of the composite ``task_id``. No-op + never
+        raises when rmux is off or no session exists.
+        """
+        spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
+        try:
+            from ..rmux.integration import reap_if_enabled as _rmux_reap
+
+            await _rmux_reap(spec_id)
+        except Exception:  # noqa: BLE001 - console reap is best-effort
+            _log.debug(
+                "[AgentService] rmux reap for kubejob build raised (ignored); "
+                "spec_id=%s", spec_id, exc_info=True,
             )
 
     async def reconcile_kubejob_builds(self) -> dict[str, str]:
@@ -3014,6 +3137,11 @@ class AgentService:
                 continue
             if terminal is not None:
                 out[job_id] = terminal
+                # RFC-0017 #680: the Job is terminal → its pod log stream is
+                # ending; cancel the streamer + reap the rmux pane so we don't
+                # leak the background task or the console FIFO.
+                self._cancel_kubejob_log_stream(job_id)
+                await self._reap_kubejob_console(job_id)
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
@@ -3086,6 +3214,10 @@ class AgentService:
             return False
         if (state.get("worker_ref") or {}).get("kind") != "k8s-job":
             return False
+        # RFC-0017 #680: stop the Job-native log streamer + reap the console
+        # pane before deleting the Job (the pod log stream is about to vanish).
+        self._cancel_kubejob_log_stream(task_id)
+        await self._reap_kubejob_console(task_id)
         try:
             await self._build_backend().delete_job(task_id)
         except Exception:  # noqa: BLE001 - delete is best-effort; row mark below frees the slot
