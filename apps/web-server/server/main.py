@@ -198,6 +198,13 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down Magestic AI Web Server...")
     if settings.REDIS_URL:
         await event_bus.stop_redis_subscriber()
+        # RFC-0017 #681: close the rmux Redis-transport client too (no-op off).
+        try:
+            from .rmux import redis_transport as _rmux_redis
+
+            await _rmux_redis.close()
+        except Exception:  # noqa: BLE001 - best-effort shutdown
+            logger.debug("rmux redis_transport close failed", exc_info=True)
     if app.state.outbox_relay_task is not None:
         app.state.outbox_relay_stop.set()
         try:

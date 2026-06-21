@@ -154,17 +154,21 @@ class SessionRegistry:
             )
             await self._wrapper.pipe_pane(session_name, fifo_path)
 
-            self._states[spec_id] = SessionState(
+            state = SessionState(
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
                 project_id=project_id,
             )
+            self._states[spec_id] = state
             logger.info(
                 "rmux session created: spec_id=%s session=%s fifo=%s",
                 spec_id, session_name, fifo_path,
             )
-            return fifo_path
+        # Mirror into the shared Redis panes index OUTSIDE the registry lock
+        # (#681) — best-effort, no-op when Redis is off.
+        await self._register_pane_in_redis(state)
+        return fifo_path
 
     async def create_passive_for_task(
         self, spec_id: str, project_id: str | None = None
@@ -192,18 +196,22 @@ class SessionRegistry:
             if fifo_path.exists():
                 fifo_path.unlink()
             os.mkfifo(str(fifo_path), mode=0o600)
-            self._states[spec_id] = SessionState(
+            state = SessionState(
                 spec_id=spec_id,
                 session_name=session_name,
                 fifo_path=fifo_path,
                 project_id=project_id,
                 passive=True,
             )
+            self._states[spec_id] = state
             logger.info(
                 "rmux passive session created: spec_id=%s fifo=%s",
                 spec_id, fifo_path,
             )
-            return fifo_path
+        # Mirror into the shared Redis panes index OUTSIDE the registry lock
+        # (#681) — best-effort, no-op when Redis is off.
+        await self._register_pane_in_redis(state)
+        return fifo_path
 
     def feed(self, spec_id: str, data: bytes) -> None:
         """Best-effort write of agent output bytes into a passive FIFO.
@@ -212,10 +220,16 @@ class SessionRegistry:
         while a reader (the WS bridge) is connected, giving natural
         "live tail" semantics: bytes are delivered to whoever is watching,
         and silently dropped when nobody is. Never raises.
+
+        RFC-0017 #681: when a shared Redis bus is configured (``REDIS_URL``) the
+        same bytes are ALSO published to the session's Redis channel so a WS
+        bridge on ANY replica can stream this session — not just the pod hosting
+        the FIFO. No-op + no behaviour change when Redis is off.
         """
         state = self._states.get(spec_id)
         if state is None or not state.passive or not data:
             return
+        self._publish_pane_bytes_to_redis(spec_id, data)
         try:
             if state.write_fd is None:
                 try:
@@ -238,6 +252,63 @@ class SessionRegistry:
                 pass
             state.write_fd = None
 
+    @staticmethod
+    def _publish_pane_bytes_to_redis(spec_id: str, data: bytes) -> None:
+        """Fire-and-forget publish of pane bytes onto the shared Redis bus (#681).
+
+        ``feed`` is sync (called from the output-processing loop), so schedule
+        the async publish on the running loop without blocking. No-op when Redis
+        is off or no loop is running. Never raises — console fan-out must never
+        affect task execution.
+        """
+        try:
+            from . import redis_transport
+
+            if not redis_transport.redis_enabled():
+                return
+            loop = asyncio.get_running_loop()
+            loop.create_task(redis_transport.publish_pane_bytes(spec_id, data))
+        except RuntimeError:
+            # No running loop (e.g. sync test context) — skip the Redis mirror.
+            pass
+        except Exception:  # noqa: BLE001 - Redis fan-out is best-effort
+            logger.debug(
+                "[rmux] redis pane publish scheduling failed for %s",
+                spec_id, exc_info=True,
+            )
+
+    async def _register_pane_in_redis(self, state: SessionState) -> None:
+        """Mirror a session into the shared Redis panes index (#681). No-op off."""
+        try:
+            from . import redis_transport
+
+            await redis_transport.register_pane(
+                state.spec_id,
+                {
+                    "spec_id": state.spec_id,
+                    "session_name": state.session_name,
+                    "project_id": state.project_id,
+                    "passive": state.passive,
+                },
+            )
+        except Exception:  # noqa: BLE001 - index mirror is best-effort
+            logger.debug(
+                "[rmux] redis register_pane failed for %s",
+                state.spec_id, exc_info=True,
+            )
+
+    @staticmethod
+    async def _unregister_pane_in_redis(spec_id: str) -> None:
+        """Remove a session from the shared Redis panes index (#681). No-op off."""
+        try:
+            from . import redis_transport
+
+            await redis_transport.unregister_pane(spec_id)
+        except Exception:  # noqa: BLE001 - index mirror is best-effort
+            logger.debug(
+                "[rmux] redis unregister_pane failed for %s", spec_id, exc_info=True
+            )
+
     async def reap_for_task(self, spec_id: str) -> None:
         """Kill the session + remove the FIFO.  Idempotent.
 
@@ -247,7 +318,13 @@ class SessionRegistry:
         async with self._registry_lock:
             state = self._states.pop(spec_id, None)
             if state is None:
-                return  # nothing to reap
+                # Still drop a stale shared-index entry — a session this pod
+                # never hosted may have been registered by another replica (#681).
+                await self._unregister_pane_in_redis(spec_id)
+                return  # nothing else to reap locally
+
+        # Drop from the shared Redis panes index (#681) — best-effort, no-op off.
+        await self._unregister_pane_in_redis(spec_id)
 
         # Close any open FIFO writer (passive sessions).
         if state.write_fd is not None:
