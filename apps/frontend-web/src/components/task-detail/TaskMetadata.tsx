@@ -32,6 +32,34 @@ import {
 } from '../../shared/constants';
 import type { Task, TaskCategory } from '../../shared/types';
 
+/**
+ * Defensive collapse of a stringified-dict blob embedded in a description.
+ *
+ * Upstream (the benchmark harness / a misbehaving emitter) can leak the entire
+ * stringified plan dict into a `Correlation epic #{...}` reference, which then
+ * renders as an unformatted wall of text. The primary fix is in the data, but
+ * we harden the renderer too: when a `#{...}`-style stringified dict follows an
+ * "epic" reference, collapse it to a short id (the plan_id / number if we can
+ * extract one, else just `#…`) so the rest of the description still renders as
+ * clean markdown. Behaviour-preserving for well-formed descriptions.
+ */
+export function collapseEpicDictBlob(description: string): string {
+  if (!description.includes('#{')) return description;
+  // Match `epic #{ ... }` up to the dict's final closing brace. The repr can
+  // contain nested braces (e.g. `'children': [{...}], 'effort_estimate': {...}`),
+  // so anchor the end on the LAST `}` that is followed by sentence-ending
+  // punctuation or end-of-string — greedy `[\s\S]*` walks past the nested ones.
+  return description.replace(
+    /(epic\s*)#\{[\s\S]*\}(?=\s*(?:[.,;)]|$))/gi,
+    (match, prefix: string) => {
+      const numMatch = /['"]?(?:epic_number|number|epic_issue)['"]?\s*:\s*(\d+)/.exec(match);
+      const idMatch = /['"]?plan_id['"]?\s*:\s*['"]([^'"]+)['"]/.exec(match);
+      const shortId = numMatch ? numMatch[1] : idMatch ? idMatch[1] : '…';
+      return `${prefix}#${shortId}`;
+    }
+  );
+}
+
 // Category icon mapping
 const CategoryIcon: Record<TaskCategory, typeof Target> = {
   feature: Target,
@@ -244,7 +272,7 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[rehypeHighlight]}
           >
-            {task.description}
+            {collapseEpicDictBlob(task.description)}
           </ReactMarkdown>
         </div>
       )}
