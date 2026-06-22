@@ -56,49 +56,72 @@ class TestDedupSignature:
 
     def test_identical_payloads_produce_identical_signatures(self) -> None:
         import copy
+
         a = _dedup_signature(self.BASE_PAYLOAD)
         b = _dedup_signature(copy.deepcopy(self.BASE_PAYLOAD))
         assert a == b
 
     def test_message_change_does_not_change_signature(self) -> None:
         # Message drifts every QA tick — must be excluded.
-        modified = {**self.BASE_PAYLOAD,
-                    "executionProgress": {**self.BASE_PAYLOAD["executionProgress"],
-                                          "message": "qa review file 3/10"}}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "executionProgress": {
+                **self.BASE_PAYLOAD["executionProgress"],
+                "message": "qa review file 3/10",
+            },
+        }
         assert _dedup_signature(modified) == _dedup_signature(self.BASE_PAYLOAD)
 
     def test_sequence_number_change_does_not_change_signature(self) -> None:
-        modified = {**self.BASE_PAYLOAD,
-                    "executionProgress": {**self.BASE_PAYLOAD["executionProgress"],
-                                          "sequenceNumber": 42}}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "executionProgress": {
+                **self.BASE_PAYLOAD["executionProgress"],
+                "sequenceNumber": 42,
+            },
+        }
         assert _dedup_signature(modified) == _dedup_signature(self.BASE_PAYLOAD)
 
     def test_started_at_change_does_not_change_signature(self) -> None:
-        modified = {**self.BASE_PAYLOAD,
-                    "executionProgress": {**self.BASE_PAYLOAD["executionProgress"],
-                                          "startedAt": "1999-01-01T00:00:00"}}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "executionProgress": {
+                **self.BASE_PAYLOAD["executionProgress"],
+                "startedAt": "1999-01-01T00:00:00",
+            },
+        }
         assert _dedup_signature(modified) == _dedup_signature(self.BASE_PAYLOAD)
 
     def test_phase_change_changes_signature(self) -> None:
-        modified = {**self.BASE_PAYLOAD,
-                    "phase": "qa_review",
-                    "executionProgress": {**self.BASE_PAYLOAD["executionProgress"],
-                                          "phase": "qa_review"}}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "phase": "qa_review",
+            "executionProgress": {
+                **self.BASE_PAYLOAD["executionProgress"],
+                "phase": "qa_review",
+            },
+        }
         assert _dedup_signature(modified) != _dedup_signature(self.BASE_PAYLOAD)
 
     def test_progress_change_changes_signature(self) -> None:
-        modified = {**self.BASE_PAYLOAD,
-                    "executionProgress": {**self.BASE_PAYLOAD["executionProgress"],
-                                          "phaseProgress": 80}}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "executionProgress": {
+                **self.BASE_PAYLOAD["executionProgress"],
+                "phaseProgress": 80,
+            },
+        }
         assert _dedup_signature(modified) != _dedup_signature(self.BASE_PAYLOAD)
 
     def test_subtask_status_change_changes_signature(self) -> None:
         # Checkbox transitions are meaningful — must defeat the dedup gate.
-        modified = {**self.BASE_PAYLOAD,
-                    "subtasks": [
-                        {"id": "1.1", "status": "completed"},
-                        {"id": "1.2", "status": "completed"},  # was in_progress
-                    ]}
+        modified = {
+            **self.BASE_PAYLOAD,
+            "subtasks": [
+                {"id": "1.1", "status": "completed"},
+                {"id": "1.2", "status": "completed"},  # was in_progress
+            ],
+        }
         assert _dedup_signature(modified) != _dedup_signature(self.BASE_PAYLOAD)
 
     def test_empty_payload_signature_is_stable(self) -> None:
@@ -134,15 +157,20 @@ class TestSafeEmitTaskUpdateDedup:
     @pytest.mark.asyncio
     async def test_identical_payload_emits_once(self, service: AgentService) -> None:
         payload = {
-            "executionProgress": {"phase": "qa_review", "phaseProgress": 100,
-                                  "overallProgress": 80, "currentSubtask": None,
-                                  "message": "qa", "sequenceNumber": 1,
-                                  "startedAt": "now"},
+            "executionProgress": {
+                "phase": "qa_review",
+                "phaseProgress": 100,
+                "overallProgress": 80,
+                "currentSubtask": None,
+                "message": "qa",
+                "sequenceNumber": 1,
+                "startedAt": "now",
+            },
             "phase": "qa_review",
             "subtasks": [{"id": "1.1", "status": "in_progress"}],
         }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, payload)
@@ -150,18 +178,25 @@ class TestSafeEmitTaskUpdateDedup:
             assert mock_emit.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_twenty_six_identical_emits_collapse_to_one(self, service: AgentService) -> None:
+    async def test_twenty_six_identical_emits_collapse_to_one(
+        self, service: AgentService
+    ) -> None:
         """The original symptom — 26 QA-review ticks must yield one network emit."""
         payload = {
-            "executionProgress": {"phase": "qa_review", "phaseProgress": 100,
-                                  "overallProgress": 80, "currentSubtask": None,
-                                  "message": "qa", "sequenceNumber": 1,
-                                  "startedAt": "t"},
+            "executionProgress": {
+                "phase": "qa_review",
+                "phaseProgress": 100,
+                "overallProgress": 80,
+                "currentSubtask": None,
+                "message": "qa",
+                "sequenceNumber": 1,
+                "startedAt": "t",
+            },
             "phase": "qa_review",
             "subtasks": [],
         }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             for _ in range(26):
@@ -173,7 +208,7 @@ class TestSafeEmitTaskUpdateDedup:
         payload_a = {"phase": "coding", "executionProgress": {"phase": "coding"}}
         payload_b = {"phase": "qa_review", "executionProgress": {"phase": "qa_review"}}
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, payload_a)
@@ -181,14 +216,22 @@ class TestSafeEmitTaskUpdateDedup:
             assert mock_emit.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_subtask_status_change_emits_again(self, service: AgentService) -> None:
+    async def test_subtask_status_change_emits_again(
+        self, service: AgentService
+    ) -> None:
         common_exec = {"phase": "coding", "phaseProgress": 50, "overallProgress": 50}
-        a = {"phase": "coding", "executionProgress": common_exec,
-             "subtasks": [{"id": "1.1", "status": "in_progress"}]}
-        b = {"phase": "coding", "executionProgress": common_exec,
-             "subtasks": [{"id": "1.1", "status": "completed"}]}
+        a = {
+            "phase": "coding",
+            "executionProgress": common_exec,
+            "subtasks": [{"id": "1.1", "status": "in_progress"}],
+        }
+        b = {
+            "phase": "coding",
+            "executionProgress": common_exec,
+            "subtasks": [{"id": "1.1", "status": "completed"}],
+        }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, a)
@@ -196,46 +239,86 @@ class TestSafeEmitTaskUpdateDedup:
             assert mock_emit.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_message_only_change_is_suppressed(self, service: AgentService) -> None:
-        base_exec = {"phase": "qa_review", "phaseProgress": 100, "overallProgress": 80,
-                     "currentSubtask": None, "sequenceNumber": 1, "startedAt": "t"}
-        a = {"phase": "qa_review",
-             "executionProgress": {**base_exec, "message": "Starting QA"},
-             "subtasks": []}
-        b = {"phase": "qa_review",
-             "executionProgress": {**base_exec, "message": "qa review file 3/10"},
-             "subtasks": []}
+    async def test_message_only_change_is_suppressed(
+        self, service: AgentService
+    ) -> None:
+        base_exec = {
+            "phase": "qa_review",
+            "phaseProgress": 100,
+            "overallProgress": 80,
+            "currentSubtask": None,
+            "sequenceNumber": 1,
+            "startedAt": "t",
+        }
+        a = {
+            "phase": "qa_review",
+            "executionProgress": {**base_exec, "message": "Starting QA"},
+            "subtasks": [],
+        }
+        b = {
+            "phase": "qa_review",
+            "executionProgress": {**base_exec, "message": "qa review file 3/10"},
+            "subtasks": [],
+        }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, a)
             await service._safe_emit_task_update(_TASK, b)
-            assert mock_emit.await_count == 1, \
+            assert mock_emit.await_count == 1, (
                 "message-only drift must be suppressed (it floods during QA)"
+            )
 
     @pytest.mark.asyncio
-    async def test_sequence_number_drift_is_suppressed(self, service: AgentService) -> None:
-        common = {"phase": "coding",
-                  "executionProgress": {"phase": "coding", "phaseProgress": 50,
-                                        "overallProgress": 30, "currentSubtask": None,
-                                        "message": "x", "startedAt": "t"}}
+    async def test_sequence_number_drift_is_suppressed(
+        self, service: AgentService
+    ) -> None:
+        common = {
+            "phase": "coding",
+            "executionProgress": {
+                "phase": "coding",
+                "phaseProgress": 50,
+                "overallProgress": 30,
+                "currentSubtask": None,
+                "message": "x",
+                "startedAt": "t",
+            },
+        }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(
-                _TASK, {**common, "executionProgress": {**common["executionProgress"], "sequenceNumber": 1}})
+                _TASK,
+                {
+                    **common,
+                    "executionProgress": {
+                        **common["executionProgress"],
+                        "sequenceNumber": 1,
+                    },
+                },
+            )
             await service._safe_emit_task_update(
-                _TASK, {**common, "executionProgress": {**common["executionProgress"], "sequenceNumber": 99}})
+                _TASK,
+                {
+                    **common,
+                    "executionProgress": {
+                        **common["executionProgress"],
+                        "sequenceNumber": 99,
+                    },
+                },
+            )
             assert mock_emit.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_different_tasks_dedup_independently(self, service: AgentService) -> None:
+    async def test_different_tasks_dedup_independently(
+        self, service: AgentService
+    ) -> None:
         # Two concurrent tasks with identical payloads — both emit.
         payload = {"phase": "coding", "executionProgress": {"phase": "coding"}}
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update("task-A", payload)
@@ -246,11 +329,16 @@ class TestSafeEmitTaskUpdateDedup:
     async def test_eviction_re_arms_dedup(self, service: AgentService) -> None:
         # After explicit eviction (the cleanup-block pattern), the next identical
         # emit goes through. This is the path the monitor exit branch uses.
-        payload = {"phase": "completed",
-                   "executionProgress": {"phase": "completed", "phaseProgress": 100,
-                                         "overallProgress": 100}}
+        payload = {
+            "phase": "completed",
+            "executionProgress": {
+                "phase": "completed",
+                "phaseProgress": 100,
+                "overallProgress": 100,
+            },
+        }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, payload)
@@ -263,9 +351,11 @@ class TestSafeEmitTaskStatusNoDedup:
     """_safe_emit_task_status is a pass-through (no dedup)."""
 
     @pytest.mark.asyncio
-    async def test_duplicate_status_emits_both_times(self, service: AgentService) -> None:
+    async def test_duplicate_status_emits_both_times(
+        self, service: AgentService
+    ) -> None:
         with patch(
-            "server.services.agent_service.emit_task_status",
+            "server.services.agent_emit.emit_task_status",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_status(_TASK, "human_review", "completed")
@@ -295,13 +385,16 @@ class TestUpdatePlanStatusEmitEvents:
             '"phases": [{"subtasks": [{"id": "1.1", "status": "completed"}]}]}'
         )
 
-        with patch(
-            "server.services.agent_service.emit_task_update",
-            new_callable=AsyncMock,
-        ) as mock_update, patch(
-            "server.services.agent_service.emit_task_status",
-            new_callable=AsyncMock,
-        ) as mock_status:
+        with (
+            patch(
+                "server.services.agent_emit.emit_task_update",
+                new_callable=AsyncMock,
+            ) as mock_update,
+            patch(
+                "server.services.agent_emit.emit_task_status",
+                new_callable=AsyncMock,
+            ) as mock_status,
+        ):
             await service._update_plan_status(
                 tmp_path, "spec-001", "completed", _TASK, emit_events=False
             )
@@ -310,6 +403,7 @@ class TestUpdatePlanStatusEmitEvents:
             assert mock_status.await_count == 0
             # Confirm the file write actually happened
             import json
+
             saved = json.loads(plan_file.read_text())
             assert saved["status"] in {"completed", "human_review"}
 
@@ -331,12 +425,18 @@ class TestUpdatePlanStatusEmitEvents:
             '{"status": "in_progress", '
             '"phases": [{"subtasks": [{"id": "1.1", "status": "completed"}]}]}'
         )
-        with patch(
-            "server.services.completion.emit_terminal_completion",
-        ) as mock_emit, patch(
-            "server.services.agent_service.emit_task_update", new_callable=AsyncMock,
-        ), patch(
-            "server.services.agent_service.emit_task_status", new_callable=AsyncMock,
+        with (
+            patch(
+                "server.services.completion.emit_terminal_completion",
+            ) as mock_emit,
+            patch(
+                "server.services.agent_emit.emit_task_update",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "server.services.agent_emit.emit_task_status",
+                new_callable=AsyncMock,
+            ),
         ):
             # emit_events=False — the terminal completion must STILL fire.
             await service._update_plan_status(
@@ -367,15 +467,21 @@ class TestUpdatePlanStatusEmitEvents:
             '"phases": [{"subtasks": [{"id": "1.1", "status": "completed"}]}]}'
         )
 
-        with patch(
-            "server.services.agent_service.emit_task_update",
-            new_callable=AsyncMock,
-        ) as mock_update, patch(
-            "server.services.agent_service.emit_task_status",
-            new_callable=AsyncMock,
-        ) as mock_status:
+        with (
+            patch(
+                "server.services.agent_emit.emit_task_update",
+                new_callable=AsyncMock,
+            ) as mock_update,
+            patch(
+                "server.services.agent_emit.emit_task_status",
+                new_callable=AsyncMock,
+            ) as mock_status,
+        ):
             await service._update_plan_status(
-                tmp_path, "spec-001", "completed", _TASK  # default emit_events=True
+                tmp_path,
+                "spec-001",
+                "completed",
+                _TASK,  # default emit_events=True
             )
             # Both must fire when emit_events=True.
             assert mock_status.await_count == 1
@@ -383,8 +489,9 @@ class TestUpdatePlanStatusEmitEvents:
             # The task:update payload MUST carry an executionProgress block
             # (this is the Issue #14 fix that kills "phase: N/A" log lines).
             payload = mock_update.await_args.args[1]
-            assert "executionProgress" in payload, \
+            assert "executionProgress" in payload, (
                 "payload must include executionProgress (Issue #14)"
+            )
             assert payload["executionProgress"]["phase"] == "completed"
             assert payload["executionProgress"]["overallProgress"] == 100
             assert payload.get("phase") == "completed"
@@ -496,6 +603,7 @@ async def _tail_build_progress(
             new_text = fh.read()
         service._task_build_progress_offset[task_id] = current_size
         from server.websockets.events import emit_task_log
+
         for line in new_text.splitlines():
             stripped = line.rstrip()
             if stripped:
@@ -515,15 +623,20 @@ class TestSafeEmitTaskUpdateForceBypass:
     @pytest.mark.asyncio
     async def test_force_true_bypasses_dedup(self, service: AgentService) -> None:
         payload = {
-            "executionProgress": {"phase": "coding", "phaseProgress": 50,
-                                  "overallProgress": 30, "currentSubtask": "1.1",
-                                  "message": "0/3 subtasks completed",
-                                  "sequenceNumber": 1, "startedAt": "t"},
+            "executionProgress": {
+                "phase": "coding",
+                "phaseProgress": 50,
+                "overallProgress": 30,
+                "currentSubtask": "1.1",
+                "message": "0/3 subtasks completed",
+                "sequenceNumber": 1,
+                "startedAt": "t",
+            },
             "phase": "coding",
             "subtasks": [{"id": "1.1", "status": "pending"}],
         }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             # First emit: normal dedup path.
@@ -536,15 +649,20 @@ class TestSafeEmitTaskUpdateForceBypass:
     async def test_force_false_still_dedups(self, service: AgentService) -> None:
         """Regression guard — default behaviour unchanged for other callers."""
         payload = {
-            "executionProgress": {"phase": "coding", "phaseProgress": 50,
-                                  "overallProgress": 30, "currentSubtask": "1.1",
-                                  "message": "0/3 subtasks completed",
-                                  "sequenceNumber": 1, "startedAt": "t"},
+            "executionProgress": {
+                "phase": "coding",
+                "phaseProgress": 50,
+                "overallProgress": 30,
+                "currentSubtask": "1.1",
+                "message": "0/3 subtasks completed",
+                "sequenceNumber": 1,
+                "startedAt": "t",
+            },
             "phase": "coding",
             "subtasks": [{"id": "1.1", "status": "pending"}],
         }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             await service._safe_emit_task_update(_TASK, payload)
@@ -561,15 +679,20 @@ class TestSafeEmitTaskUpdateForceBypass:
         it sees all 20 — the demo's auto-reload behaviour.
         """
         payload = {
-            "executionProgress": {"phase": "coding", "phaseProgress": 50,
-                                  "overallProgress": 30, "currentSubtask": "1.1",
-                                  "message": "0/3 subtasks completed",
-                                  "sequenceNumber": 1, "startedAt": "t"},
+            "executionProgress": {
+                "phase": "coding",
+                "phaseProgress": 50,
+                "overallProgress": 30,
+                "currentSubtask": "1.1",
+                "message": "0/3 subtasks completed",
+                "sequenceNumber": 1,
+                "startedAt": "t",
+            },
             "phase": "coding",
             "subtasks": [{"id": "1.1", "status": "pending"}],
         }
         with patch(
-            "server.services.agent_service.emit_task_update",
+            "server.services.agent_emit.emit_task_update",
             new_callable=AsyncMock,
         ) as mock_emit:
             for _ in range(20):
