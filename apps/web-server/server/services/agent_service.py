@@ -130,56 +130,13 @@ from .task_phase import (  # noqa: E402,F401
 )
 
 
-@dataclass
-class TaskProgress:
-    """Real-time task progress information."""
-
-    task_id: str
-    phase: TaskPhase
-    message: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    subtask: str | None = None
-    subtask_index: int | None = None
-    subtask_total: int | None = None
-    percentage: float | None = None
-    overall_progress: float | None = None  # Override scaled overall progress
-    sequence_number: int = 0  # For frontend out-of-order detection
-    started_at: str | None = None  # Task start time for UI display
-    data: dict = field(default_factory=dict)
-
-
-@dataclass
-class QueuedTask:
-    """A build admitted to the concurrency queue (RFC-0016 #668).
-
-    Holds the full set of arguments needed to start the build later, when a
-    running slot frees up. Captured verbatim from ``start_task_execution`` so
-    a dequeued task spawns identically to one that was admitted immediately.
-    """
-
-    task_id: str
-    project_path: Path
-    spec_id: str
-    auto_continue: bool
-    base_branch: str | None
-    mode: str | None
-    force: bool
-    user_id: str
-    stop_after_planning: bool
-    parallel: bool | None
-    workers: int | None
-
-
-@dataclass
-class TaskLog:
-    """A single log entry from task execution."""
-
-    task_id: str
-    content: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
-    level: str = "info"  # info, warning, error, debug
-    source: str = "agent"  # agent, stdout, stderr
-
+# Agent task runtime models live in services/agent_task_models.py (god-file
+# decomposition); re-exported so existing callers are unchanged.
+from .agent_task_models import (  # noqa: E402,F401
+    QueuedTask,
+    TaskLog,
+    TaskProgress,
+)
 
 # TaskLogWriter lives in services/task_log_writer.py (god-file decomposition);
 # re-exported so existing callers are unchanged.
