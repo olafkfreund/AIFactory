@@ -1251,73 +1251,6 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
 
     return project_id, spec_id, project_path, spec_dir
 
-@router.post("/{task_id}/clarifications", response_model=ClarificationResponse)
-async def generate_clarifications(
-    task_id: str, _access: dict = Depends(require_task_access("member"))
-):
-    """Generate clarification questions for a task using an LLM."""
-    from ..services.clarification_service import generate_clarification_questions
-
-    project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
-
-    # Load task title and description from requirements.json
-    req_file = spec_dir / "requirements.json"
-    if not req_file.exists():
-        return ClarificationResponse(skip=True, skipReason="No requirements found.")
-
-    requirements = json.loads(req_file.read_text())
-    title = requirements.get("title", "")
-    description = requirements.get("description", "")
-
-    result = await generate_clarification_questions(title, description, project_path)
-
-    return ClarificationResponse(
-        questions=[ClarificationQuestion(**q) for q in result.get("questions", [])],
-        skip=result.get("skip", False),
-        skipReason=result.get("skipReason", ""),
-    )
-
-
-@router.post("/{task_id}/clarifications/answers", response_model=Task)
-async def submit_clarification_answers(
-    task_id: str,
-    request: ClarificationAnswersRequest,
-    _access: dict = Depends(require_task_access("member")),
-):
-    """Submit answers to clarification questions and append them to the task."""
-    project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
-
-    if not request.answers:
-        return spec_to_task(project_id, spec_dir)
-
-    # Build clarification appendix
-    lines = ["\n\n## Clarifications\n"]
-    for answer in request.answers:
-        if answer.answer.strip():
-            lines.append(f"**Q: {answer.question}**")
-            lines.append(f"A: {answer.answer.strip()}\n")
-    appendix = "\n".join(lines)
-
-    # Update requirements.json description
-    req_file = spec_dir / "requirements.json"
-    if req_file.exists():
-        requirements = json.loads(req_file.read_text())
-        requirements["description"] = requirements.get("description", "") + appendix
-        req_file.write_text(json.dumps(requirements, indent=2))
-
-    # Append to spec.md
-    spec_file = spec_dir / "spec.md"
-    if spec_file.exists():
-        content = spec_file.read_text()
-        # Insert before ## Notes section if it exists, otherwise append
-        if "\n## Notes\n" in content:
-            content = content.replace("\n## Notes\n", f"{appendix}\n## Notes\n")
-        else:
-            content += appendix
-        spec_file.write_text(content)
-
-    return spec_to_task(project_id, spec_dir)
-
 
 def _try_close_github_issue(project_path: Path, spec_dir: Path) -> None:
     """Try to close a linked GitHub issue. Logs but doesn't raise on failure."""
@@ -1712,6 +1645,12 @@ router.include_router(tasks_views_router)
 from .tasks_usage import router as tasks_usage_router  # noqa: E402
 
 router.include_router(tasks_usage_router)
+
+# Task clarification endpoints — extracted into routes/tasks_clarifications.py
+# (#556); mounted here so the public /api/tasks paths are unchanged.
+from .tasks_clarifications import router as tasks_clarifications_router  # noqa: E402
+
+router.include_router(tasks_clarifications_router)
 
 
 # ============================================
