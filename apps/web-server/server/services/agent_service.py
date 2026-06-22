@@ -34,6 +34,7 @@ from . import task_control
 from .agent_credential import CredentialMixin
 from .agent_emit import EmitMixin
 from .agent_queue import QueueMixin
+from .agent_worktree_sync import WorktreeSyncMixin
 from .agent_emit import _dedup_signature  # noqa: F401  (re-export)
 from .agent_kubejob import KubejobMixin
 
@@ -76,8 +77,9 @@ from .agent_task_models import (  # noqa: E402,F401
 from .task_log_writer import TaskLogWriter  # noqa: E402,F401
 
 
-
-class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
+class AgentService(
+    KubejobMixin, CredentialMixin, EmitMixin, QueueMixin, WorktreeSyncMixin
+):
     """Service for executing AI agents on tasks."""
 
     def __init__(self):
@@ -142,6 +144,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # in-process ``running_tasks`` dict is ALWAYS the authority for killing
         # this replica's own subprocesses; the store is the cross-replica gate.
         from .job_state_store import store_enabled
+
         self._store_enabled: bool = store_enabled()
         self._job_store: Any = None  # lazily built (needs the DB engine)
         # RFC-0016 #671 control/execution split. When AIFACTORY_BUILD_BACKEND=
@@ -171,18 +174,18 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         """Lazily build + cache the durable job-state store (RFC-0016 #668)."""
         if self._job_store is None:
             from .job_state_store import JobStateStore
+
             self._job_store = JobStateStore()
         return self._job_store
 
     def _make_spawn_args(self, **kwargs: Any) -> Any:
         """Build a JSON-portable SpawnArgs from start/queue kwargs (#668)."""
         from .job_state_store import SpawnArgs
+
         project_path = kwargs.pop("project_path")
         return SpawnArgs(project_path=str(project_path), **kwargs)
 
-    def _read_correlation_key(
-        self, project_path: Path, spec_id: str
-    ) -> str | None:
+    def _read_correlation_key(self, project_path: Path, spec_id: str) -> str | None:
         """Read the upstream GitHub issue number for the correlation key (#612).
 
         Threads ``requirements.json -> provenance.issue_number`` into the
@@ -191,8 +194,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         """
         try:
             req_file = (
-                project_path / ".aifactory" / "specs" / spec_id
-                / "requirements.json"
+                project_path / ".aifactory" / "specs" / spec_id / "requirements.json"
             )
             if not req_file.exists():
                 return None
@@ -223,269 +225,6 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         self._progress_callbacks[task_id].append(callback)
         return lambda: self._progress_callbacks.get(task_id, []).remove(callback)
 
-
-    async def _sync_worktree_files(self, project_path: Path, spec_id: str, task_id: str | None = None) -> None:
-        """Sync files from worktree spec dir to main spec dir for frontend visibility.
-
-        Args:
-            project_path: Path to the project
-            spec_id: Spec directory name (e.g., "001-fix-bug")
-            task_id: Full task ID (project_id:spec_id) for consistent tracking. Falls back to spec_id if not provided.
-        """
-        # Use task_id for tracking if provided, otherwise fall back to spec_id for backwards compatibility
-        tracking_key = task_id or spec_id
-        import logging
-        logger = logging.getLogger(__name__)
-
-        # Paths
-        worktree_spec = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
-        main_spec = project_path / ".aifactory" / "specs" / spec_id
-
-        # Ensure main spec dir exists
-        main_spec.mkdir(parents=True, exist_ok=True)
-
-        # Files to sync (in order of priority)
-        files_to_sync = [
-            "implementation_plan.json",  # Most critical for UI
-            "task_logs.json",  # Detailed phase logs for UI
-            "build-progress.txt",
-            "context.json",
-            "qa_report.md",
-            "QA_FIX_REQUEST.md",
-            "spec.md",
-            "requirements.json",
-        ]
-
-        # NOTE: task_control.json and qa_review_cycle.json are deliberately
-        # ABSENT from files_to_sync. Both are authoritative state owned outside
-        # the agent's worktree (control-plane #259, QA review-cycle #260) and a
-        # worktree copy must never reset or replay them.
-
-        # Directories to sync (will copy entire directory tree)
-        dirs_to_sync = [
-            "memory",  # Session insights and memory data
-        ]
-
-        synced_count = 0
-        for filename in files_to_sync:
-            src = worktree_spec / filename
-            dst = main_spec / filename
-            if src.exists():
-                try:
-                    # For implementation_plan.json we still merge SUBTASK status
-                    # forward-only (a legitimate agent-artifact concern), but we
-                    # NO LONGER preserve control-plane status/reviewReason here.
-                    #
-                    # Issue #259: control-plane state (board column / task status
-                    # / reviewReason) now lives in the dedicated, agent-immutable
-                    # task_control.json store. We STRIP those fields from the
-                    # worktree copy so an agent sync can never reset the
-                    # human/system control decision — replacing the brittle
-                    # "preserve-then-fall-back-to-raw-copy" workaround that, on
-                    # any merge error, used to clobber the control state.
-                    if filename == "implementation_plan.json" and dst.exists():
-                        try:
-                            main_plan = json.loads(dst.read_text())
-                            worktree_plan = json.loads(src.read_text())
-
-                            # Build map of main spec subtask statuses
-                            STATUS_ORDER = {"pending": 0, "in_progress": 1, "completed": 2, "failed": 2}
-                            main_subtask_statuses = {}
-                            for phase in main_plan.get("phases", []):
-                                for subtask in phase.get("subtasks", []):
-                                    sid = subtask.get("id")
-                                    if sid:
-                                        main_subtask_statuses[sid] = subtask.get("status", "pending")
-
-                            # Start from worktree plan (has latest structure)
-                            merged_plan = worktree_plan
-
-                            # Control-plane fields never belong in the plan file
-                            # anymore — drop them so the reader can't pick a stale
-                            # agent value over the dedicated control store.
-                            task_control.strip_control_fields(merged_plan)
-
-                            # Prevent subtask status regressions
-                            for phase in merged_plan.get("phases", []):
-                                for subtask in phase.get("subtasks", []):
-                                    sid = subtask.get("id")
-                                    if sid and sid in main_subtask_statuses:
-                                        main_rank = STATUS_ORDER.get(main_subtask_statuses[sid], 0)
-                                        wt_rank = STATUS_ORDER.get(subtask.get("status", "pending"), 0)
-                                        if main_rank > wt_rank:
-                                            subtask["status"] = main_subtask_statuses[sid]
-
-                            dst.write_text(json.dumps(merged_plan, indent=2))
-                        except (json.JSONDecodeError, OSError) as merge_err:
-                            # Even the error path must not reintroduce control
-                            # fields: strip them before copying the raw worktree
-                            # plan in.
-                            logger.warning(f"[AgentService] Failed to merge implementation_plan.json, falling back to stripped copy: {merge_err}")
-                            try:
-                                raw = json.loads(src.read_text())
-                                task_control.strip_control_fields(raw)
-                                dst.write_text(json.dumps(raw, indent=2))
-                            except (json.JSONDecodeError, OSError):
-                                # Last resort: a raw copy. Control state is still
-                                # safe because the reader trusts task_control.json
-                                # over the plan file.
-                                shutil.copy2(src, dst)
-                    else:
-                        shutil.copy2(src, dst)
-                    synced_count += 1
-                except Exception as e:
-                    logger.warning(f"[AgentService] Failed to sync {filename}: {e}")
-
-        # Sync any additional files created by the agent (e.g., plan .md files)
-        # that aren't in the hardcoded list
-        try:
-            known_files = set(files_to_sync)
-            for src_file in worktree_spec.iterdir():
-                if src_file.is_file() and src_file.name not in known_files:
-                    try:
-                        shutil.copy2(src_file, main_spec / src_file.name)
-                        synced_count += 1
-                    except Exception as e:
-                        logger.warning(f"[AgentService] Failed to sync extra file {src_file.name}: {e}")
-        except OSError as e:
-            logger.warning(f"[AgentService] Failed to scan worktree spec dir for extra files: {e}")
-
-        # Sync directories
-        for dirname in dirs_to_sync:
-            src_dir = worktree_spec / dirname
-            dst_dir = main_spec / dirname
-            if src_dir.exists() and src_dir.is_dir():
-                try:
-                    # Remove existing and copy fresh
-                    if dst_dir.exists():
-                        shutil.rmtree(dst_dir)
-                    shutil.copytree(src_dir, dst_dir)
-                    synced_count += 1
-                except Exception as e:
-                    logger.warning(f"[AgentService] Failed to sync directory {dirname}: {e}")
-
-        if synced_count > 0:
-            logger.debug(f"[AgentService] Synced {synced_count} files from worktree to main spec dir")
-
-        # Tier B auto-reload — stream new build-progress.txt lines as task:log
-        # events.  The agent appends a human-readable narrative ("Starting
-        # phase 1: PROJECT DISCOVERY", "Discovered 22 files", "Working on
-        # 1.1 — ...") that, until now, only the full-page-reload `getTask`
-        # endpoint surfaced.  Tailing the delta on each sync tick lets the
-        # kanban detail view scroll the narrative in real time.
-        if task_id:
-            try:
-                bp_main = main_spec / "build-progress.txt"
-                if bp_main.exists():
-                    current_size = bp_main.stat().st_size
-                    prev_offset = self._task_build_progress_offset.get(task_id, 0)
-                    # If the file was truncated/restarted, reset to 0 rather
-                    # than re-reading nonsense from a stale offset.
-                    if current_size < prev_offset:
-                        prev_offset = 0
-                    if current_size > prev_offset:
-                        with bp_main.open("r", encoding="utf-8", errors="replace") as fh:
-                            fh.seek(prev_offset)
-                            new_text = fh.read()
-                        self._task_build_progress_offset[task_id] = current_size
-                        # Emit one task:log per non-empty line so the frontend
-                        # batches them at its 16-ms tick (useIpc.ts:191).
-                        from ..websockets.events import emit_task_log
-                        for line in new_text.splitlines():
-                            stripped = line.rstrip()
-                            if stripped:
-                                await emit_task_log(task_id, stripped)
-            except Exception as e:
-                logger.debug(f"[AgentService] build-progress tail emit failed: {e}")
-
-        # Always check for subtask status changes and emit WebSocket updates
-        # This runs independently of file sync to ensure real-time updates
-        try:
-            # Read implementation plan for progress info
-            plan_file = main_spec / "implementation_plan.json"
-            if plan_file.exists():
-                plan = json.loads(plan_file.read_text())
-
-                # Calculate progress from subtasks in phases
-                all_subtasks = []
-                current_phase = None
-                for phase in plan.get("phases", []):
-                    if phase.get("status") == "in_progress":
-                        current_phase = phase.get("name")
-                    all_subtasks.extend(phase.get("subtasks", []))
-
-                completed = sum(1 for s in all_subtasks if s.get("status") == "completed")
-                total = len(all_subtasks)
-                progress = int((completed / total) * 100) if total > 0 else 0
-
-                # Find current subtask
-                current_subtask = None
-                for s in all_subtasks:
-                    if s.get("status") == "in_progress":
-                        current_subtask = s.get("description", s.get("id"))
-                        break
-
-                # Build subtasks array for real-time frontend updates
-                subtasks_data = [
-                    {"id": s.get("id"), "status": s.get("status")}
-                    for s in all_subtasks
-                ]
-
-                # Detect individual subtask status changes and emit granular events
-                # This enables real-time subtask checkbox updates in the frontend
-                previous_states = self._task_subtask_states.get(tracking_key, {})
-                current_states = {s.get("id"): s.get("status") for s in all_subtasks}
-
-                # Check for changes and emit individual events
-                has_changes = False
-                for subtask_id, current_status in current_states.items():
-                    previous_status = previous_states.get(subtask_id)
-                    if previous_status != current_status:
-                        has_changes = True
-                        # Subtask status changed - emit granular event
-                        # Use task_id (projectId:specId format) so frontend can match
-                        await emit_subtask_update(
-                            task_id=task_id or spec_id,
-                            subtask_id=subtask_id,
-                            status=current_status,
-                            previous_status=previous_status
-                        )
-
-                # Update tracking for next comparison
-                self._task_subtask_states[tracking_key] = current_states
-
-                # Emit task update if subtasks changed OR worktree files were
-                # synced. The ``force`` flag tells _safe_emit_task_update to
-                # bypass the structural dedup when ``synced_count > 0`` —
-                # otherwise long subtasks where phase/progress/subtask-status
-                # haven't moved yet would suppress every 3-sec heartbeat and
-                # the kanban board freezes. Frontend's updateExecutionProgress
-                # is idempotent for identical payloads, so the cost is minimal.
-                if has_changes or synced_count > 0:
-                    # Use the actual current execution phase from phase event tracking
-                    actual_phase = self._task_current_phases.get(task_id, TaskPhase.PLANNING).value if task_id else "coding"
-                    await self._safe_emit_task_update(
-                        task_id or spec_id,
-                        {
-                            "executionProgress": {
-                                "phase": actual_phase,
-                                "phaseProgress": progress,
-                                "overallProgress": scale_progress(actual_phase, progress),
-                                "currentSubtask": current_subtask,
-                                "message": f"{completed}/{total} subtasks completed",
-                            },
-                            "phase": current_phase,
-                            "subtasksCompleted": completed,
-                            "subtasksTotal": total,
-                            "subtasks": subtasks_data,
-                        },
-                        # Sync ticks always go through: file CONTENT may have
-                        # changed even if the dedup signature didn't.
-                        force=synced_count > 0,
-                    )
-        except Exception as e:
-            logger.warning(f"[AgentService] Failed to emit task update: {e}")
-
     async def _monitor_process(
         self,
         task_id: str,
@@ -493,7 +232,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         project_path: Path | None = None,
         spec_id: str | None = None,
         cmd: list[str] | None = None,
-        env: dict | None = None
+        env: dict | None = None,
     ) -> None:
         """Monitor subprocess and clean up when it finishes.
 
@@ -513,9 +252,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         if spec_dir_hint is None and project_path is not None and spec_id:
             spec_dir_hint = project_path / ".aifactory" / "specs" / spec_id
 
-        await monitor_process(
-            self, task_id, proc, project_path, spec_id, cmd, env
-        )
+        await monitor_process(self, task_id, proc, project_path, spec_id, cmd, env)
 
         # A build just exited (or this monitor instance handed off to a
         # failover/continuation restart). Free the durable slot first (so the
@@ -564,14 +301,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         except Exception:  # noqa: BLE001 - status read is best-effort
             _log.debug(
                 "[AgentService] could not read control status for %s on exit",
-                task_id, exc_info=True,
+                task_id,
+                exc_info=True,
             )
         try:
             await self._store().mark_terminal(task_id, lifecycle, error=error)
         except Exception:  # noqa: BLE001 - never break the exit/drain path
-            _log.exception(
-                "[AgentService] could not free durable slot for %s", task_id
-            )
+            _log.exception("[AgentService] could not free durable slot for %s", task_id)
 
     async def _update_plan_status(
         self,
@@ -592,13 +328,22 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         kanban gets subtask data immediately.
         """
         import logging
+
         logger = logging.getLogger(__name__)
-        plan_file = project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
-        logger.info(f"[AgentService._update_plan_status] CALLED for spec_id={spec_id}, status={status}, task_id={task_id}")
+        plan_file = (
+            project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
+        )
+        logger.info(
+            f"[AgentService._update_plan_status] CALLED for spec_id={spec_id}, status={status}, task_id={task_id}"
+        )
         logger.info(f"[AgentService._update_plan_status] plan_file path: {plan_file}")
-        logger.info(f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}")
+        logger.info(
+            f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}"
+        )
         if not plan_file.exists():
-            logger.warning("[AgentService._update_plan_status] plan_file does not exist, returning early")
+            logger.warning(
+                "[AgentService._update_plan_status] plan_file does not exist, returning early"
+            )
             return
 
         # Map internal status to frontend-compatible status using the canonical helpers
@@ -619,13 +364,17 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             spec_dir = plan_file.parent
             control_status = task_control.read_control(spec_dir).get("status")
             if control_status == "done" or plan.get("status") == "done":
-                logger.info(f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {spec_id}")
+                logger.info(
+                    f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {spec_id}"
+                )
                 return
 
             # Fix 2: Validate that the plan is not just a minimal status object
             # A valid plan should have phases and subtasks from spec creation
             if "phases" not in plan or not plan.get("phases"):
-                logger.error(f"[AgentService] Invalid or minimal implementation plan detected for {spec_id}")
+                logger.error(
+                    f"[AgentService] Invalid or minimal implementation plan detected for {spec_id}"
+                )
                 if emit_events:
                     await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
                 return
@@ -645,9 +394,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if new_review_reason:
                 plan["reviewReason"] = new_review_reason
 
-            logger.info(f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}")
+            logger.info(
+                f"[AgentService._update_plan_status] About to write file with status={plan.get('status')}, reviewReason={plan.get('reviewReason')}"
+            )
             plan_file.write_text(json.dumps(plan, indent=2))
-            logger.info("[AgentService._update_plan_status] Successfully wrote plan_file")
+            logger.info(
+                "[AgentService._update_plan_status] Successfully wrote plan_file"
+            )
 
             # Issue #259: persist the authoritative control-plane state. This is
             # the web-server's OWN orchestration writing a terminal/checkpoint
@@ -659,7 +412,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 clear_review_reason=new_review_reason is None,
                 updated_by="web_server",
             )
-            logger.info(f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}")
+            logger.info(
+                f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}"
+            )
 
             # Emit the RFC-0001 completion event on a terminal build phase so the
             # cockpit (CFactory) threads the unit end to end. Both COMPLETED and
@@ -715,11 +470,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             for phase in phases:
                 phase_subtasks = phase.get("subtasks", [])
                 for subtask in phase_subtasks:
-                    subtasks_data.append({
-                        "id": subtask.get("id", ""),
-                        "status": subtask.get("status", "pending"),
-                        "title": subtask.get("description", ""),
-                    })
+                    subtasks_data.append(
+                        {
+                            "id": subtask.get("id", ""),
+                            "status": subtask.get("status", "pending"),
+                            "title": subtask.get("description", ""),
+                        }
+                    )
 
             # Emit WebSocket events so frontend updates in real-time. Skipped
             # at the terminal exit branch (Issue #14) — the _monitor_process
@@ -728,12 +485,16 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if emit_events:
                 review_reason = plan.get("reviewReason")
                 # First emit status change
-                await self._safe_emit_task_status(task_id, plan["status"], review_reason)
+                await self._safe_emit_task_status(
+                    task_id, plan["status"], review_reason
+                )
                 # Then emit task update with subtasks so they appear immediately
                 # in UI. Payload is ENRICHED with an executionProgress block (Issue #14)
                 # so the frontend's log doesn't render `phase: N/A` and the store
                 # receives a coherent terminal phase value.
-                completed_count = sum(1 for s in subtasks_data if s["status"] == "completed")
+                completed_count = sum(
+                    1 for s in subtasks_data if s["status"] == "completed"
+                )
                 # Use the caller-supplied `status` argument (the raw terminal
                 # signal — "completed" / "failed") rather than the already-mapped
                 # `plan["status"]` (which for completed tasks becomes
@@ -759,11 +520,19 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             # Still emit status event so frontend updates even if plan file write failed
             if emit_events:
                 try:
-                    fallback_status = phase_to_status(phase_enum) if phase_enum else status
-                    fallback_reason = phase_to_review_reason(phase_enum) if phase_enum else None
-                    await self._safe_emit_task_status(task_id, fallback_status, fallback_reason)
+                    fallback_status = (
+                        phase_to_status(phase_enum) if phase_enum else status
+                    )
+                    fallback_reason = (
+                        phase_to_review_reason(phase_enum) if phase_enum else None
+                    )
+                    await self._safe_emit_task_status(
+                        task_id, fallback_status, fallback_reason
+                    )
                 except Exception:
-                    logger.error(f"[AgentService] Failed to emit fallback task:status for {task_id}")
+                    logger.error(
+                        f"[AgentService] Failed to emit fallback task:status for {task_id}"
+                    )
 
     def _write_skill_context(self, spec_dir: Path) -> None:
         """Write skill_context.md to spec_dir based on selectedSkills in task_metadata.json.
@@ -775,6 +544,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         If no skills are selected, removes any existing skill_context.md.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         skill_context_file = spec_dir / "skill_context.md"
@@ -802,20 +572,27 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                     if sid:
                         selected_skill_ids.append(sid)
             except (json.JSONDecodeError, OSError) as e:
-                logger.warning(f"[AgentService] Could not read task_metadata.json for skills: {e}")
+                logger.warning(
+                    f"[AgentService] Could not read task_metadata.json for skills: {e}"
+                )
 
         # If no skills selected, remove any existing skill_context.md
         if not selected_skill_ids:
             if skill_context_file.exists():
                 try:
                     skill_context_file.unlink()
-                    logger.info("[AgentService] Removed skill_context.md (no skills selected)")
+                    logger.info(
+                        "[AgentService] Removed skill_context.md (no skills selected)"
+                    )
                 except OSError as e:
-                    logger.warning(f"[AgentService] Could not remove skill_context.md: {e}")
+                    logger.warning(
+                        f"[AgentService] Could not remove skill_context.md: {e}"
+                    )
             return
 
         # Load skill contents (max 5 skills to stay within token budget)
         from .skills_service import get_skills_service
+
         skills_service = get_skills_service()
 
         sections: list[str] = []
@@ -824,7 +601,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         for skill_id in selected_skill_ids[:5]:
             # Parse skill_id format: "{category}/{skill_name}"
             if "/" not in skill_id:
-                logger.warning(f"[AgentService] Invalid skill_id format (missing '/'): {skill_id}")
+                logger.warning(
+                    f"[AgentService] Invalid skill_id format (missing '/'): {skill_id}"
+                )
                 continue
 
             category, name = skill_id.split("/", 1)
@@ -842,9 +621,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
 
             display_name = skill_summary.name if skill_summary else name
             sections.append(
-                f"## {display_name} ({category})\n\n"
-                f"{skill_content_truncated}\n\n"
-                "---"
+                f"## {display_name} ({category})\n\n{skill_content_truncated}\n\n---"
             )
             loaded_count += 1
 
@@ -869,7 +646,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)
             skill_context_file.write_text(skill_context_content, encoding="utf-8")
-            logger.info(f"[AgentService] Wrote skill_context.md with {loaded_count} skill(s)")
+            logger.info(
+                f"[AgentService] Wrote skill_context.md with {loaded_count} skill(s)"
+            )
         except OSError as e:
             logger.error(f"[AgentService] Failed to write skill_context.md: {e}")
 
@@ -885,6 +664,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
     ) -> asyncio.subprocess.Process:
         """Start spec creation for a task."""
         import logging
+
         logger = logging.getLogger(__name__)
         if task_id in self.running_tasks:
             raise ValueError(f"Task {task_id} is already running")
@@ -906,15 +686,20 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if task_metadata_file.exists():
                 try:
                     import json
+
                     metadata = json.loads(task_metadata_file.read_text())
                     if metadata.get("requireReviewBeforeCoding", False):
                         should_auto_approve = False
-                        logger.info(f"[AgentService] Task {task_id} requires manual review - NOT auto-approving spec")
+                        logger.info(
+                            f"[AgentService] Task {task_id} requires manual review - NOT auto-approving spec"
+                        )
                     # Read spec phase model from auto profile config
                     if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
                         spec_phase_model = metadata["phaseModels"].get("spec")
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(f"[AgentService] Failed to read task_metadata.json: {e}")
+                    logger.warning(
+                        f"[AgentService] Failed to read task_metadata.json: {e}"
+                    )
 
             # PFactory governed specs (epic #327 / #329): PFactory already ran its
             # architecture/security/best-practice/feasibility gates AND a human
@@ -947,16 +732,22 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         cmd = [
             sys.executable,
             str(self.backend_path / "runners" / "spec_runner.py"),
-            "--task", f"{title}\n\n{description}",
-            "--project-dir", str(project_path),
+            "--task",
+            f"{title}\n\n{description}",
+            "--project-dir",
+            str(project_path),
         ]
 
         # Pass spec phase model if configured (multi-model support)
         if spec_phase_model:
             cmd.extend(["--model", spec_phase_model])
-            logger.info(f"[AgentService] [Model: {spec_phase_model}] Starting spec creation for {task_id}")
+            logger.info(
+                f"[AgentService] [Model: {spec_phase_model}] Starting spec creation for {task_id}"
+            )
         else:
-            logger.info(f"[AgentService] [Model: sonnet] Starting spec creation for {task_id} (default)")
+            logger.info(
+                f"[AgentService] [Model: sonnet] Starting spec creation for {task_id} (default)"
+            )
 
         # Fix 1: Only auto-approve if task doesn't require manual review
         if should_auto_approve:
@@ -982,7 +773,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # Quick Mode for simple tasks (safety net if simple task reaches spec creation)
         if complexity == "simple":
             env["QUICK_MODE"] = "true"
-            logger.info(f"[AgentService] Quick Mode enabled for spec creation task {task_id}")
+            logger.info(
+                f"[AgentService] Quick Mode enabled for spec creation task {task_id}"
+            )
 
         # Load backend .env file for graphiti and other settings
         backend_env_file = self.backend_path / ".env"
@@ -991,8 +784,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 with open(backend_env_file) as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
                             key = key.strip()
                             value = value.strip()
                             # Don't override existing env vars
@@ -1009,8 +802,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 with open(project_env_file) as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
                             key = key.strip()
                             value = value.strip()
                             if key not in env:
@@ -1035,8 +828,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 "model": spec_phase_model or "sonnet",
             }
         else:
-            logger.warning("[AgentService] No Claude OAuth token available for spec creation")
-            self._task_profiles[task_id] = {"attempt": 1, "model": spec_phase_model or "sonnet"}
+            logger.warning(
+                "[AgentService] No Claude OAuth token available for spec creation"
+            )
+            self._task_profiles[task_id] = {
+                "attempt": 1,
+                "model": spec_phase_model or "sonnet",
+            }
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
         # Claude Code CLI expects a TTY for permission handling
@@ -1047,6 +845,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
         # is set and bwrap is installed (zero behaviour change by default).
         from .sandbox import build_sandboxed_command
+
         cmd = build_sandboxed_command(cmd, project_path)
 
         proc = await asyncio.create_subprocess_exec(
@@ -1077,12 +876,14 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         self._spec_dirs[task_id] = spec_dir
 
         # Emit initial progress (50% within spec_creation phase → 10% overall)
-        await self._emit_progress(TaskProgress(
-            task_id=task_id,
-            phase=TaskPhase.SPEC_CREATION,
-            message="Starting spec creation...",
-            percentage=50,
-        ))
+        await self._emit_progress(
+            TaskProgress(
+                task_id=task_id,
+                phase=TaskPhase.SPEC_CREATION,
+                message="Starting spec creation...",
+                percentage=50,
+            )
+        )
 
         # Start output processing in background
         asyncio.create_task(self._process_output(task_id, proc.stdout, is_stderr=False))
@@ -1091,17 +892,24 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # Start process monitor to clean up when finished
         # Pass project_path so monitor can detect created spec and check for review state
         # Pass cmd and env so model fallback can retry with a different model on failure
-        asyncio.create_task(self._monitor_process(task_id, proc, project_path=project_path, cmd=cmd, env=env))
+        asyncio.create_task(
+            self._monitor_process(
+                task_id, proc, project_path=project_path, cmd=cmd, env=env
+            )
+        )
 
         # Epic #44 — Live Console also covers the spec-creation phase, not just
         # the build phase, so the whole agent run is streamable. No-op when
         # rmux is off; _process_output tees this subprocess's output into the
         # passive FIFO. The build phase re-uses the same spec_id session.
         from ..rmux.integration import create_if_enabled as _rmux_create
+
         try:
             await _rmux_create(spec_id, project_path, " ".join(cmd))
         except Exception:
-            logger.warning(f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={spec_id}")
+            logger.warning(
+                f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={spec_id}"
+            )
 
         return proc
 
@@ -1363,6 +1171,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 concurrent subtasks per wave.
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if task_id in self.running_tasks:
@@ -1372,8 +1181,10 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         cmd = [
             sys.executable,
             str(self.backend_path / "run.py"),
-            "--spec", spec_id,
-            "--project-dir", str(project_path),
+            "--spec",
+            spec_id,
+            "--project-dir",
+            str(project_path),
         ]
 
         if auto_continue:
@@ -1392,6 +1203,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if requirements_file.exists():
                 try:
                     import json
+
                     requirements = json.loads(requirements_file.read_text())
                     frontend_metadata = requirements.get("metadata", {})
 
@@ -1403,19 +1215,28 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
 
                     # Sync requireReviewBeforeCoding from frontend to backend
                     if "requireReviewBeforeCoding" in frontend_metadata:
-                        task_metadata["requireReviewBeforeCoding"] = frontend_metadata["requireReviewBeforeCoding"]
+                        task_metadata["requireReviewBeforeCoding"] = frontend_metadata[
+                            "requireReviewBeforeCoding"
+                        ]
 
                     # Save updated task_metadata.json
                     task_metadata_file.write_text(json.dumps(task_metadata, indent=2))
 
-                    require_review = task_metadata.get("requireReviewBeforeCoding", False)
+                    require_review = task_metadata.get(
+                        "requireReviewBeforeCoding", False
+                    )
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(f"[AgentService] Could not sync metadata for {task_id}: {e}")
+                    logger.warning(
+                        f"[AgentService] Could not sync metadata for {task_id}: {e}"
+                    )
             elif task_metadata_file.exists():
                 try:
                     import json
+
                     task_metadata = json.loads(task_metadata_file.read_text())
-                    require_review = task_metadata.get("requireReviewBeforeCoding", False)
+                    require_review = task_metadata.get(
+                        "requireReviewBeforeCoding", False
+                    )
                     # Note: Quick Mode no longer forces review - respect requireReviewBeforeCoding setting
                 except (json.JSONDecodeError, OSError):
                     pass
@@ -1429,9 +1250,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if not require_review or force:
                 cmd.append("--force")  # Bypass approval check for headless execution
                 if force:
-                    logger.info(f"[AgentService] Using --force for {task_id} (plan manually approved)")
+                    logger.info(
+                        f"[AgentService] Using --force for {task_id} (plan manually approved)"
+                    )
             else:
-                logger.info(f"[AgentService] Human review before coding enabled for task {task_id} - not using --force")
+                logger.info(
+                    f"[AgentService] Human review before coding enabled for task {task_id} - not using --force"
+                )
 
         if base_branch:
             cmd.extend(["--base-branch", base_branch])
@@ -1444,7 +1269,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # Stop after planning for Copilot delegation flow (#94)
         if stop_after_planning:
             cmd.append("--stop-after-planning")
-            logger.info(f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)")
+            logger.info(
+                f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)"
+            )
 
         # Parallel subtask execution (#376): run independent subtasks in
         # dependency-graph waves. Previously these flags were accepted by the
@@ -1477,14 +1304,16 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 with open(backend_env_file) as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
                             key = key.strip()
                             value = value.strip()
                             # Don't override existing env vars
                             if key not in env:
                                 env[key] = value
-                logger.info(f"[AgentService] Loaded backend .env from {backend_env_file}")
+                logger.info(
+                    f"[AgentService] Loaded backend .env from {backend_env_file}"
+                )
             except Exception as e:
                 logger.warning(f"[AgentService] Failed to load backend .env: {e}")
 
@@ -1495,8 +1324,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 with open(project_env_file) as f:
                     for line in f:
                         line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
+                        if line and not line.startswith("#") and "=" in line:
+                            key, value = line.split("=", 1)
                             key = key.strip()
                             value = value.strip()
                             if key not in env:
@@ -1510,7 +1339,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-            logger.info(f"[AgentService] Using Claude profile: {profile_name} ({profile_id})")
+            logger.info(
+                f"[AgentService] Using Claude profile: {profile_name} ({profile_id})"
+            )
             # Store for potential retry — read model from task_metadata.json
             exec_model = "sonnet"  # default
             exec_spec_dir = project_path / ".aifactory" / "specs" / spec_id
@@ -1531,7 +1362,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             logger.warning("[AgentService] No Claude OAuth token available")
 
         exec_model_display = self._task_profiles.get(task_id, {}).get("model", "sonnet")
-        logger.info(f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}")
+        logger.info(
+            f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}"
+        )
         logger.info(f"[AgentService] Command: {' '.join(cmd)}")
 
         # Claude Code Remote Control (Issue #50 / native --remote-control flag).
@@ -1565,6 +1398,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         if not _rc_enabled:
             try:
                 from ..routes.projects import load_projects
+
                 _rc_projs = load_projects()
                 _rc_pid = task_id.split(":", 1)[0]
                 _rc_proj = _rc_projs.get(_rc_pid, {})
@@ -1587,7 +1421,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 "Scrubbed CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_AUTH_TOKEN — "
                 "agent will fall back to ~/.claude/.credentials.json "
                 "(must be a full-scope token from `claude auth login`).",
-                task_id, _rc_session_name,
+                task_id,
+                _rc_session_name,
             )
 
         # E2E test mode (Epic #44 R4): when AIFACTORY_TEST_AGENT_CMD is
@@ -1600,11 +1435,13 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         _test_cmd = os.environ.get("AIFACTORY_TEST_AGENT_CMD", "").strip()
         if _test_cmd:
             import shlex
+
             cmd = shlex.split(_test_cmd)
             logger.warning(
                 "[AgentService] AIFACTORY_TEST_AGENT_CMD active — replacing "
                 "agent command with %r (task_id=%s). MUST NOT be set in prod.",
-                cmd, task_id,
+                cmd,
+                task_id,
             )
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
@@ -1629,6 +1466,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # #363: optional OS sandbox — passthrough unless AIFACTORY_AGENT_SANDBOX
         # is set and bwrap is installed (zero behaviour change by default).
         from .sandbox import build_sandboxed_command
+
         cmd = build_sandboxed_command(cmd, project_path)
 
         proc = await asyncio.create_subprocess_exec(
@@ -1660,7 +1498,16 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
 
         # Create TaskLogWriter for detailed phase logs
         # Write to worktree spec dir (will be synced to main spec dir)
-        worktree_spec_dir = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id / ".aifactory" / "specs" / spec_id
+        worktree_spec_dir = (
+            project_path
+            / ".aifactory"
+            / "worktrees"
+            / "tasks"
+            / spec_id
+            / ".aifactory"
+            / "specs"
+            / spec_id
+        )
         worktree_spec_dir.mkdir(parents=True, exist_ok=True)
         log_writer = TaskLogWriter(worktree_spec_dir)
 
@@ -1673,31 +1520,41 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         self._task_log_writers[task_id] = (log_writer, main_log_writer)
 
         # Emit initial progress (100% within planning phase → 20% overall)
-        await self._emit_progress(TaskProgress(
-            task_id=task_id,
-            phase=TaskPhase.PLANNING,
-            message="Starting task execution...",
-            percentage=100,
-        ))
+        await self._emit_progress(
+            TaskProgress(
+                task_id=task_id,
+                phase=TaskPhase.PLANNING,
+                message="Starting task execution...",
+                percentage=100,
+            )
+        )
 
         # Initialize planning phase in logs
         log_writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
         main_log_writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
 
         # Start output processing in background with log writers
-        asyncio.create_task(self._process_output(
-            task_id, proc.stdout, is_stderr=False,
-            log_writer=log_writer, spec_id=spec_id
-        ))
+        asyncio.create_task(
+            self._process_output(
+                task_id,
+                proc.stdout,
+                is_stderr=False,
+                log_writer=log_writer,
+                spec_id=spec_id,
+            )
+        )
         asyncio.create_task(self._process_output(task_id, proc.stderr, is_stderr=True))
 
         # Start process monitor to clean up when finished (with file syncing and failover support)
-        asyncio.create_task(self._monitor_process(task_id, proc, project_path, spec_id, cmd, env))
+        asyncio.create_task(
+            self._monitor_process(task_id, proc, project_path, spec_id, cmd, env)
+        )
 
         # Epic #44 R1 — opt-in Live Agent Console. No-op when
         # AIFACTORY_RMUX_ENABLED is unset/false (the default), so the
         # bank-pilot image's behaviour is byte-for-byte unchanged.
         from ..rmux.integration import create_if_enabled as _rmux_create
+
         try:
             # #322: thread the owning project id so the console bridge can
             # authorize attach/stream against the task's org.
@@ -1709,7 +1566,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             # Already swallowed inside _rmux_create; this except is a
             # belt-and-suspenders guard so a wrapper bug here cannot
             # take down task execution.
-            logger.warning(f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}")
+            logger.warning(
+                f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}"
+            )
 
         return proc
 
@@ -1739,6 +1598,7 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
         import logging
+
         logger = logging.getLogger(__name__)
         if task_id not in self.running_tasks:
             # RFC-0016 #668: a task can be parked in the admission queue rather
@@ -1757,7 +1617,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
                 except Exception:  # noqa: BLE001 - never break stop on a store hiccup
                     logger.warning(
                         "[AgentService] durable remove_queued failed for %s",
-                        task_id, exc_info=True,
+                        task_id,
+                        exc_info=True,
                     )
             if any(q.task_id == task_id for q in self._task_queue):
                 async with self._admission_lock:
@@ -1773,7 +1634,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             if self._kubejob_backend_enabled():
                 if await self._stop_kubejob_build(task_id):
                     return True
-            logger.info(f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)")
+            logger.info(
+                f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)"
+            )
             return False
 
         # Mark as stopped BEFORE termination so _monitor_process defers to us
@@ -1804,7 +1667,9 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             main_log_writer.finalize(spec_id, actual_phase)
             main_log_writer.set_phase_status(spec_id, actual_phase, "failed")
             del self._task_log_writers[task_id]
-            logger.debug(f"[AgentService] Finalized task logs for stopped task {task_id}")
+            logger.debug(
+                f"[AgentService] Finalized task logs for stopped task {task_id}"
+            )
 
         # Persist failed status to implementation_plan.json
         if spec_dir:
@@ -1817,11 +1682,14 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         # so safe even though _monitor_process may also reap on the natural
         # exit path.
         from ..rmux.integration import reap_if_enabled as _rmux_reap
+
         _reap_spec_id = task_id.split(":", 1)[1] if ":" in task_id else task_id
         try:
             await _rmux_reap(_reap_spec_id)
         except Exception:
-            logger.warning(f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={_reap_spec_id}")
+            logger.warning(
+                f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={_reap_spec_id}"
+            )
 
         # Use pop with default to handle race condition where _monitor_process
         # might have already removed the task
@@ -1849,16 +1717,19 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "[AgentService] could not free durable slot on stop for %s",
-                    task_id, exc_info=True,
+                    task_id,
+                    exc_info=True,
                 )
 
         # Emit human_review with errors reason (not just FAILED phase)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
-        await self._emit_progress(TaskProgress(
-            task_id=task_id,
-            phase=TaskPhase.FAILED,
-            message="Task stopped by user",
-        ))
+        await self._emit_progress(
+            TaskProgress(
+                task_id=task_id,
+                phase=TaskPhase.FAILED,
+                message="Task stopped by user",
+            )
+        )
 
         return True
 
@@ -1878,17 +1749,21 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         self._spec_dirs.pop(task_id, None)
 
         if return_code == 0:
-            await self._emit_progress(TaskProgress(
-                task_id=task_id,
-                phase=TaskPhase.COMPLETED,
-                message="Task completed successfully",
-            ))
+            await self._emit_progress(
+                TaskProgress(
+                    task_id=task_id,
+                    phase=TaskPhase.COMPLETED,
+                    message="Task completed successfully",
+                )
+            )
         else:
-            await self._emit_progress(TaskProgress(
-                task_id=task_id,
-                phase=TaskPhase.FAILED,
-                message=f"Task failed with exit code {return_code}",
-            ))
+            await self._emit_progress(
+                TaskProgress(
+                    task_id=task_id,
+                    phase=TaskPhase.FAILED,
+                    message=f"Task failed with exit code {return_code}",
+                )
+            )
 
         return return_code
 
@@ -1920,7 +1795,8 @@ class AgentService(KubejobMixin, CredentialMixin, EmitMixin, QueueMixin):
         _log.info(
             "[AgentService] RFC-0016 startup reconcile: %d running, %d queued "
             "(durable store)",
-            running, queued,
+            running,
+            queued,
         )
         # Fill any slots freed by a dead replica's running builds.
         await self._drain_queue()
