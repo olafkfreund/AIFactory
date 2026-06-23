@@ -648,34 +648,9 @@ def _author_spec(project_path: Path, spec_id: str) -> Path:
     return spec_dir
 
 
-def test_populate_build_worktree_materializes_spec_via_inpod_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # project under the data root → the Job WILL co-mount /work, so the control
-    # plane must populate that subPath before dispatch.
-    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
-    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    fake = _install_fake_workspace(monkeypatch)
-
-    project_path = tmp_path / "workspaces" / "proj-7"
-    _author_spec(project_path, "077-feat")
-
-    populated = bb.populate_build_worktree(project_path, "077-feat")
-
-    # Reused the in-pod preparation: ISOLATED mode + the authored spec dir.
-    assert len(fake.calls) == 1
-    call = fake.calls[0]
-    assert call["mode"] == fake.WorkspaceMode.ISOLATED
-    assert call["project_dir"] == project_path
-    assert call["spec_name"] == "077-feat"
-    assert call["source_spec_dir"] == project_path / ".aifactory" / "specs" / "077-feat"
-
-    # The populated worktree carries the materialized spec (the very thing run.py's
-    # find_spec needs at /work/.aifactory/specs/<id>/spec.md).
-    assert populated is not None
-    spec_in_worktree = Path(populated) / ".aifactory" / "specs" / "077-feat" / "spec.md"
-    assert spec_in_worktree.exists()
+# (test_populate_build_worktree_materializes_spec_via_inpod_path removed: the
+# in-pod setup_workspace path was replaced by the self-contained clone (#671) —
+# spec materialization is now covered by test_populate_builds_self_contained_repo.)
 
 
 def test_populated_worktree_matches_job_work_subpath(
@@ -687,17 +662,17 @@ def test_populated_worktree_matches_job_work_subpath(
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
-    _install_fake_workspace(monkeypatch)
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "088-feat"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
 
-    project_path = tmp_path / "workspaces" / "proj-8"
-    _author_spec(project_path, "088-feat")
-
-    populated = bb.populate_build_worktree(project_path, "088-feat")
+    populated = bb.populate_build_worktree(proj, "088-feat")
     assert populated is not None
 
     m = bb.build_run_py_job_manifest(
-        task_id="proj-8:088-feat",
-        project_path=project_path,
+        task_id="proj-1:088-feat",
+        project_path=proj,
         spec_id="088-feat",
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
@@ -750,13 +725,13 @@ async def test_dispatch_populates_worktree_before_job_created(
     # and asserts the spec already exists on disk at that moment.
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    _install_fake_workspace(monkeypatch)
-
-    project_path = tmp_path / "workspaces" / "proj-10"
-    _author_spec(project_path, "110-feat")
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "110-feat"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
 
     spec_in_worktree = (
-        project_path
+        proj
         / ".aifactory"
         / "worktrees"
         / "tasks"
@@ -778,13 +753,13 @@ async def test_dispatch_populates_worktree_before_job_created(
             await super().create_namespaced_job(namespace, manifest)
 
     store = await _make_store(tmp_path / "ord.db")
-    await store.admit("proj-10:110-feat", _spawn_args("110-feat"), cap=2)
+    await store.admit("proj-1:110-feat", _spawn_args("110-feat"), cap=2)
     backend = bb.KubeJobBuildBackend(store)
     fake = _OrderingBatch()
 
     await backend.dispatch(
-        task_id="proj-10:110-feat",
-        project_path=project_path,
+        task_id="proj-1:110-feat",
+        project_path=proj,
         spec_id="110-feat",
         batch=fake,
     )
@@ -859,3 +834,74 @@ def test_seed_creds_injected_when_secret_configured(
         "/home/nonroot/.gemini",
         "/home/nonroot/.config",
     } <= build_mounts
+
+
+# --------------------------------------------------------------------------- #
+# 6. Self-contained build worktree (#671 — /work has a real .git, not a
+#    dangling linked-worktree pointer). Real-git integration test.
+# --------------------------------------------------------------------------- #
+
+import subprocess as _sp  # noqa: E402
+
+
+def _git_init_project(root: Path) -> Path:
+    proj = root / "workspaces" / "proj-1"
+    proj.mkdir(parents=True)
+
+    def g(*a: str) -> None:
+        _sp.run(
+            ["git", "-C", str(proj), *a], check=True, capture_output=True, text=True
+        )
+
+    g("init", "-b", "main")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "Test")
+    (proj / "README.md").write_text("hi\n")
+    g("add", "-A")
+    g("commit", "-m", "init")
+    g("remote", "add", "origin", "https://github.com/acme/proj.git")
+    return proj
+
+
+def test_populate_builds_self_contained_repo(monkeypatch, tmp_path):
+    # #671: the dispatched build Job's /work must be a STANDALONE repo (real .git
+    # dir + GitHub origin + task branch + spec), not a linked git worktree whose
+    # .git points at the unmounted project repo.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
+
+    wt = bb.populate_build_worktree(proj, "042-go")
+    assert wt is not None
+    wtp = Path(wt)
+
+    # Real .git DIRECTORY — not a linked-worktree `.git` file (the #671 defect).
+    assert (wtp / ".git").is_dir()
+    # The task branch is checked out (matches the in-pod worktree convention).
+    head = _sp.run(
+        ["git", "-C", str(wtp), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert head == "aifactory/042-go"
+    # origin points at the REAL GitHub remote (for the PR-endgame push), not the
+    # local clone source (unreachable from the Job pod).
+    origin = _sp.run(
+        ["git", "-C", str(wtp), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert origin == "https://github.com/acme/proj.git"
+    # The spec is materialized into the working tree.
+    assert (wtp / ".aifactory" / "specs" / "042-go" / "spec.md").exists()
+
+
+def test_populate_skips_when_outside_data_pvc(monkeypatch, tmp_path):
+    # Outside the data PVC (laptop/dev) → no /work co-mount → nothing to populate.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    assert bb.populate_build_worktree(proj, "042-go") is None
