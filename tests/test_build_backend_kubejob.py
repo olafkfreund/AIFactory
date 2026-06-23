@@ -176,7 +176,9 @@ def test_manifest_build_image_override_wins(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", DEFAULT_NIX_IMAGE)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     assert m["spec"]["template"]["spec"]["containers"][0]["image"] == (
         "ghcr.io/acme/custom:tag"
@@ -193,7 +195,9 @@ def test_manifest_ignores_sandbox_image(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/acme/should-not-leak:tag")
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     image = m["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image != "ghcr.io/acme/should-not-leak:tag"
@@ -220,10 +224,7 @@ def test_resolve_run_py_path_is_absolute(monkeypatch: pytest.MonkeyPatch) -> Non
     # '/work/run.py'`` because run.py lives in the image backend dir, not /work.
     # Unset → the image-default backend layout (Dockerfile APP_BACKEND_PATH).
     monkeypatch.delenv("APP_BACKEND_PATH", raising=False)
-    assert (
-        bb._resolve_run_py_path()
-        == "/home/projects/MagesticAI/apps/backend/run.py"
-    )
+    assert bb._resolve_run_py_path() == "/home/projects/MagesticAI/apps/backend/run.py"
     # APP_BACKEND_PATH (the SAME var the in-pod path resolves) is honored, and a
     # trailing slash never doubles up.
     monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend/")
@@ -241,7 +242,9 @@ def test_manifest_run_py_path_honours_backend_path_env(
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
     monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend")
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
     assert "python /opt/backend/run.py " in cmd
@@ -257,7 +260,9 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
     monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path("/home/dev/myproj"), spec_id="s",
+        task_id="p:s",
+        project_path=Path("/home/dev/myproj"),
+        spec_id="s",
     )
     pod = m["spec"]["template"]["spec"]
     assert "volumes" not in pod  # no work, no store
@@ -306,6 +311,28 @@ def test_build_job_env_propagates_present_provider_env(
     assert "NO_PROXY" not in env
 
 
+def test_build_job_env_propagates_non_claude_provider_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #689: a non-Claude-routed build needs its provider credential + config env
+    # in the Job — forwarded only when present, in env (never argv).
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://ollama.com")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc-key")
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["OPENAI_API_KEY"] == "sk-openai"
+    assert env["GEMINI_API_KEY"] == "g-key"
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "https://ollama.com"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc-key"
+    # Provider vars not set on the control plane are omitted (no empty placeholder).
+    assert "GOOGLE_API_KEY" not in env
+    assert "OLLAMA_API_KEY" not in env
+    assert "GEMINI_CLI_TRUST_WORKSPACE" not in env
+
+
 def test_build_job_env_never_includes_anthropic_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -347,7 +374,9 @@ def test_manifest_carries_oauth_env_in_container_not_argv(
     monkeypatch.setenv("GITHUB_TOKEN", "gh-tok")
     extra_env = bb.build_job_env("oauth-tok-xyz")
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
         extra_env=extra_env,
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
@@ -394,7 +423,8 @@ def test_backend_unknown_falls_back_to_subprocess(
 
 
 async def test_dispatch_records_worker_ref(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     # This test exercises worker_ref recording, not worktree population; stub the
@@ -426,7 +456,8 @@ async def test_dispatch_records_worker_ref(
 
 
 async def test_dispatch_injects_oauth_token_into_job_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # #671 OAuth-env defect: the token the caller resolved from the pool must
     # land in the created Job's container env (not argv) so run.py finds it.
@@ -618,7 +649,8 @@ def _author_spec(project_path: Path, spec_id: str) -> Path:
 
 
 def test_populate_build_worktree_materializes_spec_via_inpod_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # project under the data root → the Job WILL co-mount /work, so the control
     # plane must populate that subPath before dispatch.
@@ -642,14 +674,13 @@ def test_populate_build_worktree_materializes_spec_via_inpod_path(
     # The populated worktree carries the materialized spec (the very thing run.py's
     # find_spec needs at /work/.aifactory/specs/<id>/spec.md).
     assert populated is not None
-    spec_in_worktree = (
-        Path(populated) / ".aifactory" / "specs" / "077-feat" / "spec.md"
-    )
+    spec_in_worktree = Path(populated) / ".aifactory" / "specs" / "077-feat" / "spec.md"
     assert spec_in_worktree.exists()
 
 
 def test_populated_worktree_matches_job_work_subpath(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The path the control plane populates MUST equal the subPath the Job mounts
     # at /work — otherwise the Job still sees an empty /work.
@@ -665,7 +696,9 @@ def test_populated_worktree_matches_job_work_subpath(
     assert populated is not None
 
     m = bb.build_run_py_job_manifest(
-        task_id="proj-8:088-feat", project_path=project_path, spec_id="088-feat",
+        task_id="proj-8:088-feat",
+        project_path=project_path,
+        spec_id="088-feat",
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
@@ -675,7 +708,8 @@ def test_populated_worktree_matches_job_work_subpath(
 
 
 def test_populate_skips_when_outside_data_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A project outside the PVC root → the Job has no /work co-mount, so there is
     # nothing (and no shared PVC) to populate; population is a no-op.
@@ -691,7 +725,8 @@ def test_populate_skips_when_outside_data_root(
 
 
 def test_populate_raises_when_spec_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # No authored spec under the project → fail loudly BEFORE dispatch rather than
     # launch a Job that will hit the very "Spec not found" this fix prevents.
@@ -707,7 +742,8 @@ def test_populate_raises_when_spec_missing(
 
 
 async def test_dispatch_populates_worktree_before_job_created(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # End-to-end ordering: dispatch() populates the worktree (spec present) BEFORE
     # create_namespaced_job is called. A batch fake records when the Job is created
@@ -720,8 +756,15 @@ async def test_dispatch_populates_worktree_before_job_created(
     _author_spec(project_path, "110-feat")
 
     spec_in_worktree = (
-        project_path / ".aifactory" / "worktrees" / "tasks" / "110-feat"
-        / ".aifactory" / "specs" / "110-feat" / "spec.md"
+        project_path
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "110-feat"
+        / ".aifactory"
+        / "specs"
+        / "110-feat"
+        / "spec.md"
     )
 
     class _OrderingBatch(_FakeBatch):

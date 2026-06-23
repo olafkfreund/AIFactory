@@ -196,6 +196,18 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "API_TIMEOUT_MS",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    # Non-Claude provider credentials + config a non-Claude-routed build resolves
+    # from env (byo_llm.py / phase routing). Mirrors TFactory #480's verify-Job
+    # provider set; forwarded ONLY when present (the loop below skips empties), in
+    # env (never argv), per #689. ANTHROPIC_API_KEY stays excluded (OAuth-only).
+    "OPENAI_API_KEY",
+    "OPENAI_COMPATIBLE_API_KEY",
+    "OPENAI_COMPATIBLE_BASE_URL",
+    "GEMINI_API_KEY",
+    "GEMINI_CLI_TRUST_WORKSPACE",
+    "GOOGLE_API_KEY",
+    "OLLAMA_API_KEY",
+    "OLLAMA_CLOUD_BASE_URL",
 )
 
 
@@ -222,6 +234,7 @@ def build_job_env(oauth_token: str | None) -> dict[str, str]:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
     return env
 
+
 # Terminal lifecycle states the Job may write (apis/job-state.schema.json). A
 # build that reaches one of these is done from the control plane's view.
 _TERMINAL_STATES = ("done", "failed", "stuck", "review")
@@ -238,7 +251,9 @@ def selected_backend() -> str:
         return raw
     _log.warning(
         "[build_backend] unknown %s=%r — falling back to %r",
-        _ENV_BACKEND, raw, BACKEND_SUBPROCESS,
+        _ENV_BACKEND,
+        raw,
+        BACKEND_SUBPROCESS,
     )
     return BACKEND_SUBPROCESS
 
@@ -261,7 +276,7 @@ def _worktree_subpath(data_root: str, project_path: Path, spec_id: str) -> str |
     norm = str(worktree).rstrip("/")
     if not norm.startswith(root):
         return None
-    return norm[len(root):]
+    return norm[len(root) :]
 
 
 def _resolve_build_image(default_nix_image: str) -> str:
@@ -288,8 +303,11 @@ def _resolve_build_image(default_nix_image: str) -> str:
         "build Job. This thin nix image has no bash/python outside `nix "
         "develop` and CANNOT run the run.py entrypoint; set %s (or the "
         "downward-API %s) to the aifactory runtime image.",
-        _ENV_BUILD_IMAGE, _ENV_RUNNING_IMAGE, default_nix_image,
-        _ENV_BUILD_IMAGE, _ENV_RUNNING_IMAGE,
+        _ENV_BUILD_IMAGE,
+        _ENV_RUNNING_IMAGE,
+        default_nix_image,
+        _ENV_BUILD_IMAGE,
+        _ENV_RUNNING_IMAGE,
     )
     return default_nix_image
 
@@ -358,7 +376,9 @@ def build_run_py_job_manifest(
     repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
     nix_store_pvc = os.environ.get(_ENV_NIX_STORE_PVC, "").strip() or None
     data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
-    namespace = os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
+    namespace = (
+        os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
+    )
     service_account = (
         os.environ.get(_ENV_SERVICE_ACCOUNT, _DEFAULT_SERVICE_ACCOUNT).strip()
         or _DEFAULT_SERVICE_ACCOUNT
@@ -500,7 +520,9 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
     _log.info(
         "[build_backend] populated build worktree for %s at %s (spec materialized "
         "from %s) before Job dispatch",
-        spec_id, populated, source_spec_dir,
+        spec_id,
+        populated,
+        source_spec_dir,
     )
     return populated
 
@@ -605,7 +627,9 @@ class KubeJobBuildBackend:
         )
         _log.info(
             "[build_backend] dispatched run.py Job %s/%s for task %s",
-            namespace, job_name, task_id,
+            namespace,
+            job_name,
+            task_id,
         )
         return job_name
 
@@ -636,7 +660,9 @@ class KubeJobBuildBackend:
             )
             _log.info(
                 "[build_backend] deleted k8s Job %s/%s for task %s",
-                namespace, job_name, job_id,
+                namespace,
+                job_name,
+                job_id,
             )
             return True
         finally:
@@ -761,7 +787,9 @@ class KubeJobBuildBackend:
                 return False
             _log.warning(
                 "[build_backend] could not verify Job %s/%s (%s) — assuming present",
-                namespace, job_name, exc,
+                namespace,
+                job_name,
+                exc,
             )
             return True
 
