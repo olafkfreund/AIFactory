@@ -15,6 +15,13 @@
 # Updates land via Renovate PRs (renovate.json).
 # Builds are amd64-only; arm64 support removed (not needed).
 # The Rollup optional-dep workaround below is kept for safety.
+
+# RFC-0017 #190: Nix substrate for the build-runtime (-nix) stage. Declared
+# globally (before the first FROM) because BuildKit only expands an ARG in the
+# ``COPY --from=<ref>`` image position when it is a global ARG — a stage-local
+# ARG is left literal and fails with "invalid reference format".
+ARG NIX_BASE_IMAGE=ghcr.io/olafkfreund/tfactory-runner-nix:latest
+
 FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
@@ -221,20 +228,30 @@ CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 # Only the ``:vX-nix`` tag is built from this stage (CI passes target=runtime
 # for the default + rmux images, target=build-runtime here). The default
 # bank-pilot / rmux images are byte-for-byte unchanged — no nix, no size bump.
-FROM runtime AS build-runtime
+# Alias the substrate as a named stage. ARG expansion IS supported in the FROM
+# position (unlike COPY --from=<ref>, which rejects variables on the classic
+# builder), so this is the portable way to make the substrate overridable.
+FROM ${NIX_BASE_IMAGE} AS nix-substrate
 
-# The Nix store comes from the same thin substrate the nixjob backend already
-# uses (core/job_dispatch.py DEFAULT_NIX_IMAGE). Overridable for pinning.
-ARG NIX_BASE_IMAGE=ghcr.io/olafkfreund/tfactory-runner-nix:latest
+FROM runtime AS build-runtime
 
 USER root
 
-# Copy the whole /nix tree (store + var/profiles, incl. the default-profile
-# symlink that puts ``nix`` on PATH). Chown to the sandbox uid (nonroot, 65532)
-# so single-user nix run as the build Job's SA can WRITE the store for cold task
-# flakes — parity with the writable warm-store PVC this replaces. This is the
-# only layer that differs from the runtime image; it is large by design.
-COPY --from=${NIX_BASE_IMAGE} --chown=65532:65532 /nix /nix
+# Split the copy for build speed + cache reuse (smaller/faster than a single
+# chowned tree):
+#   * /nix/store — the multi-GB content-addressed blobs — copied UNCHOWNED.
+#     Chowning it would rewrite every inode and bust BuildKit's layer reuse
+#     (slow build, fat cache). Store paths are world-readable (mode 0444/0555),
+#     so nonroot can read + exec them — which is all a WARM build (toolchains
+#     already in the substrate) needs.
+#   * /nix/var — the sqlite db, profiles and gcroots (small) — chowned to the
+#     sandbox uid so nonroot nix can open its db + take locks.
+# Limitation: the store is read-only to nonroot, so a COLD flake (a derivation
+# not already in the substrate) can't write new paths. Warm builds — the packed
+# multi-node case we're unblocking — work; cold-write support is a follow-up
+# (writable overlay at Job runtime) tracked on the slice-3 issue.
+COPY --from=nix-substrate /nix/store /nix/store
+COPY --from=nix-substrate --chown=65532:65532 /nix/var /nix/var
 
 USER nonroot
 
@@ -245,8 +262,8 @@ ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}" \
     NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Build-time smoke: the baked store is on PATH AND its db is usable by nonroot
-# (validates the chown — a root-owned store would fail ``nix eval`` here).
+# Build-time smoke: nix is on PATH AND nonroot can open the db / read the store
+# (validates the /nix/var chown + world-readable store via a pure eval).
 RUN nix --version && [ "$(nix eval --expr '1 + 1')" = "2" ]
 
 # ENTRYPOINT/CMD/HEALTHCHECK/WORKDIR are inherited from the runtime stage.

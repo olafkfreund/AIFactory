@@ -210,6 +210,10 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}-nix
             ghcr.io/${{ github.repository_owner }}/aifactory:latest-nix
+          # The Nix-store COPY is the heavy layer; gha cache lets re-releases
+          # reuse it instead of re-pulling/re-COPYing the substrate each time.
+          cache-from: type=gha,scope=aifactory-nix
+          cache-to: type=gha,mode=max,scope=aifactory-nix
           provenance: mode=max
           sbom: true
 
