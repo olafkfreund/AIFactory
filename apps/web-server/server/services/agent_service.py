@@ -137,6 +137,10 @@ class AgentService(
         # the kanban detail view scroll the agent's narrative in real time
         # rather than waiting for full-page reload (Tier B auto-reload).
         self._task_build_progress_offset: dict[str, int] = {}
+        # Live running-cost throttle (cost): monotonic ts of the last usage
+        # snapshot emitted per task from the worktree-sync tick, so the cockpit
+        # shows accruing cost mid-build without flooding the webhook.
+        self._task_usage_emit_ts: dict[str, float] = {}
         # Admission control (RFC-0016 #668). A global concurrency cap keyed off
         # ``settings.MAX_CONCURRENT_TASKS``. Builds admitted while at the cap are
         # parked FIFO in ``_task_queue`` and auto-started when a running build
