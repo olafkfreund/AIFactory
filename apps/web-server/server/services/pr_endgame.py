@@ -705,6 +705,7 @@ async def run_pr_endgame(
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
     fix_fn: Callable[[list], bool] | None = None,
+    conflict_fixer: ConflictFixer | None = None,
     on_pr_opened: Callable[[int], None] | None = None,
     re_test: Callable[[], None] | None = None,
     runner: Runner = _default_runner,
@@ -770,6 +771,9 @@ async def run_pr_endgame(
         require_copilot=(reviewer == "copilot"),
         review_fn=review_fn,
         fix_fn=fix_fn,
+        conflict_fixer=conflict_fixer,
+        worktree=str(worktree),
+        base_branch=base,
         on_approved_merged=re_test,
         runner=runner,
     )

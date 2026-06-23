@@ -142,6 +142,7 @@ async def run_terminal_completion(
                         _review_fn = None
                         _on_pr_opened = None
                         _fix_fn = None
+                        _conflict_fixer = None
                         if _reviewer == "aifactory":
                             import subprocess as _sp
 
@@ -265,6 +266,68 @@ async def run_terminal_completion(
                                     )
                                     return False
 
+                            def _conflict_fixer(conflicted_files, wt) -> bool:
+                                # #543: resolve git conflict markers in-place via
+                                # the QA-fixer. resolve_pr_conflicts owns the
+                                # rebase/add/continue + the orchestrator owns the
+                                # push + re-review, so this only needs to make the
+                                # markers disappear. Verify none remain before
+                                # returning True (the fixer is general-purpose, so
+                                # never blindly trust it resolved them). Runs in a
+                                # worker thread (no loop), so asyncio.run is safe.
+                                from pathlib import Path as _P
+
+                                try:
+                                    import asyncio as _aio
+
+                                    from qa.correction import (
+                                        _run_fixer_bg,
+                                        apply_correction,
+                                    )
+
+                                    md = (
+                                        "## Auto-resolve merge conflicts\n\n"
+                                        "Resolve the git conflict markers "
+                                        "(<<<<<<<, =======, >>>>>>>) in these "
+                                        "files, keeping BOTH sides' intent where "
+                                        "possible. The result must contain NO "
+                                        "conflict markers:\n"
+                                        + "\n".join(f"- {f}" for f in conflicted_files)
+                                    )
+
+                                    async def _fixer_to_completion(_spec):
+                                        await _run_fixer_bg(_spec)
+                                        return {"status": "qa_fixed", "completed": True}
+
+                                    _aio.run(
+                                        apply_correction(
+                                            spec_dir,
+                                            md,
+                                            confirm=True,
+                                            fixer_fn=_fixer_to_completion,
+                                            correlation_key=f"pr-conflict-{spec_id}",
+                                        )
+                                    )
+                                except Exception:  # noqa: BLE001
+                                    logger.debug(
+                                        "PR endgame conflict_fixer failed",
+                                        exc_info=True,
+                                    )
+                                    return False
+                                # Only report resolved if NO markers remain.
+                                for rel in conflicted_files:
+                                    try:
+                                        txt = (_P(wt) / rel).read_text()
+                                    except OSError:
+                                        return False
+                                    if (
+                                        "<<<<<<<" in txt
+                                        or ">>>>>>>" in txt
+                                        or "\n=======\n" in txt
+                                    ):
+                                        return False
+                                return True
+
                         endgame = await run_pr_endgame(
                             spec_dir=spec_dir,
                             spec_id=spec_id,
@@ -276,6 +339,7 @@ async def run_terminal_completion(
                             reviewer=_reviewer,
                             review_fn=_review_fn,
                             fix_fn=_fix_fn,
+                            conflict_fixer=_conflict_fixer,
                             on_pr_opened=_on_pr_opened,
                             re_test=_re_test_sync,
                         )
