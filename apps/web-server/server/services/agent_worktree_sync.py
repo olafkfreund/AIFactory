@@ -23,6 +23,12 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
+# Live running-cost throttle (seconds). The worktree sync ticks ~every 3s; emit a
+# usage snapshot from the worktree's live token_usage.json at most once per this
+# window so the cockpit shows accruing cost WHILE a build runs without flooding
+# the completion webhook. Env-overridable for ops/tests.
+_USAGE_EMIT_WINDOW_S = 15.0
+
 
 class WorktreeSyncMixin:
     """Worktree-to-main spec-dir file sync for AgentService."""
@@ -33,6 +39,7 @@ class WorktreeSyncMixin:
         _task_build_progress_offset: dict[str, Any]
         _task_current_phases: dict[str, Any]
         _task_subtask_states: dict[str, Any]
+        _task_usage_emit_ts: dict[str, float]
         _safe_emit_task_update: Callable[..., Any]
 
     async def _sync_worktree_files(
@@ -341,3 +348,37 @@ class WorktreeSyncMixin:
                     )
         except Exception as e:
             logger.warning(f"[AgentService] Failed to emit task update: {e}")
+
+        # Running-cost (live): emit a THROTTLED usage snapshot from the worktree's
+        # live token_usage.json so the cockpit reflects accruing cost WHILE the
+        # build runs — not only when it pauses (review, PR1) or terminally
+        # completes. The ~3s sync tick is throttled per task to _USAGE_EMIT_WINDOW_S
+        # so it can't flood the completion webhook. Best-effort; the throttle clock
+        # only advances on a real emit, so early ticks (no usage yet) keep checking
+        # cheaply until usage exists.
+        if task_id:
+            try:
+                import time as _time
+
+                now = _time.monotonic()
+                if (
+                    now - self._task_usage_emit_ts.get(task_id, 0.0)
+                    >= _USAGE_EMIT_WINDOW_S
+                ):
+                    from .completion import emit_usage_snapshot
+
+                    pid = task_id.split(":", 1)[0] if ":" in task_id else ""
+                    emitted = emit_usage_snapshot(
+                        worktree_spec,
+                        task_id=task_id,
+                        project_id=pid,
+                        spec_id=spec_id,
+                        status="running",
+                    )
+                    if emitted is not None:
+                        self._task_usage_emit_ts[task_id] = now
+            except Exception:  # noqa: BLE001 - live cost reporting is best-effort
+                logger.debug(
+                    "[AgentService] live usage snapshot emit failed (best-effort)",
+                    exc_info=True,
+                )
