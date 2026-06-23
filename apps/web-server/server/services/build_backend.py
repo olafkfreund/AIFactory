@@ -477,8 +477,15 @@ def build_run_py_job_manifest(
     except (TypeError, ValueError):
         deadline = _DEFAULT_DEADLINE_SECONDS
 
+    # RFC-0017 #190: a packed-workspace Job (workspace_uri set) unpacks /work from
+    # object storage, so it must NOT co-mount the RWO worktree subPath — that
+    # co-mount is exactly what pins a Job to the worktree's single node. Dropping
+    # it here (→ data_pvc=None below) is what makes multi-node scheduling possible.
+    # When workspace_uri is None (default), the #671 co-mount path is unchanged.
     worktree_subpath = (
-        _worktree_subpath(data_root, project_path, spec_id) if repo_pvc else None
+        None
+        if workspace_uri
+        else (_worktree_subpath(data_root, project_path, spec_id) if repo_pvc else None)
     )
 
     # The build entrypoint: run.py (absolute path in the image) against the
