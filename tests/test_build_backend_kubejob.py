@@ -942,3 +942,97 @@ def test_jobspec_no_workspace_uri_omits_env() -> None:
     )
     names = {e["name"] for e in m["spec"]["template"]["spec"]["containers"][0]["env"]}
     assert "WORKSPACE_URI" not in names  # default None → single-node path unchanged
+
+
+# --------------------------------------------------------------------------- #
+# 8. RFC-0017 Stage E (#190) producer: build_backend packs the worktree +
+#    sets workspace_uri, gated by AIFACTORY_PACK_WORKSPACE (default OFF).
+# --------------------------------------------------------------------------- #
+
+
+def test_maybe_pack_workspace_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Flag unset → producer is inert: no pack, no URI, co-mount path unchanged.
+    monkeypatch.delenv("AIFACTORY_PACK_WORKSPACE", raising=False)
+    src = tmp_path / "wt"
+    src.mkdir()
+    assert (
+        bb._maybe_pack_workspace(str(src), task_id="p:s", correlation_key="1") is None
+    )
+
+
+def test_maybe_pack_workspace_none_worktree_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Even ON, a None worktree (outside the data PVC) has nothing to pack.
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    assert bb._maybe_pack_workspace(None, task_id="p:s", correlation_key="1") is None
+
+
+def test_maybe_pack_workspace_on_packs_and_returns_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # ON + a real worktree → pack to the in-memory fake S3 and return the
+    # canonical workspace-archive URI (apis/concurrency-conventions.md §2 layout).
+    import core.artifact_store as a_s
+
+    # Use the in-memory transport so no boto3 / S3 / MinIO is needed.
+    monkeypatch.setattr(a_s.ArtifactStore, "_client", lambda self: a_s._FakeS3())
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    monkeypatch.delenv("S3_BUCKET", raising=False)  # → DEFAULT_BUCKET
+
+    src = tmp_path / "wt"
+    (src / "pkg").mkdir(parents=True)
+    (src / "main.py").write_text("print('hi')\n")
+
+    uri = bb._maybe_pack_workspace(
+        str(src), task_id="proj-1:042-go", correlation_key="482"
+    )
+    assert uri == (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/"
+        f"{a_s.WORKSPACE_ARCHIVE}"
+    )
+
+
+def test_maybe_pack_workspace_swallows_pack_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A pack/object-store error must NEVER break dispatch: it is logged and the
+    # caller falls back to the /work co-mount (returns None).
+    import core.artifact_store as a_s
+
+    def _boom(*_a: object, **_k: object) -> str:
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr(a_s, "pack_workspace", _boom)
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    src = tmp_path / "wt"
+    src.mkdir()
+    assert (
+        bb._maybe_pack_workspace(str(src), task_id="p:s", correlation_key="1") is None
+    )
+
+
+def test_manifest_includes_workspace_uri_when_packed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The producer threads the packed URI onto the manifest → WORKSPACE_URI env,
+    # so the Job-side consumer (later slice) can unpack it into /work.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in m["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["WORKSPACE_URI"] == uri
