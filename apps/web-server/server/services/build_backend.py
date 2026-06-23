@@ -117,6 +117,15 @@ _ENV_DEADLINE = "AIFACTORY_BUILD_DEADLINE_SECONDS"
 # present in the Job container exactly as it is in the control-plane pod.
 _ENV_BACKEND_PATH = "APP_BACKEND_PATH"
 
+# RFC-0017 Stage E (#190) — multi-node workspace handoff. When ON, the control
+# plane packs the populated build worktree to object storage and sets the Job's
+# ``workspace_uri`` (→ ``WORKSPACE_URI`` env); the Job unpacks it into ``/work``
+# instead of relying on the RWO co-mount that pins it to one node. Default OFF:
+# the #671 co-mount path is unchanged. The producer is INERT until this flag is
+# set AND S3_* is provisioned, and the Job-side consumer (unpack) lands in a
+# separate slice — so an emitted ``WORKSPACE_URI`` is harmless until both are on.
+_ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
+
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
 _DEFAULT_DATA_ROOT = "/home/nonroot/.aifactory"
@@ -418,6 +427,7 @@ def build_run_py_job_manifest(
     spec_id: str,
     correlation_key: str | None = None,
     extra_env: dict[str, str] | None = None,
+    workspace_uri: str | None = None,
 ) -> dict[str, Any]:
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
@@ -499,6 +509,10 @@ def build_run_py_job_manifest(
         deadline_seconds=deadline,
         nix_develop=False,
         extra_env=extra_env or {},
+        # RFC-0017 #190: when the producer packed the worktree, the Job receives
+        # WORKSPACE_URI and unpacks it into /work (multi-node). None (default) →
+        # WORKSPACE_URI is omitted and the /work co-mount path is unchanged.
+        workspace_uri=workspace_uri,
     )
     return _inject_seed_creds(build_job_manifest(spec))
 
@@ -577,6 +591,62 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
             "the build worktree)"
         )
     return _populate_self_contained_worktree(project_path, spec_id, source_spec_dir)
+
+
+def _pack_workspace_enabled() -> bool:
+    """RFC-0017 #190 producer gate. Default OFF — the co-mount path is unchanged."""
+    return os.environ.get(_ENV_PACK_WORKSPACE, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _maybe_pack_workspace(
+    worktree_path: str | None,
+    *,
+    task_id: str,
+    correlation_key: str | None,
+) -> str | None:
+    """Pack the populated build worktree to object storage (RFC-0017 #190).
+
+    Returns the ``s3://`` workspace-archive URI to thread onto the Job's
+    ``workspace_uri`` (→ ``WORKSPACE_URI`` env), or ``None`` when the producer is
+    OFF, there is nothing to pack, or packing failed. A pack failure is logged and
+    swallowed: the Job still has the RWO ``/work`` co-mount to fall back on, so a
+    transient object-store error never strands a dispatch. INERT by default — the
+    flag is off and the Job-side unpack lands in a later slice, so an emitted URI
+    is harmless until both sides are on.
+    """
+    if not _pack_workspace_enabled() or not worktree_path:
+        return None
+    try:
+        # Deferred import — the vendored client lives on the backend path (core.*),
+        # added to sys.path at startup (same pattern as the job_dispatch builder).
+        from core.artifact_store import ArtifactRef, ArtifactStore, pack_workspace
+
+        ref = ArtifactRef(
+            service="aifactory",
+            job_id=task_id,
+            role="workspace",
+            correlation_key=correlation_key,
+        )
+        uri = pack_workspace(ArtifactStore(), ref, worktree_path)
+        _log.info(
+            "[build_backend] packed build worktree for %s -> %s (RFC-0017 #190)",
+            task_id,
+            uri,
+        )
+        return uri
+    except Exception:  # noqa: BLE001 — a pack error must never break dispatch
+        _log.warning(
+            "[build_backend] workspace pack failed for %s; falling back to the "
+            "/work co-mount (RFC-0017 #190)",
+            task_id,
+            exc_info=True,
+        )
+        return None
 
 
 def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -733,7 +803,15 @@ class KubeJobBuildBackend:
         # the in-pod path does, at the subPath the manifest co-mounts at /work,
         # BEFORE the Job exists. Done first so a population failure never leaves a
         # dangling Job pointed at an unpopulated /work.
-        populate_build_worktree(project_path, spec_id)
+        worktree_path = populate_build_worktree(project_path, spec_id)
+
+        # RFC-0017 #190: when the producer is ON (AIFACTORY_PACK_WORKSPACE), pack
+        # the populated worktree to object storage and hand the Job its
+        # WORKSPACE_URI (multi-node handoff). OFF by default → None → the manifest
+        # keeps today's single-node /work co-mount unchanged.
+        workspace_uri = _maybe_pack_workspace(
+            worktree_path, task_id=task_id, correlation_key=correlation_key
+        )
 
         # #671 OAuth-env defect: mirror the in-pod build env into the Job (the
         # pooled token + the SDK passthrough). Goes into container env, NOT argv.
@@ -745,6 +823,7 @@ class KubeJobBuildBackend:
             spec_id=spec_id,
             correlation_key=correlation_key,
             extra_env=extra_env,
+            workspace_uri=workspace_uri,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]
