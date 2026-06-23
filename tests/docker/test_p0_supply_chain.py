@@ -12,23 +12,48 @@ from tests.docker.helpers import DOCKERFILE_PATH, REPO_ROOT
 IN_CI = os.environ.get("CI", "").lower() == "true"
 
 
+def _stage_aliases(content: str) -> set[str]:
+    """Stage names defined by `FROM <img> AS <name>` (lower-cased).
+
+    A `FROM <stage>` that references one of these is an internal multi-stage
+    reference, not an external base image — it has no digest and is not a
+    registry image, so the pin / multi-arch invariants don't apply to it.
+    """
+    aliases: set[str] = set()
+    for line in content.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 4 and parts[0].upper() == "FROM" and parts[2].upper() == "AS":
+            aliases.add(parts[3].lower())
+    return aliases
+
+
 @pytest.mark.docker
 def test_base_images_pinned_by_digest() -> None:
-    """P0.7 — every `FROM` line uses `@sha256:...`, not a floating tag."""
+    """P0.7 — every external `FROM` base uses `@sha256:...`, not a floating tag.
+
+    Internal stage references (`FROM <previously-defined-stage>`) are exempt:
+    they are not registry images and carry no digest.
+    """
     content = DOCKERFILE_PATH.read_text()
+    aliases = _stage_aliases(content)
     from_lines = [
-        line.strip() for line in content.splitlines()
+        line.strip()
+        for line in content.splitlines()
         if line.strip().upper().startswith("FROM ")
     ]
     assert from_lines, "no FROM lines found in Dockerfile"
     for line in from_lines:
-        assert "@sha256:" in line, \
-            f"FROM line is not digest-pinned: {line!r}"
+        image = line.split()[1]
+        if image.lower() in aliases:
+            continue  # internal multi-stage reference — not an external base
+        assert "@sha256:" in line, f"FROM line is not digest-pinned: {line!r}"
 
 
 @pytest.mark.docker
 @pytest.mark.slow
-@pytest.mark.skipif(not IN_CI, reason="Trivy scan enforced only in CI (needs trivy CLI on PATH)")
+@pytest.mark.skipif(
+    not IN_CI, reason="Trivy scan enforced only in CI (needs trivy CLI on PATH)"
+)
 def test_trivy_no_high_critical(built_image: str) -> None:
     """P0.8 — Trivy scan reports zero *fixable* HIGH/CRITICAL vulnerabilities.
 
@@ -37,9 +62,19 @@ def test_trivy_no_high_critical(built_image: str) -> None:
     unfixable finding isn't actionable here and must not wedge CI.
     """
     result = subprocess.run(
-        ["trivy", "image", "--severity", "HIGH,CRITICAL", "--ignore-unfixed",
-         "--format", "json", built_image],
-        capture_output=True, text=True, timeout=300,
+        [
+            "trivy",
+            "image",
+            "--severity",
+            "HIGH,CRITICAL",
+            "--ignore-unfixed",
+            "--format",
+            "json",
+            built_image,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     assert result.returncode == 0, f"trivy failed: {result.stderr}"
     report = json.loads(result.stdout)
@@ -66,28 +101,35 @@ def test_sbom_generates_valid_spdx(built_image: str) -> None:
     `anchore/sbom-action`.
     """
     import shutil
+
     if shutil.which("syft") is None:
-        pytest.skip("syft not installed on this host (CI installs it via anchore/sbom-action)")
+        pytest.skip(
+            "syft not installed on this host (CI installs it via anchore/sbom-action)"
+        )
 
     result = subprocess.run(
         ["syft", "scan", built_image, "-o", "spdx-json"],
-        capture_output=True, text=True, timeout=300,
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     assert result.returncode == 0, f"syft failed: {result.stderr[-1000:]}"
 
     sbom = json.loads(result.stdout)
 
     # Sanity check: SPDX format markers
-    assert sbom.get("spdxVersion", "").startswith("SPDX-"), \
+    assert sbom.get("spdxVersion", "").startswith("SPDX-"), (
         f"unexpected SPDX version: {sbom.get('spdxVersion')!r}"
+    )
     assert isinstance(sbom.get("packages"), list), "no packages array in SBOM"
     assert len(sbom["packages"]) > 0, "SBOM contains zero packages"
 
     # Verify our key components are catalogued. Match against package names
     # case-insensitively to survive ecosystem-specific naming differences.
     pkg_names = {pkg.get("name", "").lower() for pkg in sbom["packages"]}
-    assert "fastapi" in pkg_names, \
+    assert "fastapi" in pkg_names, (
         f"fastapi not catalogued (have {sorted(pkg_names)[:10]}...)"
+    )
 
 
 @pytest.mark.docker
@@ -104,25 +146,26 @@ def test_release_workflow_signs_with_cosign() -> None:
     release_yml = REPO_ROOT / ".github" / "workflows" / "release.yml"
     content = release_yml.read_text()
 
-    assert "sigstore/cosign-installer" in content, \
-        "release.yml does not install cosign"
+    assert "sigstore/cosign-installer" in content, "release.yml does not install cosign"
 
-    assert "cosign sign" in content, \
-        "release.yml does not invoke `cosign sign`"
+    assert "cosign sign" in content, "release.yml does not invoke `cosign sign`"
 
     # Keyless = no --key argument anywhere on the sign line(s).
     sign_command_lines = [
-        line for line in content.splitlines()
+        line
+        for line in content.splitlines()
         if "cosign sign" in line and "--key" in line
     ]
-    assert not sign_command_lines, \
+    assert not sign_command_lines, (
         f"cosign sign appears to use a key (not keyless): {sign_command_lines}"
+    )
 
-    assert "cosign verify" in content, \
+    assert "cosign verify" in content, (
         "release.yml does not verify the signature post-sign (self-test)"
+    )
 
-    assert "id-token: write" in content, \
+    assert "id-token: write" in content, (
         "release.yml lacks `id-token: write` permission required for cosign keyless"
+    )
 
-    assert "cosign attest" in content, \
-        "release.yml does not attach an SBOM attestation"
+    assert "cosign attest" in content, "release.yml does not attach an SBOM attestation"

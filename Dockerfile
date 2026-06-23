@@ -16,12 +16,6 @@
 # Builds are amd64-only; arm64 support removed (not needed).
 # The Rollup optional-dep workaround below is kept for safety.
 
-# RFC-0017 #190: Nix substrate for the build-runtime (-nix) stage. Declared
-# globally (before the first FROM) because BuildKit only expands an ARG in the
-# ``COPY --from=<ref>`` image position when it is a global ARG — a stage-local
-# ARG is left literal and fails with "invalid reference format".
-ARG NIX_BASE_IMAGE=ghcr.io/olafkfreund/tfactory-runner-nix:latest
-
 FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
@@ -228,15 +222,17 @@ CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
 # Only the ``:vX-nix`` tag is built from this stage (CI passes target=runtime
 # for the default + rmux images, target=build-runtime here). The default
 # bank-pilot / rmux images are byte-for-byte unchanged — no nix, no size bump.
-# Alias the substrate as a named stage. ARG expansion IS supported in the FROM
-# position (unlike COPY --from=<ref>, which rejects variables on the classic
-# builder), so this is the portable way to make the substrate overridable.
-FROM ${NIX_BASE_IMAGE} AS nix-substrate
-
 FROM runtime AS build-runtime
 
 USER root
 
+# Pull the Nix store directly from the substrate image via ``COPY --from=<ref>``
+# (a LITERAL external image — a stage-local ARG here fails on the classic builder
+# with "invalid reference format", so we hardcode the tag). This avoids adding a
+# ``FROM <substrate>`` line, which would (a) be amd64-only and so fail the P0
+# multi-arch invariant, and (b) be a floating-tag base the P0 digest-pin gate
+# rejects. The ref mirrors ``DEFAULT_NIX_IMAGE`` in core/job_dispatch.py.
+#
 # Split the copy for build speed + cache reuse (smaller/faster than a single
 # chowned tree):
 #   * /nix/store — the multi-GB content-addressed blobs — copied UNCHOWNED.
@@ -250,8 +246,8 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
-COPY --from=nix-substrate /nix/store /nix/store
-COPY --from=nix-substrate --chown=65532:65532 /nix/var /nix/var
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest /nix/store /nix/store
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest --chown=65532:65532 /nix/var /nix/var
 
 USER nonroot
 
