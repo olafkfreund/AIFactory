@@ -64,6 +64,11 @@ class JobSpec:
     nix_store_pvc: str | None = None  # warm /nix/store (RFC-0016 #197)
     database_url_env: str = "DATABASE_URL"
     artifacts_uri: str | None = None
+    # RFC-0017 §2.3 multi-node scale-out: packed-workspace object URI. When set,
+    # the Job receives WORKSPACE_URI and is expected to unpack_workspace it into
+    # /work at start (replacing the RWO worktree co-mount that pins a Job to one
+    # node). Default None → single-node co-mount path unchanged (#190 Stage E).
+    workspace_uri: str | None = None
     cpu_limit: str = "2"
     mem_limit: str = "4Gi"
     ttl_seconds: int = 300
@@ -114,6 +119,8 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         env.append({"name": "CORRELATION_KEY", "value": str(spec.correlation_key)})
     if spec.artifacts_uri:
         env.append({"name": "ARTIFACTS_URI", "value": spec.artifacts_uri})
+    if spec.workspace_uri:
+        env.append({"name": "WORKSPACE_URI", "value": spec.workspace_uri})
     # DATABASE_URL is injected by the consumer (often from a secretKeyRef); we only
     # name it so the Job knows to write its own job-state row.
     for k, v in spec.extra_env.items():
