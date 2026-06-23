@@ -63,6 +63,8 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -564,14 +566,6 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
         )
         return None
 
-    # Deferred resolution: core.workspace lives on the backend path (added to
-    # sys.path at startup), exactly like core.job_dispatch above. importlib keeps
-    # the seam untyped-Any so the web-server's own typecheck doesn't trip on the
-    # backend package (mirrors the prior #671 fixes' import discipline).
-    workspace: Any = importlib.import_module("core.workspace")
-    setup_workspace: Any = workspace.setup_workspace
-    workspace_mode: Any = workspace.WorkspaceMode
-
     source_spec_dir = _spec_source_dir(project_path, spec_id)
     if not source_spec_dir.exists():
         # The spec must already be authored under the project before a build can
@@ -582,24 +576,86 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
             f"dir {source_spec_dir} does not exist (nothing to materialize into "
             "the build worktree)"
         )
+    return _populate_self_contained_worktree(project_path, spec_id, source_spec_dir)
 
-    # ISOLATED mode → git worktree add + copy the spec into the worktree, the
-    # identical preparation run.py does in-pod. setup_workspace returns
-    # (working_dir, manager, localized_spec_dir); we only need the side effects on
-    # disk (the Job reads them via the shared PVC), so the tuple is discarded.
-    working_dir, _manager, _localized = setup_workspace(
-        project_path,
-        spec_id,
-        workspace_mode.ISOLATED,
-        source_spec_dir=source_spec_dir,
+
+def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], check=check, capture_output=True, text=True, timeout=300
     )
-    populated = str(working_dir)
+
+
+def _git_out(args: list[str]) -> str:
+    """git stdout, or '' on failure (never raises — best-effort reads)."""
+    r = _git(args, check=False)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _populate_self_contained_worktree(
+    project_path: Path, spec_id: str, source_spec_dir: Path
+) -> str:
+    """Build ``/work`` as a STANDALONE git repo for the dispatched build Job (#671).
+
+    The original #671 fix used ``setup_workspace(ISOLATED)`` → ``git worktree add``,
+    which makes the worktree's ``.git`` a FILE pointing at
+    ``<project>/.git/worktrees/<id>``. The Job co-mounts ONLY the worktree subPath
+    at ``/work`` — the project's real ``.git`` is not mounted — so that gitdir
+    pointer dangles in the Job pod and every git op (WorktreeManager, the
+    PR-endgame push) fails (the build-default flip blocker).
+
+    Instead, build a self-contained local clone: a real ``.git`` directory, the
+    task branch checked out, the GitHub ``origin`` set, and the spec materialized.
+    Reuses the project's own conventions so ``/work`` matches the in-pod worktree
+    shape: ``WorktreeManager.get_branch_name`` / ``get_worktree_path`` (so the
+    branch + path are byte-identical to the subPath the manifest co-mounts) and
+    ``copy_spec_to_worktree`` (the same gitignored spec materialization run.py
+    does in-pod). Inert until ``AIFACTORY_BUILD_BACKEND=kubejob`` (default off).
+    """
+    worktree_mod: Any = importlib.import_module("core.worktree")
+    workspace: Any = importlib.import_module("core.workspace")
+
+    manager: Any = worktree_mod.WorktreeManager(project_path)
+    branch = manager.get_branch_name(spec_id)
+    wt_path = Path(manager.get_worktree_path(spec_id))
+    base_branch = manager.base_branch
+
+    # The real GitHub remote the build pushes to (the local clone source below is
+    # not reachable from the Job pod, so origin must point at GitHub).
+    origin = _git_out(["-C", str(project_path), "remote", "get-url", "origin"])
+
+    # Fresh standalone clone: a real .git directory with independent objects
+    # (--no-hardlinks → self-contained even though it clones a local path), at the
+    # base branch. Replaces any stale worktree dir at the same path.
+    if wt_path.exists():
+        shutil.rmtree(wt_path)
+    wt_path.parent.mkdir(parents=True, exist_ok=True)
+    _git(
+        [
+            "clone",
+            "--local",
+            "--no-hardlinks",
+            "--branch",
+            base_branch,
+            str(project_path),
+            str(wt_path),
+        ]
+    )
+    # The task branch the build commits to (matches the in-pod worktree branch).
+    _git(["-C", str(wt_path), "checkout", "-B", branch])
+    if origin:
+        _git(["-C", str(wt_path), "remote", "set-url", "origin", origin])
+    # Materialize the spec into the clone working tree (gitignored/uncommitted —
+    # exactly as the in-pod worktree carries it).
+    workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
+
+    populated = str(wt_path)
     _log.info(
-        "[build_backend] populated build worktree for %s at %s (spec materialized "
-        "from %s) before Job dispatch",
+        "[build_backend] built self-contained build repo for %s at %s "
+        "(branch=%s, origin=%s) before Job dispatch",
         spec_id,
         populated,
-        source_spec_dir,
+        branch,
+        "set" if origin else "unset",
     )
     return populated
 
