@@ -30,8 +30,19 @@ from tests.docker.helpers import DOCKERFILE_PATH
 
 
 def _extract_base_image_digests() -> list[str]:
-    """Pull every `FROM <image>@sha256:...` reference from the Dockerfile."""
+    """Pull every external `FROM <image>` reference from the Dockerfile.
+
+    Internal stage references (`FROM <previously-defined-stage>`) are skipped:
+    they name an in-Dockerfile build stage, not a registry image, so
+    `imagetools inspect` cannot resolve them.
+    """
     text = DOCKERFILE_PATH.read_text()
+    aliases: set[str] = set()
+    for line in text.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 4 and parts[0].upper() == "FROM" and parts[2].upper() == "AS":
+            aliases.add(parts[3].lower())
+
     refs: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -40,7 +51,7 @@ def _extract_base_image_digests() -> list[str]:
         # `FROM image:tag@sha256:abc AS stage` — capture up to the first
         # whitespace after the image reference.
         match = re.match(r"FROM\s+(\S+)", stripped, re.IGNORECASE)
-        if match:
+        if match and match.group(1).lower() not in aliases:
             refs.append(match.group(1))
     return refs
 
@@ -55,7 +66,9 @@ def test_multi_arch_buildable() -> None:
         pytest.skip("docker not available")
     bx = subprocess.run(
         ["docker", "buildx", "version"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     if bx.returncode != 0:
         pytest.skip("docker buildx not installed")
@@ -69,7 +82,9 @@ def test_multi_arch_buildable() -> None:
         # one entry per platform.
         result = subprocess.run(
             ["docker", "buildx", "imagetools", "inspect", "--raw", ref],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0, (
             f"`docker buildx imagetools inspect --raw {ref}` failed:\n"
@@ -80,7 +95,9 @@ def test_multi_arch_buildable() -> None:
             entry.get("platform", {}).get("architecture")
             for entry in manifest.get("manifests", [])
         }
-        assert "amd64" in arches, \
+        assert "amd64" in arches, (
             f"{ref} does not include linux/amd64 (found arches: {sorted(a for a in arches if a)})"
-        assert "arm64" in arches, \
+        )
+        assert "arm64" in arches, (
             f"{ref} does not include linux/arm64 (found arches: {sorted(a for a in arches if a)})"
+        )
