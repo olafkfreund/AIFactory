@@ -77,6 +77,7 @@ class KubejobMixin:
         project_path: Path,
         spec_id: str,
         correlation_key: str | None,
+        stop_after_planning: bool = False,
     ) -> None:
         """Dispatch a k8s Job that runs run.py for this build (RFC-0016 #671).
 
@@ -123,6 +124,7 @@ class KubejobMixin:
                 spec_id=spec_id,
                 correlation_key=correlation_key,
                 oauth_token=token,
+                stop_after_planning=stop_after_planning,
             )
         except Exception:
             # Dispatch failed → the Job will never run, so return the credential
@@ -177,6 +179,7 @@ class KubejobMixin:
                 project_path=project_path,
                 spec_id=spec_id,
                 correlation_key=correlation_key,
+                stop_after_planning=stop_after_planning,
             )
             return None
         return await self._spawn_task_execution(

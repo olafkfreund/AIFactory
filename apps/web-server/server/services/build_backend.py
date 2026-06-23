@@ -440,6 +440,7 @@ def build_run_py_job_manifest(
     correlation_key: str | None = None,
     extra_env: dict[str, str] | None = None,
     workspace_uri: str | None = None,
+    stop_after_planning: bool = False,
 ) -> dict[str, Any]:
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
@@ -510,9 +511,15 @@ def build_run_py_job_manifest(
     # env; the entrypoint just needs an interpreter, which the aifactory build
     # image (resolved above) provides.
     run_py = _resolve_run_py_path()
-    commands = [
+    # --stop-after-planning mirrors the in-pod path (cli/main.py): the kubejob
+    # backend previously dropped this flag, so a planning-only request silently
+    # ran the full build (coder + QA + PR). Thread it into the Job's run.py argv.
+    run_py_cmd = (
         f"python {run_py} --spec {spec_id} --project-dir /work --auto-continue --force"
-    ]
+    )
+    if stop_after_planning:
+        run_py_cmd += " --stop-after-planning"
+    commands = [run_py_cmd]
 
     spec = JobSpec(
         service="aifactory",
@@ -794,6 +801,7 @@ class KubeJobBuildBackend:
         correlation_key: str | None = None,
         oauth_token: str | None = None,
         batch: Any = None,
+        stop_after_planning: bool = False,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
 
@@ -843,6 +851,7 @@ class KubeJobBuildBackend:
             correlation_key=correlation_key,
             extra_env=extra_env,
             workspace_uri=workspace_uri,
+            stop_after_planning=stop_after_planning,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]
