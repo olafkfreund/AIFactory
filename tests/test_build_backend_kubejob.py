@@ -1138,6 +1138,99 @@ def test_manifest_default_keeps_work_comount(
     assert "WORKSPACE_URI" not in env_names  # default → no unpack
 
 
+# --------------------------------------------------------------------------- #
+# 10. RFC-0017 #190 (nix source): a packed-workspace Job drops the node-pinned
+#     aifactory-nix-store warm-cache PVC when AIFACTORY_PACKED_NIX_IN_IMAGE is on
+#     (the build image then carries /nix/store). That PVC is RWO local-path and
+#     PV-pinned to one node, so co-mounting it re-pins the Job — the second pin
+#     after the /work co-mount (§9). The flag is the gate; it only affects the
+#     packed path. Default OFF and the non-packed path keep the warm store.
+# --------------------------------------------------------------------------- #
+
+
+def _nix_store_present(manifest: dict) -> tuple[bool, bool]:
+    """Return (volume_present, mount_present) for the nix-store warm cache."""
+    pod = manifest["spec"]["template"]["spec"]
+    vol = any(v["name"] == "nix-store" for v in pod.get("volumes", []))
+    c = pod["containers"][0]
+    mt = any(m["mountPath"] == "/nix/store" for m in c.get("volumeMounts", []))
+    return vol, mt
+
+
+def test_manifest_packed_nix_in_image_drops_nix_store_pvc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Packed path + flag ON + a configured warm-store PVC → the node-pinned RWO
+    # nix-store co-mount is dropped so the Job uses the image's baked /nix/store
+    # and stays node-agnostic. /work stays the writable emptyDir (§9).
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3-nix")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    vol, mt = _nix_store_present(m)
+    assert not vol  # the RWO node-pinned warm-cache volume is gone
+    assert not mt  # nothing mounted at /nix/store → baked image store is used
+    pod = m["spec"]["template"]["spec"]
+    work_vol = next(v for v in pod["volumes"] if v["name"] == "work")
+    assert "emptyDir" in work_vol  # /work pin (§9) stays dropped too
+
+
+def test_manifest_packed_keeps_nix_store_pvc_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pin guard: SAME packed Job, flag OFF (default) → the warm-store PVC is
+    # still co-mounted. This is the node pin #190 documents; the flag removes it.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    vol, mt = _nix_store_present(m)
+    assert vol and mt  # unchanged: still the RWO node-pinned warm store
+
+
+def test_manifest_nonpacked_keeps_nix_store_pvc_even_with_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Scope guard: the flag only de-pins the PACKED path. A non-packed (no
+    # workspace_uri) build keeps its warm-store co-mount even with the flag on —
+    # the co-mount path is single-node by design (#671) and the warm cache helps.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    vol, mt = _nix_store_present(m)
+    assert vol and mt  # non-packed → warm store unchanged
+
+
 def test_manifest_stop_after_planning_adds_run_py_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

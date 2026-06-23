@@ -125,6 +125,13 @@ _ENV_BACKEND_PATH = "APP_BACKEND_PATH"
 # set AND S3_* is provisioned, and the Job-side consumer (unpack) lands in a
 # separate slice — so an emitted ``WORKSPACE_URI`` is harmless until both are on.
 _ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
+# RFC-0017 #190: when the build image ships its own ``/nix/store`` (the ``-nix``
+# build-image variant), the node-pinned RWO ``aifactory-nix-store`` warm-cache
+# PVC must NOT be co-mounted on the packed path — that mount both re-pins the
+# Job to the PVC's single node AND masks the image's baked store. This flag
+# (default OFF) drops the PVC only on the packed path; flip it in gitops in the
+# same change that points ``AIFACTORY_BUILD_IMAGE`` at the nix-baked image.
+_ENV_PACKED_NIX_IN_IMAGE = "AIFACTORY_PACKED_NIX_IN_IMAGE"
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -477,6 +484,12 @@ def build_run_py_job_manifest(
     image = _resolve_build_image(DEFAULT_NIX_IMAGE)
     repo_pvc = os.environ.get(_ENV_REPO_PVC, _DEFAULT_REPO_PVC).strip() or None
     nix_store_pvc = os.environ.get(_ENV_NIX_STORE_PVC, "").strip() or None
+    # RFC-0017 #190: on the packed (multi-node) path, the warm-store PVC is a
+    # second RWO local-path pin (and would mask the image's baked /nix/store), so
+    # drop it when the build image carries nix. Gated (default OFF); the co-mount
+    # and non-packed paths keep the warm store. See _packed_nix_in_image.
+    if workspace_uri and _packed_nix_in_image():
+        nix_store_pvc = None
     data_root = os.environ.get(_ENV_DATA_ROOT, _DEFAULT_DATA_ROOT)
     namespace = (
         os.environ.get(_ENV_NAMESPACE, _DEFAULT_NAMESPACE).strip() or _DEFAULT_NAMESPACE
@@ -622,6 +635,23 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
 def _pack_workspace_enabled() -> bool:
     """RFC-0017 #190 producer gate. Default OFF — the co-mount path is unchanged."""
     return os.environ.get(_ENV_PACK_WORKSPACE, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _packed_nix_in_image() -> bool:
+    """RFC-0017 #190 nix-source gate. Default OFF.
+
+    When ON, a packed build Job (``workspace_uri`` set) drops the node-pinned
+    ``aifactory-nix-store`` warm-cache PVC and uses the ``/nix/store`` baked into
+    the build image instead, making the Job node-agnostic. Only meaningful once
+    ``AIFACTORY_BUILD_IMAGE`` points at the nix-baked ``-nix`` image; flip both
+    together in gitops. Off → the warm-store co-mount is unchanged.
+    """
+    return os.environ.get(_ENV_PACKED_NIX_IN_IMAGE, "").strip().lower() in (
         "1",
         "true",
         "yes",
