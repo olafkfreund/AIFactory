@@ -640,8 +640,13 @@ def _populate_self_contained_worktree(
             str(wt_path),
         ]
     )
-    # The task branch the build commits to (matches the in-pod worktree branch).
-    _git(["-C", str(wt_path), "checkout", "-B", branch])
+    # IMPORTANT (#716): leave /work on the BASE branch — do NOT pre-create or
+    # check out the aifactory/<spec> task branch here. run.py's own setup_workspace
+    # (WorktreeManager.create_worktree) creates that worktree + branch FROM the base
+    # branch inside the Job, exactly as it does in-pod. Pre-checking it out makes
+    # run.py's `git worktree add -b aifactory/<spec>` fail ("branch already
+    # exists") → WorktreeError, crashing the build. The clone only needs to be a
+    # self-contained repo (real .git + GitHub origin + the spec) on the base branch.
     if origin:
         _git(["-C", str(wt_path), "remote", "set-url", "origin", origin])
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
@@ -651,11 +656,12 @@ def _populate_self_contained_worktree(
     populated = str(wt_path)
     _log.info(
         "[build_backend] built self-contained build repo for %s at %s "
-        "(branch=%s, origin=%s) before Job dispatch",
+        "(base=%s, origin=%s; run.py creates the %s worktree in-Job) before dispatch",
         spec_id,
         populated,
-        branch,
+        base_branch,
         "set" if origin else "unset",
+        branch,
     )
     return populated
 
