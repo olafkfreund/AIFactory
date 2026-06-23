@@ -16,11 +16,40 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
+
+
+def _mark_git_safe_directory(dest: Path) -> None:
+    """Tell git the unpacked repo is trusted (RFC-0017 #190).
+
+    The packed workspace is unpacked into ``/work``, whose emptyDir mount root is
+    created ``root``-owned by the kubelet while the build runs as nonroot. git
+    then refuses every repo op with ``detected dubious ownership in repository at
+    '/work'`` (caught in live #190 validation, downstream of a *successful*
+    unpack). The single-node co-mount path never hit this — its PVC subPath was
+    created by the nonroot control plane, so ownership already matched. Marking
+    the dir safe is correct for a single-shot, single-tenant build container.
+
+    Best-effort: a failure here is logged, not raised — the unpack already
+    succeeded, and any genuine git problem still surfaces in the build itself.
+    """
+    # S603/S607 suppressed below: fixed `git` argv (no shell, no untrusted input);
+    # `git` by name matches every other git call site in core/ (worktree.py) and
+    # the build image puts it on PATH.
+    for path in {str(dest), str(dest.resolve())}:
+        try:
+            subprocess.run(  # noqa: S603
+                ["git", "config", "--global", "--add", "safe.directory", path],  # noqa: S607
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            _log.warning("[workspace_fetch] could not mark %s git-safe: %s", path, exc)
 
 
 def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
@@ -49,4 +78,7 @@ def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
         dest,
     )
     unpack_workspace(ArtifactStore(), uri, dest)
+    # The unpacked repo lives on a root-owned emptyDir mount but the build runs
+    # nonroot → git "dubious ownership". Mark it trusted before run.py touches git.
+    _mark_git_safe_directory(dest)
     return True

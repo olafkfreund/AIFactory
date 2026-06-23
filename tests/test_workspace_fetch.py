@@ -19,6 +19,7 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 from core import artifact_store as a_s  # noqa: E402
+from core import workspace_fetch as wf  # noqa: E402
 from core.workspace_fetch import maybe_unpack_workspace  # noqa: E402
 
 
@@ -57,11 +58,39 @@ def test_unpack_round_trip(monkeypatch, tmp_path) -> None:
     # The consumer constructs ArtifactStore() internally — route it to our store.
     monkeypatch.setattr(a_s, "ArtifactStore", lambda *a, **k: store)
     monkeypatch.setenv("WORKSPACE_URI", uri)
+    # Stub the git safe.directory call so the test never writes the runner's
+    # global gitconfig (asserted on its own in test_unpack_marks_git_safe_directory).
+    monkeypatch.setattr(wf.subprocess, "run", lambda *a, **k: None)
 
     dest = tmp_path / "work"
     assert maybe_unpack_workspace(dest) is True
     assert (dest / "main.py").read_text() == "print('hi')\n"
     assert (dest / "pkg" / "mod.py").read_text() == "X = 1\n"
+
+
+def test_unpack_marks_git_safe_directory(monkeypatch, tmp_path) -> None:
+    # After a successful unpack the consumer must mark the dest git-safe: the
+    # emptyDir /work mount root is root-owned while the build runs nonroot, so
+    # git would otherwise refuse the repo with "dubious ownership" (#190).
+    store = a_s._fake_store()
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "f.txt").write_text("x\n")
+    ref = a_s.ArtifactRef(
+        service="aifactory", job_id="j", role="workspace", correlation_key=1
+    )
+    uri = a_s.pack_workspace(store, ref, src)
+    monkeypatch.setattr(a_s, "ArtifactStore", lambda *a, **k: store)
+    monkeypatch.setenv("WORKSPACE_URI", uri)
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(wf.subprocess, "run", lambda cmd, **k: calls.append(cmd))
+
+    dest = tmp_path / "work"
+    assert maybe_unpack_workspace(dest) is True
+    safe = [c for c in calls if "safe.directory" in c]
+    assert safe, "expected git safe.directory to be configured after unpack"
+    assert str(dest) in safe[0]
 
 
 def test_fetch_error_propagates(monkeypatch, tmp_path) -> None:

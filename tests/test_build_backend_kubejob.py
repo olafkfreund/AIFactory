@@ -1083,10 +1083,12 @@ def test_manifest_packed_workspace_drops_work_comount(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # repo_pvc IS configured and the project lives inside the data PVC, so on the
-    # default path this Job WOULD co-mount the worktree at /work. With
-    # workspace_uri set the co-mount must be dropped (→ no data_pvc volume) — that
-    # RWO subPath is exactly what pins a Job to the worktree's node — while
-    # WORKSPACE_URI is still emitted so the consumer unpacks /work from S3.
+    # default path this Job WOULD co-mount the worktree at /work via an RWO PVC
+    # subPath. With workspace_uri set the RWO co-mount must be REPLACED by a
+    # writable, node-local emptyDir at /work: the consumer unpacks WORKSPACE_URI
+    # into /work at startup (so /work must be writable by the nonroot Job — an
+    # image dir is root-owned → PermissionError), and an emptyDir (not a PVC)
+    # keeps the Job node-agnostic, which is the whole point of the handoff.
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
@@ -1103,9 +1105,13 @@ def test_manifest_packed_workspace_drops_work_comount(
     )
     pod = m["spec"]["template"]["spec"]
     c = pod["containers"][0]
-    mount_paths = {mt["mountPath"] for mt in c.get("volumeMounts", [])}
-    assert "/work" not in mount_paths  # no RWO co-mount → not node-pinned
-    assert "volumes" not in pod  # no nix store here either → no volumes at all
+    work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
+    # writable unpack target, NOT an RWO worktree co-mount: no subPath
+    assert "subPath" not in work_mt
+    work_vol = next(v for v in pod["volumes"] if v["name"] == "work")
+    assert "emptyDir" in work_vol  # node-local + writable → not node-pinned
+    assert "persistentVolumeClaim" not in work_vol  # the RWO pin is gone
+    assert c["workingDir"] == "/work"
     env = {e["name"]: e.get("value") for e in c["env"]}
     assert env["WORKSPACE_URI"] == uri  # consumer unpacks /work from this
 

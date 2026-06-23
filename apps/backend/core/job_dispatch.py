@@ -128,13 +128,25 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
 
     volumes: list[dict[str, Any]] = []
     mounts: list[dict[str, Any]] = []
-    if spec.data_pvc and spec.worktree_subpath:
+    work_co_mount = bool(spec.data_pvc and spec.worktree_subpath)
+    if work_co_mount:
         volumes.append(
             {"name": "work", "persistentVolumeClaim": {"claimName": spec.data_pvc}}
         )
         mounts.append(
             {"name": "work", "mountPath": "/work", "subPath": spec.worktree_subpath}
         )
+    elif spec.workspace_uri:
+        # RFC-0017 #190: a packed-workspace Job has NO RWO worktree co-mount (that
+        # co-mount is exactly what pins a Job to the worktree's single node). The
+        # consumer (cli.main.maybe_unpack_workspace) unpacks WORKSPACE_URI into
+        # /work at startup, so /work must be a WRITABLE, node-local target — an
+        # emptyDir. Without it /work is the image's root-owned dir and the nonroot
+        # unpack dies with ``PermissionError: /work`` (caught in live #190
+        # validation). emptyDir keeps the Job node-agnostic (no PVC), which is the
+        # whole point of the pack/unpack handoff.
+        volumes.append({"name": "work", "emptyDir": {}})
+        mounts.append({"name": "work", "mountPath": "/work"})
     if spec.nix_store_pvc:
         volumes.append(
             {
@@ -149,7 +161,7 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         "name": "task",
         "image": spec.image,
         "command": ["bash", "-c", inner],
-        "workingDir": "/work" if (spec.data_pvc and spec.worktree_subpath) else "/",
+        "workingDir": "/work" if (work_co_mount or spec.workspace_uri) else "/",
         "env": env,
         "resources": {"limits": {"cpu": spec.cpu_limit, "memory": spec.mem_limit}},
     }
