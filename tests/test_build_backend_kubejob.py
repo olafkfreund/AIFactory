@@ -907,3 +907,38 @@ def test_populate_skips_when_outside_data_pvc(monkeypatch, tmp_path):
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     proj = _git_init_project(tmp_path)
     assert bb.populate_build_worktree(proj, "042-go") is None
+
+
+# --------------------------------------------------------------------------- #
+# 7. RFC-0017 Stage E (#190): JobSpec.workspace_uri -> WORKSPACE_URI env
+# --------------------------------------------------------------------------- #
+
+
+def test_jobspec_workspace_uri_emits_env() -> None:
+    from core.job_dispatch import JobSpec, build_job_manifest
+
+    m = build_job_manifest(
+        JobSpec(
+            service="aifactory",
+            job_id="p:s",
+            commands=["echo hi"],
+            workspace_uri="s3://factory-artifacts/aifactory/1/p/workspace.tar.gz",
+        )
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in m["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert (
+        env["WORKSPACE_URI"] == "s3://factory-artifacts/aifactory/1/p/workspace.tar.gz"
+    )
+
+
+def test_jobspec_no_workspace_uri_omits_env() -> None:
+    from core.job_dispatch import JobSpec, build_job_manifest
+
+    m = build_job_manifest(
+        JobSpec(service="aifactory", job_id="p:s", commands=["echo hi"])
+    )
+    names = {e["name"] for e in m["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert "WORKSPACE_URI" not in names  # default None → single-node path unchanged
