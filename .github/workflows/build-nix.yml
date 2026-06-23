@@ -1,0 +1,85 @@
+name: Publish -nix build image
+
+# RFC-0017 #190 — publish the ``-nix`` build-image variant (Dockerfile
+# ``build-runtime`` stage: the runtime image + a baked ``/nix/store``). This
+# image is consumed ONLY as ``AIFACTORY_BUILD_IMAGE`` for packed (multi-node)
+# run.py build Jobs, so they source nix from the image instead of co-mounting
+# the node-pinned ``aifactory-nix-store`` warm-store PVC (which re-pins the Job).
+#
+# Deliberately NOT part of deploy.yml: the build image is a hand-pinned,
+# validated substrate (build_backend._resolve_build_image precedence puts
+# AIFACTORY_BUILD_IMAGE above the Deployment's own image, and gitops pins it by
+# SHA on purpose — see manifests.yaml). Baking the multi-GB store onto every
+# main deploy would tax CD for an image most pushes don't change. Instead this
+# runs on demand (workflow_dispatch) and when the Dockerfile changes on main.
+#
+# The published ``:sha-<short>-nix`` tag is what you point AIFACTORY_BUILD_IMAGE
+# at in factory-gitops (paired with AIFACTORY_PACKED_NIX_IN_IMAGE=true).
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - '.github/workflows/build-nix.yml'
+
+concurrency:
+  group: build-nix-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/aifactory
+
+jobs:
+  build-nix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AIFactory
+        uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: tags
+        run: echo "sha=sha-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: "${{ secrets.GHCR_PAT || secrets.GITHUB_TOKEN }}"
+
+      # amd64 only — the substrate (tfactory-runner-nix) is amd64-only and the
+      # p510 k3d cluster is amd64. The gha cache (scope=aifactory-nix) lets a
+      # re-run reuse the heavy /nix/store COPY layer instead of re-pulling it.
+      - name: Build + push -nix build image (target build-runtime)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: build-runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}-nix
+            ${{ env.IMAGE }}:latest-nix
+          cache-from: type=gha,scope=aifactory-nix
+          cache-to: type=gha,mode=max,scope=aifactory-nix
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published \`${{ steps.tags.outputs.sha }}-nix\`"
+            echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}-nix\`"
+            echo ""
+            echo "Point \`AIFACTORY_BUILD_IMAGE\` at this tag in factory-gitops and set"
+            echo "\`AIFACTORY_PACKED_NIX_IN_IMAGE=true\` to depin packed build Jobs."
+          } >> "$GITHUB_STEP_SUMMARY"
