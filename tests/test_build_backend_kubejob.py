@@ -1036,3 +1036,63 @@ def test_manifest_includes_workspace_uri_when_packed(
         for e in m["spec"]["template"]["spec"]["containers"][0]["env"]
     }
     assert env["WORKSPACE_URI"] == uri
+
+
+# --------------------------------------------------------------------------- #
+# 9. RFC-0017 Stage E (#190) slice 5: a packed-workspace Job (workspace_uri set)
+#    drops the RWO /work worktree co-mount so it is no longer node-pinned. The
+#    default (unpacked) path keeps the co-mount unchanged.
+# --------------------------------------------------------------------------- #
+
+
+def test_manifest_packed_workspace_drops_work_comount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # repo_pvc IS configured and the project lives inside the data PVC, so on the
+    # default path this Job WOULD co-mount the worktree at /work. With
+    # workspace_uri set the co-mount must be dropped (→ no data_pvc volume) — that
+    # RWO subPath is exactly what pins a Job to the worktree's node — while
+    # WORKSPACE_URI is still emitted so the consumer unpacks /work from S3.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    pod = m["spec"]["template"]["spec"]
+    c = pod["containers"][0]
+    mount_paths = {mt["mountPath"] for mt in c.get("volumeMounts", [])}
+    assert "/work" not in mount_paths  # no RWO co-mount → not node-pinned
+    assert "volumes" not in pod  # no nix store here either → no volumes at all
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["WORKSPACE_URI"] == uri  # consumer unpacks /work from this
+
+
+def test_manifest_default_keeps_work_comount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The contrast / regression guard: SAME repo_pvc + in-PVC project, but NO
+    # workspace_uri → the #671 /work co-mount path is unchanged.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    c = m["spec"]["template"]["spec"]["containers"][0]
+    work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
+    assert work_mt["subPath"] == ("workspaces/proj-1/.aifactory/worktrees/tasks/042-go")
+    env_names = {e["name"] for e in c["env"]}
+    assert "WORKSPACE_URI" not in env_names  # default → no unpack
