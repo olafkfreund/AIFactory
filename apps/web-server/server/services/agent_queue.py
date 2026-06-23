@@ -33,6 +33,7 @@ class QueueMixin:
         _task_queue: Any
         _concurrency_cap: Callable[..., Any]
         _spawn_task_execution: Callable[..., Any]
+        _start_build_unit: Callable[..., Any]
         _store: Callable[..., Any]
 
     async def _mark_task_queued(
@@ -80,7 +81,7 @@ class QueueMixin:
                 if qt.task_id in self.running_tasks:
                     continue
                 try:
-                    await self._spawn_task_execution(
+                    await self._start_build_unit(
                         task_id=qt.task_id,
                         project_path=qt.project_path,
                         spec_id=qt.spec_id,
@@ -129,7 +130,7 @@ class QueueMixin:
             if task_id in self.running_tasks:
                 continue
             try:
-                await self._spawn_task_execution(
+                await self._start_build_unit(
                     task_id=task_id,
                     project_path=Path(spawn_args.project_path),
                     spec_id=spawn_args.spec_id,

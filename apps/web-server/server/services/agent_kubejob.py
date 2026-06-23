@@ -37,6 +37,7 @@ class KubejobMixin:
         _release_task_credential: Callable[..., Any]
         _resolve_claude_token_pooled: Callable[..., Any]
         _safe_emit_task_status: Callable[..., Any]
+        _spawn_task_execution: Callable[..., Any]
         _store: Callable[..., Any]
 
     def _kubejob_backend_enabled(self) -> bool:
@@ -142,6 +143,55 @@ class KubejobMixin:
                 "[AgentService] coding status emit raised after Job dispatch (ignored)",
                 exc_info=True,
             )
+
+    async def _start_build_unit(
+        self,
+        *,
+        task_id: str,
+        project_path: Path,
+        spec_id: str,
+        correlation_key: str | None = None,
+        auto_continue: bool = True,
+        base_branch: str | None = None,
+        mode: str | None = "full",
+        force: bool = False,
+        user_id: str = "",
+        stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
+    ) -> Any:
+        """Single backend-selection point for launching a build (RFC-0016 #671).
+
+        kubejob → dispatch a k8s Job (returns None; the Job owns execution +
+        reports its own terminal state). Else → the in-pod subprocess (returns
+        the Process). EVERY build-launch path must route through here —
+        ``start_task_execution`` AND the queue-drain paths — so a flipped backend
+        (``AIFACTORY_BUILD_BACKEND=kubejob``) takes effect no matter how the build
+        was promoted. The drain paths previously called ``_spawn_task_execution``
+        directly, so a queued/drained build silently ran in-pod even with the
+        flip on (the flip was a no-op for everything that went through admission).
+        """
+        if self._kubejob_backend_enabled():
+            await self._dispatch_build_job(
+                task_id=task_id,
+                project_path=project_path,
+                spec_id=spec_id,
+                correlation_key=correlation_key,
+            )
+            return None
+        return await self._spawn_task_execution(
+            task_id=task_id,
+            project_path=project_path,
+            spec_id=spec_id,
+            auto_continue=auto_continue,
+            base_branch=base_branch,
+            mode=mode,
+            force=force,
+            user_id=user_id,
+            stop_after_planning=stop_after_planning,
+            parallel=parallel,
+            workers=workers,
+        )
 
     async def _start_kubejob_log_stream(
         self, *, task_id: str, project_path: Path, spec_id: str

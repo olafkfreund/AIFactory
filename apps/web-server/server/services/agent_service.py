@@ -735,20 +735,14 @@ class AgentService(
             # start itself fails, free the durable slot so it isn't leaked (a
             # stuck "running" row would shrink the cap forever).
             try:
-                if self._kubejob_backend_enabled():
-                    await self._dispatch_build_job(
-                        task_id=task_id,
-                        project_path=project_path,
-                        spec_id=spec_id,
-                        correlation_key=correlation_key,
-                    )
-                    # No in-pod Process — the Job owns execution and reports its
-                    # own terminal state; the control plane reconciles by poll.
-                    return None
-                return await self._spawn_task_execution(
+                # Single backend-selector (#671): kubejob Job vs in-pod subprocess.
+                # The drain paths route through the SAME helper (agent_queue) so a
+                # flipped backend applies to queued builds too.
+                return await self._start_build_unit(
                     task_id=task_id,
                     project_path=project_path,
                     spec_id=spec_id,
+                    correlation_key=correlation_key,
                     auto_continue=auto_continue,
                     base_branch=base_branch,
                     mode=mode,
