@@ -219,6 +219,18 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "GOOGLE_API_KEY",
     "OLLAMA_API_KEY",
     "OLLAMA_CLOUD_BASE_URL",
+    # RFC-0017 #190: the Job-side consumer (core/workspace_fetch.maybe_unpack_workspace)
+    # reconstitutes /work from object storage via core/artifact_store, which reads this
+    # S3_* namespace (NOT the chart's fsspec AIFACTORY_S3_* / AWS_* WorkspaceStore vars).
+    # Without these in the Job env a packed-workspace build (WORKSPACE_URI set) cannot
+    # reach the bucket and dies fail-loud on unpack. Forwarded ONLY when present — so
+    # inert when S3 isn't configured (AIFACTORY_PACK_WORKSPACE off / single-node
+    # co-mount path), in env never argv, matching the credential rule above.
+    "S3_ENDPOINT",
+    "S3_BUCKET",
+    "S3_ACCESS_KEY",
+    "S3_SECRET_KEY",
+    "S3_REGION",
 )
 
 
