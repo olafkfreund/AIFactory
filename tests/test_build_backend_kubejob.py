@@ -880,13 +880,15 @@ def test_populate_builds_self_contained_repo(monkeypatch, tmp_path):
 
     # Real .git DIRECTORY — not a linked-worktree `.git` file (the #671 defect).
     assert (wtp / ".git").is_dir()
-    # The task branch is checked out (matches the in-pod worktree convention).
+    # /work stays on the BASE branch (#716): run.py creates the aifactory/<spec>
+    # worktree+branch itself in-Job. Pre-checking it out would make run.py's
+    # `git worktree add -b` fail ("branch already exists").
     head = _sp.run(
         ["git", "-C", str(wtp), "rev-parse", "--abbrev-ref", "HEAD"],
         capture_output=True,
         text=True,
     ).stdout.strip()
-    assert head == "aifactory/042-go"
+    assert head == "main"
     # origin points at the REAL GitHub remote (for the PR-endgame push), not the
     # local clone source (unreachable from the Job pod).
     origin = _sp.run(
