@@ -36,7 +36,9 @@ def built_image() -> str:
     if not DOCKERFILE_PATH.exists():
         pytest.fail(f"{DOCKERFILE_PATH} not found")
 
-    result = docker_build(DOCKERFILE_PATH, IMAGE_TAG)
+    # Pin the runtime stage: the Dockerfile's last stage is now ``build-runtime``
+    # (the -nix variant), but P0 acceptance asserts on the deployed image.
+    result = docker_build(DOCKERFILE_PATH, IMAGE_TAG, target="runtime")
     if result.returncode != 0:
         pytest.fail(
             f"docker build failed (exit {result.returncode}):\n"

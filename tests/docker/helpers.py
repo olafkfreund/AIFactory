@@ -39,9 +39,18 @@ def docker_build(
     build_args: dict[str, str] | None = None,
     context: Path | None = None,
     timeout: int = 600,
+    target: str | None = None,
 ) -> subprocess.CompletedProcess:
-    """Build a docker image. Returns the CompletedProcess for assertion."""
+    """Build a docker image. Returns the CompletedProcess for assertion.
+
+    ``target`` pins the build stage. The Dockerfile has a later
+    ``build-runtime`` stage (the -nix variant, RFC-0017 #190), so callers that
+    want the deployed runtime image MUST pass ``target="runtime"`` rather than
+    relying on the last stage.
+    """
     args = ["docker", "build", "-f", str(dockerfile), "-t", tag]
+    if target:
+        args += ["--target", target]
     for key, value in (build_args or {}).items():
         args += ["--build-arg", f"{key}={value}"]
     args.append(str(context or REPO_ROOT))

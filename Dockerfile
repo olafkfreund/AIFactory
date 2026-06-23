@@ -205,3 +205,48 @@ WORKDIR /home/projects/MagesticAI/apps/web-server
 # Absolute path to the venv python so we never depend on PATH ordering.
 ENTRYPOINT []
 CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
+
+# ---------------------------------------------------------------------------
+# Stage 3: build-runtime (the ``-nix`` variant) — runtime image + baked Nix
+# ---------------------------------------------------------------------------
+# RFC-0017 #190: packed (multi-node) build Jobs must NOT mount the warm-store
+# ``aifactory-nix-store`` PVC — it is RWO ``local-path`` and its PV is
+# nodeAffinity-pinned to one node, so mounting it re-pins every build Job there
+# (defeating the /work depin). This variant bakes the Nix store INTO the image
+# so a packed build Job sources nix from the image and carries zero node
+# affinity. Pair it with ``AIFACTORY_PACKED_NIX_IN_IMAGE=true`` (which drops the
+# PVC mount on the packed path) by pointing ``AIFACTORY_BUILD_IMAGE`` at a
+# ``:vX-nix`` tag in gitops.
+#
+# Only the ``:vX-nix`` tag is built from this stage (CI passes target=runtime
+# for the default + rmux images, target=build-runtime here). The default
+# bank-pilot / rmux images are byte-for-byte unchanged — no nix, no size bump.
+FROM runtime AS build-runtime
+
+# The Nix store comes from the same thin substrate the nixjob backend already
+# uses (core/job_dispatch.py DEFAULT_NIX_IMAGE). Overridable for pinning.
+ARG NIX_BASE_IMAGE=ghcr.io/olafkfreund/tfactory-runner-nix:latest
+
+USER root
+
+# Copy the whole /nix tree (store + var/profiles, incl. the default-profile
+# symlink that puts ``nix`` on PATH). Chown to the sandbox uid (nonroot, 65532)
+# so single-user nix run as the build Job's SA can WRITE the store for cold task
+# flakes — parity with the writable warm-store PVC this replaces. This is the
+# only layer that differs from the runtime image; it is large by design.
+COPY --from=${NIX_BASE_IMAGE} --chown=65532:65532 /nix /nix
+
+USER nonroot
+
+# nix resolves from the baked default profile; flakes on; reuse the apk cert
+# bundle already present in the runtime stage (ca-certificates).
+ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}" \
+    NIX_CONFIG="experimental-features = nix-command flakes" \
+    NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+# Build-time smoke: the baked store is on PATH AND its db is usable by nonroot
+# (validates the chown — a root-owned store would fail ``nix eval`` here).
+RUN nix --version && [ "$(nix eval --expr '1 + 1')" = "2" ]
+
+# ENTRYPOINT/CMD/HEALTHCHECK/WORKDIR are inherited from the runtime stage.

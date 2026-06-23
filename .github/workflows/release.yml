@@ -155,6 +155,10 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          # Pin the runtime stage explicitly: the Dockerfile now has a later
+          # ``build-runtime`` stage (the -nix variant), so the default last
+          # stage is no longer ``runtime``.
+          target: runtime
           platforms: linux/amd64
           push: true
           tags: |
@@ -178,6 +182,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          target: runtime
           platforms: linux/amd64
           push: true
           build-args: |
@@ -185,6 +190,26 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}-rmux
             ghcr.io/${{ github.repository_owner }}/aifactory:latest-rmux
+          provenance: mode=max
+          sbom: true
+
+      # RFC-0017 #190 — third variant: the runtime image with the Nix store
+      # baked in (Dockerfile ``build-runtime`` stage). Tagged ``:vX-nix``; used
+      # only as AIFACTORY_BUILD_IMAGE for packed (multi-node) build Jobs so they
+      # source nix from the image instead of the node-pinned warm-store PVC.
+      - name: Build + push -nix build image (baked Nix store, amd64-only)
+        if: steps.detect.outputs.should_release == 'true'
+        id: build_nix
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: build-runtime
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aifactory:v${{ steps.detect.outputs.new }}-nix
+            ghcr.io/${{ github.repository_owner }}/aifactory:latest-nix
           provenance: mode=max
           sbom: true
 
@@ -199,8 +224,10 @@ jobs:
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
           IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
+          IMAGE_NIX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_nix.outputs.digest }}"
           cosign sign --yes "$IMAGE"
           cosign sign --yes "$IMAGE_RMUX"
+          cosign sign --yes "$IMAGE_NIX"
 
       - name: Install Syft
         if: steps.detect.outputs.should_release == 'true'
@@ -213,6 +240,7 @@ jobs:
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build.outputs.digest }}"
           IMAGE_RMUX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_rmux.outputs.digest }}"
+          IMAGE_NIX="ghcr.io/${{ github.repository_owner }}/aifactory@${{ steps.build_nix.outputs.digest }}"
           # Bank-pilot image
           syft scan "$IMAGE" -o spdx-json=sbom.spdx.json
           syft scan "$IMAGE" -o cyclonedx-json=sbom.cyclonedx.json
@@ -223,6 +251,11 @@ jobs:
           syft scan "$IMAGE_RMUX" -o cyclonedx-json=sbom-rmux.cyclonedx.json
           cosign attest --yes --type spdxjson    --predicate sbom-rmux.spdx.json      "$IMAGE_RMUX"
           cosign attest --yes --type cyclonedx   --predicate sbom-rmux.cyclonedx.json "$IMAGE_RMUX"
+          # -nix build image (baked Nix store; RFC-0017 #190)
+          syft scan "$IMAGE_NIX" -o spdx-json=sbom-nix.spdx.json
+          syft scan "$IMAGE_NIX" -o cyclonedx-json=sbom-nix.cyclonedx.json
+          cosign attest --yes --type spdxjson    --predicate sbom-nix.spdx.json      "$IMAGE_NIX"
+          cosign attest --yes --type cyclonedx   --predicate sbom-nix.cyclonedx.json "$IMAGE_NIX"
 
       - name: Verify signature (release self-test)
         if: steps.detect.outputs.should_release == 'true'
