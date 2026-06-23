@@ -332,6 +332,83 @@ def _resolve_run_py_path() -> str:
     return f"{backend_path.rstrip('/')}/run.py"
 
 
+# -- file-auth CLI credential seeding (#690) --------------------------------- #
+#
+# Some providers authenticate via credential FILES (codex/gemini-oauth/copilot),
+# seeded in-pod on the control plane by a ``seed-creds`` initContainer that
+# copies the ``factory-cli-creds`` secret into the home dirs. A FRESH build Job
+# pod has none of these, so a build routed to a file-auth provider fails in-Job.
+# This mirrors that seeding into the dispatched Job pod, OPT-IN via a configured
+# secret name (default off → dev/test without the secret are unaffected, and the
+# env-auth path #688/#689 is unchanged). The control plane sets
+# AIFACTORY_CLI_CREDS_SECRET=factory-cli-creds.
+_ENV_CLI_CREDS_SECRET = "AIFACTORY_CLI_CREDS_SECRET"
+# Build image HOME (Dockerfile ``USER nonroot``) — where the CLIs look for creds.
+_BUILD_HOME = "/home/nonroot"
+# (secret key in the cli-creds secret  ->  path under HOME). Mirrors the
+# control-plane seed-creds initContainer in factory-gitops.
+_CLI_CRED_FILES: tuple[tuple[str, str], ...] = (
+    ("claude-credentials.json", ".claude/.credentials.json"),
+    ("codex-auth.json", ".codex/auth.json"),
+    ("copilot-apps.json", ".config/github-copilot/apps.json"),
+    ("gemini-oauth_creds.json", ".gemini/oauth_creds.json"),
+)
+# emptyDir home dirs shared between the seed initContainer and the build container.
+_SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
+    ("cc-claude", f"{_BUILD_HOME}/.claude"),
+    ("cc-codex", f"{_BUILD_HOME}/.codex"),
+    ("cc-gemini", f"{_BUILD_HOME}/.gemini"),
+    ("cc-config", f"{_BUILD_HOME}/.config"),
+)
+
+
+def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
+    credentials into the build Job pod (#690). No-op unless a secret name is
+    configured. Mutates + returns the manifest. Pure (env-only) → unit-testable.
+    """
+    secret = os.environ.get(_ENV_CLI_CREDS_SECRET, "").strip()
+    if not secret:
+        return manifest  # default off: env-auth-only path unchanged
+    pod = manifest["spec"]["template"]["spec"]
+    home_mounts = [{"name": n, "mountPath": p} for n, p in _SEED_HOME_VOLUMES]
+
+    volumes = pod.setdefault("volumes", [])
+    for name, _path in _SEED_HOME_VOLUMES:
+        volumes.append({"name": name, "emptyDir": {}})
+    volumes.append({"name": "cli-creds", "secret": {"secretName": secret}})
+
+    # cp is tolerant (a partial secret must not fail the whole build): only copy
+    # files that exist, and never let a missing one abort via ``set -e``.
+    mkdirs = " ".join(
+        f"{_BUILD_HOME}/{d}"
+        for d in (".claude", ".codex", ".gemini", ".config/github-copilot")
+    )
+    lines = [f"mkdir -p {mkdirs}"]
+    lines += [
+        f"[ -f /seed/{key} ] && cp /seed/{key} {_BUILD_HOME}/{rel} || true"
+        for key, rel in _CLI_CRED_FILES
+    ]
+    lines.append(
+        f"chmod -R g+rwX {_BUILD_HOME}/.claude {_BUILD_HOME}/.codex "
+        f"{_BUILD_HOME}/.gemini {_BUILD_HOME}/.config || true"
+    )
+    pod.setdefault("initContainers", []).append(
+        {
+            "name": "seed-creds",
+            "image": "busybox:1.36",
+            "command": ["sh", "-c"],
+            "args": ["\n".join(lines)],
+            "volumeMounts": [
+                *home_mounts,
+                {"name": "cli-creds", "mountPath": "/seed", "readOnly": True},
+            ],
+        }
+    )
+    pod["containers"][0].setdefault("volumeMounts", []).extend(home_mounts)
+    return manifest
+
+
 def build_run_py_job_manifest(
     *,
     task_id: str,
@@ -421,7 +498,7 @@ def build_run_py_job_manifest(
         nix_develop=False,
         extra_env=extra_env or {},
     )
-    return build_job_manifest(spec)
+    return _inject_seed_creds(build_job_manifest(spec))
 
 
 def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
