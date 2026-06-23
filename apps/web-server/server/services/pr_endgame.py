@@ -461,6 +461,10 @@ async def watch_and_finish(
     fix_fn: Callable[[list], bool] | None = None,
     max_fix_cycles: int = 2,
     on_approved_merged: Callable[[], None] | None = None,
+    conflict_fixer: ConflictFixer | None = None,
+    worktree: str | None = None,
+    base_branch: str = "main",
+    max_conflict_cycles: int = 1,
     runner: Runner = _default_runner,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
     max_minutes: int = _MAX_POLL_MINUTES,
@@ -482,6 +486,7 @@ async def watch_and_finish(
         require_copilot = False
 
     fix_cycles = 0
+    conflict_cycles = 0
     polls = max(1, (max_minutes * 60) // max(1, poll_interval))
     for _ in range(polls):
         await asyncio.sleep(poll_interval)
@@ -546,6 +551,57 @@ async def watch_and_finish(
                     "copilot_approved": rs.copilot_approved,
                 }
             merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
+            # #543: an approved PR that won't merge is usually behind a true
+            # line-level conflict. When a conflict_fixer is wired, rebase onto
+            # base + resolve the conflicts, push, and RE-REVIEW (loop continues →
+            # next poll re-reads the verdict and only merges on a fresh approve).
+            # Bounded; falls through to human-stop if unresolved or push fails.
+            if (
+                not merged
+                and conflict_fixer is not None
+                and worktree
+                and conflict_cycles < max_conflict_cycles
+            ):
+                conflict_cycles += 1
+                logger.info(
+                    "[pr-endgame] pr=%d approved but not mergeable — conflict "
+                    "resolution cycle %d/%d",
+                    pr,
+                    conflict_cycles,
+                    max_conflict_cycles,
+                )
+                cr = await asyncio.to_thread(
+                    resolve_pr_conflicts,
+                    worktree,
+                    base_branch,
+                    fixer=conflict_fixer,
+                    runner=runner,
+                )
+                if cr.resolved:
+                    push = await asyncio.to_thread(
+                        runner,
+                        ["git", "push", "--force-with-lease", "origin", "HEAD"],
+                        worktree,
+                    )
+                    if push.ok:
+                        continue  # re-review the rebased+resolved branch next poll
+                    logger.warning(
+                        "[pr-endgame] pr=%d post-resolve push failed: %s",
+                        pr,
+                        push.err[:200],
+                    )
+                logger.info(
+                    "[pr-endgame] pr=%d conflict not auto-resolved (%s) — human-stop",
+                    pr,
+                    cr.reason,
+                )
+                return {
+                    "pr": pr,
+                    "verdict": "approved",
+                    "merged": False,
+                    "reason": "merge_conflict_unresolved",
+                    "conflict_cycles": conflict_cycles,
+                }
             if merged and on_approved_merged is not None:
                 try:
                     on_approved_merged()
