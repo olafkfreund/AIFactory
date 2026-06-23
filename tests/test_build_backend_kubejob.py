@@ -1136,3 +1136,40 @@ def test_manifest_default_keeps_work_comount(
     assert work_mt["subPath"] == ("workspaces/proj-1/.aifactory/worktrees/tasks/042-go")
     env_names = {e["name"] for e in c["env"]}
     assert "WORKSPACE_URI" not in env_names  # default → no unpack
+
+
+def test_manifest_stop_after_planning_adds_run_py_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for the dropped-flag defect: the kubejob backend used to ignore
+    # stop_after_planning, so a planning-only request silently ran the full build
+    # (coder + QA + PR). The flag must reach the Job's run.py argv.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        stop_after_planning=True,
+    )
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "--stop-after-planning" in cmd
+
+
+def test_manifest_default_omits_stop_after_planning_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contrast guard: a normal full build must NOT carry the flag.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "--stop-after-planning" not in cmd
