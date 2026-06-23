@@ -111,7 +111,11 @@ _VALID_REVIEWERS = {"aifactory", "copilot", "any"}
 
 def resolve_pr_reviewer(project_path: Path | None = None) -> str:
     pv = _project_env(project_path, "AIFACTORY_PR_REVIEWER")
-    val = (pv if pv is not None else os.environ.get("AIFACTORY_PR_REVIEWER", "")).strip().lower()
+    val = (
+        (pv if pv is not None else os.environ.get("AIFACTORY_PR_REVIEWER", ""))
+        .strip()
+        .lower()
+    )
     return val if val in _VALID_REVIEWERS else "aifactory"
 
 
@@ -147,12 +151,21 @@ def create_pr(
 
     res = runner(
         [
-            "gh", "pr", "create", "--base", base, "--head", branch,
-            "--title", title, "--body", body,
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            base,
+            "--head",
+            branch,
+            "--title",
+            title,
+            "--body",
+            body,
         ],
         str(worktree),
     )
-    text = (res.out + "\n" + res.err)
+    text = res.out + "\n" + res.err
     pr = _parse_pr_number(text)
     if pr is None and not res.ok:
         logger.warning("[pr-endgame] gh pr create failed: %s", res.err[:300])
@@ -173,20 +186,27 @@ def request_copilot_review(
     """Ask GitHub Copilot to review the PR. Best-effort (never fatal)."""
     res = runner(
         [
-            "gh", "api", "--method", "POST",
+            "gh",
+            "api",
+            "--method",
+            "POST",
             f"/repos/{owner}/{repo}/pulls/{pr}/requested_reviewers",
-            "-f", f"reviewers[]={COPILOT_REVIEWER}",
+            "-f",
+            f"reviewers[]={COPILOT_REVIEWER}",
         ],
         None,
     )
     if not res.ok:
-        logger.info("[pr-endgame] copilot review request not accepted: %s", res.err[:200])
+        logger.info(
+            "[pr-endgame] copilot review request not accepted: %s", res.err[:200]
+        )
     return res.ok
 
 
 @dataclass
 class ReviewState:
     """Copilot-aware view of a PR's reviews."""
+
     verdict: str  # 'approved' | 'changes_requested' | 'pending'
     copilot_reviewed: bool = False
     copilot_approved: bool = False
@@ -220,8 +240,14 @@ def verdict_from_review_result(result: dict | None) -> ReviewState:
     # is changes_requested (the auto-feedback loop will try to resolve it).
     _APPROVE = {"approve", "approved", "ready_to_merge"}
     _CHANGES = {
-        "request_changes", "changes_requested", "reject", "rejected",
-        "merge_with_changes", "needs_revision", "blocked", "do_not_merge",
+        "request_changes",
+        "changes_requested",
+        "reject",
+        "rejected",
+        "merge_with_changes",
+        "needs_revision",
+        "blocked",
+        "do_not_merge",
     }
     blockers = data.get("blockers")
     if isinstance(blockers, list) and blockers:
@@ -233,7 +259,8 @@ def verdict_from_review_result(result: dict | None) -> ReviewState:
     findings = data.get("findings")
     if isinstance(findings, list):
         blocking = [
-            f for f in findings
+            f
+            for f in findings
             if isinstance(f, dict)
             and str(f.get("severity", "")).lower() in _BLOCKING_SEVERITIES
         ]
@@ -254,8 +281,13 @@ def read_review_verdict(
     want to use Copilot's findings, not merge around them.
     """
     res = runner(
-        ["gh", "api", f"/repos/{owner}/{repo}/pulls/{pr}/reviews", "--jq",
-         "[.[] | {state, login: .user.login}]"],
+        [
+            "gh",
+            "api",
+            f"/repos/{owner}/{repo}/pulls/{pr}/reviews",
+            "--jq",
+            "[.[] | {state, login: .user.login}]",
+        ],
         None,
     )
     if not res.ok:
@@ -272,8 +304,10 @@ def read_review_verdict(
         if isinstance(r, dict) and _is_copilot(r.get("login", ""))
     }
     verdict = (
-        "changes_requested" if "CHANGES_REQUESTED" in states
-        else "approved" if "APPROVED" in states
+        "changes_requested"
+        if "CHANGES_REQUESTED" in states
+        else "approved"
+        if "APPROVED" in states
         else "pending"
     )
     return ReviewState(
@@ -285,7 +319,12 @@ def read_review_verdict(
 
 
 def merge_pr(
-    owner: str, repo: str, pr: int, *, method: str = "squash", runner: Runner = _default_runner
+    owner: str,
+    repo: str,
+    pr: int,
+    *,
+    method: str = "squash",
+    runner: Runner = _default_runner,
 ) -> bool:
     """Merge the PR. Returns True on success. Never force-merges past a conflict.
 
@@ -294,28 +333,108 @@ def merge_pr(
     retry. A TRUE line-level conflict (update-branch fails) is left for a human —
     we never force it.
     """
-    flag = {"squash": "--squash", "rebase": "--rebase", "merge": "--merge"}.get(method, "--squash")
+    flag = {"squash": "--squash", "rebase": "--rebase", "merge": "--merge"}.get(
+        method, "--squash"
+    )
     full = f"{owner}/{repo}"
     res = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
     if res.ok:
         return True
 
     blob = (res.err + " " + res.out).lower()
-    if any(s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")):
-        logger.info("[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr)
+    if any(
+        s in blob for s in ("not mergeable", "cannot be cleanly", "conflict", "behind")
+    ):
+        logger.info(
+            "[pr-endgame] pr=%d not cleanly mergeable — updating branch from base", pr
+        )
         upd = runner(["gh", "pr", "update-branch", str(pr), "--repo", full], None)
         if upd.ok:
             res2 = runner(["gh", "pr", "merge", str(pr), flag, "--repo", full], None)
             if res2.ok:
                 return True
-            logger.warning("[pr-endgame] merge retry failed pr=%d: %s", pr, res2.err[:300])
+            logger.warning(
+                "[pr-endgame] merge retry failed pr=%d: %s", pr, res2.err[:300]
+            )
             return False
         logger.info(
-            "[pr-endgame] pr=%d has a true conflict update-branch can't resolve — human-stop", pr
+            "[pr-endgame] pr=%d has a true conflict update-branch can't resolve — human-stop",
+            pr,
         )
         return False
     logger.warning("[pr-endgame] merge failed pr=%d: %s", pr, res.err[:300])
     return False
+
+
+# ---------------------------------------------------------------------------
+# True-conflict resolution (#543)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ConflictResolution:
+    """Outcome of one attempt to rebase a PR branch onto base + resolve conflicts."""
+
+    resolved: bool
+    conflicted_files: list[str]
+    reason: str = ""
+
+
+# A fixer takes the list of conflict-marked files + the worktree path and returns
+# True once it has resolved the markers in-place (ready to `git add`).
+ConflictFixer = Callable[["list[str]", str], bool]
+
+
+def resolve_pr_conflicts(
+    worktree: str,
+    base_branch: str,
+    *,
+    fixer: ConflictFixer,
+    runner: Runner = _default_runner,
+) -> ConflictResolution:
+    """Rebase the PR branch onto ``base_branch`` in ``worktree`` and, on a true
+    line-level conflict, hand the conflicted files to ``fixer`` to resolve, then
+    continue the rebase (#543).
+
+    Safe-by-construction: every git step that fails leaves the rebase ABORTED
+    (worktree clean), so a caller can always fall back to human-stop. This helper
+    does NOT push and does NOT bound retries or re-review — the orchestrator owns
+    those (push the resolved branch, re-review, cap attempts). Pure + injectable
+    (``runner``/``fixer``) so it is unit-testable without real git or an LLM.
+    """
+    fetch = runner(["git", "fetch", "origin", base_branch], worktree)
+    if not fetch.ok:
+        return ConflictResolution(False, [], f"fetch failed: {fetch.err[:200]}")
+
+    base_ref = f"origin/{base_branch}"
+    reb = runner(["git", "rebase", base_ref], worktree)
+    if reb.ok:
+        return ConflictResolution(True, [], "rebase clean (no conflict)")
+
+    status = runner(["git", "diff", "--name-only", "--diff-filter=U"], worktree)
+    conflicted = [f for f in status.out.splitlines() if f.strip()]
+    if not conflicted:
+        # Rebase failed for some reason other than mergeable conflicts.
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(
+            False, [], f"rebase failed with no conflicted files: {reb.err[:200]}"
+        )
+
+    if not fixer(conflicted, worktree):
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(
+            False, conflicted, "fixer did not resolve the conflicts"
+        )
+
+    runner(["git", "add", "-A"], worktree)
+    # core.editor=true: non-interactive `rebase --continue` (no $EDITOR prompt).
+    cont = runner(["git", "-c", "core.editor=true", "rebase", "--continue"], worktree)
+    if not cont.ok:
+        runner(["git", "rebase", "--abort"], worktree)
+        return ConflictResolution(
+            False, conflicted, f"rebase --continue failed: {cont.err[:200]}"
+        )
+    return ConflictResolution(True, conflicted, "resolved via fixer")
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +488,9 @@ async def watch_and_finish(
         if review_fn is not None:
             rs = await asyncio.to_thread(review_fn)
         else:
-            rs = await asyncio.to_thread(read_review_verdict, owner, repo, pr, runner=runner)
+            rs = await asyncio.to_thread(
+                read_review_verdict, owner, repo, pr, runner=runner
+            )
 
         if rs.verdict == "changes_requested":
             who = "copilot" if rs.copilot_changes_requested else "reviewer"
@@ -380,38 +501,75 @@ async def watch_and_finish(
                 fix_cycles += 1
                 logger.info(
                     "[pr-endgame] pr=%d changes requested by %s — auto-fix cycle %d/%d",
-                    pr, who, fix_cycles, max_fix_cycles,
+                    pr,
+                    who,
+                    fix_cycles,
+                    max_fix_cycles,
                 )
                 ok = await asyncio.to_thread(fix_fn, rs.findings)
                 if not ok:
-                    return {"pr": pr, "verdict": rs.verdict, "merged": False,
-                            "reason": "fix_failed", "fix_cycles": fix_cycles}
+                    return {
+                        "pr": pr,
+                        "verdict": rs.verdict,
+                        "merged": False,
+                        "reason": "fix_failed",
+                        "fix_cycles": fix_cycles,
+                    }
                 continue  # re-review on the next poll after the fix lands
-            logger.info("[pr-endgame] pr=%d changes requested by %s — handing to a human", pr, who)
-            return {"pr": pr, "verdict": rs.verdict, "merged": False,
-                    "reason": "changes_requested" if fix_cycles == 0 else "needs_human_after_fixes",
-                    "fix_cycles": fix_cycles,
-                    "copilot_changes_requested": rs.copilot_changes_requested}
+            logger.info(
+                "[pr-endgame] pr=%d changes requested by %s — handing to a human",
+                pr,
+                who,
+            )
+            return {
+                "pr": pr,
+                "verdict": rs.verdict,
+                "merged": False,
+                "reason": "changes_requested"
+                if fix_cycles == 0
+                else "needs_human_after_fixes",
+                "fix_cycles": fix_cycles,
+                "copilot_changes_requested": rs.copilot_changes_requested,
+            }
 
         # Only consider merging on an approval that satisfies the Copilot gate.
-        approved = rs.copilot_approved if require_copilot else (rs.verdict == "approved")
+        approved = (
+            rs.copilot_approved if require_copilot else (rs.verdict == "approved")
+        )
         if approved:
             if not auto_merge:
-                return {"pr": pr, "verdict": "approved", "merged": False,
-                        "reason": "auto_merge_disabled", "copilot_approved": rs.copilot_approved}
+                return {
+                    "pr": pr,
+                    "verdict": "approved",
+                    "merged": False,
+                    "reason": "auto_merge_disabled",
+                    "copilot_approved": rs.copilot_approved,
+                }
             merged = await asyncio.to_thread(merge_pr, owner, repo, pr, runner=runner)
             if merged and on_approved_merged is not None:
                 try:
                     on_approved_merged()
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("[pr-endgame] post-merge re-test hook failed: %s", exc)
-            return {"pr": pr, "verdict": "approved", "merged": merged,
-                    "reason": None if merged else "merge_failed",
-                    "copilot_approved": rs.copilot_approved}
+                    logger.warning(
+                        "[pr-endgame] post-merge re-test hook failed: %s", exc
+                    )
+            return {
+                "pr": pr,
+                "verdict": "approved",
+                "merged": merged,
+                "reason": None if merged else "merge_failed",
+                "copilot_approved": rs.copilot_approved,
+            }
         # else: pending (or approved-but-not-by-Copilot when require_copilot) → keep waiting
 
-    return {"pr": pr, "verdict": "pending", "merged": False,
-            "reason": "review_timeout (no Copilot approval)" if require_copilot else "review_timeout"}
+    return {
+        "pr": pr,
+        "verdict": "pending",
+        "merged": False,
+        "reason": "review_timeout (no Copilot approval)"
+        if require_copilot
+        else "review_timeout",
+    }
 
 
 def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
@@ -429,7 +587,11 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
 
 
 def gather_pr_context(
-    project_path: Path, spec_dir: Path, spec_id: str, *, runner: Runner = _default_runner
+    project_path: Path,
+    spec_dir: Path,
+    spec_id: str,
+    *,
+    runner: Runner = _default_runner,
 ) -> dict | None:
     """Resolve {worktree, branch, base, repo} for a finished task, or None.
 
@@ -509,8 +671,14 @@ async def run_pr_endgame(
     title, body = _pr_title_body(spec_dir, spec_id)
     try:
         pr = await asyncio.to_thread(
-            lambda: create_pr(worktree=worktree, branch=branch, base=base,
-                              title=title, body=body, runner=runner)
+            lambda: create_pr(
+                worktree=worktree,
+                branch=branch,
+                base=base,
+                title=title,
+                body=body,
+                runner=runner,
+            )
         )
     except Exception as exc:  # noqa: BLE001 — endgame must never break completion
         logger.warning("[pr-endgame] create_pr error: %s", exc)
@@ -527,16 +695,27 @@ async def run_pr_endgame(
         try:
             on_pr_opened(pr)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[pr-endgame] on_pr_opened (reviewer trigger) failed: %s", exc)
+            logger.warning(
+                "[pr-endgame] on_pr_opened (reviewer trigger) failed: %s", exc
+            )
     logger.info(
         "[pr-endgame] opened PR #%d for %s (reviewer=%s, auto_merge=%s)",
-        pr, spec_id, reviewer, auto_merge,
+        pr,
+        spec_id,
+        reviewer,
+        auto_merge,
     )
 
     coro = watch_and_finish(
-        owner=owner, repo=name, pr=pr, auto_merge=auto_merge,
-        require_copilot=(reviewer == "copilot"), review_fn=review_fn,
-        fix_fn=fix_fn, on_approved_merged=re_test, runner=runner,
+        owner=owner,
+        repo=name,
+        pr=pr,
+        auto_merge=auto_merge,
+        require_copilot=(reviewer == "copilot"),
+        review_fn=review_fn,
+        fix_fn=fix_fn,
+        on_approved_merged=re_test,
+        runner=runner,
     )
     if background:
         asyncio.create_task(coro)
