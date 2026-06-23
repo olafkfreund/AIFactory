@@ -102,7 +102,9 @@ def _now_iso() -> str:
 
 def _ce_source() -> str:
     """CloudEvents ``source`` URI-reference identifying this producer."""
-    return (os.environ.get("AIFACTORY_EVENT_SOURCE") or "/aifactory").strip() or "/aifactory"
+    return (
+        os.environ.get("AIFACTORY_EVENT_SOURCE") or "/aifactory"
+    ).strip() or "/aifactory"
 
 
 def _new_event_id() -> str:
@@ -226,9 +228,13 @@ def _rollup(records: list[dict], key: str) -> dict:
         slot["input_tokens"] += int(rec.get("input_tokens", 0) or 0)
         slot["output_tokens"] += int(rec.get("output_tokens", 0) or 0)
         slot["total_tokens"] += int(rec.get("total_tokens", 0) or 0)
-        slot["cost_usd"] = round(slot["cost_usd"] + float(rec.get("cost_usd", 0.0) or 0.0), 6)
+        slot["cost_usd"] = round(
+            slot["cost_usd"] + float(rec.get("cost_usd", 0.0) or 0.0), 6
+        )
         slot["workers"] += 1
-        slot["duration_ms"] = int(slot.get("duration_ms", 0)) + int(rec.get("duration_ms", 0) or 0)
+        slot["duration_ms"] = int(slot.get("duration_ms", 0)) + int(
+            rec.get("duration_ms", 0) or 0
+        )
         # A provider bucket shares one billing mode; carry it so CFactory knows
         # whether this bucket's spend is real dollars or notional (#96).
         if rec.get("billing_mode"):
@@ -405,7 +411,9 @@ def build_completion_event(
         _evidence_tokens = int((usage or {}).get("total_tokens", 0) or 0)
         if _evidence_tokens <= 0:
             status = "failed"
-            halt_reason = halt_reason or "no_evidence: build emitted 0 tokens (did not run)"
+            halt_reason = (
+                halt_reason or "no_evidence: build emitted 0 tokens (did not run)"
+            )
     when = updated_at or _now_iso()
     event = {
         "correlation_key": correlation_key(spec_id, issue_number),
@@ -711,7 +719,9 @@ def emit_worker_progress(
         _notify_worker_progress(event, spec_dir=spec_dir)
         return event
     except Exception:  # noqa: BLE001 — a progress heartbeat must never break a build
-        logger.debug("worker progress heartbeat emit failed (best-effort)", exc_info=True)
+        logger.debug(
+            "worker progress heartbeat emit failed (best-effort)", exc_info=True
+        )
         return None
 
 
@@ -784,7 +794,9 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
             enqueue(event, url)
             return
     except Exception:  # noqa: BLE001 — fall back to the direct POST, never raise
-        logger.debug("outbox enqueue failed; falling back to direct POST", exc_info=True)
+        logger.debug(
+            "outbox enqueue failed; falling back to direct POST", exc_info=True
+        )
 
     try:
         import urllib.request
@@ -802,7 +814,12 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
 
 
 def emit_terminal_completion(
-    spec_dir: Path, *, task_id: str, project_id: str, spec_id: str, status: str,
+    spec_dir: Path,
+    *,
+    task_id: str,
+    project_id: str,
+    spec_id: str,
+    status: str,
 ) -> dict:
     """Build + emit the completion event for a task that reached ``status``.
     Returns the event (for callers/tests). Best-effort; never raises."""
@@ -833,9 +850,51 @@ def emit_terminal_completion(
                 worker=workers[0],
             )
     except Exception:  # noqa: BLE001 — must never break the terminal event
-        logger.debug("serial main-worker sub-event skipped (best-effort)", exc_info=True)
+        logger.debug(
+            "serial main-worker sub-event skipped (best-effort)", exc_info=True
+        )
     notify_completion(event, spec_dir=spec_dir)
     return event
+
+
+def emit_usage_snapshot(
+    spec_dir: Path,
+    *,
+    task_id: str,
+    project_id: str,
+    spec_id: str,
+    status: str,
+) -> dict | None:
+    """Emit a NON-terminal, usage-bearing event so the cockpit reflects RUNNING
+    cost even when a task pauses for human review (or otherwise stops without a
+    terminal ``done``/``failed``).
+
+    Cost accrues continuously — a build that paused at review or never finished
+    has already spent real tokens — so usage must reach CFactory independent of
+    terminal completion (``emit_terminal_completion`` only fires on terminal
+    states). This rides the SAME envelope + transport (``build_completion_event``
+    + ``notify_completion``), carrying the current ``usage`` block with the
+    non-terminal ``status``; CFactory records usage from any event that carries
+    it. Best-effort: returns the event, or ``None`` when there is nothing to
+    report (no usage yet) — never raises.
+    """
+    usage = read_usage(spec_dir)
+    if usage is None:
+        return None
+    try:
+        event = build_completion_event(
+            task_id=task_id,
+            spec_id=spec_id,
+            status=status,
+            issue_number=read_issue_number(spec_dir),
+            project_id=project_id,
+            usage=usage,
+        )
+        notify_completion(event, spec_dir=spec_dir)
+        return event
+    except Exception:  # noqa: BLE001 — usage reporting must never break the caller
+        logger.debug("usage snapshot emit failed (best-effort)", exc_info=True)
+        return None
 
 
 def _read_halt_reason(spec_dir: Path) -> str | None:
