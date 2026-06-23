@@ -316,6 +316,30 @@ class AgentService(
             await self._store().mark_terminal(task_id, lifecycle, error=error)
         except Exception:  # noqa: BLE001 - never break the exit/drain path
             _log.exception("[AgentService] could not free durable slot for %s", task_id)
+        # Running-cost: a build that paused at review still spent real tokens, but
+        # emit_terminal_completion only fires on terminal states (done/failed/
+        # stuck), so a review-paused build's usage never reaches the cockpit. Emit
+        # a non-terminal usage snapshot here so the accrued cost is recorded
+        # regardless of whether the task terminally completes. Best-effort.
+        if lifecycle == "review" and spec_dir is not None:
+            try:
+                from .completion import emit_usage_snapshot
+
+                pid = task_id.split(":", 1)[0] if ":" in task_id else ""
+                sid = task_id.split(":", 1)[1] if ":" in task_id else spec_dir.name
+                emit_usage_snapshot(
+                    spec_dir,
+                    task_id=task_id,
+                    project_id=pid,
+                    spec_id=sid,
+                    status="human_review",
+                )
+            except Exception:  # noqa: BLE001 - usage reporting is best-effort
+                _log.debug(
+                    "[AgentService] usage snapshot emit failed for %s",
+                    task_id,
+                    exc_info=True,
+                )
 
     async def _update_plan_status(
         self,
