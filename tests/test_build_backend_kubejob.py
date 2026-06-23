@@ -333,6 +333,40 @@ def test_build_job_env_propagates_non_claude_provider_env(
     assert "GEMINI_CLI_TRUST_WORKSPACE" not in env
 
 
+def test_build_job_env_propagates_artifact_store_s3_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # RFC-0017 #190: a packed-workspace Job unpacks /work from object storage via
+    # core/artifact_store, which reads the S3_* namespace. Those vars must reach the
+    # Job env (when present on the control plane) or the unpack dies fail-loud.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio.factory.svc.cluster.local:9000")
+    monkeypatch.setenv("S3_BUCKET", "factory-artifacts")
+    monkeypatch.setenv("S3_ACCESS_KEY", "minio-access")
+    monkeypatch.setenv("S3_SECRET_KEY", "minio-secret")
+    monkeypatch.setenv("S3_REGION", "us-east-1")
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["S3_ENDPOINT"] == "http://minio.factory.svc.cluster.local:9000"
+    assert env["S3_BUCKET"] == "factory-artifacts"
+    assert env["S3_ACCESS_KEY"] == "minio-access"
+    assert env["S3_SECRET_KEY"] == "minio-secret"
+    assert env["S3_REGION"] == "us-east-1"
+
+
+def test_build_job_env_omits_s3_env_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default (S3 not configured / pack flag off): no S3_* placeholders leak into
+    # the Job env — the single-node co-mount path is unchanged.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env = bb.build_job_env("oauth-tok-123")
+    assert "S3_ENDPOINT" not in env
+    assert "S3_ACCESS_KEY" not in env
+    assert "S3_SECRET_KEY" not in env
+
+
 def test_build_job_env_never_includes_anthropic_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
