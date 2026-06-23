@@ -791,3 +791,71 @@ async def test_dispatch_populates_worktree_before_job_created(
 
     assert fake.spec_present_at_create is True
     assert spec_in_worktree.exists()
+
+
+# --------------------------------------------------------------------------- #
+# 5. File-auth CLI credential seeding (#690)
+# --------------------------------------------------------------------------- #
+
+
+def _seed_env(monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    return Path(_DATA_ROOT) / "workspaces" / "proj-1"
+
+
+def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed
+    # initContainer, no cc-* volumes.
+    monkeypatch.delenv("AIFACTORY_CLI_CREDS_SECRET", raising=False)
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+    assert "initContainers" not in pod
+    vol_names = {v["name"] for v in pod.get("volumes", [])}
+    assert "cli-creds" not in vol_names
+    assert "cc-claude" not in vol_names
+
+
+def test_seed_creds_injected_when_secret_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+
+    # seed-creds initContainer present, busybox, mounts the secret at /seed.
+    init = next(c for c in pod["initContainers"] if c["name"] == "seed-creds")
+    assert init["image"].startswith("busybox")
+    seed_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "cli-creds")
+    assert seed_mount["mountPath"] == "/seed"
+    assert seed_mount.get("readOnly") is True
+    # cp's every known provider file into HOME, tolerant of a partial secret.
+    script = init["args"][0]
+    for key in (
+        "claude-credentials.json",
+        "codex-auth.json",
+        "copilot-apps.json",
+        "gemini-oauth_creds.json",
+    ):
+        assert f"/seed/{key}" in script
+    assert "|| true" in script  # never aborts on a missing provider file
+
+    # cli-creds secret volume points at the configured secret.
+    cli = next(v for v in pod["volumes"] if v["name"] == "cli-creds")
+    assert cli["secret"]["secretName"] == "factory-cli-creds"
+
+    # The build container mounts the seeded home dirs (so the CLIs find creds).
+    build_mounts = {mt["mountPath"] for mt in pod["containers"][0]["volumeMounts"]}
+    assert {
+        "/home/nonroot/.claude",
+        "/home/nonroot/.codex",
+        "/home/nonroot/.gemini",
+        "/home/nonroot/.config",
+    } <= build_mounts
