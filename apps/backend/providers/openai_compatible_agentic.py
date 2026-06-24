@@ -50,6 +50,7 @@ from typing import Any
 from providers import BaseLLMProvider
 from providers.types import (
     AssistantMessage,
+    ResultMessage,
     TextBlock,
     ToolUseBlock,
     UserMessage,
@@ -178,6 +179,20 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
             {"role": "user", "content": self._pending_prompt},
         ]
 
+        # Accumulate real token usage across turns so the session loop records it
+        # (session.py reads ResultMessage.usage). The OpenAI/Ollama response carries
+        # `usage.prompt_tokens`/`completion_tokens`; map them to the
+        # input_tokens/output_tokens keys session.py expects. Without a terminal
+        # ResultMessage these tokens were dropped → token_usage.json = 0 → the
+        # benchmark's `tokens > 0` guard false-failed an otherwise-good build.
+        total_in = 0
+        total_out = 0
+
+        def _result() -> ResultMessage:
+            return ResultMessage(
+                usage={"input_tokens": total_in, "output_tokens": total_out}
+            )
+
         for turn in range(self._max_turns):
             logger.debug(
                 "OpenAICompatibleAgenticProvider: turn %d/%d",
@@ -204,7 +219,13 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                         )
                     ]
                 )
+                yield _result()
                 return
+
+            # Real token usage for this turn (OpenAI/Ollama `usage` block).
+            _delta_in, _delta_out = self._usage_delta(response_data)
+            total_in += _delta_in
+            total_out += _delta_out
 
             # OpenAI shape: choices[0].message
             choices = response_data.get("choices")
@@ -218,6 +239,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                         )
                     ]
                 )
+                yield _result()
                 return
 
             message = (
@@ -309,6 +331,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 if not assistant_blocks:
                     assistant_blocks.append(TextBlock(text="(no output from server)"))
                 yield AssistantMessage(content=assistant_blocks)
+                yield _result()
                 return
 
         logger.warning(
@@ -325,10 +348,25 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 )
             ]
         )
+        yield _result()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _usage_delta(response_data: Any) -> tuple[int, int]:
+        """(input_tokens, output_tokens) for one response's ``usage`` block.
+
+        Maps OpenAI/Ollama ``prompt_tokens``/``completion_tokens`` to the
+        input/output names the session loop records. ``(0, 0)`` when absent.
+        """
+        usage = response_data.get("usage") if isinstance(response_data, dict) else None
+        if not isinstance(usage, dict):
+            return 0, 0
+        return int(usage.get("prompt_tokens") or 0), int(
+            usage.get("completion_tokens") or 0
+        )
 
     @staticmethod
     def _parse_tool_args(raw: Any) -> dict[str, Any]:

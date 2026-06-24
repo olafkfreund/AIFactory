@@ -89,6 +89,25 @@ class UserMessage:
     content: list
 
 
+@dataclass
+class ResultMessage:
+    """Terminal session message carrying real token usage.
+
+    Mirrors the Claude SDK's ``ResultMessage`` so ``agents.session`` records
+    per-turn token usage the SAME way for every provider: it inspects
+    ``type(msg).__name__ == "ResultMessage"`` and reads ``msg.usage``
+    (``{"input_tokens", "output_tokens", ...}``) plus ``msg.total_cost_usd`` /
+    ``msg.session_id``. Agentic HTTP providers (e.g. openai-compatible / Ollama)
+    yield ONE of these at the end of the loop so their usage lands in
+    token_usage.json instead of being silently dropped (which made the benchmark's
+    ``tokens > 0`` guard false-fail an Ollama build).
+    """
+
+    usage: dict[str, int]
+    total_cost_usd: float | None = None
+    session_id: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
