@@ -14,8 +14,10 @@ Invariants captured:
     (the #71 regression).
   - FAILED writes the completion marker (and emits status=failed) but NOT the
     side-effects marker (side-effects are COMPLETED-only).
-  - A non-terminal transition (human_review) writes neither marker and does not
-    emit a terminal completion event.
+  - human_review emits the RFC-0001 completion event (status=human_review) and
+    writes the completion marker so a parked-but-finished build still reports its
+    token usage to CFactory — but NOT the side-effects marker (the PR endgame is
+    COMPLETED-only, so human_review stays resumable).
 """
 
 from __future__ import annotations
@@ -115,7 +117,11 @@ async def test_failed_emits_completion_but_no_side_effects(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_non_terminal_transition_emits_nothing(tmp_path: Path) -> None:
+async def test_human_review_emits_usage_but_no_side_effects(tmp_path: Path) -> None:
+    # A successful build parks at human_review (auto-merge off). It MUST still
+    # emit its RFC-0001 usage block to CFactory (else the cockpit shows $0 for
+    # real spend), but must NOT run the COMPLETED-only side-effects (PR endgame),
+    # so it stays resumable.
     spec_id, task_id = "spec-004", "proj:spec-004"
     spec_dir = _make_spec(tmp_path, spec_id)
     svc = _make_service(tmp_path)
@@ -125,6 +131,7 @@ async def test_non_terminal_transition_emits_nothing(tmp_path: Path) -> None:
             tmp_path, spec_id, "human_review", task_id, emit_events=True
         )
 
-    assert not (spec_dir / _COMPLETION_MARKER).exists()
+    assert (spec_dir / _COMPLETION_MARKER).exists()
     assert not (spec_dir / _SIDE_EFFECTS_MARKER).exists()
-    assert mock_emit.call_count == 0
+    assert mock_emit.call_count == 1
+    assert mock_emit.call_args.kwargs.get("status") == "human_review"
