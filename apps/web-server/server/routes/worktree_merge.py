@@ -1413,7 +1413,14 @@ async def merge_worktree(
     """
     Merge the worktree branch into the base branch.
     """
+    import logging
     import subprocess
+
+    # This handler uses ``logger`` (e.g. when clearing internal merge-blocking
+    # files) but — unlike its sibling handlers — never bound it, so that path
+    # raised NameError → HTTP 500 on Approve (PR + merge). Bind it locally,
+    # matching the per-function pattern used elsewhere in this module.
+    logger = logging.getLogger(__name__)
 
     if options is None:
         options = WorktreeMergeOptions()
