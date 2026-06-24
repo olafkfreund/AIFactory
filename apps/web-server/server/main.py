@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import Receive, Scope, Send
 
 from . import env_bootstrap  # noqa: F401  — loads .env into os.environ first
 from .auth import TokenAuthMiddleware
@@ -247,6 +248,64 @@ def _read_app_version() -> str:
     except OSError:
         pass
     return "0.0.0-unknown"
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles for the React SPA mounted at the catch-all ``/``.
+
+    Two behaviours on top of Starlette's StaticFiles:
+
+    1. ``__call__`` guards non-HTTP scopes. The ``/`` mount is a catch-all, so a
+       websocket connection to a path with no matching WS route falls through to
+       here. Starlette's ``StaticFiles.__call__`` opens with
+       ``assert scope["type"] == "http"``, which raised ``AssertionError`` for
+       every stray websocket — spamming the logs and breaking the handshake with
+       a 500 instead of a clean rejection. Registered WS routes (``/ws/*``,
+       agent-console) are matched before this mount and are unaffected.
+    2. ``get_response`` does SPA history-fallback (serve ``index.html`` for
+       extension-less 404 GETs) and sets the SSO-safe cache policy.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1000})
+            return
+        await super().__call__(scope, receive, send)
+
+    async def get_response(self, path, scope):
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            # SPA history-fallback: React Router owns client-side routes
+            # like /console/<pid>/<spec>. The static mount has no file at
+            # those paths, so StaticFiles raises 404. Serve index.html
+            # instead and let the SPA router resolve the path — otherwise
+            # deep-links and hard refreshes return {"detail":"Not Found"}.
+            #
+            # Only fall back for genuine SPA navigations: a 404 on a GET
+            # whose last path segment has no file extension (i.e. not a
+            # missing /assets/foo.js). Anything with an extension is a real
+            # missing asset and should keep its 404. API routes never reach
+            # here — their routers are matched before this "/" mount.
+            request_path = scope.get("path") or ""
+            last_segment = request_path.rsplit("/", 1)[-1]
+            if (
+                exc.status_code == 404
+                and scope.get("method", "GET") == "GET"
+                and "." not in last_segment
+            ):
+                response = await super().get_response("index.html", scope)
+            else:
+                raise
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        elif "/assets/" in (scope.get("path") or ""):
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+            )
+        return response
 
 
 def create_app() -> FastAPI:
@@ -504,41 +563,6 @@ def create_app() -> FastAPI:
     # Cache-Control, which triggers browser heuristic caching of the shell.
     # So: HTML responses → `no-cache` (store but always revalidate; cheap 304s);
     # content-hashed assets under /assets/ → long-lived immutable cache.
-    class SPAStaticFiles(StaticFiles):
-        async def get_response(self, path, scope):
-            try:
-                response = await super().get_response(path, scope)
-            except StarletteHTTPException as exc:
-                # SPA history-fallback: React Router owns client-side routes
-                # like /console/<pid>/<spec>. The static mount has no file at
-                # those paths, so StaticFiles raises 404. Serve index.html
-                # instead and let the SPA router resolve the path — otherwise
-                # deep-links and hard refreshes return {"detail":"Not Found"}.
-                #
-                # Only fall back for genuine SPA navigations: a 404 on a GET
-                # whose last path segment has no file extension (i.e. not a
-                # missing /assets/foo.js). Anything with an extension is a real
-                # missing asset and should keep its 404. API routes never reach
-                # here — their routers are matched before this "/" mount.
-                request_path = scope.get("path") or ""
-                last_segment = request_path.rsplit("/", 1)[-1]
-                if (
-                    exc.status_code == 404
-                    and scope.get("method", "GET") == "GET"
-                    and "." not in last_segment
-                ):
-                    response = await super().get_response("index.html", scope)
-                else:
-                    raise
-            content_type = response.headers.get("content-type", "")
-            if content_type.startswith("text/html"):
-                response.headers["Cache-Control"] = "no-cache, must-revalidate"
-            elif "/assets/" in (scope.get("path") or ""):
-                response.headers["Cache-Control"] = (
-                    "public, max-age=31536000, immutable"
-                )
-            return response
-
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
         app.mount("/", SPAStaticFiles(directory=str(static_dir), html=True), name="static")
