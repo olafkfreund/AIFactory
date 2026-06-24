@@ -162,11 +162,36 @@ async def clone_or_update(
                     cwd=workspace,
                     timeout=timeout_seconds,
                 )
-            await _run_git(
-                ["pull", "--ff-only"],
-                cwd=workspace,
-                timeout=timeout_seconds,
-            )
+            try:
+                await _run_git(
+                    ["pull", "--ff-only"],
+                    cwd=workspace,
+                    timeout=timeout_seconds,
+                )
+            except GitOperationError:
+                # The managed mirror diverged or carries local/untracked
+                # changes (e.g. a consumer wrote build artifacts into it),
+                # so a fast-forward pull aborts. This clone is a disposable
+                # mirror of origin — hard-reset to the fetched remote tip and
+                # drop untracked cruft rather than failing the whole operation
+                # with a 400. (Honours the documented "reset/fast-forward".)
+                target = f"origin/{branch}" if branch else "FETCH_HEAD"
+                await _run_git(
+                    ["reset", "--hard", target],
+                    cwd=workspace,
+                    timeout=timeout_seconds,
+                )
+                await _run_git(
+                    ["clean", "-fd"],
+                    cwd=workspace,
+                    timeout=timeout_seconds,
+                )
+                logger.warning(
+                    "[workspace] ff-only pull failed for %s; hard-reset to %s "
+                    "and cleaned untracked files",
+                    workspace,
+                    target,
+                )
         finally:
             if credential is not None:
                 # Restore origin to the sanitized URL so credentials
