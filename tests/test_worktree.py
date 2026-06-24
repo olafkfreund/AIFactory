@@ -61,6 +61,18 @@ class TestWorktreeManagerInitialization:
         manager = WorktreeManager(temp_git_repo, base_branch="main")
         assert manager.base_branch == "main"
 
+    def test_init_invalid_base_branch_falls_back_to_detected(
+        self, temp_git_repo: Path
+    ):
+        """A base_branch that doesn't resolve (e.g. a benchmark's `bench/go-hello`
+        that exists only on origin, or nowhere) must NOT be used verbatim — that
+        makes `git worktree add -b aifactory/<spec> <path> <base>` fail and the
+        build silently runs on the primary checkout (main) with no dedicated
+        branch to hand off. It degrades to the detected base instead."""
+        manager = WorktreeManager(temp_git_repo, base_branch="bench/go-hello")
+        assert manager.base_branch == "main"
+        assert manager.base_branch != "bench/go-hello"
+
     def test_setup_creates_worktrees_directory(self, temp_git_repo: Path):
         """Setup creates the worktrees directory."""
         manager = WorktreeManager(temp_git_repo)
