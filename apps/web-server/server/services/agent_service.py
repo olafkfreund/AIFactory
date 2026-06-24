@@ -492,10 +492,22 @@ class AgentService(
                 spec_id=spec_id,
                 task_id=task_id,
                 backend_path=_backend_path,
-                is_terminal=phase_enum in (TaskPhase.COMPLETED, TaskPhase.FAILED),
+                # human_review (PLAN_REVIEW) is also terminal for usage-reporting:
+                # a successful build parks there (auto-merge off) and would
+                # otherwise NEVER emit its RFC-0001 usage block to CFactory — the
+                # cockpit then shows $0/0 tokens for real, completed spend. Emitting
+                # here is usage-reporting only: is_completed (COMPLETED-only) still
+                # gates the PR endgame/TFactory handoff, so human_review stays
+                # resumable. The fire-once marker keeps it idempotent.
+                is_terminal=phase_enum
+                in (TaskPhase.COMPLETED, TaskPhase.FAILED, TaskPhase.PLAN_REVIEW),
                 is_completed=phase_enum == TaskPhase.COMPLETED,
                 terminal_status=(
-                    "completed" if phase_enum == TaskPhase.COMPLETED else "failed"
+                    "completed"
+                    if phase_enum == TaskPhase.COMPLETED
+                    else "human_review"
+                    if phase_enum == TaskPhase.PLAN_REVIEW
+                    else "failed"
                 ),
                 logger=logger,
             )
