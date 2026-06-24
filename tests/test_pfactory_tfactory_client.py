@@ -57,16 +57,25 @@ def test_build_payload_carries_taxonomy_and_meta():
 
 def test_payload_carries_tfactory_block_when_provided():
     c = classify_labels(["pfactory", "handoff:tfactory"])
-    tf = {"lanes": ["unit", "api"], "frameworks": {"unit": "pytest"},
-          "coverage_target": 0.85}
+    tf = {
+        "lanes": ["unit", "api"],
+        "frameworks": {"unit": "pytest"},
+        "coverage_target": 0.85,
+    }
     payload = build_handoff_payload("001-x", {"title": "t"}, c, {}, tfactory=tf)
     assert payload["tfactory"] == tf
 
 
 def test_load_tfactory_block_reads_plan(tmp_path):
-    plan = {"feature": "x", "tfactory": {"lanes": ["unit"], "frameworks": {"unit": "pytest"}}}
+    plan = {
+        "feature": "x",
+        "tfactory": {"lanes": ["unit"], "frameworks": {"unit": "pytest"}},
+    }
     (tmp_path / "implementation_plan.json").write_text(json.dumps(plan))
-    assert load_tfactory_block(tmp_path) == {"lanes": ["unit"], "frameworks": {"unit": "pytest"}}
+    assert load_tfactory_block(tmp_path) == {
+        "lanes": ["unit"],
+        "frameworks": {"unit": "pytest"},
+    }
 
 
 def test_load_tfactory_block_absent_returns_empty(tmp_path):
@@ -76,6 +85,45 @@ def test_load_tfactory_block_absent_returns_empty(tmp_path):
 
 def test_load_tfactory_block_no_plan_returns_empty(tmp_path):
     assert load_tfactory_block(tmp_path) == {}
+
+
+# ── verify-lane model propagation (Ollama / non-default builds) ──────────────
+
+from pfactory.tfactory_client import _verify_phase_models  # noqa: E402
+
+
+def test_verify_phase_models_maps_all_lanes_to_qa_model(tmp_path):
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps(
+            {
+                "isAutoProfile": True,
+                "phaseModels": {
+                    "coding": "openai-compatible:qwen3-coder:480b",
+                    "qa": "openai-compatible:gpt-oss:120b",
+                    "planning": "openai-compatible:gpt-oss:120b",
+                },
+            }
+        )
+    )
+    pm = _verify_phase_models(tmp_path)
+    # Verify is judgment work → every TFactory lane uses the build's qa model,
+    # NOT the coder model used for the build's coding phase.
+    assert set(pm) == {"spec", "planning", "coding", "qa", "qa_fixer", "test_gen"}
+    assert all(v == "openai-compatible:gpt-oss:120b" for v in pm.values())
+
+
+def test_verify_phase_models_falls_back_to_planning_then_spec(tmp_path):
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"phaseModels": {"planning": "openai-compatible:gpt-oss:120b"}})
+    )
+    assert _verify_phase_models(tmp_path)["coding"] == "openai-compatible:gpt-oss:120b"
+
+
+def test_verify_phase_models_empty_without_phasemodels(tmp_path):
+    # No task_metadata → {} (default behaviour preserved; verify uses its default).
+    assert _verify_phase_models(tmp_path) == {}
+    (tmp_path / "task_metadata.json").write_text(json.dumps({"model": "sonnet"}))
+    assert _verify_phase_models(tmp_path) == {}
 
 
 # ── send_handoff ────────────────────────────────────────────────────────────
