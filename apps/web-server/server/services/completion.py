@@ -823,6 +823,17 @@ def emit_terminal_completion(
 ) -> dict:
     """Build + emit the completion event for a task that reached ``status``.
     Returns the event (for callers/tests). Best-effort; never raises."""
+    # RFC-0017 #190: on the packed multi-node path the build Job wrote
+    # token_usage.json into its ephemeral /work, not this control-plane data-PVC
+    # spec dir — so fetch the copy the Job pushed to object storage before reading
+    # it, else CFactory shows zero token usage. No-op on the co-mount path (file
+    # already present) and best-effort (never raises).
+    try:
+        from core.workspace_fetch import maybe_fetch_usage  # noqa: PLC0415
+
+        maybe_fetch_usage(spec_dir, spec_id)
+    except Exception:  # noqa: BLE001 - defensive; emit must still proceed
+        logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)
     event = build_completion_event(
         task_id=task_id,

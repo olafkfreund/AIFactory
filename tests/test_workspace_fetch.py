@@ -158,3 +158,44 @@ def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
     # token injected into the push URL; pushes HEAD:<branch>
     assert push[2] == "https://x-access-token:ghs_faketoken@github.com/o/r.git"
     assert push[3] == "HEAD:aifactory/042-x"
+
+
+# ---------------------------------------------------------------------------
+# Usage propagation: token_usage.json from the packed Job's /work back to the
+# control plane via object storage, so CFactory shows token usage (#190).
+# ---------------------------------------------------------------------------
+
+
+def test_push_usage_no_uri_is_noop(monkeypatch, tmp_path):
+    monkeypatch.delenv("WORKSPACE_URI", raising=False)
+    (tmp_path / "token_usage.json").write_text("{}")
+    assert wf.maybe_push_usage(tmp_path, "042-x") is False
+
+
+def test_push_usage_no_file_is_noop(monkeypatch, tmp_path):
+    monkeypatch.setenv("WORKSPACE_URI", "s3://b/k")
+    assert wf.maybe_push_usage(tmp_path, "042-x") is False
+
+
+def test_usage_round_trip(monkeypatch, tmp_path):
+    store = a_s._fake_store()
+    monkeypatch.setattr(a_s, "ArtifactStore", lambda *a, **k: store)
+    # producer: Job pushes token_usage.json
+    monkeypatch.setenv("WORKSPACE_URI", "s3://b/k")
+    job_spec = tmp_path / "job"
+    job_spec.mkdir()
+    (job_spec / "token_usage.json").write_text('{"total_tokens": 123}')
+    assert wf.maybe_push_usage(job_spec, "042-x") is True
+    # consumer: control-plane spec dir is empty -> fetch reconstitutes the file
+    cp_spec = tmp_path / "cp"
+    cp_spec.mkdir()
+    assert wf.maybe_fetch_usage(cp_spec, "042-x") is True
+    import json as _json
+
+    assert _json.loads((cp_spec / "token_usage.json").read_text())["total_tokens"] == 123
+
+
+def test_fetch_usage_noop_when_present(monkeypatch, tmp_path):
+    (tmp_path / "token_usage.json").write_text("{}")
+    # already present -> no fetch attempted (would not even need the store)
+    assert wf.maybe_fetch_usage(tmp_path, "042-x") is False

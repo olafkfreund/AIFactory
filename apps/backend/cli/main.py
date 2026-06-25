@@ -501,9 +501,16 @@ def main() -> None:
     # path (WORKSPACE_URI unset) where ``/work`` survives on the data PVC. Skipped
     # for planning-only runs (no build branch yet).
     if not args.stop_after_planning:
-        from core.workspace_fetch import maybe_push_workspace_branch  # noqa: PLC0415
+        from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_push_usage,
+            maybe_push_workspace_branch,
+        )
 
         maybe_push_workspace_branch(project_dir, spec_dir.name)
+        # Same packed-path propagation gap: token_usage.json is written here in the
+        # Job's ephemeral /work but the control-plane completion emitter reads the
+        # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
+        maybe_push_usage(spec_dir, spec_dir.name)
 
 
 if __name__ == "__main__":
