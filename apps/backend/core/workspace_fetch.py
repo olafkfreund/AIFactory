@@ -147,3 +147,81 @@ def maybe_push_workspace_branch(
     except (OSError, subprocess.SubprocessError) as exc:  # never break a green build
         _log.warning("[workspace_fetch] branch push errored: %s", exc)
         return False
+
+
+_USAGE_FILE = "token_usage.json"
+
+
+def _usage_key(spec_id: str) -> str:
+    """Deterministic object key for a task's token_usage.json (RFC-0017 #190).
+
+    Both the Job (producer) and the control plane (consumer) derive the SAME key
+    from ``spec_id`` alone — no URI threading needed.
+    """
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_USAGE_FILE
+        ).key()
+    )
+
+
+def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's ``token_usage.json`` to object storage on the packed path.
+
+    Same propagation gap as :func:`maybe_push_workspace_branch`: the build writes
+    ``token_usage.json`` into the Job's ephemeral ``/work`` spec dir, but the
+    completion-event emitter runs on the CONTROL PLANE and reads the data-PVC spec
+    dir — never populated on the packed path — so CFactory shows zero token usage.
+    Uploading it here (keyed by ``spec_id``) lets the control plane fetch it.
+
+    No-op off the packed path (``WORKSPACE_URI`` unset) where the spec dir is on
+    the data PVC already. Best-effort: never raises.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _USAGE_FILE
+    if not src.is_file():
+        _log.warning("[workspace_fetch] no %s to push", _USAGE_FILE)
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        ArtifactStore().put_bytes(
+            _usage_key(spec_id), src.read_bytes(), "application/json"
+        )
+        _log.info("[workspace_fetch] pushed %s to object store (packed path)", _USAGE_FILE)
+        return True
+    except Exception as exc:  # noqa: BLE001 - must never break a green build
+        _log.warning("[workspace_fetch] usage push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Control-plane counterpart to :func:`maybe_push_usage`.
+
+    If the data-PVC spec dir has no ``token_usage.json`` (the packed path never
+    wrote it there), fetch the one the Job pushed and write it locally so
+    ``completion.read_usage`` finds it and the completion event carries real token
+    usage to CFactory. No-op when the file already exists (co-mount path) or no
+    pushed copy exists. Best-effort: never raises.
+    """
+    dest = Path(spec_dir) / _USAGE_FILE
+    if dest.is_file():
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_usage_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - no pushed usage / store unreachable
+        _log.debug("[workspace_fetch] no pushed usage to fetch: %s", exc)
+        return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _log.info("[workspace_fetch] fetched %s from object store (packed path)", _USAGE_FILE)
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] could not write fetched usage: %s", exc)
+        return False
