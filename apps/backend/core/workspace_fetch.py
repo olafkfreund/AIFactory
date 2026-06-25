@@ -116,6 +116,7 @@ def maybe_push_workspace_branch(
             capture_output=True,
             text=True,
             timeout=120,
+            check=False,
         ).stdout.strip()
 
     try:
@@ -134,6 +135,7 @@ def maybe_push_workspace_branch(
             capture_output=True,
             text=True,
             timeout=180,
+            check=False,
         )
         if res.returncode != 0:
             _log.warning("[workspace_fetch] branch push failed: %s", res.stderr[:200])
