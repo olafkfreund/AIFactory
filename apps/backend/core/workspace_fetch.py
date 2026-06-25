@@ -160,9 +160,11 @@ def _usage_key(spec_id: str) -> str:
     """
     from core.artifact_store import ArtifactRef  # noqa: PLC0415
 
-    return ArtifactRef(
-        service="aifactory", job_id=spec_id, role="build", path=_USAGE_FILE
-    ).key()
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_USAGE_FILE
+        ).key()
+    )
 
 
 def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
