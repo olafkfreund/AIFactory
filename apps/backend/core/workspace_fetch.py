@@ -82,3 +82,68 @@ def maybe_unpack_workspace(project_dir: str | os.PathLike[str]) -> bool:
     # nonroot → git "dubious ownership". Mark it trusted before run.py touches git.
     _mark_git_safe_directory(dest)
     return True
+
+
+def maybe_push_workspace_branch(
+    project_dir: str | os.PathLike[str], spec_id: str
+) -> bool:
+    """Push the built worktree branch to origin on the packed path (RFC-0017 #190).
+
+    Symmetric to :func:`maybe_unpack_workspace`. On the packed (multi-node) path the
+    build worktree lives on the Job's ephemeral ``/work`` emptyDir, which is GONE
+    once the Job exits — so the control-plane handoff/PR-endgame push
+    (``tfactory_client._git_info_and_push`` / ``create-pr``), which reads the
+    control-plane data-PVC worktree, finds nothing and degrades to ``main`` (the
+    produced code is lost). Pushing the branch HERE, from inside the Job where
+    ``/work`` still holds the self-contained clone (origin + ``GITHUB_TOKEN``),
+    persists the build output to GitHub before the Job dies.
+
+    No-op (returns ``False``) when ``WORKSPACE_URI`` is absent — the co-mount path
+    keeps ``/work`` on the data PVC, so the existing control-plane push is unchanged.
+    Best-effort: never raises (a push failure must not fail an otherwise-green build).
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    wt = Path(project_dir) / ".aifactory" / "worktrees" / "tasks" / spec_id
+    if not wt.is_dir():
+        _log.warning("[workspace_fetch] no worktree at %s; nothing to push", wt)
+        return False
+
+    def _git(*args: str) -> str:
+        return subprocess.run(  # noqa: S603
+            ["git", *args],  # noqa: S607
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        ).stdout.strip()
+
+    try:
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+        url = _git("remote", "get-url", "origin")
+        if not branch or not url:
+            _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
+            return False
+        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        push_url = url
+        if token and url.startswith("https://github.com/"):
+            push_url = url.replace("https://", f"https://x-access-token:{token}@", 1)
+        res = subprocess.run(  # noqa: S603
+            ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
+            cwd=str(wt),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if res.returncode != 0:
+            _log.warning("[workspace_fetch] branch push failed: %s", res.stderr[:200])
+            return False
+        _log.info(
+            "[workspace_fetch] pushed build branch %s to origin (packed path)", branch
+        )
+        return True
+    except (OSError, subprocess.SubprocessError) as exc:  # never break a green build
+        _log.warning("[workspace_fetch] branch push errored: %s", exc)
+        return False

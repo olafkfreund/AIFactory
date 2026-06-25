@@ -493,6 +493,18 @@ def main() -> None:
         workers=args.workers,
     )
 
+    # RFC-0017 #190 (producer push-back): on the packed multi-node path ``/work``
+    # is an ephemeral emptyDir that dies with the Job, so persist the built branch
+    # to origin HERE — the control-plane handoff/PR-endgame push reads the
+    # control-plane data-PVC worktree, which the packed path never populates, and
+    # would otherwise degrade to ``main`` (losing the build). No-op on the co-mount
+    # path (WORKSPACE_URI unset) where ``/work`` survives on the data PVC. Skipped
+    # for planning-only runs (no build branch yet).
+    if not args.stop_after_planning:
+        from core.workspace_fetch import maybe_push_workspace_branch  # noqa: PLC0415
+
+        maybe_push_workspace_branch(project_dir, spec_dir.name)
+
 
 if __name__ == "__main__":
     main()
