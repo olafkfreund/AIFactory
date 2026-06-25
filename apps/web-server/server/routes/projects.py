@@ -226,7 +226,21 @@ def load_projects() -> dict[str, dict]:
 
 
 def save_projects(projects: dict[str, dict]) -> None:
-    """Save projects to disk."""
+    """Save projects to disk.
+
+    Stamps ``org_id=DEFAULT_ORG_ID`` on any entry that lacks one so that
+    programmatically-registered projects (cross-factory handoff, build
+    dispatch, the agent ``project_create`` tool) are immediately visible in
+    the org-scoped portal — not just after the next startup backfill
+    (``database.engine._backfill_project_orgs``). The portal create path sets
+    ``org_id`` explicitly before saving, so this never overrides a real value;
+    it only defaults the unowned case (single-tenant deployments own the
+    "default" org). An unowned project would otherwise be admin-only / hidden
+    (see ``project_authz`` — ``org_id is None`` → 403).
+    """
+    for proj in projects.values():
+        if isinstance(proj, dict) and not proj.get("org_id"):
+            proj["org_id"] = DEFAULT_ORG_ID
     projects_file = get_projects_file()
     projects_file.parent.mkdir(parents=True, exist_ok=True)
     projects_file.write_text(json.dumps(projects, indent=2))
