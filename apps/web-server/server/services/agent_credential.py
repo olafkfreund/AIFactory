@@ -157,6 +157,18 @@ class CredentialMixin:
                     )
         return self._token_pool
 
+    def reset_token_pool(self) -> None:
+        """Drop the cached token pool so the next build rebuilds it from source.
+
+        The pool (``_get_token_pool``) is cached for the process lifetime, so a
+        Claude-profile change made via the portal (Settings → Claude Profiles)
+        would otherwise not reach a warmed pool until a pod restart. Calling this
+        after a profile mutation makes the new token take effect on the next
+        build — no restart. Cheap (the next checkout rebuilds lazily).
+        """
+        with self._token_pool_build_lock:
+            self._token_pool = None
+
     def _resolve_claude_token_pooled(
         self, task_id: str
     ) -> tuple[str | None, str | None, str | None]:

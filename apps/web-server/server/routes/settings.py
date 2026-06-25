@@ -1086,6 +1086,19 @@ def save_profiles(data: dict) -> None:
     profiles_file.write_text(json.dumps(data, indent=2))
     # Set secure file permissions (owner read/write only) since profiles contain tokens
     profiles_file.chmod(0o600)
+    # Drop the cached Claude token pool so a profile change made here (the single
+    # chokepoint for every profile mutation: create / update / activate / delete /
+    # oauth-poll) takes effect on the NEXT build with no pod restart — the pool is
+    # otherwise cached for the process lifetime (claude_token_pool reads this file
+    # at precedence #2). Best-effort: never let a pool-reset failure break a save.
+    try:
+        from ..services.agent_service import get_agent_service
+
+        get_agent_service().reset_token_pool()
+    except Exception:  # pragma: no cover - defensive, save must still succeed
+        logging.getLogger(__name__).debug(
+            "[Claude Profiles] token-pool reset skipped", exc_info=True
+        )
 
 
 def _sync_env_token_for_active_profile(
