@@ -297,6 +297,24 @@ class TestAgenticProvider:
         assert body["stream"] is False
         assert body["tools"] == p._tool_defs
         assert body["temperature"] == 0
+        # Reasoning knobs are opt-in: absent unless the env vars are set.
+        assert "reasoning_effort" not in body
+        assert "max_tokens" not in body
+
+    def test_build_payload_reasoning_knobs_from_env(self, monkeypatch) -> None:
+        # Local reasoning models (Ollama gemma/gpt-oss) need bounded thinking +
+        # an explicit output budget so structured/tool turns actually emit.
+        monkeypatch.setenv("OPENAI_COMPATIBLE_REASONING_EFFORT", "low")
+        monkeypatch.setenv("OPENAI_COMPATIBLE_MAX_TOKENS", "4096")
+        p = OpenAICompatibleAgenticProvider(
+            working_dir=Path("/tmp"), tool_names=["Read"]
+        )
+        body = p._build_payload([{"role": "user", "content": "hi"}])
+        assert body["reasoning_effort"] == "low"
+        assert body["max_tokens"] == 4096
+        monkeypatch.setenv("OPENAI_COMPATIBLE_MAX_TOKENS", "notanint")
+        body2 = p._build_payload([{"role": "user", "content": "hi"}])
+        assert "max_tokens" not in body2
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_yields_final_message(self, tmp_path: Path) -> None:
