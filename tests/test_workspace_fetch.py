@@ -112,3 +112,49 @@ def test_fetch_error_propagates(monkeypatch, tmp_path) -> None:
         assert "object store unreachable" in str(exc)
     else:
         raise AssertionError("expected the fetch error to propagate")
+
+
+# ---------------------------------------------------------------------------
+# Producer push-back: persist the build branch on the packed (ephemeral /work)
+# path so the control-plane handoff/PR push doesn't degrade to `main` (#190).
+# ---------------------------------------------------------------------------
+
+
+def test_push_no_uri_is_noop(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("WORKSPACE_URI", raising=False)
+    assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is False
+
+
+def test_push_no_worktree_is_noop(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/key")
+    # No .aifactory/worktrees/tasks/042-x dir → nothing to push.
+    assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is False
+
+
+def test_push_branch_pushes_to_origin(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("WORKSPACE_URI", "s3://bucket/key")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghs_faketoken")  # noqa: S105 - test placeholder
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / "042-x"
+    wt.mkdir(parents=True)
+    calls = []
+
+    class _R:
+        def __init__(self, stdout="", rc=0):
+            self.stdout = stdout
+            self.stderr = ""
+            self.returncode = rc
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if args[:2] == ["git", "rev-parse"]:
+            return _R(stdout="aifactory/042-x")
+        if args[:3] == ["git", "remote", "get-url"]:
+            return _R(stdout="https://github.com/o/r.git")
+        return _R(rc=0)  # push
+
+    monkeypatch.setattr(wf.subprocess, "run", fake_run)
+    assert wf.maybe_push_workspace_branch(tmp_path, "042-x") is True
+    push = [c for c in calls if c[:2] == ["git", "push"]][0]
+    # token injected into the push URL; pushes HEAD:<branch>
+    assert push[2] == "https://x-access-token:ghs_faketoken@github.com/o/r.git"
+    assert push[3] == "HEAD:aifactory/042-x"
