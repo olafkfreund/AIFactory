@@ -45,6 +45,7 @@ import os
 import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator, AsyncIterator
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +104,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         base_url: str = _DEFAULT_BASE_URL,
         api_key: str | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
-        working_dir: Path | str = Path("."),
+        working_dir: Path | str = Path(),
         max_turns: int = _DEFAULT_MAX_TURNS,
         tool_names: list[str] | None = None,
         extra_headers: dict[str, str] | None = None,
@@ -129,6 +130,9 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         self._extra_headers: dict[str, str] = extra_headers or {}
         self._extra_options: dict[str, Any] = extra_options or {}
         self._pending_prompt: str | None = None
+        # Flipped to True once a model 400s on `reasoning_effort` (non-thinking
+        # models reject it); _build_payload then stops sending it.
+        self._reasoning_effort_unsupported = False
 
         effective_tools = tool_names or _DEFAULT_TOOL_NAMES
         self._tool_defs = get_tool_definitions(effective_tools)
@@ -209,7 +213,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                     asyncio.to_thread(self._http_post, url, payload),
                     timeout=float(self._timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield AssistantMessage(
                     content=[
                         TextBlock(
@@ -417,7 +421,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         # and reserve an explicit output budget so the model actually emits. Unset
         # → unchanged (the cloud OpenAI / ollama.com defaults stay untouched).
         _effort = os.environ.get("OPENAI_COMPATIBLE_REASONING_EFFORT", "").strip()
-        if _effort:
+        if _effort and not self._reasoning_effort_unsupported:
             body.setdefault("reasoning_effort", _effort)
         _max_tokens = os.environ.get("OPENAI_COMPATIBLE_MAX_TOKENS", "").strip()
         if _max_tokens.isdigit():
@@ -449,6 +453,22 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 error_body = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception:
                 pass
+            # Non-reasoning models (e.g. Ollama qwen2.5-coder) 400 when sent
+            # `reasoning_effort` ("... does not support thinking"). That knob is
+            # only meant for thinking models (gemma4/gpt-oss); drop it, remember
+            # so later turns skip it, and retry once — otherwise our opt-in knob
+            # would hard-break every non-thinking openai-compatible model.
+            if (
+                exc.code == HTTPStatus.BAD_REQUEST
+                and "reasoning_effort" in payload
+                and (
+                    "thinking" in error_body.lower()
+                    or "reasoning" in error_body.lower()
+                )
+            ):
+                self._reasoning_effort_unsupported = True
+                retry = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                return self._http_post(url, retry)
             raise RuntimeError(
                 f"OpenAI-compatible API HTTP error {exc.code}: {exc.reason}. "
                 f"Response body: {error_body}"

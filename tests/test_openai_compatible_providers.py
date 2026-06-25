@@ -301,6 +301,23 @@ class TestAgenticProvider:
         assert "reasoning_effort" not in body
         assert "max_tokens" not in body
 
+    def test_reasoning_effort_suppressed_after_unsupported(self, monkeypatch) -> None:
+        # Once a model 400s on reasoning_effort ("does not support thinking"),
+        # the provider stops sending it so non-thinking models (qwen2.5-coder)
+        # aren't hard-broken by the opt-in knob.
+        monkeypatch.setenv("OPENAI_COMPATIBLE_REASONING_EFFORT", "low")
+        p = OpenAICompatibleAgenticProvider(
+            working_dir=Path("/tmp"), tool_names=["Read"]
+        )
+        assert (
+            p._build_payload([{"role": "user", "content": "hi"}])["reasoning_effort"]
+            == "low"
+        )
+        p._reasoning_effort_unsupported = True
+        assert "reasoning_effort" not in p._build_payload(
+            [{"role": "user", "content": "hi"}]
+        )
+
     def test_build_payload_reasoning_knobs_from_env(self, monkeypatch) -> None:
         # Local reasoning models (Ollama gemma/gpt-oss) need bounded thinking +
         # an explicit output budget so structured/tool turns actually emit.
