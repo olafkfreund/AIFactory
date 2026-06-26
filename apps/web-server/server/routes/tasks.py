@@ -99,6 +99,7 @@ from .task_service import (  # noqa: F401
     load_spec_metadata,
     map_backend_status_to_frontend,
     overlay_durable_status,
+    project_repo,
     spec_to_task,
     sync_worktree_to_main_spec,
     task_to_dict,
@@ -148,9 +149,11 @@ async def list_tasks(
     priority_ranks: dict[str, int] = {}
     for pid in project_ids:
         project_path = Path(projects[pid]["path"])
+        repo = project_repo(projects[pid])  # W5 (#218): target repo on every task
         spec_dirs = get_spec_dirs(project_path)
         for spec_dir in spec_dirs:
             task = spec_to_task(pid, spec_dir)
+            task.repo = repo
             all_tasks.append(task)
             priority_ranks[task.id] = _pfactory_priority_rank(spec_dir)
 

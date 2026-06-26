@@ -684,6 +684,30 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     return metadata
 
 
+def project_repo(project_data: dict) -> str | None:
+    """Best-effort target repo (owner/name) for a project (W5, Factory #218).
+
+    Surfaced on every task so all four portals can show which repo a task runs
+    against. Reads the project's git settings, falling back to parsing a clone
+    URL. Returns ``None`` when no repo is configured.
+    """
+    settings = project_data.get("settings") or {}
+    for key in ("githubRepo", "gitRepo", "github_repo"):
+        value = settings.get(key)
+        if value and "/" in str(value):
+            return str(value)
+    org, name = settings.get("gitOrg"), settings.get("gitProject")
+    if org and name:
+        return f"{org}/{name}"
+    git_url = project_data.get("gitUrl") or project_data.get("git_url")
+    if git_url:
+        # git@github.com:owner/name.git  or  https://host/owner/name(.git)
+        match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", str(git_url))
+        if match:
+            return match.group(1)
+    return None
+
+
 def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     """Convert a spec directory to a Task model."""
     metadata = load_spec_metadata(spec_dir)
@@ -975,6 +999,8 @@ def task_to_dict(task: Task) -> dict:
         # RFC-0001 correlation: surface the upstream GitHub issue so the cockpit
         # threads this build with its PFactory plan + TFactory test.
         "githubIssueNumber": task.github_issue,
+        # W5 (Factory #218): target repo (owner/name) for cross-portal tracking.
+        "repo": task.repo,
         "subtasks": [
             {
                 "id": s.id,

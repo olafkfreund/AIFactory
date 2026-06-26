@@ -146,6 +146,11 @@ class Task(TaskBase):
         description="Upstream GitHub issue number (RFC-0001 correlation key) from "
         "PFactory provenance; lets the cockpit thread plan→code→test.",
     )
+    repo: str | None = Field(
+        None,
+        description="Target repo (owner/name) this task runs against, for "
+        "cross-portal tracking + visibility (W5, Factory #218).",
+    )
 
 
 class TaskList(BaseModel):
