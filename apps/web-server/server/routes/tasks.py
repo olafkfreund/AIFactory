@@ -98,6 +98,7 @@ from .task_service import (  # noqa: F401
     get_worktree_spec_dir,
     load_spec_metadata,
     map_backend_status_to_frontend,
+    overlay_durable_status,
     spec_to_task,
     sync_worktree_to_main_spec,
     task_to_dict,
@@ -150,9 +151,16 @@ async def list_tasks(
         spec_dirs = get_spec_dirs(project_path)
         for spec_dir in spec_dirs:
             task = spec_to_task(pid, spec_dir)
-            if status is None or task.status == status:
-                all_tasks.append(task)
-                priority_ranks[task.id] = _pfactory_priority_rank(spec_dir)
+            all_tasks.append(task)
+            priority_ranks[task.id] = _pfactory_priority_rank(spec_dir)
+
+    # W2 (Factory #218): correct any task left at the stale ``backlog`` default
+    # with the authoritative durable lifecycle, BEFORE the status filter so a
+    # corrected status (e.g. in_progress) is filtered on its real value.
+    await overlay_durable_status(all_tasks)
+
+    if status is not None:
+        all_tasks = [task for task in all_tasks if task.status == status]
 
     # Sort by created_at descending, then stably by PFactory priority (epic #327
     # / #331): governed children with priority:p0 are scheduled ahead of p2,

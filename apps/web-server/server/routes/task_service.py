@@ -23,6 +23,7 @@ from .task_models import (
     SubtaskVerification,
     Task,
     TaskMetadata,
+    TaskStatus,
 )
 
 
@@ -715,6 +716,63 @@ def spec_to_task(project_id: str, spec_dir: Path) -> Task:
         review_reason=metadata.get("reviewReason"),
         github_issue=metadata.get("github_issue"),
     )
+
+
+# durable lifecycle_state -> (frontend status, review_reason); mirrors the
+# task_phase.py conventions spec_to_task applies from task_logs.json. A
+# ``queued`` lifecycle is intentionally absent so genuinely-queued tasks keep
+# their ``backlog`` status.
+_DURABLE_STATUS_OVERLAY: dict[str, tuple[TaskStatus, str | None]] = {
+    "running": ("in_progress", None),
+    "done": ("human_review", "completed"),
+    "failed": ("human_review", "errors"),
+}
+
+
+async def overlay_durable_status(tasks: list[Task]) -> None:
+    """Correct a stale ``backlog`` status from the authoritative durable store.
+
+    On the packed / out-of-band execution path the agent writes task_logs.json
+    into an ephemeral Job workspace that never reaches the control plane, so
+    spec_to_task falls back to ``backlog`` for a task that actually ran -- making
+    the portals and CFactory show a finished or running task as queued
+    (W2, Factory #218). The durable job-state store (RFC-0016) holds the truth,
+    so for any task still at the ``backlog`` default we read its lifecycle and
+    reproduce the status spec_to_task would have set had task_logs.json reached
+    disk.
+
+    Conservative by design: only ``backlog`` tasks are touched, so a real
+    spec-dir status is never overridden. Best-effort -- never raises.
+    """
+    from ..services.job_state_store import store_enabled
+
+    if not store_enabled():
+        return
+    pending = [task for task in tasks if task.status == "backlog"]
+    if not pending:
+        return
+    try:
+        from ..services.agent_service import get_agent_service
+
+        store = get_agent_service()._store()
+    except Exception:
+        return
+    for task in pending:
+        try:
+            state = await store.get_state(task.id)
+        except Exception:
+            continue
+        lifecycle = (state or {}).get("lifecycle_state")
+        mapped = (
+            _DURABLE_STATUS_OVERLAY.get(lifecycle)
+            if isinstance(lifecycle, str)
+            else None
+        )
+        if mapped is None:
+            continue
+        task.status, reason = mapped
+        if reason is not None:
+            task.review_reason = reason
 
 
 def map_backend_status_to_frontend(backend_status: str) -> str:
