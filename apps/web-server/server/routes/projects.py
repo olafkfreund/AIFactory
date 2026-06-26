@@ -1079,10 +1079,13 @@ async def list_project_tasks(
     project_path = Path(projects[project_id]["path"])
     spec_dirs = tasks_module.get_spec_dirs(project_path)
 
-    all_tasks = []
-    for spec_dir in spec_dirs:
-        task = tasks_module.spec_to_task(project_id, spec_dir)
-        all_tasks.append(tasks_module.task_to_dict(task))
+    tasks = [tasks_module.spec_to_task(project_id, spec_dir) for spec_dir in spec_dirs]
+
+    # W2 (Factory #218): correct any task left at the stale ``backlog`` default
+    # with the authoritative durable lifecycle so the portal mirrors CFactory.
+    await tasks_module.overlay_durable_status(tasks)
+
+    all_tasks = [tasks_module.task_to_dict(task) for task in tasks]
 
     # Sort by created_at descending
     all_tasks.sort(key=lambda t: t.get("createdAt", ""), reverse=True)
