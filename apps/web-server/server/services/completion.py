@@ -829,9 +829,16 @@ def emit_terminal_completion(
     # it, else CFactory shows zero token usage. No-op on the co-mount path (file
     # already present) and best-effort (never raises).
     try:
-        from core.workspace_fetch import maybe_fetch_usage  # noqa: PLC0415
+        from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_task_logs,
+            maybe_fetch_usage,
+        )
 
         maybe_fetch_usage(spec_dir, spec_id)
+        # W1 (Factory #218): also pull the Job's task_logs.json so spec_to_task
+        # reports the real terminal status (done/failed) on the packed path
+        # instead of defaulting to backlog/queued.
+        maybe_fetch_task_logs(spec_dir, spec_id)
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)

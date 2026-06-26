@@ -225,3 +225,86 @@ def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched usage: %s", exc)
         return False
+
+
+_TASK_LOGS_FILE = "task_logs.json"
+
+
+def _task_logs_key(spec_id: str) -> str:
+    """Deterministic object key for a task's task_logs.json (W1, Factory #218).
+
+    Same producer/consumer key derivation as :func:`_usage_key`.
+    """
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_TASK_LOGS_FILE
+        ).key()
+    )
+
+
+def maybe_push_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's ``task_logs.json`` to object storage on the packed path.
+
+    ``task_logs.json`` is the authoritative per-phase status file
+    (planning/coding/qa → running/done/failed). On the packed path the build
+    writes it into the Job's ephemeral ``/work`` spec dir, but ``spec_to_task``
+    runs on the CONTROL PLANE and reads the data-PVC spec dir — never populated —
+    so the task list defaults to ``backlog`` and CFactory shows ``queued`` forever
+    even after a task built/merged/deployed (Factory #218). Uploading it here
+    (keyed by ``spec_id``) lets the control plane fetch the real status.
+
+    No-op off the packed path (``WORKSPACE_URI`` unset). Best-effort: never raises.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _TASK_LOGS_FILE
+    if not src.is_file():
+        _log.warning("[workspace_fetch] no %s to push", _TASK_LOGS_FILE)
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        ArtifactStore().put_bytes(
+            _task_logs_key(spec_id), src.read_bytes(), "application/json"
+        )
+        _log.info(
+            "[workspace_fetch] pushed %s to object store (packed path)", _TASK_LOGS_FILE
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - must never break a green build
+        _log.warning("[workspace_fetch] task_logs push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Control-plane counterpart to :func:`maybe_push_task_logs`.
+
+    If the data-PVC spec dir has no ``task_logs.json`` (the packed path never
+    wrote it there), fetch the one the Job pushed and write it locally so
+    ``spec_to_task`` reports the real per-phase status (running/done/failed)
+    instead of falling back to ``backlog``. No-op when the file already exists
+    (co-mount path) or no pushed copy exists. Best-effort: never raises.
+    """
+    dest = Path(spec_dir) / _TASK_LOGS_FILE
+    if dest.is_file():
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_task_logs_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - no pushed logs / store unreachable
+        _log.debug("[workspace_fetch] no pushed task_logs to fetch: %s", exc)
+        return False
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _log.info(
+            "[workspace_fetch] fetched %s from object store (packed path)",
+            _TASK_LOGS_FILE,
+        )
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] could not write fetched task_logs: %s", exc)
+        return False

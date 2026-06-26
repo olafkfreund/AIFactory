@@ -502,6 +502,7 @@ def main() -> None:
     # for planning-only runs (no build branch yet).
     if not args.stop_after_planning:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_push_task_logs,
             maybe_push_usage,
             maybe_push_workspace_branch,
         )
@@ -511,6 +512,10 @@ def main() -> None:
         # Job's ephemeral /work but the control-plane completion emitter reads the
         # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
         maybe_push_usage(spec_dir, spec_dir.name)
+        # W1 (Factory #218): task_logs.json carries the authoritative per-phase
+        # status; push it so the control plane reports done/failed instead of
+        # leaving the task stuck at backlog/queued.
+        maybe_push_task_logs(spec_dir, spec_dir.name)
 
 
 if __name__ == "__main__":
