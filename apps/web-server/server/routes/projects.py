@@ -1081,6 +1081,11 @@ async def list_project_tasks(
 
     tasks = [tasks_module.spec_to_task(project_id, spec_dir) for spec_dir in spec_dirs]
 
+    # W5 (Factory #218): stamp the target repo on every task for cross-portal tracking.
+    repo = tasks_module.project_repo(projects[project_id])
+    for task in tasks:
+        task.repo = repo
+
     # W2 (Factory #218): correct any task left at the stale ``backlog`` default
     # with the authoritative durable lifecycle so the portal mirrors CFactory.
     await tasks_module.overlay_durable_status(tasks)
