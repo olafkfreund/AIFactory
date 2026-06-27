@@ -62,6 +62,7 @@ from ui import (
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
+from .deploy_scaffold import scaffold_deploy_for_spec
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
@@ -638,7 +639,9 @@ async def run_autonomous_agent(
 
             # Find the phase for this subtask
             plan = load_implementation_plan(spec_dir)
-            phase = find_phase_for_subtask(plan, subtask_id) if plan else {}
+            phase = (
+                find_phase_for_subtask(plan, subtask_id) if plan and subtask_id else {}
+            )
 
             # Generate focused, minimal prompt for this subtask
             prompt = generate_subtask_prompt(
@@ -1038,6 +1041,11 @@ async def run_autonomous_agent(
     # Set final status
     if completed == total:
         status_manager.update(state=BuildState.COMPLETE)
+        # RFC-0013 consuming side: a complete build whose contract names a PaaS
+        # target gets the proven deploy artifacts scaffolded into the worktree.
+        scaffolded = scaffold_deploy_for_spec(spec_dir)
+        if scaffolded:
+            logger.info("Scaffolded deploy artifacts: %s", ", ".join(scaffolded))
     else:
         status_manager.update(state=BuildState.PAUSED)
 
@@ -1219,9 +1227,9 @@ async def _maybe_run_parallel_phase(
     verbose: bool,
     source_spec_dir: Path | None,
     remote_control_session: str | None,
-    status_manager,
+    status_manager: StatusManager,
     disabled_phases: set[int],
-    recovery_manager=None,
+    recovery_manager: RecoveryManager | None = None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 

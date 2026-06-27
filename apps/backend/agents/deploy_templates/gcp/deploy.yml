@@ -1,0 +1,50 @@
+name: Deploy (GCP Cloud Run + Cloud SQL + Memorystore)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+      REGION: ${{ secrets.GCP_REGION }}
+      REPO: ttt
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Enable APIs
+        run: |
+          gcloud services enable run.googleapis.com sqladmin.googleapis.com \
+            redis.googleapis.com vpcaccess.googleapis.com artifactregistry.googleapis.com \
+            servicenetworking.googleapis.com compute.googleapis.com --project "$PROJECT"
+      - name: Artifact Registry repo (idempotent) + docker auth
+        run: |
+          gcloud artifacts repositories describe "$REPO" --location "$REGION" --project "$PROJECT" >/dev/null 2>&1 || \
+          gcloud artifacts repositories create "$REPO" --repository-format=docker --location "$REGION" --project "$PROJECT"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+      - name: Build + push image
+        run: |
+          IMG="$REGION-docker.pkg.dev/$PROJECT/$REPO/app:${GITHUB_SHA::8}"
+          docker build -t "$IMG" .
+          docker push "$IMG"
+          echo "IMG=$IMG" >> "$GITHUB_ENV"
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform apply
+        working-directory: infra
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve \
+            -var "project_id=$PROJECT" -var "region=$REGION" -var "image=$IMG"
+          URL=$(terraform output -raw url)
+          echo "Deployed: $URL"
+          echo "$URL" > "$GITHUB_WORKSPACE/deployed_url.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployed-url
+          path: deployed_url.txt
