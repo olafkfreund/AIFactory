@@ -15,6 +15,7 @@
 # Updates land via Renovate PRs (renovate.json).
 # Builds are amd64-only; arm64 support removed (not needed).
 # The Rollup optional-dep workaround below is kept for safety.
+
 FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
 
 USER root
@@ -47,7 +48,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:d45c16a1807036a402f2101a1e82863468c923d85a2ed4817b2b12b2f0ee54dd AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:369768c6ee466cc726ebab82e1b590f2d5a78507d134b17912f3e5c58de950ff AS runtime
 
 USER root
 
@@ -205,3 +206,60 @@ WORKDIR /home/projects/MagesticAI/apps/web-server
 # Absolute path to the venv python so we never depend on PATH ordering.
 ENTRYPOINT []
 CMD ["/home/projects/MagesticAI/.venv/bin/python", "-m", "server.main"]
+
+# ---------------------------------------------------------------------------
+# Stage 3: build-runtime (the ``-nix`` variant) — runtime image + baked Nix
+# ---------------------------------------------------------------------------
+# RFC-0017 #190: packed (multi-node) build Jobs must NOT mount the warm-store
+# ``aifactory-nix-store`` PVC — it is RWO ``local-path`` and its PV is
+# nodeAffinity-pinned to one node, so mounting it re-pins every build Job there
+# (defeating the /work depin). This variant bakes the Nix store INTO the image
+# so a packed build Job sources nix from the image and carries zero node
+# affinity. Pair it with ``AIFACTORY_PACKED_NIX_IN_IMAGE=true`` (which drops the
+# PVC mount on the packed path) by pointing ``AIFACTORY_BUILD_IMAGE`` at a
+# ``:vX-nix`` tag in gitops.
+#
+# Only the ``:vX-nix`` tag is built from this stage (CI passes target=runtime
+# for the default + rmux images, target=build-runtime here). The default
+# bank-pilot / rmux images are byte-for-byte unchanged — no nix, no size bump.
+FROM runtime AS build-runtime
+
+USER root
+
+# Pull the Nix store directly from the substrate image via ``COPY --from=<ref>``
+# (a LITERAL external image — a stage-local ARG here fails on the classic builder
+# with "invalid reference format", so we hardcode the tag). This avoids adding a
+# ``FROM <substrate>`` line, which would (a) be amd64-only and so fail the P0
+# multi-arch invariant, and (b) be a floating-tag base the P0 digest-pin gate
+# rejects. The ref mirrors ``DEFAULT_NIX_IMAGE`` in core/job_dispatch.py.
+#
+# Split the copy for build speed + cache reuse (smaller/faster than a single
+# chowned tree):
+#   * /nix/store — the multi-GB content-addressed blobs — copied UNCHOWNED.
+#     Chowning it would rewrite every inode and bust BuildKit's layer reuse
+#     (slow build, fat cache). Store paths are world-readable (mode 0444/0555),
+#     so nonroot can read + exec them — which is all a WARM build (toolchains
+#     already in the substrate) needs.
+#   * /nix/var — the sqlite db, profiles and gcroots (small) — chowned to the
+#     sandbox uid so nonroot nix can open its db + take locks.
+# Limitation: the store is read-only to nonroot, so a COLD flake (a derivation
+# not already in the substrate) can't write new paths. Warm builds — the packed
+# multi-node case we're unblocking — work; cold-write support is a follow-up
+# (writable overlay at Job runtime) tracked on the slice-3 issue.
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest /nix/store /nix/store
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest --chown=65532:65532 /nix/var /nix/var
+
+USER nonroot
+
+# nix resolves from the baked default profile; flakes on; reuse the apk cert
+# bundle already present in the runtime stage (ca-certificates).
+ENV PATH="/nix/var/nix/profiles/default/bin:${PATH}" \
+    NIX_CONFIG="experimental-features = nix-command flakes" \
+    NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+# Build-time smoke: nix is on PATH AND nonroot can open the db / read the store
+# (validates the /nix/var chown + world-readable store via a pure eval).
+RUN nix --version && [ "$(nix eval --expr '1 + 1')" = "2" ]
+
+# ENTRYPOINT/CMD/HEALTHCHECK/WORKDIR are inherited from the runtime stage.

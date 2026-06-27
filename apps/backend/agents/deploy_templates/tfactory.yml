@@ -1,0 +1,5 @@
+# TFactory verification target. CI writes the live deployed URL into
+# deployed_url.txt; the verification step sets base_url to it for the run.
+targets:
+  - name: app
+    base_url: "https://REPLACE-WITH-DEPLOYED-URL"

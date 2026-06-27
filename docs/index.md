@@ -112,12 +112,12 @@ Walkthrough with screenshots + browser-side video: **[Demo →](https://aifactor
 
 | | |
 |---|---|
-| ![Kanban board](static/img/screenshots/03-kanban.png) | ![Live Agent Console](static/img/screenshots/09-live-agent-console.png) |
-| ![Plan review](static/img/screenshots/06-task-detail-plan.png) | ![LLM provider settings](static/img/screenshots/12-settings-llm-providers.png) |
+| ![Kanban board](static/img/screenshots/02-kanban-board.png) | ![Task detail — observability](static/img/screenshots/08-task-detail-observability.png) |
+| ![Plan / subtasks review](static/img/screenshots/05-task-detail-subtasks.png) | ![LLM provider settings](static/img/screenshots/22-settings-llm-providers.png) |
 
-![Settings MCP Servers tab — the new default-MCP-server catalog showing per-project auto-enable status](static/img/screenshots/13-settings-mcp-servers.png)
+![MCP servers view](static/img/screenshots/15-mcp.png)
 
-> Screenshots are auto-captured by `scripts/capture-screenshots.ts` — refresh them with `npm -w apps/frontend-web run capture-screenshots`.
+> Screenshots are auto-captured by `scripts/capture-screenshots.ts` from the live portal — refresh them with `npm -w apps/frontend-web run capture-screenshots`. A fuller, captioned set lives in the [Screenshot gallery](docs/showcase/gallery.md).
 
 ## Documentation
 

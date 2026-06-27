@@ -110,6 +110,30 @@ def load_task_contract(spec_dir: Path) -> dict:
     return {}
 
 
+def _verify_phase_models(spec_dir: Path) -> dict[str, str]:
+    """Verify-lane models for TFactory, derived from the build's ``phaseModels``.
+
+    Reads ``task_metadata.json``'s ``phaseModels``; verification is judgment work
+    (gen-functional / evaluator / planner / qa), so every TFactory phase uses the
+    build's ``qa`` model (falling back to ``planning``/``spec``) — keeping verify on
+    the SAME provider as the build rather than TFactory's default sonnet. Returns
+    ``{}`` when the task set no ``phaseModels`` (so default behaviour is unchanged).
+    """
+    try:
+        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    pm = meta.get("phaseModels") if isinstance(meta, dict) else None
+    if not isinstance(pm, dict) or not pm:
+        return {}
+    verify = pm.get("qa") or pm.get("planning") or pm.get("spec")
+    if not isinstance(verify, str) or not verify:
+        return {}
+    return dict.fromkeys(
+        ("spec", "planning", "coding", "qa", "qa_fixer", "test_gen"), verify
+    )
+
+
 def build_handoff_payload(
     spec_id: str,
     requirements: dict | None,
@@ -303,6 +327,20 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # (tfactory block: lanes/frameworks/ac_to_code_map) rather than inferring
     # from spec_text. Present only for trusted plans; absent → TFactory infers.
     contract = load_task_contract(spec_dir)
+    # Propagate the build's per-phase model choice to TFactory's verify lanes so a
+    # non-default (e.g. Ollama) build is VERIFIED on the same provider instead of
+    # silently falling back to TFactory's default (sonnet). The choice lives in
+    # task_metadata.json's phaseModels; carry it on the contract's
+    # execution.phase_models, which TFactory's ingest turns into its own
+    # task_metadata.json (get_phase_model reads that). Additive: a real signed
+    # contract's execution block is preserved; we only fill phase_models we add.
+    verify_pm = _verify_phase_models(spec_dir)
+    if verify_pm:
+        contract = dict(contract or {})
+        execution = dict(contract.get("execution") or {})
+        merged = {**verify_pm, **(execution.get("phase_models") or {})}
+        execution["phase_models"] = merged
+        contract["execution"] = execution
     if contract:
         payload["contract"] = contract
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the

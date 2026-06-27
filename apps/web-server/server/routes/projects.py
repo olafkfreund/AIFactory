@@ -226,7 +226,21 @@ def load_projects() -> dict[str, dict]:
 
 
 def save_projects(projects: dict[str, dict]) -> None:
-    """Save projects to disk."""
+    """Save projects to disk.
+
+    Stamps ``org_id=DEFAULT_ORG_ID`` on any entry that lacks one so that
+    programmatically-registered projects (cross-factory handoff, build
+    dispatch, the agent ``project_create`` tool) are immediately visible in
+    the org-scoped portal — not just after the next startup backfill
+    (``database.engine._backfill_project_orgs``). The portal create path sets
+    ``org_id`` explicitly before saving, so this never overrides a real value;
+    it only defaults the unowned case (single-tenant deployments own the
+    "default" org). An unowned project would otherwise be admin-only / hidden
+    (see ``project_authz`` — ``org_id is None`` → 403).
+    """
+    for proj in projects.values():
+        if isinstance(proj, dict) and not proj.get("org_id"):
+            proj["org_id"] = DEFAULT_ORG_ID
     projects_file = get_projects_file()
     projects_file.parent.mkdir(parents=True, exist_ok=True)
     projects_file.write_text(json.dumps(projects, indent=2))
@@ -1065,10 +1079,18 @@ async def list_project_tasks(
     project_path = Path(projects[project_id]["path"])
     spec_dirs = tasks_module.get_spec_dirs(project_path)
 
-    all_tasks = []
-    for spec_dir in spec_dirs:
-        task = tasks_module.spec_to_task(project_id, spec_dir)
-        all_tasks.append(tasks_module.task_to_dict(task))
+    tasks = [tasks_module.spec_to_task(project_id, spec_dir) for spec_dir in spec_dirs]
+
+    # W5 (Factory #218): stamp the target repo on every task for cross-portal tracking.
+    repo = tasks_module.project_repo(projects[project_id])
+    for task in tasks:
+        task.repo = repo
+
+    # W2 (Factory #218): correct any task left at the stale ``backlog`` default
+    # with the authoritative durable lifecycle so the portal mirrors CFactory.
+    await tasks_module.overlay_durable_status(tasks)
+
+    all_tasks = [tasks_module.task_to_dict(task) for task in tasks]
 
     # Sort by created_at descending
     all_tasks.sort(key=lambda t: t.get("createdAt", ""), reverse=True)

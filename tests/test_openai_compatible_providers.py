@@ -115,9 +115,18 @@ class TestFactoryRouting:
     @pytest.mark.parametrize(
         "alias",
         [
-            "openai", "openai-api", "oai", "lm-studio", "lmstudio",
-            "vllm", "openrouter", "together", "together-ai", "groq",
-            "localai", "anyscale",
+            "openai",
+            "openai-api",
+            "oai",
+            "lm-studio",
+            "lmstudio",
+            "vllm",
+            "openrouter",
+            "together",
+            "together-ai",
+            "groq",
+            "localai",
+            "anyscale",
         ],
     )
     def test_aliases_all_resolve(self, alias: str) -> None:
@@ -126,7 +135,9 @@ class TestFactoryRouting:
 
     def test_aliases_resolve_to_canonical_name(self) -> None:
         aliases = list_provider_aliases()
-        oai_aliases = {a for a, canon in aliases.items() if canon == "openai-compatible"}
+        oai_aliases = {
+            a for a, canon in aliases.items() if canon == "openai-compatible"
+        }
         # Must include the human-friendly ones
         for required in {"openai", "lm-studio", "vllm", "openrouter"}:
             assert required in oai_aliases
@@ -185,9 +196,9 @@ class TestTextProvider:
         assert headers["HTTP-Referer"] == "https://x"
 
     def test_extract_content_happy_path(self) -> None:
-        text = OpenAICompatibleProvider._extract_content({
-            "choices": [{"message": {"role": "assistant", "content": "  hi  "}}]
-        })
+        text = OpenAICompatibleProvider._extract_content(
+            {"choices": [{"message": {"role": "assistant", "content": "  hi  "}}]}
+        )
         assert text == "hi"
 
     def test_extract_content_missing_choices_raises(self) -> None:
@@ -196,14 +207,14 @@ class TestTextProvider:
 
     def test_extract_content_with_error_field_raises(self) -> None:
         with pytest.raises(RuntimeError, match="returned error"):
-            OpenAICompatibleProvider._extract_content({
-                "error": {"message": "invalid key", "code": 401}
-            })
+            OpenAICompatibleProvider._extract_content(
+                {"error": {"message": "invalid key", "code": 401}}
+            )
 
     def test_extract_content_empty_string_falls_back(self) -> None:
-        text = OpenAICompatibleProvider._extract_content({
-            "choices": [{"message": {"content": ""}}]
-        })
+        text = OpenAICompatibleProvider._extract_content(
+            {"choices": [{"message": {"content": ""}}]}
+        )
         assert text == "(no output from server)"
 
     @pytest.mark.asyncio
@@ -286,6 +297,41 @@ class TestAgenticProvider:
         assert body["stream"] is False
         assert body["tools"] == p._tool_defs
         assert body["temperature"] == 0
+        # Reasoning knobs are opt-in: absent unless the env vars are set.
+        assert "reasoning_effort" not in body
+        assert "max_tokens" not in body
+
+    def test_reasoning_effort_suppressed_after_unsupported(self, monkeypatch) -> None:
+        # Once a model 400s on reasoning_effort ("does not support thinking"),
+        # the provider stops sending it so non-thinking models (qwen2.5-coder)
+        # aren't hard-broken by the opt-in knob.
+        monkeypatch.setenv("OPENAI_COMPATIBLE_REASONING_EFFORT", "low")
+        p = OpenAICompatibleAgenticProvider(
+            working_dir=Path("/tmp"), tool_names=["Read"]
+        )
+        assert (
+            p._build_payload([{"role": "user", "content": "hi"}])["reasoning_effort"]
+            == "low"
+        )
+        p._reasoning_effort_unsupported = True
+        assert "reasoning_effort" not in p._build_payload(
+            [{"role": "user", "content": "hi"}]
+        )
+
+    def test_build_payload_reasoning_knobs_from_env(self, monkeypatch) -> None:
+        # Local reasoning models (Ollama gemma/gpt-oss) need bounded thinking +
+        # an explicit output budget so structured/tool turns actually emit.
+        monkeypatch.setenv("OPENAI_COMPATIBLE_REASONING_EFFORT", "low")
+        monkeypatch.setenv("OPENAI_COMPATIBLE_MAX_TOKENS", "4096")
+        p = OpenAICompatibleAgenticProvider(
+            working_dir=Path("/tmp"), tool_names=["Read"]
+        )
+        body = p._build_payload([{"role": "user", "content": "hi"}])
+        assert body["reasoning_effort"] == "low"
+        assert body["max_tokens"] == 4096
+        monkeypatch.setenv("OPENAI_COMPATIBLE_MAX_TOKENS", "notanint")
+        body2 = p._build_payload([{"role": "user", "content": "hi"}])
+        assert "max_tokens" not in body2
 
     @pytest.mark.asyncio
     async def test_no_tool_calls_yields_final_message(self, tmp_path: Path) -> None:
@@ -305,6 +351,9 @@ class TestAgenticProvider:
                     "finish_reason": "stop",
                 }
             ],
+            # OpenAI/Ollama usage block — must surface as a terminal ResultMessage
+            # so the session loop records real token usage (token_usage.json).
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
         }
 
         with patch(
@@ -314,14 +363,15 @@ class TestAgenticProvider:
             await provider.query("Just answer plainly")
             messages = await _collect(provider)
 
-        assert len(messages) == 1
+        # AssistantMessage (final text) THEN a ResultMessage carrying usage.
         assert type(messages[0]).__name__ == "AssistantMessage"
         assert messages[0].content[0].text == "All done."
+        result = messages[-1]
+        assert type(result).__name__ == "ResultMessage"
+        assert result.usage == {"input_tokens": 100, "output_tokens": 30}
 
     @pytest.mark.asyncio
-    async def test_tool_call_loop_executes_and_terminates(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_tool_call_loop_executes_and_terminates(self, tmp_path: Path) -> None:
         """Two-turn flow: model calls Read, then returns final text."""
         # Set up a file the agent will 'read'
         target = tmp_path / "hello.txt"
@@ -344,9 +394,7 @@ class TestAgenticProvider:
                                 "type": "function",
                                 "function": {
                                     "name": "Read",
-                                    "arguments": json.dumps(
-                                        {"file_path": str(target)}
-                                    ),
+                                    "arguments": json.dumps({"file_path": str(target)}),
                                 },
                             }
                         ],
@@ -386,9 +434,10 @@ class TestAgenticProvider:
             "AssistantMessage",
             "UserMessage",
             "AssistantMessage",
+            "ResultMessage",  # terminal usage carrier
         ]
-        # The final message contains the model's wrap-up text
-        final_text = messages[-1].content[0].text
+        # The final ASSISTANT message contains the model's wrap-up text.
+        final_text = messages[-2].content[0].text
         assert "Hello from file!" in final_text
 
     @pytest.mark.asyncio
@@ -416,9 +465,7 @@ class TestAgenticProvider:
                                 "type": "function",
                                 "function": {
                                     "name": "Read",
-                                    "arguments": json.dumps(
-                                        {"file_path": str(target)}
-                                    ),
+                                    "arguments": json.dumps({"file_path": str(target)}),
                                 },
                             }
                         ],
@@ -437,8 +484,10 @@ class TestAgenticProvider:
             await provider.query("loop forever please")
             messages = await _collect(provider)
 
-        # Final message should be the "max turns reached" notice
-        text = messages[-1].content[0].text
+        # The "max turns reached" notice is the last AssistantMessage, followed
+        # by the terminal ResultMessage (usage carrier).
+        assert type(messages[-1]).__name__ == "ResultMessage"
+        text = messages[-2].content[0].text
         assert "maximum" in text.lower() and "turn" in text.lower()
 
 

@@ -176,7 +176,9 @@ def test_manifest_build_image_override_wins(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", DEFAULT_NIX_IMAGE)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     assert m["spec"]["template"]["spec"]["containers"][0]["image"] == (
         "ghcr.io/acme/custom:tag"
@@ -193,7 +195,9 @@ def test_manifest_ignores_sandbox_image(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "ghcr.io/acme/should-not-leak:tag")
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     image = m["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image != "ghcr.io/acme/should-not-leak:tag"
@@ -220,10 +224,7 @@ def test_resolve_run_py_path_is_absolute(monkeypatch: pytest.MonkeyPatch) -> Non
     # '/work/run.py'`` because run.py lives in the image backend dir, not /work.
     # Unset → the image-default backend layout (Dockerfile APP_BACKEND_PATH).
     monkeypatch.delenv("APP_BACKEND_PATH", raising=False)
-    assert (
-        bb._resolve_run_py_path()
-        == "/home/projects/MagesticAI/apps/backend/run.py"
-    )
+    assert bb._resolve_run_py_path() == "/home/projects/MagesticAI/apps/backend/run.py"
     # APP_BACKEND_PATH (the SAME var the in-pod path resolves) is honored, and a
     # trailing slash never doubles up.
     monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend/")
@@ -241,7 +242,9 @@ def test_manifest_run_py_path_honours_backend_path_env(
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
     monkeypatch.setenv("APP_BACKEND_PATH", "/opt/backend")
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
     )
     cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
     assert "python /opt/backend/run.py " in cmd
@@ -257,7 +260,9 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
     monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path("/home/dev/myproj"), spec_id="s",
+        task_id="p:s",
+        project_path=Path("/home/dev/myproj"),
+        spec_id="s",
     )
     pod = m["spec"]["template"]["spec"]
     assert "volumes" not in pod  # no work, no store
@@ -306,6 +311,62 @@ def test_build_job_env_propagates_present_provider_env(
     assert "NO_PROXY" not in env
 
 
+def test_build_job_env_propagates_non_claude_provider_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #689: a non-Claude-routed build needs its provider credential + config env
+    # in the Job — forwarded only when present, in env (never argv).
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://ollama.com")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "oc-key")
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["OPENAI_API_KEY"] == "sk-openai"
+    assert env["GEMINI_API_KEY"] == "g-key"
+    assert env["OPENAI_COMPATIBLE_BASE_URL"] == "https://ollama.com"
+    assert env["OPENAI_COMPATIBLE_API_KEY"] == "oc-key"
+    # Provider vars not set on the control plane are omitted (no empty placeholder).
+    assert "GOOGLE_API_KEY" not in env
+    assert "OLLAMA_API_KEY" not in env
+    assert "GEMINI_CLI_TRUST_WORKSPACE" not in env
+
+
+def test_build_job_env_propagates_artifact_store_s3_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # RFC-0017 #190: a packed-workspace Job unpacks /work from object storage via
+    # core/artifact_store, which reads the S3_* namespace. Those vars must reach the
+    # Job env (when present on the control plane) or the unpack dies fail-loud.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio.factory.svc.cluster.local:9000")
+    monkeypatch.setenv("S3_BUCKET", "factory-artifacts")
+    monkeypatch.setenv("S3_ACCESS_KEY", "minio-access")
+    monkeypatch.setenv("S3_SECRET_KEY", "minio-secret")
+    monkeypatch.setenv("S3_REGION", "us-east-1")
+    env = bb.build_job_env("oauth-tok-123")
+    assert env["S3_ENDPOINT"] == "http://minio.factory.svc.cluster.local:9000"
+    assert env["S3_BUCKET"] == "factory-artifacts"
+    assert env["S3_ACCESS_KEY"] == "minio-access"
+    assert env["S3_SECRET_KEY"] == "minio-secret"
+    assert env["S3_REGION"] == "us-east-1"
+
+
+def test_build_job_env_omits_s3_env_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default (S3 not configured / pack flag off): no S3_* placeholders leak into
+    # the Job env — the single-node co-mount path is unchanged.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env = bb.build_job_env("oauth-tok-123")
+    assert "S3_ENDPOINT" not in env
+    assert "S3_ACCESS_KEY" not in env
+    assert "S3_SECRET_KEY" not in env
+
+
 def test_build_job_env_never_includes_anthropic_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -347,7 +408,9 @@ def test_manifest_carries_oauth_env_in_container_not_argv(
     monkeypatch.setenv("GITHUB_TOKEN", "gh-tok")
     extra_env = bb.build_job_env("oauth-tok-xyz")
     m = bb.build_run_py_job_manifest(
-        task_id="p:s", project_path=Path(_DATA_ROOT), spec_id="s",
+        task_id="p:s",
+        project_path=Path(_DATA_ROOT),
+        spec_id="s",
         extra_env=extra_env,
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
@@ -394,7 +457,8 @@ def test_backend_unknown_falls_back_to_subprocess(
 
 
 async def test_dispatch_records_worker_ref(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
     # This test exercises worker_ref recording, not worktree population; stub the
@@ -426,7 +490,8 @@ async def test_dispatch_records_worker_ref(
 
 
 async def test_dispatch_injects_oauth_token_into_job_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # #671 OAuth-env defect: the token the caller resolved from the pool must
     # land in the created Job's container env (not argv) so run.py finds it.
@@ -617,55 +682,32 @@ def _author_spec(project_path: Path, spec_id: str) -> Path:
     return spec_dir
 
 
-def test_populate_build_worktree_materializes_spec_via_inpod_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # project under the data root → the Job WILL co-mount /work, so the control
-    # plane must populate that subPath before dispatch.
-    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
-    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    fake = _install_fake_workspace(monkeypatch)
-
-    project_path = tmp_path / "workspaces" / "proj-7"
-    _author_spec(project_path, "077-feat")
-
-    populated = bb.populate_build_worktree(project_path, "077-feat")
-
-    # Reused the in-pod preparation: ISOLATED mode + the authored spec dir.
-    assert len(fake.calls) == 1
-    call = fake.calls[0]
-    assert call["mode"] == fake.WorkspaceMode.ISOLATED
-    assert call["project_dir"] == project_path
-    assert call["spec_name"] == "077-feat"
-    assert call["source_spec_dir"] == project_path / ".aifactory" / "specs" / "077-feat"
-
-    # The populated worktree carries the materialized spec (the very thing run.py's
-    # find_spec needs at /work/.aifactory/specs/<id>/spec.md).
-    assert populated is not None
-    spec_in_worktree = (
-        Path(populated) / ".aifactory" / "specs" / "077-feat" / "spec.md"
-    )
-    assert spec_in_worktree.exists()
+# (test_populate_build_worktree_materializes_spec_via_inpod_path removed: the
+# in-pod setup_workspace path was replaced by the self-contained clone (#671) —
+# spec materialization is now covered by test_populate_builds_self_contained_repo.)
 
 
 def test_populated_worktree_matches_job_work_subpath(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The path the control plane populates MUST equal the subPath the Job mounts
     # at /work — otherwise the Job still sees an empty /work.
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
-    _install_fake_workspace(monkeypatch)
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "088-feat"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
 
-    project_path = tmp_path / "workspaces" / "proj-8"
-    _author_spec(project_path, "088-feat")
-
-    populated = bb.populate_build_worktree(project_path, "088-feat")
+    populated = bb.populate_build_worktree(proj, "088-feat")
     assert populated is not None
 
     m = bb.build_run_py_job_manifest(
-        task_id="proj-8:088-feat", project_path=project_path, spec_id="088-feat",
+        task_id="proj-1:088-feat",
+        project_path=proj,
+        spec_id="088-feat",
     )
     c = m["spec"]["template"]["spec"]["containers"][0]
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
@@ -675,7 +717,8 @@ def test_populated_worktree_matches_job_work_subpath(
 
 
 def test_populate_skips_when_outside_data_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A project outside the PVC root → the Job has no /work co-mount, so there is
     # nothing (and no shared PVC) to populate; population is a no-op.
@@ -691,7 +734,8 @@ def test_populate_skips_when_outside_data_root(
 
 
 def test_populate_raises_when_spec_missing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # No authored spec under the project → fail loudly BEFORE dispatch rather than
     # launch a Job that will hit the very "Spec not found" this fix prevents.
@@ -707,21 +751,29 @@ def test_populate_raises_when_spec_missing(
 
 
 async def test_dispatch_populates_worktree_before_job_created(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # End-to-end ordering: dispatch() populates the worktree (spec present) BEFORE
     # create_namespaced_job is called. A batch fake records when the Job is created
     # and asserts the spec already exists on disk at that moment.
     monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
-    _install_fake_workspace(monkeypatch)
-
-    project_path = tmp_path / "workspaces" / "proj-10"
-    _author_spec(project_path, "110-feat")
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "110-feat"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
 
     spec_in_worktree = (
-        project_path / ".aifactory" / "worktrees" / "tasks" / "110-feat"
-        / ".aifactory" / "specs" / "110-feat" / "spec.md"
+        proj
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "110-feat"
+        / ".aifactory"
+        / "specs"
+        / "110-feat"
+        / "spec.md"
     )
 
     class _OrderingBatch(_FakeBatch):
@@ -735,16 +787,482 @@ async def test_dispatch_populates_worktree_before_job_created(
             await super().create_namespaced_job(namespace, manifest)
 
     store = await _make_store(tmp_path / "ord.db")
-    await store.admit("proj-10:110-feat", _spawn_args("110-feat"), cap=2)
+    await store.admit("proj-1:110-feat", _spawn_args("110-feat"), cap=2)
     backend = bb.KubeJobBuildBackend(store)
     fake = _OrderingBatch()
 
     await backend.dispatch(
-        task_id="proj-10:110-feat",
-        project_path=project_path,
+        task_id="proj-1:110-feat",
+        project_path=proj,
         spec_id="110-feat",
         batch=fake,
     )
 
     assert fake.spec_present_at_create is True
     assert spec_in_worktree.exists()
+
+
+# --------------------------------------------------------------------------- #
+# 5. File-auth CLI credential seeding (#690)
+# --------------------------------------------------------------------------- #
+
+
+def _seed_env(monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    monkeypatch.delenv("AIFACTORY_BUILD_IMAGE", raising=False)
+    return Path(_DATA_ROOT) / "workspaces" / "proj-1"
+
+
+def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed
+    # initContainer, no cc-* volumes.
+    monkeypatch.delenv("AIFACTORY_CLI_CREDS_SECRET", raising=False)
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+    assert "initContainers" not in pod
+    vol_names = {v["name"] for v in pod.get("volumes", [])}
+    assert "cli-creds" not in vol_names
+    assert "cc-claude" not in vol_names
+
+
+def test_seed_creds_injected_when_secret_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+
+    # seed-creds initContainer present, busybox, mounts the secret at /seed.
+    init = next(c for c in pod["initContainers"] if c["name"] == "seed-creds")
+    assert init["image"].startswith("busybox")
+    seed_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "cli-creds")
+    assert seed_mount["mountPath"] == "/seed"
+    assert seed_mount.get("readOnly") is True
+    # cp's every known provider file into HOME, tolerant of a partial secret.
+    script = init["args"][0]
+    for key in (
+        "claude-credentials.json",
+        "codex-auth.json",
+        "copilot-apps.json",
+        "gemini-oauth_creds.json",
+    ):
+        assert f"/seed/{key}" in script
+    assert "|| true" in script  # never aborts on a missing provider file
+
+    # cli-creds secret volume points at the configured secret.
+    cli = next(v for v in pod["volumes"] if v["name"] == "cli-creds")
+    assert cli["secret"]["secretName"] == "factory-cli-creds"
+
+    # The build container mounts the seeded home dirs (so the CLIs find creds).
+    build_mounts = {mt["mountPath"] for mt in pod["containers"][0]["volumeMounts"]}
+    assert {
+        "/home/nonroot/.claude",
+        "/home/nonroot/.codex",
+        "/home/nonroot/.gemini",
+        "/home/nonroot/.config",
+    } <= build_mounts
+
+
+# --------------------------------------------------------------------------- #
+# 6. Self-contained build worktree (#671 — /work has a real .git, not a
+#    dangling linked-worktree pointer). Real-git integration test.
+# --------------------------------------------------------------------------- #
+
+import subprocess as _sp  # noqa: E402
+
+
+def _git_init_project(root: Path) -> Path:
+    proj = root / "workspaces" / "proj-1"
+    proj.mkdir(parents=True)
+
+    def g(*a: str) -> None:
+        _sp.run(
+            ["git", "-C", str(proj), *a], check=True, capture_output=True, text=True
+        )
+
+    g("init", "-b", "main")
+    g("config", "user.email", "t@example.com")
+    g("config", "user.name", "Test")
+    (proj / "README.md").write_text("hi\n")
+    g("add", "-A")
+    g("commit", "-m", "init")
+    g("remote", "add", "origin", "https://github.com/acme/proj.git")
+    return proj
+
+
+def test_populate_builds_self_contained_repo(monkeypatch, tmp_path):
+    # #671: the dispatched build Job's /work must be a STANDALONE repo (real .git
+    # dir + GitHub origin + task branch + spec), not a linked git worktree whose
+    # .git points at the unmounted project repo.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
+
+    wt = bb.populate_build_worktree(proj, "042-go")
+    assert wt is not None
+    wtp = Path(wt)
+
+    # Real .git DIRECTORY — not a linked-worktree `.git` file (the #671 defect).
+    assert (wtp / ".git").is_dir()
+    # /work stays on the BASE branch (#716): run.py creates the aifactory/<spec>
+    # worktree+branch itself in-Job. Pre-checking it out would make run.py's
+    # `git worktree add -b` fail ("branch already exists").
+    head = _sp.run(
+        ["git", "-C", str(wtp), "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert head == "main"
+    # origin points at the REAL GitHub remote (for the PR-endgame push), not the
+    # local clone source (unreachable from the Job pod).
+    origin = _sp.run(
+        ["git", "-C", str(wtp), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert origin == "https://github.com/acme/proj.git"
+    # The spec is materialized into the working tree.
+    assert (wtp / ".aifactory" / "specs" / "042-go" / "spec.md").exists()
+
+
+def test_populate_skips_when_outside_data_pvc(monkeypatch, tmp_path):
+    # Outside the data PVC (laptop/dev) → no /work co-mount → nothing to populate.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    assert bb.populate_build_worktree(proj, "042-go") is None
+
+
+# --------------------------------------------------------------------------- #
+# 7. RFC-0017 Stage E (#190): JobSpec.workspace_uri -> WORKSPACE_URI env
+# --------------------------------------------------------------------------- #
+
+
+def test_jobspec_workspace_uri_emits_env() -> None:
+    from core.job_dispatch import JobSpec, build_job_manifest
+
+    m = build_job_manifest(
+        JobSpec(
+            service="aifactory",
+            job_id="p:s",
+            commands=["echo hi"],
+            workspace_uri="s3://factory-artifacts/aifactory/1/p/workspace.tar.gz",
+        )
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in m["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert (
+        env["WORKSPACE_URI"] == "s3://factory-artifacts/aifactory/1/p/workspace.tar.gz"
+    )
+
+
+def test_jobspec_no_workspace_uri_omits_env() -> None:
+    from core.job_dispatch import JobSpec, build_job_manifest
+
+    m = build_job_manifest(
+        JobSpec(service="aifactory", job_id="p:s", commands=["echo hi"])
+    )
+    names = {e["name"] for e in m["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert "WORKSPACE_URI" not in names  # default None → single-node path unchanged
+
+
+# --------------------------------------------------------------------------- #
+# 8. RFC-0017 Stage E (#190) producer: build_backend packs the worktree +
+#    sets workspace_uri, gated by AIFACTORY_PACK_WORKSPACE (default OFF).
+# --------------------------------------------------------------------------- #
+
+
+def test_maybe_pack_workspace_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Flag unset → producer is inert: no pack, no URI, co-mount path unchanged.
+    monkeypatch.delenv("AIFACTORY_PACK_WORKSPACE", raising=False)
+    src = tmp_path / "wt"
+    src.mkdir()
+    assert (
+        bb._maybe_pack_workspace(str(src), task_id="p:s", correlation_key="1") is None
+    )
+
+
+def test_maybe_pack_workspace_none_worktree_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Even ON, a None worktree (outside the data PVC) has nothing to pack.
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    assert bb._maybe_pack_workspace(None, task_id="p:s", correlation_key="1") is None
+
+
+def test_maybe_pack_workspace_on_packs_and_returns_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # ON + a real worktree → pack to the in-memory fake S3 and return the
+    # canonical workspace-archive URI (apis/concurrency-conventions.md §2 layout).
+    import core.artifact_store as a_s
+
+    # Use the in-memory transport so no boto3 / S3 / MinIO is needed.
+    monkeypatch.setattr(a_s.ArtifactStore, "_client", lambda self: a_s._FakeS3())
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    monkeypatch.delenv("S3_BUCKET", raising=False)  # → DEFAULT_BUCKET
+
+    src = tmp_path / "wt"
+    (src / "pkg").mkdir(parents=True)
+    (src / "main.py").write_text("print('hi')\n")
+
+    uri = bb._maybe_pack_workspace(
+        str(src), task_id="proj-1:042-go", correlation_key="482"
+    )
+    assert uri == (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/"
+        f"{a_s.WORKSPACE_ARCHIVE}"
+    )
+
+
+def test_maybe_pack_workspace_swallows_pack_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A pack/object-store error must NEVER break dispatch: it is logged and the
+    # caller falls back to the /work co-mount (returns None).
+    import core.artifact_store as a_s
+
+    def _boom(*_a: object, **_k: object) -> str:
+        raise RuntimeError("s3 down")
+
+    monkeypatch.setattr(a_s, "pack_workspace", _boom)
+    monkeypatch.setenv("AIFACTORY_PACK_WORKSPACE", "1")
+    src = tmp_path / "wt"
+    src.mkdir()
+    assert (
+        bb._maybe_pack_workspace(str(src), task_id="p:s", correlation_key="1") is None
+    )
+
+
+def test_manifest_includes_workspace_uri_when_packed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The producer threads the packed URI onto the manifest → WORKSPACE_URI env,
+    # so the Job-side consumer (later slice) can unpack it into /work.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    env = {
+        e["name"]: e.get("value")
+        for e in m["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert env["WORKSPACE_URI"] == uri
+
+
+# --------------------------------------------------------------------------- #
+# 9. RFC-0017 Stage E (#190) slice 5: a packed-workspace Job (workspace_uri set)
+#    drops the RWO /work worktree co-mount so it is no longer node-pinned. The
+#    default (unpacked) path keeps the co-mount unchanged.
+# --------------------------------------------------------------------------- #
+
+
+def test_manifest_packed_workspace_drops_work_comount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # repo_pvc IS configured and the project lives inside the data PVC, so on the
+    # default path this Job WOULD co-mount the worktree at /work via an RWO PVC
+    # subPath. With workspace_uri set the RWO co-mount must be REPLACED by a
+    # writable, node-local emptyDir at /work: the consumer unpacks WORKSPACE_URI
+    # into /work at startup (so /work must be writable by the nonroot Job — an
+    # image dir is root-owned → PermissionError), and an emptyDir (not a PVC)
+    # keeps the Job node-agnostic, which is the whole point of the handoff.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    pod = m["spec"]["template"]["spec"]
+    c = pod["containers"][0]
+    work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
+    # writable unpack target, NOT an RWO worktree co-mount: no subPath
+    assert "subPath" not in work_mt
+    work_vol = next(v for v in pod["volumes"] if v["name"] == "work")
+    assert "emptyDir" in work_vol  # node-local + writable → not node-pinned
+    assert "persistentVolumeClaim" not in work_vol  # the RWO pin is gone
+    assert c["workingDir"] == "/work"
+    env = {e["name"]: e.get("value") for e in c["env"]}
+    assert env["WORKSPACE_URI"] == uri  # consumer unpacks /work from this
+
+
+def test_manifest_default_keeps_work_comount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The contrast / regression guard: SAME repo_pvc + in-PVC project, but NO
+    # workspace_uri → the #671 /work co-mount path is unchanged.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.delenv("AIFACTORY_NIX_STORE_PVC", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    c = m["spec"]["template"]["spec"]["containers"][0]
+    work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
+    assert work_mt["subPath"] == ("workspaces/proj-1/.aifactory/worktrees/tasks/042-go")
+    env_names = {e["name"] for e in c["env"]}
+    assert "WORKSPACE_URI" not in env_names  # default → no unpack
+
+
+# --------------------------------------------------------------------------- #
+# 10. RFC-0017 #190 (nix source): a packed-workspace Job drops the node-pinned
+#     aifactory-nix-store warm-cache PVC when AIFACTORY_PACKED_NIX_IN_IMAGE is on
+#     (the build image then carries /nix/store). That PVC is RWO local-path and
+#     PV-pinned to one node, so co-mounting it re-pins the Job — the second pin
+#     after the /work co-mount (§9). The flag is the gate; it only affects the
+#     packed path. Default OFF and the non-packed path keep the warm store.
+# --------------------------------------------------------------------------- #
+
+
+def _nix_store_present(manifest: dict) -> tuple[bool, bool]:
+    """Return (volume_present, mount_present) for the nix-store warm cache."""
+    pod = manifest["spec"]["template"]["spec"]
+    vol = any(v["name"] == "nix-store" for v in pod.get("volumes", []))
+    c = pod["containers"][0]
+    mt = any(m["mountPath"] == "/nix/store" for m in c.get("volumeMounts", []))
+    return vol, mt
+
+
+def test_manifest_packed_nix_in_image_drops_nix_store_pvc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Packed path + flag ON + a configured warm-store PVC → the node-pinned RWO
+    # nix-store co-mount is dropped so the Job uses the image's baked /nix/store
+    # and stays node-agnostic. /work stays the writable emptyDir (§9).
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3-nix")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    vol, mt = _nix_store_present(m)
+    assert not vol  # the RWO node-pinned warm-cache volume is gone
+    assert not mt  # nothing mounted at /nix/store → baked image store is used
+    pod = m["spec"]["template"]["spec"]
+    work_vol = next(v for v in pod["volumes"] if v["name"] == "work")
+    assert "emptyDir" in work_vol  # /work pin (§9) stays dropped too
+
+
+def test_manifest_packed_keeps_nix_store_pvc_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The pin guard: SAME packed Job, flag OFF (default) → the warm-store PVC is
+    # still co-mounted. This is the node pin #190 documents; the flag removes it.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    uri = (
+        "s3://factory-artifacts/aifactory/482/proj-1:042-go/workspace/workspace.tar.gz"
+    )
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        workspace_uri=uri,
+    )
+    vol, mt = _nix_store_present(m)
+    assert vol and mt  # unchanged: still the RWO node-pinned warm store
+
+
+def test_manifest_nonpacked_keeps_nix_store_pvc_even_with_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Scope guard: the flag only de-pins the PACKED path. A non-packed (no
+    # workspace_uri) build keeps its warm-store co-mount even with the flag on —
+    # the co-mount path is single-node by design (#671) and the warm cache helps.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "1")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    vol, mt = _nix_store_present(m)
+    assert vol and mt  # non-packed → warm store unchanged
+
+
+def test_manifest_stop_after_planning_adds_run_py_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for the dropped-flag defect: the kubejob backend used to ignore
+    # stop_after_planning, so a planning-only request silently ran the full build
+    # (coder + QA + PR). The flag must reach the Job's run.py argv.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        stop_after_planning=True,
+    )
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "--stop-after-planning" in cmd
+
+
+def test_manifest_default_omits_stop_after_planning_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contrast guard: a normal full build must NOT carry the flag.
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+    )
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "--stop-after-planning" not in cmd

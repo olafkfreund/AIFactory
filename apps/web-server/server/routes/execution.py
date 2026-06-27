@@ -779,6 +779,60 @@ async def start_task(
     }
 
 
+@router.post("/{task_id}/handoff-tfactory")
+async def handoff_to_tfactory(
+    task_id: str,
+    _access: dict = Depends(require_task_access("member")),
+) -> dict:
+    """Push the finished build branch + hand the spec off to TFactory for
+    SOURCE-AWARE verification (PARR seam).
+
+    Reuses the same machinery as the auto-handoff on completion
+    (``build_ingest_payload`` pushes the build branch to origin and assembles the
+    ``git_url`` / ``source_branch`` / ``contract`` payload; ``send_handoff`` POSTs
+    it to TFactory's ``/api/specs/ingest``), but is callable ON DEMAND — e.g. for
+    a build parked at ``human_review`` (auto-merge off), which never fires the
+    COMPLETED-only auto-handoff. Without this, the only way to verify such a build
+    was a text-only spec-ingest with no SUT to run tests against (hollow verify).
+
+    Returns the send result plus the TFactory spec/project id + the pushed branch
+    so the caller can poll TFactory for the verdict.
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format. Expected 'project_id:spec_id'",
+        )
+    project_id, spec_id = task_id.split(":", 1)
+    projects = load_projects()
+    if project_id not in projects:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+        )
+    project_path = Path(projects[project_id]["path"])
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+    if not spec_dir.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Task/spec not found"
+        )
+
+    from pfactory.tfactory_client import build_ingest_payload, send_handoff
+
+    payload = build_ingest_payload(spec_dir, spec_id)
+    result = await send_handoff(payload)
+    try:
+        (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
+    except OSError:
+        pass
+    return {
+        **result,
+        "tfactory_spec_id": payload.get("spec_id"),
+        "tfactory_project_id": payload.get("project_id"),
+        "source_branch": payload.get("source_branch"),
+        "git_url": payload.get("git_url"),
+    }
+
+
 @router.post("/{task_id}/stop")
 async def stop_task(
     task_id: str,

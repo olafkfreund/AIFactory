@@ -64,6 +64,10 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          # Pin the runtime stage: the Dockerfile now has a later
+          # ``build-runtime`` stage (the -nix variant, RFC-0017 #190). The
+          # deployed app must stay the lean runtime image, not the nix-baked one.
+          target: runtime
           platforms: linux/amd64
           push: true
           tags: |

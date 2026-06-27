@@ -41,15 +41,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator, AsyncIterator
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
 from providers import BaseLLMProvider
 from providers.types import (
     AssistantMessage,
+    ResultMessage,
     TextBlock,
     ToolUseBlock,
     UserMessage,
@@ -101,7 +104,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         base_url: str = _DEFAULT_BASE_URL,
         api_key: str | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
-        working_dir: Path | str = Path("."),
+        working_dir: Path | str = Path(),
         max_turns: int = _DEFAULT_MAX_TURNS,
         tool_names: list[str] | None = None,
         extra_headers: dict[str, str] | None = None,
@@ -127,6 +130,9 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         self._extra_headers: dict[str, str] = extra_headers or {}
         self._extra_options: dict[str, Any] = extra_options or {}
         self._pending_prompt: str | None = None
+        # Flipped to True once a model 400s on `reasoning_effort` (non-thinking
+        # models reject it); _build_payload then stops sending it.
+        self._reasoning_effort_unsupported = False
 
         effective_tools = tool_names or _DEFAULT_TOOL_NAMES
         self._tool_defs = get_tool_definitions(effective_tools)
@@ -178,6 +184,20 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
             {"role": "user", "content": self._pending_prompt},
         ]
 
+        # Accumulate real token usage across turns so the session loop records it
+        # (session.py reads ResultMessage.usage). The OpenAI/Ollama response carries
+        # `usage.prompt_tokens`/`completion_tokens`; map them to the
+        # input_tokens/output_tokens keys session.py expects. Without a terminal
+        # ResultMessage these tokens were dropped → token_usage.json = 0 → the
+        # benchmark's `tokens > 0` guard false-failed an otherwise-good build.
+        total_in = 0
+        total_out = 0
+
+        def _result() -> ResultMessage:
+            return ResultMessage(
+                usage={"input_tokens": total_in, "output_tokens": total_out}
+            )
+
         for turn in range(self._max_turns):
             logger.debug(
                 "OpenAICompatibleAgenticProvider: turn %d/%d",
@@ -193,7 +213,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                     asyncio.to_thread(self._http_post, url, payload),
                     timeout=float(self._timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield AssistantMessage(
                     content=[
                         TextBlock(
@@ -204,7 +224,13 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                         )
                     ]
                 )
+                yield _result()
                 return
+
+            # Real token usage for this turn (OpenAI/Ollama `usage` block).
+            _delta_in, _delta_out = self._usage_delta(response_data)
+            total_in += _delta_in
+            total_out += _delta_out
 
             # OpenAI shape: choices[0].message
             choices = response_data.get("choices")
@@ -218,6 +244,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                         )
                     ]
                 )
+                yield _result()
                 return
 
             message = (
@@ -309,6 +336,7 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 if not assistant_blocks:
                     assistant_blocks.append(TextBlock(text="(no output from server)"))
                 yield AssistantMessage(content=assistant_blocks)
+                yield _result()
                 return
 
         logger.warning(
@@ -325,10 +353,25 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 )
             ]
         )
+        yield _result()
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _usage_delta(response_data: Any) -> tuple[int, int]:
+        """(input_tokens, output_tokens) for one response's ``usage`` block.
+
+        Maps OpenAI/Ollama ``prompt_tokens``/``completion_tokens`` to the
+        input/output names the session loop records. ``(0, 0)`` when absent.
+        """
+        usage = response_data.get("usage") if isinstance(response_data, dict) else None
+        if not isinstance(usage, dict):
+            return 0, 0
+        return int(usage.get("prompt_tokens") or 0), int(
+            usage.get("completion_tokens") or 0
+        )
 
     @staticmethod
     def _parse_tool_args(raw: Any) -> dict[str, Any]:
@@ -371,6 +414,18 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
         }
         # Default to deterministic output for code-generation tasks
         body.setdefault("temperature", 0)
+        # Local reasoning models (e.g. Ollama gemma/gpt-oss) spend the response
+        # budget on hidden "thinking" tokens; uncapped, on a large prompt they can
+        # return finish=length with EMPTY content/tool_calls — silently breaking
+        # structured/tool turns. These opt-in env knobs bound the reasoning effort
+        # and reserve an explicit output budget so the model actually emits. Unset
+        # → unchanged (the cloud OpenAI / ollama.com defaults stay untouched).
+        _effort = os.environ.get("OPENAI_COMPATIBLE_REASONING_EFFORT", "").strip()
+        if _effort and not self._reasoning_effort_unsupported:
+            body.setdefault("reasoning_effort", _effort)
+        _max_tokens = os.environ.get("OPENAI_COMPATIBLE_MAX_TOKENS", "").strip()
+        if _max_tokens.isdigit():
+            body.setdefault("max_tokens", int(_max_tokens))
         body.update(self._extra_options)
         return body
 
@@ -398,6 +453,22 @@ class OpenAICompatibleAgenticProvider(BaseLLMProvider):
                 error_body = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception:
                 pass
+            # Non-reasoning models (e.g. Ollama qwen2.5-coder) 400 when sent
+            # `reasoning_effort` ("... does not support thinking"). That knob is
+            # only meant for thinking models (gemma4/gpt-oss); drop it, remember
+            # so later turns skip it, and retry once — otherwise our opt-in knob
+            # would hard-break every non-thinking openai-compatible model.
+            if (
+                exc.code == HTTPStatus.BAD_REQUEST
+                and "reasoning_effort" in payload
+                and (
+                    "thinking" in error_body.lower()
+                    or "reasoning" in error_body.lower()
+                )
+            ):
+                self._reasoning_effort_unsupported = True
+                retry = {k: v for k, v in payload.items() if k != "reasoning_effort"}
+                return self._http_post(url, retry)
             raise RuntimeError(
                 f"OpenAI-compatible API HTTP error {exc.code}: {exc.reason}. "
                 f"Response body: {error_body}"

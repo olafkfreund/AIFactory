@@ -78,6 +78,12 @@ export async function apiRequest<T>(
     const response = await fetch(`${API_BASE}${endpoint}`, {
       method,
       headers,
+      // Send the OIDC `access_token` cookie set by the SSO login callback so
+      // the backend auth middleware (which accepts the cookie as a Bearer
+      // fallback) authenticates every request — not just those with a
+      // localStorage token. Without this, SSO-only sessions hit "Missing
+      // Authorization header" on mutating calls like DELETE.
+      credentials: 'include',
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal,
     });

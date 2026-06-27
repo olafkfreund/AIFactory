@@ -61,6 +61,17 @@ Scoped MCP keys (`acw_`) gate remote tools with `mcp:read` / `mcp:write`. See
 | `AIFACTORY_SOLO_MODE` | off | Single self-directed agent for small jobs (token-saving). |
 | `BMAD_SESSION_SEGMENTATION` | off | Per-story session segmentation for large tasks. |
 
+## Job-native build & multi-node scheduling
+
+How the coder loop (`run.py`) is executed, and what it takes for a build to schedule on any node rather than being pinned to one. See [Multi-replica deployment](./concepts/multi-replica) and [Reproducible builds in a per-task Nix env](./nix-reproducible-build).
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `AIFACTORY_BUILD_BACKEND` | `subprocess` | How `run.py` runs. `subprocess` is the in-pod asyncio subprocess (the shipped code default, kept as the safe fallback). `kubejob` dispatches each build as its own Kubernetes Job with Job-native log streaming. The reference live deployment sets `kubejob`. |
+| `AIFACTORY_PACK_WORKSPACE` | off | On the `kubejob` path, pack the populated `/work` to object storage and have the Job unpack it into a writable `emptyDir`, instead of co-mounting the workspace RWO `local-path` PVC. Removes the workspace node-pin — the first half of multi-node scheduling. |
+| `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | On the packed path, drop the warm Nix-store RWO `local-path` PVC from the build Job and resolve `/nix` from the build image instead. Removes the last node-pin; a packed build Job then carries no node affinity. Pair with `AIFACTORY_BUILD_IMAGE` pointed at a `-nix` tag. |
+| `AIFACTORY_BUILD_IMAGE` | (unset) | Overrides the image used for the `kubejob` build Job only (precedence: `AIFACTORY_BUILD_IMAGE` > `AIFACTORY_IMAGE` > built-in default). Point it at a published `:sha-<short>-nix` tag — the runtime image plus a baked `/nix/store` — so the build sources Nix from the layer rather than the PVC. |
+
 ## Trusted-plan ingest
 
 | Flag | What it does |

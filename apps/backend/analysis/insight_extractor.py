@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -430,17 +431,15 @@ def parse_insights(response_text: str) -> dict | None:
     # Try to extract JSON from the response
     text = response_text.strip()
 
-    # Handle markdown code blocks
-    if text.startswith("```"):
-        # Remove code block markers
-        lines = text.split("\n")
-        # Remove first line (```json or ```)
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        # Remove last line if it's ``
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
+    # Handle markdown code blocks. Reasoning-field models (e.g. Ollama gemma4 /
+    # gpt-oss) often PREFACE the JSON with prose or a thinking preamble and then
+    # emit a fenced block — so pull the FIRST ```json … ``` (or bare ```) block
+    # from anywhere in the text, not only when it's at the very start. Falls
+    # through to the raw text (then the brace-matching strategy below) when there
+    # is no fence.
+    fence = re.search(r"```(?:json|JSON)?[ \t]*\r?\n?(.*?)```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
 
     # Try to parse JSON, with fallback strategies
     insights = None

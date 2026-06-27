@@ -186,10 +186,41 @@ class WorktreeManager:
         # other git command runs (base-branch detection, worktree ops, ...).
         # See _ensure_not_bare for why this is needed.
         self._ensure_not_bare()
-        self.base_branch = base_branch or self._detect_base_branch()
+        self.base_branch = self._resolve_base_branch(base_branch)
         self.worktrees_dir = project_dir / ".aifactory" / "worktrees" / "tasks"
         self._merge_lock = asyncio.Lock()
         self._git_lock_path = self._resolve_git_lock_path()
+
+    def _resolve_base_branch(self, requested: str | None) -> str:
+        """Resolve the base branch a new worktree is cut from.
+
+        A caller-supplied base (e.g. the ``/start`` payload's ``baseBranch``) is
+        honoured ONLY when it resolves to a real commit in this repo. Otherwise
+        ``git worktree add -b aifactory/<spec> <path> <base>`` fails with a
+        WorktreeError, the build falls back to running on the primary checkout's
+        branch (often ``main``), and the dedicated ``aifactory/<spec>`` branch is
+        never created — so the AIFactory→TFactory handoff has no build branch to
+        push and verify runs hollow. A missing/invalid base degrades to detection
+        (DEFAULT_BRANCH → main/master → current) instead of blowing up the build.
+        """
+        if requested:
+            result = self._run_git(["rev-parse", "--verify", "--quiet", requested])
+            if result.returncode == 0:
+                return requested  # exists → honour it
+            # returncode 1 = valid repo, ref genuinely missing → fall back so the
+            # worktree is cut from a real base. Any other code (e.g. 128 = not a
+            # git repo / git unavailable) means we CAN'T validate — keep the
+            # requested base verbatim (prior behaviour) rather than shelling out
+            # to detection, which would raise outside a real repo.
+            if result.returncode == 1:
+                logger.warning(
+                    "requested base_branch %r does not resolve in this repo; "
+                    "falling back to detected base branch",
+                    requested,
+                )
+                return self._detect_base_branch()
+            return requested
+        return self._detect_base_branch()
 
     def _resolve_git_lock_path(self) -> Path:
         """Path to the per-base-repo git mutation sentinel.

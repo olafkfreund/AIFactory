@@ -325,8 +325,13 @@ def main() -> None:
     project_dir = get_project_dir(args.project_dir)
     debug("run.py", f"Using project directory: {project_dir}")
 
-    # Get model from CLI arg or env var (None if not explicitly set)
-    # This allows get_phase_model() to fall back to task_metadata.json
+    # Get model from CLI arg or env var (None if not explicitly set).
+    # This allows get_phase_model() to fall back to task_metadata.json — so the
+    # value is intentionally Optional[str], NOT defaulted to DEFAULT_MODEL (a
+    # truthy cli_model would wrongly out-prioritise a non-auto profile's saved
+    # model in get_phase_model). The handlers below accept this None via
+    # get_phase_model(cli_model: str | None); the type: ignore[arg-type] markers
+    # on those calls record that intentional contract.
     model = args.model or os.environ.get("AUTO_BUILD_MODEL")
 
     # Handle --mcp-doctor command (no spec needed, no banner — output is plain operator diagnostics)
@@ -380,6 +385,15 @@ def main() -> None:
         print("\nCreate a new spec with:")
         print("  claude /spec")
         sys.exit(1)
+
+    # RFC-0017 #190 (consumer): a packed-workspace Job carries WORKSPACE_URI (set
+    # by the build_backend producer when AIFACTORY_PACK_WORKSPACE is on). In that
+    # case /work is NOT populated by an RWO co-mount — reconstitute it from object
+    # storage BEFORE the spec is resolved and the build runs below. No-op (returns
+    # False) on the single-node co-mount path, so today's behaviour is unchanged.
+    from core.workspace_fetch import maybe_unpack_workspace  # noqa: PLC0415
+
+    maybe_unpack_workspace(project_dir)
 
     # Find the spec
     debug("run.py", "Finding spec", spec_identifier=args.spec)
@@ -445,7 +459,7 @@ def main() -> None:
         handle_qa_command(
             project_dir=project_dir,
             spec_dir=spec_dir,
-            model=model,
+            model=model,  # type: ignore[arg-type]  # None-able by design (see model assignment above)
             verbose=args.verbose,
         )
         return
@@ -455,7 +469,7 @@ def main() -> None:
         handle_followup_command(
             project_dir=project_dir,
             spec_dir=spec_dir,
-            model=model,
+            model=model,  # type: ignore[arg-type]  # None-able by design (see model assignment above)
             verbose=args.verbose,
         )
         return
@@ -464,7 +478,7 @@ def main() -> None:
     handle_build_command(
         project_dir=project_dir,
         spec_dir=spec_dir,
-        model=model,
+        model=model,  # type: ignore[arg-type]  # None-able by design (see model assignment above)
         max_iterations=args.max_iterations,
         verbose=args.verbose,
         force_isolated=args.isolated,
@@ -478,6 +492,30 @@ def main() -> None:
         parallel=args.parallel,
         workers=args.workers,
     )
+
+    # RFC-0017 #190 (producer push-back): on the packed multi-node path ``/work``
+    # is an ephemeral emptyDir that dies with the Job, so persist the built branch
+    # to origin HERE — the control-plane handoff/PR-endgame push reads the
+    # control-plane data-PVC worktree, which the packed path never populates, and
+    # would otherwise degrade to ``main`` (losing the build). No-op on the co-mount
+    # path (WORKSPACE_URI unset) where ``/work`` survives on the data PVC. Skipped
+    # for planning-only runs (no build branch yet).
+    if not args.stop_after_planning:
+        from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_push_task_logs,
+            maybe_push_usage,
+            maybe_push_workspace_branch,
+        )
+
+        maybe_push_workspace_branch(project_dir, spec_dir.name)
+        # Same packed-path propagation gap: token_usage.json is written here in the
+        # Job's ephemeral /work but the control-plane completion emitter reads the
+        # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
+        maybe_push_usage(spec_dir, spec_dir.name)
+        # W1 (Factory #218): task_logs.json carries the authoritative per-phase
+        # status; push it so the control plane reports done/failed instead of
+        # leaving the task stuck at backlog/queued.
+        maybe_push_task_logs(spec_dir, spec_dir.name)
 
 
 if __name__ == "__main__":
