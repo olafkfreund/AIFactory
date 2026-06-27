@@ -639,7 +639,11 @@ async def run_autonomous_agent(
 
             # Find the phase for this subtask
             plan = load_implementation_plan(spec_dir)
-            phase = find_phase_for_subtask(plan, subtask_id) if plan else {}
+            phase = (
+                find_phase_for_subtask(plan, subtask_id)
+                if plan and subtask_id
+                else {}
+            )
 
             # Generate focused, minimal prompt for this subtask
             prompt = generate_subtask_prompt(
@@ -1225,9 +1229,9 @@ async def _maybe_run_parallel_phase(
     verbose: bool,
     source_spec_dir: Path | None,
     remote_control_session: str | None,
-    status_manager,
+    status_manager: StatusManager,
     disabled_phases: set[int],
-    recovery_manager=None,
+    recovery_manager: RecoveryManager | None = None,
 ) -> bool:
     """Run the subtask's phase as parallel waves if it is eligible (#376).
 
