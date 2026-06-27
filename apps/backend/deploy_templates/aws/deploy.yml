@@ -1,0 +1,20 @@
+# Reference AWS deploy workflow: build+push to ECR, then terraform apply.
+name: Deploy (AWS App Runner + RDS + ElastiCache)
+on: { workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |   # build + push to ECR (create the repo first / via terraform), then:
+          IMG="$AWS_ACCT.dkr.ecr.$AWS_REGION.amazonaws.com/ttt/app:${GITHUB_SHA::8}"
+          docker build -t "$IMG" . && docker push "$IMG"
+      - uses: hashicorp/setup-terraform@v3
+      - working-directory: infra
+        run: terraform init && terraform apply -auto-approve -var "image=$IMG"

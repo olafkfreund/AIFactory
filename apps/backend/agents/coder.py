@@ -16,6 +16,7 @@ from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
+from deploy_scaffold import scaffold_deploy
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -111,6 +112,33 @@ def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> N
         write_build_report(spec_dir, source_spec_dir=source_spec_dir)
     except Exception:  # noqa: BLE001 - profiling must never affect a build
         pass
+
+
+def _worktree_root(spec_dir: Path) -> Path:
+    """The code worktree/project root holding the app — the parent of the
+    ``.aifactory`` dir the spec lives under (works for isolated + direct modes)."""
+    for parent in spec_dir.parents:
+        if parent.name == ".aifactory":
+            return parent.parent
+    return spec_dir.parent
+
+
+def _scaffold_deploy_artifacts(spec_dir: Path) -> None:
+    """RFC-0013 consuming side: when the contract names a managed-PaaS target,
+    materialise the proven deploy templates (Terraform + workflow + TFactory
+    target) into the worktree alongside the app. Deterministic + idempotent +
+    best-effort — never affects a build."""
+    contract = spec_dir / "context" / "task_contract.json"
+    if not contract.exists():
+        return
+    try:
+        data = json.loads(contract.read_text(encoding="utf-8"))
+        deployment = data.get("deployment") if isinstance(data, dict) else None
+        written = scaffold_deploy(deployment, _worktree_root(spec_dir))
+    except Exception:  # noqa: BLE001 - deploy scaffold must never affect a build
+        return
+    if written:
+        print(f"  Scaffolded deploy artifacts: {', '.join(written)}")
 
 
 async def run_autonomous_agent(
@@ -1038,6 +1066,9 @@ async def run_autonomous_agent(
     # Set final status
     if completed == total:
         status_manager.update(state=BuildState.COMPLETE)
+        # RFC-0013 consuming side: a complete build whose contract names a PaaS
+        # target gets the proven deploy artifacts scaffolded into the worktree.
+        _scaffold_deploy_artifacts(spec_dir)
     else:
         status_manager.update(state=BuildState.PAUSED)
 
