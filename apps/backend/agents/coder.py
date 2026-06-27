@@ -16,7 +16,6 @@ from core.error_utils import (
     decide_rate_limit_resume,
     extract_rate_limit_cooldown,
 )
-from deploy_scaffold import scaffold_deploy
 from phase_config import (
     get_phase_model,
     get_phase_thinking_budget,
@@ -63,6 +62,7 @@ from ui import (
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
+from .deploy_scaffold import scaffold_deploy
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context

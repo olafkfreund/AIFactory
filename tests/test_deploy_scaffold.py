@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
-from deploy_scaffold import scaffold_deploy  # noqa: E402
+from agents.deploy_scaffold import scaffold_deploy  # noqa: E402
 
 
 def test_no_block_writes_nothing(tmp_path: Path) -> None:
