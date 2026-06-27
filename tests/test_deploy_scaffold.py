@@ -49,3 +49,23 @@ def test_does_not_clobber_existing_coder_files(tmp_path: Path) -> None:
     written = scaffold_deploy({"deploy_system": "gcp-cloud-run"}, tmp_path)
     assert "infra/main.tf" not in written
     assert (tmp_path / "infra" / "main.tf").read_text() == "# the coder's own infra\n"
+
+
+def test_scaffold_for_spec_reads_contract(tmp_path: Path) -> None:
+    from agents.deploy_scaffold import scaffold_deploy_for_spec
+
+    spec = tmp_path / ".aifactory" / "specs" / "001-game"
+    (spec / "context").mkdir(parents=True)
+    (spec / "context" / "task_contract.json").write_text(
+        '{"deployment": {"deploy_system": "gcp-cloud-run"}}'
+    )
+    written = scaffold_deploy_for_spec(spec)
+    assert "infra/main.tf" in written
+    # written into the worktree root (parent of .aifactory), not the spec dir
+    assert (tmp_path / "infra" / "main.tf").exists()
+
+
+def test_scaffold_for_spec_no_contract(tmp_path: Path) -> None:
+    from agents.deploy_scaffold import scaffold_deploy_for_spec
+
+    assert scaffold_deploy_for_spec(tmp_path / "nope") == []

@@ -16,6 +16,7 @@ nothing.
 
 from __future__ import annotations
 
+import json
 import shutil
 from collections.abc import Mapping
 from pathlib import Path
@@ -64,3 +65,28 @@ def scaffold_deploy(deployment: Mapping[str, object] | None, dest: Path) -> list
     )
     _place(_TEMPLATES / "tfactory.yml", dest / ".tfactory.yml", written, dest)
     return sorted(written)
+
+
+def _worktree_root(spec_dir: Path) -> Path:
+    """The code worktree/project root holding the app — the parent of the
+    ``.aifactory`` dir the spec lives under (works for isolated + direct modes)."""
+    for parent in spec_dir.parents:
+        if parent.name == ".aifactory":
+            return parent.parent
+    return spec_dir.parent
+
+
+def scaffold_deploy_for_spec(spec_dir: Path) -> list[str]:
+    """Read a spec's contract ``deployment`` block and scaffold the deploy
+    artifacts into its worktree. Best-effort: returns the written paths, or an
+    empty list when there's no PaaS target / on any error (never raises, so a
+    build is never affected). The coder calls this at build completion."""
+    contract = spec_dir / "context" / "task_contract.json"
+    if not contract.exists():
+        return []
+    try:
+        data = json.loads(contract.read_text(encoding="utf-8"))
+        deployment = data.get("deployment") if isinstance(data, dict) else None
+        return scaffold_deploy(deployment, _worktree_root(spec_dir))
+    except (OSError, ValueError):
+        return []

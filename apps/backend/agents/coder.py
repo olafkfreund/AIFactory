@@ -62,7 +62,7 @@ from ui import (
 from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
 from .build_report import write_build_report
 from .compaction_recovery import CompactionDetector, build_operational_context
-from .deploy_scaffold import scaffold_deploy
+from .deploy_scaffold import scaffold_deploy_for_spec
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
@@ -112,33 +112,6 @@ def _emit_build_report(spec_dir: Path, source_spec_dir: Path | None = None) -> N
         write_build_report(spec_dir, source_spec_dir=source_spec_dir)
     except Exception:  # noqa: BLE001 - profiling must never affect a build
         pass
-
-
-def _worktree_root(spec_dir: Path) -> Path:
-    """The code worktree/project root holding the app — the parent of the
-    ``.aifactory`` dir the spec lives under (works for isolated + direct modes)."""
-    for parent in spec_dir.parents:
-        if parent.name == ".aifactory":
-            return parent.parent
-    return spec_dir.parent
-
-
-def _scaffold_deploy_artifacts(spec_dir: Path) -> None:
-    """RFC-0013 consuming side: when the contract names a managed-PaaS target,
-    materialise the proven deploy templates (Terraform + workflow + TFactory
-    target) into the worktree alongside the app. Deterministic + idempotent +
-    best-effort — never affects a build."""
-    contract = spec_dir / "context" / "task_contract.json"
-    if not contract.exists():
-        return
-    try:
-        data = json.loads(contract.read_text(encoding="utf-8"))
-        deployment = data.get("deployment") if isinstance(data, dict) else None
-        written = scaffold_deploy(deployment, _worktree_root(spec_dir))
-    except Exception:  # noqa: BLE001 - deploy scaffold must never affect a build
-        return
-    if written:
-        logger.info("Scaffolded deploy artifacts: %s", ", ".join(written))
 
 
 async def run_autonomous_agent(
@@ -1068,7 +1041,9 @@ async def run_autonomous_agent(
         status_manager.update(state=BuildState.COMPLETE)
         # RFC-0013 consuming side: a complete build whose contract names a PaaS
         # target gets the proven deploy artifacts scaffolded into the worktree.
-        _scaffold_deploy_artifacts(spec_dir)
+        scaffolded = scaffold_deploy_for_spec(spec_dir)
+        if scaffolded:
+            logger.info("Scaffolded deploy artifacts: %s", ", ".join(scaffolded))
     else:
         status_manager.update(state=BuildState.PAUSED)
 
