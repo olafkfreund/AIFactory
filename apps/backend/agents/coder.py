@@ -640,9 +640,7 @@ async def run_autonomous_agent(
             # Find the phase for this subtask
             plan = load_implementation_plan(spec_dir)
             phase = (
-                find_phase_for_subtask(plan, subtask_id)
-                if plan and subtask_id
-                else {}
+                find_phase_for_subtask(plan, subtask_id) if plan and subtask_id else {}
             )
 
             # Generate focused, minimal prompt for this subtask
