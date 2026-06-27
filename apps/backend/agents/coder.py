@@ -138,7 +138,7 @@ def _scaffold_deploy_artifacts(spec_dir: Path) -> None:
     except Exception:  # noqa: BLE001 - deploy scaffold must never affect a build
         return
     if written:
-        print(f"  Scaffolded deploy artifacts: {', '.join(written)}")
+        logger.info("Scaffolded deploy artifacts: %s", ", ".join(written))
 
 
 async def run_autonomous_agent(
