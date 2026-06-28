@@ -4,21 +4,16 @@ Task management routes.
 Handles CRUD operations for tasks (specs) within projects.
 """
 
-import ast
 import json
 import re
-import shutil
-import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.engine import get_db
-from ..paths import get_data_dir
 from ..services import task_control
 
 # PR-creation route (POST /{task_id}/worktree/create-pr) and its request model
@@ -37,7 +32,7 @@ from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
-from .projects import get_projects_file, load_projects
+from .projects import load_projects
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,
@@ -77,8 +72,6 @@ from .task_models import (  # noqa: F401
     TaskUpdate,
 )
 
-
-
 # --------------------------------------------------------------------------
 # Helper Functions
 # --------------------------------------------------------------------------
@@ -105,7 +98,6 @@ from .task_service import (  # noqa: F401
     task_to_dict,
     validate_done_status,
 )
-
 
 
 @router.get("", response_model=TaskList)
@@ -295,29 +287,9 @@ Created via Magestic AI Web UI
 # --------------------------------------------------------------------------
 
 
-def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
-    """Resolve task_id (projectId:specId) to project_id, spec_id, project_path, spec_dir.
-
-    Raises HTTPException on invalid input or missing resources.
-    """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
-        )
-
-    project_id, spec_id = task_id.split(":", 1)
-    projects = load_projects()
-
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-
-    if not spec_dir.exists():
-        raise HTTPException(status_code=404, detail="Task spec not found")
-
-    return project_id, spec_id, project_path, spec_dir
+from .inbox import (
+    resolve_task as _resolve_task,  # noqa: F401  # re-export of canonical (dedup)
+)
 
 
 def _try_close_github_issue(project_path: Path, spec_dir: Path) -> None:
@@ -651,12 +623,9 @@ from .plan_approval import (  # noqa: E402,F401
 )
 from .plan_approval import router as plan_approval_router
 
-
 # ============================================
 # Worktree Merge Routes
 # ============================================
-
-
 # ============================================
 # Worktree merge / conflict-resolution Routes (#649, epic #154)
 # ============================================

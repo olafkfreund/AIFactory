@@ -12,7 +12,7 @@ The handlers depend only on already-extractable collaborators -- ``load_projects
 from ``routes/projects`` (whose ``tasks`` import is lazy, so no module-level cycle),
 ``require_task_access`` from ``routes/project_authz``, and the ``inbox_service``
 (imported lazily inside the handlers). The two small pure path helpers
-(``_resolve_task`` and ``_get_worktree_spec_dir``) are inlined here -- byte-for-byte
+(``resolve_task`` and ``_get_worktree_spec_dir``) are inlined here -- byte-for-byte
 copies of the originals in ``routes/tasks.py`` -- so this module does not import
 ``.tasks`` and lifting the cluster out cannot create a circular import. The
 originals remain in ``routes/tasks.py`` where other handlers still use them.
@@ -78,7 +78,7 @@ class InboxEnqueueResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
-def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
+def resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
     """Resolve task_id (projectId:specId) to project_id, spec_id, project_path, spec_dir.
 
     Raises HTTPException on invalid input or missing resources.
@@ -156,7 +156,7 @@ async def enqueue_inbox_message(
     """
     from ..services import inbox_service
 
-    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    _project_id, spec_id, project_path, spec_dir = resolve_task(task_id)
     target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
 
     try:
@@ -194,7 +194,7 @@ async def list_inbox_messages(
     """List messages in a task's agent inbox."""
     from ..services import inbox_service
 
-    _project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
+    _project_id, spec_id, project_path, spec_dir = resolve_task(task_id)
     target_dir = _inbox_target_spec_dir(project_path, spec_id, spec_dir)
 
     try:
