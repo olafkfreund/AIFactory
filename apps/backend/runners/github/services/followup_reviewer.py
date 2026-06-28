@@ -37,6 +37,7 @@ try:
     from .category_utils import map_category
     from .prompt_manager import PromptManager
     from .pydantic_models import FollowupReviewResponse
+    from .specialist_reviewer import SEVERITY_MAPPING
 except (ImportError, ValueError, SystemError):
     from gh_client import GHClient
     from models import (
@@ -49,16 +50,13 @@ except (ImportError, ValueError, SystemError):
     from services.category_utils import map_category
     from services.prompt_manager import PromptManager
     from services.pydantic_models import FollowupReviewResponse
+    from services.specialist_reviewer import SEVERITY_MAPPING
 
 logger = logging.getLogger(__name__)
 
-# Severity mapping for AI responses
-_SEVERITY_MAPPING = {
-    "critical": ReviewSeverity.CRITICAL,
-    "high": ReviewSeverity.HIGH,
-    "medium": ReviewSeverity.MEDIUM,
-    "low": ReviewSeverity.LOW,
-}
+# Severity mapping for AI responses — single source of truth lives in
+# specialist_reviewer; aliased here so the two reviewers can't drift.
+_SEVERITY_MAPPING = SEVERITY_MAPPING
 
 
 class FollowupReviewer:
