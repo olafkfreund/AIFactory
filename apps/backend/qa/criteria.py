@@ -8,23 +8,12 @@ Manages acceptance criteria validation and status tracking.
 import json
 from pathlib import Path
 
+from agents.utils import load_implementation_plan
 from progress import is_build_complete
 
 # =============================================================================
 # IMPLEMENTATION PLAN I/O
 # =============================================================================
-
-
-def load_implementation_plan(spec_dir: Path) -> dict | None:
-    """Load the implementation plan JSON."""
-    plan_file = spec_dir / "implementation_plan.json"
-    if not plan_file.exists():
-        return None
-    try:
-        with open(plan_file) as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
 
 
 def save_implementation_plan(spec_dir: Path, plan: dict) -> bool:
