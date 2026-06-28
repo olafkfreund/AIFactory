@@ -63,6 +63,8 @@ from jose import JWTError, jwt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.routes.auth_routes import create_access_token
+
 from ..config import get_settings
 from ..database.engine import get_db
 from ..database.models import ExternalIdentity, User
@@ -135,33 +137,16 @@ def _idp_name() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _create_access_token(user: User) -> str:
-    settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
-    )
-    payload = {
-        "sub": user.id,
-        "email": user.email,
-        "role": user.role,
-        "type": "access",
-        "exp": expires,
-        "iat": datetime.now(timezone.utc),
-    }
-    return jwt.encode(
-        payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM,
-    )
-
-
 def _attach_session_cookies(
-    response: RedirectResponse, user: User,
+    response: RedirectResponse,
+    user: User,
 ) -> None:
     """Set the access-token cookie. Refresh-token plumbing for SAML
     sessions lands in PR-1b4 (auth.py extension)."""
     settings = get_settings()
     response.set_cookie(
         "access_token",
-        _create_access_token(user),
+        create_access_token(user),
         httponly=True,
         samesite="lax",
         max_age=60 * settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -197,7 +182,10 @@ def _build_request_data(request: Request, form: dict[str, Any]) -> dict[str, Any
 
 
 async def _attach_or_reject_identity(
-    db: AsyncSession, user: User, kind: str, subject: str,
+    db: AsyncSession,
+    user: User,
+    kind: str,
+    subject: str,
 ) -> None:
     """Apply decision #4's three rules. Mutates ``db`` on success.
 
@@ -212,17 +200,22 @@ async def _attach_or_reject_identity(
     OIDC↔SAML conflation has, just within one protocol.
     """
     existing = (
-        await db.execute(
-            select(ExternalIdentity).where(ExternalIdentity.user_id == user.id),
+        (
+            await db.execute(
+                select(ExternalIdentity).where(ExternalIdentity.user_id == user.id),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for ident in existing:
         if ident.kind == kind and ident.subject == subject:
             # Rule 1 — idempotent.
             logger.info(
                 "SAML re-login for user=%s kind=%s (existing identity reused)",
-                user.email, kind,
+                user.email,
+                kind,
             )
             return
 
@@ -233,8 +226,11 @@ async def _attach_or_reject_identity(
         logger.warning(
             "SAML linkage REJECTED — user=%s already has %d identities of "
             "kinds %s; new assertion kind=%s subject=%s",
-            user.email, len(existing),
-            sorted({i.kind for i in existing}), kind, subject,
+            user.email,
+            len(existing),
+            sorted({i.kind for i in existing}),
+            kind,
+            subject,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -247,7 +243,9 @@ async def _attach_or_reject_identity(
     # Rule 3 — clean slate, attach.
     db.add(ExternalIdentity(user_id=user.id, kind=kind, subject=subject))
     logger.info(
-        "SAML first-time link for user=%s kind=%s", user.email, kind,
+        "SAML first-time link for user=%s kind=%s",
+        user.email,
+        kind,
     )
 
 
@@ -305,12 +303,15 @@ async def saml_login(request: Request, idp: str | None = None):
 
     request_data = _build_request_data(request, form={})
     auth = OneLogin_Saml2_Auth(
-        request_data, old_settings=client.build_settings_dict(),
+        request_data,
+        old_settings=client.build_settings_dict(),
     )
     sso_url = auth.login(return_to=relay, force_authn=False)
 
     logger.info(
-        "SAML login initiated (idp=%s, return_to=%s)", target_idp, return_to,
+        "SAML login initiated (idp=%s, return_to=%s)",
+        target_idp,
+        return_to,
     )
     return RedirectResponse(url=sso_url, status_code=status.HTTP_302_FOUND)
 
@@ -362,7 +363,8 @@ async def saml_acs(
 
     request_data = _build_request_data(request, form=form_data)
     auth = OneLogin_Saml2_Auth(
-        request_data, old_settings=client.build_settings_dict(),
+        request_data,
+        old_settings=client.build_settings_dict(),
     )
 
     try:
@@ -371,7 +373,8 @@ async def saml_acs(
         # OneLogin raises a variety of exception subclasses; any of them
         # means an attacker-controlled or malformed payload reached us.
         logger.warning(
-            "SAML ACS: SDK rejected response (%s)", type(exc).__name__,
+            "SAML ACS: SDK rejected response (%s)",
+            type(exc).__name__,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -413,7 +416,8 @@ async def saml_acs(
 
     if not _replay_cache.check_and_add(assertion_id, float(not_on_or_after)):
         logger.warning(
-            "SAML ACS: replay rejected (assertion_id=%s)", assertion_id,
+            "SAML ACS: replay rejected (assertion_id=%s)",
+            assertion_id,
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -431,7 +435,8 @@ async def saml_acs(
             )
         except RelayStateInvalid as exc:
             logger.warning(
-                "SAML ACS: RelayState rejected (%s)", str(exc),
+                "SAML ACS: RelayState rejected (%s)",
+                str(exc),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -441,7 +446,8 @@ async def saml_acs(
         if payload.idp != _idp_name():
             logger.warning(
                 "SAML ACS: RelayState idp=%s does not match configured %s",
-                payload.idp, _idp_name(),
+                payload.idp,
+                _idp_name(),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -496,13 +502,16 @@ async def saml_acs(
     await db.commit()
 
     redirect = RedirectResponse(
-        url=return_to, status_code=status.HTTP_302_FOUND,
+        url=return_to,
+        status_code=status.HTTP_302_FOUND,
     )
     _attach_session_cookies(redirect, user_row)
 
     logger.info(
         "SAML login OK user=%s idp=%s return_to=%s",
-        user_row.email, _idp_name(), return_to,
+        user_row.email,
+        _idp_name(),
+        return_to,
     )
     return redirect
 
@@ -535,13 +544,15 @@ async def saml_metadata():
     from onelogin.saml2.settings import OneLogin_Saml2_Settings
 
     settings_obj = OneLogin_Saml2_Settings(
-        client.build_settings_dict(), sp_validation_only=True,
+        client.build_settings_dict(),
+        sp_validation_only=True,
     )
     metadata = settings_obj.get_sp_metadata()
     validation_errors = settings_obj.validate_metadata(metadata)
     if validation_errors:
         logger.error(
-            "SAML metadata validation failed: %s", validation_errors,
+            "SAML metadata validation failed: %s",
+            validation_errors,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -655,23 +666,23 @@ async def saml_logout(request: Request):
 
     request_data = _build_request_data(request, form={})
     auth = OneLogin_Saml2_Auth(
-        request_data, old_settings=client.build_settings_dict(),
+        request_data,
+        old_settings=client.build_settings_dict(),
     )
 
     try:
         slo_redirect = auth.logout(
             return_to=relay,
             name_id=nameid,
-            name_id_format=(
-                "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
-            ),
+            name_id_format=("urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"),
         )
     except Exception as exc:
         # OneLogin raises when the IdP metadata has no SLO URL and
         # SAML_IDP_SLO_URL override is also absent.
         logger.error(
             "SAML /logout: SDK could not build LogoutRequest (%s: %s)",
-            type(exc).__name__, exc,
+            type(exc).__name__,
+            exc,
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -683,7 +694,8 @@ async def saml_logout(request: Request):
         ) from exc
 
     logger.info(
-        "SAML SP-init SLO: redirecting user nameid=%s to IdP SLO", nameid,
+        "SAML SP-init SLO: redirecting user nameid=%s to IdP SLO",
+        nameid,
     )
     return RedirectResponse(url=slo_redirect, status_code=status.HTTP_302_FOUND)
 
@@ -751,7 +763,8 @@ async def saml_sls(
     request_data["get_data"] = dict(post_form)
 
     auth = OneLogin_Saml2_Auth(
-        request_data, old_settings=client.build_settings_dict(),
+        request_data,
+        old_settings=client.build_settings_dict(),
     )
 
     # -------------------------------------------------------------------
@@ -783,7 +796,8 @@ async def saml_sls(
         if relay_payload.idp != _idp_name():
             logger.warning(
                 "SAML SLS: RelayState idp=%s does not match configured %s",
-                relay_payload.idp, _idp_name(),
+                relay_payload.idp,
+                _idp_name(),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -798,7 +812,8 @@ async def saml_sls(
             )
         except Exception as exc:
             logger.warning(
-                "SAML SLS: SDK rejected LogoutResponse (%s)", type(exc).__name__,
+                "SAML SLS: SDK rejected LogoutResponse (%s)",
+                type(exc).__name__,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -816,7 +831,8 @@ async def saml_sls(
         # Session is confirmed cleared at IdP. Clear our cookies.
         login_page = "/login"
         response = RedirectResponse(
-            url=login_page, status_code=status.HTTP_302_FOUND,
+            url=login_page,
+            status_code=status.HTTP_302_FOUND,
         )
         _clear_session_cookies(response)
         logger.info("SAML SLS: SP-init SLO complete; session cleared")
@@ -835,7 +851,8 @@ async def saml_sls(
             )
         except Exception as exc:
             logger.warning(
-                "SAML SLS: SDK rejected LogoutRequest (%s)", type(exc).__name__,
+                "SAML SLS: SDK rejected LogoutRequest (%s)",
+                type(exc).__name__,
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -863,6 +880,7 @@ async def saml_sls(
         # NotOnOrAfter — 1 hour is generous and bounds the replay window.
         _LOGOUT_REQUEST_REPLAY_TTL = 3600.0
         import time as _time
+
         exp_epoch = _time.time() + _LOGOUT_REQUEST_REPLAY_TTL
         if not _replay_cache.check_and_add(logout_request_id, exp_epoch):
             logger.warning(
@@ -887,7 +905,8 @@ async def saml_sls(
         # SLO response URL), fall back to a plain 200 with empty body — the
         # IdP will interpret the response as a successful SLO acknowledgement.
         logger.info(
-            "SAML SLS: IdP-init SLO complete for request id=%s", logout_request_id,
+            "SAML SLS: IdP-init SLO complete for request id=%s",
+            logout_request_id,
         )
 
         if idp_redirect_url:
