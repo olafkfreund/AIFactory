@@ -38,6 +38,7 @@ from ..oidc import get_oauth_client, is_oidc_enabled
 from ..oidc.provisioning import jit_provision_user
 from ..oidc.userinfo_cache import get_cached, invalidate
 from ..oidc.userinfo_cache import put as cache_put
+from .auth_routes import create_access_token
 
 logger = logging.getLogger(__name__)
 
@@ -48,22 +49,6 @@ router = APIRouter(prefix="/api/auth/oidc", tags=["Auth (OIDC)"])
 # Internal JWT helpers — mirror auth_routes.py exactly so the produced
 # tokens are interchangeable with locally-authenticated tokens.
 # ---------------------------------------------------------------------------
-
-
-def _create_access_token(user: User) -> str:
-    settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-    )
-    payload = {
-        "sub": user.id,
-        "email": user.email,
-        "role": user.role,
-        "type": "access",
-        "exp": expires,
-        "iat": datetime.now(timezone.utc),
-    }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
 def _capture_idp_refresh_token(refresh_token: str | None) -> str | None:
@@ -233,7 +218,7 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # Seed the userinfo cache while we have the validated claims.
     cache_put(sub, userinfo)
 
-    access_token = _create_access_token(user)
+    access_token = create_access_token(user)
     refresh_token = _create_refresh_token(user, jti=jti)
 
     redirect = RedirectResponse(url=_post_login_redirect(request))
@@ -481,7 +466,7 @@ async def oidc_refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db))
     user = user_result.scalar_one()
     session.last_validated_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
-    return RefreshResponse(access_token=_create_access_token(user))
+    return RefreshResponse(access_token=create_access_token(user))
 
 
 # ---------------------------------------------------------------------------
