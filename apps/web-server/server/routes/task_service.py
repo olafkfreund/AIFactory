@@ -16,6 +16,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from ..services import task_control
 from .projects import load_projects
 from .task_models import (
@@ -25,6 +27,37 @@ from .task_models import (
     TaskMetadata,
     TaskStatus,
 )
+
+
+def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
+    """Resolve task_id (projectId:specId) to project_id, spec_id, project_path, spec_dir.
+
+    Canonical single definition (#769). Previously duplicated byte-for-byte in
+    routes/tasks.py and routes/inbox.py; both now import it from here. Because
+    resolution reads ``task_service.load_projects``, tests that need to stub the
+    project map patch ``server.routes.task_service.load_projects`` (the one
+    canonical seam) rather than each route module's copy.
+
+    Raises HTTPException on invalid input or missing resources.
+    """
+    if ":" not in task_id:
+        raise HTTPException(
+            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
+        )
+
+    project_id, spec_id = task_id.split(":", 1)
+    projects = load_projects()
+
+    if project_id not in projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_path = Path(projects[project_id]["path"])
+    spec_dir = project_path / ".aifactory" / "specs" / spec_id
+
+    if not spec_dir.exists():
+        raise HTTPException(status_code=404, detail="Task spec not found")
+
+    return project_id, spec_id, project_path, spec_dir
 
 
 def get_spec_dirs(project_path: Path) -> list[Path]:

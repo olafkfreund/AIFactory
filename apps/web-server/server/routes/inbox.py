@@ -8,14 +8,12 @@ so the public paths and request/response shapes are unchanged:
     POST /{task_id}/inbox
     GET  /{task_id}/inbox
 
-The handlers depend only on already-extractable collaborators -- ``load_projects``
-from ``routes/projects`` (whose ``tasks`` import is lazy, so no module-level cycle),
-``require_task_access`` from ``routes/project_authz``, and the ``inbox_service``
-(imported lazily inside the handlers). The two small pure path helpers
-(``_resolve_task`` and ``_get_worktree_spec_dir``) are inlined here -- byte-for-byte
-copies of the originals in ``routes/tasks.py`` -- so this module does not import
-``.tasks`` and lifting the cluster out cannot create a circular import. The
-originals remain in ``routes/tasks.py`` where other handlers still use them.
+The handlers depend only on already-extractable collaborators --
+``require_task_access`` from ``routes/project_authz``, ``_resolve_task`` from the
+leaf ``routes/task_service`` (the single canonical resolver, #769 -- importing it
+from there imports neither ``.tasks`` nor ``.inbox``, so no circular import), and
+the ``inbox_service`` (imported lazily inside the handlers). The small worktree
+path helper (``_get_worktree_spec_dir``) remains inlined here.
 
 The models (``InboxMessageCreate``, ``InboxMessage``, ``InboxEnqueueResponse``)
 and the handlers (``enqueue_inbox_message``, ``list_inbox_messages``) historically
@@ -28,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from .project_authz import require_task_access
-from .projects import load_projects
+from .task_service import _resolve_task
 
 router = APIRouter()
 
@@ -74,33 +72,10 @@ class InboxEnqueueResponse(BaseModel):
 
 
 # --------------------------------------------------------------------------
-# Pure path helpers (inlined copies of the originals in routes/tasks.py)
+# Pure path helpers
 # --------------------------------------------------------------------------
-
-
-def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
-    """Resolve task_id (projectId:specId) to project_id, spec_id, project_path, spec_dir.
-
-    Raises HTTPException on invalid input or missing resources.
-    """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
-        )
-
-    project_id, spec_id = task_id.split(":", 1)
-    projects = load_projects()
-
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-
-    if not spec_dir.exists():
-        raise HTTPException(status_code=404, detail="Task spec not found")
-
-    return project_id, spec_id, project_path, spec_dir
+# _resolve_task is imported from routes/task_service.py (#769) -- the single
+# canonical definition shared with routes/tasks.py.
 
 
 def _get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
