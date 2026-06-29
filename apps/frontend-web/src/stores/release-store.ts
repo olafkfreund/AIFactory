@@ -62,23 +62,23 @@ const initialState = {
 export const useReleaseStore = create<ReleaseState>((set) => ({
   ...initialState,
 
-  setReleaseableVersions: (versions) => set({ releaseableVersions: versions }),
-  setIsLoadingVersions: (loading) => set({ isLoadingVersions: loading }),
-  setSelectedVersion: (version) => set({
+  setReleaseableVersions: (versions) => { set({ releaseableVersions: versions }); },
+  setIsLoadingVersions: (loading) => { set({ isLoadingVersions: loading }); },
+  setSelectedVersion: (version) => { set({
     selectedVersion: version,
     // Reset preflight when version changes
     preflightStatus: null,
     error: null
-  }),
-  setPreflightStatus: (status) => set({ preflightStatus: status }),
-  setIsRunningPreflight: (running) => set({ isRunningPreflight: running }),
-  setCreateAsDraft: (draft) => set({ createAsDraft: draft }),
-  setMarkAsPrerelease: (prerelease) => set({ markAsPrerelease: prerelease }),
-  setReleaseProgress: (progress) => set({ releaseProgress: progress }),
-  setIsCreatingRelease: (creating) => set({ isCreatingRelease: creating }),
-  setLastReleaseResult: (result) => set({ lastReleaseResult: result }),
-  setError: (error) => set({ error }),
-  reset: () => set(initialState)
+  }); },
+  setPreflightStatus: (status) => { set({ preflightStatus: status }); },
+  setIsRunningPreflight: (running) => { set({ isRunningPreflight: running }); },
+  setCreateAsDraft: (draft) => { set({ createAsDraft: draft }); },
+  setMarkAsPrerelease: (prerelease) => { set({ markAsPrerelease: prerelease }); },
+  setReleaseProgress: (progress) => { set({ releaseProgress: progress }); },
+  setIsCreatingRelease: (creating) => { set({ isCreatingRelease: creating }); },
+  setLastReleaseResult: (result) => { set({ lastReleaseResult: result }); },
+  setError: (error) => { set({ error }); },
+  reset: () => { set(initialState); }
 }));
 
 // ============================================

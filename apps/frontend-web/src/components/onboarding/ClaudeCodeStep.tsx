@@ -82,7 +82,7 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
       checkVersion();
     }, 10000);
 
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [status, isInstalling, checkVersion]);
 
   // Cleanup progress interval on unmount

@@ -41,7 +41,7 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
   downloads: {},
 
   startDownload: (modelName: string) =>
-    set((state) => ({
+    { set((state) => ({
       downloads: {
         ...state.downloads,
         [modelName]: {
@@ -50,10 +50,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           percentage: 0,
         },
       },
-    })),
+    })); },
 
   updateProgress: (modelName: string, progress: Partial<DownloadProgress>) =>
-    set((state) => {
+    { set((state) => {
       const existing = state.downloads[modelName];
       if (!existing) return state;
 
@@ -69,10 +69,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           },
         },
       };
-    }),
+    }); },
 
   completeDownload: (modelName: string) =>
-    set((state) => {
+    { set((state) => {
       const existing = state.downloads[modelName];
       if (!existing) return state;
 
@@ -89,10 +89,10 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           },
         },
       };
-    }),
+    }); },
 
   failDownload: (modelName: string, error: string) =>
-    set((state) => {
+    { set((state) => {
       const existing = state.downloads[modelName];
       if (!existing) return state;
 
@@ -109,16 +109,16 @@ export const useDownloadStore = create<DownloadState>((set, get) => ({
           },
         },
       };
-    }),
+    }); },
 
   clearDownload: (modelName: string) =>
-    set((state) => {
+    { set((state) => {
       // Clean up progress tracker to prevent memory leaks
       cleanupProgressTracker(modelName);
 
       const { [modelName]: _, ...rest } = state.downloads;
       return { downloads: rest };
-    }),
+    }); },
 
   hasActiveDownloads: () => {
     const downloads = get().downloads;

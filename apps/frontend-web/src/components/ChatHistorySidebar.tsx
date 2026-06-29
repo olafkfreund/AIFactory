@@ -97,14 +97,14 @@ export function ChatHistorySidebar({
   };
 
   // Group sessions by date
-  const groupedSessions = sessions.reduce((groups, session) => {
+  const groupedSessions = sessions.reduce<Record<string, InsightsSessionSummary[]>>((groups, session) => {
     const dateLabel = formatDate(session.updatedAt);
     if (!groups[dateLabel]) {
       groups[dateLabel] = [];
     }
     groups[dateLabel].push(session);
     return groups;
-  }, {} as Record<string, InsightsSessionSummary[]>);
+  }, {});
 
   return (
     <div className="flex h-full w-64 flex-col border-r border-border bg-muted/30">
@@ -146,12 +146,12 @@ export function ChatHistorySidebar({
                     isActive={session.id === currentSessionId}
                     isEditing={editingId === session.id}
                     editTitle={editTitle}
-                    onSelect={() => onSelectSession(session.id)}
-                    onStartEdit={() => handleStartEdit(session)}
+                    onSelect={() => { onSelectSession(session.id); }}
+                    onStartEdit={() => { handleStartEdit(session); }}
                     onSaveEdit={handleSaveEdit}
                     onCancelEdit={handleCancelEdit}
                     onEditTitleChange={setEditTitle}
-                    onDelete={() => setDeleteSessionId(session.id)}
+                    onDelete={() => { setDeleteSessionId(session.id); }}
                   />
                 ))}
               </div>
@@ -161,7 +161,7 @@ export function ChatHistorySidebar({
       </ScrollArea>
 
       {/* Delete confirmation dialog */}
-      <AlertDialog open={!!deleteSessionId} onOpenChange={() => setDeleteSessionId(null)}>
+      <AlertDialog open={!!deleteSessionId} onOpenChange={() => { setDeleteSessionId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
@@ -219,7 +219,7 @@ function SessionItem({
       <div className="group flex items-center gap-1 px-2 py-1">
         <Input
           value={editTitle}
-          onChange={(e) => onEditTitleChange(e.target.value)}
+          onChange={(e) => { onEditTitleChange(e.target.value); }}
           onKeyDown={handleKeyDown}
           className="h-7 text-sm"
           autoFocus
@@ -277,7 +277,7 @@ function SessionItem({
 
       {/* Absolutely positioned menu button - always visible */}
       <DropdownMenu modal={false}>
-        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <DropdownMenuTrigger asChild onClick={(e) => { e.stopPropagation(); }}>
           <Button
             variant="ghost"
             size="icon"

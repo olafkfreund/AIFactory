@@ -56,7 +56,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
     });
     setIsSaving(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => { setSaved(false); }, 2000);
   };
 
   return (
@@ -79,7 +79,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
           <div className="rounded-md border border-border">
             <button
               type="button"
-              onClick={() => setGuideOpen(!guideOpen)}
+              onClick={() => { setGuideOpen(!guideOpen); }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               <BookOpen className="h-4 w-4" />
@@ -129,7 +129,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
                 id="ms-client-id"
                 type="text"
                 value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
+                onChange={(e) => { setClientId(e.target.value); }}
                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
               />
             </div>
@@ -139,7 +139,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
                 id="ms-client-secret"
                 type="password"
                 value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
+                onChange={(e) => { setClientSecret(e.target.value); }}
                 placeholder="••••••••••••"
               />
             </div>
@@ -160,7 +160,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
           <div className="rounded-md border border-border">
             <button
               type="button"
-              onClick={() => setGoogleGuideOpen(!googleGuideOpen)}
+              onClick={() => { setGoogleGuideOpen(!googleGuideOpen); }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               <BookOpen className="h-4 w-4" />
@@ -210,7 +210,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
                 id="google-client-id"
                 type="text"
                 value={googleClientId}
-                onChange={(e) => setGoogleClientId(e.target.value)}
+                onChange={(e) => { setGoogleClientId(e.target.value); }}
                 placeholder="xxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
               />
             </div>
@@ -220,7 +220,7 @@ export function IntegrationSettings({ settings, onSettingsChange }: IntegrationS
                 id="google-client-secret"
                 type="password"
                 value={googleClientSecret}
-                onChange={(e) => setGoogleClientSecret(e.target.value)}
+                onChange={(e) => { setGoogleClientSecret(e.target.value); }}
                 placeholder="••••••••••••"
               />
             </div>

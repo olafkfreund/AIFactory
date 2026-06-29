@@ -270,7 +270,7 @@ export function GitHubIntegration({
         </div>
         <Switch
           checked={envConfig.githubEnabled}
-          onCheckedChange={(checked) => updateEnvConfig({ githubEnabled: checked })}
+          onCheckedChange={(checked) => { updateEnvConfig({ githubEnabled: checked }); }}
         />
       </div>
 
@@ -283,7 +283,7 @@ export function GitHubIntegration({
             </Label>
             <Select
               value={gitProvider}
-              onValueChange={(val) => handleSettingsChange({ gitProvider: val })}
+              onValueChange={(val) => { handleSettingsChange({ gitProvider: val }); }}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select Git Provider" />
@@ -438,7 +438,7 @@ export function GitHubIntegration({
                 </Label>
                 <PasswordInput
                   value={settings?.gitToken || ''}
-                  onChange={(val) => handleSettingsChange({ gitToken: val })}
+                  onChange={(val) => { handleSettingsChange({ gitToken: val }); }}
                   placeholder={t('gitProviders.gitTokenPlaceholder') || "Enter your GitLab PAT"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -452,7 +452,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitBaseUrl || ''}
-                  onChange={(e) => handleSettingsChange({ gitBaseUrl: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitBaseUrl: e.target.value }); }}
                   placeholder={t('gitProviders.gitBaseUrlPlaceholder') || "https://gitlab.com"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -466,7 +466,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitRepo || ''}
-                  onChange={(e) => handleSettingsChange({ gitRepo: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitRepo: e.target.value }); }}
                   placeholder={t('gitProviders.gitRepoPlaceholder') || "group/subgroup/repo"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -483,7 +483,7 @@ export function GitHubIntegration({
                 </Label>
                 <PasswordInput
                   value={settings?.gitToken || ''}
-                  onChange={(val) => handleSettingsChange({ gitToken: val })}
+                  onChange={(val) => { handleSettingsChange({ gitToken: val }); }}
                   placeholder={t('gitProviders.gitTokenPlaceholder') || "Enter Azure DevOps PAT"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -497,7 +497,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitBaseUrl || ''}
-                  onChange={(e) => handleSettingsChange({ gitBaseUrl: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitBaseUrl: e.target.value }); }}
                   placeholder={t('gitProviders.gitBaseUrlPlaceholder') || "https://dev.azure.com"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -511,7 +511,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitOrg || ''}
-                  onChange={(e) => handleSettingsChange({ gitOrg: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitOrg: e.target.value }); }}
                   placeholder={t('gitProviders.gitOrgPlaceholder') || "e.g. MyOrg"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -525,7 +525,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitProject || ''}
-                  onChange={(e) => handleSettingsChange({ gitProject: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitProject: e.target.value }); }}
                   placeholder={t('gitProviders.gitProjectPlaceholder') || "e.g. MyProject"}
                 />
                 <p className="text-xs text-muted-foreground">
@@ -539,7 +539,7 @@ export function GitHubIntegration({
                 </Label>
                 <Input
                   value={settings?.gitRepo || ''}
-                  onChange={(e) => handleSettingsChange({ gitRepo: e.target.value })}
+                  onChange={(e) => { handleSettingsChange({ gitRepo: e.target.value }); }}
                   placeholder="e.g. MyRepo"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -578,7 +578,7 @@ export function GitHubIntegration({
 
           <AutoSyncToggle
             enabled={envConfig.githubAutoSync || false}
-            onToggle={(checked) => updateEnvConfig({ githubAutoSync: checked })}
+            onToggle={(checked) => { updateEnvConfig({ githubAutoSync: checked }); }}
           />
         </>
       )}
@@ -601,7 +601,7 @@ function RepositoryInput({ value, onChange }: RepositoryInputProps) {
       <Input
         placeholder="owner/repository"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => { onChange(e.target.value); }}
       />
     </div>
   );
@@ -744,7 +744,7 @@ function BranchSelector({
       <div className="relative pl-6">
         <button
           type="button"
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={() => { setIsOpen(!isOpen); }}
           disabled={isLoading}
           className="w-full flex items-center justify-between px-3 py-2 text-sm border border-input rounded-md bg-background hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
         >
@@ -771,7 +771,7 @@ function BranchSelector({
               <Input
                 placeholder="Search branches..."
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                onChange={(e) => { setFilter(e.target.value); }}
                 className="h-8 text-sm"
                 autoFocus
               />

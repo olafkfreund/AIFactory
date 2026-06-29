@@ -34,12 +34,12 @@ function APIKeyField({ id, label, description, placeholder, value, onChange }: A
           type={show ? 'text' : 'password'}
           placeholder={placeholder}
           value={value || ''}
-          onChange={(e) => onChange(e.target.value || undefined)}
+          onChange={(e) => { onChange(e.target.value || undefined); }}
           className="pr-10 font-mono text-sm"
         />
         <button
           type="button"
-          onClick={() => setShow(!show)}
+          onClick={() => { setShow(!show); }}
           className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
         >
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -84,7 +84,7 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
           description={t('sections.llmProvider.apiKeys.anthropic.description')}
           placeholder="sk-ant-..."
           value={settings.globalAnthropicApiKey}
-          onChange={(value) => onSettingsChange({ ...settings, globalAnthropicApiKey: value })}
+          onChange={(value) => { onSettingsChange({ ...settings, globalAnthropicApiKey: value }); }}
         />
 
         <APIKeyField
@@ -93,7 +93,7 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
           description={t('sections.llmProvider.apiKeys.openai.description')}
           placeholder="sk-..."
           value={settings.globalOpenAIApiKey}
-          onChange={(value) => onSettingsChange({ ...settings, globalOpenAIApiKey: value })}
+          onChange={(value) => { onSettingsChange({ ...settings, globalOpenAIApiKey: value }); }}
         />
 
         <APIKeyField
@@ -102,7 +102,7 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
           description={t('sections.llmProvider.apiKeys.google.description')}
           placeholder="AIza..."
           value={settings.globalGoogleApiKey}
-          onChange={(value) => onSettingsChange({ ...settings, globalGoogleApiKey: value })}
+          onChange={(value) => { onSettingsChange({ ...settings, globalGoogleApiKey: value }); }}
         />
 
         <APIKeyField
@@ -111,7 +111,7 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
           description={t('sections.llmProvider.apiKeys.groq.description')}
           placeholder="gsk_..."
           value={settings.globalGroqApiKey}
-          onChange={(value) => onSettingsChange({ ...settings, globalGroqApiKey: value })}
+          onChange={(value) => { onSettingsChange({ ...settings, globalGroqApiKey: value }); }}
         />
 
         <APIKeyField
@@ -120,7 +120,7 @@ export function APIKeysSettings({ settings, onSettingsChange }: APIKeysSettingsP
           description={t('sections.llmProvider.apiKeys.openrouter.description')}
           placeholder="sk-or-..."
           value={settings.globalOpenRouterApiKey}
-          onChange={(value) => onSettingsChange({ ...settings, globalOpenRouterApiKey: value })}
+          onChange={(value) => { onSettingsChange({ ...settings, globalOpenRouterApiKey: value }); }}
         />
       </div>
     </div>

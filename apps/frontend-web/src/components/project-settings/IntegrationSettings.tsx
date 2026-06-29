@@ -125,7 +125,7 @@ export function IntegrationSettings({
               </div>
               <Switch
                 checked={envConfig.githubEnabled}
-                onCheckedChange={(checked) => updateEnvConfig({ githubEnabled: checked })}
+                onCheckedChange={(checked) => { updateEnvConfig({ githubEnabled: checked }); }}
               />
             </div>
 
@@ -149,12 +149,12 @@ export function IntegrationSettings({
                       type={showGitHubToken ? 'text' : 'password'}
                       placeholder="ghp_xxxxxxxx or github_pat_xxxxxxxx"
                       value={envConfig.githubToken || ''}
-                      onChange={(e) => updateEnvConfig({ githubToken: e.target.value })}
+                      onChange={(e) => { updateEnvConfig({ githubToken: e.target.value }); }}
                       className="pr-10"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowGitHubToken(!showGitHubToken)}
+                      onClick={() => { setShowGitHubToken(!showGitHubToken); }}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       {showGitHubToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -170,7 +170,7 @@ export function IntegrationSettings({
                   <Input
                     placeholder="owner/repository"
                     value={envConfig.githubRepo || ''}
-                    onChange={(e) => updateEnvConfig({ githubRepo: e.target.value })}
+                    onChange={(e) => { updateEnvConfig({ githubRepo: e.target.value }); }}
                   />
                 </div>
 
@@ -233,7 +233,7 @@ export function IntegrationSettings({
                   </div>
                   <Switch
                     checked={envConfig.githubAutoSync || false}
-                    onCheckedChange={(checked) => updateEnvConfig({ githubAutoSync: checked })}
+                    onCheckedChange={(checked) => { updateEnvConfig({ githubAutoSync: checked }); }}
                   />
                 </div>
 
@@ -250,7 +250,7 @@ export function IntegrationSettings({
                   </p>
                   <Select
                     value={settings.mainBranch || ''}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, mainBranch: value }))}
+                    onValueChange={(value) => { setSettings(prev => ({ ...prev, mainBranch: value })); }}
                     disabled={isLoadingBranches || branches.length === 0}
                   >
                     <SelectTrigger>

@@ -102,7 +102,7 @@ export function SkillCard({
               onToggle(skill);
             }
           }}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
           aria-label={t('skills.selectSkill', { name: skill.name, defaultValue: skill.name })}
         />
       </div>

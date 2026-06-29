@@ -204,7 +204,7 @@ export function McpApiKeysSettings() {
     try {
       await navigator.clipboard.writeText(revealedKey.raw_key);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => { setCopied(false); }, 2000);
     } catch {
       // Clipboard API may be unavailable (e.g. non-HTTPS context).
       // The full key is still selectable from the read-only input.
@@ -280,7 +280,7 @@ export function McpApiKeysSettings() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFormOpen((open) => !open)}
+              onClick={() => { setFormOpen((open) => !open); }}
               disabled={!orgId}
             >
               <Plus className="h-3 w-3 mr-1" />
@@ -331,7 +331,7 @@ export function McpApiKeysSettings() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRevokeRequest(key)}
+                    onClick={() => { handleRevokeRequest(key); }}
                     className="text-destructive hover:text-destructive"
                     aria-label={t('sections.apiKeys.revokeAriaLabel', 'Revoke key')}
                   >
@@ -356,7 +356,7 @@ export function McpApiKeysSettings() {
               <Input
                 id="ak-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => { setName(e.target.value); }}
                 placeholder="laptop-ada"
               />
             </div>
@@ -372,7 +372,7 @@ export function McpApiKeysSettings() {
                     <input
                       type="checkbox"
                       checked={selectedScopes.has(scope.id)}
-                      onChange={() => toggleScope(scope.id)}
+                      onChange={() => { toggleScope(scope.id); }}
                       className="mt-0.5"
                     />
                     <div className="flex-1 min-w-0">
@@ -396,7 +396,7 @@ export function McpApiKeysSettings() {
                 min={1}
                 max={365}
                 value={expiresInDays}
-                onChange={(e) => setExpiresInDays(e.target.value)}
+                onChange={(e) => { setExpiresInDays(e.target.value); }}
                 placeholder={t(
                   'sections.apiKeys.expiresPlaceholder',
                   'leave blank for no expiry',
@@ -408,7 +408,7 @@ export function McpApiKeysSettings() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setFormOpen(false)}
+                onClick={() => { setFormOpen(false); }}
                 disabled={submitting}
               >
                 {t('sections.apiKeys.cancel', 'Cancel')}
@@ -458,7 +458,7 @@ export function McpApiKeysSettings() {
                 value={revealedKey.raw_key}
                 readOnly
                 className="pr-10 font-mono text-sm"
-                onFocus={(e) => e.target.select()}
+                onFocus={(e) => { e.target.select(); }}
               />
               <button
                 type="button"
@@ -477,7 +477,7 @@ export function McpApiKeysSettings() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setRevealedKey(null)}
+                onClick={() => { setRevealedKey(null); }}
               >
                 {t('sections.apiKeys.acknowledge', "I've copied it")}
               </Button>

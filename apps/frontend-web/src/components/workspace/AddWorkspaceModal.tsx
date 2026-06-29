@@ -92,7 +92,7 @@ export function AddWorkspaceModal({
   const handleAddProject = (projectId: string) => {
     setSelectedProjects((prev) => [
       ...prev,
-      { projectId, role: 'other' as ProjectRole },
+      { projectId, role: 'other' },
     ]);
   };
 
@@ -198,7 +198,7 @@ export function AddWorkspaceModal({
               id="name"
               placeholder="My App Workspace"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); }}
             />
           </div>
 
@@ -209,7 +209,7 @@ export function AddWorkspaceModal({
               id="description"
               placeholder="Backend, frontend, and mobile apps for My App"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); }}
               rows={2}
             />
           </div>
@@ -253,7 +253,7 @@ export function AddWorkspaceModal({
                   <Select
                     value={selected.role}
                     onValueChange={(value) =>
-                      handleRoleChange(selected.projectId, value as ProjectRole)
+                      { handleRoleChange(selected.projectId, value as ProjectRole); }
                     }
                   >
                     <SelectTrigger className="w-[130px] h-8">
@@ -271,7 +271,7 @@ export function AddWorkspaceModal({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
-                    onClick={() => handleRemoveProject(selected.projectId)}
+                    onClick={() => { handleRemoveProject(selected.projectId); }}
                   >
                     <X className="h-4 w-4" />
                   </Button>

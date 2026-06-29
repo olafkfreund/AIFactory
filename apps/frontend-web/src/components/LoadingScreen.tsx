@@ -22,7 +22,7 @@ export function LoadingScreen({ duration = 5000, onComplete }: LoadingScreenProp
       }
     }, 50);
 
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [duration, onComplete]);
 
   return (

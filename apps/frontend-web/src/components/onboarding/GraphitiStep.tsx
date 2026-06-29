@@ -412,7 +412,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('openai')}
+                onClick={() => { toggleShowApiKey('openai'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['openai'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -438,14 +438,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="anthropic-key"
                 type={showApiKey['anthropic'] ? 'text' : 'password'}
                 value={config.anthropicApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, anthropicApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, anthropicApiKey: e.target.value })); }}
                 placeholder="sk-ant-..."
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving || isValidating}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('anthropic')}
+                onClick={() => { toggleShowApiKey('anthropic'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['anthropic'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -471,14 +471,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                   id="azure-key"
                   type={showApiKey['azure'] ? 'text' : 'password'}
                   value={config.azureOpenaiApiKey}
-                  onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiApiKey: e.target.value }))}
+                  onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiApiKey: e.target.value })); }}
                   placeholder="Azure API key"
                   className="pr-10 font-mono text-sm"
                   disabled={isSaving || isValidating}
                 />
                 <button
                   type="button"
-                  onClick={() => toggleShowApiKey('azure')}
+                  onClick={() => { toggleShowApiKey('azure'); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   {showApiKey['azure'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -491,7 +491,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="azure-url"
                 type="text"
                 value={config.azureOpenaiBaseUrl}
-                onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiBaseUrl: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiBaseUrl: e.target.value })); }}
                 placeholder="https://your-resource.openai.azure.com"
                 className="font-mono text-sm"
                 disabled={isSaving || isValidating}
@@ -504,7 +504,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                   id="azure-llm-deployment"
                   type="text"
                   value={config.azureOpenaiLlmDeployment}
-                  onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiLlmDeployment: e.target.value }))}
+                  onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiLlmDeployment: e.target.value })); }}
                   placeholder="gpt-4"
                   className="font-mono text-sm"
                   disabled={isSaving || isValidating}
@@ -518,7 +518,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                   id="azure-embedding-deployment"
                   type="text"
                   value={config.azureOpenaiEmbeddingDeployment}
-                  onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiEmbeddingDeployment: e.target.value }))}
+                  onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiEmbeddingDeployment: e.target.value })); }}
                   placeholder="text-embedding-ada-002"
                   className="font-mono text-sm"
                   disabled={isSaving || isValidating}
@@ -539,14 +539,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="voyage-key"
                 type={showApiKey['voyage'] ? 'text' : 'password'}
                 value={config.voyageApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, voyageApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, voyageApiKey: e.target.value })); }}
                 placeholder="pa-..."
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving || isValidating}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('voyage')}
+                onClick={() => { toggleShowApiKey('voyage'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['voyage'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -572,14 +572,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="google-key"
                 type={showApiKey['google'] ? 'text' : 'password'}
                 value={config.googleApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, googleApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, googleApiKey: e.target.value })); }}
                 placeholder="AIza..."
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving || isValidating}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('google')}
+                onClick={() => { toggleShowApiKey('google'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['google'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -605,14 +605,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="groq-key"
                 type={showApiKey['groq'] ? 'text' : 'password'}
                 value={config.groqApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, groqApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, groqApiKey: e.target.value })); }}
                 placeholder="gsk_..."
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving || isValidating}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('groq')}
+                onClick={() => { toggleShowApiKey('groq'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['groq'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -638,14 +638,14 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="openrouter-key"
                 type={showApiKey['openrouter'] ? 'text' : 'password'}
                 value={config.openrouterApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, openrouterApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, openrouterApiKey: e.target.value })); }}
                 placeholder="sk-or-..."
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving || isValidating}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('openrouter')}
+                onClick={() => { toggleShowApiKey('openrouter'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['openrouter'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -670,7 +670,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                 id="ollama-url"
                 type="text"
                 value={config.ollamaBaseUrl}
-                onChange={(e) => setConfig(prev => ({ ...prev, ollamaBaseUrl: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, ollamaBaseUrl: e.target.value })); }}
                 placeholder="http://localhost:11434"
                 className="font-mono text-sm"
                 disabled={isSaving || isValidating}
@@ -683,7 +683,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                   id="ollama-llm"
                   type="text"
                   value={config.ollamaLlmModel}
-                  onChange={(e) => setConfig(prev => ({ ...prev, ollamaLlmModel: e.target.value }))}
+                  onChange={(e) => { setConfig(prev => ({ ...prev, ollamaLlmModel: e.target.value })); }}
                   placeholder="llama3.2, deepseek-r1:7b, etc."
                   className="font-mono text-sm"
                   disabled={isSaving || isValidating}
@@ -698,7 +698,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                     id="ollama-embedding"
                     type="text"
                     value={config.ollamaEmbeddingModel}
-                    onChange={(e) => setConfig(prev => ({ ...prev, ollamaEmbeddingModel: e.target.value }))}
+                    onChange={(e) => { setConfig(prev => ({ ...prev, ollamaEmbeddingModel: e.target.value })); }}
                     placeholder="nomic-embed-text"
                     className="font-mono text-sm"
                     disabled={isSaving || isValidating}
@@ -710,7 +710,7 @@ export function GraphitiStep({ onNext, onBack, onSkip }: GraphitiStepProps) {
                     id="ollama-dim"
                     type="number"
                     value={config.ollamaEmbeddingDim}
-                    onChange={(e) => setConfig(prev => ({ ...prev, ollamaEmbeddingDim: e.target.value }))}
+                    onChange={(e) => { setConfig(prev => ({ ...prev, ollamaEmbeddingDim: e.target.value })); }}
                     placeholder="768"
                     className="font-mono text-sm"
                     disabled={isSaving || isValidating}

@@ -370,7 +370,7 @@ export function TaskCreationWizard({
       setImages(prev => [...prev, ...newImages]);
       // Show success feedback
       setPasteSuccess(true);
-      setTimeout(() => setPasteSuccess(false), 2000);
+      setTimeout(() => { setPasteSuccess(false); }, 2000);
     }
   }, [images]);
 
@@ -615,7 +615,7 @@ export function TaskCreationWizard({
         setImages(prev => [...prev, ...newImages]);
         // Show success feedback
         setPasteSuccess(true);
-        setTimeout(() => setPasteSuccess(false), 2000);
+        setTimeout(() => { setPasteSuccess(false); }, 2000);
       }
     },
     [images, isCreating, description]
@@ -938,7 +938,7 @@ export function TaskCreationWizard({
               id="title"
               placeholder="Leave empty to auto-generate from description"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); }}
               disabled={isCreating}
             />
             <p className="text-xs text-muted-foreground">
@@ -976,7 +976,7 @@ export function TaskCreationWizard({
               </button>
               <button
                 type="button"
-                onClick={() => setMode('full')}
+                onClick={() => { setMode('full'); }}
                 disabled={isCreating}
                 className={cn(
                   "flex-1 p-3 rounded-lg border-2 transition-all text-left",
@@ -1032,7 +1032,7 @@ export function TaskCreationWizard({
           <div className="rounded-lg border border-border">
             <button
               type="button"
-              onClick={() => setShowSkillsBrowser(!showSkillsBrowser)}
+              onClick={() => { setShowSkillsBrowser(!showSkillsBrowser); }}
               className={cn(
                 'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
                 'w-full justify-between py-2 px-3 rounded-lg hover:bg-muted/50'
@@ -1067,7 +1067,7 @@ export function TaskCreationWizard({
           {/* Advanced Options Toggle */}
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            onClick={() => { setShowAdvanced(!showAdvanced); }}
             className={cn(
               'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
               'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
@@ -1093,7 +1093,7 @@ export function TaskCreationWizard({
                   </Label>
                   <Select
                     value={category}
-                    onValueChange={(value) => setCategory(value as TaskCategory)}
+                    onValueChange={(value) => { setCategory(value as TaskCategory); }}
                     disabled={isCreating}
                   >
                     <SelectTrigger id="category" className="h-9">
@@ -1116,7 +1116,7 @@ export function TaskCreationWizard({
                   </Label>
                   <Select
                     value={priority}
-                    onValueChange={(value) => setPriority(value as TaskPriority)}
+                    onValueChange={(value) => { setPriority(value as TaskPriority); }}
                     disabled={isCreating}
                   >
                     <SelectTrigger id="priority" className="h-9">
@@ -1139,7 +1139,7 @@ export function TaskCreationWizard({
                   </Label>
                   <Select
                     value={complexity}
-                    onValueChange={(value) => setComplexity(value as TaskComplexity)}
+                    onValueChange={(value) => { setComplexity(value as TaskComplexity); }}
                     disabled={isCreating}
                   >
                     <SelectTrigger id="complexity" className="h-9">
@@ -1162,7 +1162,7 @@ export function TaskCreationWizard({
                   </Label>
                   <Select
                     value={impact}
-                    onValueChange={(value) => setImpact(value as TaskImpact)}
+                    onValueChange={(value) => { setImpact(value as TaskImpact); }}
                     disabled={isCreating}
                   >
                     <SelectTrigger id="impact" className="h-9">
@@ -1190,7 +1190,7 @@ export function TaskCreationWizard({
             <Checkbox
               id="require-review"
               checked={requireReviewBeforeCoding}
-              onCheckedChange={(checked) => setRequireReviewBeforeCoding(checked === true)}
+              onCheckedChange={(checked) => { setRequireReviewBeforeCoding(checked === true); }}
               disabled={isCreating}
               className="mt-0.5"
             />
@@ -1212,7 +1212,7 @@ export function TaskCreationWizard({
             <Checkbox
               id="enable-remote-control"
               checked={enableRemoteControl}
-              onCheckedChange={(checked) => setEnableRemoteControl(checked === true)}
+              onCheckedChange={(checked) => { setEnableRemoteControl(checked === true); }}
               disabled={isCreating}
               className="mt-0.5"
             />
@@ -1246,7 +1246,7 @@ export function TaskCreationWizard({
             <Checkbox
               id="auto-handover-tfactory"
               checked={autoHandoverTfactory}
-              onCheckedChange={(checked) => setAutoHandoverTfactory(checked === true)}
+              onCheckedChange={(checked) => { setAutoHandoverTfactory(checked === true); }}
               disabled={isCreating}
               className="mt-0.5"
             />
@@ -1281,7 +1281,7 @@ export function TaskCreationWizard({
                 <Checkbox
                   id="enable-delegation"
                   checked={enableDelegation && delegationSupported}
-                  onCheckedChange={(checked) => setEnableDelegation(checked === true)}
+                  onCheckedChange={(checked) => { setEnableDelegation(checked === true); }}
                   disabled={delegationDisabled}
                   className="mt-0.5"
                 />
@@ -1308,7 +1308,7 @@ export function TaskCreationWizard({
           {/* Git Options Toggle */}
           <button
             type="button"
-            onClick={() => setShowGitOptions(!showGitOptions)}
+            onClick={() => { setShowGitOptions(!showGitOptions); }}
             className={cn(
               'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
               'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
@@ -1420,7 +1420,7 @@ export function TaskCreationWizard({
           {projectPath && (
             <TaskFileExplorerDrawer
               isOpen={showFileExplorer}
-              onClose={() => setShowFileExplorer(false)}
+              onClose={() => { setShowFileExplorer(false); }}
               projectPath={projectPath}
             />
           )}

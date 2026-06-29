@@ -512,7 +512,7 @@ export function TaskFiles({ task, worktreeSpecsPath }: TaskFilesProps) {
                     key={file.path}
                     role="option"
                     aria-selected={focusedIndex === index}
-                    onClick={() => navigateToFolder(file.path)}
+                    onClick={() => { navigateToFolder(file.path); }}
                     className={cn(
                       'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors',
                       'hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',

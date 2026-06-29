@@ -60,10 +60,10 @@ export function TerminalTitle({ title, associatedTask, onTitleChange, terminalCo
         ref={inputRef}
         type="text"
         value={editedTitle}
-        onChange={(e) => setEditedTitle(e.target.value)}
+        onChange={(e) => { setEditedTitle(e.target.value); }}
         onKeyDown={handleKeyDown}
         onBlur={handleSave}
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); }}
         className={cn("text-xs font-medium text-foreground bg-transparent border border-primary/50 rounded px-1 py-0.5 outline-none focus:border-primary", maxWidthClass)}
         style={{ width: `${Math.max(editedTitle.length * 6 + 16, 60)}px` }}
       />

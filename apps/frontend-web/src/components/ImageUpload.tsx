@@ -53,7 +53,7 @@ export function isValidImageMimeType(mimeType: string): boolean {
 export async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => { resolve(reader.result as string); };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
@@ -65,7 +65,7 @@ export async function fileToBase64(file: File): Promise<string> {
 export async function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
+    reader.onload = () => { resolve(reader.result as string); };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
@@ -101,7 +101,7 @@ export async function createThumbnail(dataUrl: string, maxSize = 200): Promise<s
       ctx?.drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL('image/jpeg', 0.8));
     };
-    img.onerror = () => resolve(dataUrl); // Return original if thumbnail fails
+    img.onerror = () => { resolve(dataUrl); }; // Return original if thumbnail fails
     img.src = dataUrl;
   });
 }

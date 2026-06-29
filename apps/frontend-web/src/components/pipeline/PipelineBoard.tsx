@@ -156,7 +156,7 @@ export function PipelineBoard({ tasks, onTaskClick, onNewTaskClick }: Props) {
   useEffect(() => {
     const board = boardRef.current;
     if (!board) return;
-    const ro = new ResizeObserver(() => measure());
+    const ro = new ResizeObserver(() => { measure(); });
     ro.observe(board);
     window.addEventListener('resize', measure);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); };
@@ -183,7 +183,7 @@ export function PipelineBoard({ tasks, onTaskClick, onNewTaskClick }: Props) {
     if (launched.length) setFlights((f) => [...f, ...launched]);
   }, [tasks, centers]);
 
-  const removeFlight = useCallback((id: string) => setFlights((f) => f.filter((x) => x.id !== id)), []);
+  const removeFlight = useCallback((id: string) => { setFlights((f) => f.filter((x) => x.id !== id)); }, []);
 
   return (
     <div ref={boardRef} className="pl-board">
@@ -264,7 +264,7 @@ export function PipelineBoard({ tasks, onTaskClick, onNewTaskClick }: Props) {
                         )}
                         {failed && <span className="pl-card-cross" aria-hidden><CrossIcon size={84} /></span>}
 
-                        <TaskCard task={task} onClick={() => onTaskClick(task)} />
+                        <TaskCard task={task} onClick={() => { onTaskClick(task); }} />
 
                         {agents > 0 && (
                           <div className="pl-card-agents" title={`${agentCount(task)} agent(s) active`}>
@@ -313,7 +313,7 @@ export function PipelineBoard({ tasks, onTaskClick, onNewTaskClick }: Props) {
               initial={{ left: fl.x0, opacity: 0, scale: 0.5 }}
               animate={{ left: fl.x1, opacity: [0, 1, 1, 0], scale: [0.5, 1.15, 1, 0.8], y: [0, -26, -26, 0] }}
               transition={{ duration: 1.1, ease: 'easeInOut', times: [0, 0.2, 0.8, 1] }}
-              onAnimationComplete={() => removeFlight(fl.id)}>
+              onAnimationComplete={() => { removeFlight(fl.id); }}>
               <PackageIcon size={26} />
             </motion.div>
           ))}

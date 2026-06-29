@@ -420,7 +420,7 @@ export function AdvancedSettings({ settings, onSettingsChange, section, version 
             <Switch
               checked={settings.autoUpdateAutoBuild}
               onCheckedChange={(checked) =>
-                onSettingsChange({ ...settings, autoUpdateAutoBuild: checked })
+                { onSettingsChange({ ...settings, autoUpdateAutoBuild: checked }); }
               }
             />
           </div>
@@ -435,7 +435,7 @@ export function AdvancedSettings({ settings, onSettingsChange, section, version 
             <Switch
               checked={settings.betaUpdates ?? false}
               onCheckedChange={(checked) =>
-                onSettingsChange({ ...settings, betaUpdates: checked })
+                { onSettingsChange({ ...settings, betaUpdates: checked }); }
               }
             />
           </div>
@@ -480,13 +480,13 @@ export function AdvancedSettings({ settings, onSettingsChange, section, version 
             <Switch
               checked={notificationsSettings[item.key]}
               onCheckedChange={(checked) =>
-                onSettingsChange({
+                { onSettingsChange({
                   ...settings,
                   notifications: {
                     ...notificationsSettings,
                     [item.key]: checked
                   }
-                })
+                }); }
               }
             />
           </div>
@@ -501,13 +501,13 @@ export function AdvancedSettings({ settings, onSettingsChange, section, version 
           <Switch
             checked={notificationsSettings.emailEnabled}
             onCheckedChange={(checked) =>
-              onSettingsChange({
+              { onSettingsChange({
                 ...settings,
                 notifications: {
                   ...notificationsSettings,
                   emailEnabled: checked
                 }
-              })
+              }); }
             }
           />
         </div>

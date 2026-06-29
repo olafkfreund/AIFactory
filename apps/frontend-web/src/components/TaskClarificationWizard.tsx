@@ -181,7 +181,7 @@ export function TaskClarificationWizard({
                         key={option}
                         type="button"
                         disabled={isSubmitting}
-                        onClick={() => handleSelectOption(q.id, option)}
+                        onClick={() => { handleSelectOption(q.id, option); }}
                         className={cn(
                           'flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors',
                           isSelected
@@ -210,7 +210,7 @@ export function TaskClarificationWizard({
           {!isLoading && (
             <Button
               variant="outline"
-              onClick={() => onOpenChange(false)}
+              onClick={() => { onOpenChange(false); }}
               disabled={isSubmitting}
             >
               {skip || error

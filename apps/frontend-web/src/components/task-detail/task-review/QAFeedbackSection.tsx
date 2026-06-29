@@ -30,7 +30,7 @@ export function QAFeedbackSection({
       <Textarea
         placeholder="Describe the issues or changes needed..."
         value={feedback}
-        onChange={(e) => onFeedbackChange(e.target.value)}
+        onChange={(e) => { onFeedbackChange(e.target.value); }}
         className="mb-3"
         rows={3}
       />

@@ -133,25 +133,27 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   // Memoize status badge variant and label - ensures React tracks status changes properly
   // This guarantees the badge re-renders when task.status changes via WebSocket events
   const { statusBadgeVariant, statusLabel } = useMemo(() => {
-    const variant = task.status === 'done' ? 'success'
+    const variant: 'success' | 'purple' | 'info' | 'secondary' =
+      task.status === 'done' ? 'success'
       : task.status === 'human_review' ? 'purple'
       : task.status === 'in_progress' ? 'info'
       : 'secondary';
     const label = TASK_STATUS_LABELS[task.status];
-    return { statusBadgeVariant: variant as 'success' | 'purple' | 'info' | 'secondary', statusLabel: label };
+    return { statusBadgeVariant: variant, statusLabel: label };
   }, [task.status]);
 
   // Memoize review reason badge variant and label - ensures proper reactivity for review states
   const { reviewBadgeVariant, reviewLabel } = useMemo(() => {
     if (!task.reviewReason) return { reviewBadgeVariant: null, reviewLabel: null };
-    const variant = task.reviewReason === 'completed' ? 'success'
+    const variant: 'success' | 'destructive' | 'warning' =
+      task.reviewReason === 'completed' ? 'success'
       : task.reviewReason === 'errors' ? 'destructive'
       : 'warning';
     const label = task.reviewReason === 'completed' ? 'Completed'
       : task.reviewReason === 'errors' ? 'Has Errors'
       : task.reviewReason === 'plan_review' ? 'Approve Plan'
       : 'QA Issues';
-    return { reviewBadgeVariant: variant as 'success' | 'destructive' | 'warning', reviewLabel: label };
+    return { reviewBadgeVariant: variant, reviewLabel: label };
   }, [task.reviewReason]);
 
   // Memoize showTaskReview to ensure TaskReview section appears when:
@@ -477,7 +479,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                       variant="ghost"
                       size="icon"
                       className="hover:bg-primary/10 hover:text-primary transition-colors"
-                      onClick={() => onExpandMissionControl(task.id)}
+                      onClick={() => { onExpandMissionControl(task.id); }}
                       title="Open in Mission Control"
                     >
                       <Maximize2 className="h-4 w-4" />
@@ -487,7 +489,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     variant="ghost"
                     size="icon"
                     className="hover:bg-primary/10 hover:text-primary transition-colors"
-                    onClick={() => state.setIsEditDialogOpen(true)}
+                    onClick={() => { state.setIsEditDialogOpen(true); }}
                     disabled={state.isRunning && !state.isStuck}
                   >
                     <Pencil className="h-4 w-4" />
@@ -700,7 +702,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 variant="ghost"
                 size="sm"
                 className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                onClick={() => state.setShowDeleteDialog(true)}
+                onClick={() => { state.setShowDeleteDialog(true); }}
                 disabled={state.isRunning && !state.isStuck}
               >
                 <Trash2 className="mr-2 h-4 w-4" />
