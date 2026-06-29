@@ -153,7 +153,7 @@ export function SkillsBrowser({
                 <button
                   key={cat.name}
                   type="button"
-                  onClick={() => setSelectedCategory(cat.name)}
+                  onClick={() => { setSelectedCategory(cat.name); }}
                   className={cn(
                     'w-full rounded-md px-2.5 py-1.5 text-left text-xs transition-colors',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -212,7 +212,7 @@ export function SkillsBrowser({
         <input
           type="text"
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(e) => { setSearchQuery(e.target.value); }}
           placeholder={t('skills.searchPlaceholder', { defaultValue: 'Search skills…' })}
           className={cn(
             'w-full rounded-md border border-border bg-card py-2 pl-8 pr-8',
@@ -372,7 +372,7 @@ export function SkillsBrowser({
                   <span className="max-w-[140px] truncate">{skill.name}</span>
                   <button
                     type="button"
-                    onClick={() => handleRemoveSkill(skill.id)}
+                    onClick={() => { handleRemoveSkill(skill.id); }}
                     className="ml-0.5 rounded-full text-primary/60 hover:text-primary focus:outline-none focus:ring-1 focus:ring-ring"
                     aria-label={t('skills.removeSkill', {
                       name: skill.name,

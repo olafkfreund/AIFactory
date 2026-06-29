@@ -187,7 +187,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
       const timer = setTimeout(() => {
         window.dispatchEvent(new Event('resize'));
       }, 50);
-      return () => clearTimeout(timer);
+      return () => { clearTimeout(timer); };
     }
     return undefined;
   }, [isActive, terminals.length]);
@@ -212,7 +212,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => { window.removeEventListener('keydown', handleKeyDown); };
   }, [isActive, addTerminal, canAddTerminal, projectPath, activeTerminalId, handleCloseTerminal]);
 
   const handleAddTerminal = useCallback(() => {
@@ -455,8 +455,8 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                     cwd={terminal.cwd || projectPath}
                     projectPath={projectPath}
                     isActive={terminal.id === activeTerminalId}
-                    onClose={() => handleCloseTerminal(terminal.id)}
-                    onActivate={() => setActiveTerminal(terminal.id)}
+                    onClose={() => { handleCloseTerminal(terminal.id); }}
+                    onActivate={() => { setActiveTerminal(terminal.id); }}
                     tasks={tasks}
                     onNewTaskClick={onNewTaskClick}
                     terminalCount={terminals.length}

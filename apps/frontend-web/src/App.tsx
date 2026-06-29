@@ -182,7 +182,7 @@ function AuthenticatedApp() {
     const timeout = setTimeout(() => {
       useProjectStore.getState().clearSwitchingState();
     }, 10_000);
-    return () => clearTimeout(timeout);
+    return () => { clearTimeout(timeout); };
   }, [isSwitchingProject]);
 
   // Apply theme (light/dark mode — Gruvbox palette is the default in index.css)
@@ -292,9 +292,9 @@ function AuthenticatedApp() {
         <div className="flex h-screen bg-background">
           {/* Sidebar */}
           <Sidebar
-            onSettingsClick={() => setIsSettingsDialogOpen(true)}
-            onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
-            onOpenOnboarding={() => setIsOnboardingOpen(true)}
+            onSettingsClick={() => { setIsSettingsDialogOpen(true); }}
+            onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
+            onOpenOnboarding={() => { setIsOnboardingOpen(true); }}
             activeView={activeView}
             onViewChange={setActiveView}
           />
@@ -314,11 +314,11 @@ function AuthenticatedApp() {
                 // Also update selectedProjectId so components use the correct project context
                 useProjectStore.getState().selectProject(projectId);
               }}
-              onProjectClose={(projectId) => closeProjectTab(projectId)}
+              onProjectClose={(projectId) => { closeProjectTab(projectId); }}
               onAddProject={handleAddProject}
               onProjectAdded={handleProjectAdded}
-              onSettingsClick={() => setIsSettingsDialogOpen(true)}
-              onOpenOnboarding={() => setIsOnboardingOpen(true)}
+              onSettingsClick={() => { setIsSettingsDialogOpen(true); }}
+              onOpenOnboarding={() => { setIsOnboardingOpen(true); }}
             />
 
             <main className="flex-1 overflow-hidden">
@@ -328,7 +328,7 @@ function AuthenticatedApp() {
                     <PipelineBoard
                       tasks={tasks}
                       onTaskClick={handleTaskClick}
-                      onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
+                      onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
                       isInitialized={!!selectedProject?.autoBuildPath}
                     />
                   )}
@@ -336,7 +336,7 @@ function AuthenticatedApp() {
                   <div className={activeView === 'terminals' ? 'h-full' : 'hidden'}>
                     <TerminalGrid
                       projectPath={selectedProject?.path}
-                      onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
+                      onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
                       isActive={activeView === 'terminals'}
                     />
                   </div>
@@ -351,7 +351,7 @@ function AuthenticatedApp() {
                   )}
                   {activeView === 'github-issues' && (
                     <GitHubIssues
-                      onOpenSettings={() => setIsSettingsDialogOpen(true)}
+                      onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
                       onNavigateToTask={(taskId) => {
                         setSelectedTaskId(taskId);
                         setActiveView('kanban');
@@ -360,7 +360,7 @@ function AuthenticatedApp() {
                   )}
                   {activeView === 'github-prs' && (
                     <GitHubPRs
-                      onOpenSettings={() => setIsSettingsDialogOpen(true)}
+                      onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
                       isActive={true}
                     />
                   )}
@@ -429,7 +429,7 @@ function AuthenticatedApp() {
             onOpenChange={(open) => {
               if (!open) setSelectedTaskId(null);
             }}
-            onSwitchToTerminals={() => setActiveView('terminals')}
+            onSwitchToTerminals={() => { setActiveView('terminals'); }}
             onOpenInbuiltTerminal={handleOpenInbuiltTerminal}
             onExpandMissionControl={(taskId) => {
               setSelectedTaskId(null);
@@ -441,7 +441,7 @@ function AuthenticatedApp() {
           {missionControlTask && (
             <MissionControl
               task={missionControlTask}
-              onClose={() => setMissionControlId(null)}
+              onClose={() => { setMissionControlId(null); }}
               onCollapse={(taskId) => {
                 setMissionControlId(null);
                 setSelectedTaskId(taskId);
@@ -453,8 +453,8 @@ function AuthenticatedApp() {
           <OnboardingWizard
             open={isOnboardingOpen}
             onOpenChange={setIsOnboardingOpen}
-            onOpenTaskCreator={() => setIsNewTaskDialogOpen(true)}
-            onOpenSettings={() => setIsSettingsDialogOpen(true)}
+            onOpenTaskCreator={() => { setIsNewTaskDialogOpen(true); }}
+            onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
           />
         </div>
       </TooltipProvider>

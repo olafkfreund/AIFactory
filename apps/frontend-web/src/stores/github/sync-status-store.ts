@@ -22,14 +22,14 @@ export const useSyncStatusStore = create<SyncStatusState>((set, get) => ({
   connectionError: null,
 
   // Actions
-  setSyncStatus: (syncStatus) => set({ syncStatus, connectionError: null }),
+  setSyncStatus: (syncStatus) => { set({ syncStatus, connectionError: null }); },
 
-  setConnectionError: (connectionError) => set({ connectionError }),
+  setConnectionError: (connectionError) => { set({ connectionError }); },
 
-  clearSyncStatus: () => set({
+  clearSyncStatus: () => { set({
     syncStatus: null,
     connectionError: null
-  }),
+  }); },
 
   // Selectors
   isConnected: () => {

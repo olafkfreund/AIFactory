@@ -184,7 +184,7 @@ export function LogViewer() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => logger.download('json')}
+                onClick={() => { logger.download('json'); }}
               >
                 <Download className="w-4 h-4 mr-2" />
                 Export JSON
@@ -192,7 +192,7 @@ export function LogViewer() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => logger.download('text')}
+                onClick={() => { logger.download('text'); }}
               >
                 <Download className="w-4 h-4 mr-2" />
                 Export Text

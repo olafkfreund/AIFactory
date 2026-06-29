@@ -376,10 +376,10 @@ if (typeof window !== 'undefined') {
 // Helper to create category-specific loggers
 export function createLogger(category: string) {
   return {
-    debug: (message: string, data?: unknown) => logger.debug(category, message, data),
-    info: (message: string, data?: unknown) => logger.info(category, message, data),
-    warn: (message: string, data?: unknown) => logger.warn(category, message, data),
-    error: (message: string, data?: unknown) => logger.error(category, message, data),
+    debug: (message: string, data?: unknown) => { logger.debug(category, message, data); },
+    info: (message: string, data?: unknown) => { logger.info(category, message, data); },
+    warn: (message: string, data?: unknown) => { logger.warn(category, message, data); },
+    error: (message: string, data?: unknown) => { logger.error(category, message, data); },
   };
 }
 

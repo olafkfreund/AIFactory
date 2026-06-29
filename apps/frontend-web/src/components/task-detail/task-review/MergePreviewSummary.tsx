@@ -71,7 +71,7 @@ export function MergePreviewSummary({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => onShowConflictDialog(true)}
+              onClick={() => { onShowConflictDialog(true); }}
               className="h-7 text-xs"
             >
               View Details

@@ -43,8 +43,8 @@ export function IssueList({
             key={issue.id}
             issue={issue}
             isSelected={selectedIssueNumber === issue.number}
-            onClick={() => onSelectIssue(issue.number)}
-            onInvestigate={() => onInvestigate(issue)}
+            onClick={() => { onSelectIssue(issue.number); }}
+            onInvestigate={() => { onInvestigate(issue); }}
           />
         ))}
       </div>

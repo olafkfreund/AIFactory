@@ -87,7 +87,7 @@ export function ChangelogFilters({
           <Label className="text-sm font-medium">Changelog Source</Label>
           <RadioGroup
             value={sourceMode}
-            onValueChange={(value) => onSourceModeChange(value as ChangelogSourceMode)}
+            onValueChange={(value) => { onSourceModeChange(value as ChangelogSourceMode); }}
             className="space-y-2"
           >
             <label
@@ -185,7 +185,7 @@ export function ChangelogFilters({
                 <Label className="text-xs">History Type</Label>
                 <Select
                   value={gitHistoryType}
-                  onValueChange={(v) => onGitHistoryTypeChange(v as 'recent' | 'since-date' | 'tag-range' | 'since-version')}
+                  onValueChange={(v) => { onGitHistoryTypeChange(v as 'recent' | 'since-date' | 'tag-range' | 'since-version'); }}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -228,7 +228,7 @@ export function ChangelogFilters({
                     min={1}
                     max={500}
                     value={gitHistoryCount}
-                    onChange={(e) => onGitHistoryCountChange(parseInt(e.target.value) || 25)}
+                    onChange={(e) => { onGitHistoryCountChange(parseInt(e.target.value) || 25); }}
                   />
                 </div>
               )}
@@ -239,7 +239,7 @@ export function ChangelogFilters({
                   <Input
                     type="date"
                     value={gitHistorySinceDate}
-                    onChange={(e) => onGitHistorySinceDateChange(e.target.value)}
+                    onChange={(e) => { onGitHistorySinceDateChange(e.target.value); }}
                   />
                 </div>
               )}
@@ -276,7 +276,7 @@ export function ChangelogFilters({
                       </div>
                       <div className="space-y-2">
                         <Label className="text-xs">To Tag (optional)</Label>
-                        <Select value={gitHistoryToTag || 'HEAD'} onValueChange={(v) => onGitHistoryToTagChange(v === 'HEAD' ? '' : v)}>
+                        <Select value={gitHistoryToTag || 'HEAD'} onValueChange={(v) => { onGitHistoryToTagChange(v === 'HEAD' ? '' : v); }}>
                           <SelectTrigger>
                             <SelectValue placeholder="HEAD (latest)" />
                           </SelectTrigger>
@@ -337,7 +337,7 @@ export function ChangelogFilters({
                 <Checkbox
                   id="merge-commits"
                   checked={includeMergeCommits}
-                  onCheckedChange={(checked) => onIncludeMergeCommitsChange(checked as boolean)}
+                  onCheckedChange={(checked) => { onIncludeMergeCommitsChange(checked as boolean); }}
                 />
                 <Label htmlFor="merge-commits" className="text-xs cursor-pointer">
                   Include merge commits

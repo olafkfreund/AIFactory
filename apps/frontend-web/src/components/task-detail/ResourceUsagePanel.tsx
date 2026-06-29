@@ -75,7 +75,7 @@ export function ResourceUsagePanel({ taskId, active = true }: ResourceUsagePanel
         // On error, keep stale data rather than clearing it
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); });
   };
 
   useEffect(() => {

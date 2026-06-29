@@ -101,7 +101,7 @@ function MissionControlContent({
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
   }, [onClose]);
 
   const executionPhase = task.executionProgress?.phase;
@@ -201,7 +201,7 @@ function MissionControlContent({
     state.setIsDiscarding(false);
   };
 
-  const handleCreatePR = () => setShowCreatePRDialog(true);
+  const handleCreatePR = () => { setShowCreatePRDialog(true); };
 
   const needsReview = state.needsReview && task.reviewReason !== 'plan_review';
 
@@ -430,7 +430,7 @@ function MissionControlContent({
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {renderPrimaryAction()}
           {onEdit && (
-            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(task.id)}>
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { onEdit(task.id); }}>
               <Pencil className="h-4 w-4" />
             </Button>
           )}
@@ -440,7 +440,7 @@ function MissionControlContent({
               size="icon"
               className="h-8 w-8"
               title="Collapse to compact view"
-              onClick={() => onCollapse(task.id)}
+              onClick={() => { onCollapse(task.id); }}
             >
               <Minimize2 className="h-4 w-4" />
             </Button>
@@ -478,7 +478,7 @@ function MissionControlContent({
           task={task}
           projectPath={selectedProject.path}
           onOpenChange={setShowCreatePRDialog}
-          onSuccess={() => setIsCreatingPR(false)}
+          onSuccess={() => { setIsCreatingPR(false); }}
           onError={(error) => {
             state.setWorkspaceError(error);
             setIsCreatingPR(false);

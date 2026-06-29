@@ -16,7 +16,7 @@ export function AgentConfigSection({ settings, onUpdateSettings }: AgentConfigSe
         <Label htmlFor="model" className="text-sm font-medium text-foreground">Model</Label>
         <Select
           value={settings.model}
-          onValueChange={(value) => onUpdateSettings({ model: value })}
+          onValueChange={(value) => { onUpdateSettings({ model: value }); }}
         >
           <SelectTrigger id="model">
             <SelectValue />

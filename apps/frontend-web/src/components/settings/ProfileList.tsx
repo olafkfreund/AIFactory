@@ -136,7 +136,7 @@ export function ProfileList({ onProfileSaved }: ProfileListProps) {
             Configure custom Anthropic-compatible API endpoints
           </p>
         </div>
-        <Button onClick={() => setIsAddDialogOpen(true)} size="sm">
+        <Button onClick={() => { setIsAddDialogOpen(true); }} size="sm">
           <Plus className="h-4 w-4 mr-2" />
           Add Profile
         </Button>
@@ -150,7 +150,7 @@ export function ProfileList({ onProfileSaved }: ProfileListProps) {
           <p className="text-sm text-muted-foreground text-center max-w-sm mb-4">
             Create a profile to configure custom API endpoints for your builds.
           </p>
-          <Button onClick={() => setIsAddDialogOpen(true)} variant="outline">
+          <Button onClick={() => { setIsAddDialogOpen(true); }} variant="outline">
             <Plus className="h-4 w-4 mr-2" />
             Create First Profile
           </Button>
@@ -234,7 +234,7 @@ export function ProfileList({ onProfileSaved }: ProfileListProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setEditProfile(profile)}
+                      onClick={() => { setEditProfile(profile); }}
                     >
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -246,7 +246,7 @@ export function ProfileList({ onProfileSaved }: ProfileListProps) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDeleteConfirmProfile(profile)}
+                      onClick={() => { setDeleteConfirmProfile(profile); }}
                       className="text-destructive hover:text-destructive"
                       data-testid={`profile-delete-button-${profile.id}`}
                       aria-label={`Delete profile ${profile.name}`}
@@ -282,7 +282,7 @@ export function ProfileList({ onProfileSaved }: ProfileListProps) {
       {/* Delete Confirmation Dialog */}
       <AlertDialog
         open={deleteConfirmProfile !== null}
-        onOpenChange={() => setDeleteConfirmProfile(null)}
+        onOpenChange={() => { setDeleteConfirmProfile(null); }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>

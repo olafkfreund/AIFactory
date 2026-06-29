@@ -89,7 +89,7 @@ export function WelcomeScreen({
                 {recentProjects.map((project, _index) => (
                   <button
                     key={project.id}
-                    onClick={() => onSelectProject(project.id)}
+                    onClick={() => { onSelectProject(project.id); }}
                     className="w-full flex items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors hover:bg-accent/50 group"
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/20 text-accent-foreground shrink-0">

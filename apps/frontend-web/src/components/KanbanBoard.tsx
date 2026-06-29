@@ -160,7 +160,7 @@ const DroppableColumn = memo(function DroppableColumn({ status, tasks, onTaskCli
   const onClickHandlers = useMemo(() => {
     const handlers = new Map<string, () => void>();
     tasks.forEach((task) => {
-      handlers.set(task.id, () => onTaskClick(task));
+      handlers.set(task.id, () => { onTaskClick(task); });
     });
     return handlers;
   }, [tasks, onTaskClick]);
@@ -408,7 +408,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
       const column: KanbanColumn =
         task.status === 'copilot_running' || task.status === 'copilot_pr_opened'
           ? 'in_progress'
-          : (task.status as KanbanColumn);
+          : (task.status);
       if (grouped[column] !== undefined) {
         grouped[column].push(task);
       }

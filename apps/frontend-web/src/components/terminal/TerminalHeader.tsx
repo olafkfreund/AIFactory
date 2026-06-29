@@ -70,7 +70,7 @@ export function TerminalHeader({
           <div
             {...dragHandleProps}
             className="cursor-grab active:cursor-grabbing p-0.5 -ml-1 rounded hover:bg-muted/50 transition-colors touch-none"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); }}
           >
             <GripVertical className="h-3 w-3 text-muted-foreground" />
           </div>

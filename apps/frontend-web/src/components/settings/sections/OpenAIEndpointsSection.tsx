@@ -246,7 +246,7 @@ export function OpenAIEndpointsSection({ isOpen }: OpenAIEndpointsSectionProps) 
                 id="ep-label"
                 placeholder="LM Studio (local)"
                 value={form.label}
-                onChange={(e) => setForm({ ...form, label: e.target.value })}
+                onChange={(e) => { setForm({ ...form, label: e.target.value }); }}
               />
             </div>
             <div className="space-y-1">
@@ -259,7 +259,7 @@ export function OpenAIEndpointsSection({ isOpen }: OpenAIEndpointsSectionProps) 
                 placeholder="qwen2.5-coder-32b"
                 value={form.default_model}
                 onChange={(e) =>
-                  setForm({ ...form, default_model: e.target.value })
+                  { setForm({ ...form, default_model: e.target.value }); }
                 }
               />
               {testResults.__form__?.ok &&
@@ -290,7 +290,7 @@ export function OpenAIEndpointsSection({ isOpen }: OpenAIEndpointsSectionProps) 
               id="ep-url"
               placeholder="http://localhost:1234"
               value={form.base_url}
-              onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+              onChange={(e) => { setForm({ ...form, base_url: e.target.value }); }}
             />
             <p className="text-xs text-muted-foreground">
               {t(
@@ -319,12 +319,12 @@ export function OpenAIEndpointsSection({ isOpen }: OpenAIEndpointsSectionProps) 
                     : 'sk-...'
                 }
                 value={form.api_key}
-                onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                onChange={(e) => { setForm({ ...form, api_key: e.target.value }); }}
                 className="pr-10"
               />
               <button
                 type="button"
-                onClick={() => setShowApiKey(!showApiKey)}
+                onClick={() => { setShowApiKey(!showApiKey); }}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey ? (
@@ -440,7 +440,7 @@ export function OpenAIEndpointsSection({ isOpen }: OpenAIEndpointsSectionProps) 
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => startEdit(endpoint)}
+                    onClick={() => { startEdit(endpoint); }}
                     title={t('openaiEndpoints.edit', 'Edit')}
                   >
                     <Pencil className="h-3 w-3" />

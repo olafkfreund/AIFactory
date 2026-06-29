@@ -391,7 +391,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
       {/* Header - clickable to expand */}
       <button
         type="button"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={() => { setIsExpanded(!isExpanded); }}
         className="w-full flex items-center gap-3 p-4 hover:bg-muted/50 transition-colors text-left"
       >
         <div className="p-2 rounded-lg bg-muted">
@@ -979,7 +979,7 @@ export function AgentTools() {
   };
 
   // Group agents by category
-  const agentsByCategory = Object.entries(AGENT_CONFIGS).reduce(
+  const agentsByCategory = Object.entries(AGENT_CONFIGS).reduce<Record<string, Array<{ id: string; config: typeof AGENT_CONFIGS[keyof typeof AGENT_CONFIGS] }>>>(
     (acc, [id, config]) => {
       const category = config.category;
       if (!acc[category]) {
@@ -988,7 +988,7 @@ export function AgentTools() {
       acc[category].push({ id, config });
       return acc;
     },
-    {} as Record<string, Array<{ id: string; config: typeof AGENT_CONFIGS[keyof typeof AGENT_CONFIGS] }>>
+    {}
   );
 
   return (
@@ -1266,7 +1266,7 @@ export function AgentTools() {
                 {/* Category Header */}
                 <button
                   type="button"
-                  onClick={() => toggleCategory(categoryId)}
+                  onClick={() => { toggleCategory(categoryId); }}
                   className="flex items-center gap-2 w-full text-left hover:opacity-80 transition-opacity"
                 >
                   {isExpanded ? (

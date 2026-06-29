@@ -110,7 +110,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
 
       const result = await window.API.worktreeDetectTools();
       if (result.success && result.data) {
-        setDetectedTools(result.data as DetectedTools);
+        setDetectedTools(result.data);
 
         // Auto-select the first detected IDE if none is configured
         if (!settings.preferredIDE && result.data.ides.length > 0) {
@@ -300,7 +300,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
               </Label>
               <Select
                 value={preferredIDE}
-                onValueChange={(value: SupportedIDE) => setPreferredIDE(value)}
+                onValueChange={(value: SupportedIDE) => { setPreferredIDE(value); }}
                 disabled={isSaving}
               >
                 <SelectTrigger>
@@ -332,7 +332,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                   <Input
                     id="custom-ide-path"
                     value={customIDEPath}
-                    onChange={(e) => setCustomIDEPath(e.target.value)}
+                    onChange={(e) => { setCustomIDEPath(e.target.value); }}
                     placeholder="/path/to/your/ide"
                     className="mt-1"
                     disabled={isSaving}
@@ -349,7 +349,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
               </Label>
               <Select
                 value={preferredTerminal}
-                onValueChange={(value: SupportedTerminal) => setPreferredTerminal(value)}
+                onValueChange={(value: SupportedTerminal) => { setPreferredTerminal(value); }}
                 disabled={isSaving}
               >
                 <SelectTrigger>
@@ -381,7 +381,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                   <Input
                     id="custom-terminal-path"
                     value={customTerminalPath}
-                    onChange={(e) => setCustomTerminalPath(e.target.value)}
+                    onChange={(e) => { setCustomTerminalPath(e.target.value); }}
                     placeholder="/path/to/your/terminal"
                     className="mt-1"
                     disabled={isSaving}

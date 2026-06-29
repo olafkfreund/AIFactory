@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint . --max-warnings 2710",
+    "lint": "eslint . --max-warnings 2039",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "capture-screenshots": "tsx ../../scripts/capture-screenshots.ts",

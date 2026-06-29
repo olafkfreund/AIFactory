@@ -109,7 +109,7 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
                 <button
                   type="button"
                   key={preset.value}
-                  onClick={() => handlePresetChange(preset.value)}
+                  onClick={() => { handlePresetChange(preset.value); }}
                   className={cn(
                     'flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
@@ -179,7 +179,7 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
               max={UI_SCALE_MAX}
               step={UI_SCALE_STEP}
               value={displayScale}
-              onChange={(e) => handleSliderChange(parseInt(e.target.value, 10))}
+              onChange={(e) => { handleSliderChange(parseInt(e.target.value, 10)); }}
               className={cn(
                 'flex-1 h-2 bg-muted rounded-lg appearance-none cursor-pointer',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',

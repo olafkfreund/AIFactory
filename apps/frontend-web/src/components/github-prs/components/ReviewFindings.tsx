@@ -67,7 +67,7 @@ export function ReviewFindings({
     };
 
     for (const finding of findings) {
-      const severity = finding.severity as SeverityGroup;
+      const severity = finding.severity;
       if (groups[severity]) {
         groups[severity].push(finding);
       }
@@ -193,7 +193,7 @@ export function ReviewFindings({
                 count={group.length}
                 selectedCount={selectedInGroup}
                 expanded={isExpanded}
-                onToggle={() => toggleSection(severity)}
+                onToggle={() => { toggleSection(severity); }}
                 onSelectAll={allFindingsPosted ? undefined : (e) => {
                   e.stopPropagation();
                   toggleSeverityGroup(severity);
@@ -211,7 +211,7 @@ export function ReviewFindings({
                         finding={finding}
                         selected={!isPosted && selectedIds.has(finding.id)}
                         posted={isPosted}
-                        onToggle={isPosted ? undefined : () => toggleFinding(finding.id)}
+                        onToggle={isPosted ? undefined : () => { toggleFinding(finding.id); }}
                       />
                     );
                   })}

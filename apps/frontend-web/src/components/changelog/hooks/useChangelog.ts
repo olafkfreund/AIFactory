@@ -193,7 +193,7 @@ export function useChangelog() {
     const success = copyChangelogToClipboard();
     if (success) {
       setCopySuccess(true);
-      setTimeout(() => setCopySuccess(false), 2000);
+      setTimeout(() => { setCopySuccess(false); }, 2000);
     }
   };
 
