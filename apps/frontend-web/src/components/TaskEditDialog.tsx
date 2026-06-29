@@ -299,7 +299,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       setShowImages(true);
       // Show success feedback
       setPasteSuccess(true);
-      setTimeout(() => setPasteSuccess(false), 2000);
+      setTimeout(() => { setPasteSuccess(false); }, 2000);
     }
   }, [images]);
 
@@ -396,7 +396,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         setShowImages(true);
         // Show success feedback
         setPasteSuccess(true);
-        setTimeout(() => setPasteSuccess(false), 2000);
+        setTimeout(() => { setPasteSuccess(false); }, 2000);
       }
     },
     [images, isSaving]
@@ -539,7 +539,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
               id="edit-description"
               placeholder="Describe the feature, bug fix, or improvement. Be as specific as possible about requirements, constraints, and expected behavior."
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => { setDescription(e.target.value); }}
               onPaste={handlePaste}
               onDragOver={handleTextareaDragOver}
               onDragLeave={handleTextareaDragLeave}
@@ -564,7 +564,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
               id="edit-title"
               placeholder="Leave empty to auto-generate from description"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => { setTitle(e.target.value); }}
               disabled={isSaving}
             />
             <p className="text-xs text-muted-foreground">
@@ -602,7 +602,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
               </button>
               <button
                 type="button"
-                onClick={() => setMode('full')}
+                onClick={() => { setMode('full'); }}
                 disabled={isSaving}
                 className={cn(
                   "flex-1 p-3 rounded-lg border-2 transition-all text-left",
@@ -657,7 +657,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
           {/* Advanced Options Toggle */}
           <button
             type="button"
-            onClick={() => setShowAdvanced(!showAdvanced)}
+            onClick={() => { setShowAdvanced(!showAdvanced); }}
             className={cn(
               'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
               'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
@@ -683,7 +683,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
                   </Label>
                   <Select
                     value={category}
-                    onValueChange={(value) => setCategory(value as TaskCategory)}
+                    onValueChange={(value) => { setCategory(value as TaskCategory); }}
                     disabled={isSaving}
                   >
                     <SelectTrigger id="edit-category" className="h-9">
@@ -706,7 +706,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
                   </Label>
                   <Select
                     value={priority}
-                    onValueChange={(value) => setPriority(value as TaskPriority)}
+                    onValueChange={(value) => { setPriority(value as TaskPriority); }}
                     disabled={isSaving}
                   >
                     <SelectTrigger id="edit-priority" className="h-9">
@@ -729,7 +729,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
                   </Label>
                   <Select
                     value={complexity}
-                    onValueChange={(value) => setComplexity(value as TaskComplexity)}
+                    onValueChange={(value) => { setComplexity(value as TaskComplexity); }}
                     disabled={isSaving}
                   >
                     <SelectTrigger id="edit-complexity" className="h-9">
@@ -752,7 +752,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
                   </Label>
                   <Select
                     value={impact}
-                    onValueChange={(value) => setImpact(value as TaskImpact)}
+                    onValueChange={(value) => { setImpact(value as TaskImpact); }}
                     disabled={isSaving}
                   >
                     <SelectTrigger id="edit-impact" className="h-9">
@@ -778,7 +778,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
           {/* Images Toggle */}
           <button
             type="button"
-            onClick={() => setShowImages(!showImages)}
+            onClick={() => { setShowImages(!showImages); }}
             className={cn(
               'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
               'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
@@ -819,7 +819,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
           <div className="rounded-lg border border-border">
             <button
               type="button"
-              onClick={() => setShowSkillsBrowser(!showSkillsBrowser)}
+              onClick={() => { setShowSkillsBrowser(!showSkillsBrowser); }}
               className={cn(
                 'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
                 'w-full justify-between py-2 px-3 rounded-lg hover:bg-muted/50'
@@ -856,7 +856,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
             <Checkbox
               id="edit-require-review"
               checked={requireReviewBeforeCoding}
-              onCheckedChange={(checked) => setRequireReviewBeforeCoding(checked === true)}
+              onCheckedChange={(checked) => { setRequireReviewBeforeCoding(checked === true); }}
               disabled={isSaving}
               className="mt-0.5"
             />

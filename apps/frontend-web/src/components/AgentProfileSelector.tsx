@@ -111,7 +111,7 @@ export function AgentProfileSelector({
   const handleProfileSelect = (selectedId: string) => {
     if (selectedId === 'custom') {
       // Keep current model/thinking level, just mark as custom
-      onProfileChange('custom', model as ModelType || 'sonnet', thinkingLevel as ThinkingLevel || 'medium');
+      onProfileChange('custom', model || 'sonnet', thinkingLevel as ThinkingLevel || 'medium');
     } else if (selectedId === 'auto') {
       // Auto profile - set defaults
       const autoProfile = DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto');
@@ -243,7 +243,7 @@ export function AgentProfileSelector({
           {/* Clickable Header */}
           <button
             type="button"
-            onClick={() => setShowPhaseDetails(!showPhaseDetails)}
+            onClick={() => { setShowPhaseDetails(!showPhaseDetails); }}
             className={cn(
               'flex w-full items-center justify-between p-4 text-left',
               'hover:bg-muted/50 transition-colors',
@@ -307,7 +307,7 @@ export function AgentProfileSelector({
                       <Label className="text-[10px] text-muted-foreground">{t('agentProfile.model')}</Label>
                       <Select
                         value={currentPhaseModels[phase]}
-                        onValueChange={(value) => handlePhaseModelChange(phase, value as ModelType)}
+                        onValueChange={(value) => { handlePhaseModelChange(phase, value); }}
                         disabled={disabled}
                       >
                         <SelectTrigger className="h-8 text-xs">
@@ -359,7 +359,7 @@ export function AgentProfileSelector({
                       <Label className="text-[10px] text-muted-foreground">{t('agentProfile.thinking')}</Label>
                       <Select
                         value={currentPhaseThinking[phase]}
-                        onValueChange={(value) => handlePhaseThinkingChange(phase, value as ThinkingLevel)}
+                        onValueChange={(value) => { handlePhaseThinkingChange(phase, value as ThinkingLevel); }}
                         disabled={disabled}
                       >
                         <SelectTrigger className="h-8 text-xs">
@@ -392,7 +392,7 @@ export function AgentProfileSelector({
             </Label>
             <Select
               value={model}
-              onValueChange={(value) => onModelChange(value as ModelType)}
+              onValueChange={(value) => { onModelChange(value); }}
               disabled={disabled}
             >
               <SelectTrigger id="custom-model" className="h-9">
@@ -448,7 +448,7 @@ export function AgentProfileSelector({
             </Label>
             <Select
               value={thinkingLevel}
-              onValueChange={(value) => onThinkingLevelChange(value as ThinkingLevel)}
+              onValueChange={(value) => { onThinkingLevelChange(value as ThinkingLevel); }}
               disabled={disabled}
             >
               <SelectTrigger id="custom-thinking" className="h-9">

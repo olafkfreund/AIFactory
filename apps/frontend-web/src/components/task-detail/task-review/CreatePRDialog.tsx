@@ -78,7 +78,7 @@ export function CreatePRDialog({
         setForkError(t('tasks:createPR.forkDetectionFailed'));
         setBaseBranch('main');
       })
-      .finally(() => setIsLoadingFork(false));
+      .finally(() => { setIsLoadingFork(false); });
   }, [open, projectPath, t]);
 
   // Pre-fill title and description from task when dialog opens
@@ -178,7 +178,7 @@ export function CreatePRDialog({
             ) : (
               <RadioGroup
                 value={targetRepo}
-                onValueChange={(v) => setTargetRepo(v as 'origin' | 'upstream')}
+                onValueChange={(v) => { setTargetRepo(v as 'origin' | 'upstream'); }}
                 className="space-y-2"
               >
                 <label className="flex items-center gap-3 p-2.5 rounded-lg border border-border hover:bg-muted/50 cursor-pointer transition-colors">
@@ -212,7 +212,7 @@ export function CreatePRDialog({
             <Input
               id="pr-base-branch"
               value={baseBranch}
-              onChange={(e) => setBaseBranch(e.target.value)}
+              onChange={(e) => { setBaseBranch(e.target.value); }}
               placeholder="main"
             />
           </div>
@@ -225,7 +225,7 @@ export function CreatePRDialog({
             <Input
               id="pr-title"
               value={prTitle}
-              onChange={(e) => setPrTitle(e.target.value)}
+              onChange={(e) => { setPrTitle(e.target.value); }}
               placeholder={task.title}
             />
           </div>
@@ -238,7 +238,7 @@ export function CreatePRDialog({
             <Textarea
               id="pr-description"
               value={prBody}
-              onChange={(e) => setPrBody(e.target.value)}
+              onChange={(e) => { setPrBody(e.target.value); }}
               rows={4}
               className="resize-none"
             />
@@ -248,14 +248,14 @@ export function CreatePRDialog({
           <label className="inline-flex items-center gap-2.5 text-sm cursor-pointer select-none">
             <Checkbox
               checked={isDraft}
-              onCheckedChange={(checked) => setIsDraft(checked === true)}
+              onCheckedChange={(checked) => { setIsDraft(checked === true); }}
             />
             <span className="text-muted-foreground">{t('tasks:createPR.draft')}</span>
           </label>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
+          <Button variant="outline" onClick={() => { onOpenChange(false); }} disabled={isSubmitting}>
             {t('tasks:createPR.cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={isSubmitting || isLoadingFork}>

@@ -84,27 +84,27 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   isLoading: false,
   error: null,
 
-  setTasks: (tasks) => set({ tasks }),
+  setTasks: (tasks) => { set({ tasks }); },
 
   addTask: (task) =>
-    set((state) => ({
+    { set((state) => ({
       tasks: [...state.tasks, task]
-    })),
+    })); },
 
   updateTask: (taskId, updates) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
 
       return {
         tasks: updateTaskAtIndex(state.tasks, index, (t) => ({ ...t, ...updates }))
       };
-    }),
+    }); },
 
   // Handle complete task data updates from WebSocket events
   // This action merges all provided fields efficiently in a single state update
   updateTaskFull: (update) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, update.taskId);
       if (window.DEBUG) {
         console.log('[task-store] updateTaskFull:', update.taskId, 'found index:', index);
@@ -182,10 +182,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         })
       };
-    }),
+    }); },
 
   updateTaskStatus: (taskId, status, reviewReason) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (window.DEBUG) {
         console.log('[task-store] updateTaskStatus:', taskId, 'new status:', status, 'reviewReason:', reviewReason, 'found index:', index);
@@ -251,10 +251,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           return { ...t, status, executionProgress, reviewReason: updatedReviewReason, updatedAt: new Date() };
         })
       };
-    }),
+    }); },
 
   updateTaskFromPlan: (taskId, plan) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
 
@@ -309,10 +309,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         })
       };
-    }),
+    }); },
 
   updateExecutionProgress: (taskId, progress) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       // Debug logging (uncomment to trace progress updates)
       // console.log('[task-store] updateExecutionProgress:', taskId, 'progress:', progress, 'found index:', index);
@@ -359,10 +359,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         })
       };
-    }),
+    }); },
 
   updateSubtaskStatuses: (taskId, subtaskUpdates) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
 
@@ -395,11 +395,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         })
       };
-    }),
+    }); },
 
   // Update a single subtask status - more efficient for granular WebSocket events
   updateSingleSubtaskStatus: (taskId, subtaskId, status) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
 
@@ -423,10 +423,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         })
       };
-    }),
+    }); },
 
   appendLog: (taskId, log) =>
-    set((state) => {
+    { set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
 
@@ -436,11 +436,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           logs: [...(t.logs || []), log]
         }))
       };
-    }),
+    }); },
 
   // Batch append multiple logs at once (single state update instead of N updates)
   batchAppendLogs: (taskId, logs) =>
-    set((state) => {
+    { set((state) => {
       if (logs.length === 0) return state;
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) return state;
@@ -451,15 +451,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           logs: [...(t.logs || []), ...logs]
         }))
       };
-    }),
+    }); },
 
-  selectTask: (taskId) => set({ selectedTaskId: taskId }),
+  selectTask: (taskId) => { set({ selectedTaskId: taskId }); },
 
-  setLoading: (isLoading) => set({ isLoading }),
+  setLoading: (isLoading) => { set({ isLoading }); },
 
-  setError: (error) => set({ error }),
+  setError: (error) => { set({ error }); },
 
-  clearTasks: () => set({ tasks: [], selectedTaskId: null }),
+  clearTasks: () => { set({ tasks: [], selectedTaskId: null }); },
 
   getSelectedTask: () => {
     const state = get();

@@ -116,12 +116,12 @@ export function SecuritySettings({
               type={showApiKey['openai'] ? 'text' : 'password'}
               placeholder={envConfig.openaiKeyIsGlobal ? 'Enter to override global key...' : 'sk-xxxxxxxx'}
               value={envConfig.openaiKeyIsGlobal ? '' : (envConfig.openaiApiKey || '')}
-              onChange={(e) => updateEnvConfig({ openaiApiKey: e.target.value || undefined })}
+              onChange={(e) => { updateEnvConfig({ openaiApiKey: e.target.value || undefined }); }}
               className="pr-10"
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('openai')}
+              onClick={() => { toggleShowApiKey('openai'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               aria-label={showApiKey['openai'] ? 'Hide OpenAI API key' : 'Show OpenAI API key'}
             >
@@ -150,19 +150,19 @@ export function SecuritySettings({
             <Input
               type={showApiKey['voyage'] ? 'text' : 'password'}
               value={envConfig.graphitiProviderConfig?.voyageApiKey || ''}
-              onChange={(e) => updateEnvConfig({
+              onChange={(e) => { updateEnvConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: 'voyage',
                   voyageApiKey: e.target.value || undefined,
                 }
-              })}
+              }); }}
               placeholder="pa-xxxxxxxx"
               className="pr-10"
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('voyage')}
+              onClick={() => { toggleShowApiKey('voyage'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               aria-label={showApiKey['voyage'] ? 'Hide Voyage AI API key' : 'Show Voyage AI API key'}
             >
@@ -180,13 +180,13 @@ export function SecuritySettings({
             <Input
               placeholder="voyage-3"
               value={envConfig.graphitiProviderConfig?.voyageEmbeddingModel || ''}
-              onChange={(e) => updateEnvConfig({
+              onChange={(e) => { updateEnvConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: 'voyage',
                   voyageEmbeddingModel: e.target.value || undefined,
                 }
-              })}
+              }); }}
             />
           </div>
         </div>
@@ -205,19 +205,19 @@ export function SecuritySettings({
             <Input
               type={showApiKey['google'] ? 'text' : 'password'}
               value={envConfig.graphitiProviderConfig?.googleApiKey || ''}
-              onChange={(e) => updateEnvConfig({
+              onChange={(e) => { updateEnvConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: 'google',
                   googleApiKey: e.target.value || undefined,
                 }
-              })}
+              }); }}
               placeholder="AIzaSy..."
               className="pr-10"
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('google')}
+              onClick={() => { toggleShowApiKey('google'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               aria-label={showApiKey['google'] ? 'Hide Google API key' : 'Show Google API key'}
             >
@@ -245,19 +245,19 @@ export function SecuritySettings({
               <Input
                 type={showApiKey['azure'] ? 'text' : 'password'}
                 value={envConfig.graphitiProviderConfig?.azureOpenaiApiKey || ''}
-                onChange={(e) => updateEnvConfig({
+                onChange={(e) => { updateEnvConfig({
                   graphitiProviderConfig: {
                     ...envConfig.graphitiProviderConfig,
                     embeddingProvider: 'azure_openai',
                     azureOpenaiApiKey: e.target.value || undefined,
                   }
-                })}
+                }); }}
                 placeholder="Azure API Key"
                 className="pr-10"
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('azure')}
+                onClick={() => { toggleShowApiKey('azure'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 aria-label={showApiKey['azure'] ? 'Hide Azure OpenAI API key' : 'Show Azure OpenAI API key'}
               >
@@ -270,13 +270,13 @@ export function SecuritySettings({
             <Input
               placeholder="https://your-resource.openai.azure.com"
               value={envConfig.graphitiProviderConfig?.azureOpenaiBaseUrl || ''}
-              onChange={(e) => updateEnvConfig({
+              onChange={(e) => { updateEnvConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: 'azure_openai',
                   azureOpenaiBaseUrl: e.target.value || undefined,
                 }
-              })}
+              }); }}
             />
           </div>
           <div className="space-y-1">
@@ -284,13 +284,13 @@ export function SecuritySettings({
             <Input
               placeholder="text-embedding-ada-002"
               value={envConfig.graphitiProviderConfig?.azureOpenaiEmbeddingDeployment || ''}
-              onChange={(e) => updateEnvConfig({
+              onChange={(e) => { updateEnvConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: 'azure_openai',
                   azureOpenaiEmbeddingDeployment: e.target.value || undefined,
                 }
-              })}
+              }); }}
             />
           </div>
         </div>
@@ -377,7 +377,7 @@ export function SecuritySettings({
                 <Switch
                   checked={settings.graphitiMcpEnabled}
                   onCheckedChange={(checked) =>
-                    setSettings({ ...settings, graphitiMcpEnabled: checked })
+                    { setSettings({ ...settings, graphitiMcpEnabled: checked }); }
                   }
                 />
               </div>
@@ -391,7 +391,7 @@ export function SecuritySettings({
                   <Input
                     placeholder="http://localhost:3101/mcp/"
                     value={settings.graphitiMcpUrl || ''}
-                    onChange={(e) => setSettings({ ...settings, graphitiMcpUrl: e.target.value || undefined })}
+                    onChange={(e) => { setSettings({ ...settings, graphitiMcpUrl: e.target.value || undefined }); }}
                   />
                 </div>
               )}
@@ -442,7 +442,7 @@ export function SecuritySettings({
                 <Input
                   placeholder="aifactory_memory"
                   value={envConfig.graphitiDatabase || ''}
-                  onChange={(e) => updateEnvConfig({ graphitiDatabase: e.target.value })}
+                  onChange={(e) => { updateEnvConfig({ graphitiDatabase: e.target.value }); }}
                 />
               </div>
 
@@ -454,7 +454,7 @@ export function SecuritySettings({
                 <Input
                   placeholder="~/.aifactory/memories"
                   value={envConfig.graphitiDbPath || ''}
-                  onChange={(e) => updateEnvConfig({ graphitiDbPath: e.target.value || undefined })}
+                  onChange={(e) => { updateEnvConfig({ graphitiDbPath: e.target.value || undefined }); }}
                 />
               </div>
             </>

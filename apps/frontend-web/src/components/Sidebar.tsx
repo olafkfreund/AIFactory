@@ -287,7 +287,7 @@ export function Sidebar({
     return (
       <button
         key={item.id}
-        onClick={() => handleNavClick(item.id)}
+        onClick={() => { handleNavClick(item.id); }}
         disabled={!selectedProjectId}
         className={cn(
           'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200',
@@ -370,7 +370,7 @@ export function Sidebar({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() => setShowLogoutDialog(true)}
+                onClick={() => { setShowLogoutDialog(true); }}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
               >
                 <LogOut className="h-3.5 w-3.5" />
@@ -486,7 +486,7 @@ export function Sidebar({
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLogoutDialog(false)}>
+            <Button variant="outline" onClick={() => { setShowLogoutDialog(false); }}>
               {t('logoutDialog.cancel')}
             </Button>
             <Button variant="destructive" onClick={() => { setShowLogoutDialog(false); logout(); }}>

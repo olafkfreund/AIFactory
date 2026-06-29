@@ -237,7 +237,7 @@ export function PRList({ prs, selectedPRNumber, isLoading, error, getReviewState
           return (
             <button
               key={pr.number}
-              onClick={() => onSelectPR(pr.number)}
+              onClick={() => { onSelectPR(pr.number); }}
               className={cn(
                 'w-full p-4 text-left transition-colors hover:bg-accent/50',
                 selectedPRNumber === pr.number && 'bg-accent/50'

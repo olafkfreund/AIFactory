@@ -95,7 +95,7 @@ export function ProjectTabBar({
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => { window.removeEventListener('keydown', handleKeyDown); };
   }, [projects, activeProjectId, onProjectSelect, onProjectClose]);
 
   // Render the bar even when no project tabs are open — the global
@@ -119,7 +119,7 @@ export function ProjectTabBar({
               isActive={isActiveTab}
               canClose={projects.length > 1}
               tabIndex={index}
-              onSelect={() => onProjectSelect(project.id)}
+              onSelect={() => { onProjectSelect(project.id); }}
               onClose={(e) => {
                 e.stopPropagation();
                 onProjectClose(project.id);

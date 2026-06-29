@@ -54,7 +54,7 @@ export function EmailIntegration({ settings: _settings, onSettingsChange: _onSet
   }, []);
 
   useEffect(() => {
-    Promise.all([loadAccounts(), loadCredentialsStatus()]).finally(() => setIsLoading(false));
+    Promise.all([loadAccounts(), loadCredentialsStatus()]).finally(() => { setIsLoading(false); });
   }, [loadAccounts, loadCredentialsStatus]);
 
   // Listen for OAuth callback messages from popup
@@ -70,12 +70,12 @@ export function EmailIntegration({ settings: _settings, onSettingsChange: _onSet
           setStatusMessage({ type: 'error', text: event.data.message || t('email.connectionFailed') });
         }
         // Clear status after 5 seconds
-        setTimeout(() => setStatusMessage(null), 5000);
+        setTimeout(() => { setStatusMessage(null); }, 5000);
       }
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => { window.removeEventListener('message', handleMessage); };
   }, [loadAccounts, t]);
 
   const openOAuthPopup = (authUrl: string) => {
@@ -102,7 +102,7 @@ export function EmailIntegration({ settings: _settings, onSettingsChange: _onSet
       setIsConnecting(false);
       setConnectingProvider(null);
       setStatusMessage({ type: 'error', text: result.error || t('email.connectionFailed') });
-      setTimeout(() => setStatusMessage(null), 5000);
+      setTimeout(() => { setStatusMessage(null); }, 5000);
     }
   };
 
@@ -118,7 +118,7 @@ export function EmailIntegration({ settings: _settings, onSettingsChange: _onSet
       setIsConnecting(false);
       setConnectingProvider(null);
       setStatusMessage({ type: 'error', text: result.error || t('email.connectionFailed') });
-      setTimeout(() => setStatusMessage(null), 5000);
+      setTimeout(() => { setStatusMessage(null); }, 5000);
     }
   };
 
@@ -138,7 +138,7 @@ export function EmailIntegration({ settings: _settings, onSettingsChange: _onSet
     } else {
       setStatusMessage({ type: 'error', text: result.error || t('email.connectionFailed') });
     }
-    setTimeout(() => setStatusMessage(null), 5000);
+    setTimeout(() => { setStatusMessage(null); }, 5000);
   };
 
   if (isLoading) {

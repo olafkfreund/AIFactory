@@ -45,7 +45,7 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
   prReviews: {},
 
   // Actions
-  startPRReview: (projectId: string, prNumber: number) => set((state) => {
+  startPRReview: (projectId: string, prNumber: number) => { set((state) => {
     const key = `${projectId}:${prNumber}`;
     const existing = state.prReviews[key];
     return {
@@ -63,9 +63,9 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  startFollowupReview: (projectId: string, prNumber: number) => set((state) => {
+  startFollowupReview: (projectId: string, prNumber: number) => { set((state) => {
     const key = `${projectId}:${prNumber}`;
     const existing = state.prReviews[key];
 
@@ -92,9 +92,9 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  setPRReviewProgress: (projectId: string, progress: PRReviewProgress) => set((state) => {
+  setPRReviewProgress: (projectId: string, progress: PRReviewProgress) => { set((state) => {
     const key = `${projectId}:${progress.prNumber}`;
     const existing = state.prReviews[key];
     return {
@@ -112,9 +112,9 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  setPRReviewResult: (projectId: string, result: PRReviewResult, options?: { preserveNewCommitsCheck?: boolean }) => set((state) => {
+  setPRReviewResult: (projectId: string, result: PRReviewResult, options?: { preserveNewCommitsCheck?: boolean }) => { set((state) => {
     // Handle both camelCase (prNumber) and snake_case (pr_number) from backend
     const prNum = result.prNumber ?? (result as unknown as Record<string, unknown>).pr_number as number;
     const key = `${projectId}:${prNum}`;
@@ -140,9 +140,9 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  setPRReviewError: (projectId: string, prNumber: number, error: string) => set((state) => {
+  setPRReviewError: (projectId: string, prNumber: number, error: string) => { set((state) => {
     const key = `${projectId}:${prNumber}`;
     const existing = state.prReviews[key];
     return {
@@ -160,9 +160,9 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  setNewCommitsCheck: (projectId: string, prNumber: number, check: NewCommitsCheck) => set((state) => {
+  setNewCommitsCheck: (projectId: string, prNumber: number, check: NewCommitsCheck) => { set((state) => {
     const key = `${projectId}:${prNumber}`;
     const existing = state.prReviews[key];
     if (!existing) {
@@ -192,13 +192,13 @@ export const usePRReviewStore = create<PRReviewStoreState>((set, get) => ({
         }
       }
     };
-  }),
+  }); },
 
-  clearPRReview: (projectId: string, prNumber: number) => set((state) => {
+  clearPRReview: (projectId: string, prNumber: number) => { set((state) => {
     const key = `${projectId}:${prNumber}`;
     const { [key]: _, ...rest } = state.prReviews;
     return { prReviews: rest };
-  }),
+  }); },
 
   // Selectors
   getPRReviewState: (projectId: string, prNumber: number) => {

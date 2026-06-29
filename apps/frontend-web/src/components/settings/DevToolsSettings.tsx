@@ -71,7 +71,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
 
       const result = await window.API.worktreeDetectTools();
       if (result.success && result.data) {
-        setDetectedTools(result.data as DetectedTools);
+        setDetectedTools(result.data);
       } else {
         setDetectError(result.error || 'Failed to detect tools');
       }
@@ -178,7 +178,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
           </Label>
           <Select
             value={settings.preferredTerminal || 'system'}
-            onValueChange={(value) => handleTerminalChange(value as SupportedTerminal)}
+            onValueChange={(value) => { handleTerminalChange(value as SupportedTerminal); }}
           >
             <SelectTrigger id="preferred-terminal">
               <SelectValue placeholder={t('devtools.terminal.placeholder', 'Select terminal...')} />
@@ -210,7 +210,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
                 <Input
                   id="custom-terminal-path"
                   value={settings.customTerminalPath || ''}
-                  onChange={(e) => handleCustomTerminalPathChange(e.target.value)}
+                  onChange={(e) => { handleCustomTerminalPathChange(e.target.value); }}
                   placeholder="/path/to/your/terminal"
                   className="flex-1"
                 />

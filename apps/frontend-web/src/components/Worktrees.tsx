@@ -364,7 +364,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
                       <Button
                         variant="default"
                         size="sm"
-                        onClick={() => openMergeDialog(worktree)}
+                        onClick={() => { openMergeDialog(worktree); }}
                         disabled={!task}
                       >
                         <GitMerge className="h-3.5 w-3.5 mr-1.5" />
@@ -385,7 +385,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
                         variant="outline"
                         size="sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => confirmDelete(worktree)}
+                        onClick={() => { confirmDelete(worktree); }}
                         disabled={!task}
                       >
                         <Trash2 className="h-3.5 w-3.5 mr-1.5" />

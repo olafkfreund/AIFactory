@@ -73,22 +73,22 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
   lastMetrics: null,
 
   // Actions
-  setSession: (session) => set({ session }),
+  setSession: (session) => { set({ session }); },
 
-  setSessions: (sessions) => set({ sessions }),
+  setSessions: (sessions) => { set({ sessions }); },
 
-  setStatus: (status) => set({ status }),
+  setStatus: (status) => { set({ status }); },
 
-  setLoadingSessions: (loading) => set({ isLoadingSessions: loading }),
+  setLoadingSessions: (loading) => { set({ isLoadingSessions: loading }); },
 
-  setAvailableProviders: (providers) => set({ availableProviders: providers }),
+  setAvailableProviders: (providers) => { set({ availableProviders: providers }); },
 
-  setLoadingProviders: (loading) => set({ isLoadingProviders: loading }),
+  setLoadingProviders: (loading) => { set({ isLoadingProviders: loading }); },
 
-  setPendingMessage: (message) => set({ pendingMessage: message }),
+  setPendingMessage: (message) => { set({ pendingMessage: message }); },
 
   addMessage: (message) =>
-    set((state) => {
+    { set((state) => {
       if (!state.session) {
         // Create new session if none exists
         return {
@@ -109,10 +109,10 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           updatedAt: new Date()
         }
       };
-    }),
+    }); },
 
   updateLastAssistantMessage: (content) =>
-    set((state) => {
+    { set((state) => {
       if (!state.session || state.session.messages.length === 0) return state;
 
       const messages = [...state.session.messages];
@@ -130,19 +130,19 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           updatedAt: new Date()
         }
       };
-    }),
+    }); },
 
   appendStreamingContent: (content) =>
-    set((state) => ({
+    { set((state) => ({
       streamingContent: state.streamingContent + content
-    })),
+    })); },
 
-  clearStreamingContent: () => set({ streamingContent: '' }),
+  clearStreamingContent: () => { set({ streamingContent: '' }); },
 
-  setCurrentTool: (tool) => set({ currentTool: tool }),
+  setCurrentTool: (tool) => { set({ currentTool: tool }); },
 
   addToolUsage: (tool) =>
-    set((state) => ({
+    { set((state) => ({
       toolsUsed: [
         ...state.toolsUsed,
         {
@@ -151,14 +151,14 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           timestamp: new Date()
         }
       ]
-    })),
+    })); },
 
-  clearToolsUsed: () => set({ toolsUsed: [] }),
+  clearToolsUsed: () => { set({ toolsUsed: [] }); },
 
-  setLastMetrics: (metrics) => set({ lastMetrics: metrics }),
+  setLastMetrics: (metrics) => { set({ lastMetrics: metrics }); },
 
   finalizeStreamingMessage: (suggestedTask) =>
-    set((state) => {
+    { set((state) => {
       const content = state.streamingContent;
       const toolsUsed = state.toolsUsed.length > 0 ? [...state.toolsUsed] : undefined;
 
@@ -202,17 +202,17 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           updatedAt: new Date()
         }
       };
-    }),
+    }); },
 
   clearSession: () =>
-    set({
+    { set({
       session: null,
       status: initialStatus,
       pendingMessage: '',
       streamingContent: '',
       currentTool: null,
       toolsUsed: []
-    })
+    }); }
 }));
 
 // Helper functions

@@ -85,7 +85,7 @@ beforeEach(() => {
     observe() {}
     unobserve() {}
     disconnect() {}
-  } as any;
+  };
   vi.spyOn(globalThis, 'fetch').mockReset();
 });
 

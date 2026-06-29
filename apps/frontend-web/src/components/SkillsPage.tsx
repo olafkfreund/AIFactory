@@ -140,7 +140,7 @@ export function SkillsPage() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); }}
                 placeholder={t('skills.searchPlaceholder', { defaultValue: 'Search skills…' })}
                 className={cn(
                   'w-full rounded-md border border-border bg-card py-2 pl-8 pr-8',
@@ -177,7 +177,7 @@ export function SkillsPage() {
                         <button
                           key={cat.name}
                           type="button"
-                          onClick={() => setSelectedCategory(cat.name)}
+                          onClick={() => { setSelectedCategory(cat.name); }}
                           className={cn(
                             'w-full rounded-md px-2.5 py-2 text-left text-xs transition-colors',
                             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -233,7 +233,7 @@ export function SkillsPage() {
                       <button
                         key={skill.id}
                         type="button"
-                        onClick={() => handleSkillClick(skill)}
+                        onClick={() => { handleSkillClick(skill); }}
                         className={cn(
                           'flex w-full flex-col gap-1 rounded-lg px-3 py-2.5 text-left transition-colors',
                           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',

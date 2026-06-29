@@ -49,8 +49,8 @@ function useElapsed(startedAt?: Date, running?: boolean): string | null {
   const [, tick] = useState(0);
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => tick((n) => n + 1), 1000);
-    return () => clearInterval(id);
+    const id = setInterval(() => { tick((n) => n + 1); }, 1000);
+    return () => { clearInterval(id); };
   }, [running]);
   if (!startedAt) return null;
   const start = startedAt instanceof Date ? startedAt.getTime() : new Date(startedAt).getTime();
