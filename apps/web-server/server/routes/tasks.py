@@ -90,6 +90,7 @@ from .task_service import (  # noqa: F401
     _collapse_correlation_epic,
     _looks_like_stringified_mapping,
     _pfactory_priority_rank,
+    _resolve_task,
     _summarize_mapping,
     get_execution_progress,
     get_next_spec_id,
@@ -293,31 +294,9 @@ Created via Magestic AI Web UI
 # --------------------------------------------------------------------------
 # Clarification Endpoints
 # --------------------------------------------------------------------------
-
-
-def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
-    """Resolve task_id (projectId:specId) to project_id, spec_id, project_path, spec_dir.
-
-    Raises HTTPException on invalid input or missing resources.
-    """
-    if ":" not in task_id:
-        raise HTTPException(
-            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
-        )
-
-    project_id, spec_id = task_id.split(":", 1)
-    projects = load_projects()
-
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project_path = Path(projects[project_id]["path"])
-    spec_dir = project_path / ".aifactory" / "specs" / spec_id
-
-    if not spec_dir.exists():
-        raise HTTPException(status_code=404, detail="Task spec not found")
-
-    return project_id, spec_id, project_path, spec_dir
+#
+# _resolve_task now lives in routes/task_service.py (#769) and is re-exported
+# above, so ``from .tasks import _resolve_task`` continues to work unchanged.
 
 
 def _try_close_github_issue(project_path: Path, spec_dir: Path) -> None:
