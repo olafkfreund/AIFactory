@@ -157,7 +157,9 @@ def test_manifest_runs_run_py_on_build_image_with_mounts(
     assert "nix develop" not in cmd
 
     mount_paths = {mt["mountPath"] for mt in c["volumeMounts"]}
-    assert mount_paths == {"/work", "/nix/store"}
+    # /clis is the always-on install-clis provisioning (#777), alongside the
+    # worktree + warm-store mounts.
+    assert mount_paths == {"/work", "/nix/store", "/clis"}
     # worktree subPath is the data-root-relative worktree dir.
     work_mt = next(mt for mt in c["volumeMounts"] if mt["mountPath"] == "/work")
     assert work_mt["subPath"] == (
@@ -265,7 +267,10 @@ def test_manifest_outside_data_root_has_no_worktree_mount(
         spec_id="s",
     )
     pod = m["spec"]["template"]["spec"]
-    assert "volumes" not in pod  # no work, no store
+    # No worktree / warm-store volume — only the always-on install-clis emptyDir
+    # (#777) is present.
+    vol_names = {v["name"] for v in pod.get("volumes", [])}
+    assert vol_names == {"clis"}
 
 
 # --------------------------------------------------------------------------- #
@@ -815,15 +820,17 @@ def _seed_env(monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_seed_creds_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed
-    # initContainer, no cc-* volumes.
+    # No AIFACTORY_CLI_CREDS_SECRET → env-auth-only path unchanged: no seed-creds
+    # initContainer, no cc-* volumes. install-clis is unconditional (#777) so it
+    # is present regardless.
     monkeypatch.delenv("AIFACTORY_CLI_CREDS_SECRET", raising=False)
     project_path = _seed_env(monkeypatch)
     m = bb.build_run_py_job_manifest(
         task_id="proj-1:s", project_path=project_path, spec_id="s"
     )
     pod = m["spec"]["template"]["spec"]
-    assert "initContainers" not in pod
+    init_names = {c["name"] for c in pod.get("initContainers", [])}
+    assert init_names == {"install-clis"}
     vol_names = {v["name"] for v in pod.get("volumes", [])}
     assert "cli-creds" not in vol_names
     assert "cc-claude" not in vol_names
@@ -868,6 +875,62 @@ def test_seed_creds_injected_when_secret_configured(
         "/home/nonroot/.gemini",
         "/home/nonroot/.config",
     } <= build_mounts
+
+
+# --------------------------------------------------------------------------- #
+# 6. Provider CLI provisioning on the build Job (#777)
+# --------------------------------------------------------------------------- #
+
+
+def test_install_clis_initcontainer_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A build routed to a non-claude runtime (e.g. codex — core/runtime_gating.py)
+    # dies "Codex CLI executable not found" because the dispatched Job pod is
+    # FRESH and never got the control-plane's CLI provisioning. The build Job
+    # must carry the SAME install-clis initContainer, unconditionally (no flag).
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+
+    init = next(c for c in pod["initContainers"] if c["name"] == "install-clis")
+    assert init["image"] == "node:22-bookworm-slim"
+    script = init["args"][0]
+    assert "npm install -g" in script
+    assert "@anthropic-ai/claude-code" in script
+    assert "@openai/codex" in script
+    assert "@google/gemini-cli" in script
+    assert "ln -sf /clis/bin/gemini /clis/bin/antigravity" in script
+    init_mount = next(mt for mt in init["volumeMounts"] if mt["name"] == "clis")
+    assert init_mount["mountPath"] == "/clis"
+
+    # /clis is a shared emptyDir (writable, node-agnostic — no PVC).
+    clis_vol = next(v for v in pod["volumes"] if v["name"] == "clis")
+    assert clis_vol == {"name": "clis", "emptyDir": {}}
+
+    # The build container mounts /clis and has /clis/bin prepended to PATH so
+    # the provisioned `codex`/`claude`/`gemini`/`antigravity` binaries resolve.
+    container = pod["containers"][0]
+    build_mounts = {mt["mountPath"] for mt in container["volumeMounts"]}
+    assert "/clis" in build_mounts
+    path_env = next(e for e in container["env"] if e["name"] == "PATH")
+    assert path_env["value"].startswith("/clis/bin:")
+
+
+def test_install_clis_unaffected_by_seed_creds_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # install-clis has no opt-in flag: it is present whether or not the
+    # unrelated file-auth seed-creds path (#690) is configured.
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    pod = m["spec"]["template"]["spec"]
+    init_names = [c["name"] for c in pod["initContainers"]]
+    assert "install-clis" in init_names
+    assert "seed-creds" in init_names
 
 
 # --------------------------------------------------------------------------- #

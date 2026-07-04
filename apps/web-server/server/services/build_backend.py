@@ -56,6 +56,12 @@ sinks. That removes the only remaining reason kubejob isn't the default. The
 default flip (``AIFACTORY_BUILD_BACKEND=kubejob``, RFC-0016 #671) is now READY
 pending a live validation run (a real build green Job-native with the console
 intact) — deliberately NOT flipped in this change.
+
+#777: the build Job now also gets an ``install-clis`` initContainer (mirroring
+the control-plane pod's provisioning) so non-``claude`` runtimes selectable via
+``core/runtime_gating.py`` (``codex``, ``antigravity``/gemini) have their CLI
+binary on PATH in the Job, not just a valid API credential. See
+``_inject_install_clis``.
 """
 
 from __future__ import annotations
@@ -392,6 +398,40 @@ _SEED_HOME_VOLUMES: tuple[tuple[str, str], ...] = (
 )
 
 
+# -- provider CLI provisioning (#777) ----------------------------------------- #
+#
+# The coding phase can select the ``codex`` runtime (core/runtime_gating.py), whose
+# provider spawns the ``codex`` CLI binary directly (not just the API). The
+# control-plane Deployment provisions ``claude``/``codex``/``gemini`` (+ the
+# ``antigravity`` alias) into a shared ``/clis`` emptyDir via an ``install-clis``
+# initContainer (factory-gitops apps/aifactory/manifests/manifests.yaml) and
+# prepends ``/clis/bin`` to ``PATH``. The dispatched build Job is a FRESH pod that
+# never got this treatment, so a build routed to ``codex`` died ``Fatal error:
+# Codex CLI executable not found: 'codex'`` even though OPENAI_API_KEY was valid —
+# the CLI just was not on PATH. This mirrors that SAME provisioning into the build
+# Job pod, unconditionally (the control plane always runs it on every pod start,
+# so the build Job does too — no opt-in flag). The -nix build image bakes
+# ``claude`` already (a claude build works), but not ``codex``/``gemini`` — this
+# closes that gap for every runtime.
+_INSTALL_CLIS_IMAGE = "node:22-bookworm-slim"
+_INSTALL_CLIS_SCRIPT = (
+    "set -e\n"
+    "export npm_config_prefix=/clis\n"
+    "npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli\n"
+    # antigravity CLI == gemini-cli, invoked as `antigravity` (matches gitops).
+    "ln -sf /clis/bin/gemini /clis/bin/antigravity\n"
+)
+_CLIS_VOLUME_NAME = "clis"
+_CLIS_MOUNT_PATH = "/clis"
+# Prepends /clis/bin to the same PATH shape the control-plane Deployment sets
+# (factory-gitops apps/aifactory/manifests/manifests.yaml), so the build Job's
+# python/venv + system binaries stay resolvable alongside the provisioned CLIs.
+_BUILD_PATH_ENV = (
+    "/clis/bin:/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
+    "/usr/sbin:/usr/bin:/sbin:/bin"
+)
+
+
 def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
     credentials into the build Job pod (#690). No-op unless a secret name is
@@ -436,6 +476,35 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
         }
     )
     pod["containers"][0].setdefault("volumeMounts", []).extend(home_mounts)
+    return manifest
+
+
+def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Add the ``install-clis`` initContainer so the build Job has the same
+    provider CLIs (``claude``/``codex``/``gemini``/``antigravity``) on PATH that
+    the control-plane pod is provisioned with (#777). Unconditional — mirrors the
+    control plane, which runs this on every pod start with no opt-in flag.
+    Mutates + returns the manifest. Pure (no env / no I/O) → unit-testable.
+    """
+    pod = manifest["spec"]["template"]["spec"]
+    pod.setdefault("volumes", []).append({"name": _CLIS_VOLUME_NAME, "emptyDir": {}})
+    pod.setdefault("initContainers", []).insert(
+        0,
+        {
+            "name": "install-clis",
+            "image": _INSTALL_CLIS_IMAGE,
+            "command": ["sh", "-c"],
+            "args": [_INSTALL_CLIS_SCRIPT],
+            "volumeMounts": [
+                {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
+            ],
+        },
+    )
+    container = pod["containers"][0]
+    container.setdefault("volumeMounts", []).append(
+        {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
+    )
+    container.setdefault("env", []).append({"name": "PATH", "value": _BUILD_PATH_ENV})
     return manifest
 
 
@@ -553,7 +622,7 @@ def build_run_py_job_manifest(
         # WORKSPACE_URI is omitted and the /work co-mount path is unchanged.
         workspace_uri=workspace_uri,
     )
-    return _inject_seed_creds(build_job_manifest(spec))
+    return _inject_install_clis(_inject_seed_creds(build_job_manifest(spec)))
 
 
 def _spec_source_dir(project_path: Path, spec_id: str) -> Path:
