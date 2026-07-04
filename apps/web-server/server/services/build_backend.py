@@ -423,12 +423,16 @@ _INSTALL_CLIS_SCRIPT = (
 )
 _CLIS_VOLUME_NAME = "clis"
 _CLIS_MOUNT_PATH = "/clis"
-# Prepends /clis/bin to the same PATH shape the control-plane Deployment sets
-# (factory-gitops apps/aifactory/manifests/manifests.yaml), so the build Job's
-# python/venv + system binaries stay resolvable alongside the provisioned CLIs.
+# Prepends /clis/bin to the -nix BUILD image's own default PATH (Dockerfile
+# build-runtime stage), NOT the control-plane Deployment's — the build image
+# additionally carries /nix/var/nix/profiles/default/bin (where ``nix`` lives; the
+# build runs ``nix develop`` for the SUT toolchain) and /home/nonroot/.npm-global/bin.
+# Dropping either breaks the packed build, so keep the image's exact PATH and only
+# prepend /clis/bin for the provisioned provider CLIs.
 _BUILD_PATH_ENV = (
-    "/clis/bin:/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
-    "/usr/sbin:/usr/bin:/sbin:/bin"
+    "/clis/bin:/nix/var/nix/profiles/default/bin:/home/nonroot/.npm-global/bin:"
+    "/home/projects/MagesticAI/.venv/bin:/usr/local/sbin:/usr/local/bin:"
+    "/usr/bin:/usr/sbin:/sbin:/bin"
 )
 
 

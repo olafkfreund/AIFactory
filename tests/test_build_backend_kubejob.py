@@ -915,6 +915,11 @@ def test_install_clis_initcontainer_present(monkeypatch: pytest.MonkeyPatch) -> 
     assert "/clis" in build_mounts
     path_env = next(e for e in container["env"] if e["name"] == "PATH")
     assert path_env["value"].startswith("/clis/bin:")
+    # Regression guard: prepending /clis/bin must NOT drop the -nix build image's
+    # own PATH — `nix` lives at /nix/var/nix/profiles/default/bin and the build
+    # runs `nix develop` for the SUT toolchain (dropping it breaks the build).
+    assert "/nix/var/nix/profiles/default/bin" in path_env["value"]
+    assert "/home/nonroot/.npm-global/bin" in path_env["value"]
 
 
 def test_install_clis_unaffected_by_seed_creds_flag(
