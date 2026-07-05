@@ -22,7 +22,6 @@ import { TaskCreationWizard } from './components/TaskCreationWizard';
 import { TaskDetailModal } from './components/task-detail';
 import { MissionControl } from './components/MissionControl';
 import { OnboardingWizard } from './components/onboarding';
-import { LoadingScreen } from './components/LoadingScreen';
 import { ProjectSwitchLoadingModal } from './components/ProjectSwitchLoadingModal';
 import { LoginPage } from './pages/LoginPage';
 import { EditorPage } from './pages/EditorPage';
@@ -39,12 +38,6 @@ import type { Task, Project } from './shared/types';
 
 function AuthenticatedApp() {
   // Loading screen state - show for 5 seconds on every page load
-  const [isLoading, setIsLoading] = useState(true);
-
-  const handleLoadingComplete = useCallback(() => {
-    setIsLoading(false);
-  }, []);
-
   // Stores
   const projects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
@@ -280,11 +273,6 @@ function AuthenticatedApp() {
     // Switch to terminals view to show the new terminal
     setActiveView('terminals');
   }, []);
-
-  // Show loading screen for 2 seconds on page load
-  if (isLoading) {
-    return <LoadingScreen duration={2000} onComplete={handleLoadingComplete} />;
-  }
 
   return (
     <ViewStateProvider>
