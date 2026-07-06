@@ -50,14 +50,12 @@ _NO_KEY_WARNED: set[str] = set()
 # ---------------------------------------------------------------------------
 
 _CLAUDE_PRICING: dict[str, dict[str, float]] = {
-    # Opus 4.8 — current flagship. NOTE: pricing assumed identical to 4.7's
-    # flagship tier; verify against the official price list and adjust if it
-    # differs. (Cost reporting only — does not affect build correctness.)
+    # Opus 4.8 — current flagship. $5 / $25 per MTok (Anthropic price list).
     "claude-opus-4-8": {
-        "input": 15.0,
-        "output": 75.0,
-        "cache_read": 1.50,  # 0.1x input rate
-        "cache_creation": 18.75,  # 1.25x input rate
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.50,  # 0.1x input rate
+        "cache_creation": 6.25,  # 1.25x input rate
     },
     # Opus 4.7 — previous flagship; adaptive thinking.
     "claude-opus-4-7": {
@@ -80,7 +78,15 @@ _CLAUDE_PRICING: dict[str, dict[str, float]] = {
         "cache_read": 1.50,
         "cache_creation": 18.75,
     },
-    # Sonnet 4.6 — default model for coding + QA phases.
+    # Sonnet 5 — current Sonnet (near-Opus coding). $3 / $15 per MTok
+    # (introductory $2 / $10 through Aug 31 2026; list rate used here).
+    "claude-sonnet-5": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.30,
+        "cache_creation": 3.75,
+    },
+    # Sonnet 4.6 — previous Sonnet; kept for operators who pinned it.
     "claude-sonnet-4-6": {
         "input": 3.0,
         "output": 15.0,

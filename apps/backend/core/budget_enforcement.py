@@ -370,7 +370,9 @@ def _fixture_catalog() -> dict[str, crc.ModelEntry]:
 
 # Named ceilings for the self-tests (avoids inline magic-value comparisons).
 _TINY_CEILING = 0.01
-_MID_CEILING = 5.0
+# Opus coding+qa at nominal weights ≈ $4.65 at $5/$25 MTok, so this must sit
+# below that for the downgrade self-test to trip (was 5.0 under Opus-4.1 pricing).
+_MID_CEILING = 3.0
 
 
 def _test_parse_mode() -> None:
