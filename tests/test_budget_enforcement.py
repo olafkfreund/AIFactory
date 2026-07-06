@@ -82,7 +82,9 @@ def test_enforce_downgrades_within_floor(
         "budget_mode": "enforce",
         "phase_models": {"coding": "opus", "qa": "opus"},
         "routing": {
-            "cost_ceiling_usd": 5.0,
+            # Opus coding+qa at nominal weights costs ~$4.65 at $5/$25 MTok, so a
+            # $3 ceiling forces the downgrade this test asserts.
+            "cost_ceiling_usd": 3.0,
             "class": "standard",
             "difficulty": "medium",
         },
@@ -97,7 +99,7 @@ def test_enforce_downgrades_within_floor(
     picked = metered_catalog[decision.phase_models["coding"]]
     assert picked["class"] in {"balanced", "frontier"}  # at/above the balanced floor
     assert decision.estimate_usd is not None
-    assert decision.estimate_usd <= 5.0
+    assert decision.estimate_usd <= 3.0
 
 
 def test_governed_fails_fast_never_degrades(catalog: dict[str, crc.ModelEntry]) -> None:
