@@ -17,6 +17,32 @@ export function LoginPage() {
   // authenticating against. /api/health is unauthenticated (PUBLIC_PATHS), so
   // it resolves before login. Best-effort — a failed/blocked fetch just hides
   // the line rather than disrupting the login form.
+  // Silent SSO handoff (#149): switching between portals that share the one
+  // Keycloak realm shouldn't force a manual "Sign in with SSO" click. On first
+  // landing here with no session, probe silently (prompt=none) — if the realm
+  // session is live, Keycloak returns a code and we log in without a prompt; if
+  // not, the callback bounces back to /login with the guard already set, so the
+  // manual form shows and this never loops. Gated on OIDC actually being enabled
+  // (else a 404), and single-shot per tab via sessionStorage.
+  useEffect(() => {
+    if (sessionStorage.getItem('ssoAutoTried')) return;
+    let cancelled = false;
+    fetch('/api/auth/oidc/enabled')
+      .then((res) => (res.ok ? res.json() : { enabled: false }))
+      .then((data: { enabled?: boolean }) => {
+        if (!cancelled && data.enabled) {
+          sessionStorage.setItem('ssoAutoTried', '1');
+          window.location.href = '/api/auth/oidc/login?prompt=none';
+        }
+      })
+      .catch(() => {
+        /* stay on the manual login form */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [version, setVersion] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
