@@ -36,11 +36,11 @@ from .routes import (
     auto_fix,
     capabilities,
     context,
+    copilot_mcp,
     email,
     execution,
     files,
     from_issue,
-    copilot_mcp,
     git,
     git_credentials,
     github,
@@ -48,6 +48,7 @@ from .routes import (
     notifications,
     organizations,
     projects,
+    search,
     skills,
     tasks,
     terminal,
@@ -467,6 +468,7 @@ def create_app() -> FastAPI:
     # consults this on load to know whether to render the Live Agent
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
+    app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
     # Copilot-facing MCP server at /mcp (JSON-RPC 2.0, POST-only).
     # Requires AIFACTORY_MCP_SECRET in env; accepts all requests in dev mode.
