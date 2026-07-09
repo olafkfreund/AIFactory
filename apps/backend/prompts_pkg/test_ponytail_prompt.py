@@ -34,7 +34,7 @@ _PROVIDER_NAMES = [
 ]
 
 
-def test_build_context_has_ladder_and_safety_carveout():
+def test_build_context_has_ladder_and_safety_carveout() -> None:
     text = PONYTAIL_BUILD_CONTEXT.lower()
     assert "does this need to exist at all?" in text  # rung 1
     assert "standard library" in text  # rung 3
@@ -45,25 +45,25 @@ def test_build_context_has_ladder_and_safety_carveout():
     assert "accessibility" in text
 
 
-def test_injected_text_is_provider_neutral():
+def test_injected_text_is_provider_neutral() -> None:
     for blob in (PONYTAIL_BUILD_CONTEXT, PONYTAIL_QA_CONTEXT):
         low = blob.lower()
         for name in _PROVIDER_NAMES:
             assert name not in low, f"ponytail block names a provider: {name!r}"
 
 
-def test_build_agents_receive_the_ladder(tmp_path: Path):
+def test_build_agents_receive_the_ladder(tmp_path: Path) -> None:
     for builder in (get_planner_prompt, get_coding_prompt, get_solo_prompt):
         prompt = builder(tmp_path)
         assert "MINIMAL-CODE DISCIPLINE (PONYTAIL" in prompt, builder.__name__
 
 
-def test_solo_also_gets_reviewer_note(tmp_path: Path):
+def test_solo_also_gets_reviewer_note(tmp_path: Path) -> None:
     # Solo is coder + QA in one flow, so it must get both blocks.
     prompt = get_solo_prompt(tmp_path)
     assert "REVIEWING MINIMAL CODE (PONYTAIL-AWARE)" in prompt
 
 
-def test_qa_reviewer_is_ponytail_aware(tmp_path: Path):
+def test_qa_reviewer_is_ponytail_aware(tmp_path: Path) -> None:
     prompt = get_qa_reviewer_prompt(tmp_path, tmp_path)
     assert "REVIEWING MINIMAL CODE (PONYTAIL-AWARE)" in prompt
