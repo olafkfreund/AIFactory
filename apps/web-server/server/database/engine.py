@@ -167,6 +167,7 @@ async def init_db() -> None:
     # Lazy import to avoid a circular dependency between engine.py and config.py
     # at module load (config imports settings which imports paths which...).
     from ..config import get_settings
+
     settings = get_settings()
 
     # SQLite default needs its parent directory created; Postgres URLs don't.
@@ -176,7 +177,8 @@ async def init_db() -> None:
     else:
         logger.info(
             "Initializing database (dialect=%s, driver=%s)",
-            engine.dialect.name, engine.dialect.driver,
+            engine.dialect.name,
+            engine.dialect.driver,
         )
 
     if settings.MIGRATIONS_AUTO_APPLY:
@@ -184,6 +186,7 @@ async def init_db() -> None:
         # Alembic uses a sync engine internally; run via to_thread so we
         # don't block the asyncio loop on the DDL transactions.
         import asyncio
+
         await asyncio.to_thread(_alembic_upgrade_head_sync)
     else:
         logger.info(
@@ -258,10 +261,14 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
             org = await session.get(Organization, DEFAULT_ORG_ID)
             if org is None:
                 org = (
-                    await session.execute(
-                        select(Organization).where(Organization.slug == "default")
+                    (
+                        await session.execute(
+                            select(Organization).where(Organization.slug == "default")
+                        )
                     )
-                ).scalars().first()
+                    .scalars()
+                    .first()
+                )
             if org is None:
                 org = Organization(
                     id=DEFAULT_ORG_ID,
@@ -286,7 +293,9 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
                             OrgMember.org_id == default_org_id
                         )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
             all_user_ids = (await session.execute(select(User.id))).scalars().all()
             for uid in all_user_ids:

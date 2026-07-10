@@ -44,8 +44,7 @@ def fresh_db():
 
     nonce = secrets.token_hex(8)
     engine = create_async_engine(
-        f"sqlite+aiosqlite:///file:teardown-{nonce}"
-        f"?mode=memory&cache=shared&uri=true",
+        f"sqlite+aiosqlite:///file:teardown-{nonce}?mode=memory&cache=shared&uri=true",
     )
 
     async def _init():
@@ -60,15 +59,21 @@ def fresh_db():
 async def _seed_isolated_org(SessionLocal):
     async with SessionLocal() as db:
         user = User(
-            id="u-acme", email="acme@example.com",
-            password_hash="x", role="user", is_active=True,
+            id="u-acme",
+            email="acme@example.com",
+            password_hash="x",
+            role="user",
+            is_active=True,
         )
         org = Organization(
             id="11111111-2222-3333-4444-555555555555",
-            name="Acme", slug="acme", owner_id=user.id,
+            name="Acme",
+            slug="acme",
+            owner_id=user.id,
         )
         state = TenantState(
-            org_id=org.id, isolation_mode="isolated",
+            org_id=org.id,
+            isolation_mode="isolated",
             namespace_name="aifactory-tenant-acme",
             service_account="aifactory-tenant-acme-agent",
             iam_role_arn="arn:aws:iam::123:role/foo",
@@ -111,8 +116,12 @@ def test_tear_down_happy_path_deletes_everything(fresh_db, monkeypatch):
     async def _go():
         async with SessionLocal() as db:
             result = await svc.tear_down_org(
-                db, org.id, dry_run=False,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                org.id,
+                dry_run=False,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
             await db.commit()
@@ -140,6 +149,7 @@ def test_tear_down_happy_path_deletes_everything(fresh_db, monkeypatch):
     async def _check():
         async with SessionLocal() as db:
             return await db.get(TenantState, org.id)
+
     state = _run(_check())
     assert state.isolation_mode == "deleted"
 
@@ -161,8 +171,12 @@ def test_tear_down_dry_run_lists_but_does_not_delete(fresh_db, monkeypatch):
     async def _go():
         async with SessionLocal() as db:
             return await svc.tear_down_org(
-                db, org.id, dry_run=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                org.id,
+                dry_run=True,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -199,8 +213,12 @@ def test_tear_down_propagates_prefix_safety_violation(fresh_db, monkeypatch):
     async def _go():
         async with SessionLocal() as db:
             return await svc.tear_down_org(
-                db, org.id, dry_run=False,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                org.id,
+                dry_run=False,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -220,8 +238,12 @@ def test_tear_down_missing_org_skips(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             return await svc.tear_down_org(
-                db, "nonexistent-org", dry_run=False,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                "nonexistent-org",
+                dry_run=False,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -237,11 +259,17 @@ def test_tear_down_missing_state_row_skips(fresh_db):
     async def _seed():
         async with SessionLocal() as db:
             user = User(
-                id="u-x", email="x@example.com",
-                password_hash="x", role="user", is_active=True,
+                id="u-x",
+                email="x@example.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             org = Organization(
-                id="org-x", name="X", slug="x", owner_id=user.id,
+                id="org-x",
+                name="X",
+                slug="x",
+                owner_id=user.id,
             )
             db.add(user)
             db.add(org)
@@ -253,8 +281,12 @@ def test_tear_down_missing_state_row_skips(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             return await svc.tear_down_org(
-                db, "org-x", dry_run=False,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                "org-x",
+                dry_run=False,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -278,8 +310,12 @@ def test_tear_down_lock_not_acquired_skips(fresh_db, monkeypatch):
     async def _go():
         async with SessionLocal() as db:
             return await svc.tear_down_org(
-                db, org.id, dry_run=False,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                db,
+                org.id,
+                dry_run=False,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 

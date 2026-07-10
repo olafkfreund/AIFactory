@@ -56,22 +56,35 @@ def test_returns_one_line_per_member(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             u1 = User(
-                id="u-alice", email="alice@corp.com", name="Alice",
-                password_hash="x", role="user", is_active=True,
+                id="u-alice",
+                email="alice@corp.com",
+                name="Alice",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             u2 = User(
-                id="u-bob", email="bob@corp.com", name="Bob",
-                password_hash="x", role="user", is_active=True,
+                id="u-bob",
+                email="bob@corp.com",
+                name="Bob",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             org = Organization(
-                id="org-1", name="Acme", slug="acme", owner_id="u-alice",
+                id="org-1",
+                name="Acme",
+                slug="acme",
+                owner_id="u-alice",
             )
             db.add_all([u1, u2, org])
             await db.flush()
-            db.add_all([
-                OrgMember(org_id="org-1", user_id="u-alice", role="owner"),
-                OrgMember(org_id="org-1", user_id="u-bob", role="member"),
-            ])
+            db.add_all(
+                [
+                    OrgMember(org_id="org-1", user_id="u-alice", role="owner"),
+                    OrgMember(org_id="org-1", user_id="u-bob", role="member"),
+                ]
+            )
             await db.commit()
 
         async with SessionLocal() as db:
@@ -93,25 +106,39 @@ def test_excludes_members_of_other_orgs(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             u1 = User(
-                id="u-alice", email="a@c.com", password_hash="x",
-                role="user", is_active=True,
+                id="u-alice",
+                email="a@c.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             u2 = User(
-                id="u-carol", email="c@c.com", password_hash="x",
-                role="user", is_active=True,
+                id="u-carol",
+                email="c@c.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             o1 = Organization(
-                id="org-1", name="Acme", slug="acme", owner_id="u-alice",
+                id="org-1",
+                name="Acme",
+                slug="acme",
+                owner_id="u-alice",
             )
             o2 = Organization(
-                id="org-2", name="Beta", slug="beta", owner_id="u-carol",
+                id="org-2",
+                name="Beta",
+                slug="beta",
+                owner_id="u-carol",
             )
             db.add_all([u1, u2, o1, o2])
             await db.flush()
-            db.add_all([
-                OrgMember(org_id="org-1", user_id="u-alice", role="owner"),
-                OrgMember(org_id="org-2", user_id="u-carol", role="owner"),
-            ])
+            db.add_all(
+                [
+                    OrgMember(org_id="org-1", user_id="u-alice", role="owner"),
+                    OrgMember(org_id="org-2", user_id="u-carol", role="owner"),
+                ]
+            )
             await db.commit()
 
         async with SessionLocal() as db:
@@ -132,11 +159,17 @@ def test_last_login_at_null_when_never_logged_in(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             u = User(
-                id="u-new", email="new@c.com", password_hash="x",
-                role="user", is_active=True,
+                id="u-new",
+                email="new@c.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             org = Organization(
-                id="org-1", name="x", slug="x", owner_id="u-new",
+                id="org-1",
+                name="x",
+                slug="x",
+                owner_id="u-new",
             )
             db.add_all([u, org])
             await db.flush()
@@ -162,11 +195,18 @@ def test_last_login_at_iso_string_when_populated(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             u = User(
-                id="u-active", email="active@c.com", password_hash="x",
-                role="user", is_active=True, last_login_at=when,
+                id="u-active",
+                email="active@c.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
+                last_login_at=when,
             )
             org = Organization(
-                id="org-1", name="x", slug="x", owner_id="u-active",
+                id="org-1",
+                name="x",
+                slug="x",
+                owner_id="u-active",
             )
             db.add_all([u, org])
             await db.flush()
@@ -189,22 +229,33 @@ def test_includes_role_and_active_flags(fresh_db):
     async def _go():
         async with SessionLocal() as db:
             u1 = User(
-                id="u1", email="a@c.com", password_hash="x",
-                role="user", is_active=True,
+                id="u1",
+                email="a@c.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             u2 = User(
-                id="u2", email="b@c.com", password_hash="x",
-                role="user", is_active=False,  # deactivated user
+                id="u2",
+                email="b@c.com",
+                password_hash="x",
+                role="user",
+                is_active=False,  # deactivated user
             )
             org = Organization(
-                id="org-1", name="x", slug="x", owner_id="u1",
+                id="org-1",
+                name="x",
+                slug="x",
+                owner_id="u1",
             )
             db.add_all([u1, u2, org])
             await db.flush()
-            db.add_all([
-                OrgMember(org_id="org-1", user_id="u1", role="admin"),
-                OrgMember(org_id="org-1", user_id="u2", role="viewer"),
-            ])
+            db.add_all(
+                [
+                    OrgMember(org_id="org-1", user_id="u1", role="admin"),
+                    OrgMember(org_id="org-1", user_id="u2", role="viewer"),
+                ]
+            )
             await db.commit()
         async with SessionLocal() as db:
             return await _consume(_stream_review(db, org_id="org-1"))
@@ -238,11 +289,14 @@ def test_oidc_callback_stamps_last_login_at(fresh_db, monkeypatch):
 
     async def _go():
         async with SessionLocal() as db:
-            user = await jit_provision_user(db, {
-                "sub": "okta-12345",
-                "email": "alice@corp.com",
-                "name": "Alice Smith",
-            })
+            user = await jit_provision_user(
+                db,
+                {
+                    "sub": "okta-12345",
+                    "email": "alice@corp.com",
+                    "name": "Alice Smith",
+                },
+            )
             # This is the line oidc_routes.py runs after JIT.
             user.last_login_at = datetime.now(timezone.utc).replace(
                 tzinfo=None,
@@ -252,6 +306,7 @@ def test_oidc_callback_stamps_last_login_at(fresh_db, monkeypatch):
 
         async with SessionLocal() as db:
             from sqlalchemy import select
+
             result = await db.execute(select(User).where(User.id == user.id))
             return result.scalar_one()
 
@@ -260,6 +315,7 @@ def test_oidc_callback_stamps_last_login_at(fresh_db, monkeypatch):
     # Re-fetch to confirm it persisted.
     async def _check():
         from sqlalchemy import select
+
         async with SessionLocal() as db:
             result = await db.execute(select(User).where(User.id == user_id))
             return result.scalar_one()

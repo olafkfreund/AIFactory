@@ -83,7 +83,8 @@ async def _default_line_source(namespace: str, job_name: str) -> AsyncIterator[b
             _log.warning(
                 "[build_log_stream] no pod for Job %s/%s appeared — "
                 "skipping Job-native log stream",
-                namespace, job_name,
+                namespace,
+                job_name,
             )
             return
 
@@ -116,7 +117,9 @@ async def _await_pod_name(core: Any, namespace: str, job_name: str) -> str | Non
         except Exception:  # noqa: BLE001 - transient API error; retry
             _log.debug(
                 "[build_log_stream] pod list for %s/%s raised (retrying)",
-                namespace, job_name, exc_info=True,
+                namespace,
+                job_name,
+                exc_info=True,
             )
             pods = None
         items = getattr(pods, "items", None) or []
@@ -170,12 +173,17 @@ class KubeJobLogStreamer:
             _log.warning(
                 "[build_log_stream] log stream for Job %s/%s ended on error "
                 "after %d line(s) (build unaffected)",
-                namespace, job_name, delivered, exc_info=True,
+                namespace,
+                job_name,
+                delivered,
+                exc_info=True,
             )
         else:
             _log.info(
                 "[build_log_stream] Job %s/%s log stream completed (%d line(s))",
-                namespace, job_name, delivered,
+                namespace,
+                job_name,
+                delivered,
             )
         return delivered
 

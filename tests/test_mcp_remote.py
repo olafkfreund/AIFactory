@@ -120,6 +120,7 @@ def test_hash_key_deterministic():
     assert len(digest) == 64
     # SHA-256 hex digest of the literal string
     import hashlib
+
     expected = hashlib.sha256(b"acw_abc123").hexdigest()
     assert digest == expected
 
@@ -146,9 +147,7 @@ def test_require_scope_fail():
 
 
 def test_authenticated_key_has_scope():
-    key = AuthenticatedKey(
-        key_id="k1", scopes=frozenset({"mcp:read"}), user_id=None
-    )
+    key = AuthenticatedKey(key_id="k1", scopes=frozenset({"mcp:read"}), user_id=None)
     assert key.has_scope("mcp:read")
     assert not key.has_scope("mcp:write")
 
@@ -184,9 +183,7 @@ async def test_unknown_tool_returns_error(read_only_key):
 
 
 async def test_read_tool_blocked_without_read_scope(no_scope_key):
-    result = await dispatch_tool_call(
-        "aifactory.list_projects", {}, no_scope_key
-    )
+    result = await dispatch_tool_call("aifactory.list_projects", {}, no_scope_key)
     assert result.get("isError") is True
     assert "mcp:read" in result["content"][0]["text"]
 
@@ -308,7 +305,9 @@ async def test_missing_required_argument_is_actionable(write_key):
     mock_call = AsyncMock(return_value={"ok": True})
     with patch("server.mcp_remote.tools._call_internal", mock_call):
         result = await dispatch_tool_call(
-            "aifactory.get_task", {}, write_key  # missing task_id
+            "aifactory.get_task",
+            {},
+            write_key,  # missing task_id
         )
     assert result.get("isError") is True
     assert "missing required argument" in result["content"][0]["text"]
@@ -323,9 +322,7 @@ async def test_http_error_becomes_isError_content(read_only_key):
     exc = httpx.HTTPStatusError("", request=request, response=response)
     mock_call = AsyncMock(side_effect=exc)
     with patch("server.mcp_remote.tools._call_internal", mock_call):
-        result = await dispatch_tool_call(
-            "aifactory.list_projects", {}, read_only_key
-        )
+        result = await dispatch_tool_call("aifactory.list_projects", {}, read_only_key)
     assert result.get("isError") is True
     assert "503" in result["content"][0]["text"]
 
@@ -334,9 +331,7 @@ async def test_arbitrary_exception_becomes_isError(read_only_key):
     """An unexpected internal failure shouldn't leak to the MCP client."""
     mock_call = AsyncMock(side_effect=RuntimeError("boom"))
     with patch("server.mcp_remote.tools._call_internal", mock_call):
-        result = await dispatch_tool_call(
-            "aifactory.list_projects", {}, read_only_key
-        )
+        result = await dispatch_tool_call("aifactory.list_projects", {}, read_only_key)
     assert result.get("isError") is True
     assert "boom" in result["content"][0]["text"]
 

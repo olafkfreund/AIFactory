@@ -29,12 +29,12 @@ import pytest
 # Store original modules for cleanup
 _original_modules = {}
 _mocked_module_names = [
-    'claude_agent_sdk',
-    'ui',
-    'progress',
-    'task_logger',
-    'linear_updater',
-    'client',
+    "claude_agent_sdk",
+    "ui",
+    "progress",
+    "task_logger",
+    "linear_updater",
+    "client",
 ]
 
 for name in _mocked_module_names:
@@ -46,7 +46,7 @@ mock_sdk = MagicMock()
 mock_sdk.ClaudeSDKClient = MagicMock()
 mock_sdk.ClaudeAgentOptions = MagicMock()
 mock_sdk.ClaudeCodeOptions = MagicMock()
-sys.modules['claude_agent_sdk'] = mock_sdk
+sys.modules["claude_agent_sdk"] = mock_sdk
 
 # Mock UI module (used by progress)
 mock_ui = MagicMock()
@@ -69,20 +69,20 @@ mock_ui.print_section = MagicMock()
 mock_ui.print_status = MagicMock()
 mock_ui.print_phase_status = MagicMock()
 mock_ui.print_key_value = MagicMock()
-sys.modules['ui'] = mock_ui
+sys.modules["ui"] = mock_ui
 
 # Mock progress module
 mock_progress = MagicMock()
 mock_progress.count_subtasks = MagicMock(return_value=(3, 3))
 mock_progress.is_build_complete = MagicMock(return_value=True)
-sys.modules['progress'] = mock_progress
+sys.modules["progress"] = mock_progress
 
 # Mock task_logger
 mock_task_logger = MagicMock()
 mock_task_logger.LogPhase = MagicMock()
 mock_task_logger.LogEntryType = MagicMock()
 mock_task_logger.get_task_logger = MagicMock(return_value=None)
-sys.modules['task_logger'] = mock_task_logger
+sys.modules["task_logger"] = mock_task_logger
 
 # Mock linear_updater
 mock_linear = MagicMock()
@@ -92,12 +92,12 @@ mock_linear.linear_qa_started = MagicMock()
 mock_linear.linear_qa_approved = MagicMock()
 mock_linear.linear_qa_rejected = MagicMock()
 mock_linear.linear_qa_max_iterations = MagicMock()
-sys.modules['linear_updater'] = mock_linear
+sys.modules["linear_updater"] = mock_linear
 
 # Mock client module
 mock_client = MagicMock()
 mock_client.create_client = MagicMock()
-sys.modules['client'] = mock_client
+sys.modules["client"] = mock_client
 
 # Now we can safely add the aifactory path and import.
 # Note: `apps` (lowercase) — the previous capital-A path was a no-op on
@@ -207,7 +207,11 @@ def sample_implementation_plan():
                 "phase": 1,
                 "name": "Backend Foundation",
                 "subtasks": [
-                    {"id": "subtask-1-1", "description": "Add avatar fields", "status": "completed"},
+                    {
+                        "id": "subtask-1-1",
+                        "description": "Add avatar fields",
+                        "status": "completed",
+                    },
                 ],
             },
         ],
@@ -217,7 +221,9 @@ def sample_implementation_plan():
 class TestImplementationPlanIO:
     """Tests for implementation plan loading/saving."""
 
-    def test_load_implementation_plan(self, spec_dir: Path, sample_implementation_plan: dict):
+    def test_load_implementation_plan(
+        self, spec_dir: Path, sample_implementation_plan: dict
+    ):
         """Loads implementation plan from JSON."""
         plan_file = spec_dir / "implementation_plan.json"
         plan_file.write_text(json.dumps(sample_implementation_plan))
@@ -343,7 +349,9 @@ class TestIsQAApproved:
 
         assert is_qa_approved(spec_dir) is True
 
-    def test_is_qa_approved_false_when_rejected(self, spec_dir: Path, qa_signoff_rejected: dict):
+    def test_is_qa_approved_false_when_rejected(
+        self, spec_dir: Path, qa_signoff_rejected: dict
+    ):
         """is_qa_approved returns False when rejected."""
         plan = {"feature": "Test", "qa_signoff": qa_signoff_rejected}
         save_implementation_plan(spec_dir, plan)
@@ -382,7 +390,9 @@ class TestIsQARejected:
 
         assert is_qa_rejected(spec_dir) is True
 
-    def test_is_qa_rejected_false_when_approved(self, spec_dir: Path, qa_signoff_approved: dict):
+    def test_is_qa_rejected_false_when_approved(
+        self, spec_dir: Path, qa_signoff_approved: dict
+    ):
         """is_qa_rejected returns False when approved."""
         plan = {"feature": "Test", "qa_signoff": qa_signoff_approved}
         save_implementation_plan(spec_dir, plan)
@@ -546,7 +556,9 @@ class TestShouldRunQA:
         # Reset mock
         mock_progress.is_build_complete.return_value = True
 
-    def test_should_run_qa_already_approved(self, spec_dir: Path, qa_signoff_approved: dict):
+    def test_should_run_qa_already_approved(
+        self, spec_dir: Path, qa_signoff_approved: dict
+    ):
         """Returns False when already approved."""
         mock_progress.is_build_complete.return_value = True
 
@@ -566,7 +578,9 @@ class TestShouldRunQA:
         result = should_run_qa(spec_dir)
         assert result is True
 
-    def test_should_run_qa_rejected_status(self, spec_dir: Path, qa_signoff_rejected: dict):
+    def test_should_run_qa_rejected_status(
+        self, spec_dir: Path, qa_signoff_rejected: dict
+    ):
         """Returns True when rejected (needs re-review after fixes)."""
         mock_progress.is_build_complete.return_value = True
 
@@ -590,7 +604,9 @@ class TestShouldRunQA:
 class TestShouldRunFixes:
     """Tests for should_run_fixes function."""
 
-    def test_should_run_fixes_when_rejected(self, spec_dir: Path, qa_signoff_rejected: dict):
+    def test_should_run_fixes_when_rejected(
+        self, spec_dir: Path, qa_signoff_rejected: dict
+    ):
         """Returns True when QA rejected and under max iterations."""
         # Ensure qa_session is below MAX_QA_ITERATIONS
         qa_signoff_rejected["qa_session"] = 1
@@ -628,7 +644,9 @@ class TestShouldRunFixes:
         result = should_run_fixes(spec_dir)
         assert result is False
 
-    def test_should_run_fixes_not_rejected(self, spec_dir: Path, qa_signoff_approved: dict):
+    def test_should_run_fixes_not_rejected(
+        self, spec_dir: Path, qa_signoff_approved: dict
+    ):
         """Returns False when not rejected."""
         plan = {"feature": "Test", "qa_signoff": qa_signoff_approved}
         save_implementation_plan(spec_dir, plan)
@@ -675,7 +693,9 @@ class TestPrintQAStatus:
         captured = capsys.readouterr()
         assert "Not started" in captured.out
 
-    def test_print_qa_status_approved(self, spec_dir: Path, qa_signoff_approved: dict, capsys):
+    def test_print_qa_status_approved(
+        self, spec_dir: Path, qa_signoff_approved: dict, capsys
+    ):
         """Prints approved status with test results."""
         plan = {"feature": "Test", "qa_signoff": qa_signoff_approved}
         save_implementation_plan(spec_dir, plan)
@@ -688,7 +708,9 @@ class TestPrintQAStatus:
         assert "APPROVED" in captured.out
         assert "Tests:" in captured.out
 
-    def test_print_qa_status_rejected(self, spec_dir: Path, qa_signoff_rejected: dict, capsys):
+    def test_print_qa_status_rejected(
+        self, spec_dir: Path, qa_signoff_rejected: dict, capsys
+    ):
         """Prints rejected status with issues found."""
         plan = {"feature": "Test", "qa_signoff": qa_signoff_rejected}
         save_implementation_plan(spec_dir, plan)
@@ -701,7 +723,9 @@ class TestPrintQAStatus:
         assert "REJECTED" in captured.out
         assert "Issues Found:" in captured.out
 
-    def test_print_qa_status_with_history(self, spec_dir: Path, qa_signoff_rejected: dict, capsys):
+    def test_print_qa_status_with_history(
+        self, spec_dir: Path, qa_signoff_rejected: dict, capsys
+    ):
         """Prints iteration history summary when available."""
         from unittest.mock import patch
 
@@ -710,14 +734,26 @@ class TestPrintQAStatus:
 
         # Mock iteration history using patch for the actual import location
         import qa.report as report_module
-        with patch.object(report_module, 'get_iteration_history', return_value=[
-            {"iteration": 1, "status": "rejected", "issues": []},
-            {"iteration": 2, "status": "rejected", "issues": []},
-        ]), patch.object(report_module, 'get_recurring_issue_summary', return_value={
-            "iterations_approved": 0,
-            "iterations_rejected": 2,
-            "most_common": [],
-        }):
+
+        with (
+            patch.object(
+                report_module,
+                "get_iteration_history",
+                return_value=[
+                    {"iteration": 1, "status": "rejected", "issues": []},
+                    {"iteration": 2, "status": "rejected", "issues": []},
+                ],
+            ),
+            patch.object(
+                report_module,
+                "get_recurring_issue_summary",
+                return_value={
+                    "iterations_approved": 0,
+                    "iterations_rejected": 2,
+                    "most_common": [],
+                },
+            ),
+        ):
             print_qa_status(spec_dir)
 
         captured = capsys.readouterr()
@@ -814,17 +850,29 @@ class TestPrintQAStatus:
 
         # Mock iteration history using patch for the actual import location
         import qa.report as report_module
-        with patch.object(report_module, 'get_iteration_history', return_value=[
-            {"iteration": 1, "status": "rejected"},
-            {"iteration": 2, "status": "rejected"},
-            {"iteration": 3, "status": "rejected"},
-        ]), patch.object(report_module, 'get_recurring_issue_summary', return_value={
-            "iterations_approved": 0,
-            "iterations_rejected": 3,
-            "most_common": [
-                {"title": "Common Issue", "occurrences": 3},
-            ],
-        }):
+
+        with (
+            patch.object(
+                report_module,
+                "get_iteration_history",
+                return_value=[
+                    {"iteration": 1, "status": "rejected"},
+                    {"iteration": 2, "status": "rejected"},
+                    {"iteration": 3, "status": "rejected"},
+                ],
+            ),
+            patch.object(
+                report_module,
+                "get_recurring_issue_summary",
+                return_value={
+                    "iterations_approved": 0,
+                    "iterations_rejected": 3,
+                    "most_common": [
+                        {"title": "Common Issue", "occurrences": 3},
+                    ],
+                },
+            ),
+        ):
             print_qa_status(spec_dir)
 
         captured = capsys.readouterr()
@@ -891,7 +939,10 @@ class TestQAStateMachine:
 
     def test_iteration_count_increments(self, spec_dir: Path):
         """QA session counter increments through iterations."""
-        plan = {"feature": "Test", "qa_signoff": {"status": "rejected", "qa_session": 1}}
+        plan = {
+            "feature": "Test",
+            "qa_signoff": {"status": "rejected", "qa_session": 1},
+        }
         save_implementation_plan(spec_dir, plan)
         assert get_qa_iteration_count(spec_dir) == 1
 

@@ -78,7 +78,6 @@ from .task_models import (  # noqa: F401
 )
 
 
-
 # --------------------------------------------------------------------------
 # Helper Functions
 # --------------------------------------------------------------------------
@@ -105,7 +104,6 @@ from .task_service import (  # noqa: F401
     task_to_dict,
     validate_done_status,
 )
-
 
 
 @router.get("", response_model=TaskList)

@@ -50,7 +50,7 @@ BYPASS_PAYLOADS = [
 # Dynamic interpreter payloads we cannot statically resolve — fail closed.
 FAIL_CLOSED_PAYLOADS = [
     'bash -c "$PAYLOAD"',
-    "sh -c \"${CMD}\"",
+    'sh -c "${CMD}"',
     'bash -c "$(echo bm8K | base64 -d)"',
 ]
 

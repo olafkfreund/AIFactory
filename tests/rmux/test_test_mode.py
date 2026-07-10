@@ -88,14 +88,11 @@ class TestTestAgentCmdOverride:
 
         rmux_mock = AsyncMock()
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=rmux_mock
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=rmux_mock),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -131,14 +128,11 @@ class TestTestAgentCmdOverride:
             captured["args"] = args
             return fake_proc
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=AsyncMock()
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=AsyncMock()),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -148,6 +142,7 @@ class TestTestAgentCmdOverride:
             )
 
         import sys
+
         assert captured["args"][0] == sys.executable, (
             f"expected {sys.executable!r}, got {captured['args'][0]!r}"
         )
@@ -171,14 +166,11 @@ class TestTestAgentCmdOverride:
             captured["args"] = args
             return fake_proc
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=AsyncMock()
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=AsyncMock()),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -188,4 +180,5 @@ class TestTestAgentCmdOverride:
             )
 
         import sys
+
         assert captured["args"][0] == sys.executable

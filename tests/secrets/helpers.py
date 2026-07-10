@@ -44,6 +44,7 @@ def kms_backend_available(backend: str) -> bool:
     isn't installed, breaking the skipif-decorator evaluation.
     """
     import importlib
+
     lib_for = {
         "aws_kms": "boto3",
         "azure_kv": "azure.keyvault.keys",

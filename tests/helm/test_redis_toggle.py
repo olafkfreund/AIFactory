@@ -130,9 +130,7 @@ class TestRedisOnWithExternalSecret:
             ],
         )
 
-    def test_redis_url_env_from_secret_ref(
-        self, helm_available, chart_dir
-    ) -> None:
+    def test_redis_url_env_from_secret_ref(self, helm_available, chart_dir) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
         matching = [e for e in env if e["name"] == "REDIS_URL"]
@@ -149,9 +147,7 @@ class TestRedisValidation:
     or an externalSecretName. The chart's required-validator catches
     misconfiguration at ``helm template`` time, not at runtime."""
 
-    def test_enabled_with_no_source_fails(
-        self, helm_available, chart_dir
-    ) -> None:
+    def test_enabled_with_no_source_fails(self, helm_available, chart_dir) -> None:
         stderr = _render_expect_error(
             chart_dir,
             [

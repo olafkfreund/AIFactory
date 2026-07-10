@@ -33,9 +33,12 @@ class _Proc:
 
 def test_signals_process_group(monkeypatch):
     import server.services.agent_service as mod
+
     calls = {}
     monkeypatch.setattr(mod.os, "getpgid", lambda pid: 9000 + pid)
-    monkeypatch.setattr(mod.os, "killpg", lambda pgid, sig: calls.setdefault("killpg", (pgid, sig)))
+    monkeypatch.setattr(
+        mod.os, "killpg", lambda pgid, sig: calls.setdefault("killpg", (pgid, sig))
+    )
 
     proc = _Proc(pid=4242)
     AgentService._signal_process_tree(proc, signal.SIGTERM)
@@ -46,6 +49,7 @@ def test_signals_process_group(monkeypatch):
 
 def test_falls_back_to_single_process(monkeypatch):
     import server.services.agent_service as mod
+
     monkeypatch.setattr(mod.os, "getpgid", lambda pid: pid)
 
     def _boom(pgid, sig):
@@ -71,6 +75,7 @@ def test_build_spawn_uses_new_session():
     # thin admission wrapper plus _spawn_task_execution, which now owns the
     # asyncio.create_subprocess_exec call — so inspect the spawn-bearing method.
     import inspect
+
     src = inspect.getsource(AgentService._spawn_task_execution)
     assert "start_new_session=True" in src
 

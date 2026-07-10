@@ -129,7 +129,9 @@ def test_settings_dict_constructs_valid_onelogin_object(base_sp_config):
 
 
 def test_url_source_starts_refresh_thread(
-    base_sp_config, idp_metadata_xml, monkeypatch,
+    base_sp_config,
+    idp_metadata_xml,
+    monkeypatch,
 ):
     """When idpMetadataUrl is used (not file), the refresh thread
     starts. Confirms by checking the thread exists + is daemonic."""
@@ -137,9 +139,7 @@ def test_url_source_starts_refresh_thread(
     from server.saml.client import SamlClient
 
     base_sp_config.idp_metadata_file = None
-    base_sp_config.idp_metadata_url = (
-        "https://test-idp.example.com/saml/metadata"
-    )
+    base_sp_config.idp_metadata_url = "https://test-idp.example.com/saml/metadata"
 
     class _FakeResponse:
         def __init__(self, text: str) -> None:

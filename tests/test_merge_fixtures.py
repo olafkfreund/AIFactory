@@ -33,7 +33,7 @@ from merge import (
 # SAMPLE CODE CONSTANTS
 # =============================================================================
 
-SAMPLE_REACT_COMPONENT = '''import React from 'react';
+SAMPLE_REACT_COMPONENT = """import React from 'react';
 import { useState } from 'react';
 
 function App() {
@@ -50,9 +50,9 @@ function App() {
 }
 
 export default App;
-'''
+"""
 
-SAMPLE_REACT_WITH_HOOK = '''import React from 'react';
+SAMPLE_REACT_WITH_HOOK = """import React from 'react';
 import { useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 
@@ -71,9 +71,9 @@ function App() {
 }
 
 export default App;
-'''
+"""
 
-SAMPLE_REACT_WITH_WRAP = '''import React from 'react';
+SAMPLE_REACT_WITH_WRAP = """import React from 'react';
 import { useState } from 'react';
 import { ThemeProvider } from './context/Theme';
 
@@ -93,7 +93,7 @@ function App() {
 }
 
 export default App;
-'''
+"""
 
 SAMPLE_PYTHON_MODULE = '''"""Sample Python module."""
 import os
@@ -162,6 +162,7 @@ class Greeter:
 # PROJECT FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def temp_project(tmp_path: Path) -> Path:
     """Create a temporary project directory with git repo."""
@@ -169,11 +170,11 @@ def temp_project(tmp_path: Path) -> Path:
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
-        cwd=tmp_path, capture_output=True
+        cwd=tmp_path,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=tmp_path, capture_output=True
+        ["git", "config", "user.name", "Test User"], cwd=tmp_path, capture_output=True
     )
 
     # Create initial files
@@ -184,8 +185,7 @@ def temp_project(tmp_path: Path) -> Path:
     # Initial commit
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=tmp_path, capture_output=True
+        ["git", "commit", "-m", "Initial commit"], cwd=tmp_path, capture_output=True
     )
 
     # Ensure branch is named 'main' (some git configs default to 'master')
@@ -197,6 +197,7 @@ def temp_project(tmp_path: Path) -> Path:
 # =============================================================================
 # COMPONENT FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def semantic_analyzer() -> SemanticAnalyzer:
@@ -231,12 +232,14 @@ def ai_resolver() -> AIResolver:
 @pytest.fixture
 def mock_ai_resolver() -> AIResolver:
     """Create an AIResolver with mocked AI function."""
+
     def mock_ai_call(system: str, user: str) -> str:
         return """```typescript
 const merged = useAuth();
 const other = useOther();
 return <div>Merged</div>;
 ```"""
+
     return AIResolver(ai_call_fn=mock_ai_call)
 
 
@@ -244,9 +247,11 @@ return <div>Merged</div>;
 # FACTORY FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def make_ai_resolver() -> Callable:
     """Factory for creating AIResolver with custom mock responses."""
+
     def _make_resolver(response: str = None) -> AIResolver:
         if response is None:
             response = """```python

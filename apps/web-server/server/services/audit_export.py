@@ -78,12 +78,14 @@ CSV_COLUMNS = [
 
 def _row_for_csv(row: AuditLog) -> list[str]:
     """Flatten an AuditLog row into the CSV column order."""
+
     def _str(v):
         if v is None:
             return ""
         if isinstance(v, datetime):
             return v.isoformat()
         return str(v)
+
     return [
         _str(row.id),
         _str(row.created_at),
@@ -300,10 +302,13 @@ def verify_anchored_export(
             expected = compute_hash(prev_hash, obj)
             stored_prev = obj.get("prev_hash") or GENESIS
             if stored_prev != prev_hash:
-                failures.append((
-                    i, f"chain break: row.prev_hash={stored_prev!r} != "
-                       f"expected {prev_hash!r}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"chain break: row.prev_hash={stored_prev!r} != "
+                        f"expected {prev_hash!r}",
+                    )
+                )
                 continue
             prev_hash = expected
             rows_verified += 1
@@ -319,37 +324,45 @@ def verify_anchored_export(
         elif kind == "anchor":
             # Verify chain-head match + HMAC signature.
             expected_chain_head = (
-                prev_hash if window_has_rows or prev_hash != GENESIS
-                else GENESIS
+                prev_hash if window_has_rows or prev_hash != GENESIS else GENESIS
             )
             if obj["chain_head_hash"] != expected_chain_head:
-                failures.append((
-                    i, f"anchor chain_head_hash={obj['chain_head_hash']!r} "
-                       f"!= expected {expected_chain_head!r}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"anchor chain_head_hash={obj['chain_head_hash']!r} "
+                        f"!= expected {expected_chain_head!r}",
+                    )
+                )
                 continue
 
             key_bytes = signing_keys.get(obj["key_version"])
             if key_bytes is None:
-                failures.append((
-                    i, f"no signing key for version {obj['key_version']}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"no signing key for version {obj['key_version']}",
+                    )
+                )
                 continue
 
             # Sentinel for empty-window: SHA256 of empty bytes.
             cls_hash_hex = (
-                cls_h.hexdigest()
-                if window_has_rows
-                else sha256(b"").hexdigest()
+                cls_h.hexdigest() if window_has_rows else sha256(b"").hexdigest()
             )
             anchor_input = f"{obj['chain_head_hash']}|{cls_hash_hex}"
             expected_sig = hmac.new(
-                key_bytes, anchor_input.encode("utf-8"), sha256,
+                key_bytes,
+                anchor_input.encode("utf-8"),
+                sha256,
             ).hexdigest()
             if not hmac.compare_digest(expected_sig, obj["signature"]):
-                failures.append((
-                    i, f"anchor signature mismatch at signed_at={obj['signed_at']}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"anchor signature mismatch at signed_at={obj['signed_at']}",
+                    )
+                )
                 continue
 
             anchors_verified += 1
@@ -364,11 +377,13 @@ def verify_anchored_export(
 
     # Trailing rows after the last anchor are the legitimate pending window.
     pending_window = (
-        rows_verified
-        - sum(
-            1 for _ in []
-        )  # we don't track per-anchor counts; rough is fine
-    ) if False else 0  # the count is informational; verifier doesn't fail on it
+        (
+            rows_verified
+            - sum(1 for _ in [])  # we don't track per-anchor counts; rough is fine
+        )
+        if False
+        else 0
+    )  # the count is informational; verifier doesn't fail on it
 
     # Honest count: anchors_verified covers windows; rows AFTER the last
     # anchor stay in the running state but aren't a failure.
@@ -441,22 +456,28 @@ def verify_tenant_anchored_export(
             # Validate that this row belongs to the claimed org.
             row_org = obj.get("org_id")
             if row_org and row_org != org_id:
-                failures.append((
-                    i,
-                    f"cross-tenant row: row.org_id={row_org!r} != "
-                    f"expected org_id={org_id!r}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"cross-tenant row: row.org_id={row_org!r} != "
+                        f"expected org_id={org_id!r}",
+                    )
+                )
                 continue
 
             # First row: expected prev_hash is the per-tenant genesis.
-            expected_prev = genesis if not window_has_rows and prev_hash == genesis else prev_hash
+            expected_prev = (
+                genesis if not window_has_rows and prev_hash == genesis else prev_hash
+            )
             stored_prev = obj.get("prev_hash") or genesis
             if stored_prev != expected_prev:
-                failures.append((
-                    i,
-                    f"chain break: row.prev_hash={stored_prev!r} != "
-                    f"expected {expected_prev!r}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"chain break: row.prev_hash={stored_prev!r} != "
+                        f"expected {expected_prev!r}",
+                    )
+                )
                 continue
 
             # Domain-separated hash for per-tenant chain.
@@ -473,27 +494,34 @@ def verify_tenant_anchored_export(
             # Verify that this anchor belongs to the claimed org.
             anchor_org = obj.get("org_id")
             if anchor_org and anchor_org != org_id:
-                failures.append((
-                    i,
-                    f"cross-tenant anchor: anchor.org_id={anchor_org!r} != "
-                    f"expected org_id={org_id!r} (design finding #6)",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"cross-tenant anchor: anchor.org_id={anchor_org!r} != "
+                        f"expected org_id={org_id!r} (design finding #6)",
+                    )
+                )
                 continue
 
             expected_chain_head = prev_hash if window_has_rows else genesis
             if obj["chain_head_hash"] != expected_chain_head:
-                failures.append((
-                    i,
-                    f"anchor chain_head_hash={obj['chain_head_hash']!r} "
-                    f"!= expected {expected_chain_head!r}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"anchor chain_head_hash={obj['chain_head_hash']!r} "
+                        f"!= expected {expected_chain_head!r}",
+                    )
+                )
                 continue
 
             key_bytes = signing_keys.get(obj["key_version"])
             if key_bytes is None:
-                failures.append((
-                    i, f"no signing key for version {obj['key_version']}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"no signing key for version {obj['key_version']}",
+                    )
+                )
                 continue
 
             cls_hash_hex = (
@@ -501,13 +529,17 @@ def verify_tenant_anchored_export(
             )
             anchor_input = f"{obj['chain_head_hash']}|{cls_hash_hex}"
             expected_sig = hmac.new(
-                key_bytes, anchor_input.encode("utf-8"), sha256,
+                key_bytes,
+                anchor_input.encode("utf-8"),
+                sha256,
             ).hexdigest()
             if not hmac.compare_digest(expected_sig, obj["signature"]):
-                failures.append((
-                    i,
-                    f"anchor signature mismatch at signed_at={obj['signed_at']}",
-                ))
+                failures.append(
+                    (
+                        i,
+                        f"anchor signature mismatch at signed_at={obj['signed_at']}",
+                    )
+                )
                 continue
 
             anchors_verified += 1

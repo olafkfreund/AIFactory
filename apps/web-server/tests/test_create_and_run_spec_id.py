@@ -21,17 +21,22 @@ def test_create_and_run_uses_non_pending_spec_id(tmp_path):
 
     req = execution.StartTaskRequest()
     with (
-        patch.object(execution, "load_projects",
-                     return_value={project_id: {"path": str(project_path)}}),
+        patch.object(
+            execution,
+            "load_projects",
+            return_value={project_id: {"path": str(project_path)}},
+        ),
         patch.object(execution, "get_agent_service") as mock_svc,
     ):
         mock_svc.return_value.start_spec_creation = AsyncMock(return_value=None)
-        result = asyncio.run(execution.create_and_run_task(
-            project_id,
-            "Add /metrics endpoint",
-            "Add a /metrics endpoint returning request counts, with a test.",
-            req,
-        ))
+        result = asyncio.run(
+            execution.create_and_run_task(
+                project_id,
+                "Add /metrics endpoint",
+                "Add a /metrics endpoint returning request counts, with a test.",
+                req,
+            )
+        )
 
     tid = result["task_id"]
     # 1. No transient pending id (the rename trigger).

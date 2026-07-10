@@ -64,6 +64,7 @@ def _live_s3_reachable() -> bool:
     if endpoint:
         import socket
         from urllib.parse import urlparse
+
         u = urlparse(endpoint)
         try:
             with socket.create_connection((u.hostname, u.port or 80), timeout=2):
@@ -138,12 +139,15 @@ def _unique_project_id() -> str:
     """Each test run uses a fresh project_id so concurrent test runs
     against the same MinIO don't stomp each other."""
     import uuid
+
     return f"itest-{uuid.uuid4().hex[:12]}"
 
 
 @pytest.mark.asyncio
 async def test_round_trip_against_live_minio(
-    live_store, project_workspace, tmp_path,
+    live_store,
+    project_workspace,
+    tmp_path,
 ):
     """Upload to MinIO, verify the manifest landed, download to a
     fresh dir, byte-for-byte match. This is the load-bearing proof
@@ -152,28 +156,36 @@ async def test_round_trip_against_live_minio(
     project_id = _unique_project_id()
 
     await live_store.upload_project(
-        org_id=org_id, project_id=project_id, local_path=project_workspace,
-        triggered_by_task_id="001:demo", triggered_by_phase="completed",
+        org_id=org_id,
+        project_id=project_id,
+        local_path=project_workspace,
+        triggered_by_task_id="001:demo",
+        triggered_by_phase="completed",
     )
     # Manifest must exist now.
-    assert (await live_store.project_exists(
-        org_id=org_id, project_id=project_id,
-    )) is True
+    assert (
+        await live_store.project_exists(
+            org_id=org_id,
+            project_id=project_id,
+        )
+    ) is True
 
     restored = tmp_path / "restored"
     ok = await live_store.download_project(
-        org_id=org_id, project_id=project_id, local_path=restored,
+        org_id=org_id,
+        project_id=project_id,
+        local_path=restored,
     )
     assert ok is True
 
     # Same file set.
     src = sorted(
         f.relative_to(project_workspace).as_posix()
-        for f in project_workspace.rglob("*") if f.is_file()
+        for f in project_workspace.rglob("*")
+        if f.is_file()
     )
     dst = sorted(
-        f.relative_to(restored).as_posix()
-        for f in restored.rglob("*") if f.is_file()
+        f.relative_to(restored).as_posix() for f in restored.rglob("*") if f.is_file()
     )
     assert src == dst
 
@@ -187,13 +199,16 @@ async def test_round_trip_against_live_minio(
 
 @pytest.mark.asyncio
 async def test_partial_upload_simulation_against_live_minio(
-    live_store, project_workspace, tmp_path,
+    live_store,
+    project_workspace,
+    tmp_path,
 ):
     """Write some files via fsspec WITHOUT writing the manifest, then
     confirm download treats it as missing and doesn't pollute the
     local dir. Defends the partial-upload-detection contract against
     real S3 listing behavior (eventual consistency edge cases)."""
     import fsspec
+
     org_id = "live-test"
     project_id = _unique_project_id()
 
@@ -208,15 +223,20 @@ async def test_partial_upload_simulation_against_live_minio(
     fs.put_file(str(stray), f"{key_root}/README.md")
 
     # project_exists must be False (no manifest = no snapshot).
-    assert (await live_store.project_exists(
-        org_id=org_id, project_id=project_id,
-    )) is False
+    assert (
+        await live_store.project_exists(
+            org_id=org_id,
+            project_id=project_id,
+        )
+    ) is False
 
     # download must return False AND must not leave the partial file
     # behind locally.
     restored = tmp_path / "should-be-empty"
     ok = await live_store.download_project(
-        org_id=org_id, project_id=project_id, local_path=restored,
+        org_id=org_id,
+        project_id=project_id,
+        local_path=restored,
     )
     assert ok is False
     assert not (restored / "README.md").exists()

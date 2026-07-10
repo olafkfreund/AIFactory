@@ -32,6 +32,7 @@ from spec.validate_pkg.validators.implementation_plan_validator import (  # noqa
 def _validate(plan: dict, tmp_path: Path):
     """Write ``plan`` to a temp spec dir and run the validator against it."""
     import json
+
     plan_file = tmp_path / "implementation_plan.json"
     plan_file.write_text(json.dumps(plan))
     v = ImplementationPlanValidator(tmp_path)
@@ -57,9 +58,9 @@ class TestSchemaDriftResilience:
         # Must not raise
         result = _validate(plan, tmp_path)
         assert result.valid is False
-        assert any(
-            "phases" in err and "list" in err for err in result.errors
-        ), f"Expected an error about 'phases' shape, got: {result.errors}"
+        assert any("phases" in err and "list" in err for err in result.errors), (
+            f"Expected an error about 'phases' shape, got: {result.errors}"
+        )
 
     def test_phase_as_string_in_list_returns_error(self, tmp_path: Path):
         """phases is a list, but contains a string instead of an object."""
@@ -124,7 +125,8 @@ class TestSchemaDriftResilience:
         # If the schema requires other fields we don't care about here, we at
         # least confirm we didn't crash AND the phases-shape errors are gone.
         phase_shape_errors = [
-            e for e in result.errors
+            e
+            for e in result.errors
             if "must be a JSON list" in e or "expected an object" in e
         ]
         assert phase_shape_errors == [], (

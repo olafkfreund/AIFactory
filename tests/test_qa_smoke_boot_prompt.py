@@ -10,11 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 _QA_REVIEWER = (
-    Path(__file__).parent.parent
-    / "apps"
-    / "backend"
-    / "prompts"
-    / "qa_reviewer.md"
+    Path(__file__).parent.parent / "apps" / "backend" / "prompts" / "qa_reviewer.md"
 )
 
 

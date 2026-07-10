@@ -66,7 +66,9 @@ COMPAT_POD = os.environ.get("GVISOR_COMPAT_POD", "gvisor-compat-tester")
 # ---------------------------------------------------------------------------
 
 
-def _kubectl(*args: str, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+def _kubectl(
+    *args: str, check: bool = True, timeout: int = 60
+) -> subprocess.CompletedProcess:
     """Run ``kubectl --namespace NAMESPACE`` command."""
     cmd = ["kubectl", "--namespace", NAMESPACE, *args]
     return subprocess.run(
@@ -78,7 +80,9 @@ def _kubectl(*args: str, check: bool = True, timeout: int = 60) -> subprocess.Co
     )
 
 
-def _kubectl_global(*args: str, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+def _kubectl_global(
+    *args: str, check: bool = True, timeout: int = 60
+) -> subprocess.CompletedProcess:
     """Run a kubectl command without a --namespace flag (cluster-scoped resources)."""
     return subprocess.run(
         ["kubectl", *args],
@@ -89,7 +93,9 @@ def _kubectl_global(*args: str, check: bool = True, timeout: int = 60) -> subpro
     )
 
 
-def _exec_in_pod(pod: str, *cmd_args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+def _exec_in_pod(
+    pod: str, *cmd_args: str, timeout: int = 60
+) -> subprocess.CompletedProcess:
     """kubectl exec into ``pod`` in NAMESPACE and run cmd_args."""
     return subprocess.run(
         ["kubectl", "--namespace", NAMESPACE, "exec", pod, "--", *cmd_args],
@@ -131,9 +137,12 @@ def aifactory_pod_name(kubectl_ok) -> str | None:
     a different lifecycle state.
     """
     result = _kubectl(
-        "get", "pods",
-        "-l", "app.kubernetes.io/name=aifactory",
-        "-o", "jsonpath={.items[0].metadata.name}",
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/name=aifactory",
+        "-o",
+        "jsonpath={.items[0].metadata.name}",
         check=False,
     )
     name = result.stdout.strip()
@@ -151,8 +160,11 @@ def compat_pod(kubectl_ok) -> str:
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         result = _kubectl(
-            "get", "pod", COMPAT_POD,
-            "-o", "jsonpath={.status.phase}",
+            "get",
+            "pod",
+            COMPAT_POD,
+            "-o",
+            "jsonpath={.status.phase}",
             check=False,
         )
         phase = result.stdout.strip()
@@ -185,8 +197,11 @@ class TestGvisorRuntimeClassOnCluster:
         bootstrap — the runsc install or containerd config step failed.
         """
         result = _kubectl_global(
-            "get", "runtimeclass", "gvisor",
-            "-o", "jsonpath={.handler}",
+            "get",
+            "runtimeclass",
+            "gvisor",
+            "-o",
+            "jsonpath={.handler}",
             check=False,
         )
         assert result.returncode == 0, (
@@ -213,9 +228,12 @@ class TestGvisorRuntimeClassOnCluster:
                 "Ensure AIFactory is deployed with sandbox.gvisor.enabled=true."
             )
         result = _kubectl(
-            "get", "pods",
-            "-l", "app.kubernetes.io/name=aifactory",
-            "-o", "jsonpath={.items[*].spec.runtimeClassName}",
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/name=aifactory",
+            "-o",
+            "jsonpath={.items[*].spec.runtimeClassName}",
             check=False,
         )
         raw = result.stdout.strip()
@@ -258,7 +276,9 @@ class TestGvisorCompatibilityMatrix:
         # Use a shallow clone of a minimal public repo.
         result = _exec_in_pod(
             compat_pod,
-            "git", "clone", "--depth=1",
+            "git",
+            "clone",
+            "--depth=1",
             "https://github.com/octocat/Hello-World.git",
             "/tmp/gvisor-test-clone",
             timeout=90,
@@ -287,9 +307,12 @@ class TestGvisorCompatibilityMatrix:
             compat_pod,
             "curl",
             "--silent",
-            "--max-time", "20",
-            "--write-out", "%{http_code}",
-            "--output", "/dev/null",
+            "--max-time",
+            "20",
+            "--write-out",
+            "%{http_code}",
+            "--output",
+            "/dev/null",
             "https://api.anthropic.com/v1/models",
             timeout=30,
         )
@@ -321,7 +344,8 @@ class TestGvisorCompatibilityMatrix:
             compat_pod,
             "curl",
             "-sI",
-            "--max-time", "20",
+            "--max-time",
+            "20",
             "https://api.anthropic.com/v1/models",
             timeout=30,
         )
@@ -354,8 +378,11 @@ class TestGvisorCompatibilityMatrix:
 
         # Verify the pod is Running before trying exec.
         pod_phase = _kubectl(
-            "get", "pod", aifactory_pod_name,
-            "-o", "jsonpath={.status.phase}",
+            "get",
+            "pod",
+            aifactory_pod_name,
+            "-o",
+            "jsonpath={.status.phase}",
             check=False,
         ).stdout.strip()
         if pod_phase != "Running":
@@ -368,7 +395,10 @@ class TestGvisorCompatibilityMatrix:
         # workspaces.mountPath default is /workspaces.
         mount_path = "/workspaces"
         check_mount = _exec_in_pod(
-            aifactory_pod_name, "ls", mount_path, timeout=10,
+            aifactory_pod_name,
+            "ls",
+            mount_path,
+            timeout=10,
         )
         if check_mount.returncode != 0:
             pytest.skip(
@@ -379,7 +409,9 @@ class TestGvisorCompatibilityMatrix:
         canary = "/workspaces/gvisor-smoke-test-canary.txt"
         write_result = _exec_in_pod(
             aifactory_pod_name,
-            "sh", "-c", f"echo 'gvisor-canary' > {canary}",
+            "sh",
+            "-c",
+            f"echo 'gvisor-canary' > {canary}",
             timeout=10,
         )
         assert write_result.returncode == 0, (
@@ -387,7 +419,10 @@ class TestGvisorCompatibilityMatrix:
             f"rc={write_result.returncode}, stderr={write_result.stderr.strip()}"
         )
         read_result = _exec_in_pod(
-            aifactory_pod_name, "cat", canary, timeout=10,
+            aifactory_pod_name,
+            "cat",
+            canary,
+            timeout=10,
         )
         assert read_result.returncode == 0, (
             "Failed to read canary file from workspace PVC under gVisor."

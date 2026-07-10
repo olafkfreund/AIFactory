@@ -63,22 +63,133 @@ DEFAULT_CACHE_PATH = Path.home() / ".aifactory" / "skills-cache.json"
 _CACHE_VERSION = 2
 
 # Stop words excluded from keyword search / suggestion scoring
-STOP_WORDS = frozenset({
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "to", "for", "of",
-    "with", "in", "on", "at", "by", "from", "up", "about", "into", "through",
-    "during", "before", "after", "above", "below", "between", "out", "off",
-    "over", "under", "again", "further", "then", "once", "and", "but", "or",
-    "nor", "not", "so", "yet", "both", "either", "neither", "each", "few",
-    "more", "most", "other", "some", "such", "no", "only", "own", "same",
-    "than", "too", "very", "just", "how", "what", "when", "where", "who",
-    "which", "this", "that", "these", "those", "i", "we", "you", "he", "she",
-    "it", "they", "me", "him", "her", "us", "them", "my", "your", "his",
-    "their", "our", "build", "create", "make", "add", "use", "using", "want",
-    "implement", "write", "new", "all", "any", "because", "while", "also",
-    "if", "else", "get", "set",
-})
+STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "shall",
+        "can",
+        "need",
+        "to",
+        "for",
+        "of",
+        "with",
+        "in",
+        "on",
+        "at",
+        "by",
+        "from",
+        "up",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "then",
+        "once",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "not",
+        "so",
+        "yet",
+        "both",
+        "either",
+        "neither",
+        "each",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "no",
+        "only",
+        "own",
+        "same",
+        "than",
+        "too",
+        "very",
+        "just",
+        "how",
+        "what",
+        "when",
+        "where",
+        "who",
+        "which",
+        "this",
+        "that",
+        "these",
+        "those",
+        "i",
+        "we",
+        "you",
+        "he",
+        "she",
+        "it",
+        "they",
+        "me",
+        "him",
+        "her",
+        "us",
+        "them",
+        "my",
+        "your",
+        "his",
+        "their",
+        "our",
+        "build",
+        "create",
+        "make",
+        "add",
+        "use",
+        "using",
+        "want",
+        "implement",
+        "write",
+        "new",
+        "all",
+        "any",
+        "because",
+        "while",
+        "also",
+        "if",
+        "else",
+        "get",
+        "set",
+    }
+)
 
 # Synonym map: normalises related terms to a common keyword for scoring
 SYNONYMS: dict[str, list[str]] = {
@@ -117,6 +228,7 @@ for _canonical, _variants in SYNONYMS.items():
 @dataclass
 class SkillCategory:
     """Metadata for a skill category (directory)."""
+
     name: str
     count: int
     description: Optional[str] = None
@@ -125,9 +237,10 @@ class SkillCategory:
 @dataclass
 class SkillSummary:
     """Lightweight metadata for a skill, without full content."""
-    id: str           # '{category}/{skill_name}'
-    name: str         # filename stem (e.g. 'alpine-js')
-    category: str     # parent directory name
+
+    id: str  # '{category}/{skill_name}'
+    name: str  # filename stem (e.g. 'alpine-js')
+    category: str  # parent directory name
     description: str  # first prose paragraph after the blockquote
     source: Optional[str] = None  # extracted from "> Source:" line
 
@@ -135,15 +248,17 @@ class SkillSummary:
 @dataclass
 class SkillDetail(SkillSummary):
     """Full skill data including the raw markdown content."""
+
     content: str = ""
 
 
 @dataclass
 class SkillSuggestion:
     """A scored skill suggestion for a task description."""
+
     skill: SkillSummary
     relevance_score: float  # 0.0 – 1.0
-    reason: str             # human-readable match explanation
+    reason: str  # human-readable match explanation
 
 
 def suggestion_to_selected(suggestion: "SkillSuggestion") -> dict:
@@ -572,7 +687,9 @@ class SkillsService:
                 score = 0
                 matched_keywords: list[str] = []
 
-                name_lower = entry.summary.name.lower().replace("-", " ").replace("_", " ")
+                name_lower = (
+                    entry.summary.name.lower().replace("-", " ").replace("_", " ")
+                )
                 name_exact = name_lower.replace(" ", "")
 
                 # Exact name match (after normalisation)

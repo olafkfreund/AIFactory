@@ -43,6 +43,7 @@ def _run(coro):
 
 def _fernet_test_key() -> str:
     import base64
+
     return base64.urlsafe_b64encode(b"\xaa" * 32).decode()
 
 
@@ -62,6 +63,7 @@ def _kms_env(monkeypatch):
 async def _seed_chain(SessionLocal) -> None:
     """Build a 3-row chain spanning two days with proper prev_hash linkage."""
     from server.services.audit_chain import GENESIS, compute_hash, serialize_for_export
+
     async with SessionLocal() as db:
         # Pre-compute prev_hash for each row so the chain verifies.
         rows_data = [
@@ -72,8 +74,12 @@ async def _seed_chain(SessionLocal) -> None:
         prev = GENESIS
         for rid, ts, cls in rows_data:
             row = AuditLog(
-                id=rid, action="test.event", resource_type="test",
-                created_at=ts, prev_hash=prev, classification=cls,
+                id=rid,
+                action="test.event",
+                resource_type="test",
+                created_at=ts,
+                prev_hash=prev,
+                classification=cls,
             )
             db.add(row)
             await db.flush()
@@ -95,11 +101,11 @@ async def _load_signing_keys(SessionLocal) -> dict[int, bytes]:
     """Verifier needs key_version → raw bytes."""
     from server.database.models import AuditSigningKey
     from sqlalchemy import select
+
     async with SessionLocal() as db:
         rows = (await db.execute(select(AuditSigningKey))).scalars().all()
         return {
-            r.version: (await svc.load_key_by_version(db, r.version)).raw
-            for r in rows
+            r.version: (await svc.load_key_by_version(db, r.version)).raw for r in rows
         }
 
 
@@ -193,8 +199,9 @@ def test_verifier_rejects_tampered_row_content(fresh_db):
     assert not result.ok
     # The chain detects the tamper at the anchor verification (chain
     # head mismatch).
-    assert any("anchor" in reason or "chain" in reason
-               for _, reason in result.failures), result.failures
+    assert any(
+        "anchor" in reason or "chain" in reason for _, reason in result.failures
+    ), result.failures
 
 
 def test_verifier_rejects_tampered_anchor_signature(fresh_db):
@@ -224,8 +231,9 @@ def test_verifier_rejects_tampered_anchor_signature(fresh_db):
 
     result = audit_export.verify_anchored_export(tampered_raw, keys)
     assert not result.ok
-    assert any("signature mismatch" in reason
-               for _, reason in result.failures), result.failures
+    assert any("signature mismatch" in reason for _, reason in result.failures), (
+        result.failures
+    )
 
 
 def test_verifier_rejects_classification_tamper_in_wire(fresh_db):

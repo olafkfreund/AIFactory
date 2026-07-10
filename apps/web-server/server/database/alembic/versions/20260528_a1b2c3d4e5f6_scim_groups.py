@@ -74,9 +74,7 @@ def upgrade() -> None:
             "group_id", "user_id", name="uq_scim_group_members_group_user"
         ),
     )
-    op.create_index(
-        "ix_scim_group_members_user_id", "scim_group_members", ["user_id"]
-    )
+    op.create_index("ix_scim_group_members_user_id", "scim_group_members", ["user_id"])
 
 
 def downgrade() -> None:

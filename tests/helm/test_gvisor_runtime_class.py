@@ -43,7 +43,9 @@ class TestGvisorOff:
     """Default state — no runtimeClassName, chart unchanged from v1.0."""
 
     def test_pod_spec_has_no_runtime_class(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = _render(chart_dir, ["postgres.externalSecretName=test-pg"])
         dep = _find_deployment(docs)
@@ -69,7 +71,9 @@ class TestGvisorOn:
         return _render(chart_dir, sets)
 
     def test_default_runtime_class_name(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         pod_spec = dep["spec"]["template"]["spec"]
@@ -79,7 +83,9 @@ class TestGvisorOn:
         )
 
     def test_custom_runtime_class_name(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Operators on platforms that use a non-standard RuntimeClass
         name (some K8s flavours ship ``runsc`` directly) can override
@@ -91,7 +97,9 @@ class TestGvisorOn:
         assert pod_spec.get("runtimeClassName") == "runsc"
 
     def test_security_context_unchanged_when_gvisor_on(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Enabling gVisor does not weaken the existing layered
         defences — non-root user, dropped caps, RuntimeDefault

@@ -30,24 +30,43 @@ def test_audit_anchor_tables_created(test_postgres_url: str) -> None:
         pytest.skip("alembic CLI not on PATH")
 
     result = run_alembic(
-        ["upgrade", "head"], env={"DATABASE_URL": test_postgres_url},
+        ["upgrade", "head"],
+        env={"DATABASE_URL": test_postgres_url},
     )
     assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        anchors = conn.execute(text("""
+        anchors = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'audit_anchors' ORDER BY ordinal_position
-        """)).scalars().all()
-        keys = conn.execute(text("""
+        """)
+            )
+            .scalars()
+            .all()
+        )
+        keys = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'audit_signing_keys' ORDER BY ordinal_position
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
 
-    for col in ("id", "chain_head_hash", "signature", "signed_at",
-                "key_version", "created_at"):
+    for col in (
+        "id",
+        "chain_head_hash",
+        "signature",
+        "signed_at",
+        "key_version",
+        "created_at",
+    ):
         assert col in anchors, f"audit_anchors missing {col}"
     for col in ("version", "wrapped_key", "created_at", "retired_at"):
         assert col in keys, f"audit_signing_keys missing {col}"
@@ -67,13 +86,15 @@ def test_audit_logs_classification_default_internal(
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
         # Insert a row WITHOUT specifying classification (uses default).
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO audit_logs (id, action, resource_type)
             VALUES ('audit-default-1', 'test.default', 'test')
-        """))
-        cls = conn.execute(text(
-            "SELECT classification FROM audit_logs WHERE id='audit-default-1'"
-        )).scalar()
+        """)
+        )
+        cls = conn.execute(
+            text("SELECT classification FROM audit_logs WHERE id='audit-default-1'")
+        ).scalar()
         conn.execute(text("DELETE FROM audit_logs WHERE id='audit-default-1'"))
     engine.dispose()
 
@@ -90,10 +111,12 @@ def test_users_last_login_at_nullable(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        info = conn.execute(text("""
+        info = conn.execute(
+            text("""
             SELECT is_nullable FROM information_schema.columns
             WHERE table_name='users' AND column_name='last_login_at'
-        """)).scalar()
+        """)
+        ).scalar()
     engine.dispose()
     assert info == "YES", "users.last_login_at should be nullable"
 
@@ -115,25 +138,37 @@ def test_audit_anchors_unique_per_utc_day(test_postgres_url: str) -> None:
         conn.execute(text("DELETE FROM audit_anchors WHERE id LIKE 'utc-day-%'"))
         # The signing key may already exist from a previous run; create
         # if missing.
-        existing = conn.execute(text("SELECT MIN(version) FROM audit_signing_keys")).scalar()
+        existing = conn.execute(
+            text("SELECT MIN(version) FROM audit_signing_keys")
+        ).scalar()
         if existing is None:
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 INSERT INTO audit_signing_keys (wrapped_key) VALUES (E'\\\\xdeadbeef')
-            """))
-        key_version = conn.execute(text("SELECT MIN(version) FROM audit_signing_keys")).scalar()
+            """)
+            )
+        key_version = conn.execute(
+            text("SELECT MIN(version) FROM audit_signing_keys")
+        ).scalar()
 
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO audit_anchors (id, chain_head_hash, signature, signed_at, key_version)
             VALUES ('utc-day-1', 'hash1', 'sig1', '2026-05-28 02:00:00 UTC', :v)
-        """), {"v": key_version})
+        """),
+            {"v": key_version},
+        )
 
     with engine.begin() as conn:
         # Same UTC day, different time-of-day — must violate the unique idx.
         with pytest.raises(Exception):
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 INSERT INTO audit_anchors (id, chain_head_hash, signature, signed_at, key_version)
                 VALUES ('utc-day-2', 'hash2', 'sig2', '2026-05-28 22:00:00 UTC', :v)
-            """), {"v": key_version})
+            """),
+                {"v": key_version},
+            )
 
     # Cleanup
     with engine.begin() as conn:
@@ -166,10 +201,16 @@ def test_downgrade_clean(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        tables = conn.execute(text("""
+        tables = (
+            conn.execute(
+                text("""
             SELECT table_name FROM information_schema.tables
             WHERE table_name IN ('audit_anchors', 'audit_signing_keys')
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
     assert tables == [], f"downgrade left tables behind: {tables}"
 

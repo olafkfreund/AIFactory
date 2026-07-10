@@ -40,9 +40,17 @@ def test_soc2_evidence_doc_exists(repo_root) -> None:
     """soc2-evidence.md exists + covers CC1..CC9 + A1 + C1."""
     body = _read(repo_root, "guides/compliance/soc2-evidence.md")
     required_headings = [
-        "## CC1:", "## CC2:", "## CC3:", "## CC4:", "## CC5:",
-        "## CC6:", "## CC7:", "## CC8:", "## CC9:",
-        "## A1:", "## C1:",
+        "## CC1:",
+        "## CC2:",
+        "## CC3:",
+        "## CC4:",
+        "## CC5:",
+        "## CC6:",
+        "## CC7:",
+        "## CC8:",
+        "## CC9:",
+        "## A1:",
+        "## C1:",
         "## Documented limitations",
     ]
     for h in required_headings:
@@ -85,8 +93,14 @@ def test_dpia_doc_exists(repo_root) -> None:
 def test_threat_model_doc_exists(repo_root) -> None:
     """threat-model.md exists with STRIDE pass + documented limitations."""
     body = _read(repo_root, "guides/security/threat-model.md")
-    stride = ["Spoofing", "Tampering", "Repudiation", "Information disclosure",
-              "Denial of service", "Elevation of privilege"]
+    stride = [
+        "Spoofing",
+        "Tampering",
+        "Repudiation",
+        "Information disclosure",
+        "Denial of service",
+        "Elevation of privilege",
+    ]
     for t in stride:
         assert t in body, f"STRIDE category missing: {t}"
     # Each category should have at least one threat row.
@@ -120,7 +134,8 @@ def test_upgrade_guide_exists(repo_root) -> None:
     """upgrade.md exists with v0.x→v1.0 procedure + rollback."""
     body = _read(repo_root, "guides/deployment/upgrade.md")
     required = [
-        "v0.x", "v1.0",
+        "v0.x",
+        "v1.0",
         "forward-only",
         "pg_dump",
         "Rollback",
@@ -137,7 +152,9 @@ def test_backup_restore_drill_script(repo_root) -> None:
     assert os.access(path, os.X_OK), "backup-restore.sh must be executable"
     result = subprocess.run(
         [str(path), "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0
     assert "USAGE" in result.stdout or "Usage" in result.stdout
@@ -150,7 +167,9 @@ def test_upgrade_in_place_drill_script(repo_root) -> None:
     assert os.access(path, os.X_OK)
     result = subprocess.run(
         [str(path), "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0
     assert "USAGE" in result.stdout
@@ -163,7 +182,9 @@ def test_image_mirroring_drill_script(repo_root) -> None:
     assert os.access(path, os.X_OK)
     result = subprocess.run(
         [str(path), "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0
     assert "USAGE" in result.stdout
@@ -203,7 +224,9 @@ def test_backup_restore_drill_dry_run(repo_root, tmp_path) -> None:
         path = repo_root / rel
         result = subprocess.run(
             [str(path), "--dry-run"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0, (
             f"{rel} --dry-run failed: rc={result.returncode}\n"

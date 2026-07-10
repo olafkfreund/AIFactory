@@ -43,8 +43,7 @@ from server.services.delegation_tracker import (  # noqa: E402
 def test_formatter_renders_all_sections(tmp_path: Path):
     spec_md = tmp_path / "spec.md"
     spec_md.write_text(
-        "# Add user logout endpoint\n\n"
-        "## Description\n\nReturn 204 on POST /logout."
+        "# Add user logout endpoint\n\n## Description\n\nReturn 204 on POST /logout."
     )
     plan_json = tmp_path / "implementation_plan.json"
     plan_json.write_text(
@@ -167,16 +166,21 @@ async def test_tracker_promotes_to_in_review_when_copilot_pr_matches():
     upserted: list[dict] = []
     emitted: list[tuple] = []
 
-    with patch(
-        "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item",
-        side_effect=lambda pid, item: upserted.append(item),
-    ), patch(
-        "server.websockets.events.emit_task_status",
-        new=AsyncMock(side_effect=lambda *args, **kw: emitted.append((args, kw))),
+    with (
+        patch(
+            "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
+        ),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.auto_fix_service._upsert_queue_item",
+            side_effect=lambda pid, item: upserted.append(item),
+        ),
+        patch(
+            "server.websockets.events.emit_task_status",
+            new=AsyncMock(side_effect=lambda *args, **kw: emitted.append((args, kw))),
+        ),
     ):
         summary = await scan_delegated_tasks("proj-1")
 
@@ -202,15 +206,18 @@ async def test_tracker_declines_after_24h_with_no_match():
     mock_provider.fetch_prs = AsyncMock(return_value=[])
     upserted: list[dict] = []
 
-    with patch(
-        "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item",
-        side_effect=lambda pid, item: upserted.append(item),
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
+    with (
+        patch(
+            "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
+        ),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.auto_fix_service._upsert_queue_item",
+            side_effect=lambda pid, item: upserted.append(item),
+        ),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
     ):
         summary = await scan_delegated_tasks("proj-1")
 
@@ -233,15 +240,18 @@ async def test_tracker_keeps_pending_within_window():
     mock_provider.fetch_prs = AsyncMock(return_value=[])
     upserted: list[dict] = []
 
-    with patch(
-        "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item",
-        side_effect=lambda pid, item: upserted.append(item),
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
+    with (
+        patch(
+            "server.services.auto_fix_service.get_queue", return_value=[delegated_item]
+        ),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.auto_fix_service._upsert_queue_item",
+            side_effect=lambda pid, item: upserted.append(item),
+        ),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
     ):
         summary = await scan_delegated_tasks("proj-1")
 
@@ -300,21 +310,21 @@ async def test_start_auto_fix_delegation_branch_assigns_copilot(tmp_path: Path):
     mock_agent_service = MagicMock()
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
-    with patch(
-        "server.routes.projects.load_projects", return_value=projects_fixture
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent_service,
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item"
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
+    with (
+        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent_service,
+        ),
+        patch("server.services.auto_fix_service._upsert_queue_item"),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
     ):
         from server.services.auto_fix_service import start_auto_fix
+
         result = await start_auto_fix("proj-1", 42)
 
     assert result["status"] == "delegated"
@@ -352,19 +362,20 @@ async def test_start_auto_fix_default_branch_when_delegation_off(tmp_path: Path)
     mock_agent_service = MagicMock()
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
-    with patch(
-        "server.routes.projects.load_projects", return_value=projects_fixture
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent_service,
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item"
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
+    with (
+        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent_service,
+        ),
+        patch("server.services.auto_fix_service._upsert_queue_item"),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
     ):
         from server.services.auto_fix_service import start_auto_fix
+
         result = await start_auto_fix("proj-1", 42)
 
     assert result["status"] == "started"
@@ -408,19 +419,20 @@ async def test_start_auto_fix_delegation_skipped_for_ado_provider(
     mock_agent_service = MagicMock()
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
-    with patch(
-        "server.routes.projects.load_projects", return_value=projects_fixture
-    ), patch(
-        "server.services.auto_fix_service._provider_for", return_value=mock_provider
-    ), patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent_service,
-    ), patch(
-        "server.services.auto_fix_service._upsert_queue_item"
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
+    with (
+        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch(
+            "server.services.auto_fix_service._provider_for", return_value=mock_provider
+        ),
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent_service,
+        ),
+        patch("server.services.auto_fix_service._upsert_queue_item"),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
     ):
         from server.services.auto_fix_service import start_auto_fix
+
         result = await start_auto_fix("proj-1", 42)
 
     assert result["status"] == "started"

@@ -119,7 +119,8 @@ async def ensure_active_key(db: AsyncSession) -> _SigningKey:
 
 
 async def load_key_by_version(
-    db: AsyncSession, version: int,
+    db: AsyncSession,
+    version: int,
 ) -> _SigningKey:
     """Load + unwrap a specific historical key. Used by the verifier
     when checking an anchor's signature."""
@@ -173,7 +174,9 @@ def sign_anchor(chain_head: str, key: _SigningKey) -> str:
 
 
 def verify_anchor(
-    chain_head: str, signature_hex: str, key: _SigningKey,
+    chain_head: str,
+    signature_hex: str,
+    key: _SigningKey,
 ) -> bool:
     """Constant-time HMAC verify. Returns True if the signature is valid."""
     expected = sign_anchor(chain_head, key)
@@ -202,5 +205,6 @@ KEY_LENGTH_BYTES = _KEY_LENGTH_BYTES
 # The genesis sentinel used by the chain when no prior rows exist.
 # Anchors signed before any audit rows are emitted use this value.
 GENESIS_CHAIN_HEAD = os.environ.get(
-    "AUDIT_ANCHOR_GENESIS", "GENESIS",
+    "AUDIT_ANCHOR_GENESIS",
+    "GENESIS",
 )

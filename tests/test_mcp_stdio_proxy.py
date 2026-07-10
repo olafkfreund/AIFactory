@@ -103,12 +103,11 @@ def test_legacy_admin_token_acts_as_wildcard(monkeypatch):
 def test_unknown_acw_key_returns_401(monkeypatch):
     """An unknown bearer token falls through to acw_ validation, which
     rejects via MCPAuthError → 401."""
+
     async def _raise(_header):
         raise MCPAuthError("Invalid API key")
 
-    monkeypatch.setattr(
-        "server.mcp_stdio.auth.mcp_remote_auth.authenticate", _raise
-    )
+    monkeypatch.setattr("server.mcp_stdio.auth.mcp_remote_auth.authenticate", _raise)
     client = TestClient(_app_with_scope(MCP_READ_SCOPE))
     r = client.get("/probe", headers={"Authorization": "Bearer acw_unknown"})
     assert r.status_code == 401
@@ -121,6 +120,7 @@ def test_acw_key_with_wrong_scope_returns_403(monkeypatch):
     The 401/403 split lets the client tell 'your key is bad' (regen)
     apart from 'your key works but is scoped wrong' (mint a new one).
     """
+
     async def _ok(_header):
         return AuthenticatedKey(
             key_id="key-123",
@@ -128,9 +128,7 @@ def test_acw_key_with_wrong_scope_returns_403(monkeypatch):
             user_id="user-1",
         )
 
-    monkeypatch.setattr(
-        "server.mcp_stdio.auth.mcp_remote_auth.authenticate", _ok
-    )
+    monkeypatch.setattr("server.mcp_stdio.auth.mcp_remote_auth.authenticate", _ok)
     client = TestClient(_app_with_scope(PROJECT_WRITE_SCOPE))  # need WRITE
     r = client.get("/probe", headers={"Authorization": "Bearer acw_readonly"})
     assert r.status_code == 403
@@ -139,6 +137,7 @@ def test_acw_key_with_wrong_scope_returns_403(monkeypatch):
 
 def test_acw_key_with_right_scope_passes(monkeypatch):
     """Happy path: scoped acw_ key passes → handler runs."""
+
     async def _ok(_header):
         return AuthenticatedKey(
             key_id="key-456",
@@ -146,13 +145,9 @@ def test_acw_key_with_right_scope_passes(monkeypatch):
             user_id="user-2",
         )
 
-    monkeypatch.setattr(
-        "server.mcp_stdio.auth.mcp_remote_auth.authenticate", _ok
-    )
+    monkeypatch.setattr("server.mcp_stdio.auth.mcp_remote_auth.authenticate", _ok)
     client = TestClient(_app_with_scope(PROJECT_WRITE_SCOPE))
-    r = client.get(
-        "/probe", headers={"Authorization": "Bearer acw_writer"}
-    )
+    r = client.get("/probe", headers={"Authorization": "Bearer acw_writer"})
     assert r.status_code == 200
     assert r.json() == {"ok": True}
 
@@ -228,6 +223,7 @@ def test_client_rewrites_path_to_proxy_prefix(monkeypatch):
     monkeypatch.setattr(http_client, "_read_token", lambda: "acw_test_key")
 
     import asyncio
+
     asyncio.run(http_client.request("GET", "/api/tasks"))
     assert captured["path"] == "/api/mcp-stdio/tasks"
 
@@ -250,6 +246,7 @@ def test_audit_helper_passes_right_fields_for_authenticated_key(monkeypatch):
     from unittest.mock import AsyncMock
 
     import server.mcp_stdio.router  # noqa: F401  (load into sys.modules)
+
     proxy_router = sys.modules["server.mcp_stdio.router"]
 
     captured: dict = {}
@@ -269,9 +266,11 @@ def test_audit_helper_passes_right_fields_for_authenticated_key(monkeypatch):
     class _FakeRequest:
         class _Client:
             host = "10.0.0.1"
+
         client = _Client()
 
     import asyncio
+
     asyncio.run(
         proxy_router._audit_mcp_write(
             key,
@@ -304,6 +303,7 @@ def test_audit_helper_marks_legacy_admin_calls(monkeypatch):
     import sys
 
     import server.mcp_stdio.router  # noqa: F401  (load into sys.modules)
+
     proxy_router = sys.modules["server.mcp_stdio.router"]
 
     captured: dict = {}
@@ -317,6 +317,7 @@ def test_audit_helper_marks_legacy_admin_calls(monkeypatch):
         client = None  # exercises the IP-less branch
 
     import asyncio
+
     asyncio.run(
         proxy_router._audit_mcp_write(
             _LegacyAdminKey(),

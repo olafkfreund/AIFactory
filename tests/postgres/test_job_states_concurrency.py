@@ -53,7 +53,9 @@ async def _ensure_schema(url: str) -> None:
 async def _wipe(url: str) -> None:
     engine = create_async_engine(url)
     async with engine.begin() as conn:
-        await conn.execute(text("DELETE FROM job_states WHERE service = :s"), {"s": SERVICE})
+        await conn.execute(
+            text("DELETE FROM job_states WHERE service = :s"), {"s": SERVICE}
+        )
     await engine.dispose()
 
 

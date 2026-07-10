@@ -24,6 +24,7 @@ router = APIRouter()
 # Request/Response Models
 # ============================================
 
+
 class CreateRepoRequest(BaseModel):
     repoName: str
     description: str | None = None
@@ -82,15 +83,12 @@ class CreateReleaseRequest(BaseModel):
 # GitHub CLI Helpers
 # ============================================
 
+
 def run_gh_command(args: list[str], cwd: str | None = None) -> dict:
     """Run a gh CLI command and return the result."""
     try:
         result = subprocess.run(
-            ["gh"] + args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30
+            ["gh"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -149,7 +147,10 @@ def _persist_cli_token_to_project(project_id: str) -> bool:
 # AI Analysis Helper
 # ============================================
 
-async def analyze_issue_with_ai(issue_data: dict, comments: list, project_path: str) -> dict:
+
+async def analyze_issue_with_ai(
+    issue_data: dict, comments: list, project_path: str
+) -> dict:
     """
     Analyze a GitHub issue using AI.
 
@@ -221,7 +222,11 @@ def _build_issue_analysis_prompt(issue_data: dict, comments: list) -> str:
             created_at = comment.get("created_at", "")
             comments_text += f"**{author}** ({created_at}):\n{body}\n\n"
 
-    labels_text = ", ".join([label.get("name", "") for label in issue_data.get("labels", [])]) if issue_data.get("labels") else "None"
+    labels_text = (
+        ", ".join([label.get("name", "") for label in issue_data.get("labels", [])])
+        if issue_data.get("labels")
+        else "None"
+    )
 
     prompt = f"""You are analyzing a GitHub issue to help understand what needs to be done and provide actionable insights.
 
@@ -311,10 +316,19 @@ def _parse_ai_analysis_response(response_content: str) -> dict:
         analysis = json.loads(json_text)
 
         # Validate required fields
-        required_fields = ["summary", "issue_type", "complexity", "suggestions", "affected_areas", "risks"]
+        required_fields = [
+            "summary",
+            "issue_type",
+            "complexity",
+            "suggestions",
+            "affected_areas",
+            "risks",
+        ]
         for field in required_fields:
             if field not in analysis:
-                analysis[field] = [] if field in ["suggestions", "affected_areas", "risks"] else None
+                analysis[field] = (
+                    [] if field in ["suggestions", "affected_areas", "risks"] else None
+                )
 
         return analysis
 
@@ -326,13 +340,14 @@ def _parse_ai_analysis_response(response_content: str) -> dict:
             "complexity": "unknown",
             "suggestions": [],
             "affected_areas": [],
-            "risks": []
+            "risks": [],
         }
 
 
 # ============================================
 # GitHub CLI Check & Auth
 # ============================================
+
 
 @router.get("/cli/check")
 async def check_github_cli():
@@ -343,10 +358,14 @@ async def check_github_cli():
         # Parse version from "gh version 2.x.x (2024-...)"
         output = result.get("output", "")
         import re as _re
+
         m = _re.search(r"(\d+\.\d+\.\d+)", output)
         if m:
             version = m.group(1)
-    return {"success": True, "data": {"installed": result["success"], "version": version}}
+    return {
+        "success": True,
+        "data": {"installed": result["success"], "version": version},
+    }
 
 
 @router.post("/cli/install")
@@ -469,7 +488,10 @@ async def check_github_auth():
         user_result = run_gh_command(["api", "user", "-q", ".login"])
         if user_result["success"]:
             username = user_result["output"]
-    return {"success": True, "data": {"authenticated": authenticated, "username": username}}
+    return {
+        "success": True,
+        "data": {"authenticated": authenticated, "username": username},
+    }
 
 
 @router.get("/auto-detect")
@@ -482,13 +504,19 @@ async def auto_detect_github(projectId: str | None = Query(None)):
     """
     # Check gh CLI is installed
     if not shutil.which("gh"):
-        return {"success": True, "data": {"authenticated": False, "reason": "gh_not_installed"}}
+        return {
+            "success": True,
+            "data": {"authenticated": False, "reason": "gh_not_installed"},
+        }
 
     # Check auth status
     auth_result = run_gh_command(["auth", "status"])
     output = auth_result.get("output", "")
     if not (auth_result["success"] and "Logged in" in output):
-        return {"success": True, "data": {"authenticated": False, "reason": "not_logged_in"}}
+        return {
+            "success": True,
+            "data": {"authenticated": False, "reason": "not_logged_in"},
+        }
 
     # Get username
     username = ""
@@ -507,7 +535,7 @@ async def auto_detect_github(projectId: str | None = Query(None)):
             "authenticated": True,
             "username": username,
             "tokenPersisted": token_persisted,
-        }
+        },
     }
 
 
@@ -520,6 +548,7 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
     """Monitor gh auth login process in background and broadcast result."""
     global _gh_auth_status, _gh_auth_proc
     import logging
+
     log = logging.getLogger(__name__)
 
     try:
@@ -529,25 +558,35 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
             _gh_auth_status = {"complete": True, "success": True}
             log.info("[GitHub Auth] Authentication completed successfully")
         else:
-            _gh_auth_status = {"complete": True, "success": False,
-                               "error": "Authentication flow did not complete. Please try again."}
+            _gh_auth_status = {
+                "complete": True,
+                "success": False,
+                "error": "Authentication flow did not complete. Please try again.",
+            }
             log.warning(f"[GitHub Auth] Process exited with code {proc.returncode}")
     except asyncio.TimeoutError:
-        _gh_auth_status = {"complete": True, "success": False,
-                           "error": "Authentication timed out after 5 minutes."}
+        _gh_auth_status = {
+            "complete": True,
+            "success": False,
+            "error": "Authentication timed out after 5 minutes.",
+        }
         try:
             proc.kill()
         except Exception:
             pass
     except Exception as e:
-        _gh_auth_status = {"complete": True, "success": False,
-                           "error": f"Authentication failed: {e}"}
+        _gh_auth_status = {
+            "complete": True,
+            "success": False,
+            "error": f"Authentication failed: {e}",
+        }
     finally:
         _gh_auth_proc = None
 
     # Broadcast completion via WebSocket
     try:
         from ..websockets.events import broadcast_event
+
         await broadcast_event("github:auth-complete", _gh_auth_status)
     except Exception:
         pass
@@ -566,10 +605,7 @@ async def start_github_auth():
     if not gh_path:
         return {
             "success": True,
-            "data": {
-                "success": False,
-                "message": "GitHub CLI (gh) is not installed."
-            }
+            "data": {"success": False, "message": "GitHub CLI (gh) is not installed."},
         }
 
     # Kill any existing auth process
@@ -584,9 +620,13 @@ async def start_github_auth():
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            gh_path, "auth", "login",
-            "--hostname", "github.com",
-            "--git-protocol", "https",
+            gh_path,
+            "auth",
+            "login",
+            "--hostname",
+            "github.com",
+            "--git-protocol",
+            "https",
             "--web",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -613,10 +653,14 @@ async def start_github_auth():
                     if not line:
                         break
                     text = line.decode("utf-8", errors="replace").strip()
-                    code_match = re.search(r"one-time code:\s*([A-Z0-9]+-[A-Z0-9]+)", text)
+                    code_match = re.search(
+                        r"one-time code:\s*([A-Z0-9]+-[A-Z0-9]+)", text
+                    )
                     if code_match:
                         device_code = code_match.group(1)
-                    url_match = re.search(r"(https://github\.com/login/device\S*)", text)
+                    url_match = re.search(
+                        r"(https://github\.com/login/device\S*)", text
+                    )
                     if url_match:
                         auth_url = url_match.group(1)
                     if device_code and auth_url:
@@ -633,14 +677,14 @@ async def start_github_auth():
                     "data": {
                         "success": True,
                         "message": "Already authenticated with GitHub.",
-                    }
+                    },
                 }
             return {
                 "success": True,
                 "data": {
                     "success": False,
                     "message": "Could not extract device code from gh CLI output.",
-                }
+                },
             }
 
         # Start background monitor for process completion
@@ -653,7 +697,7 @@ async def start_github_auth():
                 "deviceCode": device_code,
                 "authUrl": auth_url or "https://github.com/login/device",
                 "awaiting": True,
-            }
+            },
         }
 
     except Exception as e:
@@ -662,8 +706,8 @@ async def start_github_auth():
             "success": True,
             "data": {
                 "success": False,
-                "message": f"Failed to start authentication: {e}"
-            }
+                "message": f"Failed to start authentication: {e}",
+            },
         }
 
 
@@ -718,10 +762,16 @@ async def get_github_user():
 @router.get("/repos")
 async def list_github_user_repos():
     """List repositories for authenticated user."""
-    result = run_gh_command([
-        "repo", "list", "--json", "name,nameWithOwner,description,isPrivate,url",
-        "--limit", "100"
-    ])
+    result = run_gh_command(
+        [
+            "repo",
+            "list",
+            "--json",
+            "name,nameWithOwner,description,isPrivate,url",
+            "--limit",
+            "100",
+        ]
+    )
     if result["success"]:
         try:
             raw_repos = json.loads(result["output"])
@@ -752,7 +802,9 @@ async def list_github_orgs():
 @router.get("/detect-repo")
 async def detect_github_repo(path: str = Query(...)):
     """Detect GitHub remote for a local repository."""
-    result = run_gh_command(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=path)
+    result = run_gh_command(
+        ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=path
+    )
     if result["success"]:
         return {"success": True, "data": result["output"]}
     return {"success": True, "data": ""}
@@ -763,9 +815,7 @@ async def get_github_branches(
     repo: str = Query(...),
 ):
     """Get branches for a GitHub repository."""
-    result = run_gh_command([
-        "api", f"repos/{repo}/branches", "--jq", ".[].name"
-    ])
+    result = run_gh_command(["api", f"repos/{repo}/branches", "--jq", ".[].name"])
     if result["success"]:
         branches = result["output"].split("\n") if result["output"] else []
         return {"success": True, "data": branches}
@@ -791,8 +841,8 @@ async def create_github_repo(request: CreateRepoRequest):
             "success": True,
             "data": {
                 "fullName": request.repoName,
-                "url": f"https://github.com/{request.repoName}"
-            }
+                "url": f"https://github.com/{request.repoName}",
+            },
         }
     return {"success": False, "error": result.get("error", "Failed to create repo")}
 
@@ -806,11 +856,14 @@ async def add_git_remote(request: AddRemoteRequest):
             ["git", "remote", "add", "origin", remote_url],
             cwd=request.projectPath,
             check=True,
-            capture_output=True
+            capture_output=True,
         )
         return {"success": True, "data": {"remoteUrl": remote_url}}
     except subprocess.CalledProcessError as e:
-        return {"success": False, "error": e.stderr.decode() if e.stderr else "Failed to add remote"}
+        return {
+            "success": False,
+            "error": e.stderr.decode() if e.stderr else "Failed to add remote",
+        }
 
 
 # ============================================
@@ -824,6 +877,7 @@ project_router = APIRouter()
 def _resolve_project_path(projectId: str) -> FilePath | None:
     """Resolve a project ID to its filesystem path."""
     from .projects import load_projects
+
     projects = load_projects()
     if projectId not in projects:
         return None
@@ -845,18 +899,34 @@ def _map_gh_issue(issue: dict, repo_full_name: str = "") -> dict:
         "body": issue.get("body", ""),
         "state": (issue.get("state", "OPEN") or "OPEN").lower(),
         "labels": [
-            {"id": i, "name": lbl.get("name", "") if isinstance(lbl, dict) else str(lbl), "color": lbl.get("color", "") if isinstance(lbl, dict) else ""}
+            {
+                "id": i,
+                "name": lbl.get("name", "") if isinstance(lbl, dict) else str(lbl),
+                "color": lbl.get("color", "") if isinstance(lbl, dict) else "",
+            }
             for i, lbl in enumerate(labels)
         ],
         "assignees": [
-            {"login": a.get("login", "") if isinstance(a, dict) else str(a), "avatar_url": a.get("avatarUrl", "") if isinstance(a, dict) else ""}
+            {
+                "login": a.get("login", "") if isinstance(a, dict) else str(a),
+                "avatar_url": a.get("avatarUrl", "") if isinstance(a, dict) else "",
+            }
             for a in assignees
         ],
         "author": {
-            "login": author.get("login", "") if isinstance(author, dict) else str(author),
-            "avatar_url": author.get("avatarUrl", "") if isinstance(author, dict) else "",
+            "login": author.get("login", "")
+            if isinstance(author, dict)
+            else str(author),
+            "avatar_url": author.get("avatarUrl", "")
+            if isinstance(author, dict)
+            else "",
         },
-        "milestone": {"title": milestone.get("title", ""), "number": milestone.get("number", 0)} if milestone else None,
+        "milestone": {
+            "title": milestone.get("title", ""),
+            "number": milestone.get("number", 0),
+        }
+        if milestone
+        else None,
         "commentsCount": len(comments) if isinstance(comments, list) else 0,
         "htmlUrl": issue.get("url", ""),
         "repoFullName": repo_full_name,
@@ -878,6 +948,7 @@ def _get_repo_full_name(project_path: str) -> str:
 def _use_provider_api(projectId: str) -> bool:
     """Check if the project is configured to use a custom GitProvider REST API."""
     from .projects import load_projects
+
     projects = load_projects()
     if projectId not in projects:
         return False
@@ -886,7 +957,9 @@ def _use_provider_api(projectId: str) -> bool:
     provider = settings.get("gitProvider", "github").lower()
     token = settings.get("gitToken")
     # If using gitlab or azure_devops, or github with a custom token configured, use the provider API
-    return provider in ("gitlab", "azure_devops") or (provider == "github" and bool(token))
+    return provider in ("gitlab", "azure_devops") or (
+        provider == "github" and bool(token)
+    )
 
 
 def _get_project_provider(projectId: str):
@@ -897,6 +970,7 @@ def _get_project_provider(projectId: str):
         sys.path.insert(0, str(backend_path))
 
     from .projects import load_projects
+
     projects = load_projects()
     if projectId not in projects:
         raise ValueError(f"Project {projectId} not found")
@@ -960,6 +1034,7 @@ def _get_project_provider(projectId: str):
 def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
     """Map IssueData from GitProvider to frontend shape."""
     from datetime import datetime
+
     return {
         "id": issue.number,
         "number": issue.number,
@@ -967,23 +1042,25 @@ def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
         "body": issue.body,
         "state": issue.state.lower(),
         "labels": [
-            {"id": i, "name": name, "color": ""}
-            for i, name in enumerate(issue.labels)
+            {"id": i, "name": name, "color": ""} for i, name in enumerate(issue.labels)
         ],
-        "assignees": [
-            {"login": a, "avatar_url": ""}
-            for a in issue.assignees
-        ],
+        "assignees": [{"login": a, "avatar_url": ""} for a in issue.assignees],
         "author": {
             "login": issue.author,
             "avatar_url": "",
         },
-        "milestone": {"title": issue.milestone, "number": 0} if issue.milestone else None,
+        "milestone": {"title": issue.milestone, "number": 0}
+        if issue.milestone
+        else None,
         "commentsCount": 0,
         "htmlUrl": issue.url,
         "repoFullName": repo_full_name,
-        "createdAt": issue.created_at.isoformat() if isinstance(issue.created_at, datetime) else str(issue.created_at),
-        "updatedAt": issue.updated_at.isoformat() if isinstance(issue.updated_at, datetime) else str(issue.updated_at),
+        "createdAt": issue.created_at.isoformat()
+        if isinstance(issue.created_at, datetime)
+        else str(issue.created_at),
+        "updatedAt": issue.updated_at.isoformat()
+        if isinstance(issue.updated_at, datetime)
+        else str(issue.updated_at),
         "closedAt": None,
     }
 
@@ -991,6 +1068,7 @@ def _map_provider_issue(issue, repo_full_name: str = "") -> dict:
 def _map_provider_pr(pr) -> dict:
     """Map PRData from GitProvider to frontend shape."""
     from datetime import datetime
+
     files = pr.files or []
     return {
         "number": pr.number,
@@ -1015,8 +1093,12 @@ def _map_provider_pr(pr) -> dict:
             }
             for f in files
         ],
-        "createdAt": pr.created_at.isoformat() if isinstance(pr.created_at, datetime) else str(pr.created_at),
-        "updatedAt": pr.updated_at.isoformat() if isinstance(pr.updated_at, datetime) else str(pr.updated_at),
+        "createdAt": pr.created_at.isoformat()
+        if isinstance(pr.created_at, datetime)
+        else str(pr.created_at),
+        "updatedAt": pr.updated_at.isoformat()
+        if isinstance(pr.updated_at, datetime)
+        else str(pr.updated_at),
         "htmlUrl": pr.url,
     }
 
@@ -1024,31 +1106,38 @@ def _map_provider_pr(pr) -> dict:
 async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]:
     """Fetch and map issue/PR comments using GitProvider API endpoints."""
     from runners.github.providers.protocol import ProviderType
+
     comments = []
-    
+
     if provider.provider_type == ProviderType.GITLAB:
         try:
-            notes = await provider.api_get(f"/api/v4/projects/{provider._project_id}/issues/{issueNumber}/notes")
+            notes = await provider.api_get(
+                f"/api/v4/projects/{provider._project_id}/issues/{issueNumber}/notes"
+            )
         except Exception:
             try:
-                notes = await provider.api_get(f"/api/v4/projects/{provider._project_id}/merge_requests/{issueNumber}/notes")
+                notes = await provider.api_get(
+                    f"/api/v4/projects/{provider._project_id}/merge_requests/{issueNumber}/notes"
+                )
             except Exception:
                 notes = []
-        
+
         for note in notes:
             if note.get("system"):
                 continue
             author = note.get("author", {})
-            comments.append({
-                "id": note.get("id", 0),
-                "body": note.get("body", ""),
-                "user": {
-                    "login": author.get("username", "") or author.get("name", ""),
-                    "avatar_url": author.get("avatar_url", ""),
-                },
-                "created_at": note.get("created_at", ""),
-                "updated_at": note.get("updated_at", ""),
-            })
+            comments.append(
+                {
+                    "id": note.get("id", 0),
+                    "body": note.get("body", ""),
+                    "user": {
+                        "login": author.get("username", "") or author.get("name", ""),
+                        "avatar_url": author.get("avatar_url", ""),
+                    },
+                    "created_at": note.get("created_at", ""),
+                    "updated_at": note.get("updated_at", ""),
+                }
+            )
 
     elif provider.provider_type == ProviderType.AZURE_DEVOPS:
         try:
@@ -1057,16 +1146,21 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
             comments_raw = resp.get("comments", [])
             for c in comments_raw:
                 author = c.get("createdBy", {})
-                comments.append({
-                    "id": c.get("id", 0),
-                    "body": c.get("text", ""),
-                    "user": {
-                        "login": author.get("uniqueName", "") or author.get("displayName", ""),
-                        "avatar_url": author.get("_links", {}).get("avatar", {}).get("href", ""),
-                    },
-                    "created_at": c.get("createdDate", ""),
-                    "updated_at": c.get("modifiedDate", ""),
-                })
+                comments.append(
+                    {
+                        "id": c.get("id", 0),
+                        "body": c.get("text", ""),
+                        "user": {
+                            "login": author.get("uniqueName", "")
+                            or author.get("displayName", ""),
+                            "avatar_url": author.get("_links", {})
+                            .get("avatar", {})
+                            .get("href", ""),
+                        },
+                        "created_at": c.get("createdDate", ""),
+                        "updated_at": c.get("modifiedDate", ""),
+                    }
+                )
         except Exception:
             try:
                 url = f"{provider._base_url}/{provider._org}/{provider._proj}/_apis/git/repositories/{provider._repo_id}/pullRequests/{issueNumber}/threads?api-version=7.1"
@@ -1078,16 +1172,21 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                         if c.get("isDeleted"):
                             continue
                         author = c.get("author", {})
-                        comments.append({
-                            "id": c.get("id", 0),
-                            "body": c.get("content", ""),
-                            "user": {
-                                "login": author.get("uniqueName", "") or author.get("displayName", ""),
-                                "avatar_url": author.get("_links", {}).get("avatar", {}).get("href", ""),
-                            },
-                            "created_at": c.get("publishedDate", ""),
-                            "updated_at": c.get("lastContentUpdatedDate", ""),
-                        })
+                        comments.append(
+                            {
+                                "id": c.get("id", 0),
+                                "body": c.get("content", ""),
+                                "user": {
+                                    "login": author.get("uniqueName", "")
+                                    or author.get("displayName", ""),
+                                    "avatar_url": author.get("_links", {})
+                                    .get("avatar", {})
+                                    .get("href", ""),
+                                },
+                                "created_at": c.get("publishedDate", ""),
+                                "updated_at": c.get("lastContentUpdatedDate", ""),
+                            }
+                        )
             except Exception:
                 pass
     else:
@@ -1097,16 +1196,18 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
             comments_raw = await provider.api_get(url)
             for c in comments_raw:
                 user = c.get("user", {})
-                comments.append({
-                    "id": c.get("id", 0),
-                    "body": c.get("body", ""),
-                    "user": {
-                        "login": user.get("login", ""),
-                        "avatar_url": user.get("avatar_url", ""),
-                    },
-                    "created_at": c.get("created_at", ""),
-                    "updated_at": c.get("updated_at", ""),
-                })
+                comments.append(
+                    {
+                        "id": c.get("id", 0),
+                        "body": c.get("body", ""),
+                        "user": {
+                            "login": user.get("login", ""),
+                            "avatar_url": user.get("avatar_url", ""),
+                        },
+                        "created_at": c.get("created_at", ""),
+                        "updated_at": c.get("updated_at", ""),
+                    }
+                )
         except Exception:
             pass
 
@@ -1125,10 +1226,12 @@ async def get_project_github_repositories(projectId: str):
             provider = _get_project_provider(projectId)
             repo_info = await provider.get_repository_info()
             mapped_repo = {
-                "nameWithOwner": repo_info.get("nameWithOwner") or repo_info.get("name") or provider.repo,
+                "nameWithOwner": repo_info.get("nameWithOwner")
+                or repo_info.get("name")
+                or provider.repo,
                 "description": repo_info.get("description", ""),
                 "url": repo_info.get("url", ""),
-                "isPrivate": repo_info.get("isPrivate", False)
+                "isPrivate": repo_info.get("isPrivate", False),
             }
             return {"success": True, "data": [mapped_repo]}
         except Exception as e:
@@ -1153,29 +1256,38 @@ async def check_project_github_connection(projectId: str):
     """Check GitHub connection status for a project."""
     project_path = _resolve_project_path(projectId)
     if not project_path:
-        return {"success": True, "data": {"connected": False, "repoFullName": None, "error": f"Project {projectId} not found"}}
+        return {
+            "success": True,
+            "data": {
+                "connected": False,
+                "repoFullName": None,
+                "error": f"Project {projectId} not found",
+            },
+        }
 
     if _use_provider_api(projectId):
         try:
             provider = _get_project_provider(projectId)
             repo_info = await provider.get_repository_info()
-            
+
             # Fetch issues count
             try:
                 issues = await provider.fetch_issues()
                 issue_count = len(issues)
             except Exception:
                 issue_count = 0
-                
+
             return {
                 "success": True,
                 "data": {
                     "connected": True,
-                    "repoFullName": repo_info.get("nameWithOwner") or repo_info.get("name") or provider.repo,
+                    "repoFullName": repo_info.get("nameWithOwner")
+                    or repo_info.get("name")
+                    or provider.repo,
                     "repoDescription": repo_info.get("description", ""),
                     "issueCount": issue_count,
                     "error": None,
-                }
+                },
             }
         except Exception as e:
             return {
@@ -1186,13 +1298,20 @@ async def check_project_github_connection(projectId: str):
                     "repoDescription": None,
                     "issueCount": 0,
                     "error": f"Connection failed: {str(e)}",
-                }
+                },
             }
 
     # Check gh auth
     auth_result = run_gh_command(["auth", "status"])
     if not auth_result["success"]:
-        return {"success": True, "data": {"connected": False, "repoFullName": None, "error": "GitHub CLI not authenticated. Run 'gh auth login' in terminal."}}
+        return {
+            "success": True,
+            "data": {
+                "connected": False,
+                "repoFullName": None,
+                "error": "GitHub CLI not authenticated. Run 'gh auth login' in terminal.",
+            },
+        }
 
     # Check repo detection
     repo_result = run_gh_command(
@@ -1200,12 +1319,26 @@ async def check_project_github_connection(projectId: str):
         cwd=str(project_path),
     )
     if not repo_result["success"]:
-        return {"success": True, "data": {"connected": False, "repoFullName": None, "error": "No GitHub remote detected for this project."}}
+        return {
+            "success": True,
+            "data": {
+                "connected": False,
+                "repoFullName": None,
+                "error": "No GitHub remote detected for this project.",
+            },
+        }
 
     try:
         repo_data = json.loads(repo_result["output"])
     except json.JSONDecodeError:
-        return {"success": True, "data": {"connected": False, "repoFullName": None, "error": "Failed to parse repo info."}}
+        return {
+            "success": True,
+            "data": {
+                "connected": False,
+                "repoFullName": None,
+                "error": "Failed to parse repo info.",
+            },
+        }
 
     repo_full_name = repo_data.get("nameWithOwner", "")
     repo_description = repo_data.get("description", "")
@@ -1230,15 +1363,12 @@ async def check_project_github_connection(projectId: str):
             "repoDescription": repo_description,
             "issueCount": issue_count,
             "error": None,
-        }
+        },
     }
 
 
 @project_router.get("/issues")
-async def get_project_github_issues(
-    projectId: str,
-    state: str | None = Query(None)
-):
+async def get_project_github_issues(projectId: str, state: str | None = Query(None)):
     """Get GitHub issues for a project."""
     project_path = _resolve_project_path(projectId)
     if not project_path:
@@ -1248,12 +1378,12 @@ async def get_project_github_issues(
         try:
             provider = _get_project_provider(projectId)
             from runners.github.providers.protocol import IssueFilters
-            
+
             # Map state
             query_state = "open"
             if state and state in ("open", "closed", "all"):
                 query_state = state
-                
+
             filters = IssueFilters(state=query_state)
             issues_raw = await provider.fetch_issues(filters)
             issues = [_map_provider_issue(issue, provider.repo) for issue in issues_raw]
@@ -1262,16 +1392,22 @@ async def get_project_github_issues(
             return {"success": False, "error": str(e)}
 
     args = [
-        "issue", "list",
-        "--json", "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url",
-        "--limit", "100",
+        "issue",
+        "list",
+        "--json",
+        "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url",
+        "--limit",
+        "100",
     ]
     if state and state in ("open", "closed", "all"):
         args.extend(["--state", state])
 
     result = run_gh_command(args, cwd=str(project_path))
     if not result["success"]:
-        return {"success": False, "error": result.get("error", "Failed to fetch issues")}
+        return {
+            "success": False,
+            "error": result.get("error", "Failed to fetch issues"),
+        }
 
     try:
         issues_raw = json.loads(result["output"])
@@ -1299,11 +1435,20 @@ async def get_project_github_issue(projectId: str, issueNumber: int):
             return {"success": False, "error": str(e)}
 
     result = run_gh_command(
-        ["issue", "view", str(issueNumber), "--json", "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url"],
+        [
+            "issue",
+            "view",
+            str(issueNumber),
+            "--json",
+            "number,title,body,state,labels,assignees,author,milestone,createdAt,updatedAt,closedAt,comments,url",
+        ],
         cwd=str(project_path),
     )
     if not result["success"]:
-        return {"success": False, "error": result.get("error", f"Failed to fetch issue #{issueNumber}")}
+        return {
+            "success": False,
+            "error": result.get("error", f"Failed to fetch issue #{issueNumber}"),
+        }
 
     try:
         issue_raw = json.loads(result["output"])
@@ -1334,7 +1479,12 @@ async def get_project_github_issue_comments(projectId: str, issueNumber: int):
         cwd=str(project_path),
     )
     if not result["success"]:
-        return {"success": False, "error": result.get("error", f"Failed to fetch comments for issue #{issueNumber}")}
+        return {
+            "success": False,
+            "error": result.get(
+                "error", f"Failed to fetch comments for issue #{issueNumber}"
+            ),
+        }
 
     try:
         data = json.loads(result["output"])
@@ -1345,25 +1495,29 @@ async def get_project_github_issue_comments(projectId: str, issueNumber: int):
     comments = []
     for c in raw_comments:
         author = c.get("author", {}) or {}
-        comments.append({
-            "id": c.get("id", 0),
-            "body": c.get("body", ""),
-            "user": {
-                "login": author.get("login", "") if isinstance(author, dict) else str(author),
-                "avatar_url": author.get("avatarUrl", "") if isinstance(author, dict) else "",
-            },
-            "created_at": c.get("createdAt", ""),
-            "updated_at": c.get("updatedAt", ""),
-        })
+        comments.append(
+            {
+                "id": c.get("id", 0),
+                "body": c.get("body", ""),
+                "user": {
+                    "login": author.get("login", "")
+                    if isinstance(author, dict)
+                    else str(author),
+                    "avatar_url": author.get("avatarUrl", "")
+                    if isinstance(author, dict)
+                    else "",
+                },
+                "created_at": c.get("createdAt", ""),
+                "updated_at": c.get("updatedAt", ""),
+            }
+        )
 
     return {"success": True, "data": comments}
 
 
 @project_router.post("/issues/{issueNumber}/investigate")
 async def investigate_github_issue(
-    projectId: str,
-    issueNumber: int,
-    request: InvestigateRequest
+    projectId: str, issueNumber: int, request: InvestigateRequest
 ):
     """Investigate an issue using AI (supports GitHub, GitLab, Azure DevOps)."""
     try:
@@ -1390,12 +1544,18 @@ async def investigate_github_issue(
                     "state": issue_obj.state,
                     "labels": [{"name": lbl} for lbl in issue_obj.labels],
                     "author": {"login": issue_obj.author},
-                    "createdAt": issue_obj.created_at.isoformat() if issue_obj.created_at else None,
-                    "updatedAt": issue_obj.updated_at.isoformat() if issue_obj.updated_at else None,
+                    "createdAt": issue_obj.created_at.isoformat()
+                    if issue_obj.created_at
+                    else None,
+                    "updatedAt": issue_obj.updated_at.isoformat()
+                    if issue_obj.updated_at
+                    else None,
                     "url": issue_obj.url,
                 }
                 try:
-                    all_comments = await _get_provider_issue_comments(provider, issueNumber)
+                    all_comments = await _get_provider_issue_comments(
+                        provider, issueNumber
+                    )
                 except Exception:
                     all_comments = []
             except Exception as exc:
@@ -1406,14 +1566,20 @@ async def investigate_github_issue(
         else:
             # Fetch issue details using gh CLI
             issue_result = run_gh_command(
-                ["issue", "view", str(issueNumber), "--json", "number,title,body,state,labels,author,createdAt,updatedAt,url"],
-                cwd=str(project_path)
+                [
+                    "issue",
+                    "view",
+                    str(issueNumber),
+                    "--json",
+                    "number,title,body,state,labels,author,createdAt,updatedAt,url",
+                ],
+                cwd=str(project_path),
             )
 
             if not issue_result["success"]:
                 return {
                     "success": False,
-                    "error": f"Failed to fetch issue: {issue_result.get('error', 'Unknown error')}"
+                    "error": f"Failed to fetch issue: {issue_result.get('error', 'Unknown error')}",
                 }
 
             try:
@@ -1424,7 +1590,7 @@ async def investigate_github_issue(
             # Fetch all comments for the issue
             comments_result = run_gh_command(
                 ["issue", "view", str(issueNumber), "--json", "comments"],
-                cwd=str(project_path)
+                cwd=str(project_path),
             )
 
             all_comments = []
@@ -1439,7 +1605,8 @@ async def investigate_github_issue(
         selected_comments = []
         if request.selectedCommentIds:
             selected_comments = [
-                comment for comment in all_comments
+                comment
+                for comment in all_comments
                 if comment.get("id") in request.selectedCommentIds
             ]
         else:
@@ -1462,9 +1629,7 @@ async def investigate_github_issue(
         # Perform AI analysis
         try:
             analysis_result = await analyze_issue_with_ai(
-                issue_info,
-                selected_comments,
-                str(project_path)
+                issue_info, selected_comments, str(project_path)
             )
             analysis_status = "completed"
             analysis_data = analysis_result
@@ -1478,29 +1643,20 @@ async def investigate_github_issue(
                 "complexity": None,
                 "suggestions": [],
                 "affected_areas": [],
-                "risks": []
+                "risks": [],
             }
 
         # Prepare investigation data
         investigation_data = {
             "issue": issue_info,
             "comments": selected_comments,
-            "analysis": {
-                "status": analysis_status,
-                **analysis_data
-            }
+            "analysis": {"status": analysis_status, **analysis_data},
         }
 
-        return {
-            "success": True,
-            "data": investigation_data
-        }
+        return {"success": True, "data": investigation_data}
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to investigate issue: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to investigate issue: {str(e)}"}
 
 
 @project_router.post("/import")
@@ -1546,7 +1702,13 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
         traverse to any not-yet-imported children.
         """
         result = run_gh_command(
-            ["issue", "view", str(issue_number), "--json", "number,title,body,state,labels,author,createdAt,url"],
+            [
+                "issue",
+                "view",
+                str(issue_number),
+                "--json",
+                "number,title,body,state,labels,author,createdAt,url",
+            ],
             cwd=str(project_path),
         )
         if not result["success"]:
@@ -1558,13 +1720,20 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
 
         body = issue_data.get("body", "") or ""
         labels = issue_data.get("labels", []) or []
-        label_names = [lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in labels]
+        label_names = [
+            lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in labels
+        ]
         classification = classify_labels(label_names) if classify_labels else None
 
         existing = _existing_spec_for_issue(issue_number)
         if existing:
             return (
-                {"number": issue_number, "title": issue_data.get("title", ""), "specId": existing, "skipped": True},
+                {
+                    "number": issue_number,
+                    "title": issue_data.get("title", ""),
+                    "specId": existing,
+                    "skipped": True,
+                },
                 classification,
                 body,
             )
@@ -1619,7 +1788,11 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
         # spec.md lets the agent write fresh on the fast path with no trip.
 
         return (
-            {"number": issue_number, "title": issue_data.get("title", ""), "specId": spec_name},
+            {
+                "number": issue_number,
+                "title": issue_data.get("title", ""),
+                "specId": spec_name,
+            },
             classification,
             body,
         )
@@ -1664,7 +1837,7 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
             "imported": imported,
             "failed": failed,
             "issues": issues,
-        }
+        },
     }
 
 
@@ -1688,7 +1861,10 @@ async def close_github_issue(projectId: str, issueNumber: int):
         cwd=str(project_path),
     )
     if not result["success"]:
-        return {"success": False, "error": result.get("error", f"Failed to close issue #{issueNumber}")}
+        return {
+            "success": False,
+            "error": result.get("error", f"Failed to close issue #{issueNumber}"),
+        }
 
     return {"success": True}
 
@@ -1707,12 +1883,12 @@ async def get_project_github_prs(
         try:
             provider = _get_project_provider(projectId)
             from runners.github.providers.protocol import PRFilters
-            
+
             # Map state
             query_state = "open"
             if state and state in ("open", "closed", "merged", "all"):
                 query_state = state
-                
+
             filters = PRFilters(state=query_state)
             prs_raw = await provider.fetch_prs(filters)
             prs = [_map_provider_pr(pr) for pr in prs_raw]
@@ -1867,7 +2043,9 @@ async def post_pr_review_to_github(
 
     service = get_pr_data_service()
     selected_ids = request.selectedFindingIds if request else None
-    result = service.post_review_to_github(project_path, prNumber, selected_finding_ids=selected_ids)
+    result = service.post_review_to_github(
+        project_path, prNumber, selected_finding_ids=selected_ids
+    )
 
     if not result["success"]:
         # Determine appropriate status code based on error
@@ -1905,7 +2083,9 @@ async def post_pr_comment(
             comment_id = await provider.add_comment(prNumber, request.body)
             return {"success": True, "data": {"commentId": comment_id}}
         except Exception as e:
-            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+            return JSONResponse(
+                status_code=500, content={"success": False, "error": str(e)}
+            )
 
     from ..services.pr_data_service import get_pr_data_service
 
@@ -1938,11 +2118,18 @@ async def approve_pr(
         try:
             provider = _get_project_provider(projectId)
             from runners.github.providers.protocol import ReviewData
-            review = ReviewData(pr_number=prNumber, event="approve", body=request.body if request else "Approved")
+
+            review = ReviewData(
+                pr_number=prNumber,
+                event="approve",
+                body=request.body if request else "Approved",
+            )
             await provider.post_review(prNumber, review)
             return {"success": True}
         except Exception as e:
-            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+            return JSONResponse(
+                status_code=500, content={"success": False, "error": str(e)}
+            )
 
     from ..services.pr_data_service import get_pr_data_service
 
@@ -1978,9 +2165,14 @@ async def merge_pr(
             if success:
                 return {"success": True}
             else:
-                return JSONResponse(status_code=500, content={"success": False, "error": "Failed to merge PR"})
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "error": "Failed to merge PR"},
+                )
         except Exception as e:
-            return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+            return JSONResponse(
+                status_code=500, content={"success": False, "error": str(e)}
+            )
 
     from ..services.pr_data_service import get_pr_data_service
 
@@ -2041,7 +2233,10 @@ async def cancel_pr_review(
     service = get_pr_review_service()
 
     if not service.is_running(projectId, prNumber):
-        return {"success": True, "data": {"cancelled": False, "reason": "No review is running"}}
+        return {
+            "success": True,
+            "data": {"cancelled": False, "reason": "No review is running"},
+        }
 
     cancelled = await service.cancel_review(projectId, prNumber)
 
@@ -2114,7 +2309,15 @@ async def create_github_release(projectId: str, request: CreateReleaseRequest):
     if not project_path:
         return {"success": False, "error": f"Project {projectId} not found"}
 
-    args = ["release", "create", request.version, "--title", request.version, "--notes", request.releaseNotes]
+    args = [
+        "release",
+        "create",
+        request.version,
+        "--title",
+        request.version,
+        "--notes",
+        request.releaseNotes,
+    ]
     if request.draft:
         args.append("--draft")
     if request.prerelease:
@@ -2122,7 +2325,10 @@ async def create_github_release(projectId: str, request: CreateReleaseRequest):
 
     result = run_gh_command(args, cwd=str(project_path))
     if not result["success"]:
-        return {"success": False, "error": result.get("error", "Failed to create release")}
+        return {
+            "success": False,
+            "error": result.get("error", "Failed to create release"),
+        }
 
     # gh release create outputs the release URL
     release_url = result.get("output", "")
@@ -2142,7 +2348,8 @@ async def get_github_features():
         "data": {
             "copilot_dispatch_enabled": os.environ.get(
                 "AIFACTORY_COPILOT_DISPATCH_ENABLED", ""
-            ).lower() in ("1", "true", "yes"),
+            ).lower()
+            in ("1", "true", "yes"),
         },
     }
 
@@ -2162,7 +2369,10 @@ async def list_github_models():
     if not result["success"]:
         return JSONResponse(
             status_code=502,
-            content={"success": False, "error": result.get("error", "Failed to fetch GitHub Models catalog")},
+            content={
+                "success": False,
+                "error": result.get("error", "Failed to fetch GitHub Models catalog"),
+            },
         )
     try:
         catalog = json.loads(result["output"])
@@ -2170,16 +2380,21 @@ async def list_github_models():
     except json.JSONDecodeError:
         return JSONResponse(
             status_code=502,
-            content={"success": False, "error": "Invalid JSON from GitHub Models catalog"},
+            content={
+                "success": False,
+                "error": "Invalid JSON from GitHub Models catalog",
+            },
         )
 
 
 @router.get("/fork-info")
-async def get_fork_info(project_path: str = Query(..., description="Absolute path to the project")):
+async def get_fork_info(
+    project_path: str = Query(..., description="Absolute path to the project"),
+):
     """Detect if repo is a fork and return origin + upstream info."""
     result = run_gh_command(
         ["repo", "view", "--json", "nameWithOwner,parent,isFork,defaultBranchRef"],
-        cwd=project_path
+        cwd=project_path,
     )
     if not result["success"]:
         return {"success": False, "error": result.get("error")}
@@ -2197,6 +2412,8 @@ async def get_fork_info(project_path: str = Query(..., description="Absolute pat
     if info["isFork"] and data.get("parent"):
         parent = data["parent"]
         info["upstream"] = parent.get("nameWithOwner")
-        info["upstreamDefaultBranch"] = parent.get("defaultBranchRef", {}).get("name", "main")
+        info["upstreamDefaultBranch"] = parent.get("defaultBranchRef", {}).get(
+            "name", "main"
+        )
 
     return {"success": True, "data": info}

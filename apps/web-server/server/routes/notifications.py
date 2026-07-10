@@ -77,7 +77,9 @@ class MarkAllReadResponse(BaseModel):
     summary="List notifications for the current user",
 )
 async def list_notifications(
-    limit: int = Query(default=50, ge=1, le=100, description="Max notifications to return"),
+    limit: int = Query(
+        default=50, ge=1, le=100, description="Max notifications to return"
+    ),
     include_read: bool = Query(default=False, description="Include read notifications"),
     current_user: User = Depends(get_current_user),
 ):
@@ -96,10 +98,7 @@ async def list_notifications(
     unread_count = notification_service.get_unread_count(current_user.id)
 
     return NotificationListResponse(
-        items=[
-            NotificationResponse(**n.to_dict())
-            for n in notifications
-        ],
+        items=[NotificationResponse(**n.to_dict()) for n in notifications],
         unread_count=unread_count,
     )
 

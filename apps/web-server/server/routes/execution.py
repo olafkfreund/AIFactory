@@ -308,7 +308,11 @@ async def start_task(
                 # plans from declared lanes/frameworks/endpoints, not inference.
                 _tf = load_tfactory_block(spec_dir)
                 _payload = build_handoff_payload(
-                    spec_id, _req, _classification, _meta, tfactory=_tf,
+                    spec_id,
+                    _req,
+                    _classification,
+                    _meta,
+                    tfactory=_tf,
                     spec_dir=spec_dir,  # #476: carry the mutation ledger as evidence
                 )
                 transport = await send_handoff(_payload)
@@ -1158,7 +1162,9 @@ async def create_from_trusted_plan(
     # the very first poll. Otherwise an early poll sees None and CFactory mints an
     # orphaned `af-<spec>` duplicate card that never threads. (ingest's
     # _record_approval_provenance preserves this issue_number.)
-    corr = request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    corr = (
+        request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    )
     if corr is not None and str(corr).isdigit():
         prov = requirements.get("provenance")
         prov = prov if isinstance(prov, dict) else {}
@@ -1183,7 +1189,9 @@ async def create_from_trusted_plan(
     # RFC-0001 correlation: ingest stamped {approved_by, trusted_plan} provenance;
     # also record the GitHub issue number from the contract's correlation_key so
     # the task list exposes Task.github_issue and the cockpit threads plan→code→test.
-    corr = request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    corr = (
+        request.plan.get("correlation_key") if isinstance(request.plan, dict) else None
+    )
     if corr is not None and str(corr).isdigit():
         req_file = spec_dir / "requirements.json"
         try:

@@ -57,6 +57,7 @@ def test_missing_sa_token_raises_on_authenticate(tmp_path, monkeypatch):
     VaultClientError (with operator-actionable message)."""
     # Point the SA token constant at a non-existent path.
     from server.services import vault_client as vc
+
     monkeypatch.setattr(vc, "_SA_TOKEN_PATH", tmp_path / "does-not-exist")
 
     fake_hvac = MagicMock()
@@ -121,12 +122,8 @@ def test_create_tenant_kubernetes_role_binds_sa(authed_client):
     inner.auth.kubernetes.create_role.assert_called_once()
     kw = inner.auth.kubernetes.create_role.call_args.kwargs
     assert kw["name"] == f"aifactory-tenant-{_UUID}"
-    assert kw["bound_service_account_names"] == (
-        ["aifactory-tenant-acme-agent"]
-    )
-    assert kw["bound_service_account_namespaces"] == (
-        ["aifactory-tenant-acme"]
-    )
+    assert kw["bound_service_account_names"] == (["aifactory-tenant-acme-agent"])
+    assert kw["bound_service_account_namespaces"] == (["aifactory-tenant-acme"])
     assert kw["policies"] == [f"aifactory-tenant-{_UUID}"]
 
 

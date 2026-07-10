@@ -36,6 +36,7 @@ from models import (
 # Fixtures
 # ============================================================================
 
+
 @pytest.fixture
 def temp_github_dir(tmp_path):
     """Create temporary GitHub directory structure."""
@@ -97,6 +98,7 @@ def mock_bot_detector(tmp_path):
 # PRReviewResult Tests
 # ============================================================================
 
+
 class TestPRReviewResult:
     """Test PRReviewResult model."""
 
@@ -104,12 +106,13 @@ class TestPRReviewResult:
         """Test saving and loading review result."""
         # Save
         import asyncio
-        asyncio.run(
-            sample_review_result.save(temp_github_dir)
-        )
+
+        asyncio.run(sample_review_result.save(temp_github_dir))
 
         # Verify file exists
-        review_file = temp_github_dir / "pr" / f"review_{sample_review_result.pr_number}.json"
+        review_file = (
+            temp_github_dir / "pr" / f"review_{sample_review_result.pr_number}.json"
+        )
         assert review_file.exists()
 
         # Load
@@ -193,6 +196,7 @@ class TestPRReviewFinding:
 # Follow-up Review Context Tests
 # ============================================================================
 
+
 class TestFollowupReviewContext:
     """Test FollowupReviewContext model."""
 
@@ -230,6 +234,7 @@ class TestFollowupReviewContext:
 # ============================================================================
 # Bot Detection Integration Tests
 # ============================================================================
+
 
 class TestBotDetectionIntegration:
     """Test bot detection integration with review flow."""
@@ -285,6 +290,7 @@ class TestBotDetectionIntegration:
 # Orchestrator Skip Logic Tests
 # ============================================================================
 
+
 class TestOrchestratorSkipLogic:
     """Test orchestrator behavior when bot detection skips."""
 
@@ -293,9 +299,7 @@ class TestOrchestratorSkipLogic:
         import asyncio
 
         # Save existing review
-        asyncio.run(
-            sample_review_result.save(temp_github_dir)
-        )
+        asyncio.run(sample_review_result.save(temp_github_dir))
 
         # Simulate the orchestrator logic for "Already reviewed" skip
         skip_reason = "Already reviewed commit abc123"
@@ -331,6 +335,7 @@ class TestOrchestratorSkipLogic:
 # ============================================================================
 # Follow-up Review Logic Tests
 # ============================================================================
+
 
 class TestFollowupReviewLogic:
     """Test follow-up review resolution logic."""
@@ -401,6 +406,7 @@ class TestFollowupReviewLogic:
 # Posted Findings Tracking Tests
 # ============================================================================
 
+
 class TestPostedFindingsTracking:
     """Test posted findings tracking for follow-up eligibility."""
 
@@ -427,9 +433,7 @@ class TestPostedFindingsTracking:
         sample_review_result.posted_at = "2025-01-01T10:00:00"
 
         # Save
-        asyncio.run(
-            sample_review_result.save(temp_github_dir)
-        )
+        asyncio.run(sample_review_result.save(temp_github_dir))
 
         # Load and verify
         loaded = PRReviewResult.load(temp_github_dir, sample_review_result.pr_number)
@@ -442,6 +446,7 @@ class TestPostedFindingsTracking:
 # ============================================================================
 # Error Handling Tests
 # ============================================================================
+
 
 class TestErrorHandling:
     """Test error handling in review flow."""
@@ -497,6 +502,7 @@ class TestErrorHandling:
 # ============================================================================
 # Blocker Generation Tests
 # ============================================================================
+
 
 class TestBlockerGeneration:
     """Test blocker generation from findings."""

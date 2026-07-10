@@ -40,7 +40,10 @@ def test_clean_root_only_layout_has_no_conflict(tmp_path: Path) -> None:
 
 def test_clean_src_layout_has_no_conflict(tmp_path: Path) -> None:
     # App lives under src/ with no shadowing root module → fine.
-    _write(tmp_path / "src" / "app" / "__init__.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    _write(
+        tmp_path / "src" / "app" / "__init__.py",
+        "from fastapi import FastAPI\napp = FastAPI()\n",
+    )
     _write(
         tmp_path / "pyproject.toml",
         '[tool.pytest.ini_options]\npythonpath = ["src"]\n',

@@ -39,6 +39,7 @@ FIXTURES_PATH = Path(__file__).parent / "fixtures" / "skills"
 # Helper: minimal valid SelectedSkill data
 # ---------------------------------------------------------------------------
 
+
 def _make_skill(
     skill_id: str = "frontend/react",
     name: str = "react",
@@ -259,12 +260,14 @@ class TestWriteSkillContext:
     def _make_agent_service(self):
         """Return an AgentService instance with settings mocked out."""
         from unittest.mock import MagicMock
+
         with patch("server.services.agent_service.get_settings") as mock_settings:
             mock_settings.return_value = MagicMock(
                 BACKEND_PATH="/tmp/backend",
                 PROJECTS_DATA_DIR="/tmp/data",
             )
             from server.services.agent_service import AgentService
+
             return AgentService()
 
     def _write_task_metadata(self, selected_skills: list) -> None:
@@ -272,7 +275,12 @@ class TestWriteSkillContext:
         if selected_skills and isinstance(selected_skills[0], str):
             # Convert string IDs to dict format (production shape)
             skill_dicts = [
-                {"id": sid, "name": sid.split("/")[-1], "category": sid.split("/")[0], "source": None}
+                {
+                    "id": sid,
+                    "name": sid.split("/")[-1],
+                    "category": sid.split("/")[0],
+                    "source": None,
+                }
                 for sid in selected_skills
             ]
         else:
@@ -290,7 +298,9 @@ class TestWriteSkillContext:
         """skill_context.md is created when selectedSkills is non-empty."""
         self._write_task_metadata(["frontend/react"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         assert (self.spec_dir / "skill_context.md").exists()
 
@@ -298,7 +308,9 @@ class TestWriteSkillContext:
         """skill_context.md includes the markdown content of the selected skill."""
         self._write_task_metadata(["frontend/react"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         content = (self.spec_dir / "skill_context.md").read_text(encoding="utf-8")
         assert "React" in content
@@ -307,7 +319,9 @@ class TestWriteSkillContext:
         """skill_context.md starts with the standard header."""
         self._write_task_metadata(["frontend/react"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         content = (self.spec_dir / "skill_context.md").read_text(encoding="utf-8")
         assert "# Selected Skills Context" in content
@@ -316,7 +330,9 @@ class TestWriteSkillContext:
         """All selected skills (up to 5) appear in skill_context.md."""
         self._write_task_metadata(["frontend/react", "backend/fastapi"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         content = (self.spec_dir / "skill_context.md").read_text(encoding="utf-8")
         assert "React" in content
@@ -330,14 +346,18 @@ class TestWriteSkillContext:
         """skill_context.md is not created when selectedSkills is []."""
         self._write_task_metadata([])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         assert not (self.spec_dir / "skill_context.md").exists()
 
     def test_no_skill_context_when_metadata_missing(self):
         """skill_context.md is not created when task_metadata.json is absent."""
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         assert not (self.spec_dir / "skill_context.md").exists()
 
@@ -347,7 +367,9 @@ class TestWriteSkillContext:
         (self.spec_dir / "skill_context.md").write_text("stale content")
         self._write_task_metadata([])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         assert not (self.spec_dir / "skill_context.md").exists()
 
@@ -359,7 +381,9 @@ class TestWriteSkillContext:
         """Skill IDs without a '/' are skipped without raising an exception."""
         self._write_task_metadata(["invalid_no_slash", "frontend/react"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         # The valid skill still produces output
         assert (self.spec_dir / "skill_context.md").exists()
@@ -368,7 +392,9 @@ class TestWriteSkillContext:
         """Unknown skill IDs (not in index) are silently skipped."""
         self._write_task_metadata(["frontend/nonexistent_skill"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         # No valid skills → no file
         assert not (self.spec_dir / "skill_context.md").exists()
@@ -377,7 +403,9 @@ class TestWriteSkillContext:
         """When all skills fail to load, no skill_context.md is written."""
         self._write_task_metadata(["frontend/bogus1", "backend/bogus2"])
         agent = self._make_agent_service()
-        with patch("server.services.skills_service._skills_service", self.fixture_service):
+        with patch(
+            "server.services.skills_service._skills_service", self.fixture_service
+        ):
             agent._write_skill_context(self.spec_dir)
         assert not (self.spec_dir / "skill_context.md").exists()
 

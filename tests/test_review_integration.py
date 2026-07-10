@@ -164,7 +164,9 @@ class TestFullReviewWorkflowIntegration:
         # 6. Modify spec.md (simulating user edit)
         spec_file = complete_spec_dir / "spec.md"
         original_content = spec_file.read_text()
-        spec_file.write_text(original_content + "\n\n## Additional Notes\n\nSome extra information.\n")
+        spec_file.write_text(
+            original_content + "\n\n## Additional Notes\n\nSome extra information.\n"
+        )
 
         # 7. Approval should now be invalid (spec changed)
         assert not reloaded.is_approval_valid(complete_spec_dir)
@@ -236,7 +238,9 @@ class TestFullReviewWorkflowIntegration:
         state.approve(complete_spec_dir, approved_by="user", auto_save=False)
         assert state.spec_hash != original_hash
 
-    def test_feedback_persistence_across_sessions(self, complete_spec_dir: Path) -> None:
+    def test_feedback_persistence_across_sessions(
+        self, complete_spec_dir: Path
+    ) -> None:
         """Test that feedback is preserved across review sessions."""
         # First session - add feedback
         state1 = ReviewState()
@@ -308,7 +312,9 @@ class TestFullReviewWorkflowIntegration:
         state_for_invalidate.invalidate(complete_spec_dir, auto_save=False)
 
         assert not state_for_invalidate.approved
-        assert state_for_invalidate.approved_by == "original_approver"  # Kept as history
+        assert (
+            state_for_invalidate.approved_by == "original_approver"
+        )  # Kept as history
         assert state_for_invalidate.approved_at == ""  # Cleared
         assert state_for_invalidate.spec_hash == ""  # Cleared
         assert len(state_for_invalidate.feedback) == 1  # Preserved
@@ -323,7 +329,9 @@ class TestFullReviewWorkflowIntegration:
         assert state_for_reject.spec_hash == ""  # Cleared
         assert len(state_for_reject.feedback) == 1  # Preserved
 
-    def test_status_summary_reflects_current_state(self, complete_spec_dir: Path) -> None:
+    def test_status_summary_reflects_current_state(
+        self, complete_spec_dir: Path
+    ) -> None:
         """Test that get_review_status_summary() accurately reflects state."""
         from review import get_review_status_summary
 
@@ -362,7 +370,9 @@ class TestFullReviewWorkflowIntegration:
         """
         # First process loads and starts modifying
         state1 = ReviewState.load(complete_spec_dir)
-        state1.add_feedback("Feedback from process 1", complete_spec_dir, auto_save=False)
+        state1.add_feedback(
+            "Feedback from process 1", complete_spec_dir, auto_save=False
+        )
 
         # Second process loads and modifies
         state2 = ReviewState.load(complete_spec_dir)
@@ -376,7 +386,9 @@ class TestFullReviewWorkflowIntegration:
         assert len(final.feedback) == 1
         assert "process 1" in final.feedback[0]
 
-    def test_review_count_tracks_all_interactions(self, complete_spec_dir: Path) -> None:
+    def test_review_count_tracks_all_interactions(
+        self, complete_spec_dir: Path
+    ) -> None:
         """Test that review_count accurately tracks user interactions."""
         state = ReviewState()
         assert state.review_count == 0

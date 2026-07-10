@@ -96,8 +96,16 @@ class SpawnArgs:
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "SpawnArgs":
         fields = {
-            "project_path", "spec_id", "auto_continue", "base_branch", "mode",
-            "force", "user_id", "stop_after_planning", "parallel", "workers",
+            "project_path",
+            "spec_id",
+            "auto_continue",
+            "base_branch",
+            "mode",
+            "force",
+            "user_id",
+            "stop_after_planning",
+            "parallel",
+            "workers",
         }
         return cls(**{k: v for k, v in data.items() if k in fields})
 
@@ -109,6 +117,7 @@ class JobStateStore:
         if session_factory is None:
             # Lazy import keeps non-DB code paths (CLI, in-memory tests) clean.
             from ..database.engine import async_session_factory
+
             session_factory = async_session_factory
         self._session_factory = session_factory
 
@@ -256,9 +265,7 @@ class JobStateStore:
                     existing.lifecycle_state = lifecycle
                     existing.phase = "coding" if grant else None
                     existing.admission = admission
-                    existing.worker_ref = (
-                        {"kind": "subprocess"} if grant else None
-                    )
+                    existing.worker_ref = {"kind": "subprocess"} if grant else None
                     existing.spawn_args = spawn_args.to_json()
                     existing.result = None
                     existing.error = None
@@ -369,9 +376,7 @@ class JobStateStore:
                 if lifecycle_state in ("done", "failed", "stuck"):
                     row.ended_at = _now()
 
-    async def set_worker_ref(
-        self, job_id: str, worker_ref: dict[str, Any]
-    ) -> None:
+    async def set_worker_ref(self, job_id: str, worker_ref: dict[str, Any]) -> None:
         """Record the execution-unit reference for a job (RFC-0016 #671).
 
         Used by the kubejob build backend after it creates the k8s Job, so the

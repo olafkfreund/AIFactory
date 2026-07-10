@@ -169,7 +169,9 @@ class ProjectAccessChecker:
 
         # Auth disabled (dev mode) → allow, like the middleware.
         if _auth_disabled():
-            return user if isinstance(user, dict) else {"id": "default", "role": "admin"}
+            return (
+                user if isinstance(user, dict) else {"id": "default", "role": "admin"}
+            )
 
         # Shared rule (also used by the rmux WS bridge, #322).
         await authorize_project_for_user(user, project_id, db, self.minimum_role)

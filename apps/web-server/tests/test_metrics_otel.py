@@ -109,9 +109,7 @@ def test_record_two_workers_records_three_instruments(metrics_enabled):
     assert "worker.duration_ms" in collected
 
     # Input tokens by provider/model/phase.
-    in_by_provider = {
-        a["provider"]: v for a, v, _ in collected["gen_ai.input_tokens"]
-    }
+    in_by_provider = {a["provider"]: v for a, v, _ in collected["gen_ai.input_tokens"]}
     assert in_by_provider == {"claude": 300, "ollama": 500}
 
     out_by_provider = {
@@ -120,9 +118,7 @@ def test_record_two_workers_records_three_instruments(metrics_enabled):
     assert out_by_provider == {"claude": 40, "ollama": 60}
 
     # Cost: claude 0.30, ollama 0.0 (local → free, but the series exists).
-    cost_by_provider = {
-        a["provider"]: v for a, v, _ in collected["gen_ai.cost_usd"]
-    }
+    cost_by_provider = {a["provider"]: v for a, v, _ in collected["gen_ai.cost_usd"]}
     assert cost_by_provider["claude"] == pytest.approx(0.30)
     assert cost_by_provider["ollama"] == pytest.approx(0.0)
 
@@ -243,10 +239,17 @@ def test_completion_over_budget_emits_counter_under_does_not(metrics_enabled, tm
     over = tmp_path / "over"
     over.mkdir()
     (over / "task_metadata.json").write_text(json.dumps({"budgetUsd": 1.00}))
-    (over / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 2400, "outputTokens": 100, "totalTokens": 2500,
-        "totalCostUsd": 1.25, "model": "claude-sonnet-4-6",
-    }))
+    (over / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 2400,
+                "outputTokens": 100,
+                "totalTokens": 2500,
+                "totalCostUsd": 1.25,
+                "model": "claude-sonnet-4-6",
+            }
+        )
+    )
     usage = completion.read_usage(over)
     assert usage["budget"]["exceeded"] is True
 
@@ -257,10 +260,17 @@ def test_completion_over_budget_emits_counter_under_does_not(metrics_enabled, tm
     under = tmp_path / "under"
     under.mkdir()
     (under / "task_metadata.json").write_text(json.dumps({"budgetUsd": 5.00}))
-    (under / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 100, "outputTokens": 10, "totalTokens": 110,
-        "totalCostUsd": 0.50, "model": "claude-sonnet-4-6",
-    }))
+    (under / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "totalCostUsd": 0.50,
+                "model": "claude-sonnet-4-6",
+            }
+        )
+    )
     usage2 = completion.read_usage(under)
     assert usage2["budget"]["exceeded"] is False
 
@@ -296,9 +306,7 @@ def test_new_traceparent_uses_active_span_context(monkeypatch):
 
     with tracer.start_as_current_span("req") as span:
         ctx = span.get_span_context()
-        expected = (
-            f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{ctx.trace_flags:02x}"
-        )
+        expected = f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{ctx.trace_flags:02x}"
         tp = _new_traceparent()
         assert tp == expected
         # The traceparent carries the ACTIVE trace id, not a random one.

@@ -28,12 +28,21 @@ def _write_plan(path: Path) -> None:
         "workflow_type": "feature",
         "phases": [
             {
-                "id": "p1", "name": "Modules",
+                "id": "p1",
+                "name": "Modules",
                 "subtasks": [
-                    {"id": "subtask-1-2", "description": "version", "status": "completed",
-                     "files_to_create": ["app/routers/version.py"]},
-                    {"id": "subtask-1-3", "description": "upstreams", "status": "completed",
-                     "files_to_create": ["app/routers/upstreams.py"]},
+                    {
+                        "id": "subtask-1-2",
+                        "description": "version",
+                        "status": "completed",
+                        "files_to_create": ["app/routers/version.py"],
+                    },
+                    {
+                        "id": "subtask-1-3",
+                        "description": "upstreams",
+                        "status": "completed",
+                        "files_to_create": ["app/routers/upstreams.py"],
+                    },
                 ],
             }
         ],
@@ -57,7 +66,7 @@ def test_reset_sets_pending(tmp_path):
 
     assert reset_subtask_status_pending(plan_path, "subtask-1-3") is True
 
-    assert _status(plan_path, "subtask-1-3") == "pending"   # redo-able by serial loop
+    assert _status(plan_path, "subtask-1-3") == "pending"  # redo-able by serial loop
     assert _status(plan_path, "subtask-1-2") == "completed"  # others untouched
 
 

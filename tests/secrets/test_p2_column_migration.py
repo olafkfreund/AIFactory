@@ -47,6 +47,7 @@ def pg_url() -> str:
 
 def _reset_schema(url: str) -> None:
     """Drop + recreate the public schema (idempotent test setup)."""
+
     async def _drop():
         eng = create_async_engine(url)
         try:
@@ -58,6 +59,7 @@ def _reset_schema(url: str) -> None:
                 await conn.commit()
         finally:
             await eng.dispose()
+
     asyncio.run(_drop())
 
 
@@ -84,14 +86,20 @@ def _seed_email_account(url: str, plaintext: str) -> str:
     row_id = str(uuid.uuid4())
     try:
         with engine.begin() as conn:
-            conn.execute(text(
-                "INSERT INTO users (id, email, name, password_hash, role, is_active) "
-                "VALUES (:id, :em, 'O', 'x', 'admin', TRUE)"
-            ), {"id": owner_id, "em": "owner@example.com"})
-            conn.execute(text(
-                "INSERT INTO email_accounts (id, user_id, provider, email_address, access_token) "
-                "VALUES (:id, :uid, 'gmail', 'a@b.com', :tok)"
-            ), {"id": row_id, "uid": owner_id, "tok": plaintext})
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, email, name, password_hash, role, is_active) "
+                    "VALUES (:id, :em, 'O', 'x', 'admin', TRUE)"
+                ),
+                {"id": owner_id, "em": "owner@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO email_accounts (id, user_id, provider, email_address, access_token) "
+                    "VALUES (:id, :uid, 'gmail', 'a@b.com', :tok)"
+                ),
+                {"id": row_id, "uid": owner_id, "tok": plaintext},
+            )
     finally:
         engine.dispose()
     return row_id
@@ -99,7 +107,9 @@ def _seed_email_account(url: str, plaintext: str) -> str:
 
 @pytest.mark.secrets
 @pytest.mark.slow
-def test_migration_backfills_plaintext_to_encrypted(fernet_key: str, pg_url: str) -> None:
+def test_migration_backfills_plaintext_to_encrypted(
+    fernet_key: str, pg_url: str
+) -> None:
     """P2.3 — plaintext seeded pre-migration is encrypted by `alembic upgrade head`."""
     _reset_schema(pg_url)
     plaintext = "ya29.A0AfH6SMBxxxxxxxxxxxxxxxx_FAKE_OAUTH_TOKEN"
@@ -125,15 +135,18 @@ def test_migration_backfills_plaintext_to_encrypted(fernet_key: str, pg_url: str
         with Session(engine) as session:
             row = session.get(EmailAccount, row_id)
             assert row is not None, "row vanished after migration"
-            assert row.access_token == plaintext, \
+            assert row.access_token == plaintext, (
                 f"ORM round-trip failed: {row.access_token!r} != {plaintext!r}"
+            )
     finally:
         engine.dispose()
 
 
 @pytest.mark.secrets
 @pytest.mark.slow
-def test_pg_dump_contains_no_plaintext_credentials(fernet_key: str, pg_url: str) -> None:
+def test_pg_dump_contains_no_plaintext_credentials(
+    fernet_key: str, pg_url: str
+) -> None:
     """P2.3 — after migration, raw column bytes contain NO plaintext."""
     _reset_schema(pg_url)
     plaintext = "secret-refresh-token-xyz789-uniquesentinel"
@@ -158,7 +171,9 @@ def test_pg_dump_contains_no_plaintext_credentials(fernet_key: str, pg_url: str)
         engine.dispose()
 
     # In Postgres LargeBinary maps to BYTEA → comes back as `memoryview` or bytes.
-    assert isinstance(raw, (bytes, bytearray, memoryview)), \
+    assert isinstance(raw, (bytes, bytearray, memoryview)), (
         f"column type after migration should be bytes; got {type(raw).__name__}"
-    assert plaintext.encode("utf-8") not in bytes(raw), \
+    )
+    assert plaintext.encode("utf-8") not in bytes(raw), (
         "plaintext leaked into the encrypted column after migration"
+    )

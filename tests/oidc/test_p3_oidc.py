@@ -45,12 +45,14 @@ def _build_test_app():
     Returns ``(app, engine)`` so tests that want to inspect rows
     post-flow can do so without going through the API.
     """
-    reimport_oidc({
-        "APP_OIDC_ENABLED": "true",
-        "APP_OIDC_ISSUER_URL": os.environ["OIDC_ISSUER_URL"],
-        "APP_OIDC_CLIENT_ID": os.environ["OIDC_CLIENT_ID"],
-        "APP_OIDC_CLIENT_SECRET": os.environ["OIDC_CLIENT_SECRET"],
-    })
+    reimport_oidc(
+        {
+            "APP_OIDC_ENABLED": "true",
+            "APP_OIDC_ISSUER_URL": os.environ["OIDC_ISSUER_URL"],
+            "APP_OIDC_CLIENT_ID": os.environ["OIDC_CLIENT_ID"],
+            "APP_OIDC_CLIENT_SECRET": os.environ["OIDC_CLIENT_SECRET"],
+        }
+    )
 
     # Fresh in-memory SQLite per app. The "?cache=shared&uri=true"
     # combo lets aiosqlite share the in-memory DB across the multiple
@@ -66,15 +68,18 @@ def _build_test_app():
     from server.routes import oidc_routes
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from starlette.middleware.sessions import SessionMiddleware
+
     db_nonce = _test_secrets.token_hex(8)
     engine = create_async_engine(
         f"sqlite+aiosqlite:///file:p3test-{db_nonce}?mode=memory&cache=shared&uri=true"
     )
 
     import asyncio
+
     async def _init():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
     asyncio.get_event_loop().run_until_complete(_init()) if False else None
     # The above pattern doesn't work cleanly inside test sync context.
     # Use a fresh event loop instead:
@@ -166,9 +171,7 @@ def test_login_callback_pkce_roundtrip(oidc_issuer_url, oidc_client_id) -> None:
         # Step 3: complete the callback. The TestClient still carries
         # the SessionMiddleware cookie from step 1, which holds the
         # PKCE verifier authlib needs for the token exchange.
-        resp = client.get(
-            f"/api/auth/oidc/callback?code={code}&state={state}"
-        )
+        resp = client.get(f"/api/auth/oidc/callback?code={code}&state={state}")
 
         assert resp.status_code in (302, 307), (
             f"/callback should redirect on success; got {resp.status_code} "
@@ -235,9 +238,7 @@ def test_pkce_state_tamper_rejected(oidc_issuer_url, oidc_client_id) -> None:
         tampered_state = "attacker-injected-state-value-xxxxxxxxx"
         assert tampered_state != original_state, "fixture must use a distinct value"
 
-        resp = client.get(
-            f"/api/auth/oidc/callback?code={code}&state={tampered_state}"
-        )
+        resp = client.get(f"/api/auth/oidc/callback?code={code}&state={tampered_state}")
         assert resp.status_code == 400, (
             f"tampered state must be rejected; got {resp.status_code} "
             f"body={resp.text[:300]!r}"
@@ -312,6 +313,7 @@ def test_jit_provisions_user_and_org_member(oidc_issuer_url, oidc_client_id) -> 
             assert members[0].user_id == user.id
             assert members[0].org_id == orgs[0].id
             return user.id, user.oidc_sub
+
     user_id_1, sub_1 = asyncio.new_event_loop().run_until_complete(_check_first_login())
 
     # ---- Second login: same sub, fresh TestClient session ----
@@ -343,12 +345,14 @@ def test_jit_provisions_user_and_org_member(oidc_issuer_url, oidc_client_id) -> 
 
             members = (await session.execute(select(OrgMember))).scalars().all()
             assert len(members) == 1, "no duplicate membership rows"
+
     asyncio.new_event_loop().run_until_complete(_check_second_login())
 
 
 def _complete_login_get_refresh_token(app, oidc_issuer_url) -> str:
     """Helper: drive the full login flow and return the refresh JWT."""
     from fastapi.testclient import TestClient
+
     with TestClient(app, follow_redirects=False) as client:
         resp = client.get("/api/auth/oidc/login")
         assert resp.status_code in (302, 307)
@@ -368,7 +372,9 @@ def _complete_login_get_refresh_token(app, oidc_issuer_url) -> str:
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
 def test_userinfo_cache_avoids_per_request_rtt(
-    oidc_issuer_url, oidc_client_id, monkeypatch,
+    oidc_issuer_url,
+    oidc_client_id,
+    monkeypatch,
 ) -> None:
     """N refreshes within one cache window hit the userinfo cache.
 
@@ -416,7 +422,9 @@ def test_userinfo_cache_avoids_per_request_rtt(
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
 def test_user_disabled_in_idp_revoked_within_ttl(
-    oidc_issuer_url, oidc_client_id, monkeypatch,
+    oidc_issuer_url,
+    oidc_client_id,
+    monkeypatch,
 ) -> None:
     """When the IdP rejects a refresh, the session row is deleted + 401 returned.
 
@@ -450,6 +458,7 @@ def test_user_disabled_in_idp_revoked_within_ttl(
         async with SessionLocal() as s:
             rows = (await s.execute(select(OidcRefreshSession))).scalars().all()
             return len(rows)
+
     assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
 
     # Force cache miss + simulate IdP rejection (disabled user → "revoked").
@@ -457,6 +466,7 @@ def test_user_disabled_in_idp_revoked_within_ttl(
 
     async def _reject(idp_refresh_token):
         return "revoked"
+
     monkeypatch.setattr(oidc_routes, "_validate_against_idp", _reject)
 
     with TestClient(app) as client:
@@ -479,7 +489,9 @@ def test_user_disabled_in_idp_revoked_within_ttl(
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
 def test_idp_transient_error_does_not_revoke_session(
-    oidc_issuer_url, oidc_client_id, monkeypatch,
+    oidc_issuer_url,
+    oidc_client_id,
+    monkeypatch,
 ) -> None:
     """A transient IdP failure returns 503 and must NOT revoke the session
     (avoids locking users out during an IdP outage — #366)."""
@@ -499,12 +511,14 @@ def test_idp_transient_error_does_not_revoke_session(
     async def _count_sessions():
         async with SessionLocal() as s:
             return len((await s.execute(select(OidcRefreshSession))).scalars().all())
+
     assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
 
     userinfo_cache.clear_all()
 
     async def _transient(idp_refresh_token):
         return "idp_error"
+
     monkeypatch.setattr(oidc_routes, "_validate_against_idp", _transient)
 
     with TestClient(app) as client:
@@ -524,7 +538,8 @@ def test_idp_transient_error_does_not_revoke_session(
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
 def test_revocation_via_real_idp_grant_no_mock(
-    oidc_issuer_url, oidc_client_id,
+    oidc_issuer_url,
+    oidc_client_id,
 ) -> None:
     """End-to-end revocation against the REAL IdP, no mock (#366).
 
@@ -561,9 +576,12 @@ def test_revocation_via_real_idp_grant_no_mock(
     async def _corrupt():
         async with SessionLocal() as s:
             await s.execute(
-                update(OidcRefreshSession).values(idp_refresh_token="bogus.invalid.token")
+                update(OidcRefreshSession).values(
+                    idp_refresh_token="bogus.invalid.token"
+                )
             )
             await s.commit()
+
     asyncio.new_event_loop().run_until_complete(_corrupt())
     userinfo_cache.clear_all()
 
@@ -583,7 +601,8 @@ def test_revocation_via_real_idp_grant_no_mock(
 @pytest.mark.slow
 @pytest.mark.skipif(not authlib_available(), reason="authlib not installed")
 def test_logout_redirects_to_end_session_endpoint(
-    oidc_issuer_url, oidc_client_id,
+    oidc_issuer_url,
+    oidc_client_id,
 ) -> None:
     """POST /api/auth/oidc/logout redirects to the IdP's end_session_endpoint.
 
@@ -608,9 +627,8 @@ def test_logout_redirects_to_end_session_endpoint(
     # Confirm session was created at login.
     async def _count_sessions():
         async with SessionLocal() as s:
-            return len(
-                (await s.execute(select(OidcRefreshSession))).scalars().all()
-            )
+            return len((await s.execute(select(OidcRefreshSession))).scalars().all())
+
     assert asyncio.new_event_loop().run_until_complete(_count_sessions()) == 1
 
     with TestClient(app, follow_redirects=False) as client:

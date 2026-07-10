@@ -114,7 +114,8 @@ def test_openai_compatible_env_overrides_explicit_base_url(monkeypatch):
 
     monkeypatch.setenv("LITELLM_GATEWAY_URL", "http://litellm:4000")
     p = OpenAICompatibleProvider(
-        model="gpt-4o-mini", base_url="https://openrouter.ai/api",
+        model="gpt-4o-mini",
+        base_url="https://openrouter.ai/api",
     )
     assert p._base_url == "http://litellm:4000"
 
@@ -145,7 +146,8 @@ def test_ollama_env_overrides_explicit_base_url(monkeypatch):
 
     monkeypatch.setenv("LITELLM_GATEWAY_URL", "http://litellm:4000")
     p = OllamaProvider(
-        model="llama3.1:8b", base_url="http://my-ollama:8080",
+        model="llama3.1:8b",
+        base_url="http://my-ollama:8080",
     )
     assert p._base_url == "http://litellm:4000"
 
@@ -155,11 +157,14 @@ def test_ollama_env_overrides_explicit_base_url(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("gateway", [
-    "http://litellm:4000",
-    "http://litellm:4000/",
-    "http://litellm:4000///",
-])
+@pytest.mark.parametrize(
+    "gateway",
+    [
+        "http://litellm:4000",
+        "http://litellm:4000/",
+        "http://litellm:4000///",
+    ],
+)
 def test_provider_strips_trailing_slashes_on_gateway(monkeypatch, gateway):
     """Operators may copy/paste URLs with stray trailing slashes;
     the existing trailing-slash strip still applies post-redirect."""

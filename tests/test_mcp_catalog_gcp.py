@@ -200,9 +200,7 @@ def test_gcp_skipped_without_has_gcp_marker(monkeypatch):
 def test_gcp_skipped_when_marker_absent_from_dict(monkeypatch):
     """Marker key not in the dict at all — same result as False."""
     _stub_creds(monkeypatch, gcp=True)
-    servers = get_required_mcp_servers(
-        "coder", None, {}, infra_markers={}
-    )
+    servers = get_required_mcp_servers("coder", None, {}, infra_markers={})
     assert "gcp" not in servers
 
 
@@ -257,4 +255,12 @@ def test_gcp_is_catalog_server():
 
 def test_catalog_ids_includes_all_entries():
     ids = set(mcp_catalog.catalog_ids())
-    assert {"github", "kubernetes", "aws", "azure", "gitlab", "azure_devops", "gcp"} <= ids
+    assert {
+        "github",
+        "kubernetes",
+        "aws",
+        "azure",
+        "gitlab",
+        "azure_devops",
+        "gcp",
+    } <= ids

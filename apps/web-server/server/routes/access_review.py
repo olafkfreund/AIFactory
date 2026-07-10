@@ -79,7 +79,9 @@ async def export_access_review(
 
 
 async def _stream_review(
-    db: AsyncSession, *, org_id: str,
+    db: AsyncSession,
+    *,
+    org_id: str,
 ) -> AsyncIterator[bytes]:
     """Yield NDJSON lines, one per OrgMember+User."""
     stmt = (
@@ -98,8 +100,7 @@ async def _stream_review(
             "active": user.is_active,
             "joined_at": member.joined_at.isoformat() if member.joined_at else None,
             "last_login_at": (
-                user.last_login_at.isoformat()
-                if user.last_login_at else None
+                user.last_login_at.isoformat() if user.last_login_at else None
             ),
         }
         yield (json.dumps(line) + "\n").encode("utf-8")

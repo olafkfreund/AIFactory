@@ -19,6 +19,7 @@ import pytest
 def fernet_key() -> str:
     """A random 32-byte URL-safe-base64 Fernet key, fresh per test."""
     import base64
+
     return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
 
 

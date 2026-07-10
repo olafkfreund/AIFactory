@@ -191,7 +191,9 @@ def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         ArtifactStore().put_bytes(
             _usage_key(spec_id), src.read_bytes(), "application/json"
         )
-        _log.info("[workspace_fetch] pushed %s to object store (packed path)", _USAGE_FILE)
+        _log.info(
+            "[workspace_fetch] pushed %s to object store (packed path)", _USAGE_FILE
+        )
         return True
     except Exception as exc:  # noqa: BLE001 - must never break a green build
         _log.warning("[workspace_fetch] usage push failed: %s", exc)
@@ -220,7 +222,9 @@ def maybe_fetch_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
-        _log.info("[workspace_fetch] fetched %s from object store (packed path)", _USAGE_FILE)
+        _log.info(
+            "[workspace_fetch] fetched %s from object store (packed path)", _USAGE_FILE
+        )
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched usage: %s", exc)

@@ -102,12 +102,17 @@ def test_envelope_org_round_trip():
 def test_envelope_unknown_version_returns_none(caplog):
     """v mismatch is non-fatal: log + skip, don't raise. Ensures rolling
     upgrades survive when an older replica sees a future envelope."""
-    raw = json.dumps({
-        "v": 999, "source": "x",
-        "scope": {"kind": "broadcast"},
-        "type": "t", "payload": {},
-    })
+    raw = json.dumps(
+        {
+            "v": 999,
+            "source": "x",
+            "scope": {"kind": "broadcast"},
+            "type": "t",
+            "payload": {},
+        }
+    )
     import logging
+
     logging.getLogger("server.websockets.event_bus").propagate = True
     with caplog.at_level("WARNING"):
         assert _parse_envelope(raw) is None
@@ -119,11 +124,15 @@ def test_envelope_malformed_json_returns_none():
 
 
 def test_envelope_unknown_scope_kind_returns_none():
-    raw = json.dumps({
-        "v": 1, "source": "x",
-        "scope": {"kind": "bogus"},
-        "type": "t", "payload": {},
-    })
+    raw = json.dumps(
+        {
+            "v": 1,
+            "source": "x",
+            "scope": {"kind": "bogus"},
+            "type": "t",
+            "payload": {},
+        }
+    )
     assert _parse_envelope(raw) is None
 
 
@@ -205,6 +214,7 @@ async def test_publish_event_delivers_locally_when_redis_unset(monkeypatch):
     """REDIS_URL unset → publish_event = deliver_local. No Redis calls."""
     _fresh_registry()
     from server.config import get_settings
+
     monkeypatch.setattr(get_settings(), "REDIS_URL", "")
     monkeypatch.setattr(event_bus, "_redis_publisher", None)
 
@@ -221,6 +231,7 @@ async def test_publish_event_delivers_locally_AND_publishes_to_redis(monkeypatch
     publishes the envelope to the configured channel."""
     _fresh_registry()
     from server.config import get_settings
+
     monkeypatch.setattr(get_settings(), "REDIS_URL", "redis://test/0")
     monkeypatch.setattr(get_settings(), "REDIS_CHANNEL", "test-channel")
 
@@ -251,6 +262,7 @@ async def test_publish_event_swallows_redis_publish_failure(monkeypatch):
     break an HTTP request that fired an event."""
     _fresh_registry()
     from server.config import get_settings
+
     monkeypatch.setattr(get_settings(), "REDIS_URL", "redis://test/0")
 
     fake_pub = AsyncMock()
@@ -293,13 +305,15 @@ async def test_dispatch_envelope_delivers_when_source_differs():
     _register(ws, user_id="u-1")
 
     # Craft an envelope as if from a different replica.
-    foreign = json.dumps({
-        "v": 1,
-        "source": "another-replica-uuid",
-        "scope": {"kind": "user", "user_id": "u-1"},
-        "type": "task:log",
-        "payload": {"foo": "bar"},
-    })
+    foreign = json.dumps(
+        {
+            "v": 1,
+            "source": "another-replica-uuid",
+            "scope": {"kind": "user", "user_id": "u-1"},
+            "type": "task:log",
+            "payload": {"foo": "bar"},
+        }
+    )
     await event_bus._dispatch_envelope(foreign)
 
     assert len(ws.sent) == 1

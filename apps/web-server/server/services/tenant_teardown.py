@@ -131,7 +131,9 @@ async def _tear_down_org_safe(db, org) -> None:
         # the failure in the Kubernetes pod log too.
         logger.warning(
             "tear-down failed for org %s; will retry next cron tick: %s",
-            org.id, exc, exc_info=True,
+            org.id,
+            exc,
+            exc_info=True,
         )
 
 
@@ -143,7 +145,9 @@ async def _run() -> int:
         return 0
 
     if os.environ.get("TENANT_ISOLATION_ENABLED", "").lower() not in (
-        "true", "1", "yes",
+        "true",
+        "1",
+        "yes",
     ):
         logger.info(
             "TENANT_ISOLATION_ENABLED is not true; nothing to do",
@@ -162,7 +166,9 @@ async def _run() -> int:
             logger.info(
                 "tenant tear-down sweep: %d candidates "
                 "(grace=%d days, dry_run=%d hours)",
-                len(candidates), _GRACE_DAYS, _DRY_RUN_HOURS,
+                len(candidates),
+                _GRACE_DAYS,
+                _DRY_RUN_HOURS,
             )
             for org in candidates:
                 if await _is_in_dry_run_window(org, now):
@@ -171,7 +177,10 @@ async def _run() -> int:
                         "DRY-RUN: would tear down org %s "
                         "(deleted_at=%s, grace=%d days, dry_run=%d hours); "
                         "actual delete after dry-run window expires",
-                        org.id, org.deleted_at, _GRACE_DAYS, _DRY_RUN_HOURS,
+                        org.id,
+                        org.deleted_at,
+                        _GRACE_DAYS,
+                        _DRY_RUN_HOURS,
                     )
                     continue
                 await _tear_down_org_safe(db, org)

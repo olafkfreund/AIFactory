@@ -66,17 +66,24 @@ def fresh_db():
     yield engine, SessionLocal
 
 
-async def _seed_org(SessionLocal, *, slug: str = "acme",
-                    deleted_at=None) -> Organization:
+async def _seed_org(
+    SessionLocal, *, slug: str = "acme", deleted_at=None
+) -> Organization:
     """Create a User + Organization for a reconcile test."""
     async with SessionLocal() as db:
         user = User(
-            id=f"u-{slug}", email=f"{slug}@example.com",
-            password_hash="x", role="user", is_active=True,
+            id=f"u-{slug}",
+            email=f"{slug}@example.com",
+            password_hash="x",
+            role="user",
+            is_active=True,
         )
         org = Organization(
-            id=f"org-{slug}", name=slug.title(), slug=slug,
-            owner_id=user.id, deleted_at=deleted_at,
+            id=f"org-{slug}",
+            name=slug.title(),
+            slug=slug,
+            owner_id=user.id,
+            deleted_at=deleted_at,
         )
         db.add(user)
         db.add(org)
@@ -100,6 +107,7 @@ def test_derive_namespace_name_respects_env_override(monkeypatch):
     monkeypatch.setenv("TENANT_NAMESPACE_PREFIX", "myco")
     # The module reads at module load, so we have to reload to pick up.
     import importlib
+
     importlib.reload(svc)
     try:
         assert svc.derive_namespace_name("acme") == "myco-acme"
@@ -123,7 +131,9 @@ def test_no_op_when_isolation_disabled(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=False,
+                db,
+                org_db,
+                isolation_enabled=False,
             )
 
     decision = _run(_go())
@@ -141,7 +151,9 @@ def test_create_decision_on_first_reconcile_under_isolation(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
 
     decision = _run(_go())
@@ -172,7 +184,9 @@ def test_no_op_steady_state_after_create(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
 
     decision = _run(_go())
@@ -193,7 +207,9 @@ def test_soft_delete_acked_within_grace_period(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
 
     decision = _run(_go())
@@ -213,7 +229,9 @@ def test_tear_down_decision_past_grace_period(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
 
     decision = _run(_go())
@@ -230,7 +248,8 @@ def test_state_drift_triggers_update(fresh_db):
         async with SessionLocal() as db:
             # Manually create a drifted state row.
             state = TenantState(
-                org_id=org.id, isolation_mode="shared",
+                org_id=org.id,
+                isolation_mode="shared",
                 namespace_name="aifactory-tenant-acme",  # set, but mode wrong
             )
             db.add(state)
@@ -239,7 +258,9 @@ def test_state_drift_triggers_update(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
 
     decision = _run(_go())
@@ -264,7 +285,9 @@ def test_failure_path_records_error_returns_no_op(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             decision = await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
             )
             await db.commit()
             return decision
@@ -297,7 +320,8 @@ def test_state_drift_after_isolation_disabled(fresh_db):
         # Pretend we previously reconciled under isolation.
         async with SessionLocal() as db:
             state = TenantState(
-                org_id=org.id, isolation_mode="isolated",
+                org_id=org.id,
+                isolation_mode="isolated",
                 namespace_name="aifactory-tenant-acme",
             )
             db.add(state)
@@ -307,7 +331,9 @@ def test_state_drift_after_isolation_disabled(fresh_db):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=False,
+                db,
+                org_db,
+                isolation_enabled=False,
             )
 
     decision = _run(_go())

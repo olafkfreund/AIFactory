@@ -224,14 +224,18 @@ class TestIntegrationCreateAndReap:
         worktree = tmp_path / "wt"
         worktree.mkdir()
 
-        fifo = await real_registry.create_for_task(
-            spec_id=spec_id,
-            worktree_path=worktree,
-            cmd_or_session="bash -c 'sleep 30'",
-        ) if False else await real_registry.create_for_task(
-            spec_id=spec_id,
-            worktree_path=worktree,
-            agent_cmd="bash -c 'sleep 30'",
+        fifo = (
+            await real_registry.create_for_task(
+                spec_id=spec_id,
+                worktree_path=worktree,
+                cmd_or_session="bash -c 'sleep 30'",
+            )
+            if False
+            else await real_registry.create_for_task(
+                spec_id=spec_id,
+                worktree_path=worktree,
+                agent_cmd="bash -c 'sleep 30'",
+            )
         )
 
         # FIFO exists + is a FIFO

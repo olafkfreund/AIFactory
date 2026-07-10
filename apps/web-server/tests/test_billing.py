@@ -27,10 +27,23 @@ def test_copilot_and_opencode_are_always_subscription():
 
 def test_ollama_local_vs_cloud():
     assert classify_billing_mode("ollama", {}) == "local"  # default localhost
-    assert classify_billing_mode("ollama", {"OLLAMA_HOST": "http://localhost:11434"}) == "local"
-    assert classify_billing_mode("ollama", {"OLLAMA_HOST": "127.0.0.1:11434"}) == "local"
-    assert classify_billing_mode("ollama", {"OLLAMA_HOST": "https://ollama.com"}) == "cloud"
-    assert classify_billing_mode("local-ollama", {"OLLAMA_BASE_URL": "http://gpu-box.lan:11434"}) == "cloud"
+    assert (
+        classify_billing_mode("ollama", {"OLLAMA_HOST": "http://localhost:11434"})
+        == "local"
+    )
+    assert (
+        classify_billing_mode("ollama", {"OLLAMA_HOST": "127.0.0.1:11434"}) == "local"
+    )
+    assert (
+        classify_billing_mode("ollama", {"OLLAMA_HOST": "https://ollama.com"})
+        == "cloud"
+    )
+    assert (
+        classify_billing_mode(
+            "local-ollama", {"OLLAMA_BASE_URL": "http://gpu-box.lan:11434"}
+        )
+        == "cloud"
+    )
 
 
 def test_inherently_metered_providers():

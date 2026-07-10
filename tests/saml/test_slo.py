@@ -54,8 +54,7 @@ def fresh_db():
 
     nonce = _test_secrets.token_hex(8)
     engine = create_async_engine(
-        f"sqlite+aiosqlite:///file:saml-slo-{nonce}"
-        "?mode=memory&cache=shared&uri=true",
+        f"sqlite+aiosqlite:///file:saml-slo-{nonce}?mode=memory&cache=shared&uri=true",
     )
 
     async def _init():
@@ -209,7 +208,9 @@ class _FakeSloAuth:
         # Embed the RelayState in the returned URL so our test can inspect it.
         return f"{_FakeSloAuth.logout_url}{return_to or ''}"
 
-    def process_slo(self, keep_local_session=False, request_id=None, delete_session_cb=None):
+    def process_slo(
+        self, keep_local_session=False, request_id=None, delete_session_cb=None
+    ):
         # Determine whether we're handling SAMLResponse or SAMLRequest based
         # on what's in get_data.
         get_data = self._request_data.get("get_data", {})
@@ -505,7 +506,9 @@ def test_sls_idp_init_replay_rejected(fresh_db, saml_slo_enabled):
             data={"SAMLRequest": "fakelogoutrequest"},
             follow_redirects=False,
         )
-        assert first.status_code in (200, 302), f"First submission failed: {first.status_code}"
+        assert first.status_code in (200, 302), (
+            f"First submission failed: {first.status_code}"
+        )
 
         second = client.post(
             "/api/auth/saml/sls",

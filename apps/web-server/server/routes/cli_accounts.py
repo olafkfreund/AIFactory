@@ -76,6 +76,7 @@ def _canonical_cli(cli: str) -> str:
     """Normalise a CLI id, mapping the legacy ``gemini`` alias to ``antigravity``."""
     return _CLI_ALIASES.get(cli, cli)
 
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -158,7 +159,9 @@ def _detect_cli_version(cli: str) -> str | None:
             try:
                 result = subprocess.run(
                     ["bash", "-l", "-c", f"which {shlex.quote(binary)}"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     bin_path = result.stdout.strip()
@@ -172,8 +175,13 @@ def _detect_cli_version(cli: str) -> str | None:
         # ~/.gemini/antigravity-cli/bin/ by default; that directory is rarely
         # on PATH but the binary IS installed.
         candidates = []
-        if cli == "antigravity" or binary in ("gemini", "antigravity") or (
-            binary.startswith("/") and (binary.endswith("gemini") or binary.endswith("antigravity"))
+        if (
+            cli == "antigravity"
+            or binary in ("gemini", "antigravity")
+            or (
+                binary.startswith("/")
+                and (binary.endswith("gemini") or binary.endswith("antigravity"))
+            )
         ):
             candidates += [
                 ANTIGRAVITY_INSTALL_DIR / "bin" / "antigravity",
@@ -371,9 +379,7 @@ def _detect_gemini_credentials() -> tuple[bool, str | None, str | None]:
     if settings:
         # Nested path: security.auth.selectedType
         selected_type = (
-            settings.get("security", {})
-            .get("auth", {})
-            .get("selectedType", "")
+            settings.get("security", {}).get("auth", {}).get("selectedType", "")
         )
         if selected_type in ("oauth-personal", "LOGIN_WITH_GOOGLE"):
             return True, "google_login", None
@@ -455,13 +461,18 @@ def _poll_codex_token(mtime_before: float) -> None:
                     if auth_data:
                         tokens = auth_data.get("tokens", {})
                         if tokens.get("access_token") or tokens.get("refresh_token"):
-                            _save_credentials("codex", {
-                                "source": "cli_login",
-                                "access_token": tokens.get("access_token"),
-                                "refresh_token": tokens.get("refresh_token"),
-                                "expires_at": auth_data.get("expires_at"),
-                                "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                            })
+                            _save_credentials(
+                                "codex",
+                                {
+                                    "source": "cli_login",
+                                    "access_token": tokens.get("access_token"),
+                                    "refresh_token": tokens.get("refresh_token"),
+                                    "expires_at": auth_data.get("expires_at"),
+                                    "imported_at": time.strftime(
+                                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                                    ),
+                                },
+                            )
                             logger.info("[Codex] Credentials detected and saved")
                             _broadcast_cli_auth_event("codex", True)
                             return
@@ -494,7 +505,9 @@ def _poll_gemini_token(mtime_before: float) -> None:
                     oauth_changed = True
 
             if settings_changed or oauth_changed:
-                settings = _read_json_file(settings_path) if settings_path.exists() else {}
+                settings = (
+                    _read_json_file(settings_path) if settings_path.exists() else {}
+                )
                 selected_type = ""
                 if settings:
                     selected_type = (
@@ -503,23 +516,38 @@ def _poll_gemini_token(mtime_before: float) -> None:
                         .get("selectedType", "")
                     )
 
-                if selected_type in ("oauth-personal", "LOGIN_WITH_GOOGLE") or oauth_changed:
-                    _save_credentials("antigravity", {
-                        "source": "cli_login",
-                        "selectedType": selected_type or "oauth-personal",
-                        "authMethod": "google_login",
-                        "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    })
+                if (
+                    selected_type in ("oauth-personal", "LOGIN_WITH_GOOGLE")
+                    or oauth_changed
+                ):
+                    _save_credentials(
+                        "antigravity",
+                        {
+                            "source": "cli_login",
+                            "selectedType": selected_type or "oauth-personal",
+                            "authMethod": "google_login",
+                            "imported_at": time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            ),
+                        },
+                    )
                     logger.info("[Gemini] Credentials detected and saved")
                     _broadcast_cli_auth_event("antigravity", True)
                     return
-                elif selected_type == "API_KEY" or (settings and settings.get("apiKey")):
-                    _save_credentials("antigravity", {
-                        "source": "cli_login",
-                        "selectedType": selected_type,
-                        "authMethod": "api_key",
-                        "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    })
+                elif selected_type == "API_KEY" or (
+                    settings and settings.get("apiKey")
+                ):
+                    _save_credentials(
+                        "antigravity",
+                        {
+                            "source": "cli_login",
+                            "selectedType": selected_type,
+                            "authMethod": "api_key",
+                            "imported_at": time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            ),
+                        },
+                    )
                     logger.info("[Gemini] API key credentials detected and saved")
                     _broadcast_cli_auth_event("antigravity", True)
                     return
@@ -534,6 +562,7 @@ def _broadcast_cli_auth_event(cli: str, success: bool) -> None:
     """Broadcast a cli-account-auth event via WebSocket."""
     try:
         from ..websockets.events import broadcast_event
+
         loop = asyncio.new_event_loop()
         loop.run_until_complete(
             broadcast_event("cli-account-auth", {"cli": cli, "success": success})
@@ -588,15 +617,26 @@ async def import_cli_credentials(cli: str):
         if auth_data:
             tokens = auth_data.get("tokens", {})
             if tokens.get("access_token") or tokens.get("refresh_token"):
-                _save_credentials(cli, {
-                    "source": "import",
-                    "access_token": tokens.get("access_token"),
-                    "refresh_token": tokens.get("refresh_token"),
-                    "expires_at": auth_data.get("expires_at"),
-                    "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                })
-                return {"success": True, "message": "Codex credentials imported successfully"}
-        return {"success": False, "error": "No Codex credentials found at ~/.codex/auth.json"}
+                _save_credentials(
+                    cli,
+                    {
+                        "source": "import",
+                        "access_token": tokens.get("access_token"),
+                        "refresh_token": tokens.get("refresh_token"),
+                        "expires_at": auth_data.get("expires_at"),
+                        "imported_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                        ),
+                    },
+                )
+                return {
+                    "success": True,
+                    "message": "Codex credentials imported successfully",
+                }
+        return {
+            "success": False,
+            "error": "No Codex credentials found at ~/.codex/auth.json",
+        }
 
     else:  # antigravity
         # Check settings.json for auth type
@@ -604,42 +644,58 @@ async def import_cli_credentials(cli: str):
         selected_type = ""
         if settings:
             selected_type = (
-                settings.get("security", {})
-                .get("auth", {})
-                .get("selectedType", "")
+                settings.get("security", {}).get("auth", {}).get("selectedType", "")
             )
 
         # Check oauth_creds.json
         oauth_creds = _read_json_file(cfg["oauth_credentials_file"])
 
         if selected_type in ("oauth-personal", "LOGIN_WITH_GOOGLE") or oauth_creds:
-            _save_credentials(cli, {
-                "source": "import",
-                "selectedType": selected_type or "oauth-personal",
-                "authMethod": "google_login",
-                "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            })
-            return {"success": True, "message": "Antigravity credentials imported successfully"}
+            _save_credentials(
+                cli,
+                {
+                    "source": "import",
+                    "selectedType": selected_type or "oauth-personal",
+                    "authMethod": "google_login",
+                    "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+            )
+            return {
+                "success": True,
+                "message": "Antigravity credentials imported successfully",
+            }
         if settings and (selected_type == "API_KEY" or settings.get("apiKey")):
-            _save_credentials(cli, {
-                "source": "import",
-                "selectedType": selected_type,
-                "authMethod": "api_key",
-                "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            })
-            return {"success": True, "message": "Antigravity credentials imported successfully"}
-        return {"success": False, "error": "No Antigravity credentials found at ~/.gemini/settings.json"}
+            _save_credentials(
+                cli,
+                {
+                    "source": "import",
+                    "selectedType": selected_type,
+                    "authMethod": "api_key",
+                    "imported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                },
+            )
+            return {
+                "success": True,
+                "message": "Antigravity credentials imported successfully",
+            }
+        return {
+            "success": False,
+            "error": "No Antigravity credentials found at ~/.gemini/settings.json",
+        }
 
 
 @router.post("/cli-accounts/{cli}/api-key")
 async def set_cli_api_key(cli: str, body: APIKeyRequest):
     """Save a manual API key for a CLI."""
     cli = _validate_cli(cli)
-    _save_credentials(cli, {
-        "source": "api_key",
-        "api_key": body.api_key,
-        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    })
+    _save_credentials(
+        cli,
+        {
+            "source": "api_key",
+            "api_key": body.api_key,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    )
     return {"success": True, "message": f"API key saved for {cli}"}
 
 
@@ -659,7 +715,9 @@ async def start_cli_login(cli: str):
     mtime_before = credentials_path.stat().st_mtime if credentials_path.exists() else 0
 
     if cli == "codex":
-        threading.Thread(target=_poll_codex_token, args=(mtime_before,), daemon=True).start()
+        threading.Thread(
+            target=_poll_codex_token, args=(mtime_before,), daemon=True
+        ).start()
         return {
             "success": True,
             "data": {
@@ -668,7 +726,9 @@ async def start_cli_login(cli: str):
             },
         }
     else:  # antigravity
-        threading.Thread(target=_poll_gemini_token, args=(mtime_before,), daemon=True).start()
+        threading.Thread(
+            target=_poll_gemini_token, args=(mtime_before,), daemon=True
+        ).start()
         binary = get_antigravity_binary()
         return {
             "success": True,
@@ -829,7 +889,9 @@ def install_or_update_cli(cli: str):
         # Two commands — use hardcoded shell string (no user input)
         node_check = subprocess.run(
             ["bash", "-l", "-c", "node --version && npm --version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if node_check.returncode != 0:
             return {

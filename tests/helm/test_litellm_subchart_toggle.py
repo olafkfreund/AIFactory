@@ -44,7 +44,8 @@ def _render(chart_dir, set_values: list[str] | None = None) -> list[dict]:
 
 
 def _render_expect_error(
-    chart_dir, set_values: list[str] | None = None,
+    chart_dir,
+    set_values: list[str] | None = None,
 ) -> str:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
@@ -65,8 +66,7 @@ def _find_deployment(docs: list[dict], name_contains: str = "aifactory") -> dict
         if name_contains in name and "litellm" not in name:
             return d
     raise AssertionError(
-        f"no Deployment matching '{name_contains}' (and not litellm) "
-        f"in rendered chart",
+        f"no Deployment matching '{name_contains}' (and not litellm) in rendered chart",
     )
 
 
@@ -96,7 +96,8 @@ def _envs(deployment: dict) -> dict[str, dict]:
     return {
         e["name"]: e
         for e in deployment["spec"]["template"]["spec"]["containers"][0].get(
-            "env", [],
+            "env",
+            [],
         )
     }
 
@@ -122,7 +123,9 @@ class TestLiteLLMSubchartOff:
             )
 
     def test_no_litellm_service_when_disabled(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = _render(chart_dir, ["postgres.externalSecretName=test-pg"])
         assert _find_litellm_service(docs) is None, (
@@ -130,7 +133,9 @@ class TestLiteLLMSubchartOff:
         )
 
     def test_no_grafana_configmap_when_disabled(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         # Even if monitoring.grafanaDashboards.enabled=true on its own,
         # the ConfigMap is gated by litellm.enabled (no point shipping
@@ -161,7 +166,9 @@ class TestLiteLLMSubchartOnInCluster:
         )
 
     def test_litellm_service_rendered(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         svc = _find_litellm_service(self._docs_on(chart_dir))
         assert svc is not None, (
@@ -174,7 +181,9 @@ class TestLiteLLMSubchartOnInCluster:
         )
 
     def test_web_pod_gateway_url_points_at_service(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = _envs(dep)
@@ -185,7 +194,9 @@ class TestLiteLLMSubchartOnInCluster:
         )
 
     def test_master_key_mounted_from_secret(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = _envs(dep)
@@ -195,7 +206,9 @@ class TestLiteLLMSubchartOnInCluster:
         assert ref["key"] == "LITELLM_MASTER_KEY"
 
     def test_audit_envs_default_to_compliance_safe(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = _envs(dep)
@@ -209,7 +222,9 @@ class TestLiteLLMSubchartValidation:
     """Schema + template validators fire at helm template time."""
 
     def test_missing_master_key_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -222,7 +237,9 @@ class TestLiteLLMSubchartValidation:
         assert "masterKeySecretName" in stderr
 
     def test_invalid_failure_mode_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -236,7 +253,9 @@ class TestLiteLLMSubchartValidation:
         assert "failureMode" in stderr
 
     def test_full_text_capture_without_enabled_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -256,7 +275,9 @@ class TestLiteLLMExternalGatewayOverride:
     has their own LiteLLM deployment outside this chart."""
 
     def test_external_url_used_verbatim(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = _render(
             chart_dir,
@@ -269,9 +290,7 @@ class TestLiteLLMExternalGatewayOverride:
         )
         dep = _find_deployment(docs)
         env = _envs(dep)
-        assert env["LITELLM_GATEWAY_URL"]["value"] == (
-            "http://external.svc:4000"
-        )
+        assert env["LITELLM_GATEWAY_URL"]["value"] == ("http://external.svc:4000")
 
 
 @pytest.mark.helm
@@ -279,7 +298,9 @@ class TestLiteLLMGrafanaDashboard:
     """Grafana dashboard ConfigMap — gated by BOTH toggles."""
 
     def test_configmap_renders_with_dashboard_json(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = _render(
             chart_dir,

@@ -27,14 +27,16 @@ FIX_MD = "# QA Fix Request\n\nLogin returns 500. Fix the handler."
 
 
 def test_valid_triage_with_failing_tests():
-    v = validate_triage_report({
-        "source": "triage",
-        "failing_tests": [
-            {"test_id": "t1", "reason": "got 500 want 200", "file": "api.py"},
-        ],
-        "manifest_hash": "abc123",
-        "correlation_key": "412",
-    })
+    v = validate_triage_report(
+        {
+            "source": "triage",
+            "failing_tests": [
+                {"test_id": "t1", "reason": "got 500 want 200", "file": "api.py"},
+            ],
+            "manifest_hash": "abc123",
+            "correlation_key": "412",
+        }
+    )
     assert v.ok is True
     assert v.errors == []
     assert v.failing_test_count == 1
@@ -60,10 +62,12 @@ def test_reject_missing_source():
 
 
 def test_reject_failing_test_missing_fields():
-    v = validate_triage_report({
-        "source": "triage",
-        "failing_tests": [{"test_id": "", "reason": "r"}, {"file": "x"}],
-    })
+    v = validate_triage_report(
+        {
+            "source": "triage",
+            "failing_tests": [{"test_id": "", "reason": "r"}, {"file": "x"}],
+        }
+    )
     assert v.ok is False
     assert any("test_id" in e for e in v.errors)
     assert any("reason" in e for e in v.errors)
@@ -76,11 +80,13 @@ def test_reject_nothing_to_act_on():
 
 
 def test_manifest_hash_must_be_string():
-    v = validate_triage_report({
-        "source": "triage",
-        "failing_tests": [{"test_id": "t", "reason": "r"}],
-        "manifest_hash": 12345,
-    })
+    v = validate_triage_report(
+        {
+            "source": "triage",
+            "failing_tests": [{"test_id": "t", "reason": "r"}],
+            "manifest_hash": 12345,
+        }
+    )
     assert v.ok is False
 
 
@@ -88,15 +94,21 @@ def test_manifest_hash_must_be_string():
 
 
 def test_count_assertions_across_styles():
-    py = "def test_x():\n    assert a == 1\n    self.assertEqual(a, b)\n    assert (c)\n"
+    py = (
+        "def test_x():\n    assert a == 1\n    self.assertEqual(a, b)\n    assert (c)\n"
+    )
     # bare `assert a == 1`, self.assertEqual(...), assert (c) → 3
     assert count_assertions(py) == 3
     ts = "it('x', () => { expect(a).toBe(1); assert(b); assert.equal(c, d); })"
-    assert count_assertions(ts) == 3  # expect(, assert(, assert.equal( — no double count
+    assert (
+        count_assertions(ts) == 3
+    )  # expect(, assert(, assert.equal( — no double count
 
 
 def test_snapshot_counts_test_files(tmp_path: Path):
-    (tmp_path / "test_a.py").write_text("def test_a():\n    assert 1 == 1\n    assert 2\n")
+    (tmp_path / "test_a.py").write_text(
+        "def test_a():\n    assert 1 == 1\n    assert 2\n"
+    )
     (tmp_path / "b_test.py").write_text("def test_b():\n    assert True\n")
     (tmp_path / "helpers.py").write_text("assert 9  # not a test file\n")
     (tmp_path / "node_modules").mkdir()
@@ -127,13 +139,16 @@ async def _fake_fixer_factory(calls):
     async def fake_fixer(spec_dir):
         calls.append(spec_dir)
         return {"status": "qa_fixing"}
+
     return fake_fixer
 
 
 async def test_malformed_triage_blocks_the_fixer(tmp_path: Path):
     calls: list = []
     res = await apply_correction(
-        tmp_path, FIX_MD, confirm=True,
+        tmp_path,
+        FIX_MD,
+        confirm=True,
         fixer_fn=await _fake_fixer_factory(calls),
         triage={"source": "triage", "failing_tests": []},  # nothing to act on
         correlation_key="412",
@@ -153,7 +168,9 @@ async def test_valid_triage_runs_fixer_and_records_manifest(tmp_path: Path):
     spec.mkdir(parents=True)
     calls: list = []
     res = await apply_correction(
-        spec, FIX_MD, confirm=True,
+        spec,
+        FIX_MD,
+        confirm=True,
         fixer_fn=await _fake_fixer_factory(calls),
         triage={
             "source": "triage",
@@ -177,7 +194,10 @@ async def test_legacy_markdown_only_still_runs(tmp_path: Path):
     """Non-breaking: no triage block → today's behaviour, fixer runs."""
     calls: list = []
     res = await apply_correction(
-        tmp_path, FIX_MD, confirm=True, fixer_fn=await _fake_fixer_factory(calls),
+        tmp_path,
+        FIX_MD,
+        confirm=True,
+        fixer_fn=await _fake_fixer_factory(calls),
     )
     assert res["success"] is True and res["started"] is True
     assert calls == [tmp_path]
@@ -194,9 +214,14 @@ def test_check_fix_cycle_flags_weakened_assertions(tmp_path: Path):
 
     # Record a handback baseline (snapshots the project's test assertions now).
     from qa.correction import record_handback
+
     record_handback(
-        spec, source="triage", correlation_key="412", manifest_hash="h1",
-        failing_test_count=1, triage_present=True,
+        spec,
+        source="triage",
+        correlation_key="412",
+        manifest_hash="h1",
+        failing_test_count=1,
+        triage_present=True,
     )
 
     # The fixer weakens the test to make it pass.
@@ -217,9 +242,14 @@ def test_check_fix_cycle_ok_when_additive(tmp_path: Path):
     test_file.write_text("def test_login():\n    assert a\n")
 
     from qa.correction import record_handback
+
     record_handback(
-        spec, source="triage", correlation_key="412", manifest_hash="h1",
-        failing_test_count=1, triage_present=True,
+        spec,
+        source="triage",
+        correlation_key="412",
+        manifest_hash="h1",
+        failing_test_count=1,
+        triage_present=True,
     )
     test_file.write_text("def test_login():\n    assert a\n    assert b  # added\n")
     assert check_fix_cycle_assertions(spec)["ok"] is True

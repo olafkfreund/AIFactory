@@ -70,7 +70,9 @@ async def _single_call(project_dir: Path, attempt: int) -> tuple[int, int]:
         async with client:
             # A trivial prompt — we only care about the cache fields in the
             # response, not the model's answer.
-            await client.query(f"Respond with the single word 'pong' (attempt {attempt}).")
+            await client.query(
+                f"Respond with the single word 'pong' (attempt {attempt})."
+            )
             async for msg in client.receive_response():
                 msg_type = type(msg).__name__
                 if msg_type == "ResultMessage":

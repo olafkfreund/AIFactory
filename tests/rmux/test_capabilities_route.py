@@ -47,9 +47,7 @@ class TestCapabilities:
         r = client.get("/api/capabilities")
         assert r.json()["rmux"] is False
 
-    def test_rmux_true_when_flag_set(
-        self, client: TestClient, monkeypatch
-    ) -> None:
+    def test_rmux_true_when_flag_set(self, client: TestClient, monkeypatch) -> None:
         monkeypatch.setenv("AIFACTORY_RMUX_ENABLED", "true")
         r = client.get("/api/capabilities")
         assert r.json()["rmux"] is True

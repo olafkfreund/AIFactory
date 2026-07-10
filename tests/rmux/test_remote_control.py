@@ -97,14 +97,11 @@ class TestRemoteControlPerTaskToggle:
             captured["env"] = kwargs.get("env", {})
             return fake_proc
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=AsyncMock()
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=AsyncMock()),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -145,14 +142,11 @@ class TestRemoteControlPerTaskToggle:
             captured["env"] = dict(kwargs.get("env", {}))
             return fake_proc
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=AsyncMock()
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=AsyncMock()),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -192,14 +186,11 @@ class TestRemoteControlDefaultOff:
             captured["env"] = dict(kwargs.get("env", {}))
             return fake_proc
 
-        with patch(
-            "asyncio.create_subprocess_exec", side_effect=_fake_exec
-        ), patch(
-            "pty.openpty", return_value=(7, 8)
-        ), patch(
-            "os.close"
-        ), patch(
-            "server.rmux.integration.create_if_enabled", new=AsyncMock()
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+            patch("pty.openpty", return_value=(7, 8)),
+            patch("os.close"),
+            patch("server.rmux.integration.create_if_enabled", new=AsyncMock()),
         ):
             await svc.start_task_execution(
                 task_id=f"proj1:{spec_id}",
@@ -213,8 +204,10 @@ class TestRemoteControlDefaultOff:
             f"got {captured['args']!r}"
         )
         # OAuth token should be present (or at least not deliberately scrubbed)
-        assert captured["env"].get("CLAUDE_CODE_OAUTH_TOKEN") is not None or \
-               "CLAUDE_CODE_OAUTH_TOKEN" in captured["env"], (
+        assert (
+            captured["env"].get("CLAUDE_CODE_OAUTH_TOKEN") is not None
+            or "CLAUDE_CODE_OAUTH_TOKEN" in captured["env"]
+        ), (
             "When Remote Control is OFF, the OAuth token env path must remain "
             "the standard one (token in env)."
         )

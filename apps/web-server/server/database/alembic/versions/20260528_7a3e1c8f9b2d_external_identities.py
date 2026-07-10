@@ -66,7 +66,9 @@ def upgrade() -> None:
         # within its own kind, and we prevent collisions across IdP kinds
         # by checking application-side before insert.
         sa.UniqueConstraint(
-            "kind", "subject", name="uq_external_identities_kind_subject",
+            "kind",
+            "subject",
+            name="uq_external_identities_kind_subject",
         ),
         # A user can only have ONE identity per kind+subject pair, but
         # may have multiple identities of the same kind (e.g. several
@@ -74,11 +76,13 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_external_identities_user_id",
-        "external_identities", ["user_id"],
+        "external_identities",
+        ["user_id"],
     )
     op.create_index(
         "ix_external_identities_kind",
-        "external_identities", ["kind"],
+        "external_identities",
+        ["kind"],
     )
 
     # Backfill: copy existing users.oidc_sub into external_identities so
@@ -96,6 +100,7 @@ def upgrade() -> None:
     ).fetchall()
     if rows:
         import uuid as _uuid
+
         conn.execute(
             sa.text("""
                 INSERT INTO external_identities (id, user_id, kind, subject)
@@ -115,9 +120,11 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index(
-        "ix_external_identities_kind", table_name="external_identities",
+        "ix_external_identities_kind",
+        table_name="external_identities",
     )
     op.drop_index(
-        "ix_external_identities_user_id", table_name="external_identities",
+        "ix_external_identities_user_id",
+        table_name="external_identities",
     )
     op.drop_table("external_identities")

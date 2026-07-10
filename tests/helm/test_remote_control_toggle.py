@@ -113,7 +113,9 @@ class TestRemoteControlOn:
         # 0400 in YAML serializes as integer 256
         assert secret["defaultMode"] == 256
         # items projection — only credentials.json key, lands at that path
-        assert secret["items"] == [{"key": "credentials.json", "path": "credentials.json"}]
+        assert secret["items"] == [
+            {"key": "credentials.json", "path": "credentials.json"}
+        ]
 
     def test_volume_mount_uses_subpath_and_is_readonly(
         self, helm_available, chart_dir
@@ -163,6 +165,5 @@ class TestRemoteControlValidation:
             f"error message should mention the missing field; got: {stderr[:300]}"
         )
         assert "claude auth login" in stderr or "kubectl create secret" in stderr, (
-            "error message should hint at the operator setup; "
-            f"got: {stderr[:300]}"
+            f"error message should hint at the operator setup; got: {stderr[:300]}"
         )

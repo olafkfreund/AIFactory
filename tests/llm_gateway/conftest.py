@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WEB_SERVER_ROOT = REPO_ROOT / 'apps' / 'web-server'
-BACKEND_ROOT = REPO_ROOT / 'apps' / 'backend'
+WEB_SERVER_ROOT = REPO_ROOT / "apps" / "web-server"
+BACKEND_ROOT = REPO_ROOT / "apps" / "backend"
 
 # Order matters: the web-server import of llm_audit_hook resolves
 # server.services.llm_pii_redactor via the apps/backend path.
@@ -31,8 +31,7 @@ def fresh_db():
 
     nonce = secrets.token_hex(8)
     engine = create_async_engine(
-        f'sqlite+aiosqlite:///file:llm-gw-{nonce}'
-        f'?mode=memory&cache=shared&uri=true',
+        f"sqlite+aiosqlite:///file:llm-gw-{nonce}?mode=memory&cache=shared&uri=true",
     )
 
     import asyncio

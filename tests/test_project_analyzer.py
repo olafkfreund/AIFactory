@@ -54,7 +54,10 @@ class TestProjectAnalyzerInitialization:
 
         path = analyzer.get_profile_path()
         # Use resolve() to handle /var -> /private/var symlinks on macOS
-        assert path.resolve() == (temp_dir / ".aifactory" / ".aifactory-security.json").resolve()
+        assert (
+            path.resolve()
+            == (temp_dir / ".aifactory" / ".aifactory-security.json").resolve()
+        )
 
     def test_get_profile_path_with_spec(self, temp_dir: Path, spec_dir: Path):
         """Profile path is in spec dir when provided."""

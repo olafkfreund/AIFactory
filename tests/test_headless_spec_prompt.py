@@ -33,8 +33,12 @@ def empty_project(tmp_path):
 
 def test_no_input_when_stdin_not_a_tty(empty_project, capsys):
     """Headless run (no TTY) must not call input() — it would block forever."""
-    with mock.patch.object(sys.stdin, "isatty", return_value=False), \
-            mock.patch("builtins.input", side_effect=AssertionError("input() called headlessly")):
+    with (
+        mock.patch.object(sys.stdin, "isatty", return_value=False),
+        mock.patch(
+            "builtins.input", side_effect=AssertionError("input() called headlessly")
+        ),
+    ):
         # Must return, not raise — i.e. input() is never reached.
         print_specs_list(empty_project, auto_create=True)
 
@@ -47,8 +51,12 @@ def test_no_input_when_stdin_not_a_tty(empty_project, capsys):
 def test_no_input_when_ci_env_set(empty_project, monkeypatch, capsys):
     """CI=true (set by agent_service) also suppresses the interactive prompt."""
     monkeypatch.setenv("CI", "true")
-    with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-            mock.patch("builtins.input", side_effect=AssertionError("input() called under CI")):
+    with (
+        mock.patch.object(sys.stdin, "isatty", return_value=True),
+        mock.patch(
+            "builtins.input", side_effect=AssertionError("input() called under CI")
+        ),
+    ):
         print_specs_list(empty_project, auto_create=True)
 
     assert "QUICK START" not in capsys.readouterr().out
@@ -57,8 +65,13 @@ def test_no_input_when_ci_env_set(empty_project, monkeypatch, capsys):
 def test_no_input_when_claude_cli_entrypoint(empty_project, monkeypatch, capsys):
     """CLAUDE_CODE_ENTRYPOINT=cli (set by agent_service) also suppresses it."""
     monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
-    with mock.patch.object(sys.stdin, "isatty", return_value=True), \
-            mock.patch("builtins.input", side_effect=AssertionError("input() called via cli entrypoint")):
+    with (
+        mock.patch.object(sys.stdin, "isatty", return_value=True),
+        mock.patch(
+            "builtins.input",
+            side_effect=AssertionError("input() called via cli entrypoint"),
+        ),
+    ):
         print_specs_list(empty_project, auto_create=True)
 
     assert "QUICK START" not in capsys.readouterr().out
@@ -66,7 +79,10 @@ def test_no_input_when_claude_cli_entrypoint(empty_project, monkeypatch, capsys)
 
 def test_auto_create_false_never_prompts(empty_project, capsys):
     """The build runner passes auto_create=False on a missing spec."""
-    with mock.patch("builtins.input", side_effect=AssertionError("input() called with auto_create=False")):
+    with mock.patch(
+        "builtins.input",
+        side_effect=AssertionError("input() called with auto_create=False"),
+    ):
         print_specs_list(empty_project, auto_create=False)
 
     out = capsys.readouterr().out

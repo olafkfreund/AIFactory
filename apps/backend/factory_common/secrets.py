@@ -57,7 +57,9 @@ class SecretPattern:
 
 
 def _p(name: str, pattern: str, description: str, flags: int = 0) -> SecretPattern:
-    return SecretPattern(name=name, regex=re.compile(pattern, flags), description=description)
+    return SecretPattern(
+        name=name, regex=re.compile(pattern, flags), description=description
+    )
 
 
 # Canonical pattern table (single source of truth for the fleet).
@@ -130,7 +132,9 @@ def scan(text: str) -> list[tuple[str, str]]:
     for pattern in SECRET_PATTERNS:
         for match in pattern.regex.finditer(text):
             groups = match.groupdict()
-            span = groups["secret"] if groups.get("secret") is not None else match.group(0)
+            span = (
+                groups["secret"] if groups.get("secret") is not None else match.group(0)
+            )
             findings.append((pattern.name, span))
     return findings
 

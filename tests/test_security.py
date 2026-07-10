@@ -98,7 +98,9 @@ class TestCommandExtraction:
 
     def test_heredoc_in_git_commit(self):
         """Extracts 'git' from heredoc-style commit command."""
-        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
+        heredoc_cmd = (
+            '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
+        )
         commands = extract_commands(heredoc_cmd)
         assert "git" in commands
 
@@ -346,6 +348,7 @@ class TestSecurityProfileIntegration:
     def test_profile_detects_python_commands(self, python_project):
         """Profile includes Python commands for Python projects."""
         from project_analyzer import get_or_create_profile
+
         reset_profile_cache()
 
         profile = get_or_create_profile(python_project)
@@ -356,6 +359,7 @@ class TestSecurityProfileIntegration:
     def test_profile_detects_node_commands(self, node_project):
         """Profile includes Node commands for Node projects."""
         from project_analyzer import get_or_create_profile
+
         reset_profile_cache()
 
         profile = get_or_create_profile(node_project)
@@ -366,6 +370,7 @@ class TestSecurityProfileIntegration:
     def test_profile_detects_docker_commands(self, docker_project):
         """Profile includes Docker commands for Docker projects."""
         from project_analyzer import get_or_create_profile
+
         reset_profile_cache()
 
         profile = get_or_create_profile(docker_project)
@@ -377,6 +382,7 @@ class TestSecurityProfileIntegration:
         """Profile is cached after first analysis."""
         from project_analyzer import get_or_create_profile
         from security import get_security_profile, reset_profile_cache
+
         reset_profile_cache()
 
         # First call - analyzes
@@ -411,7 +417,9 @@ class TestGitCommitValidator:
 
     def test_heredoc_commit_allowed(self):
         """Heredoc-style commit passes (no secrets in staged files)."""
-        heredoc_cmd = '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
+        heredoc_cmd = (
+            '''git commit -m "$(cat <<'EOF'\naifactory: Complete subtask-1\nEOF\n)"'''
+        )
         allowed, reason = validate_git_commit(heredoc_cmd)
         assert allowed is True
         assert reason == ""
@@ -424,7 +432,7 @@ class TestGitCommitValidator:
 
     def test_git_c_heredoc_allowed(self):
         """git -c with heredoc-style quoting is allowed."""
-        cmd = 'git -c commit.gpgsign=false commit -m "$(cat <<\'EOF\'\nmsg\nEOF\n)"'
+        cmd = "git -c commit.gpgsign=false commit -m \"$(cat <<'EOF'\nmsg\nEOF\n)\""
         allowed, reason = validate_git_commit(cmd)
         assert allowed is True
 
@@ -432,6 +440,7 @@ class TestGitCommitValidator:
 # =============================================================================
 # DATABASE VALIDATOR TESTS
 # =============================================================================
+
 
 class TestDropdbValidator:
     """Tests for dropdb command validation."""
@@ -491,10 +500,14 @@ class TestDropdbValidator:
 
     def test_handles_flags(self):
         """Correctly parses command with flags."""
-        allowed, reason = validate_dropdb_command("dropdb -h localhost -p 5432 -U admin test_db")
+        allowed, reason = validate_dropdb_command(
+            "dropdb -h localhost -p 5432 -U admin test_db"
+        )
         assert allowed is True
 
-        allowed, reason = validate_dropdb_command("dropdb -h localhost -p 5432 production")
+        allowed, reason = validate_dropdb_command(
+            "dropdb -h localhost -p 5432 production"
+        )
         assert allowed is False
 
 
@@ -530,12 +543,16 @@ class TestPsqlValidator:
 
     def test_allows_insert(self):
         """Allows INSERT queries."""
-        allowed, reason = validate_psql_command("psql -c \"INSERT INTO users (name) VALUES ('test')\"")
+        allowed, reason = validate_psql_command(
+            "psql -c \"INSERT INTO users (name) VALUES ('test')\""
+        )
         assert allowed is True
 
     def test_allows_update_with_where(self):
         """Allows UPDATE with WHERE clause."""
-        allowed, reason = validate_psql_command("psql -c \"UPDATE users SET name='new' WHERE id=1\"")
+        allowed, reason = validate_psql_command(
+            "psql -c \"UPDATE users SET name='new' WHERE id=1\""
+        )
         assert allowed is True
 
     def test_allows_create_table(self):
@@ -640,12 +657,16 @@ class TestRedisCliValidator:
 
     def test_blocks_config(self):
         """Blocks CONFIG commands."""
-        allowed, reason = validate_redis_cli_command("redis-cli CONFIG SET maxmemory 100mb")
+        allowed, reason = validate_redis_cli_command(
+            "redis-cli CONFIG SET maxmemory 100mb"
+        )
         assert allowed is False
 
     def test_handles_connection_flags(self):
         """Correctly handles connection flags."""
-        allowed, reason = validate_redis_cli_command("redis-cli -h localhost -p 6379 GET mykey")
+        allowed, reason = validate_redis_cli_command(
+            "redis-cli -h localhost -p 6379 GET mykey"
+        )
         assert allowed is True
 
         allowed, reason = validate_redis_cli_command("redis-cli -h localhost FLUSHALL")
@@ -662,7 +683,9 @@ class TestMongoshValidator:
 
     def test_allows_insert(self):
         """Allows insert operations."""
-        allowed, reason = validate_mongosh_command("mongosh --eval \"db.users.insertOne({name: 'test'})\"")
+        allowed, reason = validate_mongosh_command(
+            "mongosh --eval \"db.users.insertOne({name: 'test'})\""
+        )
         assert allowed is True
 
     def test_blocks_drop_database(self):
@@ -678,12 +701,16 @@ class TestMongoshValidator:
 
     def test_blocks_delete_all(self):
         """Blocks deleteMany({}) which deletes all documents."""
-        allowed, reason = validate_mongosh_command("mongosh --eval 'db.users.deleteMany({})'")
+        allowed, reason = validate_mongosh_command(
+            "mongosh --eval 'db.users.deleteMany({})'"
+        )
         assert allowed is False
 
     def test_allows_delete_with_filter(self):
         """Allows deleteMany with a filter."""
-        allowed, reason = validate_mongosh_command("mongosh --eval \"db.users.deleteMany({status: 'inactive'})\"")
+        allowed, reason = validate_mongosh_command(
+            "mongosh --eval \"db.users.deleteMany({status: 'inactive'})\""
+        )
         assert allowed is True
 
     def test_allows_interactive_session(self):

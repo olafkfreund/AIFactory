@@ -30,7 +30,9 @@ def test_copilot_alias_and_registry():
     assert _resolve_canonical("copilot") == "copilot"
     assert _resolve_canonical("github-copilot") == "copilot"
 
-    provider = get_provider("copilot", phase="coding", model="copilot:gpt-5", working_dir="/tmp")
+    provider = get_provider(
+        "copilot", phase="coding", model="copilot:gpt-5", working_dir="/tmp"
+    )
     assert type(provider).__name__ == "CopilotAgenticProvider"
     # The copilot: prefix is stripped before reaching the CLI's --model.
     assert provider._model == "gpt-5"
@@ -39,7 +41,9 @@ def test_copilot_alias_and_registry():
 def test_unknown_copilot_backend_falls_back():
     from providers.copilot_agentic import CopilotAgenticProvider
 
-    p = CopilotAgenticProvider(model="copilot:not-a-real-model", working_dir=Path("/tmp"))
+    p = CopilotAgenticProvider(
+        model="copilot:not-a-real-model", working_dir=Path("/tmp")
+    )
     assert p._model == "claude-sonnet-4.5"
 
 

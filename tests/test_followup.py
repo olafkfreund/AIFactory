@@ -185,7 +185,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -206,7 +208,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -227,7 +231,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -249,8 +255,12 @@ class TestResetForFollowup:
                     phase=1,
                     name="Phase 1",
                     subtasks=[
-                        Chunk(id="c1", description="Task 1", status=ChunkStatus.COMPLETED),
-                        Chunk(id="c2", description="Task 2", status=ChunkStatus.COMPLETED),
+                        Chunk(
+                            id="c1", description="Task 1", status=ChunkStatus.COMPLETED
+                        ),
+                        Chunk(
+                            id="c2", description="Task 2", status=ChunkStatus.COMPLETED
+                        ),
                     ],
                 ),
             ],
@@ -272,8 +282,12 @@ class TestResetForFollowup:
                     phase=1,
                     name="Phase 1",
                     subtasks=[
-                        Chunk(id="c1", description="Task 1", status=ChunkStatus.COMPLETED),
-                        Chunk(id="c2", description="Task 2", status=ChunkStatus.PENDING),
+                        Chunk(
+                            id="c1", description="Task 1", status=ChunkStatus.COMPLETED
+                        ),
+                        Chunk(
+                            id="c2", description="Task 2", status=ChunkStatus.PENDING
+                        ),
                     ],
                 ),
             ],
@@ -293,7 +307,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.PENDING)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.PENDING)
+                    ],
                 ),
             ],
         )
@@ -313,7 +329,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -333,7 +351,9 @@ class TestResetForFollowup:
                 Phase(
                     phase=1,
                     name="Phase 1",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -384,13 +404,17 @@ class TestExistingChunksPreserved:
                 phase=1,
                 name="Phase 1",
                 depends_on=[],
-                subtasks=[Chunk(id="c1", description="Task 1", status=ChunkStatus.COMPLETED)],
+                subtasks=[
+                    Chunk(id="c1", description="Task 1", status=ChunkStatus.COMPLETED)
+                ],
             ),
             Phase(
                 phase=2,
                 name="Phase 2",
                 depends_on=[1],
-                subtasks=[Chunk(id="c2", description="Task 2", status=ChunkStatus.COMPLETED)],
+                subtasks=[
+                    Chunk(id="c2", description="Task 2", status=ChunkStatus.COMPLETED)
+                ],
             ),
         ]
 
@@ -420,7 +444,9 @@ class TestFollowupPlanSaveLoad:
                 Phase(
                     phase=1,
                     name="Original",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -451,7 +477,9 @@ class TestFollowupPlanSaveLoad:
                 Phase(
                     phase=1,
                     name="Original",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -487,7 +515,9 @@ class TestFollowupProgressCalculation:
                 Phase(
                     phase=1,
                     name="Original",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )
@@ -516,7 +546,9 @@ class TestFollowupProgressCalculation:
                 Phase(
                     phase=1,
                     name="Original",
-                    subtasks=[Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)],
+                    subtasks=[
+                        Chunk(id="c1", description="Task", status=ChunkStatus.COMPLETED)
+                    ],
                 ),
             ],
         )

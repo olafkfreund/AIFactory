@@ -93,9 +93,7 @@ def _get_redrive_module() -> ModuleType | None:
         # review_cycle must be importable as qa.review_cycle before review_redrive.
         if "qa.review_cycle" not in sys.modules:
             _load_module_from_file("qa.review_cycle", cycle_file)
-        _review_redrive_mod = _load_module_from_file(
-            "qa.review_redrive", redrive_file
-        )
+        _review_redrive_mod = _load_module_from_file("qa.review_redrive", redrive_file)
         logger.debug("[review_redrive] loaded backend review modules")
         return _review_redrive_mod
     except Exception as exc:  # noqa: BLE001 - degrade gracefully, never crash poll
@@ -160,9 +158,7 @@ def check_review_obligation(
             **kwargs,
         )
     except Exception as exc:  # noqa: BLE001 - never crash the poll tick
-        logger.warning(
-            "[review_redrive] process failed for %s: %s", spec_id, exc
-        )
+        logger.warning("[review_redrive] process failed for %s: %s", spec_id, exc)
         return None
 
     if result:

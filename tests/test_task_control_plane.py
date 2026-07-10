@@ -36,12 +36,14 @@ if str(_WEB_SERVER_DIR) not in sys.path:
 try:
     from server.services import task_control
     from server.services.agent_service import AgentService
+
     _IMPORT_OK = True
 except Exception:  # pragma: no cover - skip when web-server deps unavailable
     _IMPORT_OK = False
 
 pytestmark = pytest.mark.skipif(
-    not _IMPORT_OK, reason="web-server package/deps not importable",
+    not _IMPORT_OK,
+    reason="web-server package/deps not importable",
 )
 
 
@@ -70,7 +72,9 @@ def _make_plan(subtask_statuses: dict, **top_level) -> dict:
 class TestTaskControlStore:
     def test_write_then_read_roundtrip(self, tmp_path):
         spec = tmp_path / "001-feature"
-        task_control.write_control(spec, status="human_review", review_reason="plan_review")
+        task_control.write_control(
+            spec, status="human_review", review_reason="plan_review"
+        )
         got = task_control.read_control(spec)
         assert got["status"] == "human_review"
         assert got["reviewReason"] == "plan_review"
@@ -87,7 +91,9 @@ class TestTaskControlStore:
 
     def test_partial_update_merges(self, tmp_path):
         spec = tmp_path / "001-feature"
-        task_control.write_control(spec, status="human_review", review_reason="qa_rejected")
+        task_control.write_control(
+            spec, status="human_review", review_reason="qa_rejected"
+        )
         # Status-only update keeps the existing reviewReason.
         task_control.write_control(spec, status="human_review")
         got = task_control.read_control(spec)
@@ -95,7 +101,9 @@ class TestTaskControlStore:
 
     def test_clear_review_reason(self, tmp_path):
         spec = tmp_path / "001-feature"
-        task_control.write_control(spec, status="human_review", review_reason="plan_review")
+        task_control.write_control(
+            spec, status="human_review", review_reason="plan_review"
+        )
         task_control.write_control(spec, status="in_progress", clear_review_reason=True)
         got = task_control.read_control(spec)
         assert got["status"] == "in_progress"
@@ -105,7 +113,9 @@ class TestTaskControlStore:
         """Pre-#259 specs (status only in plan file) still surface their state."""
         spec = tmp_path / "001-feature"
         spec.mkdir()
-        plan = _make_plan({"st-1": "completed"}, status="human_review", reviewReason="completed")
+        plan = _make_plan(
+            {"st-1": "completed"}, status="human_review", reviewReason="completed"
+        )
         (spec / "implementation_plan.json").write_text(json.dumps(plan))
         got = task_control.read_control(spec)
         assert got["status"] == "human_review"
@@ -113,7 +123,9 @@ class TestTaskControlStore:
         assert got.get("_migratedFromPlan") is True
 
     def test_strip_control_fields(self):
-        plan = _make_plan({"st-1": "completed"}, status="human_review", reviewReason="x")
+        plan = _make_plan(
+            {"st-1": "completed"}, status="human_review", reviewReason="x"
+        )
         task_control.strip_control_fields(plan)
         assert "status" not in plan
         assert "reviewReason" not in plan
@@ -132,8 +144,13 @@ class TestSyncDoesNotClobberControlPlane:
         main_spec = project_path / ".aifactory" / "specs" / spec_id
         worktree_spec = (
             project_path
-            / ".aifactory" / "worktrees" / "tasks" / spec_id
-            / ".aifactory" / "specs" / spec_id
+            / ".aifactory"
+            / "worktrees"
+            / "tasks"
+            / spec_id
+            / ".aifactory"
+            / "specs"
+            / spec_id
         )
         main_spec.mkdir(parents=True)
         worktree_spec.mkdir(parents=True)
@@ -153,7 +170,10 @@ class TestSyncDoesNotClobberControlPlane:
         # Human sets a review status via the control store (e.g. kanban move /
         # QA rejection).
         task_control.write_control(
-            main_spec, status="human_review", review_reason="qa_rejected", updated_by="web_user",
+            main_spec,
+            status="human_review",
+            review_reason="qa_rejected",
+            updated_by="web_user",
         )
 
         # 2) Agent emits a fresh plan into its worktree. Crucially this mimics
@@ -161,34 +181,45 @@ class TestSyncDoesNotClobberControlPlane:
         #    top-level status that, pre-fix, would land in the main plan file.
         worktree_plan = _make_plan(
             {"st-1": "completed", "st-2": "completed"},
-            status="in_progress",          # agent's view — must NOT win
-            reviewReason="completed",      # agent's view — must NOT win
+            status="in_progress",  # agent's view — must NOT win
+            reviewReason="completed",  # agent's view — must NOT win
         )
-        (worktree_spec / "implementation_plan.json").write_text(json.dumps(worktree_plan))
+        (worktree_spec / "implementation_plan.json").write_text(
+            json.dumps(worktree_plan)
+        )
 
         # 3) A _sync_worktree_files tick runs (the exact path from the bug report).
         service = AgentService()
         asyncio.run(
-            service._sync_worktree_files(project_path, spec_id, task_id=f"proj:{spec_id}")
+            service._sync_worktree_files(
+                project_path, spec_id, task_id=f"proj:{spec_id}"
+            )
         )
 
         # 4a) Control-plane state is intact in the dedicated store.
         control = task_control.read_control(main_spec)
-        assert control["status"] == "human_review", "human review status was reset by agent sync"
-        assert control["reviewReason"] == "qa_rejected", "reviewReason was reset by agent sync"
+        assert control["status"] == "human_review", (
+            "human review status was reset by agent sync"
+        )
+        assert control["reviewReason"] == "qa_rejected", (
+            "reviewReason was reset by agent sync"
+        )
 
         # 4b) The synced plan file must NOT carry the agent's control fields —
         #     otherwise a reader could pick them over the control store.
         synced_plan = json.loads((main_spec / "implementation_plan.json").read_text())
         assert "status" not in synced_plan, "agent control status leaked into main plan"
-        assert "reviewReason" not in synced_plan, "agent reviewReason leaked into main plan"
+        assert "reviewReason" not in synced_plan, (
+            "agent reviewReason leaked into main plan"
+        )
 
         # 4c) Forward subtask progress from the worktree still syncs (artifact data).
         synced_subtasks = {
-            s["id"]: s["status"]
-            for p in synced_plan["phases"] for s in p["subtasks"]
+            s["id"]: s["status"] for p in synced_plan["phases"] for s in p["subtasks"]
         }
-        assert synced_subtasks["st-2"] == "completed", "forward subtask progress was lost"
+        assert synced_subtasks["st-2"] == "completed", (
+            "forward subtask progress was lost"
+        )
 
     def test_sync_falls_back_safely_on_corrupt_worktree_plan(self, tmp_path):
         """A corrupt worktree plan must not crash sync nor reset control state."""
@@ -199,14 +230,18 @@ class TestSyncDoesNotClobberControlPlane:
         (main_spec / "implementation_plan.json").write_text(
             json.dumps(_make_plan({"st-1": "completed"}))
         )
-        task_control.write_control(main_spec, status="human_review", review_reason="completed")
+        task_control.write_control(
+            main_spec, status="human_review", review_reason="completed"
+        )
 
         # Corrupt JSON in the worktree triggers the except branch.
         (worktree_spec / "implementation_plan.json").write_text("{ not valid json")
 
         service = AgentService()
         asyncio.run(
-            service._sync_worktree_files(project_path, spec_id, task_id=f"proj:{spec_id}")
+            service._sync_worktree_files(
+                project_path, spec_id, task_id=f"proj:{spec_id}"
+            )
         )
 
         control = task_control.read_control(main_spec)

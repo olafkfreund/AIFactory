@@ -95,12 +95,12 @@ class _FakeAsyncAnthropic:
         self.retrieve_calls.append((batch_id, timeout))
         # Pop next from the queued sequence.
         next_status = (
-            self._retrieve_sequence.pop(0)
-            if self._retrieve_sequence
-            else "ended"
+            self._retrieve_sequence.pop(0) if self._retrieve_sequence else "ended"
         )
         counts = SimpleNamespace(
-            succeeded=len([i for i in self._results_items if i.result.type == "succeeded"]),
+            succeeded=len(
+                [i for i in self._results_items if i.result.type == "succeeded"]
+            ),
             errored=len([i for i in self._results_items if i.result.type == "errored"]),
             canceled=0,
             expired=0,
@@ -185,21 +185,25 @@ class TestSubmitBatch:
 class TestAwaitBatch:
     async def test_polls_until_ended_then_returns_results(self):
         # 2 in_progress polls, then ended.
-        items = [_make_individual("r1", text="hello"), _make_individual("r2", text="world")]
+        items = [
+            _make_individual("r1", text="hello"),
+            _make_individual("r2", text="world"),
+        ]
         fake = _FakeAsyncAnthropic(
             retrieve_sequence=["in_progress", "in_progress", "ended"],
             results_items=items,
         )
-        with patch("anthropic.AsyncAnthropic", return_value=fake), patch(
-            "core.batch.asyncio.sleep", new=AsyncMock()
+        with (
+            patch("anthropic.AsyncAnthropic", return_value=fake),
+            patch("core.batch.asyncio.sleep", new=AsyncMock()),
         ):
             results = await await_batch(
-                    "msgbatch_test",
-                    api_key="test",
-                    timeout=60,
-                    initial_poll_interval=0.01,
-                    max_poll_interval=0.05,
-                )
+                "msgbatch_test",
+                api_key="test",
+                timeout=60,
+                initial_poll_interval=0.01,
+                max_poll_interval=0.05,
+            )
 
         assert len(results) == 2
         assert {r.custom_id for r in results} == {"r1", "r2"}
@@ -254,12 +258,12 @@ class TestAwaitBatch:
         with patch("anthropic.AsyncAnthropic", return_value=fake):
             with pytest.raises(TimeoutError, match="did not complete within"):
                 await await_batch(
-                        "msgbatch_stuck",
-                        api_key="test",
-                        timeout=0.05,
-                        initial_poll_interval=0.005,
-                        max_poll_interval=0.02,
-                    )
+                    "msgbatch_stuck",
+                    api_key="test",
+                    timeout=0.05,
+                    initial_poll_interval=0.005,
+                    max_poll_interval=0.02,
+                )
 
 
 class TestExtractSavings:

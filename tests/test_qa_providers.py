@@ -74,6 +74,7 @@ from qa.providers.types import (  # noqa: E402
 # Helpers
 # ===========================================================================
 
+
 def _run(coro):
     """Run a coroutine in a new event loop (test helper).
 
@@ -125,7 +126,9 @@ class TestToolUseBlock:
 
     def test_stores_name_and_input(self):
         """ToolUseBlock stores name and input attributes."""
-        block = ToolUseBlock(name="write_file", input={"path": "/tmp/x", "content": "y"})
+        block = ToolUseBlock(
+            name="write_file", input={"path": "/tmp/x", "content": "y"}
+        )
         assert block.name == "write_file"
         assert block.input == {"path": "/tmp/x", "content": "y"}
 
@@ -341,8 +344,14 @@ class TestListProviders:
     def test_has_expected_providers(self):
         """All canonical providers are registered (gemini -> antigravity)."""
         assert set(list_providers()) == {
-            "claude", "codex", "antigravity", "ollama", "copilot", "opencode",
-            "openai-compatible", "github-models",
+            "claude",
+            "codex",
+            "antigravity",
+            "ollama",
+            "copilot",
+            "opencode",
+            "openai-compatible",
+            "github-models",
         }
 
 
@@ -495,7 +504,9 @@ class TestGetQaLlmProviderKwargs:
 
     def test_ollama_base_url_kwarg(self):
         """base_url kwarg is stored on the OllamaProvider instance."""
-        provider = get_qa_llm_provider("ollama", base_url="http://ollama.example.com:11434")
+        provider = get_qa_llm_provider(
+            "ollama", base_url="http://ollama.example.com:11434"
+        )
         assert isinstance(provider, OllamaProvider)
         assert "ollama.example.com" in provider._base_url
 
@@ -663,7 +674,9 @@ class TestCodexCLIProviderReceiveResponse:
             provider = CodexCLIProvider()
             await provider.query("test prompt")
             with patch("shutil.which", return_value=None):
-                with pytest.raises(RuntimeError, match="Codex CLI executable not found"):
+                with pytest.raises(
+                    RuntimeError, match="Codex CLI executable not found"
+                ):
                     await _collect(provider.receive_response())
 
         _run(_test())
@@ -740,7 +753,9 @@ class TestCodexCLIProviderReceiveResponse:
                     "asyncio.create_subprocess_exec",
                     AsyncMock(return_value=mock_proc),
                 ):
-                    with pytest.raises(RuntimeError, match="Codex CLI exited with an error"):
+                    with pytest.raises(
+                        RuntimeError, match="Codex CLI exited with an error"
+                    ):
                         await _collect(provider.receive_response())
 
         _run(_test())
@@ -985,7 +1000,9 @@ class TestGeminiCLIProviderReceiveResponse:
                     "asyncio.create_subprocess_exec",
                     AsyncMock(return_value=mock_proc),
                 ):
-                    with pytest.raises(RuntimeError, match="Antigravity CLI exited with an error"):
+                    with pytest.raises(
+                        RuntimeError, match="Antigravity CLI exited with an error"
+                    ):
                         await _collect(provider.receive_response())
 
         _run(_test())
@@ -1205,7 +1222,9 @@ class TestOllamaProviderContextManager:
             # Replace _verify_connection directly — to_thread will call it
             # in a thread pool, and the RuntimeError will propagate out.
             def _failing_verify():
-                raise RuntimeError("Cannot reach Ollama server at 'http://localhost:11434'")
+                raise RuntimeError(
+                    "Cannot reach Ollama server at 'http://localhost:11434'"
+                )
 
             provider._verify_connection = _failing_verify  # type: ignore[method-assign]
 
@@ -1302,6 +1321,7 @@ class TestOllamaProviderVerifyConnection:
     def test_verify_connection_success(self):
         """_verify_connection succeeds when server returns 200."""
         import contextlib
+
         provider = OllamaProvider(base_url="http://localhost:11434")
 
         class _FakeResponse:
@@ -1320,6 +1340,7 @@ class TestOllamaProviderVerifyConnection:
     def test_verify_connection_url_error_raises_runtime_error(self):
         """_verify_connection raises RuntimeError when server is unreachable."""
         import urllib.error
+
         provider = OllamaProvider(base_url="http://localhost:11434")
 
         with patch(

@@ -115,7 +115,9 @@ def test_absent_contract_returns_empty(tmp_path: Path):
 
 
 def test_no_constitution_block_returns_empty(tmp_path: Path):
-    _write_contract(tmp_path, {"epic_context": {"house_standards": {"available": True}}})
+    _write_contract(
+        tmp_path, {"epic_context": {"house_standards": {"available": True}}}
+    )
     assert get_constitution_context(tmp_path) == ""
 
 

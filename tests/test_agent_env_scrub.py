@@ -23,20 +23,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "apps" / "backen
 from core.auth import get_agent_env_blanks  # noqa: E402
 
 SECRETS = {
-    "API_TOKEN": "x", "APP_API_TOKEN": "x", "JWT_SECRET": "x", "APP_JWT_SECRET": "x",
+    "API_TOKEN": "x",
+    "APP_API_TOKEN": "x",
+    "JWT_SECRET": "x",
+    "APP_JWT_SECRET": "x",
     "DATABASE_URL": "postgres://u:p@h/db",
-    "AWS_SECRET_ACCESS_KEY": "x", "AWS_ACCESS_KEY_ID": "x", "AWS_SESSION_TOKEN": "x",
-    "VAULT_TOKEN": "x", "AZURE_CLIENT_SECRET": "x",
-    "OPENAI_API_KEY": "x", "ANTHROPIC_API_KEY": "x", "GITHUB_TOKEN": "x",
+    "AWS_SECRET_ACCESS_KEY": "x",
+    "AWS_ACCESS_KEY_ID": "x",
+    "AWS_SESSION_TOKEN": "x",
+    "VAULT_TOKEN": "x",
+    "AZURE_CLIENT_SECRET": "x",
+    "OPENAI_API_KEY": "x",
+    "ANTHROPIC_API_KEY": "x",
+    "GITHUB_TOKEN": "x",
     # generic-pattern matches
-    "MY_DB_PASSWORD": "x", "SERVICE_PRIVATE_KEY": "x", "FOO_CREDENTIAL": "x",
-    "BAR_KMS_KEY": "x", "SSH_PASSPHRASE": "x",
+    "MY_DB_PASSWORD": "x",
+    "SERVICE_PRIVATE_KEY": "x",
+    "FOO_CREDENTIAL": "x",
+    "BAR_KMS_KEY": "x",
+    "SSH_PASSPHRASE": "x",
 }
 
 KEEP = {
-    "CLAUDE_CODE_OAUTH_TOKEN": "tok", "ANTHROPIC_AUTH_TOKEN": "tok",
-    "ANTHROPIC_BASE_URL": "https://x", "ANTHROPIC_MODEL": "claude",
-    "PATH": "/usr/bin", "HOME": "/home/x", "LANG": "en_US", "PWD": "/work",
+    "CLAUDE_CODE_OAUTH_TOKEN": "tok",
+    "ANTHROPIC_AUTH_TOKEN": "tok",
+    "ANTHROPIC_BASE_URL": "https://x",
+    "ANTHROPIC_MODEL": "claude",
+    "PATH": "/usr/bin",
+    "HOME": "/home/x",
+    "LANG": "en_US",
+    "PWD": "/work",
     "NODE_ENV": "production",
 }
 

@@ -27,6 +27,7 @@ pytestmark = pytest.mark.tenant_isolation
 def _api_exception(status: int, reason: str = "Test"):
     """Build a kubernetes_asyncio.client.rest.ApiException."""
     from kubernetes_asyncio.client.rest import ApiException
+
     return ApiException(status=status, reason=reason)
 
 
@@ -102,8 +103,7 @@ async def test_get_namespace_status_returns_phase_and_timestamp(client):
     deletion_timestamp, get_namespace_status surfaces both."""
     ns = MagicMock()
     ns.status.phase = "Terminating"
-    ns.metadata.deletion_timestamp = datetime(2026, 5, 28, 12, 0,
-                                              tzinfo=timezone.utc)
+    ns.metadata.deletion_timestamp = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
 
     api = MagicMock()
     api.read_namespace = AsyncMock(return_value=ns)
@@ -151,8 +151,7 @@ async def test_create_service_account_annotates_irsa(client):
 
     body = api.create_namespaced_service_account.call_args.kwargs["body"]
     assert body.metadata.annotations == {
-        "eks.amazonaws.com/role-arn":
-            "arn:aws:iam::123:role/aifactory-tenant-uuid",
+        "eks.amazonaws.com/role-arn": "arn:aws:iam::123:role/aifactory-tenant-uuid",
     }
 
 
@@ -164,7 +163,9 @@ async def test_create_service_account_no_irsa_omits_annotation(client):
 
     with patch("kubernetes_asyncio.client.CoreV1Api", return_value=api):
         await client.create_service_account(
-            namespace="ns", name="sa", irsa_role_arn=None,
+            namespace="ns",
+            name="sa",
+            irsa_role_arn=None,
         )
 
     body = api.create_namespaced_service_account.call_args.kwargs["body"]
@@ -183,7 +184,8 @@ async def test_create_service_account_409_patches_annotation(client):
 
     with patch("kubernetes_asyncio.client.CoreV1Api", return_value=api):
         await client.create_service_account(
-            namespace="ns", name="sa",
+            namespace="ns",
+            name="sa",
             irsa_role_arn="arn:aws:iam::123:role/whatever",
         )
 
@@ -256,10 +258,15 @@ async def test_apply_network_policies_cilium_emits_ciliumnetworkpolicy(client):
     custom_api.create_namespaced_custom_object = AsyncMock()
     custom_api.api_client.close = AsyncMock()
 
-    with patch(
-        "kubernetes_asyncio.client.NetworkingV1Api", return_value=net_api,
-    ), patch(
-        "kubernetes_asyncio.client.CustomObjectsApi", return_value=custom_api,
+    with (
+        patch(
+            "kubernetes_asyncio.client.NetworkingV1Api",
+            return_value=net_api,
+        ),
+        patch(
+            "kubernetes_asyncio.client.CustomObjectsApi",
+            return_value=custom_api,
+        ),
     ):
         await client.apply_network_policies(
             namespace="ns",
@@ -290,7 +297,8 @@ async def test_apply_network_policies_calico_emits_standard_networkpolicy(
     net_api.api_client.close = AsyncMock()
 
     with patch(
-        "kubernetes_asyncio.client.NetworkingV1Api", return_value=net_api,
+        "kubernetes_asyncio.client.NetworkingV1Api",
+        return_value=net_api,
     ):
         await client.apply_network_policies(
             namespace="ns",
@@ -305,9 +313,10 @@ async def test_apply_network_policies_calico_emits_standard_networkpolicy(
         for c in net_api.create_namespaced_network_policy.call_args_list
     ]
     allow = [b for b in bodies if b.metadata.name.startswith("allow-")][0]
-    assert allow.metadata.annotations[
-        "aifactory.io/allowed-fqdns"
-    ] == "api.anthropic.com,auth.example.com"
+    assert (
+        allow.metadata.annotations["aifactory.io/allowed-fqdns"]
+        == "api.anthropic.com,auth.example.com"
+    )
 
 
 @pytest.mark.asyncio
@@ -328,14 +337,20 @@ async def test_apply_network_policies_auto_falls_back_to_calico(client):
     net_api.create_namespaced_network_policy = AsyncMock()
     net_api.api_client.close = AsyncMock()
 
-    with patch(
-        "kubernetes_asyncio.client.ApiextensionsV1Api",
-        return_value=apiext_api,
-    ), patch(
-        "kubernetes_asyncio.client.NetworkingV1Api", return_value=net_api,
+    with (
+        patch(
+            "kubernetes_asyncio.client.ApiextensionsV1Api",
+            return_value=apiext_api,
+        ),
+        patch(
+            "kubernetes_asyncio.client.NetworkingV1Api",
+            return_value=net_api,
+        ),
     ):
         await client.apply_network_policies(
-            namespace="ns", allowed_fqdns=["x"], cni_backend="auto",
+            namespace="ns",
+            allowed_fqdns=["x"],
+            cni_backend="auto",
         )
 
     # default-deny + calico allow = 2 standard NetworkPolicy creates.
@@ -346,7 +361,9 @@ async def test_apply_network_policies_auto_falls_back_to_calico(client):
 async def test_apply_network_policies_unsupported_backend_raises(client):
     with pytest.raises(KubernetesClientError):
         await client.apply_network_policies(
-            namespace="ns", allowed_fqdns=[], cni_backend="weave",
+            namespace="ns",
+            allowed_fqdns=[],
+            cni_backend="weave",
         )
 
 

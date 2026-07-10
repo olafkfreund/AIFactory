@@ -72,9 +72,13 @@ class AuditLogListResponse(BaseModel):
 )
 async def list_audit_logs(
     org_id: str,
-    action: str | None = Query(default=None, description="Filter by action (e.g. 'user.login')"),
+    action: str | None = Query(
+        default=None, description="Filter by action (e.g. 'user.login')"
+    ),
     user_id: str | None = Query(default=None, description="Filter by user ID"),
-    resource_type: str | None = Query(default=None, description="Filter by resource type"),
+    resource_type: str | None = Query(
+        default=None, description="Filter by resource type"
+    ),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
     limit: int = Query(default=50, ge=1, le=200, description="Page size (max 200)"),
     membership: OrgMember = Depends(require_org_role("admin")),

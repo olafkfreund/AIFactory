@@ -25,7 +25,9 @@ class _Clock:
 
 
 def _rec(spec_dir: Path) -> WaveRecorder:
-    return WaveRecorder(spec_dir, workers_max=4, phase_name="P", clock=_Clock(), now=lambda: "T")
+    return WaveRecorder(
+        spec_dir, workers_max=4, phase_name="P", clock=_Clock(), now=lambda: "T"
+    )
 
 
 def test_in_flight_wave_counts_toward_observed_concurrency(tmp_path):
@@ -34,14 +36,15 @@ def test_in_flight_wave_counts_toward_observed_concurrency(tmp_path):
     assert rec.observed_max_concurrency == 4  # was 0 before the fix
     # And the persisted live report reflects it too.
     import json
+
     report = json.loads((tmp_path / "parallel_report.json").read_text())
     assert report["observed_max_concurrency"] == 4
 
 
 def test_closed_waves_still_report_peak(tmp_path):
     rec = _rec(tmp_path)
-    rec.record_wave(1, ["a", "b", "c"])   # concurrency 3
-    rec.record_wave(2, ["d"])             # closes wave1; pending wave2 conc 1
+    rec.record_wave(1, ["a", "b", "c"])  # concurrency 3
+    rec.record_wave(2, ["d"])  # closes wave1; pending wave2 conc 1
     assert rec.observed_max_concurrency == 3  # max(closed=3, pending=1)
 
 

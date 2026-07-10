@@ -54,7 +54,7 @@ def test_read_issue_from_github_issue_block(tmp_path):
 
 def test_read_issue_absent_is_none(tmp_path):
     assert read_issue_number(_spec_with_issue(tmp_path)) is None
-    assert read_issue_number(tmp_path / "nope") is None   # no requirements.json
+    assert read_issue_number(tmp_path / "nope") is None  # no requirements.json
 
 
 # ── correlation key + envelope ───────────────────────────────────────────────
@@ -67,7 +67,10 @@ def test_correlation_key_issue_vs_synthetic():
 
 def test_envelope_has_rfc_core_fields():
     ev = build_completion_event(
-        task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        status="done",
+        issue_number=412,
         updated_at="2026-06-04T16:00:00+00:00",
     )
     assert _RFC_CORE <= set(ev)
@@ -79,7 +82,10 @@ def test_envelope_has_rfc_core_fields():
 
 def test_envelope_synthetic_key_when_no_issue():
     ev = build_completion_event(
-        task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=None,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        status="done",
+        issue_number=None,
     )
     assert ev["correlation_key"] == "af-spec-9"
     assert ev["correlation"]["issue_number"] is None
@@ -103,6 +109,7 @@ def test_webhook_posts_envelope(tmp_path, monkeypatch):
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
 
     ev = build_completion_event(task_id="t", spec_id="s", status="done", issue_number=1)
@@ -118,9 +125,12 @@ def test_webhook_failure_is_swallowed(tmp_path, monkeypatch):
         raise OSError("refused")
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     # Must not raise.
-    notify_completion(build_completion_event(task_id="t", spec_id="s", status="done", issue_number=1))
+    notify_completion(
+        build_completion_event(task_id="t", spec_id="s", status="done", issue_number=1)
+    )
 
 
 def test_sentinel_written_when_enabled(tmp_path, monkeypatch):
@@ -141,7 +151,11 @@ def test_failed_terminal_emits_failed_status(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     spec = _spec_with_issue(tmp_path, 412)
     ev = emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="failed",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
+        status="failed",
     )
     assert _RFC_CORE <= set(ev)
     assert ev["service"] == "aifactory"
@@ -154,7 +168,11 @@ def test_emit_terminal_completion_builds_from_spec(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     spec = _spec_with_issue(tmp_path, 412)
     ev = emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="done",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
+        status="done",
     )
     assert ev["service"] == "aifactory"
     assert ev["correlation_key"] == "412"
@@ -206,9 +224,17 @@ def test_read_usage_derives_total_when_missing(tmp_path):
 
 def test_envelope_includes_usage_when_supplied():
     ev = build_completion_event(
-        task_id="t", spec_id="s", status="done", issue_number=1,
-        usage={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
-               "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
+        task_id="t",
+        spec_id="s",
+        status="done",
+        issue_number=1,
+        usage={
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "total_tokens": 12,
+            "cost_usd": 0.01,
+            "model": "claude-sonnet-4-6",
+        },
     )
     assert ev["usage"]["total_tokens"] == 12
     assert ev["schema_version"] == "1.3"
@@ -224,15 +250,26 @@ def test_emit_reads_usage_from_token_usage_json(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_SENTINEL", raising=False)
     spec = _spec_with_issue(tmp_path, 412)
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     ev = emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9", status="done",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
+        status="done",
     )
     assert ev["usage"] == {
-        "input_tokens": 2400, "output_tokens": 100, "total_tokens": 2500,
-        "cost_usd": 1.25, "model": "claude-sonnet-4-6",
+        "input_tokens": 2400,
+        "output_tokens": 100,
+        "total_tokens": 2500,
+        "cost_usd": 1.25,
+        "model": "claude-sonnet-4-6",
     }
 
 
@@ -255,8 +292,17 @@ def _base_event(**overrides):
 def test_envelope_keeps_all_legacy_fields():
     """Additive: nothing the old consumers read was removed or renamed."""
     ev = _base_event(updated_at="2026-06-04T16:00:00+00:00")
-    for legacy in ("correlation_key", "service", "task_id", "status", "phase",
-                   "updated_at", "correlation", "schema_version", "event"):
+    for legacy in (
+        "correlation_key",
+        "service",
+        "task_id",
+        "status",
+        "phase",
+        "updated_at",
+        "correlation",
+        "schema_version",
+        "event",
+    ):
         assert legacy in ev, legacy
     assert ev["service"] == "aifactory"
     assert ev["event"] == "completion"
@@ -310,8 +356,13 @@ def test_envelope_validates_against_published_schema():
     )
     ev = _base_event(
         updated_at="2026-06-04T16:00:00+00:00",
-        usage={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
-               "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
+        usage={
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "total_tokens": 12,
+            "cost_usd": 0.01,
+            "model": "claude-sonnet-4-6",
+        },
     )
     jsonschema.validate(ev, schema)  # raises on non-conformance
 
@@ -322,7 +373,10 @@ def test_synthetic_correlation_event_validates_against_schema():
         (_WS / "server" / "services" / "completion_event.schema.json").read_text()
     )
     ev = build_completion_event(
-        task_id="proj:spec-9", spec_id="spec-9", status="failed", issue_number=None,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        status="failed",
+        issue_number=None,
     )
     jsonschema.validate(ev, schema)
 
@@ -350,14 +404,27 @@ def test_read_usage_serial_back_compat_one_main_worker(tmp_path):
     usage block, plus a one-entry 'main' workers list."""
     spec = tmp_path / "spec"
     spec.mkdir()
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 1200, "outputTokens": 50, "totalTokens": 1250,
-        "totalCostUsd": 0.5, "model": "claude-sonnet-4-6",
-        "workers": {
-            "main": _worker("main", "claude", "claude-sonnet-4-6",
-                            in_t=1200, out_t=50, cost=0.5),
-        },
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 1200,
+                "outputTokens": 50,
+                "totalTokens": 1250,
+                "totalCostUsd": 0.5,
+                "model": "claude-sonnet-4-6",
+                "workers": {
+                    "main": _worker(
+                        "main",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=1200,
+                        out_t=50,
+                        cost=0.5,
+                    ),
+                },
+            }
+        )
+    )
     usage = read_usage(spec)
     # Scalar block is exactly the pre-#45 shape.
     assert usage["input_tokens"] == 1200
@@ -376,16 +443,37 @@ def test_read_usage_two_workers_rollups(tmp_path):
     """Two workers on two providers/models → workers[] + correct rollups."""
     spec = tmp_path / "spec"
     spec.mkdir()
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
-        "totalCostUsd": 0.30, "model": "ollama:llama3",  # scalar = last-writer
-        "workers": {
-            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
-                             in_t=300, out_t=40, cost=0.30, dur=1500),
-            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
-                             in_t=500, out_t=60, cost=0.0, dur=2200),
-        },
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 800,
+                "outputTokens": 100,
+                "totalTokens": 900,
+                "totalCostUsd": 0.30,
+                "model": "ollama:llama3",  # scalar = last-writer
+                "workers": {
+                    "sub-A": _worker(
+                        "sub-A",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=300,
+                        out_t=40,
+                        cost=0.30,
+                        dur=1500,
+                    ),
+                    "sub-B": _worker(
+                        "sub-B",
+                        "ollama",
+                        "ollama:llama3",
+                        in_t=500,
+                        out_t=60,
+                        cost=0.0,
+                        dur=2200,
+                    ),
+                },
+            }
+        )
+    )
     usage = read_usage(spec)
     assert len(usage["workers"]) == 2
     # Deterministic order by worker_id.
@@ -413,10 +501,17 @@ def test_read_usage_no_workers_map_omits_new_fields(tmp_path):
     workers[]/by_provider/by_model keys (additive omission)."""
     spec = tmp_path / "spec"
     spec.mkdir()
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 10, "outputTokens": 5, "totalTokens": 15,
-        "totalCostUsd": 0.01, "model": "claude-sonnet-4-6",
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 10,
+                "outputTokens": 5,
+                "totalTokens": 15,
+                "totalCostUsd": 0.01,
+                "model": "claude-sonnet-4-6",
+            }
+        )
+    )
     usage = read_usage(spec)
     assert usage["total_tokens"] == 15
     assert "workers" not in usage
@@ -430,18 +525,42 @@ def test_v13_usage_round_trips_through_build_completion_event(tmp_path):
     jsonschema = __import__("pytest").importorskip("jsonschema")
     spec = tmp_path / "spec"
     spec.mkdir()
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
-        "totalCostUsd": 0.30, "model": "ollama:llama3",
-        "workers": {
-            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
-                             in_t=300, out_t=40, cost=0.30, dur=1500),
-            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
-                             in_t=500, out_t=60, cost=0.0, dur=2200),
-        },
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 800,
+                "outputTokens": 100,
+                "totalTokens": 900,
+                "totalCostUsd": 0.30,
+                "model": "ollama:llama3",
+                "workers": {
+                    "sub-A": _worker(
+                        "sub-A",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=300,
+                        out_t=40,
+                        cost=0.30,
+                        dur=1500,
+                    ),
+                    "sub-B": _worker(
+                        "sub-B",
+                        "ollama",
+                        "ollama:llama3",
+                        in_t=500,
+                        out_t=60,
+                        cost=0.0,
+                        dur=2200,
+                    ),
+                },
+            }
+        )
+    )
     ev = build_completion_event(
-        task_id="t", spec_id="s", status="done", issue_number=1,
+        task_id="t",
+        spec_id="s",
+        status="done",
+        issue_number=1,
         usage=read_usage(spec),
     )
     assert ev["schema_version"] == "1.3"
@@ -463,9 +582,17 @@ def test_old_consumer_ignores_new_usage_fields_still_validates(tmp_path):
     against the v1.3 schema — the new fields are optional, not required."""
     jsonschema = __import__("pytest").importorskip("jsonschema")
     ev = build_completion_event(
-        task_id="t", spec_id="s", status="done", issue_number=1,
-        usage={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12,
-               "cost_usd": 0.01, "model": "claude-sonnet-4-6"},
+        task_id="t",
+        spec_id="s",
+        status="done",
+        issue_number=1,
+        usage={
+            "input_tokens": 10,
+            "output_tokens": 2,
+            "total_tokens": 12,
+            "cost_usd": 0.01,
+            "model": "claude-sonnet-4-6",
+        },
     )
     schema = json.loads(
         (_WS / "server" / "services" / "completion_event.schema.json").read_text()
@@ -497,8 +624,11 @@ def test_build_worker_event_exact_shape():
     """The live sub-event matches the EXACT v1.3 worker contract CFactory is
     being built against (status/phase + the worker{} object fields)."""
     ev = build_worker_event(
-        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
-        project_id="proj", worker=_sample_worker(),
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        issue_number=412,
+        project_id="proj",
+        worker=_sample_worker(),
         updated_at="2026-06-13T12:00:00+00:00",
     )
     assert _RFC_CORE <= set(ev)
@@ -527,7 +657,9 @@ def test_build_worker_event_exact_shape():
 
 def test_build_worker_event_defaults_to_main_and_derives_total():
     ev = build_worker_event(
-        task_id="proj:s", spec_id="s", issue_number=None,
+        task_id="proj:s",
+        spec_id="s",
+        issue_number=None,
         worker={"input_tokens": 10, "output_tokens": 5},  # no id, no total
     )
     assert ev["correlation_key"] == "af-s"  # synthetic key when no issue
@@ -538,7 +670,9 @@ def test_build_worker_event_defaults_to_main_and_derives_total():
 
 def test_build_worker_event_prefers_agent_phase_over_phase():
     ev = build_worker_event(
-        task_id="proj:s", spec_id="s", issue_number=1,
+        task_id="proj:s",
+        spec_id="s",
+        issue_number=1,
         worker=_sample_worker(agent_phase="qa", phase="coding"),
     )
     assert ev["worker"]["agent_phase"] == "qa"
@@ -550,8 +684,11 @@ def test_worker_event_validates_against_published_schema():
         (_WS / "server" / "services" / "completion_event.schema.json").read_text()
     )
     ev = build_worker_event(
-        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
-        project_id="proj", worker=_sample_worker(provider="ollama", cost_usd=0.0),
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        issue_number=412,
+        project_id="proj",
+        worker=_sample_worker(provider="ollama", cost_usd=0.0),
         updated_at="2026-06-13T12:00:00+00:00",
     )
     jsonschema.validate(ev, schema)  # phase:"worker" + worker{} must validate
@@ -573,12 +710,16 @@ def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
 
     spec = _spec_with_issue(tmp_path, 412)
     ev = emit_worker_completion(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_sample_worker(),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_sample_worker(),
     )
     assert captured["url"] == "http://hook.test/c"
     assert captured["body"]["status"] == "worker_done"
@@ -587,7 +728,9 @@ def test_emit_worker_completion_posts_via_same_transport(tmp_path, monkeypatch):
     assert ev["worker"]["worker_id"] == "sub-A"
 
 
-def test_emit_worker_completion_is_best_effort_on_raising_transport(tmp_path, monkeypatch):
+def test_emit_worker_completion_is_best_effort_on_raising_transport(
+    tmp_path, monkeypatch
+):
     """A raising transport MUST NOT propagate — emission is best-effort."""
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
 
@@ -595,11 +738,15 @@ def test_emit_worker_completion_is_best_effort_on_raising_transport(tmp_path, mo
         raise OSError("refused")
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     spec = _spec_with_issue(tmp_path, 1)
     # Must not raise — returns the built event regardless of transport failure.
     ev = emit_worker_completion(
-        spec_dir=spec, task_id="t", spec_id="s", project_id="p",
+        spec_dir=spec,
+        task_id="t",
+        spec_id="s",
+        project_id="p",
         worker=_sample_worker(),
     )
     assert ev["status"] == "worker_done"
@@ -610,8 +757,11 @@ def test_worker_sentinel_written_to_per_worker_file(tmp_path, monkeypatch):
     monkeypatch.delenv("AIFACTORY_COMPLETION_WEBHOOK", raising=False)
     spec = _spec_with_issue(tmp_path, 412)
     emit_worker_completion(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_sample_worker(worker_id="sub-A"),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_sample_worker(worker_id="sub-A"),
     )
     # Per-worker sentinel — does NOT clobber the terminal COMPLETED.json.
     sentinel = spec / "WORKER.sub-A.json"
@@ -620,7 +770,9 @@ def test_worker_sentinel_written_to_per_worker_file(tmp_path, monkeypatch):
     assert not (spec / "COMPLETED.json").exists()
 
 
-def test_terminal_event_unchanged_and_serial_main_worker_subevent_fires(tmp_path, monkeypatch):
+def test_terminal_event_unchanged_and_serial_main_worker_subevent_fires(
+    tmp_path, monkeypatch
+):
     """The terminal event still fires unchanged; the serial 'main' worker also
     gets a live sub-event on completion (different status/phase)."""
     monkeypatch.setenv("AIFACTORY_COMPLETION_WEBHOOK", "http://hook.test/c")
@@ -636,19 +788,36 @@ def test_terminal_event_unchanged_and_serial_main_worker_subevent_fires(tmp_path
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
 
     spec = _spec_with_issue(tmp_path, 412)
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 1200, "outputTokens": 50, "totalTokens": 1250,
-        "totalCostUsd": 0.5, "model": "claude-sonnet-4-6",
-        "workers": {
-            "main": _worker("main", "claude", "claude-sonnet-4-6",
-                            in_t=1200, out_t=50, cost=0.5),
-        },
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 1200,
+                "outputTokens": 50,
+                "totalTokens": 1250,
+                "totalCostUsd": 0.5,
+                "model": "claude-sonnet-4-6",
+                "workers": {
+                    "main": _worker(
+                        "main",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=1200,
+                        out_t=50,
+                        cost=0.5,
+                    ),
+                },
+            }
+        )
+    )
     ev = emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
         status="completed",
     )
     # Terminal event itself is UNCHANGED: completion event, with usage rollups,
@@ -683,21 +852,39 @@ def test_terminal_event_no_serial_subevent_for_multiple_workers(tmp_path, monkey
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
 
     spec = _spec_with_issue(tmp_path, 412)
-    (spec / "token_usage.json").write_text(json.dumps({
-        "totalInputTokens": 800, "outputTokens": 100, "totalTokens": 900,
-        "totalCostUsd": 0.30, "model": "ollama:llama3",
-        "workers": {
-            "sub-A": _worker("sub-A", "claude", "claude-sonnet-4-6",
-                             in_t=300, out_t=40, cost=0.30),
-            "sub-B": _worker("sub-B", "ollama", "ollama:llama3",
-                             in_t=500, out_t=60, cost=0.0),
-        },
-    }))
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 800,
+                "outputTokens": 100,
+                "totalTokens": 900,
+                "totalCostUsd": 0.30,
+                "model": "ollama:llama3",
+                "workers": {
+                    "sub-A": _worker(
+                        "sub-A",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=300,
+                        out_t=40,
+                        cost=0.30,
+                    ),
+                    "sub-B": _worker(
+                        "sub-B", "ollama", "ollama:llama3", in_t=500, out_t=60, cost=0.0
+                    ),
+                },
+            }
+        )
+    )
     emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
         status="completed",
     )
     # Only the terminal event — no extra worker sub-event from the terminal path.
@@ -717,8 +904,12 @@ def test_budget_block_exceeded_true_when_spent_over_limit(tmp_path):
     spec.mkdir()
     _write_budget(spec, 1.00)
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     usage = read_usage(spec)
     assert usage["budget"] == {"limit_usd": 1.0, "spent_usd": 1.25, "exceeded": True}
@@ -730,8 +921,12 @@ def test_budget_block_exceeded_false_when_under_limit(tmp_path):
     spec.mkdir()
     _write_budget(spec, 5.00)
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     usage = read_usage(spec)
     assert usage["budget"] == {"limit_usd": 5.0, "spent_usd": 1.25, "exceeded": False}
@@ -743,8 +938,12 @@ def test_no_budget_block_when_no_budget_set(tmp_path):
     spec.mkdir()
     # No task_metadata.json budgetUsd.
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     assert "budget" not in read_usage(spec)
     # An empty/absent budgetUsd key also omits the block.
@@ -758,8 +957,12 @@ def test_budget_block_exceeded_at_exactly_limit_is_false(tmp_path):
     spec.mkdir()
     _write_budget(spec, 1.25)
     _write_usage(
-        spec, totalInputTokens=10, outputTokens=5, totalTokens=15,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=10,
+        outputTokens=5,
+        totalTokens=15,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     assert read_usage(spec)["budget"]["exceeded"] is False
 
@@ -771,11 +974,18 @@ def test_budget_block_validates_against_schema(tmp_path):
     spec.mkdir()
     _write_budget(spec, 1.00)
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     ev = build_completion_event(
-        task_id="t", spec_id="s", status="done", issue_number=1,
+        task_id="t",
+        spec_id="s",
+        status="done",
+        issue_number=1,
         usage=read_usage(spec),
     )
     assert ev["usage"]["budget"]["exceeded"] is True
@@ -793,11 +1003,18 @@ def test_budget_over_does_not_abort_build(tmp_path, monkeypatch):
     spec = _spec_with_issue(tmp_path, 412)
     _write_budget(spec, 0.10)
     _write_usage(
-        spec, totalInputTokens=2400, outputTokens=100, totalTokens=2500,
-        totalCostUsd=1.25, model="claude-sonnet-4-6",
+        spec,
+        totalInputTokens=2400,
+        outputTokens=100,
+        totalTokens=2500,
+        totalCostUsd=1.25,
+        model="claude-sonnet-4-6",
     )
     ev = emit_terminal_completion(
-        spec, task_id="proj:spec-9", project_id="proj", spec_id="spec-9",
+        spec,
+        task_id="proj:spec-9",
+        project_id="proj",
+        spec_id="spec-9",
         status="completed",
     )
     # Build reached its natural terminal state; the event is the normal
@@ -835,8 +1052,11 @@ def test_build_worker_progress_event_exact_shape():
     """The progress heartbeat matches the EXACT Tier 2 contract a future CFactory
     consumer matches against (status/phase/type + the worker{} snapshot)."""
     ev = build_worker_progress_event(
-        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
-        project_id="proj", worker=_progress_worker(),
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        issue_number=412,
+        project_id="proj",
+        worker=_progress_worker(),
         updated_at="2026-06-13T12:00:00+00:00",
     )
     assert _RFC_CORE <= set(ev)
@@ -864,7 +1084,9 @@ def test_build_worker_progress_event_exact_shape():
 
 def test_build_worker_progress_event_defaults_and_derives_total():
     ev = build_worker_progress_event(
-        task_id="proj:s", spec_id="s", issue_number=None,
+        task_id="proj:s",
+        spec_id="s",
+        issue_number=None,
         worker={"input_tokens": 10, "output_tokens": 5},  # no id, no total
     )
     assert ev["correlation_key"] == "af-s"  # synthetic key when no issue
@@ -880,8 +1102,11 @@ def test_worker_progress_event_validates_against_published_schema():
         (_WS / "server" / "services" / "completion_event.schema.json").read_text()
     )
     ev = build_worker_progress_event(
-        task_id="proj:spec-9", spec_id="spec-9", issue_number=412,
-        project_id="proj", worker=_progress_worker(provider="ollama", cost_usd=0.0),
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        issue_number=412,
+        project_id="proj",
+        worker=_progress_worker(provider="ollama", cost_usd=0.0),
         updated_at="2026-06-13T12:00:00+00:00",
     )
     jsonschema.validate(ev, schema)  # phase:"worker_progress" + worker{} must validate
@@ -899,15 +1124,21 @@ def test_progress_throttle_one_emit_per_window(tmp_path, monkeypatch):
     spec = _spec_with_issue(tmp_path, 412)
 
     ev1 = emit_worker_progress(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_progress_worker(),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_progress_worker(),
     )
     assert ev1 is not None and ev1["status"] == "running"
     # 5s later — still inside the 10s window → throttled (None).
     clock["t"] = 1005.0
     ev2 = emit_worker_progress(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_progress_worker(),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_progress_worker(),
     )
     assert ev2 is None
 
@@ -922,16 +1153,28 @@ def test_progress_throttle_emits_again_after_window(tmp_path, monkeypatch):
     monkeypatch.setattr(_completion_mod.time, "monotonic", lambda: clock["t"])
     spec = _spec_with_issue(tmp_path, 412)
 
-    assert emit_worker_progress(
-        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
-        worker=_progress_worker(),
-    ) is not None
+    assert (
+        emit_worker_progress(
+            spec_dir=spec,
+            task_id="t",
+            spec_id="spec-9",
+            project_id="proj",
+            worker=_progress_worker(),
+        )
+        is not None
+    )
     # 11s later — past the 10s window → emits again.
     clock["t"] = 2011.0
-    assert emit_worker_progress(
-        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
-        worker=_progress_worker(),
-    ) is not None
+    assert (
+        emit_worker_progress(
+            spec_dir=spec,
+            task_id="t",
+            spec_id="spec-9",
+            project_id="proj",
+            worker=_progress_worker(),
+        )
+        is not None
+    )
 
 
 def test_progress_throttle_independent_per_worker(tmp_path, monkeypatch):
@@ -943,15 +1186,27 @@ def test_progress_throttle_independent_per_worker(tmp_path, monkeypatch):
     monkeypatch.setattr(_completion_mod.time, "monotonic", lambda: 500.0)
     spec = _spec_with_issue(tmp_path, 412)
 
-    assert emit_worker_progress(
-        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
-        worker=_progress_worker(worker_id="sub-A"),
-    ) is not None
+    assert (
+        emit_worker_progress(
+            spec_dir=spec,
+            task_id="t",
+            spec_id="spec-9",
+            project_id="proj",
+            worker=_progress_worker(worker_id="sub-A"),
+        )
+        is not None
+    )
     # Different worker, same instant → NOT throttled.
-    assert emit_worker_progress(
-        spec_dir=spec, task_id="t", spec_id="spec-9", project_id="proj",
-        worker=_progress_worker(worker_id="sub-B"),
-    ) is not None
+    assert (
+        emit_worker_progress(
+            spec_dir=spec,
+            task_id="t",
+            spec_id="spec-9",
+            project_id="proj",
+            worker=_progress_worker(worker_id="sub-B"),
+        )
+        is not None
+    )
 
 
 def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
@@ -971,11 +1226,15 @@ def test_progress_emit_posts_via_same_transport(tmp_path, monkeypatch):
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
     spec = _spec_with_issue(tmp_path, 412)
     emit_worker_progress(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_progress_worker(),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_progress_worker(),
     )
     assert captured["url"] == "http://hook.test/c"
     assert captured["body"]["status"] == "running"
@@ -993,11 +1252,15 @@ def test_progress_emit_best_effort_on_raising_transport(tmp_path, monkeypatch):
         raise OSError("refused")
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     spec = _spec_with_issue(tmp_path, 1)
     # Must not raise — the slot was reserved and the transport error swallowed.
     ev = emit_worker_progress(
-        spec_dir=spec, task_id="t", spec_id="s", project_id="p",
+        spec_dir=spec,
+        task_id="t",
+        spec_id="s",
+        project_id="p",
         worker=_progress_worker(),
     )
     # Built + returned despite the transport failure (best-effort).
@@ -1016,12 +1279,17 @@ def test_progress_sentinel_is_rolling_and_never_clobbers(tmp_path, monkeypatch):
     (spec / "WORKER.sub-A.json").write_text(json.dumps({"keep": "worker_done"}))
 
     emit_worker_progress(
-        spec_dir=spec, task_id="proj:spec-9", spec_id="spec-9",
-        project_id="proj", worker=_progress_worker(worker_id="sub-A"),
+        spec_dir=spec,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        project_id="proj",
+        worker=_progress_worker(worker_id="sub-A"),
     )
     progress = spec / "WORKER.sub-A.progress.json"
     assert progress.exists()
     assert json.loads(progress.read_text())["phase"] == "worker_progress"
     # The other sentinels are untouched.
     assert json.loads((spec / "COMPLETED.json").read_text()) == {"keep": "terminal"}
-    assert json.loads((spec / "WORKER.sub-A.json").read_text()) == {"keep": "worker_done"}
+    assert json.loads((spec / "WORKER.sub-A.json").read_text()) == {
+        "keep": "worker_done"
+    }

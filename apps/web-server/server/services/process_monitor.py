@@ -284,7 +284,9 @@ async def monitor_process(
                                 service._last_emitted_task_update.pop(task_id, None)
                                 service._task_start_times.pop(task_id, None)
                                 service._task_current_phases.pop(task_id, None)
-                                service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+                                service._release_task_credential(
+                                    task_id
+                                )  # #670: return pooled credential + pop profile
                                 service._task_subtask_states.pop(task_id, None)
 
                                 # Emit PLAN_REVIEW phase (maps to "human_review" status) — plan_review always scales to 20%
@@ -316,7 +318,9 @@ async def monitor_process(
                         service._last_emitted_task_update.pop(task_id, None)
                         service._task_start_times.pop(task_id, None)
                         service._task_current_phases.pop(task_id, None)
-                        service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+                        service._release_task_credential(
+                            task_id
+                        )  # #670: return pooled credential + pop profile
                         service._task_rate_limits.pop(task_id, None)
                         service._task_subtask_states.pop(task_id, None)
 
@@ -397,7 +401,9 @@ async def monitor_process(
                         service._last_emitted_task_update.pop(task_id, None)
                         service._task_start_times.pop(task_id, None)
                         service._task_current_phases.pop(task_id, None)
-                        service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+                        service._release_task_credential(
+                            task_id
+                        )  # #670: return pooled credential + pop profile
                         service._task_subtask_states.pop(task_id, None)
                         service._spec_dirs.pop(task_id, None)
 
@@ -637,7 +643,9 @@ async def monitor_process(
                         service._last_emitted_task_update.pop(task_id, None)
                         service._task_start_times.pop(task_id, None)
                         service._task_current_phases.pop(task_id, None)
-                        service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+                        service._release_task_credential(
+                            task_id
+                        )  # #670: return pooled credential + pop profile
                         service._task_rate_limits.pop(task_id, None)
                         service._task_subtask_states.pop(task_id, None)
                         if task_id in service._task_log_writers:
@@ -809,7 +817,9 @@ async def monitor_process(
         service._last_emitted_task_update.pop(task_id, None)
         service._task_start_times.pop(task_id, None)
         service._task_current_phases.pop(task_id, None)
-        service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+        service._release_task_credential(
+            task_id
+        )  # #670: return pooled credential + pop profile
         service._task_rate_limits.pop(task_id, None)
         service._task_subtask_states.pop(task_id, None)
         service._spec_dirs.pop(task_id, None)
@@ -825,7 +835,9 @@ async def monitor_process(
         service._task_start_times.pop(task_id, None)
         service._task_current_phases.pop(task_id, None)
         service._task_user_ids.pop(task_id, None)
-        service._release_task_credential(task_id)  # #670: return pooled credential + pop profile
+        service._release_task_credential(
+            task_id
+        )  # #670: return pooled credential + pop profile
         service._task_rate_limits.pop(task_id, None)
         service._task_subtask_states.pop(task_id, None)
         service._spec_dirs.pop(task_id, None)

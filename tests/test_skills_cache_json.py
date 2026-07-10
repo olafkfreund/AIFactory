@@ -73,7 +73,9 @@ def test_foreign_version_cache_is_rejected_and_rebuilt(skills_tree, tmp_path):
     cache = tmp_path / "skills-cache.json"
     # A cache with a mismatched version must never be trusted: constructing the
     # service rebuilds the index and overwrites it with the current version.
-    cache.write_text(json.dumps({"version": 999, "base_path": str(skills_tree), "index": {}}))
+    cache.write_text(
+        json.dumps({"version": 999, "base_path": str(skills_tree), "index": {}})
+    )
     SkillsService(skills_base_path=skills_tree, cache_path=cache)
 
     rebuilt = json.loads(cache.read_text())
@@ -85,6 +87,10 @@ def test_load_cache_rejects_foreign_version_directly(skills_tree, tmp_path):
     # Unit check on the guard itself: a freshly-written foreign cache that is
     # newer than the skills tree is still rejected on its version.
     cache = tmp_path / "skills-cache.json"
-    svc = SkillsService(skills_base_path=skills_tree, cache_path=cache)  # writes a valid v2 cache
-    cache.write_text(json.dumps({"version": 999, "base_path": str(skills_tree), "index": {}}))
+    svc = SkillsService(
+        skills_base_path=skills_tree, cache_path=cache
+    )  # writes a valid v2 cache
+    cache.write_text(
+        json.dumps({"version": 999, "base_path": str(skills_tree), "index": {}})
+    )
     assert svc._load_cache() is False

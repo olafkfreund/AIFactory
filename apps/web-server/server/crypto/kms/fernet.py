@@ -32,7 +32,7 @@ class FernetBackend:
     """
 
     NONCE_BYTES = 12  # AESGCM standard
-    KEY_BYTES = 32    # AES-256
+    KEY_BYTES = 32  # AES-256
 
     def __init__(self, root_key: bytes) -> None:
         if len(root_key) != self.KEY_BYTES:
@@ -55,7 +55,9 @@ class FernetBackend:
         try:
             key = base64.urlsafe_b64decode(raw.encode())
         except Exception as exc:
-            raise RuntimeError(f"KMS_FERNET_KEY is not valid URL-safe base64: {exc}") from exc
+            raise RuntimeError(
+                f"KMS_FERNET_KEY is not valid URL-safe base64: {exc}"
+            ) from exc
         return cls(key)
 
     def encrypt(self, plaintext: bytes) -> bytes:
@@ -66,8 +68,7 @@ class FernetBackend:
     def decrypt(self, blob: bytes) -> bytes:
         if len(blob) < self.NONCE_BYTES + 16:  # +16 for GCM tag
             raise ValueError(
-                f"ciphertext too short: {len(blob)} bytes "
-                f"(min {self.NONCE_BYTES + 16})"
+                f"ciphertext too short: {len(blob)} bytes (min {self.NONCE_BYTES + 16})"
             )
         nonce, ciphertext = blob[: self.NONCE_BYTES], blob[self.NONCE_BYTES :]
         return self._aead.decrypt(nonce, ciphertext, associated_data=None)

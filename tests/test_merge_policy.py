@@ -56,7 +56,9 @@ def test_low_refuses_when_ci_not_green():
 def test_low_refuses_when_verdict_not_pass():
     assert decide_merge("low", **{**GREEN, "tfactory_verdict": "fail"}) == HOLD_ASYNC
     assert decide_merge("low", **{**GREEN, "tfactory_verdict": None}) == HOLD_ASYNC
-    assert decide_merge("low", **{**GREEN, "tfactory_verdict": "handback"}) == HOLD_ASYNC
+    assert (
+        decide_merge("low", **{**GREEN, "tfactory_verdict": "handback"}) == HOLD_ASYNC
+    )
 
 
 def test_low_refuses_below_val_floor():
@@ -70,7 +72,10 @@ def test_low_refuses_without_ci_parity():
 
 
 def test_low_auto_merges_when_val_exceeds_floor():
-    assert decide_merge("low", **{**GREEN, "achieved_val": 3, "val_floor": 2}) == AUTO_MERGE
+    assert (
+        decide_merge("low", **{**GREEN, "achieved_val": 3, "val_floor": 2})
+        == AUTO_MERGE
+    )
 
 
 # ── coercion of verdict + VAL spellings ────────────────────────────────────

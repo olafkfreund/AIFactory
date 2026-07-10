@@ -35,7 +35,7 @@ CLI_ENDPOINTS = [
         "file": "gitlab.py",
         "function": "update_merge_request",
         "cli_tool": "glab",
-        "phase": "Phase 7: GitLab CLI Operations"
+        "phase": "Phase 7: GitLab CLI Operations",
     },
     {
         "id": "7.2",
@@ -43,7 +43,7 @@ CLI_ENDPOINTS = [
         "file": "gitlab.py",
         "function": "assign_merge_request",
         "cli_tool": "glab",
-        "phase": "Phase 7: GitLab CLI Operations"
+        "phase": "Phase 7: GitLab CLI Operations",
     },
     {
         "id": "7.3",
@@ -51,7 +51,7 @@ CLI_ENDPOINTS = [
         "file": "gitlab.py",
         "function": "approve_merge_request",
         "cli_tool": "glab",
-        "phase": "Phase 7: GitLab CLI Operations"
+        "phase": "Phase 7: GitLab CLI Operations",
     },
     {
         "id": "7.4",
@@ -59,7 +59,7 @@ CLI_ENDPOINTS = [
         "file": "gitlab.py",
         "function": "merge_merge_request",
         "cli_tool": "glab",
-        "phase": "Phase 7: GitLab CLI Operations"
+        "phase": "Phase 7: GitLab CLI Operations",
     },
     {
         "id": "7.5",
@@ -67,7 +67,7 @@ CLI_ENDPOINTS = [
         "file": "gitlab.py",
         "function": "post_mr_note",  # Actual function name
         "cli_tool": "glab",
-        "phase": "Phase 7: GitLab CLI Operations"
+        "phase": "Phase 7: GitLab CLI Operations",
     },
     # Phase 9: Context Management (1 endpoint)
     {
@@ -76,7 +76,7 @@ CLI_ENDPOINTS = [
         "file": "context.py",
         "function": "invoke_claude_setup",
         "cli_tool": "claude",
-        "phase": "Phase 9: Context Management"
+        "phase": "Phase 9: Context Management",
     },
     # Phase 10: Git Operations (2 endpoints)
     {
@@ -85,7 +85,7 @@ CLI_ENDPOINTS = [
         "file": "git.py",
         "function": "squash_commits",
         "cli_tool": "git",
-        "phase": "Phase 10: Git Operations"
+        "phase": "Phase 10: Git Operations",
     },
     {
         "id": "10.2",
@@ -93,7 +93,7 @@ CLI_ENDPOINTS = [
         "file": "git.py",
         "function": "create_worktree",
         "cli_tool": "git",
-        "phase": "Phase 10: Git Operations"
+        "phase": "Phase 10: Git Operations",
     },
     # Phase 14: Git Maintenance & Reviews (2 endpoints)
     {
@@ -102,7 +102,7 @@ CLI_ENDPOINTS = [
         "file": "git.py",
         "function": "download_source_update",
         "cli_tool": "git",
-        "phase": "Phase 14: Git Maintenance & Reviews"
+        "phase": "Phase 14: Git Maintenance & Reviews",
     },
     {
         "id": "14.2",
@@ -110,7 +110,7 @@ CLI_ENDPOINTS = [
         "file": "git.py",
         "function": "create_release",
         "cli_tool": "gh/glab",
-        "phase": "Phase 14: Git Maintenance & Reviews"
+        "phase": "Phase 14: Git Maintenance & Reviews",
     },
 ]
 
@@ -118,6 +118,7 @@ CLI_ENDPOINTS = [
 # ============================================================================
 # Verification Functions
 # ============================================================================
+
 
 def check_endpoint_exists(endpoint: Dict) -> Tuple[bool, str]:
     """Check if endpoint function exists in source file."""
@@ -182,11 +183,11 @@ def check_cli_command_execution(endpoint: Dict) -> Tuple[bool, str]:
 
     # Check for CLI execution patterns
     cli_patterns = [
-        r'run_glab_command',  # glab CLI wrapper
-        r'run_gh_command',    # gh CLI wrapper
-        r'run_git_command',   # git CLI wrapper
-        r'subprocess\.run',   # Direct subprocess call
-        r'subprocess\.Popen', # Direct subprocess call
+        r"run_glab_command",  # glab CLI wrapper
+        r"run_gh_command",  # gh CLI wrapper
+        r"run_git_command",  # git CLI wrapper
+        r"subprocess\.run",  # Direct subprocess call
+        r"subprocess\.Popen",  # Direct subprocess call
     ]
 
     found_patterns = []
@@ -217,11 +218,11 @@ def check_error_handling(endpoint: Dict) -> Tuple[bool, str]:
 
     # Check for error handling patterns
     error_patterns = [
-        r'try:',
-        r'except',
-        r'HTTPException',
-        r'if\s+not\s+',  # Validation checks
-        r'raise',
+        r"try:",
+        r"except",
+        r"HTTPException",
+        r"if\s+not\s+",  # Validation checks
+        r"raise",
     ]
 
     found_patterns = []
@@ -230,7 +231,10 @@ def check_error_handling(endpoint: Dict) -> Tuple[bool, str]:
             found_patterns.append(pattern)
 
     if len(found_patterns) < 2:
-        return False, f"Insufficient error handling (found {len(found_patterns)} patterns)"
+        return (
+            False,
+            f"Insufficient error handling (found {len(found_patterns)} patterns)",
+        )
 
     return True, f"Error handling present ({len(found_patterns)} patterns)"
 
@@ -252,11 +256,11 @@ def check_input_validation(endpoint: Dict) -> Tuple[bool, str]:
 
     # Check for validation patterns
     validation_patterns = [
-        r'if\s+not\s+\w+',  # Not empty checks
-        r'\.strip\(',       # Whitespace stripping
-        r'len\(',           # Length checks
-        r'load_projects',   # Project validation
-        r'Pydantic|BaseModel',  # Pydantic validation
+        r"if\s+not\s+\w+",  # Not empty checks
+        r"\.strip\(",  # Whitespace stripping
+        r"len\(",  # Length checks
+        r"load_projects",  # Project validation
+        r"Pydantic|BaseModel",  # Pydantic validation
     ]
 
     found_patterns = []
@@ -274,6 +278,7 @@ def check_input_validation(endpoint: Dict) -> Tuple[bool, str]:
 # Main Verification
 # ============================================================================
 
+
 def verify_all_endpoints() -> Dict:
     """Verify all CLI integration endpoints."""
     results = {
@@ -282,7 +287,7 @@ def verify_all_endpoints() -> Dict:
         "failed": 0,
         "endpoints": [],
         "by_phase": {},
-        "by_cli_tool": {}
+        "by_cli_tool": {},
     }
 
     for endpoint in CLI_ENDPOINTS:
@@ -295,7 +300,7 @@ def verify_all_endpoints() -> Dict:
             "phase": endpoint["phase"],
             "checks": {},
             "status": "verified",
-            "issues": []
+            "issues": [],
         }
 
         # Run all checks
@@ -312,7 +317,7 @@ def verify_all_endpoints() -> Dict:
             passed, message = check_func(endpoint)
             endpoint_result["checks"][check_name] = {
                 "passed": passed,
-                "message": message
+                "message": message,
             }
             if not passed:
                 all_passed = False
@@ -354,7 +359,9 @@ def print_verification_report(results: Dict):
     print()
 
     print(f"Total Endpoints: {results['total_endpoints']}")
-    print(f"✅ Verified: {results['verified']} ({results['verified']/results['total_endpoints']*100:.1f}%)")
+    print(
+        f"✅ Verified: {results['verified']} ({results['verified'] / results['total_endpoints'] * 100:.1f}%)"
+    )
     print(f"❌ Failed: {results['failed']}")
     print()
 

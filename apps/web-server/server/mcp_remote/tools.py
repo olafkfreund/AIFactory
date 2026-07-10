@@ -309,9 +309,7 @@ async def dispatch_tool_call(
         if tool_name == "aifactory.list_tasks":
             project_id = arguments["project_id"]
             return _format_json(
-                await _call_internal(
-                    "GET", f"/api/projects/{project_id}/tasks", key
-                )
+                await _call_internal("GET", f"/api/projects/{project_id}/tasks", key)
             )
         if tool_name == "aifactory.get_task":
             return _format_json(

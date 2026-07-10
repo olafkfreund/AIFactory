@@ -291,7 +291,9 @@ async def get_worktree_merge_preview(
             if task_files_result.returncode == 0:
                 task_files = set(task_files_result.stdout.strip().split("\n"))
                 # Find files that overlap (uncommitted in main AND modified in task)
-                uncommitted_conflicting_files = list(set(uncommitted_files) & task_files)
+                uncommitted_conflicting_files = list(
+                    set(uncommitted_files) & task_files
+                )
 
                 # Filter out gitignored files (e.g. build artifacts)
                 if uncommitted_conflicting_files:
@@ -349,7 +351,9 @@ async def get_worktree_merge_preview(
     total_conflicts = len(all_conflicts)
     auto_mergeable = sum(1 for c in all_conflicts if c.get("canAutoMerge", False))
     has_any_conflicts = has_conflicts or total_conflicts > 0
-    can_merge = not has_conflicts and (total_conflicts == 0 or total_conflicts == auto_mergeable)
+    can_merge = not has_conflicts and (
+        total_conflicts == 0 or total_conflicts == auto_mergeable
+    )
 
     # Build preview response with all merge information
     preview_data = {
@@ -481,7 +485,9 @@ async def resolve_worktree_conflicts(
     # Check if a merge is already in progress
     merge_head = project_path / ".git" / "MERGE_HEAD"
     if merge_head.exists():
-        logger.info(f"Merge already in progress for {task_id}, resolving existing conflicts")
+        logger.info(
+            f"Merge already in progress for {task_id}, resolving existing conflicts"
+        )
     else:
         # Start the git merge (allow conflicts)
         logger.info(
@@ -528,7 +534,9 @@ async def resolve_worktree_conflicts(
             "data": {
                 "resolved": [],
                 "remaining": [],
-                "stats": {"message": "Merge started with conflicts, AI resolution disabled"},
+                "stats": {
+                    "message": "Merge started with conflicts, AI resolution disabled"
+                },
             },
         }
 
@@ -628,7 +636,9 @@ async def resolve_worktree_conflicts(
                     or "=======" in resolved_content
                     or ">>>>>>> " in resolved_content
                 ):
-                    logger.warning(f"AI resolution for {file_path} still has markers, cleaning up")
+                    logger.warning(
+                        f"AI resolution for {file_path} still has markers, cleaning up"
+                    )
                     resolved_content = _clean_conflict_markers(resolved_content)
 
                 full_path.write_text(resolved_content)
@@ -755,7 +765,9 @@ async def resolve_uncommitted_conflicts(
         spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            worktree_path = (
+                project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            )
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -847,7 +859,10 @@ async def resolve_uncommitted_conflicts(
                 capture_output=True,
                 text=True,
             )
-            if result.returncode == 0 and "No local changes to save" not in result.stdout:
+            if (
+                result.returncode == 0
+                and "No local changes to save" not in result.stdout
+            ):
                 stash_created = True
                 logger.info(f"Stashed changes (fallback): {result.stdout.strip()}")
             elif result.returncode != 0 and "No local changes to save" not in (
@@ -1033,7 +1048,9 @@ async def resolve_git_merge_conflicts(
         spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            worktree_path = (
+                project_path / ".aifactory" / "worktrees" / "tasks" / task_id
+            )
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -1069,13 +1086,17 @@ async def resolve_git_merge_conflicts(
         )
         if result.returncode == 0 and result.stdout.strip():
             conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
-            logger.info(f"Found {len(conflicted_files)} conflicted files: {conflicted_files}")
+            logger.info(
+                f"Found {len(conflicted_files)} conflicted files: {conflicted_files}"
+            )
     except subprocess.CalledProcessError as e:
         logger.warning(f"git diff --diff-filter=U failed: {e}")
 
     # If no conflicted files from git, scan for files with conflict markers
     if not conflicted_files:
-        logger.info("No files from git diff --diff-filter=U, scanning for conflict markers...")
+        logger.info(
+            "No files from git diff --diff-filter=U, scanning for conflict markers..."
+        )
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -1158,7 +1179,9 @@ async def resolve_git_merge_conflicts(
                     or "=======" in resolved_content
                     or ">>>>>>> " in resolved_content
                 ):
-                    logger.warning(f"AI resolution for {file_path} still contains conflict markers")
+                    logger.warning(
+                        f"AI resolution for {file_path} still contains conflict markers"
+                    )
                     # Try to clean up obvious marker remnants
                     resolved_content = _clean_conflict_markers(resolved_content)
 
@@ -1351,7 +1374,9 @@ async def abort_worktree_merge(
                     aborted_locations.append("worktree")
                     logger.info(f"Aborted merge in worktree: {worktree_path}")
                 else:
-                    logger.warning(f"Failed to abort merge in worktree: {result.stderr}")
+                    logger.warning(
+                        f"Failed to abort merge in worktree: {result.stderr}"
+                    )
                     errors.append(f"Worktree: {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
             errors.append("Worktree: git merge --abort timed out")
@@ -1365,7 +1390,9 @@ async def abort_worktree_merge(
             # Check if main project is in a merge state
             git_dir = project_path / ".git"
             merge_head = (
-                git_dir / "MERGE_HEAD" if git_dir.is_dir() else project_path / ".git" / "MERGE_HEAD"
+                git_dir / "MERGE_HEAD"
+                if git_dir.is_dir()
+                else project_path / ".git" / "MERGE_HEAD"
             )
             if merge_head.exists():
                 result = subprocess.run(
@@ -1379,7 +1406,9 @@ async def abort_worktree_merge(
                     aborted_locations.append("main project")
                     logger.info(f"Aborted merge in main project: {project_path}")
                 else:
-                    logger.warning(f"Failed to abort merge in main project: {result.stderr}")
+                    logger.warning(
+                        f"Failed to abort merge in main project: {result.stderr}"
+                    )
                     errors.append(f"Main project: {result.stderr.strip()}")
         except subprocess.TimeoutExpired:
             errors.append("Main project: git merge --abort timed out")
@@ -1573,7 +1602,9 @@ async def merge_worktree(
 
 
 @router.get("/{task_id}/worktree/status")
-async def get_worktree_status(task_id: str, _access: dict = Depends(require_task_access("viewer"))):
+async def get_worktree_status(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Get the status of a task's worktree.
     Returns information about the worktree including changed files count,
@@ -1730,7 +1761,9 @@ async def get_worktree_status(task_id: str, _access: dict = Depends(require_task
 
 
 @router.get("/{task_id}/worktree/diff")
-async def get_worktree_diff(task_id: str, _access: dict = Depends(require_task_access("viewer"))):
+async def get_worktree_diff(
+    task_id: str, _access: dict = Depends(require_task_access("viewer"))
+):
     """
     Get the diff details for a task's worktree.
     Returns detailed file-by-file changes between the worktree branch and base branch.
@@ -1891,7 +1924,9 @@ async def get_worktree_diff(task_id: str, _access: dict = Depends(require_task_a
             # Skip internal files, directories, and dotfiles
             if f.name.startswith(".") or f.name.startswith("__") or f.is_dir():
                 continue
-            if f.name in INTERNAL_FILES or any(f.name.startswith(p) for p in INTERNAL_PREFIXES):
+            if f.name in INTERNAL_FILES or any(
+                f.name.startswith(p) for p in INTERNAL_PREFIXES
+            ):
                 continue
             # Check if this file exists in the main project
             main_file = project_path / f.name
@@ -1951,7 +1986,9 @@ async def get_worktree_diff(task_id: str, _access: dict = Depends(require_task_a
 
 
 @router.post("/{task_id}/worktree/discard")
-async def discard_worktree(task_id: str, _access: dict = Depends(require_task_access("admin"))):
+async def discard_worktree(
+    task_id: str, _access: dict = Depends(require_task_access("admin"))
+):
     """
     Discard/delete the worktree for a task.
     Removes the worktree directory and optionally the branch.

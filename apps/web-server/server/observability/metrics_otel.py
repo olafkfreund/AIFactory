@@ -126,7 +126,8 @@ def _ensure_instruments() -> bool:
             logger.info(
                 "OTel metrics enabled — exporting per-worker token/cost/duration "
                 "(protocol=%s service=%s)",
-                protocol, service_name,
+                protocol,
+                service_name,
             )
 
         meter = _meter_provider.get_meter("aifactory.worker_metrics")

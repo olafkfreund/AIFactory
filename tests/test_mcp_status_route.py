@@ -50,6 +50,7 @@ def client(tmp_path, monkeypatch):
     (tmp_path / "home").mkdir()
 
     from core import mcp_credentials
+
     mcp_credentials.reset_cache()
 
     # Build the FastAPI app and TestClient

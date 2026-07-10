@@ -42,7 +42,10 @@ def test_strip_provider_prefix_handles_opencode():
         == "anthropic/claude-sonnet-4-5"
     )
     # Non-opencode strings pass through untouched.
-    assert strip_provider_prefix("anthropic/claude-sonnet-4-5") == "anthropic/claude-sonnet-4-5"
+    assert (
+        strip_provider_prefix("anthropic/claude-sonnet-4-5")
+        == "anthropic/claude-sonnet-4-5"
+    )
 
 
 def test_opencode_alias_and_registry():

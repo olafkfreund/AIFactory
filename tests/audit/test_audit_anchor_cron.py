@@ -46,6 +46,7 @@ def _run(coro):
 
 def _fernet_test_key() -> str:
     import base64
+
     return base64.urlsafe_b64encode(b"\xaa" * 32).decode()
 
 
@@ -93,14 +94,16 @@ def test_first_anchor_with_rows_uses_outgoing_chain_head(fresh_db):
 
     async def _go():
         async with SessionLocal() as db:
-            db.add(AuditLog(
-                id="a-001",
-                action="test.event",
-                resource_type="test",
-                created_at=datetime(2026, 5, 27, 10, 0, 0),
-                prev_hash="aa" * 32,
-                classification="internal",
-            ))
+            db.add(
+                AuditLog(
+                    id="a-001",
+                    action="test.event",
+                    resource_type="test",
+                    created_at=datetime(2026, 5, 27, 10, 0, 0),
+                    prev_hash="aa" * 32,
+                    classification="internal",
+                )
+            )
             r2 = AuditLog(
                 id="a-002",
                 action="test.event",
@@ -137,14 +140,16 @@ def test_zero_row_day_emits_anchor_with_same_head(fresh_db):
     async def _go():
         # Day 1 has a row.
         async with SessionLocal() as db:
-            db.add(AuditLog(
-                id="day1-row",
-                action="x",
-                resource_type="x",
-                created_at=datetime(2026, 5, 27, 12, 0, 0),
-                prev_hash="dd" * 32,
-                classification="internal",
-            ))
+            db.add(
+                AuditLog(
+                    id="day1-row",
+                    action="x",
+                    resource_type="x",
+                    created_at=datetime(2026, 5, 27, 12, 0, 0),
+                    prev_hash="dd" * 32,
+                    classification="internal",
+                )
+            )
             await db.commit()
             a1 = await cron.emit_anchor_for_day(db, date(2026, 5, 27))
             await db.commit()
@@ -179,15 +184,18 @@ def test_backfill_emits_one_per_missed_day(fresh_db):
             # Seed the May 24 anchor manually.
             await svc.ensure_active_key(db)
             await db.commit()
-            db.add(AuditAnchor(
-                chain_head_hash=svc.GENESIS_CHAIN_HEAD,
-                signature="00" * 32,
-                signed_at=datetime(2026, 5, 25, 0, 0, 0),  # day_end of May 24
-                key_version=1,
-            ))
+            db.add(
+                AuditAnchor(
+                    chain_head_hash=svc.GENESIS_CHAIN_HEAD,
+                    signature="00" * 32,
+                    signed_at=datetime(2026, 5, 25, 0, 0, 0),  # day_end of May 24
+                    key_version=1,
+                )
+            )
             await db.commit()
             emitted = await cron.backfill_missing_anchors(
-                db, today_utc=date(2026, 5, 28),
+                db,
+                today_utc=date(2026, 5, 28),
             )
             return emitted
 
@@ -204,15 +212,18 @@ def test_backfill_emits_nothing_when_caught_up(fresh_db):
             await db.commit()
             # Anchor for yesterday exists; today = May 28; nothing
             # to do.
-            db.add(AuditAnchor(
-                chain_head_hash=svc.GENESIS_CHAIN_HEAD,
-                signature="00" * 32,
-                signed_at=datetime(2026, 5, 28, 0, 0, 0),  # day_end of May 27
-                key_version=1,
-            ))
+            db.add(
+                AuditAnchor(
+                    chain_head_hash=svc.GENESIS_CHAIN_HEAD,
+                    signature="00" * 32,
+                    signed_at=datetime(2026, 5, 28, 0, 0, 0),  # day_end of May 27
+                    key_version=1,
+                )
+            )
             await db.commit()
             return await cron.backfill_missing_anchors(
-                db, today_utc=date(2026, 5, 28),
+                db,
+                today_utc=date(2026, 5, 28),
             )
 
     emitted = _run(_go())
@@ -254,14 +265,16 @@ def test_classification_tampering_invalidates_anchor(fresh_db):
 
     async def _go():
         async with SessionLocal() as db:
-            db.add(AuditLog(
-                id="t-001",
-                action="x",
-                resource_type="x",
-                created_at=datetime(2026, 5, 27, 12, 0, 0),
-                prev_hash="ee" * 32,
-                classification="confidential",
-            ))
+            db.add(
+                AuditLog(
+                    id="t-001",
+                    action="x",
+                    resource_type="x",
+                    created_at=datetime(2026, 5, 27, 12, 0, 0),
+                    prev_hash="ee" * 32,
+                    classification="confidential",
+                )
+            )
             await db.commit()
             anchor = await cron.emit_anchor_for_day(db, date(2026, 5, 27))
             await db.commit()
@@ -276,6 +289,7 @@ def test_classification_tampering_invalidates_anchor(fresh_db):
         # Verifier recomputes cls_hash + checks signature.
         async with SessionLocal() as db:
             from sqlalchemy import select as _select
+
             stmt = _select(AuditAnchor).where(AuditAnchor.id == anchor_id)
             res = await db.execute(stmt)
             stored = res.scalar_one()
@@ -284,7 +298,8 @@ def test_classification_tampering_invalidates_anchor(fresh_db):
             # Recompute what the verifier would compute now (post-tamper).
             day_end = datetime(2026, 5, 28, 0, 0, 0, tzinfo=timezone.utc)
             recomputed_cls = await cron._classifications_hash_before(
-                db, day_end,
+                db,
+                day_end,
             )
             recomputed_input = f"{stored.chain_head_hash}|{recomputed_cls}"
             recomputed_sig = svc.sign_anchor(recomputed_input, key)

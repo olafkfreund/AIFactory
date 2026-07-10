@@ -30,7 +30,7 @@ def _plan(*ids: str) -> ImplementationPlan:
                 name="Implementation",
                 subtasks=[Subtask(id=i, description=f"do {i}") for i in ids],
             )
-        ]
+        ],
     )
 
 

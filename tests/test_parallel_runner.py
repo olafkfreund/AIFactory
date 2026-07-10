@@ -183,7 +183,10 @@ class TestFailures:
 
 class TestStall:
     async def test_cycle_stalls_immediately(self):
-        tasks = [_st("a", deps=["b"], create=["a.py"]), _st("b", deps=["a"], create=["b.py"])]
+        tasks = [
+            _st("a", deps=["b"], create=["a.py"]),
+            _st("b", deps=["a"], create=["b.py"]),
+        ]
         h = _Harness()
         res = await run_parallel_phase(tasks, workers=3, **h.kwargs())
         assert res.stalled
@@ -206,8 +209,10 @@ class TestEligibility:
         ph = Phase(
             phase=1,
             name="p",
-            subtasks=[_st("a", create=["a.py"], status=SubtaskStatus.COMPLETED),
-                      _st("b", create=["b.py"])],
+            subtasks=[
+                _st("a", create=["a.py"], status=SubtaskStatus.COMPLETED),
+                _st("b", create=["b.py"]),
+            ],
             parallel_safe=True,
         )
         assert not is_phase_parallel_eligible(ph, workers=3)
@@ -218,46 +223,59 @@ class TestEligibility:
         assert is_phase_parallel_eligible(ph, workers=3)
 
     def test_not_eligible_with_one_worker(self):
-        ph = Phase(phase=1, name="p",
-                   subtasks=[_st("a", create=["a.py"]), _st("b", create=["b.py"])],
-                   parallel_safe=True)
+        ph = Phase(
+            phase=1,
+            name="p",
+            subtasks=[_st("a", create=["a.py"]), _st("b", create=["b.py"])],
+            parallel_safe=True,
+        )
         assert not is_phase_parallel_eligible(ph, workers=1)
 
     # --- auto-derive (#376): planner omitted parallel_safe ---
     def test_autoderive_eligible_from_disjoint_files(self):
         ph = Phase(
-            phase=1, name="p", parallel_safe=False,
+            phase=1,
+            name="p",
+            parallel_safe=False,
             subtasks=[_st("a", create=["app/x.py"]), _st("b", create=["tests/x.py"])],
         )
         assert is_phase_parallel_eligible(ph, workers=3)
 
     def test_autoderive_not_eligible_when_files_overlap(self):
         ph = Phase(
-            phase=1, name="p", parallel_safe=False,
+            phase=1,
+            name="p",
+            parallel_safe=False,
             subtasks=[_st("a", modify=["app/x.py"]), _st("b", modify=["app/x.py"])],
         )
         assert not is_phase_parallel_eligible(ph, workers=3)
 
     def test_autoderive_not_eligible_when_footprint_unknown(self):
         # Empty file sets => unknown scope => cannot prove safe => not eligible.
-        ph = Phase(phase=1, name="p", parallel_safe=False,
-                   subtasks=[_st("a"), _st("b")])
+        ph = Phase(
+            phase=1, name="p", parallel_safe=False, subtasks=[_st("a"), _st("b")]
+        )
         assert not is_phase_parallel_eligible(ph, workers=3)
 
     def test_autoderive_not_eligible_when_dependent(self):
         ph = Phase(
-            phase=1, name="p", parallel_safe=False,
-            subtasks=[_st("a", create=["a.py"]),
-                      _st("b", deps=["a"], create=["b.py"])],
+            phase=1,
+            name="p",
+            parallel_safe=False,
+            subtasks=[_st("a", create=["a.py"]), _st("b", deps=["a"], create=["b.py"])],
         )
         assert not is_phase_parallel_eligible(ph, workers=3)
 
     def test_autoderive_eligible_with_third_independent(self):
         ph = Phase(
-            phase=1, name="p", parallel_safe=False,
-            subtasks=[_st("a", create=["a.py"]),
-                      _st("b", deps=["a"], create=["b.py"]),
-                      _st("c", create=["c.py"])],
+            phase=1,
+            name="p",
+            parallel_safe=False,
+            subtasks=[
+                _st("a", create=["a.py"]),
+                _st("b", deps=["a"], create=["b.py"]),
+                _st("c", create=["c.py"]),
+            ],
         )
         assert is_phase_parallel_eligible(ph, workers=3)
 
