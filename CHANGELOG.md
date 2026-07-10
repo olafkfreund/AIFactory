@@ -1,6 +1,16 @@
 ## [Unreleased]
 
 
+## 3.6.27 - 2026-07-10
+
+### Removed
+
+- **Repo-wide over-engineering cleanup (ponytail-audit) — ~10.5k lines, 7 deps (#797).** Deleted verified-dead code: backend `runners/github/` review-intelligence modules (trust, learning, confidence, duplicates, multi_repo, cleanup, onboarding, memory_integration), the `bmad/` subagent framework + context_shard/agent_adapter/session_spawner, and 18 unraised exception classes; web-server dead `verify_token`/`bearer_scheme`; frontend dead components/shims (DevTools\*, DisplaySettings, TerminalDropdown, AddWorkspaceModal, release-store, shell-escape, `components/` barrel). Removed unused dependencies `gitpython`, `aiofiles`, `python-dotenv`, `zod`, `react-resizable-panels`, `uuid`, `@types/uuid`. Test-covered modules (qa/providers, gemini shims, output_validator, build_cached_system_blocks) and live CLI shims were kept; the required backend gate (ruff + pytest) is green.
+
+### Changed
+
+- **Behavior-preserving refactors to stdlib/native (#797).** Frontend `use-toast` hand-rolled reducer → zustand, `uuid` → `crypto.randomUUID()`, `hookProxyFactory` → native `Proxy`, inlined single-consumer wrappers; web-server lazy singletons → `@functools.cache`, extracted a `_json_store` helper, and deduped `_slugify` (→ `server/utils/slug.py`) and profiles-path resolution.
+
 ### Added
 
 - **Safety-net commit so agent work is never lost (#611 g, RFC-0008 §3.2).** The coding agent commits its own work, but if it finished with files written and uncommitted, a later post-session bookkeeping step that aborts (e.g. LLM insight extraction) — or a worktree teardown — could lose them (the demo nearly lost `app/main.py`). New defensive `agents/utils.commit_uncommitted_changes()` stages + commits any leftover changes in the worktree; `agents/session.post_session_processing` calls it right after computing the agent's own commit count and **before** the abortable bookkeeping. It only preserves files (does not count toward `new_commits`/completion, so an unconfirmed subtask is still retried with its work safely committed) and never raises. 3 unit tests over a real temp repo; session/agent suites green.
