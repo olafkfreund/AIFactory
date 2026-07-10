@@ -30,6 +30,18 @@ class CredentialMixin:
         _token_pool: Any
         _token_pool_build_lock: Any
 
+    def _resolve_profiles_file(self) -> Path:
+        """Resolve claude-profiles.json, preferring the primary data dir and
+        falling back to the legacy data-dir location when only that exists."""
+        from ..paths import get_data_file
+
+        profiles_file = Path(self.settings.PROJECTS_DATA_DIR) / "claude-profiles.json"
+        legacy_profiles_file = get_data_file("claude-profiles.json")
+        if not profiles_file.exists() and legacy_profiles_file.exists():
+            profiles_file = legacy_profiles_file
+            _log.debug(f"[AgentService] Using legacy profiles file at {profiles_file}")
+        return profiles_file
+
     def _resolve_claude_token(
         self, exclude_profile_id: str | None = None
     ) -> tuple[str | None, str | None, str | None]:
@@ -68,15 +80,7 @@ class CredentialMixin:
             )
 
         # Load claude-profiles.json
-        profiles_file = Path(self.settings.PROJECTS_DATA_DIR) / "claude-profiles.json"
-        from ..paths import get_data_file
-
-        legacy_profiles_file = get_data_file("claude-profiles.json")
-        if not profiles_file.exists() and legacy_profiles_file.exists():
-            profiles_file = legacy_profiles_file
-            logger.debug(
-                f"[AgentService] Using legacy profiles file at {profiles_file}"
-            )
+        profiles_file = self._resolve_profiles_file()
 
         if profiles_file.exists():
             try:
@@ -358,16 +362,7 @@ class CredentialMixin:
 
         logger = logging.getLogger(__name__)
 
-        profiles_file = Path(self.settings.PROJECTS_DATA_DIR) / "claude-profiles.json"
-        from ..paths import get_data_file
-
-        legacy_profiles_file = get_data_file("claude-profiles.json")
-
-        if not profiles_file.exists() and legacy_profiles_file.exists():
-            profiles_file = legacy_profiles_file
-            logger.debug(
-                f"[AgentService] Using legacy profiles file at {profiles_file}"
-            )
+        profiles_file = self._resolve_profiles_file()
 
         if not profiles_file.exists():
             logger.warning(

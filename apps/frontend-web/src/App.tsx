@@ -28,7 +28,6 @@ import { LoginPage } from './pages/LoginPage';
 import { EditorPage } from './pages/EditorPage';
 import { ConsolePage } from './pages/ConsolePage';
 import { ConsoleGridPage } from './pages/ConsoleGridPage';
-import { ViewStateProvider } from './contexts/ViewStateContext';
 import { useProjectStore, loadProjects } from './stores/project-store';
 import { useTaskStore, loadTasks } from './stores/task-store';
 import { useSettingsStore, loadSettings } from './stores/settings-store';
@@ -287,8 +286,7 @@ function AuthenticatedApp() {
   }
 
   return (
-    <ViewStateProvider>
-      <TooltipProvider>
+    <TooltipProvider>
         <div className="flex h-screen bg-background">
           {/* Sidebar */}
           <Sidebar
@@ -458,7 +456,6 @@ function AuthenticatedApp() {
           />
         </div>
       </TooltipProvider>
-    </ViewStateProvider>
   );
 }
 

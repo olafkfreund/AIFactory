@@ -1,6 +1,5 @@
 import { useState, useMemo, memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useViewState } from '../contexts/ViewStateContext';
 import { PipelineHeader } from './pipeline/PipelineHeader';
 import {
   DndContext,
@@ -365,7 +364,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   const { t } = useTranslation('tasks');
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [overColumnId, setOverColumnId] = useState<string | null>(null);
-  const { showArchived, toggleShowArchived } = useViewState();
+  const [showArchived, setShowArchived] = useState(false);
+  const toggleShowArchived = () => setShowArchived((prev) => !prev);
 
   // Calculate archived count for Done column button
   const archivedCount = useMemo(() =>
