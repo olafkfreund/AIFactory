@@ -150,7 +150,9 @@ async def oidc_login(request: Request):
     extra: dict[str, str] = {}
     if request.query_params.get("prompt") == "none":
         extra["prompt"] = "none"
-    return await oauth.oidc.authorize_redirect(request, redirect_uri, nonce=nonce, **extra)
+    return await oauth.oidc.authorize_redirect(
+        request, redirect_uri, nonce=nonce, **extra
+    )
 
 
 @router.get(
