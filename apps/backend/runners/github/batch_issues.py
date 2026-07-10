@@ -21,14 +21,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+SIMILAR_THRESHOLD = 0.70  # Cosine similarity for "potentially related"
+
 # Import validators
 try:
     from .batch_validator import BatchValidator
-    from .duplicates import SIMILAR_THRESHOLD
     from .file_lock import locked_json_write
 except (ImportError, ValueError, SystemError):
     from batch_validator import BatchValidator
-    from duplicates import SIMILAR_THRESHOLD
     from file_lock import locked_json_write
 
 
