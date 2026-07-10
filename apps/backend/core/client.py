@@ -12,10 +12,12 @@ The client factory now uses AGENT_CONFIGS from agents/tools_pkg/models.py as the
 single source of truth for phase-aware tool and MCP server configuration.
 """
 
+import contextlib
 import copy
 import json
 import logging
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -429,10 +431,7 @@ def load_project_mcp_config(project_dir: Path) -> dict:
                     key = key.strip()
                     value = value.strip().strip("\"'")
                     # Include global MCP toggles
-                    if key in mcp_keys:
-                        config[key] = value
-                    # Include per-agent MCP overrides (AGENT_MCP_<agent>_ADD/REMOVE)
-                    elif key.startswith("AGENT_MCP_"):
+                    if key in mcp_keys or key.startswith("AGENT_MCP_"):
                         config[key] = value
                     # Include custom MCP servers (parse JSON with schema validation)
                     elif key == "CUSTOM_MCP_SERVERS":
@@ -938,25 +937,23 @@ def create_client(
     # AGENT_CONFIGS/permissions, since permission_mode is bypassPermissions anyway.
     # ponytail: one place, flag-gated, no-op unless the flag and graph both exist.
     if agent_type == "coder" and os.environ.get("AIFACTORY_GRAPHIFY_ENABLED") == "true":
-        import subprocess  # local: keeps the opt-in path off the hot import list
-
         graph_json = project_dir / "graphify-out" / "graph.json"
         if not graph_json.exists():
-            try:
-                subprocess.run(
-                    ["graphify", "update", str(project_dir), "--no-cluster"],
+            # best-effort token-free build; degrade to no graph tool on any failure.
+
+            # is our own CLI on PATH in the coder image.
+            with contextlib.suppress(FileNotFoundError, subprocess.SubprocessError):
+                subprocess.run(  # noqa: S603
+                    ["graphify", "update", str(project_dir), "--no-cluster"],  # noqa: S607
                     timeout=180,
                     capture_output=True,
                     check=False,
                 )
-            except (FileNotFoundError, subprocess.SubprocessError):
-                pass  # graphify not installed / build failed — degrade to no graph tool
         graphify_cfg = _graphify_server_config(agent_type, graph_json)
         if graphify_cfg:
             mcp_servers["graphify"] = graphify_cfg
             if "mcp__graphify__query_graph" not in allowed_tools_list:
                 allowed_tools_list.append("mcp__graphify__query_graph")
-            print("   - graphify: code-graph query tool enabled for coder")
 
     # Build system prompt
     # Static content (CLAUDE.md) is placed before the dynamic base instructions so
