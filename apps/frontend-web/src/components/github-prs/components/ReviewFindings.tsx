@@ -9,7 +9,7 @@
  * - Visual summary of finding counts
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import {
   CheckCircle,
   AlertTriangle,
@@ -21,7 +21,6 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '../../ui/button';
 import { cn } from '../../../lib/utils';
 import type { PRReviewFinding } from '../hooks/useGitHubPRs';
-import { useFindingSelection } from '../hooks/useFindingSelection';
 import { FindingsSummary } from './FindingsSummary';
 import { SeverityGroupHeader } from './SeverityGroupHeader';
 import { FindingItem } from './FindingItem';
@@ -87,19 +86,46 @@ export function ReviewFindings({
     posted: postedIds.size,
   }), [groupedFindings, findings.length, unpostedFindings, postedIds.size]);
 
-  // Selection hooks - use unposted findings only
-  const {
-    toggleFinding,
-    selectAll,
-    selectNone,
-    selectImportant,
-    toggleSeverityGroup,
-  } = useFindingSelection({
-    findings: unpostedFindings,
-    selectedIds,
-    onSelectionChange,
-    groupedFindings,
-  });
+  // Selection callbacks - operate on unposted findings only
+  const toggleFinding = useCallback((id: string) => {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    onSelectionChange(next);
+  }, [selectedIds, onSelectionChange]);
+
+  const selectAll = useCallback(() => {
+    onSelectionChange(new Set(unpostedFindings.map(f => f.id)));
+  }, [unpostedFindings, onSelectionChange]);
+
+  const selectNone = useCallback(() => {
+    onSelectionChange(new Set());
+  }, [onSelectionChange]);
+
+  const selectImportant = useCallback(() => {
+    const important = [...groupedFindings.critical, ...groupedFindings.high];
+    onSelectionChange(new Set(important.map(f => f.id)));
+  }, [groupedFindings, onSelectionChange]);
+
+  const toggleSeverityGroup = useCallback((severity: SeverityGroup) => {
+    const groupFindings = groupedFindings[severity];
+    const allSelected = groupFindings.every(f => selectedIds.has(f.id));
+
+    const next = new Set(selectedIds);
+    if (allSelected) {
+      for (const f of groupFindings) {
+        next.delete(f.id);
+      }
+    } else {
+      for (const f of groupFindings) {
+        next.add(f.id);
+      }
+    }
+    onSelectionChange(next);
+  }, [groupedFindings, selectedIds, onSelectionChange]);
 
   // Toggle section expansion
   const toggleSection = (severity: SeverityGroup) => {

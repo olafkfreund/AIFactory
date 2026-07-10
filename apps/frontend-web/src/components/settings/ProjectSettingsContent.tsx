@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react';
+import { FolderOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SettingsSection } from './SettingsSection';
 import { useProjectSettings, UseProjectSettingsReturn } from '../project-settings/hooks/useProjectSettings';
-import { EmptyProjectState } from './common/EmptyProjectState';
-import { ErrorDisplay } from './common/ErrorDisplay';
 import { SectionRouter } from './sections/SectionRouter';
 import { createHookProxy } from './utils/hookProxyFactory';
 import type { Project } from '../../shared/types';
@@ -36,7 +35,12 @@ export function ProjectSettingsContent({
         title={t('projectSettings.noProjectSelected.title')}
         description={t('projectSettings.noProjectSelected.description')}
       >
-        <EmptyProjectState />
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <FolderOpen className="h-12 w-12 text-muted-foreground/50 mb-4" />
+          <p className="text-muted-foreground">
+            Select a project to view and edit its settings
+          </p>
+        </div>
       </SettingsSection>
     );
   }
@@ -129,7 +133,11 @@ function ProjectSettingsContentInner({
         handleInitialize={handleInitialize}
       />
 
-      <ErrorDisplay error={error} envError={envError} />
+      {(error || envError) && (
+        <div className="mt-4 rounded-lg bg-destructive/10 border border-destructive/30 p-3 text-sm text-destructive">
+          {error || envError}
+        </div>
+      )}
     </>
   );
 }
