@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.28 - 2026-07-10
+
+### Fixed
+
+- **Release pipeline can pull the private `tfactory-runner-nix` base image.** `release.yml` logged into GHCR with `GITHUB_TOKEN`, which can't read the private, repo-unlinked `ghcr.io/olafkfreund/tfactory-runner-nix` package the image build `COPY`s from (`Dockerfile:255`) — so the first version-bumped release (`v3.6.27`) 403'd on the baked-Nix-store image step. Now uses `GHCR_PAT || GITHUB_TOKEN`, mirroring `deploy.yml`. This release also regenerates the full release artifacts (image, SBOM, cosign signature) that `v3.6.27` could not produce.
+
+
 ## 3.6.27 - 2026-07-10
 
 ### Removed
