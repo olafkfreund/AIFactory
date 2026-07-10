@@ -27,6 +27,10 @@ extend-exclude = [
     # AIFactory-native budget logic that consumes it lives in
     # budget_enforcement.py, which IS linted here.
     "apps/backend/core/cost_router_core.py",
+    # Vendored byte-exact mirror of the Factory hub canonical, kept identical by
+    # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
+    # here would drift it from the hub, so ruff must leave it alone.
+    "apps/backend/factory_common/",
 ]
 
 [lint]
