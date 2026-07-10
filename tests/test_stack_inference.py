@@ -26,8 +26,13 @@ from project.stack_inference import (
 )
 
 
-def _write_spec(spec_dir: Path, *, spec_md: str = "", requirements: dict | None = None,
-                context: dict | None = None) -> None:
+def _write_spec(
+    spec_dir: Path,
+    *,
+    spec_md: str = "",
+    requirements: dict | None = None,
+    context: dict | None = None,
+) -> None:
     if spec_md:
         (spec_dir / "spec.md").write_text(spec_md, encoding="utf-8")
     if requirements is not None:

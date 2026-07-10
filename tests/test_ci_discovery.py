@@ -152,7 +152,10 @@ jobs:
 
         result = discovery.discover(temp_dir)
 
-        assert "NODE_ENV" in result.environment_variables or "CI" in result.environment_variables
+        assert (
+            "NODE_ENV" in result.environment_variables
+            or "CI" in result.environment_variables
+        )
 
     @requires_yaml
     def test_handle_multiple_workflows(self, discovery, temp_dir):
@@ -562,7 +565,9 @@ class TestConvenienceFunctions:
         """Test discover_ci function."""
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n"
+        )
 
         result = discover_ci(temp_dir)
 
@@ -579,7 +584,9 @@ class TestConvenienceFunctions:
         """Test get_ci_test_commands function."""
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest tests/\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: pytest tests/\n"
+        )
 
         commands = get_ci_test_commands(temp_dir)
 
@@ -589,7 +596,9 @@ class TestConvenienceFunctions:
         """Test get_ci_system function."""
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n"
+        )
 
         system = get_ci_system(temp_dir)
 
@@ -643,7 +652,9 @@ class TestEdgeCases:
         # Create both GitHub and GitLab configs
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n"
+        )
 
         (temp_dir / ".gitlab-ci.yml").write_text("test:\n  script:\n    - npm test\n")
 
@@ -656,7 +667,9 @@ class TestEdgeCases:
         """Test that results are cached."""
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n"
+        )
 
         result1 = discovery.discover(temp_dir)
         result2 = discovery.discover(temp_dir)
@@ -667,7 +680,9 @@ class TestEdgeCases:
         """Test cache clearing."""
         workflows = temp_dir / ".github" / "workflows"
         workflows.mkdir(parents=True)
-        (workflows / "ci.yml").write_text("name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+        (workflows / "ci.yml").write_text(
+            "name: CI\non: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n"
+        )
 
         result1 = discovery.discover(temp_dir)
         discovery.clear_cache()

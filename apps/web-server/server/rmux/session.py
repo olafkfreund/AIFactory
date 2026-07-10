@@ -39,6 +39,7 @@ from .wrapper import RmuxError, RmuxWrapper
 
 logger = logging.getLogger(__name__)
 
+
 # Default panes directory. In a container ``/var/run/aifactory/panes`` is
 # writable, but on a local laptop it isn't — so we resolve a writable
 # default at runtime (env override → data dir → /var/run as last resort).
@@ -135,9 +136,7 @@ class SessionRegistry:
 
         async with self._registry_lock:
             if spec_id in self._states:
-                raise ValueError(
-                    f"rmux session already exists for spec_id={spec_id!r}"
-                )
+                raise ValueError(f"rmux session already exists for spec_id={spec_id!r}")
 
             # Create panes dir + FIFO.  mkfifo blows up if the path
             # already exists, so unlink first (idempotent recovery
@@ -149,9 +148,7 @@ class SessionRegistry:
 
             # Bring up rmux + session + pipe-pane in one shot.
             await self._wrapper.ensure_daemon()
-            await self._wrapper.new_session(
-                session_name, worktree_path, agent_cmd
-            )
+            await self._wrapper.new_session(session_name, worktree_path, agent_cmd)
             await self._wrapper.pipe_pane(session_name, fifo_path)
 
             state = SessionState(
@@ -163,7 +160,9 @@ class SessionRegistry:
             self._states[spec_id] = state
             logger.info(
                 "rmux session created: spec_id=%s session=%s fifo=%s",
-                spec_id, session_name, fifo_path,
+                spec_id,
+                session_name,
+                fifo_path,
             )
         # Mirror into the shared Redis panes index OUTSIDE the registry lock
         # (#681) — best-effort, no-op when Redis is off.
@@ -189,9 +188,7 @@ class SessionRegistry:
 
         async with self._registry_lock:
             if spec_id in self._states:
-                raise ValueError(
-                    f"rmux session already exists for spec_id={spec_id!r}"
-                )
+                raise ValueError(f"rmux session already exists for spec_id={spec_id!r}")
             self._panes_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             if fifo_path.exists():
                 fifo_path.unlink()
@@ -206,7 +203,8 @@ class SessionRegistry:
             self._states[spec_id] = state
             logger.info(
                 "rmux passive session created: spec_id=%s fifo=%s",
-                spec_id, fifo_path,
+                spec_id,
+                fifo_path,
             )
         # Mirror into the shared Redis panes index OUTSIDE the registry lock
         # (#681) — best-effort, no-op when Redis is off.
@@ -274,7 +272,8 @@ class SessionRegistry:
         except Exception:  # noqa: BLE001 - Redis fan-out is best-effort
             logger.debug(
                 "[rmux] redis pane publish scheduling failed for %s",
-                spec_id, exc_info=True,
+                spec_id,
+                exc_info=True,
             )
 
     async def _register_pane_in_redis(self, state: SessionState) -> None:
@@ -294,7 +293,8 @@ class SessionRegistry:
         except Exception:  # noqa: BLE001 - index mirror is best-effort
             logger.debug(
                 "[rmux] redis register_pane failed for %s",
-                state.spec_id, exc_info=True,
+                state.spec_id,
+                exc_info=True,
             )
 
     @staticmethod
@@ -359,7 +359,8 @@ class SessionRegistry:
 
         logger.info(
             "rmux session reaped: spec_id=%s session=%s",
-            spec_id, state.session_name,
+            spec_id,
+            state.session_name,
         )
 
     # ------------------------------------------------------------------

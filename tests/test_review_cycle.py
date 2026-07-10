@@ -206,9 +206,7 @@ class TestUntouchedDetection:
     def test_aged_unstarted_request_is_untouched(self, spec_dir):
         request_review(spec_dir)
         future = datetime.now(timezone.utc) + timedelta(seconds=301)
-        stalled = detect_untouched_review(
-            spec_dir, timeout_seconds=300, now=future
-        )
+        stalled = detect_untouched_review(spec_dir, timeout_seconds=300, now=future)
         assert stalled is not None
         assert stalled.state is CycleState.REQUESTED
 
@@ -217,8 +215,7 @@ class TestUntouchedDetection:
         record_started(spec_dir, cycle_id=c1.cycle_id)
         far_future = datetime.now(timezone.utc) + timedelta(hours=1)
         assert (
-            detect_untouched_review(spec_dir, timeout_seconds=1, now=far_future)
-            is None
+            detect_untouched_review(spec_dir, timeout_seconds=1, now=far_future) is None
         )
 
     def test_no_cycle_returns_none(self, spec_dir):
@@ -227,9 +224,7 @@ class TestUntouchedDetection:
     def test_redrive_emits_signal_for_stalled_review(self, spec_dir):
         c1 = request_review(spec_dir)
         future = datetime.now(timezone.utc) + timedelta(seconds=301)
-        signal = redrive_untouched_review(
-            spec_dir, timeout_seconds=300, now=future
-        )
+        signal = redrive_untouched_review(spec_dir, timeout_seconds=300, now=future)
         assert signal is not None
         assert signal["action"] == "redrive_review"
         assert signal["cycle_id"] == c1.cycle_id
@@ -240,10 +235,7 @@ class TestUntouchedDetection:
         c1 = request_review(spec_dir)
         record_started(spec_dir, cycle_id=c1.cycle_id)
         future = datetime.now(timezone.utc) + timedelta(hours=1)
-        assert (
-            redrive_untouched_review(spec_dir, timeout_seconds=1, now=future)
-            is None
-        )
+        assert redrive_untouched_review(spec_dir, timeout_seconds=1, now=future) is None
 
 
 # =============================================================================

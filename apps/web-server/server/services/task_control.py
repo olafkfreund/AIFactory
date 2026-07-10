@@ -83,7 +83,8 @@ def read_control(spec_dir: Path) -> dict[str, Any]:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
                 "[task_control] Failed to read %s, falling back to legacy: %s",
-                cfile, e,
+                cfile,
+                e,
             )
 
     # Backward-compat read-time migration from implementation_plan.json.
@@ -173,7 +174,9 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp",
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

@@ -85,9 +85,11 @@ def test_npm_install_antigravity_uses_prefixed_install_dir_and_symlink():
         result.stderr = ""
         return result
 
-    with patch.object(ca, "_run_login_shell", side_effect=fake_run), \
-         patch.object(ca, "_create_antigravity_symlink") as mock_symlink, \
-         patch("pathlib.Path.mkdir"):
+    with (
+        patch.object(ca, "_run_login_shell", side_effect=fake_run),
+        patch.object(ca, "_create_antigravity_symlink") as mock_symlink,
+        patch("pathlib.Path.mkdir"),
+    ):
         result = ca._npm_install_cli("antigravity", "@google/gemini-cli")
 
     assert result.returncode == 0
@@ -108,9 +110,11 @@ def test_npm_install_antigravity_skips_symlink_on_failure():
         result.stderr = "boom"
         return result
 
-    with patch.object(ca, "_run_login_shell", side_effect=fake_run), \
-         patch.object(ca, "_create_antigravity_symlink") as mock_symlink, \
-         patch("pathlib.Path.mkdir"):
+    with (
+        patch.object(ca, "_run_login_shell", side_effect=fake_run),
+        patch.object(ca, "_create_antigravity_symlink") as mock_symlink,
+        patch("pathlib.Path.mkdir"),
+    ):
         result = ca._npm_install_cli("antigravity", "@google/gemini-cli")
 
     assert result.returncode == 1
@@ -146,9 +150,11 @@ def test_install_endpoint_reports_update_when_already_installed():
     # First version detect = already installed; second = post-update version.
     versions = iter(["1.0.0", "1.2.0"])
 
-    with patch.object(ca, "_detect_cli_version", side_effect=lambda c: next(versions)), \
-         patch("subprocess.run", return_value=node_ok), \
-         patch.object(ca, "_npm_install_cli", return_value=install_ok):
+    with (
+        patch.object(ca, "_detect_cli_version", side_effect=lambda c: next(versions)),
+        patch("subprocess.run", return_value=node_ok),
+        patch.object(ca, "_npm_install_cli", return_value=install_ok),
+    ):
         # Pass the legacy "gemini" id to exercise normalisation through the endpoint.
         result = ca.install_or_update_cli("gemini")
 
@@ -169,9 +175,11 @@ def test_install_endpoint_reports_fresh_install():
     # First detect = None (not installed); second = new version.
     versions = iter([None, "1.2.0"])
 
-    with patch.object(ca, "_detect_cli_version", side_effect=lambda c: next(versions)), \
-         patch("subprocess.run", return_value=node_ok), \
-         patch.object(ca, "_npm_install_cli", return_value=install_ok):
+    with (
+        patch.object(ca, "_detect_cli_version", side_effect=lambda c: next(versions)),
+        patch("subprocess.run", return_value=node_ok),
+        patch.object(ca, "_npm_install_cli", return_value=install_ok),
+    ):
         result = ca.install_or_update_cli("antigravity")
 
     assert result["success"] is True
@@ -186,17 +194,24 @@ def test_install_endpoint_reports_fresh_install():
 
 def test_detect_cli_version_reads_npm_package_json_for_antigravity():
     """Version detection prefers the bundled package.json (avoids slow startup)."""
-    with patch.object(ca, "get_antigravity_binary", return_value="antigravity"), \
-         patch("shutil.which", return_value="/home/u/.gemini/antigravity-cli/bin/antigravity"), \
-         patch.object(ca, "_read_npm_package_version", return_value="3.4.5"):
+    with (
+        patch.object(ca, "get_antigravity_binary", return_value="antigravity"),
+        patch(
+            "shutil.which",
+            return_value="/home/u/.gemini/antigravity-cli/bin/antigravity",
+        ),
+        patch.object(ca, "_read_npm_package_version", return_value="3.4.5"),
+    ):
         version = ca._detect_cli_version("antigravity")
     assert version == "3.4.5"
 
 
 def test_detect_cli_version_normalises_gemini_alias():
     """Passing the legacy 'gemini' id resolves the antigravity config."""
-    with patch.object(ca, "get_antigravity_binary", return_value="antigravity"), \
-         patch("shutil.which", return_value="/usr/bin/antigravity"), \
-         patch.object(ca, "_read_npm_package_version", return_value="9.9.9"):
+    with (
+        patch.object(ca, "get_antigravity_binary", return_value="antigravity"),
+        patch("shutil.which", return_value="/usr/bin/antigravity"),
+        patch.object(ca, "_read_npm_package_version", return_value="9.9.9"),
+    ):
         version = ca._detect_cli_version("gemini")
     assert version == "9.9.9"

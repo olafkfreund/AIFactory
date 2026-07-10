@@ -33,18 +33,21 @@ def test_external_identities_table_created(test_postgres_url: str) -> None:
         pytest.skip("alembic CLI not on PATH")
 
     result = run_alembic(
-        ["upgrade", "head"], env={"DATABASE_URL": test_postgres_url},
+        ["upgrade", "head"],
+        env={"DATABASE_URL": test_postgres_url},
     )
     assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        cols = conn.execute(text("""
+        cols = conn.execute(
+            text("""
             SELECT column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_name = 'external_identities'
             ORDER BY ordinal_position
-        """)).fetchall()
+        """)
+        ).fetchall()
     engine.dispose()
 
     col_names = [c[0] for c in cols]
@@ -68,28 +71,36 @@ def test_unique_kind_subject_constraint(test_postgres_url: str) -> None:
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
         # Create a user to satisfy the FK.
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('user-aaaa-1', 'a@example.com', 'x', 'user', true)
             ON CONFLICT (id) DO NOTHING
-        """))
+        """)
+        )
 
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO external_identities (id, user_id, kind, subject)
             VALUES ('ext-1', 'user-aaaa-1', 'saml:corp', 'a@example.com')
-        """))
+        """)
+        )
 
     with engine.begin() as conn:
         # Same (kind, subject) — must fail.
         with pytest.raises(Exception):
-            conn.execute(text("""
+            conn.execute(
+                text("""
                 INSERT INTO external_identities (id, user_id, kind, subject)
                 VALUES ('ext-2', 'user-aaaa-1', 'saml:corp', 'a@example.com')
-            """))
+            """)
+            )
 
     # Clean up so the test is idempotent across re-runs.
     with engine.begin() as conn:
-        conn.execute(text("DELETE FROM external_identities WHERE user_id='user-aaaa-1'"))
+        conn.execute(
+            text("DELETE FROM external_identities WHERE user_id='user-aaaa-1'")
+        )
         conn.execute(text("DELETE FROM users WHERE id='user-aaaa-1'"))
     engine.dispose()
 
@@ -106,20 +117,24 @@ def test_cascade_delete_on_user(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('user-cas-1', 'c@example.com', 'x', 'user', true)
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO external_identities (id, user_id, kind, subject)
             VALUES ('ext-cas-1', 'user-cas-1', 'saml:corp', 'c@example.com')
-        """))
+        """)
+        )
 
         conn.execute(text("DELETE FROM users WHERE id='user-cas-1'"))
 
-        n = conn.execute(text(
-            "SELECT COUNT(*) FROM external_identities WHERE user_id='user-cas-1'"
-        )).scalar()
+        n = conn.execute(
+            text("SELECT COUNT(*) FROM external_identities WHERE user_id='user-cas-1'")
+        ).scalar()
         assert n == 0, "CASCADE delete did not fire — orphan ext_identity left"
 
     engine.dispose()
@@ -149,12 +164,14 @@ def test_downgrade_drops_table(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        exists = conn.execute(text("""
+        exists = conn.execute(
+            text("""
             SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
                 WHERE table_name = 'external_identities'
             )
-        """)).scalar()
+        """)
+        ).scalar()
     engine.dispose()
     assert exists is False, "downgrade left the table behind"
 

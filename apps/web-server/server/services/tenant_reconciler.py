@@ -59,7 +59,8 @@ logger = logging.getLogger(__name__)
 # Operator-tunable in PR-3's Helm chart; for now these are module
 # constants so the decision logic is testable.
 _NAMESPACE_PREFIX = os.environ.get(
-    "TENANT_NAMESPACE_PREFIX", "aifactory-tenant",
+    "TENANT_NAMESPACE_PREFIX",
+    "aifactory-tenant",
 )
 _DELETION_GRACE_DAYS = int(
     os.environ.get("TENANT_DELETION_GRACE_DAYS", "30"),
@@ -103,7 +104,8 @@ _TENANT_OIDC_PROVIDER_ARN = os.environ.get("TENANT_OIDC_PROVIDER_ARN", "")
 # Allowed-FQDN egress list. Comma-separated; PR-3's Helm chart
 # materialises this from ``tenant.networkPolicy.allowedFqdns``.
 _ALLOWED_FQDNS_RAW = os.environ.get(
-    "TENANT_ALLOWED_FQDNS", "api.anthropic.com",
+    "TENANT_ALLOWED_FQDNS",
+    "api.anthropic.com",
 )
 
 # ResourceQuota / LimitRange defaults — operator-tunable in PR-3.
@@ -126,7 +128,7 @@ class ReconcileDecision:
     action: str  # 'create' | 'update' | 'soft_delete_acked' | 'tear_down' | 'no_op'
     target_namespace: str | None
     isolation_mode: str  # 'shared' | 'isolated' | 'deleted'
-    rationale: str       # human-readable, ends up in the log line
+    rationale: str  # human-readable, ends up in the log line
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +151,9 @@ def _parse_allowed_fqdns() -> list[str]:
 
 
 async def reconcile_org(
-    db: AsyncSession, org: Organization, *,
+    db: AsyncSession,
+    org: Organization,
+    *,
     isolation_enabled: bool,
     now: datetime | None = None,
     apply: bool = False,
@@ -180,29 +184,41 @@ async def reconcile_org(
 
     try:
         decision = _compute_decision(
-            org=org, state=state,
-            isolation_enabled=isolation_enabled, now=now,
+            org=org,
+            state=state,
+            isolation_enabled=isolation_enabled,
+            now=now,
         )
         _log_intent(decision)
 
         if apply and decision.action in ("create", "update"):
             await _apply_create_or_update(
-                db=db, org=org, state=state, decision=decision,
-                k8s_client=k8s_client, aws_client=aws_client,
-                vault_client=vault_client, redis_client=redis_client,
+                db=db,
+                org=org,
+                state=state,
+                decision=decision,
+                k8s_client=k8s_client,
+                aws_client=aws_client,
+                vault_client=vault_client,
+                redis_client=redis_client,
             )
         elif apply and decision.action == "tear_down":
             await _apply_tear_down(
-                db=db, org=org, state=state,
-                k8s_client=k8s_client, aws_client=aws_client,
-                vault_client=vault_client, redis_client=redis_client,
+                db=db,
+                org=org,
+                state=state,
+                k8s_client=k8s_client,
+                aws_client=aws_client,
+                vault_client=vault_client,
+                redis_client=redis_client,
             )
 
         # Update the state's reconciled_at + clear any prior error
         # iff we got this far without re-raising.
         state.reconciled_at = now
         if state.reconcile_error and decision.action in (
-            "no_op", "soft_delete_acked",
+            "no_op",
+            "soft_delete_acked",
         ):
             # Steady-state passes shouldn't keep an old error sticky.
             state.reconcile_error = None
@@ -214,11 +230,13 @@ async def reconcile_org(
         # NOT crash. Operator sees the error via SQL query.
         logger.warning(
             "tenant reconciler failed for org %s; will retry next tick",
-            org.id, exc_info=True,
+            org.id,
+            exc_info=True,
         )
         state.reconcile_error = f"{type(exc).__name__}: {exc}"[:512]
         return ReconcileDecision(
-            org_id=org.id, action="no_op",
+            org_id=org.id,
+            action="no_op",
             target_namespace=None,
             isolation_mode=state.isolation_mode,
             rationale=f"reconcile failed: {type(exc).__name__}",
@@ -226,7 +244,9 @@ async def reconcile_org(
 
 
 async def reconcile_all(
-    db: AsyncSession, *, isolation_enabled: bool,
+    db: AsyncSession,
+    *,
+    isolation_enabled: bool,
     apply: bool = False,
     k8s_client: Any = None,
     aws_client: Any = None,
@@ -240,9 +260,13 @@ async def reconcile_all(
     for org in result.scalars():
         decisions.append(
             await reconcile_org(
-                db, org, isolation_enabled=isolation_enabled,
-                apply=apply, k8s_client=k8s_client,
-                aws_client=aws_client, vault_client=vault_client,
+                db,
+                org,
+                isolation_enabled=isolation_enabled,
+                apply=apply,
+                k8s_client=k8s_client,
+                aws_client=aws_client,
+                vault_client=vault_client,
                 redis_client=redis_client,
             ),
         )
@@ -250,7 +274,9 @@ async def reconcile_all(
 
 
 async def tear_down_org(
-    db: AsyncSession, org_id: str, *,
+    db: AsyncSession,
+    org_id: str,
+    *,
     dry_run: bool = True,
     k8s_client: Any = None,
     aws_client: Any = None,
@@ -282,7 +308,8 @@ async def tear_down_org(
 
     try:
         result: dict[str, Any] = {
-            "org_id": org_id, "dry_run": dry_run,
+            "org_id": org_id,
+            "dry_run": dry_run,
             "namespace": state.namespace_name,
             "s3_objects_count": 0,
             "vault_deleted": False,
@@ -298,7 +325,8 @@ async def tear_down_org(
                 # see the safety violation; everything else stays inside
                 # the try/except per failure-safe contract.
                 count = await aws_client.s3_recursive_delete(
-                    bucket=_TENANT_S3_BUCKET, prefix=prefix,
+                    bucket=_TENANT_S3_BUCKET,
+                    prefix=prefix,
                     dry_run=dry_run,
                 )
                 result["s3_objects_count"] = count
@@ -306,7 +334,8 @@ async def tear_down_org(
                 raise
             except Exception:
                 logger.warning(
-                    "tear_down S3 step failed for org %s", org_id,
+                    "tear_down S3 step failed for org %s",
+                    org_id,
                     exc_info=True,
                 )
 
@@ -317,7 +346,8 @@ async def tear_down_org(
                 result["k8s_deleted"] = True
             except Exception:
                 logger.warning(
-                    "tear_down K8s delete failed for org %s", org_id,
+                    "tear_down K8s delete failed for org %s",
+                    org_id,
                     exc_info=True,
                 )
 
@@ -329,7 +359,8 @@ async def tear_down_org(
                 result["vault_deleted"] = True
             except Exception:
                 logger.warning(
-                    "tear_down Vault delete failed for org %s", org_id,
+                    "tear_down Vault delete failed for org %s",
+                    org_id,
                     exc_info=True,
                 )
 
@@ -340,7 +371,8 @@ async def tear_down_org(
                 result["iam_deleted"] = True
             except Exception:
                 logger.warning(
-                    "tear_down IAM delete failed for org %s", org_id,
+                    "tear_down IAM delete failed for org %s",
+                    org_id,
                     exc_info=True,
                 )
 
@@ -360,8 +392,11 @@ async def tear_down_org(
 
 
 def _compute_decision(
-    *, org: Organization, state: TenantState,
-    isolation_enabled: bool, now: datetime,
+    *,
+    org: Organization,
+    state: TenantState,
+    isolation_enabled: bool,
+    now: datetime,
 ) -> ReconcileDecision:
     """The heart of the reconciler. Pure function."""
 
@@ -370,7 +405,8 @@ def _compute_decision(
         days_since_delete = (now - org.deleted_at).days
         if days_since_delete >= _DELETION_GRACE_DAYS:
             return ReconcileDecision(
-                org_id=org.id, action="tear_down",
+                org_id=org.id,
+                action="tear_down",
                 target_namespace=state.namespace_name,
                 isolation_mode="deleted",
                 rationale=(
@@ -380,7 +416,8 @@ def _compute_decision(
                 ),
             )
         return ReconcileDecision(
-            org_id=org.id, action="soft_delete_acked",
+            org_id=org.id,
+            action="soft_delete_acked",
             target_namespace=state.namespace_name,
             isolation_mode="deleted",
             rationale=(
@@ -394,7 +431,8 @@ def _compute_decision(
     if not isolation_enabled:
         if state.isolation_mode != "shared":
             return ReconcileDecision(
-                org_id=org.id, action="no_op",
+                org_id=org.id,
+                action="no_op",
                 target_namespace=state.namespace_name,
                 isolation_mode=state.isolation_mode,
                 rationale=(
@@ -404,7 +442,8 @@ def _compute_decision(
                 ),
             )
         return ReconcileDecision(
-            org_id=org.id, action="no_op",
+            org_id=org.id,
+            action="no_op",
             target_namespace=None,
             isolation_mode="shared",
             rationale="isolation disabled; org runs in shared namespace",
@@ -416,7 +455,8 @@ def _compute_decision(
     if state.namespace_name is None:
         target_ns = derive_namespace_name(org.slug)
         return ReconcileDecision(
-            org_id=org.id, action="create",
+            org_id=org.id,
+            action="create",
             target_namespace=target_ns,
             isolation_mode="isolated",
             rationale=(
@@ -429,7 +469,8 @@ def _compute_decision(
     # Case 3b: namespace exists; check for drift.
     if state.isolation_mode != "isolated":
         return ReconcileDecision(
-            org_id=org.id, action="update",
+            org_id=org.id,
+            action="update",
             target_namespace=state.namespace_name,
             isolation_mode="isolated",
             rationale=(
@@ -441,7 +482,8 @@ def _compute_decision(
 
     # Case 3c: steady state.
     return ReconcileDecision(
-        org_id=org.id, action="no_op",
+        org_id=org.id,
+        action="no_op",
         target_namespace=state.namespace_name,
         isolation_mode="isolated",
         rationale="steady state; reconciliation is current",
@@ -454,9 +496,14 @@ def _compute_decision(
 
 
 async def _apply_create_or_update(
-    *, db: AsyncSession, org: Organization, state: TenantState,
+    *,
+    db: AsyncSession,
+    org: Organization,
+    state: TenantState,
     decision: ReconcileDecision,
-    k8s_client: Any, aws_client: Any, vault_client: Any,
+    k8s_client: Any,
+    aws_client: Any,
+    vault_client: Any,
     redis_client: Any,
 ) -> None:
     """Execute the K8s + AWS + Vault writes for one org.
@@ -494,8 +541,7 @@ async def _apply_create_or_update(
         # ----- Step 1: K8s -----
         if k8s_client is None:
             raise RuntimeError(
-                "k8s_client required for apply; reconciler caller "
-                "must inject one",
+                "k8s_client required for apply; reconciler caller must inject one",
             )
 
         labels = {
@@ -507,10 +553,13 @@ async def _apply_create_or_update(
         # SA created without IRSA annotation; we patch it after the
         # IAM role ARN is known.
         await k8s_client.create_service_account(
-            namespace=namespace, name=sa_name, irsa_role_arn=None,
+            namespace=namespace,
+            name=sa_name,
+            irsa_role_arn=None,
         )
         await k8s_client.create_role_and_binding(
-            namespace=namespace, sa_name=sa_name,
+            namespace=namespace,
+            sa_name=sa_name,
         )
         await k8s_client.apply_network_policies(
             namespace=namespace,
@@ -546,7 +595,8 @@ async def _apply_create_or_update(
                 )
                 # Re-create / patch SA to land the IRSA annotation.
                 await k8s_client.create_service_account(
-                    namespace=namespace, name=sa_name,
+                    namespace=namespace,
+                    name=sa_name,
                     irsa_role_arn=iam_role_arn,
                 )
             except Exception:
@@ -556,7 +606,8 @@ async def _apply_create_or_update(
                 logger.warning(
                     "AWS IAM step failed for org %s; K8s namespace "
                     "still created, will retry next tick",
-                    org.id, exc_info=True,
+                    org.id,
+                    exc_info=True,
                 )
                 state.reconcile_error = "iam-create failed; see logs"
         else:
@@ -584,7 +635,8 @@ async def _apply_create_or_update(
                 logger.warning(
                     "Vault step failed for org %s; K8s+IAM landed, "
                     "will retry Vault next tick",
-                    org.id, exc_info=True,
+                    org.id,
+                    exc_info=True,
                 )
                 if not state.reconcile_error:
                     state.reconcile_error = "vault-create failed; see logs"
@@ -614,7 +666,9 @@ async def _apply_create_or_update(
         if per_tenant_enabled():
             try:
                 issued = await issue_tenant_anchor_key(
-                    db, vault_client, org.id,
+                    db,
+                    vault_client,
+                    org.id,
                 )
                 if issued:
                     logger.info(
@@ -627,7 +681,8 @@ async def _apply_create_or_update(
                 logger.warning(
                     "tenant reconciler: per-tenant anchor key issuance failed "
                     "for org=%s; falling back to shared chain until next tick",
-                    org.id, exc_info=True,
+                    org.id,
+                    exc_info=True,
                 )
                 if not state.reconcile_error:
                     state.reconcile_error = "anchor-key-issue failed; see logs"
@@ -636,8 +691,13 @@ async def _apply_create_or_update(
 
 
 async def _apply_tear_down(
-    *, db: AsyncSession, org: Organization, state: TenantState,
-    k8s_client: Any, aws_client: Any, vault_client: Any,
+    *,
+    db: AsyncSession,
+    org: Organization,
+    state: TenantState,
+    k8s_client: Any,
+    aws_client: Any,
+    vault_client: Any,
     redis_client: Any,
 ) -> None:
     """Stage-2 tear-down driven by ``_compute_decision`` (post-grace).
@@ -647,9 +707,13 @@ async def _apply_tear_down(
     """
     # tear_down_org handles its own lock acquisition.
     await tear_down_org(
-        db, org.id, dry_run=False,
-        k8s_client=k8s_client, aws_client=aws_client,
-        vault_client=vault_client, redis_client=redis_client,
+        db,
+        org.id,
+        dry_run=False,
+        k8s_client=k8s_client,
+        aws_client=aws_client,
+        vault_client=vault_client,
+        redis_client=redis_client,
     )
 
 
@@ -676,7 +740,10 @@ async def _acquire_lock(redis_client: Any, org_id: str) -> bool:
         # SETNX with TTL atomically. ``set(..., nx=True, ex=...)`` is
         # the modern Redis client form.
         result = await redis_client.set(
-            key, _POD_ID, nx=True, ex=_LOCK_TTL_SEC,
+            key,
+            _POD_ID,
+            nx=True,
+            ex=_LOCK_TTL_SEC,
         )
         return bool(result)
     except Exception:
@@ -684,7 +751,8 @@ async def _acquire_lock(redis_client: Any, org_id: str) -> bool:
             "tenant reconciler: Redis unavailable; refusing to write "
             "(single-replica mode required when REDIS_URL is set but "
             "Redis is down). org=%s",
-            org_id, exc_info=True,
+            org_id,
+            exc_info=True,
         )
         return False
 
@@ -703,7 +771,8 @@ async def _release_lock(redis_client: Any, org_id: str) -> None:
         # Best-effort. A stale lock just expires via TTL.
         logger.debug(
             "release lock failed for org %s (will expire via TTL)",
-            org_id, exc_info=True,
+            org_id,
+            exc_info=True,
         )
 
 
@@ -713,7 +782,10 @@ async def _release_lock(redis_client: Any, org_id: str) -> None:
 
 
 async def _check_stuck_terminating(
-    *, k8s_client: Any, namespace: str, now: datetime,
+    *,
+    k8s_client: Any,
+    namespace: str,
+    now: datetime,
 ) -> bool:
     """Return True + emit WARNING when the namespace has been Terminating
     for more than _STUCK_TERMINATING_MIN minutes.
@@ -729,7 +801,8 @@ async def _check_stuck_terminating(
         status = await k8s_client.get_namespace_status(namespace)
     except Exception:
         logger.debug(
-            "stuck-Terminating probe failed for ns %s", namespace,
+            "stuck-Terminating probe failed for ns %s",
+            namespace,
             exc_info=True,
         )
         return False
@@ -749,7 +822,8 @@ async def _check_stuck_terminating(
         logger.warning(
             "namespace %s stuck Terminating since %s — operator must "
             "investigate finalizers (auto-removal NOT enabled)",
-            namespace, status.deletion_timestamp,
+            namespace,
+            status.deletion_timestamp,
         )
         return True
     return False
@@ -761,7 +835,8 @@ async def _check_stuck_terminating(
 
 
 async def _load_or_create_state(
-    db: AsyncSession, org_id: str,
+    db: AsyncSession,
+    org_id: str,
 ) -> TenantState:
     """Get the org's tenant_state row, creating one with default
     'shared' mode if absent."""
@@ -782,8 +857,10 @@ def _log_intent(decision: ReconcileDecision) -> None:
     so operators can grep for live-apply vs dry-run runs."""
     logger.info(
         "tenant reconciler: org=%s action=%s ns=%s mode=%s — %s",
-        decision.org_id, decision.action,
-        decision.target_namespace, decision.isolation_mode,
+        decision.org_id,
+        decision.action,
+        decision.target_namespace,
+        decision.isolation_mode,
         decision.rationale,
     )
 
@@ -818,11 +895,15 @@ class TenantReconciler:
         self.isolation_enabled = isolation_enabled
 
     async def reconcile_org(
-        self, db: AsyncSession, org: Organization, *,
+        self,
+        db: AsyncSession,
+        org: Organization,
+        *,
         apply: bool = True,
     ) -> ReconcileDecision:
         return await reconcile_org(
-            db, org,
+            db,
+            org,
             isolation_enabled=self.isolation_enabled,
             apply=apply,
             k8s_client=self.k8s_client,
@@ -832,7 +913,10 @@ class TenantReconciler:
         )
 
     async def reconcile_all(
-        self, db: AsyncSession, *, apply: bool = True,
+        self,
+        db: AsyncSession,
+        *,
+        apply: bool = True,
     ) -> list[ReconcileDecision]:
         return await reconcile_all(
             db,
@@ -845,10 +929,16 @@ class TenantReconciler:
         )
 
     async def tear_down_org(
-        self, db: AsyncSession, org_id: str, *, dry_run: bool = True,
+        self,
+        db: AsyncSession,
+        org_id: str,
+        *,
+        dry_run: bool = True,
     ) -> dict[str, Any]:
         return await tear_down_org(
-            db, org_id, dry_run=dry_run,
+            db,
+            org_id,
+            dry_run=dry_run,
             k8s_client=self.k8s_client,
             aws_client=self.aws_client,
             vault_client=self.vault_client,
@@ -903,7 +993,8 @@ async def sync_virtual_key_on_create(
         )
         logger.info(
             "litellm virtual-key created: org=%s allowed_models=%r",
-            org.id, org.allowed_models,
+            org.id,
+            org.allowed_models,
         )
         return key
     except Exception:
@@ -911,7 +1002,8 @@ async def sync_virtual_key_on_create(
         logger.warning(
             "litellm virtual-key create failed for org=%s; "
             "will retry on next reconcile tick",
-            org.id, exc_info=True,
+            org.id,
+            exc_info=True,
         )
         return None
 
@@ -937,8 +1029,10 @@ async def sync_virtual_key_on_soft_delete(
         # exists via the orgs route.
         try:
             from .audit_service import log_audit_event_bg
+
             await log_audit_event_bg(
-                org_id=org.id, user_id=None,
+                org_id=org.id,
+                user_id=None,
                 action="llm.virtual_key.disabled",
                 resource_type="litellm_key",
                 resource_id=org.id,
@@ -949,7 +1043,8 @@ async def sync_virtual_key_on_soft_delete(
             # already happened, which is the security-critical part.
             logger.debug(
                 "litellm virtual-key disable audit write failed for "
-                "org=%s; LiteLLM state is correct", org.id,
+                "org=%s; LiteLLM state is correct",
+                org.id,
                 exc_info=True,
             )
         return True
@@ -957,7 +1052,8 @@ async def sync_virtual_key_on_soft_delete(
         logger.warning(
             "litellm virtual-key disable failed for org=%s; "
             "will retry on next reconcile tick",
-            org.id, exc_info=True,
+            org.id,
+            exc_info=True,
         )
         return False
 
@@ -973,14 +1069,16 @@ async def sync_virtual_key_on_hard_delete(
     try:
         await admin_client.delete_virtual_key(org_id=org.id)
         logger.info(
-            "litellm virtual-key hard-deleted: org=%s", org.id,
+            "litellm virtual-key hard-deleted: org=%s",
+            org.id,
         )
         return True
     except Exception:
         logger.warning(
             "litellm virtual-key hard-delete failed for org=%s; "
             "will retry on next reconcile tick",
-            org.id, exc_info=True,
+            org.id,
+            exc_info=True,
         )
         return False
 
@@ -1006,8 +1104,8 @@ async def reconcile_virtual_keys_drift(
         live_keys = await admin_client.list_virtual_keys()
     except Exception:
         logger.warning(
-            "litellm drift sweep: list_virtual_keys failed; aborting "
-            "this tick", exc_info=True,
+            "litellm drift sweep: list_virtual_keys failed; aborting this tick",
+            exc_info=True,
         )
         counts["errors"] += 1
         return counts
@@ -1052,7 +1150,9 @@ async def reconcile_virtual_keys_drift(
             counts["errors"] += 1
             logger.warning(
                 "litellm drift sweep: orphan key revoke failed for "
-                "org=%s; will retry next tick", org_id, exc_info=True,
+                "org=%s; will retry next tick",
+                org_id,
+                exc_info=True,
             )
 
     return counts

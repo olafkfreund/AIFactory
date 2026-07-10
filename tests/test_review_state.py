@@ -21,6 +21,7 @@ from tests.review_fixtures import approved_state, pending_state
 # REVIEW STATE - BASIC FUNCTIONALITY
 # =============================================================================
 
+
 class TestReviewStateBasics:
     """Tests for ReviewState basic functionality."""
 
@@ -91,6 +92,7 @@ class TestReviewStateBasics:
 # =============================================================================
 # REVIEW STATE - LOAD/SAVE
 # =============================================================================
+
 
 class TestReviewStatePersistence:
     """Tests for ReviewState load and save operations."""

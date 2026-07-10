@@ -39,10 +39,9 @@ def pytest_collection_modifyitems(config, items):
     names ``gvisor_live`` (how CI selects them) or ``GVISOR_LIVE=1`` is set.
     """
     markexpr = config.getoption("markexpr", default="") or ""
-    explicitly_requested = (
-        "gvisor_live" in markexpr
-        or os.environ.get("GVISOR_LIVE", "").lower() in ("1", "true", "yes")
-    )
+    explicitly_requested = "gvisor_live" in markexpr or os.environ.get(
+        "GVISOR_LIVE", ""
+    ).lower() in ("1", "true", "yes")
     if explicitly_requested:
         return
 
@@ -64,9 +63,7 @@ def _binary_version(name: str) -> str | None:
     """Return the binary's version string or None if it doesn't run."""
     try:
         result = subprocess.run(
-            [name, "version", "--short"]
-            if name == "helm"
-            else [name, "version"],
+            [name, "version", "--short"] if name == "helm" else [name, "version"],
             capture_output=True,
             text=True,
             timeout=5,

@@ -75,6 +75,8 @@ def fresh_db(tmp_path):
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
     return engine, SessionLocal
+
+
 @pytest.fixture(autouse=True)
 def _clean_saml_env(monkeypatch, tmp_path, idp_metadata_xml):
     """Each test sets SAML env vars explicitly; clear leftovers + the
@@ -166,7 +168,10 @@ async def _seed_user(SessionLocal, email: str, *, role: str = "user"):
 
 
 async def _seed_external_identity(
-    SessionLocal, user_id: str, kind: str, subject: str,
+    SessionLocal,
+    user_id: str,
+    kind: str,
+    subject: str,
 ):
     from server.database.models import ExternalIdentity
 
@@ -307,7 +312,8 @@ def test_login_default_idp_when_param_omitted(fresh_db, saml_enabled):
     app = _make_app(fresh_db)
     with TestClient(app) as client:
         resp = client.get(
-            "/api/auth/saml/login", follow_redirects=False,
+            "/api/auth/saml/login",
+            follow_redirects=False,
         )
     assert resp.status_code == 302
 
@@ -337,7 +343,9 @@ def _post_acs(
     if relay_state is not None:
         form["RelayState"] = relay_state
     return client.post(
-        "/api/auth/saml/acs", data=form, follow_redirects=False,
+        "/api/auth/saml/acs",
+        data=form,
+        follow_redirects=False,
     )
 
 
@@ -373,11 +381,17 @@ def test_acs_happy_path_sp_init(fresh_db, saml_enabled):
         from sqlalchemy import select
 
         async with SessionLocal() as s:
-            rows = (await s.execute(
-                select(ExternalIdentity).where(
-                    ExternalIdentity.user_id == user_id,
-                ),
-            )).scalars().all()
+            rows = (
+                (
+                    await s.execute(
+                        select(ExternalIdentity).where(
+                            ExternalIdentity.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
             return rows
 
     rows = asyncio.run(_check())
@@ -388,7 +402,9 @@ def test_acs_happy_path_sp_init(fresh_db, saml_enabled):
     # Access token decodes + carries the expected sub/email.
     raw = cookie.split("access_token=", 1)[1].split(";", 1)[0]
     payload = jwt.decode(
-        raw, "test-jwt-secret-32-bytes-minimum-len!", algorithms=["HS256"],
+        raw,
+        "test-jwt-secret-32-bytes-minimum-len!",
+        algorithms=["HS256"],
     )
     assert payload["email"] == "alice@corp.example.com"
     assert payload["type"] == "access"
@@ -495,9 +511,14 @@ def test_acs_cross_idp_collision_rejected(fresh_db, saml_enabled):
     user_id = asyncio.run(
         _seed_user(SessionLocal, "alice@corp.example.com"),
     )
-    asyncio.run(_seed_external_identity(
-        SessionLocal, user_id, kind="oidc:github", subject="gh-sub-12345",
-    ))
+    asyncio.run(
+        _seed_external_identity(
+            SessionLocal,
+            user_id,
+            kind="oidc:github",
+            subject="gh-sub-12345",
+        )
+    )
 
     app = _make_app(fresh_db)
     with TestClient(app) as client:
@@ -517,10 +538,14 @@ def test_acs_same_kind_different_subject_rejected(fresh_db, saml_enabled):
     user_id = asyncio.run(
         _seed_user(SessionLocal, "alice@corp.example.com"),
     )
-    asyncio.run(_seed_external_identity(
-        SessionLocal, user_id,
-        kind="saml:corp-sso", subject="alice@previous-tenant.example.com",
-    ))
+    asyncio.run(
+        _seed_external_identity(
+            SessionLocal,
+            user_id,
+            kind="saml:corp-sso",
+            subject="alice@previous-tenant.example.com",
+        )
+    )
 
     app = _make_app(fresh_db)
     with TestClient(app) as client:
@@ -534,10 +559,14 @@ def test_acs_idempotent_relogin_succeeds(fresh_db, saml_enabled):
     user_id = asyncio.run(
         _seed_user(SessionLocal, "alice@corp.example.com"),
     )
-    asyncio.run(_seed_external_identity(
-        SessionLocal, user_id,
-        kind="saml:corp-sso", subject="alice@corp.example.com",
-    ))
+    asyncio.run(
+        _seed_external_identity(
+            SessionLocal,
+            user_id,
+            kind="saml:corp-sso",
+            subject="alice@corp.example.com",
+        )
+    )
 
     app = _make_app(fresh_db)
     with TestClient(app) as client:
@@ -550,11 +579,17 @@ def test_acs_idempotent_relogin_succeeds(fresh_db, saml_enabled):
         from sqlalchemy import select
 
         async with SessionLocal() as s:
-            rows = (await s.execute(
-                select(ExternalIdentity).where(
-                    ExternalIdentity.user_id == user_id,
-                ),
-            )).scalars().all()
+            rows = (
+                (
+                    await s.execute(
+                        select(ExternalIdentity).where(
+                            ExternalIdentity.user_id == user_id,
+                        ),
+                    )
+                )
+                .scalars()
+                .all()
+            )
             return len(rows)
 
     assert asyncio.run(_count()) == 1
@@ -572,7 +607,9 @@ def test_acs_idp_init_uses_default_return_to(fresh_db, saml_enabled):
 
 
 def test_acs_idp_init_without_default_return_to_rejected(
-    fresh_db, saml_enabled, monkeypatch,
+    fresh_db,
+    saml_enabled,
+    monkeypatch,
 ):
     """Operator disabled IdP-init by leaving default_return_to unset."""
     monkeypatch.delenv("SAML_IDP_INIT_DEFAULT_RETURN_TO", raising=False)

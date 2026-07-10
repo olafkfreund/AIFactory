@@ -64,9 +64,9 @@ def test_fresh_input_split_proportional_to_segments():
     """Fresh (non-cached) input splits by estimated segment weight."""
     # user weight 100 tok, coordination 100 tok, tool 200 tok -> 1:1:2
     segments = PromptSegments(
-        user_prompt="u" * 400,            # ~100 tok
-        coordination_context="c" * 400,   # ~100 tok
-        tool_output_chars=800,            # ~200 tok
+        user_prompt="u" * 400,  # ~100 tok
+        coordination_context="c" * 400,  # ~100 tok
+        tool_output_chars=800,  # ~200 tok
     )
     usage = TurnUsage(
         input_tokens=400,
@@ -91,9 +91,7 @@ def test_per_category_tokens_reconcile_to_real_total():
     usage = TurnUsage(input_tokens=1234, cache_read_tokens=4321, output_tokens=50)
     attr = attribute_turn(segments, usage)
     input_sum = sum(
-        c.tokens
-        for k, c in attr.categories.items()
-        if k != "thinking_and_output"
+        c.tokens for k, c in attr.categories.items() if k != "thinking_and_output"
     )
     assert input_sum == usage.total_input_tokens
     assert attr.categories["thinking_and_output"].tokens == 50
@@ -103,8 +101,8 @@ def test_no_cache_estimates_system_from_segment():
     """When no cache is reported, system prompt is estimated and carved out of
     the fresh input alongside the other categories."""
     segments = PromptSegments(
-        system_prompt="s" * 800,   # ~200 tok
-        user_prompt="u" * 800,     # ~200 tok
+        system_prompt="s" * 800,  # ~200 tok
+        user_prompt="u" * 800,  # ~200 tok
     )
     usage = TurnUsage(input_tokens=400)  # no cache
     attr = attribute_turn(segments, usage)
@@ -166,8 +164,9 @@ def test_record_turn_persists_and_aggregates(tmp_path: Path):
     spec_dir.mkdir()
 
     seg = PromptSegments(user_prompt="u" * 400, tool_output_chars=400)
-    usage = TurnUsage(input_tokens=200, output_tokens=50, cache_read_tokens=1000,
-                      cost_usd=0.5)
+    usage = TurnUsage(
+        input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
+    )
 
     b1 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
     assert b1["turns"] == 1
@@ -217,8 +216,7 @@ def test_total_tokens_present_and_equals_input_plus_output(tmp_path: Path):
     on_disk = json.loads(usage_file_path(spec_dir).read_text())
     assert "totalTokens" in on_disk
     assert (
-        on_disk["totalTokens"]
-        == on_disk["totalInputTokens"] + on_disk["outputTokens"]
+        on_disk["totalTokens"] == on_disk["totalInputTokens"] + on_disk["outputTokens"]
     )
     assert on_disk["totalTokens"] == 1250
 

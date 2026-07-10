@@ -31,20 +31,46 @@ def test_job_states_table_created(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        cols = conn.execute(text("""
+        cols = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'job_states' ORDER BY ordinal_position
-        """)).scalars().all()
-        indexes = conn.execute(text("""
+        """)
+            )
+            .scalars()
+            .all()
+        )
+        indexes = (
+            conn.execute(
+                text("""
             SELECT indexname FROM pg_indexes WHERE tablename = 'job_states'
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
 
     for col in (
-        "schema_version", "job_id", "correlation_key", "service", "kind",
-        "lifecycle_state", "service_status", "phase", "attempt", "admission",
-        "worker_ref", "spawn_args", "result", "usage", "error",
-        "created_at", "updated_at", "ended_at",
+        "schema_version",
+        "job_id",
+        "correlation_key",
+        "service",
+        "kind",
+        "lifecycle_state",
+        "service_status",
+        "phase",
+        "attempt",
+        "admission",
+        "worker_ref",
+        "spawn_args",
+        "result",
+        "usage",
+        "error",
+        "created_at",
+        "updated_at",
+        "ended_at",
     ):
         assert col in cols, f"job_states missing {col}"
 
@@ -67,10 +93,16 @@ def test_job_states_downgrade_drops_table(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        tables = conn.execute(text("""
+        tables = (
+            conn.execute(
+                text("""
             SELECT table_name FROM information_schema.tables
             WHERE table_name = 'job_states'
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
     assert tables == [], "downgrade left job_states behind"
 

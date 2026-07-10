@@ -133,7 +133,9 @@ def enqueue(
     """
     event_id = str(event.get("id") or "").strip()
     if not event_id:
-        logger.warning("outbox enqueue skipped: event has no 'id' (needs #466 envelope)")
+        logger.warning(
+            "outbox enqueue skipped: event has no 'id' (needs #466 envelope)"
+        )
         return False
     ts = now if now is not None else time.time()
     created_iso = event.get("updated_at") or event.get("time") or ""
@@ -234,14 +236,21 @@ def deliver_due_once(
                     )
                     logger.error(
                         "outbox abandoned event %s after %d attempts: %s",
-                        row["id"], attempts, exc,
+                        row["id"],
+                        attempts,
+                        exc,
                     )
                 else:
                     failed += 1
                     conn.execute(
                         "UPDATE completion_outbox SET attempts=?, "
                         "next_attempt_at=?, last_error=? WHERE id=?",
-                        (attempts, ts + _backoff_seconds(attempts), str(exc), row["id"]),
+                        (
+                            attempts,
+                            ts + _backoff_seconds(attempts),
+                            str(exc),
+                            row["id"],
+                        ),
                     )
                 continue
             conn.execute(
@@ -257,7 +266,10 @@ def deliver_due_once(
     if delivered or failed or abandoned:
         logger.info(
             "outbox relay: delivered=%d failed=%d abandoned=%d remaining=%d",
-            delivered, failed, abandoned, remaining,
+            delivered,
+            failed,
+            abandoned,
+            remaining,
         )
     return {
         "delivered": delivered,
@@ -286,7 +298,9 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-async def relay_loop(*, interval_s: float = 10.0, path: Path | None = None, stop=None) -> None:
+async def relay_loop(
+    *, interval_s: float = 10.0, path: Path | None = None, stop=None
+) -> None:
     """Background relay: drain due rows every ``interval_s`` until stopped.
 
     The blocking SQLite/HTTP work runs in a worker thread so the event loop is
@@ -297,8 +311,11 @@ async def relay_loop(*, interval_s: float = 10.0, path: Path | None = None, stop
     import asyncio
 
     stop = stop or asyncio.Event()
-    logger.info("completion outbox relay started (interval=%.0fs, db=%s)",
-                interval_s, path or db_path())
+    logger.info(
+        "completion outbox relay started (interval=%.0fs, db=%s)",
+        interval_s,
+        path or db_path(),
+    )
     while not stop.is_set():
         try:
             await asyncio.to_thread(deliver_due_once, path=path)

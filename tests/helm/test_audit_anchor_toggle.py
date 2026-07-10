@@ -35,7 +35,8 @@ def _render(chart_dir, set_values: list[str] | None = None) -> list[dict]:
 
 
 def _render_expect_error(
-    chart_dir, set_values: list[str] | None = None,
+    chart_dir,
+    set_values: list[str] | None = None,
 ) -> str:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
@@ -113,26 +114,30 @@ class TestAuditAnchorOnCronJob:
         assert cron["spec"]["timeZone"] == "UTC"
 
     def test_cronjob_runs_correct_command(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         cron = _find_cronjob(self._docs_on(chart_dir), "audit-anchor-cron")
-        container = (
-            cron["spec"]["jobTemplate"]["spec"]
-                ["template"]["spec"]["containers"][0]
-        )
+        container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"][
+            "containers"
+        ][0]
         assert container["command"] == [
-            "python", "-m", "server.jobs.audit_anchor_cron",
+            "python",
+            "-m",
+            "server.jobs.audit_anchor_cron",
         ]
 
     def test_cronjob_security_context(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Match the web pod's hardening posture."""
         cron = _find_cronjob(self._docs_on(chart_dir), "audit-anchor-cron")
-        sc = (
-            cron["spec"]["jobTemplate"]["spec"]
-                ["template"]["spec"]["containers"][0]["securityContext"]
-        )
+        sc = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"][0][
+            "securityContext"
+        ]
         assert sc["runAsNonRoot"] is True
         assert sc["allowPrivilegeEscalation"] is False
         assert sc["readOnlyRootFilesystem"] is True
@@ -161,9 +166,13 @@ class TestAuditAnchorOnInProcess:
         assert s["value"] == "in-process"
 
     def test_no_cronjob_rendered(self, helm_available, chart_dir) -> None:
-        assert _find_cronjob(
-            self._docs_on(chart_dir), "audit-anchor-cron",
-        ) is None
+        assert (
+            _find_cronjob(
+                self._docs_on(chart_dir),
+                "audit-anchor-cron",
+            )
+            is None
+        )
 
 
 @pytest.mark.helm
@@ -190,7 +199,9 @@ class TestAuditAnchorValidation:
     """Schema-level validators fire at helm template time."""
 
     def test_invalid_scheduler_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,

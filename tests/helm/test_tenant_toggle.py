@@ -51,7 +51,8 @@ def _render(chart_dir, set_values: list[str] | None = None) -> list[dict]:
 
 
 def _render_expect_error(
-    chart_dir, set_values: list[str] | None = None,
+    chart_dir,
+    set_values: list[str] | None = None,
 ) -> str:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
@@ -71,7 +72,9 @@ def _find_deployment(docs: list[dict]) -> dict:
 
 
 def _find_by_kind_name(
-    docs: list[dict], kind: str, name_suffix: str,
+    docs: list[dict],
+    kind: str,
+    name_suffix: str,
 ) -> dict | None:
     for d in docs:
         if d.get("kind") != kind:
@@ -127,32 +130,53 @@ class TestTenantIsolationOff:
 
     def test_no_reconciler_rbac(self, helm_available, chart_dir) -> None:
         docs = self._docs(chart_dir)
-        assert _find_by_kind_name(
-            docs, "ClusterRole", "-tenant-reconciler",
-        ) is None
-        assert _find_by_kind_name(
-            docs, "ClusterRoleBinding", "-tenant-reconciler",
-        ) is None
+        assert (
+            _find_by_kind_name(
+                docs,
+                "ClusterRole",
+                "-tenant-reconciler",
+            )
+            is None
+        )
+        assert (
+            _find_by_kind_name(
+                docs,
+                "ClusterRoleBinding",
+                "-tenant-reconciler",
+            )
+            is None
+        )
 
     def test_no_teardown_cronjob(self, helm_available, chart_dir) -> None:
-        assert _find_cronjob(
-            self._docs(chart_dir), "tenant-teardown-cron",
-        ) is None
+        assert (
+            _find_cronjob(
+                self._docs(chart_dir),
+                "tenant-teardown-cron",
+            )
+            is None
+        )
 
     def test_no_cni_probe(self, helm_available, chart_dir) -> None:
         docs = self._docs(chart_dir)
         jobs = [
-            j for j in _find_all_by_kind(docs, "Job")
-            if j.get("metadata", {}).get("labels", {}).get(
+            j
+            for j in _find_all_by_kind(docs, "Job")
+            if j.get("metadata", {})
+            .get("labels", {})
+            .get(
                 "app.kubernetes.io/component",
-            ) == "tenant-cni-probe"
+            )
+            == "tenant-cni-probe"
         ]
         assert jobs == []
 
     def test_no_gatekeeper_templates(self, helm_available, chart_dir) -> None:
         docs = self._docs(chart_dir)
-        for kind in ("ConstraintTemplate", "AIFactoryTenantNamespacePrefix",
-                     "AIFactoryTenantRoleBindingScope"):
+        for kind in (
+            "ConstraintTemplate",
+            "AIFactoryTenantNamespacePrefix",
+            "AIFactoryTenantRoleBindingScope",
+        ):
             assert _find_all_by_kind(docs, kind) == [], (
                 f"Gatekeeper {kind} rendered when isolation disabled"
             )
@@ -178,7 +202,9 @@ class TestTenantIsolationOn:
         )
 
     def test_web_pod_has_all_tenant_env_vars(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs(chart_dir))
         env = {
@@ -195,10 +221,14 @@ class TestTenantIsolationOn:
         assert env["TENANT_QUOTA_MAX_PVCS"] == "20"
 
     def test_reconciler_clusterrole_rendered(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         cr = _find_by_kind_name(
-            self._docs(chart_dir), "ClusterRole", "-tenant-reconciler",
+            self._docs(chart_dir),
+            "ClusterRole",
+            "-tenant-reconciler",
         )
         assert cr is not None, "tenant reconciler ClusterRole not rendered"
         # Spot-check the verbs we documented in the design.
@@ -207,66 +237,75 @@ class TestTenantIsolationOn:
         # of ClusterRole (no .spec). Handle both shapes.
         if "rules" in cr:
             rules = cr["rules"]
-        ns_rule = next(
-            r for r in rules
-            if "namespaces" in r.get("resources", [])
-        )
+        ns_rule = next(r for r in rules if "namespaces" in r.get("resources", []))
         for verb in ("create", "update", "delete", "get", "list"):
-            assert verb in ns_rule["verbs"], (
-                f"namespace rule missing verb {verb!r}"
-            )
+            assert verb in ns_rule["verbs"], f"namespace rule missing verb {verb!r}"
 
     def test_reconciler_clusterrolebinding_targets_web_sa(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         crb = _find_by_kind_name(
             self._docs(chart_dir),
-            "ClusterRoleBinding", "-tenant-reconciler",
+            "ClusterRoleBinding",
+            "-tenant-reconciler",
         )
         assert crb is not None
         # Subject points at the chart's main ServiceAccount.
         subj = crb["subjects"][0]
         assert subj["kind"] == "ServiceAccount"
-        assert subj["name"].endswith("test-release-aifactory") or \
-               subj["name"].endswith("aifactory")
+        assert subj["name"].endswith("test-release-aifactory") or subj["name"].endswith(
+            "aifactory"
+        )
 
     def test_teardown_cronjob_rendered_with_defaults(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         cron = _find_cronjob(self._docs(chart_dir), "tenant-teardown-cron")
         assert cron is not None, "tenant-teardown CronJob not rendered"
         assert cron["spec"]["schedule"] == "0 3 * * *"
         assert cron["spec"]["concurrencyPolicy"] == "Forbid"
         assert cron["spec"]["timeZone"] == "UTC"
-        container = (
-            cron["spec"]["jobTemplate"]["spec"]
-                ["template"]["spec"]["containers"][0]
-        )
+        container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"][
+            "containers"
+        ][0]
         assert container["command"] == [
-            "python", "-m", "server.services.tenant_teardown",
+            "python",
+            "-m",
+            "server.services.tenant_teardown",
         ]
 
     def test_teardown_cronjob_passes_grace_days(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         cron = _find_cronjob(self._docs(chart_dir), "tenant-teardown-cron")
-        container = (
-            cron["spec"]["jobTemplate"]["spec"]
-                ["template"]["spec"]["containers"][0]
-        )
+        container = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"][
+            "containers"
+        ][0]
         env = {e["name"]: e.get("value") for e in container["env"]}
         assert env["TENANT_DELETION_GRACE_DAYS"] == "30"
         assert env["TENANT_TEARDOWN_DRY_RUN_HOURS"] == "24"
 
     def test_cni_probe_job_rendered(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs(chart_dir)
         probes = [
-            j for j in _find_all_by_kind(docs, "Job")
-            if j.get("metadata", {}).get("labels", {}).get(
+            j
+            for j in _find_all_by_kind(docs, "Job")
+            if j.get("metadata", {})
+            .get("labels", {})
+            .get(
                 "app.kubernetes.io/component",
-            ) == "tenant-cni-probe"
+            )
+            == "tenant-cni-probe"
         ]
         assert len(probes) == 1, "expected exactly one CNI probe Job"
         ann = probes[0]["metadata"]["annotations"]
@@ -277,13 +316,18 @@ class TestTenantIsolationOn:
         assert "before-hook-creation" in ann["helm.sh/hook-delete-policy"]
 
     def test_no_gatekeeper_without_opt_in(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Even with isolation ON, Gatekeeper templates stay off until
         ``gatekeeperEnabled=true``."""
         docs = self._docs(chart_dir)
-        for kind in ("ConstraintTemplate", "AIFactoryTenantNamespacePrefix",
-                     "AIFactoryTenantRoleBindingScope"):
+        for kind in (
+            "ConstraintTemplate",
+            "AIFactoryTenantNamespacePrefix",
+            "AIFactoryTenantRoleBindingScope",
+        ):
             assert _find_all_by_kind(docs, kind) == []
 
 
@@ -308,7 +352,9 @@ class TestTenantIsolationWithGatekeeper:
         )
 
     def test_constraint_templates_rendered(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs(chart_dir)
         templates = _find_all_by_kind(docs, "ConstraintTemplate")
@@ -317,20 +363,26 @@ class TestTenantIsolationWithGatekeeper:
         assert "aifactorytenantrolebindingscope" in names
 
     def test_constraints_rendered(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs(chart_dir)
         ns_constraint = _find_all_by_kind(
-            docs, "AIFactoryTenantNamespacePrefix",
+            docs,
+            "AIFactoryTenantNamespacePrefix",
         )
         rb_constraint = _find_all_by_kind(
-            docs, "AIFactoryTenantRoleBindingScope",
+            docs,
+            "AIFactoryTenantRoleBindingScope",
         )
         assert len(ns_constraint) == 1
         assert len(rb_constraint) == 1
 
     def test_namespace_constraint_uses_configured_prefix(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs(chart_dir)
         c = _find_all_by_kind(docs, "AIFactoryTenantNamespacePrefix")[0]
@@ -339,7 +391,9 @@ class TestTenantIsolationWithGatekeeper:
         assert c["spec"]["parameters"]["prefix"] == "aifactory-tenant-"
 
     def test_rolebinding_constraint_targets_reconciler_sa(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs(chart_dir)
         c = _find_all_by_kind(docs, "AIFactoryTenantRoleBindingScope")[0]
@@ -358,7 +412,9 @@ class TestTenantSchemaValidators:
     """JSON-schema rejects malformed values at helm template time."""
 
     def test_invalid_cni_backend_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -372,7 +428,9 @@ class TestTenantSchemaValidators:
         assert "cniBackend" in stderr or "flannel" in stderr
 
     def test_negative_grace_days_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -384,7 +442,9 @@ class TestTenantSchemaValidators:
         assert "deletionGraceDays" in stderr or "-1" in stderr
 
     def test_zero_grace_days_allowed(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Day-0 is documented as allowed but produces a WARNING log
         on every reconcile pass (concept doc §grace-period). Helm
@@ -406,7 +466,9 @@ class TestTenantSchemaValidators:
         assert env["TENANT_DELETION_GRACE_DAYS"] == "0"
 
     def test_invalid_namespace_prefix_rejected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Uppercase / leading-digit / trailing-dash prefixes fail the
         DNS-label pattern."""
@@ -433,16 +495,21 @@ class TestTenantIsolationFixture:
 
     def test_fixture_renders(self, helm_available, chart_dir) -> None:
         from pathlib import Path
-        fixture = (
-            Path(__file__).parent / "fixtures" / "tenant-isolation-enabled.yaml"
-        )
+
+        fixture = Path(__file__).parent / "fixtures" / "tenant-isolation-enabled.yaml"
         assert fixture.is_file(), f"fixture missing: {fixture}"
         result = subprocess.run(
             [
-                "helm", "template", "test-release", str(chart_dir),
-                "-f", str(fixture),
+                "helm",
+                "template",
+                "test-release",
+                str(chart_dir),
+                "-f",
+                str(fixture),
             ],
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         )
         docs = [d for d in yaml.safe_load_all(result.stdout) if d]
         # Sanity: CRD + Gatekeeper + RBAC + CronJob + Probe all show up.

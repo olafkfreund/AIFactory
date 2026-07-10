@@ -73,9 +73,7 @@ class User(Base):
     # admin UI to render "Erased on YYYY-MM-DD" placeholders instead
     # of treating the user row as deleted. The audit chain preserves
     # historical user_id references via SHA-256 hashing.
-    gdpr_erased_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
-    )
+    gdpr_erased_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -97,20 +95,20 @@ class User(Base):
         back_populates="user",
         foreign_keys="OrgMember.user_id",
     )
-    api_keys: Mapped[list["ApiKey"]] = relationship(
-        "ApiKey", back_populates="user"
-    )
+    api_keys: Mapped[list["ApiKey"]] = relationship("ApiKey", back_populates="user")
     # Epic #35 #41 PR-1b — per-IdP identity records. One row per
     # (kind, subject) pair the user has logged in with.
     external_identities: Mapped[list["ExternalIdentity"]] = relationship(
-        "ExternalIdentity", back_populates="user",
+        "ExternalIdentity",
+        back_populates="user",
         cascade="all, delete-orphan",
     )
     # Epic #35 #43 PR-1 — last successful auth timestamp. Updated by
     # auth.py on every OIDC/SAML/password login. NULL = never logged in.
     # Used by /api/admin/access-review (SOC2 CC6.2 / ISO 27001 A.9.2.5).
     last_login_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
 
     def __repr__(self) -> str:
@@ -147,12 +145,14 @@ class Organization(Base):
     # NULL until isolation is enabled + first reconcile pass runs;
     # locked once set (slug renames do NOT change this).
     tenant_namespace: Mapped[str | None] = mapped_column(
-        String(63), nullable=True,
+        String(63),
+        nullable=True,
     )
     # Epic #35 #36 PR-1 — soft-delete timestamp. Stage-1 sets this
     # (immediate PII scrub); stage-2 (day 30) tears down infra.
     deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
     # Epic #35 #38 PR-2a — per-org LLM model allowlist. JSON array of
     # model name patterns the org may use. ``["*"]`` (default) means
@@ -161,7 +161,10 @@ class Organization(Base):
     # ``["bedrock/anthropic.*"]``. The reconciler (PR-2b) syncs this
     # into LiteLLM's per-tenant virtual-key model list via admin API.
     allowed_models: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, server_default='["*"]', default=list,
+        JSON,
+        nullable=False,
+        server_default='["*"]',
+        default=list,
     )
 
     # Relationships
@@ -225,9 +228,7 @@ class OrgMember(Base):
         back_populates="org_memberships",
         foreign_keys=[user_id],
     )
-    inviter: Mapped["User | None"] = relationship(
-        "User", foreign_keys=[invited_by]
-    )
+    inviter: Mapped["User | None"] = relationship("User", foreign_keys=[invited_by])
 
     def __repr__(self) -> str:
         return (
@@ -265,9 +266,7 @@ class OidcRefreshSession(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
     )
-    jti: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False
-    )
+    jti: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     oidc_sub: Mapped[str] = mapped_column(String(255), nullable=False)
     # IdP-issued refresh token (offline_access), encrypted at rest (#366).
     idp_refresh_token: Mapped[str | None] = mapped_column(
@@ -347,9 +346,7 @@ class Task(Base):
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="backlog"
-    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="backlog")
     spec_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_by: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=True
@@ -366,12 +363,8 @@ class Task(Base):
 
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="tasks")
-    creator: Mapped["User | None"] = relationship(
-        "User", foreign_keys=[created_by]
-    )
-    assignee: Mapped["User | None"] = relationship(
-        "User", foreign_keys=[assigned_to]
-    )
+    creator: Mapped["User | None"] = relationship("User", foreign_keys=[created_by])
+    assignee: Mapped["User | None"] = relationship("User", foreign_keys=[assigned_to])
 
     def __repr__(self) -> str:
         return f"<Task id={self.id!r} title={self.title!r} status={self.status!r}>"
@@ -484,9 +477,7 @@ class EmailAccount(Base):
 
     __tablename__ = "email_accounts"
     __table_args__ = (
-        UniqueConstraint(
-            "user_id", "provider", name="uq_email_accounts_user_provider"
-        ),
+        UniqueConstraint("user_id", "provider", name="uq_email_accounts_user_provider"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -501,12 +492,8 @@ class EmailAccount(Base):
     email_address: Mapped[str] = mapped_column(String(255), nullable=False)
     # P2.3: OAuth credentials encrypted at rest via EncryptedString.
     # See apps/web-server/server/crypto/ for the at-rest encryption layer.
-    access_token: Mapped[str] = mapped_column(
-        _EncryptedString(), nullable=False
-    )
-    refresh_token: Mapped[str | None] = mapped_column(
-        _EncryptedString(), nullable=True
-    )
+    access_token: Mapped[str] = mapped_column(_EncryptedString(), nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(_EncryptedString(), nullable=True)
     token_expiry: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scopes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -612,9 +599,7 @@ class AuditLog(Base):
     # row's content (or the genesis sentinel for the first row).
     # Threat model: tamper-detection within the audit log only.
     # Signed external anchor lands in Epic #35 #43 (see AuditAnchor).
-    prev_hash: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    prev_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Epic #35 #43 PR-1 — data-classification tier. One of
     # 'public' | 'internal' | 'confidential'. Included in
     # `_canonical()` so the chain protects classification against
@@ -624,16 +609,16 @@ class AuditLog(Base):
     # 'confidential' for KMS access / key rotation / GDPR erasure /
     # audit-chain rewrites.
     classification: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="internal",
+        String(16),
+        nullable=False,
+        server_default="internal",
     )
 
     # Relationships (read-only lookups, no back_populates needed)
     organization: Mapped["Organization | None"] = relationship(
         "Organization", foreign_keys=[org_id]
     )
-    user: Mapped["User | None"] = relationship(
-        "User", foreign_keys=[user_id]
-    )
+    user: Mapped["User | None"] = relationship("User", foreign_keys=[user_id])
 
     def __repr__(self) -> str:
         return (
@@ -666,25 +651,31 @@ class KmsDataKey(Base):
         String(36), primary_key=True, default=_generate_uuid
     )
     org_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False, unique=True, index=True,
+        String(36),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
     )
     wrapped_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     kms_key_id: Mapped[str] = mapped_column(
-        String(255), nullable=False,
+        String(255),
+        nullable=False,
         comment="Identifier of the KMS root key that wrapped this data key. "
-                "For fernet backend: literal `fernet:default`. For aws_kms: "
-                "the KMS ARN. Lets rotation runbooks know which backend "
-                "wrapped each row.",
+        "For fernet backend: literal `fernet:default`. For aws_kms: "
+        "the KMS ARN. Lets rotation runbooks know which backend "
+        "wrapped each row.",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
     rotated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
         comment="Updated on every re-wrap (root key rotation). The "
-                "DataKeyManager polls this column to invalidate its "
-                "in-process LRU cache.",
+        "DataKeyManager polls this column to invalidate its "
+        "in-process LRU cache.",
     )
 
     def __repr__(self) -> str:
@@ -720,7 +711,9 @@ class ExternalIdentity(Base):
     __tablename__ = "external_identities"
     __table_args__ = (
         UniqueConstraint(
-            "kind", "subject", name="uq_external_identities_kind_subject",
+            "kind",
+            "subject",
+            name="uq_external_identities_kind_subject",
         ),
         Index("ix_external_identities_user_id", "user_id"),
         Index("ix_external_identities_kind", "kind"),
@@ -730,7 +723,8 @@ class ExternalIdentity(Base):
         String(36), primary_key=True, default=_generate_uuid
     )
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"),
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -740,13 +734,12 @@ class ExternalIdentity(Base):
     )
 
     user: Mapped["User"] = relationship(
-        "User", back_populates="external_identities",
+        "User",
+        back_populates="external_identities",
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<ExternalIdentity user_id={self.user_id!r} kind={self.kind!r}>"
-        )
+        return f"<ExternalIdentity user_id={self.user_id!r} kind={self.kind!r}>"
 
 
 # ---------------------------------------------------------------------------
@@ -821,24 +814,21 @@ class ScimGroupMember(Base):
         String(36), primary_key=True, default=_generate_uuid
     )
     group_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("scim_groups.id", ondelete="CASCADE"),
+        String(36),
+        ForeignKey("scim_groups.id", ondelete="CASCADE"),
         nullable=False,
     )
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"),
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
     display: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    group: Mapped["ScimGroup"] = relationship(
-        "ScimGroup", back_populates="members"
-    )
+    group: Mapped["ScimGroup"] = relationship("ScimGroup", back_populates="members")
 
     def __repr__(self) -> str:
-        return (
-            f"<ScimGroupMember group_id={self.group_id!r} "
-            f"user_id={self.user_id!r}>"
-        )
+        return f"<ScimGroupMember group_id={self.group_id!r} user_id={self.user_id!r}>"
 
 
 # ---------------------------------------------------------------------------
@@ -870,14 +860,18 @@ class AuditSigningKey(Base):
     __tablename__ = "audit_signing_keys"
 
     version: Mapped[int] = mapped_column(
-        primary_key=True, autoincrement=True,
+        primary_key=True,
+        autoincrement=True,
     )
     wrapped_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
     )
     retired_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
     # v1.2 #208 — per-tenant key scoping. NULL = deployment-wide (v1.1).
     # ON DELETE CASCADE: key is removed when the org row is hard-deleted;
@@ -891,7 +885,8 @@ class AuditSigningKey(Base):
 
     # Relationship (read-only; no back_populates needed).
     organization: Mapped["Organization | None"] = relationship(
-        "Organization", foreign_keys=[org_id],
+        "Organization",
+        foreign_keys=[org_id],
     )
 
     def __repr__(self) -> str:
@@ -927,7 +922,9 @@ class AuditAnchor(Base):
     )
 
     id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=_generate_uuid,
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
     )
     # Hex SHA-256 of the canonical content of the last audit_logs row
     # whose created_at < the anchor's day boundary. Empty (=GENESIS or
@@ -938,10 +935,13 @@ class AuditAnchor(Base):
     signature: Mapped[str] = mapped_column(String(64), nullable=False)
     signed_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     key_version: Mapped[int] = mapped_column(
-        ForeignKey("audit_signing_keys.version"), nullable=False,
+        ForeignKey("audit_signing_keys.version"),
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
     )
     # v1.2 #208 — per-tenant anchor scoping. NULL = shared chain (v1.1).
     # ON DELETE SET NULL: chain artefact is preserved when the org is deleted
@@ -953,18 +953,17 @@ class AuditAnchor(Base):
     )
 
     signing_key: Mapped["AuditSigningKey"] = relationship(
-        "AuditSigningKey", foreign_keys=[key_version],
+        "AuditSigningKey",
+        foreign_keys=[key_version],
     )
     organization: Mapped["Organization | None"] = relationship(
-        "Organization", foreign_keys=[org_id],
+        "Organization",
+        foreign_keys=[org_id],
     )
 
     def __repr__(self) -> str:
         org = f" org={self.org_id}" if self.org_id else ""
-        return (
-            f"<AuditAnchor signed_at={self.signed_at!r} "
-            f"v{self.key_version}{org}>"
-        )
+        return f"<AuditAnchor signed_at={self.signed_at!r} v{self.key_version}{org}>"
 
 
 class TenantAuditState(Base):
@@ -999,30 +998,35 @@ class TenantAuditState(Base):
     # NULL before the first daily anchor. Used by health-check queries to
     # detect "key issued but no first anchor yet" (design rec #5).
     last_anchor_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
     # 'active': per-tenant chain is live.
     # 'sealed': org soft-deleted; no new rows; chain stays for legal-hold.
     lifecycle: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="active",
+        String(16),
+        nullable=False,
+        server_default="active",
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
         onupdate=func.now(),
     )
 
     organization: Mapped["Organization"] = relationship(
-        "Organization", foreign_keys=[org_id],
+        "Organization",
+        foreign_keys=[org_id],
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<TenantAuditState org_id={self.org_id!r} "
-            f"lifecycle={self.lifecycle!r}>"
-        )
+        return f"<TenantAuditState org_id={self.org_id!r} lifecycle={self.lifecycle!r}>"
 
 
 # ---------------------------------------------------------------------------
@@ -1052,9 +1056,7 @@ class TenantState(Base):
     """
 
     __tablename__ = "tenant_states"
-    __table_args__ = (
-        Index("ix_tenant_states_isolation_mode", "isolation_mode"),
-    )
+    __table_args__ = (Index("ix_tenant_states_isolation_mode", "isolation_mode"),)
 
     org_id: Mapped[str] = mapped_column(
         String(36),
@@ -1062,41 +1064,50 @@ class TenantState(Base):
         primary_key=True,
     )
     isolation_mode: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="shared",
+        String(16),
+        nullable=False,
+        default="shared",
     )
     namespace_name: Mapped[str | None] = mapped_column(
-        String(63), nullable=True,
+        String(63),
+        nullable=True,
     )
     service_account: Mapped[str | None] = mapped_column(
-        String(63), nullable=True,
+        String(63),
+        nullable=True,
     )
     iam_role_arn: Mapped[str | None] = mapped_column(
-        String(2048), nullable=True,
+        String(2048),
+        nullable=True,
     )
     vault_policy_name: Mapped[str | None] = mapped_column(
-        String(255), nullable=True,
+        String(255),
+        nullable=True,
     )
     reconciled_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True,
+        DateTime,
+        nullable=True,
     )
     reconcile_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
         onupdate=func.now(),
     )
 
     organization: Mapped["Organization"] = relationship(
-        "Organization", foreign_keys=[org_id],
+        "Organization",
+        foreign_keys=[org_id],
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<TenantState org_id={self.org_id!r} "
-            f"mode={self.isolation_mode!r}>"
-        )
+        return f"<TenantState org_id={self.org_id!r} mode={self.isolation_mode!r}>"
 
 
 # ---------------------------------------------------------------------------
@@ -1136,28 +1147,39 @@ class JobState(Base):
     # schema_version is a const "1" in the contract; stored so a future
     # breaking bump is detectable per-row.
     schema_version: Mapped[str] = mapped_column(
-        String(8), nullable=False, default="1", server_default="1",
+        String(8),
+        nullable=False,
+        default="1",
+        server_default="1",
     )
     # PK = the service-assigned job id (AIFactory task_id "project:spec").
     job_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     # Upstream GitHub issue number (RFC-0001 correlation). Null until known.
     correlation_key: Mapped[str | None] = mapped_column(
-        String(255), nullable=True,
+        String(255),
+        nullable=True,
     )
     service: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="aifactory",
+        String(16),
+        nullable=False,
+        default="aifactory",
     )
     kind: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="build",
+        String(16),
+        nullable=False,
+        default="build",
     )
     # Canonical lifecycle: queued | running | review | done | failed | stuck.
     lifecycle_state: Mapped[str] = mapped_column(String(16), nullable=False)
     service_status: Mapped[str | None] = mapped_column(
-        String(64), nullable=True,
+        String(64),
+        nullable=True,
     )
     phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attempt: Mapped[int] = mapped_column(
-        nullable=False, default=1, server_default="1",
+        nullable=False,
+        default=1,
+        server_default="1",
     )
     # admission{enqueued_at, queue_position, started_at} per the schema.
     admission: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -1170,10 +1192,15 @@ class JobState(Base):
     usage: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, server_default=func.now(), onupdate=func.now(),
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

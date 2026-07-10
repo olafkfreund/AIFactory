@@ -61,6 +61,7 @@ def test_valid_traceparent_env_attaches_context(monkeypatch):
     # Verify trace_id propagated. After attach, the *current context*
     # has a span context whose trace_id matches the env var's.
     from opentelemetry import trace
+
     current = trace.get_current_span()
     ctx = current.get_span_context()
     assert ctx.is_valid

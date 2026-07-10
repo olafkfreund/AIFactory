@@ -72,8 +72,7 @@ def _normalize_issue(payload: dict | None) -> dict:
     payload = payload or {}
     raw_labels = payload.get("labels") or []
     label_names = [
-        lbl.get("name", "") if isinstance(lbl, dict) else str(lbl)
-        for lbl in raw_labels
+        lbl.get("name", "") if isinstance(lbl, dict) else str(lbl) for lbl in raw_labels
     ]
     return {
         "number": payload.get("number"),

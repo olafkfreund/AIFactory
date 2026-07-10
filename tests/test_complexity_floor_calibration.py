@@ -108,6 +108,7 @@ def test_trivial_tasks_stay_quick_flow(detector, description):
 # Requirements-based floor (acceptance criteria / services count)
 # ---------------------------------------------------------------------------
 
+
 def test_many_acceptance_criteria_raise_to_standard(detector):
     """A short 'add' task with many distinct deliverables classifies Standard."""
     requirements = {

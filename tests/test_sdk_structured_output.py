@@ -114,7 +114,9 @@ Provide a verdict (PASS or FAIL), reason, and score.
                         print(f"     Data: {structured_data}")
                         if structured_data:
                             try:
-                                validated = SimpleReviewResponse.model_validate(structured_data)
+                                validated = SimpleReviewResponse.model_validate(
+                                    structured_data
+                                )
                                 print("\n  ✅ Successfully validated StructuredOutput!")
                                 print(f"     verdict: {validated.verdict}")
                                 print(f"     reason: {validated.reason}")
@@ -139,6 +141,7 @@ Provide a verdict (PASS or FAIL), reason, and score.
             # If result is a string, try to parse as JSON
             if isinstance(result, str):
                 import json
+
                 try:
                     parsed = json.loads(result)
                     print(f"  result parsed as JSON: {parsed}")

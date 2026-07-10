@@ -45,6 +45,7 @@ def _make_github_provider(graphql_responses: list[dict]) -> GitHubProvider:
     return. Each is wrapped in a stub mimicking GHCommandResult so the
     provider's `result.stdout` access works.
     """
+
     def _stub(resp_dict: dict):
         stub = MagicMock()
         stub.stdout = json.dumps(resp_dict)
@@ -83,18 +84,12 @@ async def test_github_assign_copilot_happy_path():
             }
         }
     }
-    issue_resp = {
-        "data": {"repository": {"issue": {"id": "ISSUE_NODE_ID"}}}
-    }
+    issue_resp = {"data": {"repository": {"issue": {"id": "ISSUE_NODE_ID"}}}}
     mutation_resp = {
-        "data": {
-            "replaceActorsForAssignable": {"assignable": {"number": 42}}
-        }
+        "data": {"replaceActorsForAssignable": {"assignable": {"number": 42}}}
     }
 
-    provider = _make_github_provider(
-        [suggested_actors, issue_resp, mutation_resp]
-    )
+    provider = _make_github_provider([suggested_actors, issue_resp, mutation_resp])
     await provider.assign_to_user(42, ["Copilot"])
 
     # Three gh api graphql calls in order: actors lookup, issue lookup, mutation.
@@ -169,14 +164,10 @@ async def test_github_assign_copilot_alias_case_insensitive_and_mixed():
             }
         }
     }
-    issue_resp = {
-        "data": {"repository": {"issue": {"id": "ISSUE_NODE_ID"}}}
-    }
+    issue_resp = {"data": {"repository": {"issue": {"id": "ISSUE_NODE_ID"}}}}
     mutation_resp = {"data": {"replaceActorsForAssignable": {}}}
 
-    provider = _make_github_provider(
-        [suggested_actors, issue_resp, mutation_resp]
-    )
+    provider = _make_github_provider([suggested_actors, issue_resp, mutation_resp])
     await provider.assign_to_user(42, ["copilot", "alice"])
 
     mutation_cmd = provider._gh_client.run.await_args_list[2].args[0]
@@ -208,6 +199,7 @@ async def test_gitlab_assign_to_user_triggers_duo_workflow():
     """When given the Copilot/Duo alias, GitLabProvider should POST to
     /api/v4/ai/duo_workflows/workflows with the issue context."""
     from unittest.mock import patch
+
     provider = GitLabProvider(_repo="acme/widgets", _token="OAUTH_TOKEN")
 
     # Stub get_repository_info so we don't make a real HTTP call to resolve
@@ -220,16 +212,20 @@ async def test_gitlab_assign_to_user_triggers_duo_workflow():
             self._payload = payload or {"id": 999}
             self.content = b'{"id": 999}'
             self.text = ""
+
         def json(self):
             return self._payload
 
     class _FakeClient:
         def __init__(self, *a, **kw):
             captured["headers"] = kw.get("headers", {})
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         async def post(self, url, headers=None, json=None):
             captured["url"] = url
             captured["json"] = json
@@ -269,22 +265,27 @@ async def test_gitlab_assign_to_user_unauth_silently_noops():
     be a silent no-op — the tracker detects the miss by polling for the
     MR."""
     from unittest.mock import patch
+
     provider = GitLabProvider(_repo="acme/widgets", _token="OAUTH_TOKEN")
 
     class _FakeResp:
         status_code = 401
         content = b""
         text = ""
+
         def json(self):
             return {}
 
     class _FakeClient:
         def __init__(self, *a, **kw):
             pass
+
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         async def post(self, url, headers=None, json=None):
             return _FakeResp()
 

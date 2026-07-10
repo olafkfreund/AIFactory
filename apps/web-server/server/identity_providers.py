@@ -54,10 +54,7 @@ def _saml_descriptor() -> IdpDescriptor | None:
         return None
 
     name = os.environ.get("SAML_IDP_NAME", "saml").strip() or "saml"
-    display_name = (
-        os.environ.get("SAML_IDP_DISPLAY_NAME", "").strip()
-        or name
-    )
+    display_name = os.environ.get("SAML_IDP_DISPLAY_NAME", "").strip() or name
     login_url = f"/api/auth/saml/login?idp={name}"
 
     return IdpDescriptor(
@@ -82,10 +79,7 @@ def _oidc_descriptor() -> IdpDescriptor | None:
     if not all(os.environ.get(k) for k in required):
         return None
 
-    display_name = (
-        os.environ.get("OIDC_DISPLAY_NAME", "").strip()
-        or "OIDC (default)"
-    )
+    display_name = os.environ.get("OIDC_DISPLAY_NAME", "").strip() or "OIDC (default)"
 
     return IdpDescriptor(
         name="oidc",
@@ -113,4 +107,3 @@ def list_configured_identity_providers() -> list[IdpDescriptor]:
         providers.append(oidc)
 
     return providers
-

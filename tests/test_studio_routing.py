@@ -44,7 +44,9 @@ def test_get_provider_extra_kwargs_studio(monkeypatch):
 
     kwargs = get_provider_extra_kwargs("openai-compatible", "studio:gemini-2.5-flash")
 
-    assert kwargs["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert (
+        kwargs["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    )
     assert kwargs["api_key"] == "mock-google-key"
     assert kwargs["model"] == "gemini-2.5-flash"
 
@@ -52,7 +54,9 @@ def test_get_provider_extra_kwargs_studio(monkeypatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GEMINI_API_KEY", "mock-gemini-key")
 
-    kwargs_fallback = get_provider_extra_kwargs("openai-compatible", "studio:gemini-2.5-pro")
+    kwargs_fallback = get_provider_extra_kwargs(
+        "openai-compatible", "studio:gemini-2.5-pro"
+    )
     assert kwargs_fallback["api_key"] == "mock-gemini-key"
     assert kwargs_fallback["model"] == "gemini-2.5-pro"
 

@@ -84,9 +84,7 @@ def _session_tracer_provider():
         provider = current
     else:
         # Default proxy provider — install ours.
-        provider = TracerProvider(
-            resource=Resource.create({"service.name": "test"})
-        )
+        provider = TracerProvider(resource=Resource.create({"service.name": "test"}))
         provider.add_span_processor(processor)
         trace.set_tracer_provider(provider)
 
@@ -207,6 +205,7 @@ def test_correlation_id_helper_extracts_trace_id(in_memory_tracing):
     avoids spinning up a full ASGI stack."""
     init_tracing()
     from server.observability.correlation_id import _try_trace_id
+
     tracer = trace.get_tracer("test")
     with tracer.start_as_current_span("probe") as span:
         rid = _try_trace_id()
@@ -218,6 +217,7 @@ def test_correlation_id_helper_extracts_trace_id(in_memory_tracing):
 def test_correlation_id_helper_returns_none_outside_span():
     """No active span → None, caller's fallback (header / UUID) runs."""
     from server.observability.correlation_id import _try_trace_id
+
     assert _try_trace_id() is None
 
 
@@ -249,6 +249,7 @@ def test_subprocess_env_omits_traceparent_outside_span():
     import os
 
     from server.utils.subprocess_env import make_subprocess_env
+
     os.environ.pop("TRACEPARENT", None)
     env = make_subprocess_env()
     assert "TRACEPARENT" not in env
@@ -287,9 +288,8 @@ def test_event_bus_envelope_omits_trace_field_outside_span():
     absence (next test)."""
     from server.websockets import event_bus
     from server.websockets.event_bus import BroadcastScope
-    raw = event_bus._serialize_envelope(
-        BroadcastScope(), "task:log", {"line": "hello"}
-    )
+
+    raw = event_bus._serialize_envelope(BroadcastScope(), "task:log", {"line": "hello"})
     obj = json.loads(raw)
     assert "trace" not in obj
 
@@ -300,12 +300,16 @@ def test_event_bus_extract_traceparent_tolerates_old_envelopes():
     returns None and dispatch falls back to plain local delivery."""
     from server.websockets.event_bus import _extract_traceparent_from_raw
 
-    old_envelope = json.dumps({
-        "v": 1, "source": "x",
-        "scope": {"kind": "broadcast"},
-        "type": "t", "payload": {},
-        # no trace field at all
-    })
+    old_envelope = json.dumps(
+        {
+            "v": 1,
+            "source": "x",
+            "scope": {"kind": "broadcast"},
+            "type": "t",
+            "payload": {},
+            # no trace field at all
+        }
+    )
     assert _extract_traceparent_from_raw(old_envelope) is None
 
 
@@ -313,14 +317,18 @@ def test_event_bus_extract_traceparent_from_new_envelope():
     """When the trace field is present, extraction returns it."""
     from server.websockets.event_bus import _extract_traceparent_from_raw
 
-    new_envelope = json.dumps({
-        "v": 1, "source": "x",
-        "scope": {"kind": "broadcast"},
-        "type": "t", "payload": {},
-        "trace": {
-            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-            "tracestate": "",
-        },
-    })
+    new_envelope = json.dumps(
+        {
+            "v": 1,
+            "source": "x",
+            "scope": {"kind": "broadcast"},
+            "type": "t",
+            "payload": {},
+            "trace": {
+                "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                "tracestate": "",
+            },
+        }
+    )
     tp = _extract_traceparent_from_raw(new_envelope)
     assert tp == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"

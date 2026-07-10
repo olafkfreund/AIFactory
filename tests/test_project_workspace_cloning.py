@@ -31,6 +31,7 @@ if str(_WEB_SERVER) not in sys.path:
 def test_project_create_requires_path_or_gitUrl():
     import pydantic
     from server.routes.projects import ProjectCreate
+
     with pytest.raises(pydantic.ValidationError):
         ProjectCreate()
     with pytest.raises(pydantic.ValidationError):
@@ -40,12 +41,14 @@ def test_project_create_requires_path_or_gitUrl():
 def test_project_create_rejects_both_path_and_gitUrl():
     import pydantic
     from server.routes.projects import ProjectCreate
+
     with pytest.raises(pydantic.ValidationError):
         ProjectCreate(path="/x", gitUrl="https://example.com/r")
 
 
 def test_project_create_accepts_path_only():
     from server.routes.projects import ProjectCreate
+
     pc = ProjectCreate(path="/tmp/x")
     assert pc.path == "/tmp/x"
     assert pc.gitUrl is None
@@ -54,6 +57,7 @@ def test_project_create_accepts_path_only():
 
 def test_project_create_accepts_gitUrl_only():
     from server.routes.projects import ProjectCreate
+
     pc = ProjectCreate(gitUrl="https://example.com/foo.git", branch="main")
     assert pc.gitUrl == "https://example.com/foo.git"
     assert pc.branch == "main"
@@ -63,6 +67,7 @@ def test_project_create_accepts_gitUrl_only():
 def test_project_create_accepts_snake_case_aliases():
     """Frontend may send `git_url` / `git_credential_id` rather than camelCase."""
     from server.routes.projects import ProjectCreate
+
     pc = ProjectCreate.model_validate(
         {"git_url": "https://example.com/r", "git_credential_id": "cred-1"}
     )
@@ -73,6 +78,7 @@ def test_project_create_accepts_snake_case_aliases():
 def test_project_create_treats_empty_strings_as_missing():
     """Frontend sometimes sends '' instead of omitting the field."""
     from server.routes.projects import ProjectCreate
+
     pc = ProjectCreate(path="/x", gitUrl="")
     assert pc.path == "/x"
     assert pc.gitUrl is None
@@ -85,11 +91,13 @@ def test_project_create_treats_empty_strings_as_missing():
 
 def test_slug_handles_ssh_form():
     from server.services.project_workspace_service import slug_from_git_url
+
     assert slug_from_git_url("git@github.com:olaf/AIFactory.git") == "olaf-AIFactory"
 
 
 def test_slug_handles_https_form():
     from server.services.project_workspace_service import slug_from_git_url
+
     assert (
         slug_from_git_url("https://github.com/olaf/AIFactory.git") == "olaf-AIFactory"
     )
@@ -97,14 +105,15 @@ def test_slug_handles_https_form():
 
 def test_slug_handles_nested_groups():
     from server.services.project_workspace_service import slug_from_git_url
+
     assert (
-        slug_from_git_url("https://gitlab.com/group/sub/repo.git")
-        == "group-sub-repo"
+        slug_from_git_url("https://gitlab.com/group/sub/repo.git") == "group-sub-repo"
     )
 
 
 def test_slug_drops_dot_git_suffix():
     from server.services.project_workspace_service import slug_from_git_url
+
     assert slug_from_git_url("https://example.test/me/x.git") == "me-x"
     # already-no-suffix should work too
     assert slug_from_git_url("https://example.test/me/x") == "me-x"
@@ -112,6 +121,7 @@ def test_slug_drops_dot_git_suffix():
 
 def test_slug_empty_input_does_not_crash():
     from server.services.project_workspace_service import slug_from_git_url
+
     # Pathological URL with no path component → falls back to "workspace"
     assert slug_from_git_url("https://example.test") == "workspace"
 
@@ -124,12 +134,14 @@ def test_slug_empty_input_does_not_crash():
 def test_workspace_root_uses_env(monkeypatch, tmp_path):
     monkeypatch.setenv("PROJECT_WORKSPACE_ROOT", str(tmp_path / "ws"))
     from server.services import project_workspace_service as svc
+
     assert svc.workspace_root() == tmp_path / "ws"
 
 
 def test_workspace_root_falls_back_to_default(monkeypatch):
     monkeypatch.delenv("PROJECT_WORKSPACE_ROOT", raising=False)
     from server.services import project_workspace_service as svc
+
     assert svc.workspace_root() == Path.home() / ".aifactory" / "workspaces"
 
 
@@ -242,9 +254,7 @@ async def test_clone_or_update_raises_on_git_failure(tmp_path):
     )
 
     async def fake_create_subprocess_exec(*args, **kw):
-        return _mock_proc(
-            returncode=128, stderr=b"fatal: repository not found"
-        )
+        return _mock_proc(returncode=128, stderr=b"fatal: repository not found")
 
     with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
         with pytest.raises(GitOperationError) as exc:

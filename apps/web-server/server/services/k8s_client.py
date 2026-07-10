@@ -119,7 +119,9 @@ class KubernetesClient:
     # -- Namespace -----------------------------------------------------
 
     async def create_tenant_namespace(
-        self, name: str, labels: dict[str, str],
+        self,
+        name: str,
+        labels: dict[str, str],
     ) -> None:
         """Create a Namespace, swallowing 409 AlreadyExists."""
         await self._ensure_configured()
@@ -195,7 +197,10 @@ class KubernetesClient:
     # -- ServiceAccount ------------------------------------------------
 
     async def create_service_account(
-        self, namespace: str, name: str, irsa_role_arn: str | None,
+        self,
+        namespace: str,
+        name: str,
+        irsa_role_arn: str | None,
     ) -> None:
         """Create a ServiceAccount; annotate with IRSA role ARN when supplied.
 
@@ -212,14 +217,16 @@ class KubernetesClient:
 
         body = k8s_client.V1ServiceAccount(
             metadata=k8s_client.V1ObjectMeta(
-                name=name, namespace=namespace,
+                name=name,
+                namespace=namespace,
                 annotations=annotations or None,
             ),
         )
         api = k8s_client.CoreV1Api()
         try:
             await api.create_namespaced_service_account(
-                namespace=namespace, body=body,
+                namespace=namespace,
+                body=body,
             )
         except ApiException as exc:
             if exc.status == 409:
@@ -230,7 +237,9 @@ class KubernetesClient:
                     try:
                         patch = {"metadata": {"annotations": annotations}}
                         await api.patch_namespaced_service_account(
-                            name=name, namespace=namespace, body=patch,
+                            name=name,
+                            namespace=namespace,
+                            body=patch,
                         )
                     except ApiException as patch_exc:
                         raise KubernetesClientError(
@@ -248,7 +257,9 @@ class KubernetesClient:
     # -- Role + RoleBinding --------------------------------------------
 
     async def create_role_and_binding(
-        self, namespace: str, sa_name: str,
+        self,
+        namespace: str,
+        sa_name: str,
     ) -> None:
         """Create a minimal Role + RoleBinding granting pod read in the ns.
 
@@ -266,7 +277,8 @@ class KubernetesClient:
 
         role = k8s_client.V1Role(
             metadata=k8s_client.V1ObjectMeta(
-                name=role_name, namespace=namespace,
+                name=role_name,
+                namespace=namespace,
             ),
             rules=[
                 k8s_client.V1PolicyRule(
@@ -278,7 +290,8 @@ class KubernetesClient:
         )
         binding = k8s_client.V1RoleBinding(
             metadata=k8s_client.V1ObjectMeta(
-                name=binding_name, namespace=namespace,
+                name=binding_name,
+                namespace=namespace,
             ),
             role_ref=k8s_client.V1RoleRef(
                 api_group="rbac.authorization.k8s.io",
@@ -298,7 +311,8 @@ class KubernetesClient:
         try:
             try:
                 await rbac_api.create_namespaced_role(
-                    namespace=namespace, body=role,
+                    namespace=namespace,
+                    body=role,
                 )
             except ApiException as exc:
                 if exc.status != 409:
@@ -309,7 +323,8 @@ class KubernetesClient:
 
             try:
                 await rbac_api.create_namespaced_role_binding(
-                    namespace=namespace, body=binding,
+                    namespace=namespace,
+                    body=binding,
                 )
             except ApiException as exc:
                 if exc.status != 409:
@@ -323,7 +338,10 @@ class KubernetesClient:
     # -- NetworkPolicy -------------------------------------------------
 
     async def apply_network_policies(
-        self, namespace: str, allowed_fqdns: list[str], cni_backend: str,
+        self,
+        namespace: str,
+        allowed_fqdns: list[str],
+        cni_backend: str,
     ) -> None:
         """Emit default-deny + allow-egress policies.
 
@@ -344,17 +362,12 @@ class KubernetesClient:
         # default-deny in place.
         if cni_backend not in ("cilium", "calico", "auto"):
             raise KubernetesClientError(
-                f"unsupported cni_backend={cni_backend!r}; expected "
-                f"calico|cilium|auto",
+                f"unsupported cni_backend={cni_backend!r}; expected calico|cilium|auto",
             )
 
         chosen = cni_backend
         if cni_backend == "auto":
-            chosen = (
-                "cilium"
-                if await self._cilium_crd_available()
-                else "calico"
-            )
+            chosen = "cilium" if await self._cilium_crd_available() else "calico"
 
         await self._apply_default_deny(namespace)
         if chosen == "cilium":
@@ -386,7 +399,8 @@ class KubernetesClient:
 
         body = k8s_client.V1NetworkPolicy(
             metadata=k8s_client.V1ObjectMeta(
-                name="default-deny", namespace=namespace,
+                name="default-deny",
+                namespace=namespace,
             ),
             spec=k8s_client.V1NetworkPolicySpec(
                 pod_selector=k8s_client.V1LabelSelector(match_labels={}),
@@ -396,19 +410,21 @@ class KubernetesClient:
         api = k8s_client.NetworkingV1Api()
         try:
             await api.create_namespaced_network_policy(
-                namespace=namespace, body=body,
+                namespace=namespace,
+                body=body,
             )
         except ApiException as exc:
             if exc.status != 409:
                 raise KubernetesClientError(
-                    f"create default-deny in {namespace}: "
-                    f"{exc.status} {exc.reason}",
+                    f"create default-deny in {namespace}: {exc.status} {exc.reason}",
                 ) from exc
         finally:
             await api.api_client.close()
 
     async def _apply_cilium_egress(
-        self, namespace: str, allowed_fqdns: list[str],
+        self,
+        namespace: str,
+        allowed_fqdns: list[str],
     ) -> None:
         """Apply a CiliumNetworkPolicy CR with toFQDNs egress allowlist."""
         from kubernetes_asyncio import client as k8s_client
@@ -427,9 +443,12 @@ class KubernetesClient:
                 # can reach the cluster DNS service.
                 {
                     "toEndpoints": [
-                        {"matchLabels": {"k8s:io.kubernetes.pod.namespace":
-                                         "kube-system",
-                                         "k8s-app": "kube-dns"}},
+                        {
+                            "matchLabels": {
+                                "k8s:io.kubernetes.pod.namespace": "kube-system",
+                                "k8s-app": "kube-dns",
+                            }
+                        },
                     ],
                     "toPorts": [
                         {"ports": [{"port": "53", "protocol": "UDP"}]},
@@ -451,8 +470,11 @@ class KubernetesClient:
         api = k8s_client.CustomObjectsApi()
         try:
             await api.create_namespaced_custom_object(
-                group="cilium.io", version="v2", namespace=namespace,
-                plural="ciliumnetworkpolicies", body=body,
+                group="cilium.io",
+                version="v2",
+                namespace=namespace,
+                plural="ciliumnetworkpolicies",
+                body=body,
             )
         except ApiException as exc:
             if exc.status != 409:
@@ -464,7 +486,9 @@ class KubernetesClient:
             await api.api_client.close()
 
     async def _apply_calico_egress(
-        self, namespace: str, allowed_fqdns: list[str],
+        self,
+        namespace: str,
+        allowed_fqdns: list[str],
     ) -> None:
         """Apply a Calico-flavoured NetworkPolicy.
 
@@ -497,13 +521,16 @@ class KubernetesClient:
                     k8s_client.V1NetworkPolicyEgressRule(
                         ports=[
                             k8s_client.V1NetworkPolicyPort(
-                                port=443, protocol="TCP",
+                                port=443,
+                                protocol="TCP",
                             ),
                             k8s_client.V1NetworkPolicyPort(
-                                port=53, protocol="UDP",
+                                port=53,
+                                protocol="UDP",
                             ),
                             k8s_client.V1NetworkPolicyPort(
-                                port=53, protocol="TCP",
+                                port=53,
+                                protocol="TCP",
                             ),
                         ],
                     ),
@@ -513,7 +540,8 @@ class KubernetesClient:
         api = k8s_client.NetworkingV1Api()
         try:
             await api.create_namespaced_network_policy(
-                namespace=namespace, body=body,
+                namespace=namespace,
+                body=body,
             )
         except ApiException as exc:
             if exc.status != 409:
@@ -527,7 +555,10 @@ class KubernetesClient:
     # -- ResourceQuota + LimitRange ------------------------------------
 
     async def apply_resource_quota(
-        self, namespace: str, pod_count: int, pvc_count: int,
+        self,
+        namespace: str,
+        pod_count: int,
+        pvc_count: int,
     ) -> None:
         """Cap the namespace's pod + PVC count to prevent noisy neighbours."""
         await self._ensure_configured()
@@ -536,7 +567,8 @@ class KubernetesClient:
 
         body = k8s_client.V1ResourceQuota(
             metadata=k8s_client.V1ObjectMeta(
-                name="tenant-quota", namespace=namespace,
+                name="tenant-quota",
+                namespace=namespace,
             ),
             spec=k8s_client.V1ResourceQuotaSpec(
                 hard={
@@ -548,7 +580,8 @@ class KubernetesClient:
         api = k8s_client.CoreV1Api()
         try:
             await api.create_namespaced_resource_quota(
-                namespace=namespace, body=body,
+                namespace=namespace,
+                body=body,
             )
         except ApiException as exc:
             if exc.status != 409:
@@ -560,7 +593,10 @@ class KubernetesClient:
             await api.api_client.close()
 
     async def apply_limit_range(
-        self, namespace: str, default_cpu: str, default_memory: str,
+        self,
+        namespace: str,
+        default_cpu: str,
+        default_memory: str,
     ) -> None:
         """Set per-Container default CPU + memory limits in the namespace."""
         await self._ensure_configured()
@@ -569,7 +605,8 @@ class KubernetesClient:
 
         body = k8s_client.V1LimitRange(
             metadata=k8s_client.V1ObjectMeta(
-                name="tenant-limits", namespace=namespace,
+                name="tenant-limits",
+                namespace=namespace,
             ),
             spec=k8s_client.V1LimitRangeSpec(
                 limits=[
@@ -577,7 +614,8 @@ class KubernetesClient:
                         type="Container",
                         default={"cpu": default_cpu, "memory": default_memory},
                         default_request={
-                            "cpu": default_cpu, "memory": default_memory,
+                            "cpu": default_cpu,
+                            "memory": default_memory,
                         },
                     ),
                 ],
@@ -586,7 +624,8 @@ class KubernetesClient:
         api = k8s_client.CoreV1Api()
         try:
             await api.create_namespaced_limit_range(
-                namespace=namespace, body=body,
+                namespace=namespace,
+                body=body,
             )
         except ApiException as exc:
             if exc.status != 409:

@@ -100,9 +100,7 @@ class LiteLLMAdminUnavailableError(RuntimeError):
     """
 
     def __init__(self, endpoint: str, underlying: Exception) -> None:
-        super().__init__(
-            f"LiteLLM admin {endpoint} unreachable: {underlying!r}"
-        )
+        super().__init__(f"LiteLLM admin {endpoint} unreachable: {underlying!r}")
         self.endpoint = endpoint
         self.underlying = underlying
 
@@ -174,8 +172,10 @@ class LiteLLMAdminClient:
         to "no per-tenant restriction" at LiteLLM's level (LiteLLM's
         deployment-wide model_list still applies).
         """
-        budget = budget_usd_per_day if budget_usd_per_day is not None else (
-            _DEFAULT_BUDGET_USD_PER_DAY
+        budget = (
+            budget_usd_per_day
+            if budget_usd_per_day is not None
+            else (_DEFAULT_BUDGET_USD_PER_DAY)
         )
         # WHY: LiteLLM's `models: ["*"]` is shorthand for "no per-key
         # restriction" — exactly what the design wants for backward-
@@ -191,7 +191,8 @@ class LiteLLMAdminClient:
         key = body.get("key") or body.get("api_key") or ""
         if not key:
             raise LiteLLMAdminError(
-                _KEY_GENERATE, 200,
+                _KEY_GENERATE,
+                200,
                 f"response missing 'key': {body}",
             )
         return str(key)
@@ -226,7 +227,9 @@ class LiteLLMAdminClient:
         fires after the grace window expires.
         """
         await self.update_virtual_key(
-            org_id=org_id, budget_duration="0s", max_budget=0.0,
+            org_id=org_id,
+            budget_duration="0s",
+            max_budget=0.0,
         )
 
     async def delete_virtual_key(self, org_id: str) -> None:
@@ -266,7 +269,9 @@ class LiteLLMAdminClient:
         return await self._request("POST", path, json_body=payload)
 
     async def _get(
-        self, path: str, params: dict[str, Any] | None = None,
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await self._request("GET", path, params=params)
 
@@ -288,8 +293,11 @@ class LiteLLMAdminClient:
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.request(
-                    method, url, headers=headers,
-                    json=json_body, params=params,
+                    method,
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    params=params,
                 )
         except (httpx.NetworkError, httpx.TimeoutException) as exc:
             raise LiteLLMAdminUnavailableError(path, exc) from exc

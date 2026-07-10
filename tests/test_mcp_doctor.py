@@ -43,6 +43,7 @@ def isolate_creds(monkeypatch, tmp_path):
     monkeypatch.setenv("NO_COLOR", "1")
     # Drop the cached operator config so a previous test's HOME doesn't leak in
     from core import mcp_credentials
+
     mcp_credentials.reset_cache()
 
 

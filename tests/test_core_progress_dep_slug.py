@@ -27,14 +27,37 @@ def _write(spec_dir: Path, integration_status: str) -> None:
     plan = {
         "feature": "gw",
         "phases": [
-            {"phase": 1, "name": "Scaffold", "subtasks": [
-                {"id": "subtask-1-1", "description": "scaffold", "status": "completed"}]},
-            {"phase": 2, "name": "Parallel Module Implementation",
-             "depends_on": ["phase-1-scaffold"], "subtasks": [
-                {"id": "subtask-2-1", "description": "mod", "status": "completed"}]},
-            {"phase": 3, "name": "Integration", "depends_on": ["phase-2-modules"],
-             "subtasks": [
-                {"id": "subtask-3-1", "description": "wire", "status": integration_status}]},
+            {
+                "phase": 1,
+                "name": "Scaffold",
+                "subtasks": [
+                    {
+                        "id": "subtask-1-1",
+                        "description": "scaffold",
+                        "status": "completed",
+                    }
+                ],
+            },
+            {
+                "phase": 2,
+                "name": "Parallel Module Implementation",
+                "depends_on": ["phase-1-scaffold"],
+                "subtasks": [
+                    {"id": "subtask-2-1", "description": "mod", "status": "completed"}
+                ],
+            },
+            {
+                "phase": 3,
+                "name": "Integration",
+                "depends_on": ["phase-2-modules"],
+                "subtasks": [
+                    {
+                        "id": "subtask-3-1",
+                        "description": "wire",
+                        "status": integration_status,
+                    }
+                ],
+            },
         ],
     }
     (spec_dir / "implementation_plan.json").write_text(json.dumps(plan))
@@ -58,14 +81,29 @@ def test_incomplete_dependency_blocks_integration(tmp_path):
     plan = {
         "feature": "gw",
         "phases": [
-            {"phase": 1, "name": "Scaffold", "subtasks": [
-                {"id": "subtask-1-1", "description": "s", "status": "completed"}]},
-            {"phase": 2, "name": "Modules", "depends_on": ["phase-1-scaffold"],
-             "subtasks": [
-                {"id": "subtask-2-1", "description": "m", "status": "pending"}]},
-            {"phase": 3, "name": "Integration", "depends_on": ["phase-2-modules"],
-             "subtasks": [
-                {"id": "subtask-3-1", "description": "i", "status": "pending"}]},
+            {
+                "phase": 1,
+                "name": "Scaffold",
+                "subtasks": [
+                    {"id": "subtask-1-1", "description": "s", "status": "completed"}
+                ],
+            },
+            {
+                "phase": 2,
+                "name": "Modules",
+                "depends_on": ["phase-1-scaffold"],
+                "subtasks": [
+                    {"id": "subtask-2-1", "description": "m", "status": "pending"}
+                ],
+            },
+            {
+                "phase": 3,
+                "name": "Integration",
+                "depends_on": ["phase-2-modules"],
+                "subtasks": [
+                    {"id": "subtask-3-1", "description": "i", "status": "pending"}
+                ],
+            },
         ],
     }
     (tmp_path / "implementation_plan.json").write_text(json.dumps(plan))
@@ -77,10 +115,17 @@ def test_integer_depends_on_still_works(tmp_path):
     plan = {
         "feature": "gw",
         "phases": [
-            {"phase": 1, "name": "A", "subtasks": [
-                {"id": "s1", "description": "a", "status": "completed"}]},
-            {"phase": 2, "name": "B", "depends_on": [1], "subtasks": [
-                {"id": "s2", "description": "b", "status": "pending"}]},
+            {
+                "phase": 1,
+                "name": "A",
+                "subtasks": [{"id": "s1", "description": "a", "status": "completed"}],
+            },
+            {
+                "phase": 2,
+                "name": "B",
+                "depends_on": [1],
+                "subtasks": [{"id": "s2", "description": "b", "status": "pending"}],
+            },
         ],
     }
     (tmp_path / "implementation_plan.json").write_text(json.dumps(plan))

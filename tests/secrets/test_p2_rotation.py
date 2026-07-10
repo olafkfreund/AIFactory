@@ -35,12 +35,11 @@ def _build_fernet_backend(b64_key: str):
     is the right production constraint but the wrong abstraction here.
     """
     from server.crypto.kms.fernet import FernetBackend
+
     return FernetBackend(root_key=base64.urlsafe_b64decode(b64_key.encode()))
 
 
-def _setup_db_with_old_wrapped_keys(
-    old_backend, n_orgs: int = 5
-):
+def _setup_db_with_old_wrapped_keys(old_backend, n_orgs: int = 5):
     """Build an in-memory SQLite seeded with ``n_orgs`` kms_data_keys rows
     each wrapped under the OLD backend. Returns ``(engine, plaintexts)``
     where ``plaintexts[org_id]`` is the original 32-byte data key for
@@ -122,8 +121,12 @@ def test_rotation_rewraps_all_per_org_keys() -> None:
 
     # Capture the pre-rotation wrapped bytes for the "changed" assertion.
     with Session(engine) as session:
-        pre_rows = {r.org_id: bytes(r.wrapped_key) for r in session.query(KmsDataKey).all()}
-        pre_rotated_at = {r.org_id: r.rotated_at for r in session.query(KmsDataKey).all()}
+        pre_rows = {
+            r.org_id: bytes(r.wrapped_key) for r in session.query(KmsDataKey).all()
+        }
+        pre_rotated_at = {
+            r.org_id: r.rotated_at for r in session.query(KmsDataKey).all()
+        }
 
     # Tiny sleep so rotated_at definitely advances on systems with
     # microsecond-precision clocks.
@@ -138,7 +141,9 @@ def test_rotation_rewraps_all_per_org_keys() -> None:
     )
 
     assert report.error_count == 0, f"rotation errors: {report.errors}"
-    assert report.rotated_count == 5, f"expected 5 rows rotated, got {report.rotated_count}"
+    assert report.rotated_count == 5, (
+        f"expected 5 rows rotated, got {report.rotated_count}"
+    )
     assert report.skipped_count == 0
 
     # Per-row assertions.

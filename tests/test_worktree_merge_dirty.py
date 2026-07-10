@@ -32,14 +32,16 @@ def test_merge_succeeds_with_dirty_gitignore_in_base(temp_git_repo: Path):
     wt = Path(info.path)
 
     # Worktree branch: add new files + change .gitignore, then commit.
-    (wt / "main.go").write_text('package main\nfunc main() {}\n')
+    (wt / "main.go").write_text("package main\nfunc main() {}\n")
     (wt / ".gitignore").write_text("*.log\n/bin\n")
     _git(wt, "add", ".")
     _git(wt, "commit", "-m", "feature: main.go + gitignore")
 
     # Simulate the smart-merge dirtying the base working tree's .gitignore.
     (temp_git_repo / ".gitignore").write_text("*.log\n# touched by smart-merge\n")
-    assert _git(temp_git_repo, "status", "--porcelain").stdout.strip(), "base should be dirty"
+    assert _git(temp_git_repo, "status", "--porcelain").stdout.strip(), (
+        "base should be dirty"
+    )
 
     # Before the fix this returned False ("Merge conflict! Aborting").
     ok = mgr.merge_worktree("001-feature", delete_after=False, no_commit=False)

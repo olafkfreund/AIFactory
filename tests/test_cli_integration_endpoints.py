@@ -42,9 +42,11 @@ def client():
     server/main.py (e.g. `from .auth import ...`) to resolve.
     """
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
     from server.main import create_app
+
     app = create_app()
     return TestClient(app)
 
@@ -59,7 +61,7 @@ def mock_projects_file(tmp_path):
                 "id": "test-project-1",
                 "name": "Test Project",
                 "path": str(tmp_path / "test-project"),
-                "createdAt": "2024-01-01T00:00:00Z"
+                "createdAt": "2024-01-01T00:00:00Z",
             }
         ]
     }
@@ -97,24 +99,26 @@ def mock_project_dir(tmp_path):
 class TestPhase7GitLabCLI:
     """Tests for Phase 7: GitLab CLI Operations (currently unimplemented)."""
 
-    def test_update_merge_request_success(self, client, mock_projects_file, mock_project_dir):
+    def test_update_merge_request_success(
+        self, client, mock_projects_file, mock_project_dir
+    ):
         """Test update_merge_request with valid inputs"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
                     returncode=0,
                     stdout="Merge request !123 updated successfully",
-                    stderr=""
+                    stderr="",
                 )
 
                 response = client.patch(
                     "/api/projects/test-project-1/gitlab/merge-requests/123",
                     json={
                         "title": "Updated MR Title",
-                        "description": "Updated description"
-                    }
+                        "description": "Updated description",
+                    },
                 )
 
                 # Verify response
@@ -133,15 +137,15 @@ class TestPhase7GitLabCLI:
 
     def test_update_merge_request_empty_title(self, client, mock_projects_file):
         """Test update_merge_request rejects empty title"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.patch(
                 "/api/projects/test-project-1/gitlab/merge-requests/123",
                 json={
                     "title": "   ",  # Empty after stripping
-                    "description": "Test"
-                }
+                    "description": "Test",
+                },
             )
 
             # Should reject empty title
@@ -149,31 +153,29 @@ class TestPhase7GitLabCLI:
 
     def test_update_merge_request_project_not_found(self, client):
         """Test update_merge_request with non-existent project"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = {"projects": []}
 
             response = client.patch(
                 "/api/projects/nonexistent/gitlab/merge-requests/123",
-                json={"title": "Test"}
+                json={"title": "Test"},
             )
 
             assert response.status_code == 404
 
     def test_assign_merge_request_success(self, client, mock_projects_file):
         """Test assign_merge_request with valid user IDs"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Assigned users to MR",
-                    stderr=""
+                    returncode=0, stdout="Assigned users to MR", stderr=""
                 )
 
                 response = client.patch(
                     "/api/projects/test-project-1/gitlab/merge-requests/123/assign",
-                    json={"userIds": [1, 2, 3]}
+                    json={"userIds": [1, 2, 3]},
                 )
 
                 assert response.status_code == 200
@@ -187,26 +189,24 @@ class TestPhase7GitLabCLI:
 
     def test_assign_merge_request_no_users(self, client, mock_projects_file):
         """Test assign_merge_request rejects empty user list"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.patch(
                 "/api/projects/test-project-1/gitlab/merge-requests/123/assign",
-                json={"userIds": []}
+                json={"userIds": []},
             )
 
             assert response.status_code in [400, 422]
 
     def test_approve_merge_request_success(self, client, mock_projects_file):
         """Test approve_merge_request executes glab command"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Approved merge request",
-                    stderr=""
+                    returncode=0, stdout="Approved merge request", stderr=""
                 )
 
                 response = client.post(
@@ -225,19 +225,17 @@ class TestPhase7GitLabCLI:
 
     def test_merge_merge_request_success(self, client, mock_projects_file):
         """Test merge_merge_request with valid method"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Merged successfully",
-                    stderr=""
+                    returncode=0, stdout="Merged successfully", stderr=""
                 )
 
                 response = client.post(
                     "/api/projects/test-project-1/gitlab/merge-requests/123/merge",
-                    json={"method": "squash"}
+                    json={"method": "squash"},
                 )
 
                 assert response.status_code == 200
@@ -251,31 +249,29 @@ class TestPhase7GitLabCLI:
 
     def test_merge_merge_request_invalid_method(self, client, mock_projects_file):
         """Test merge_merge_request rejects invalid merge method"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
                 "/api/projects/test-project-1/gitlab/merge-requests/123/merge",
-                json={"method": "invalid-method"}
+                json={"method": "invalid-method"},
             )
 
             assert response.status_code in [400, 422]
 
     def test_post_merge_request_note_success(self, client, mock_projects_file):
         """Test post_merge_request_note adds comment to MR"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Note posted",
-                    stderr=""
+                    returncode=0, stdout="Note posted", stderr=""
                 )
 
                 response = client.post(
                     "/api/projects/test-project-1/gitlab/merge-requests/123/notes",
-                    json={"body": "This is a test comment"}
+                    json={"body": "This is a test comment"},
                 )
 
                 assert response.status_code == 200
@@ -289,12 +285,12 @@ class TestPhase7GitLabCLI:
 
     def test_post_merge_request_note_empty_body(self, client, mock_projects_file):
         """Test post_merge_request_note rejects empty body"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
                 "/api/projects/test-project-1/gitlab/merge-requests/123/notes",
-                json={"body": "   "}
+                json={"body": "   "},
             )
 
             assert response.status_code in [400, 422]
@@ -315,15 +311,13 @@ class TestPhase9Context:
 
     def test_invoke_claude_setup_authenticated(self, client, mock_projects_file):
         """Test invoke_claude_setup checks authentication status"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 # Simulate Claude CLI is authenticated
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Authenticated",
-                    stderr=""
+                    returncode=0, stdout="Authenticated", stderr=""
                 )
 
                 response = client.post(
@@ -335,15 +329,13 @@ class TestPhase9Context:
 
     def test_invoke_claude_setup_not_authenticated(self, client, mock_projects_file):
         """Test invoke_claude_setup provides instructions when not authenticated"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 # Simulate Claude CLI is not authenticated
                 mock_run.return_value = MagicMock(
-                    returncode=1,
-                    stdout="",
-                    stderr="Not authenticated"
+                    returncode=1, stdout="", stderr="Not authenticated"
                 )
 
                 response = client.post(
@@ -355,7 +347,10 @@ class TestPhase9Context:
                 if response.status_code == 200:
                     data = response.json()
                     # Should include instructions
-                    assert "instructions" in str(data).lower() or "setup" in str(data).lower()
+                    assert (
+                        "instructions" in str(data).lower()
+                        or "setup" in str(data).lower()
+                    )
 
 
 # =============================================================================
@@ -373,10 +368,10 @@ class TestPhase10GitOperations:
 
     def test_squash_commits_success(self, client, mock_projects_file, mock_project_dir):
         """Test squash_commits with valid commit count"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 # Mock git status (clean)
                 mock_run.side_effect = [
                     MagicMock(returncode=0, stdout="", stderr=""),  # git status
@@ -386,10 +381,7 @@ class TestPhase10GitOperations:
 
                 response = client.post(
                     "/api/projects/test-project-1/git/squash",
-                    json={
-                        "commitCount": 3,
-                        "message": "Squashed commits"
-                    }
+                    json={"commitCount": 3, "message": "Squashed commits"},
                 )
 
                 # Should succeed with valid inputs
@@ -397,53 +389,48 @@ class TestPhase10GitOperations:
 
     def test_squash_commits_invalid_count(self, client, mock_projects_file):
         """Test squash_commits rejects invalid commit count"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
                 "/api/projects/test-project-1/git/squash",
                 json={
                     "commitCount": 1,  # Must be at least 2
-                    "message": "Test"
-                }
+                    "message": "Test",
+                },
             )
 
             assert response.status_code in [400, 422]
 
     def test_squash_commits_uncommitted_changes(self, client, mock_projects_file):
         """Test squash_commits detects uncommitted changes"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 # Mock git status showing changes
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="M file.txt",
-                    stderr=""
+                    returncode=0, stdout="M file.txt", stderr=""
                 )
 
                 response = client.post(
                     "/api/projects/test-project-1/git/squash",
-                    json={
-                        "commitCount": 3,
-                        "message": "Test"
-                    }
+                    json={"commitCount": 3, "message": "Test"},
                 )
 
                 # Should reject when there are uncommitted changes
                 assert response.status_code in [400, 409]
 
-    def test_create_worktree_success(self, client, mock_projects_file, mock_project_dir):
+    def test_create_worktree_success(
+        self, client, mock_projects_file, mock_project_dir
+    ):
         """Test create_worktree with valid inputs"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Worktree created",
-                    stderr=""
+                    returncode=0, stdout="Worktree created", stderr=""
                 )
 
                 response = client.post(
@@ -451,8 +438,8 @@ class TestPhase10GitOperations:
                     json={
                         "name": "feature-branch",
                         "createBranch": True,
-                        "baseBranch": "main"
-                    }
+                        "baseBranch": "main",
+                    },
                 )
 
                 assert response.status_code in [200, 201]
@@ -461,15 +448,15 @@ class TestPhase10GitOperations:
 
     def test_create_worktree_invalid_name(self, client, mock_projects_file):
         """Test create_worktree rejects invalid worktree name"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
                 "/api/projects/test-project-1/git/worktree",
                 json={
                     "name": "invalid@name!",  # Invalid characters
-                    "createBranch": True
-                }
+                    "createBranch": True,
+                },
             )
 
             assert response.status_code in [400, 422]
@@ -490,7 +477,7 @@ class TestPhase14GitMaintenance:
 
     def test_download_source_update_success(self, client):
         """Test download_source_update performs git pull"""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="", stderr=""),  # git status
                 MagicMock(returncode=0, stdout="origin\n", stderr=""),  # git remote
@@ -506,12 +493,10 @@ class TestPhase14GitMaintenance:
 
     def test_download_source_update_uncommitted_changes(self, client):
         """Test download_source_update prevents pull with uncommitted changes"""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             # Mock git status showing changes
             mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="M file.txt",
-                stderr=""
+                returncode=0, stdout="M file.txt", stderr=""
             )
 
             response = client.post("/api/git/source/update")
@@ -521,14 +506,12 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_github_success(self, client, mock_projects_file):
         """Test create_release with GitHub platform"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Release created",
-                    stderr=""
+                    returncode=0, stdout="Release created", stderr=""
                 )
 
                 response = client.post(
@@ -536,8 +519,8 @@ class TestPhase14GitMaintenance:
                     json={
                         "version": "1.0.0",
                         "releaseNotes": "Initial release",
-                        "platform": "github"
-                    }
+                        "platform": "github",
+                    },
                 )
 
                 assert response.status_code in [200, 201]
@@ -551,14 +534,12 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_gitlab_success(self, client, mock_projects_file):
         """Test create_release with GitLab platform"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Release created",
-                    stderr=""
+                    returncode=0, stdout="Release created", stderr=""
                 )
 
                 response = client.post(
@@ -566,8 +547,8 @@ class TestPhase14GitMaintenance:
                     json={
                         "version": "1.0.0",
                         "releaseNotes": "Initial release",
-                        "platform": "gitlab"
-                    }
+                        "platform": "gitlab",
+                    },
                 )
 
                 assert response.status_code in [200, 201]
@@ -581,7 +562,7 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_invalid_platform(self, client, mock_projects_file):
         """Test create_release rejects invalid platform"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
@@ -589,22 +570,20 @@ class TestPhase14GitMaintenance:
                 json={
                     "version": "1.0.0",
                     "releaseNotes": "Test",
-                    "platform": "invalid"
-                }
+                    "platform": "invalid",
+                },
             )
 
             assert response.status_code in [400, 422]
 
     def test_create_release_version_prefix(self, client, mock_projects_file):
         """Test create_release adds 'v' prefix to version"""
-        with patch('server.routes.projects.load_projects') as mock_load:
+        with patch("server.routes.projects.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=0,
-                    stdout="Release created",
-                    stderr=""
+                    returncode=0, stdout="Release created", stderr=""
                 )
 
                 response = client.post(
@@ -612,8 +591,8 @@ class TestPhase14GitMaintenance:
                     json={
                         "version": "1.0.0",  # Without 'v' prefix
                         "releaseNotes": "Test",
-                        "platform": "github"
-                    }
+                        "platform": "github",
+                    },
                 )
 
                 assert response.status_code in [200, 201]
@@ -629,18 +608,16 @@ class TestPhase14GitMaintenance:
 # =============================================================================
 
 
-@pytest.mark.skip(
-    reason="Exercises server.routes.gitlab which is not implemented yet."
-)
+@pytest.mark.skip(reason="Exercises server.routes.gitlab which is not implemented yet.")
 class TestCLIErrorHandling:
     """Tests for CLI error handling across all endpoints"""
 
     def test_cli_tool_not_found(self, client, mock_projects_file):
         """Test handling when CLI tool is not installed"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.side_effect = FileNotFoundError("glab: command not found")
 
                 response = client.post(
@@ -652,11 +629,12 @@ class TestCLIErrorHandling:
 
     def test_cli_timeout(self, client, mock_projects_file):
         """Test handling of CLI command timeout"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 import subprocess
+
                 mock_run.side_effect = subprocess.TimeoutExpired("glab", 30)
 
                 response = client.post(
@@ -668,14 +646,12 @@ class TestCLIErrorHandling:
 
     def test_cli_failure_return_code(self, client, mock_projects_file):
         """Test handling of CLI command failure"""
-        with patch('server.routes.gitlab.load_projects') as mock_load:
+        with patch("server.routes.gitlab.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
-            with patch('subprocess.run') as mock_run:
+            with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(
-                    returncode=1,
-                    stdout="",
-                    stderr="MR not found"
+                    returncode=1, stdout="", stderr="MR not found"
                 )
 
                 response = client.post(
@@ -702,14 +678,11 @@ def test_all_cli_endpoints_implemented():
         "approve_merge_request",
         "merge_merge_request",
         "post_merge_request_note",
-
         # Phase 9: Context (1)
         "invoke_claude_setup",
-
         # Phase 10: Git Operations (2)
         "squash_commits",
         "create_worktree",
-
         # Phase 14: Git Maintenance (2 CLI; the 2 review endpoints moved
         # to the AI bucket)
         "download_source_update",

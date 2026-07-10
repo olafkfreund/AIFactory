@@ -21,7 +21,10 @@ from server.services.completion import build_completion_event, notify_completion
 
 def _event(event_id="11111111-1111-4111-8111-111111111111", status="done"):
     return build_completion_event(
-        task_id="proj:spec-9", spec_id="spec-9", status=status, issue_number=412,
+        task_id="proj:spec-9",
+        spec_id="spec-9",
+        status=status,
+        issue_number=412,
         event_id=event_id,
     )
 
@@ -50,7 +53,9 @@ def test_enqueue_is_idempotent_on_event_id(tmp_path):
 
 def test_enqueue_without_id_is_skipped(tmp_path):
     db = _db(tmp_path)
-    assert outbox.enqueue({"correlation_key": "x"}, "http://hook.test/c", path=db) is False
+    assert (
+        outbox.enqueue({"correlation_key": "x"}, "http://hook.test/c", path=db) is False
+    )
     assert outbox.pending_count(path=db) == 0
 
 
@@ -100,7 +105,8 @@ def test_crash_before_delivery_is_eventually_delivered(tmp_path):
 
     # Tick 1 — the "POST" blows up (process would have crashed here).
     outbox.deliver_due_once(
-        path=db, now=1000.0,
+        path=db,
+        now=1000.0,
         sender=lambda u, p: (_ for _ in ()).throw(outbox.DeliveryError("crash")),
     )
     assert outbox.pending_count(path=db) == 1
@@ -177,6 +183,7 @@ def test_notify_completion_direct_post_when_flag_off(tmp_path, monkeypatch):
         return _Resp()
 
     import urllib.request
+
     monkeypatch.setattr(urllib.request, "urlopen", _fake)
 
     notify_completion(_event())

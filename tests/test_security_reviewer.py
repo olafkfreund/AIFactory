@@ -26,7 +26,9 @@ def _diff(added_lines, file="app/x.py"):
 class TestStaticScan:
     def test_detects_private_key(self):
         f = scan_diff_static(_diff(["-----BEGIN RSA PRIVATE KEY-----"]))
-        assert any(x.category == "secret:private-key" and x.severity == "critical" for x in f)
+        assert any(
+            x.category == "secret:private-key" and x.severity == "critical" for x in f
+        )
 
     def test_detects_aws_key(self):
         f = scan_diff_static(_diff(["KEY = 'AKIAIOSFODNN7EXAMPLE'"]))
@@ -37,7 +39,9 @@ class TestStaticScan:
         assert any(x.category == "secret:hardcoded" and x.severity == "high" for x in f)
 
     def test_detects_eval_and_shell_true(self):
-        f = scan_diff_static(_diff(["eval(user_input)", "subprocess.run(cmd, shell=True)"]))
+        f = scan_diff_static(
+            _diff(["eval(user_input)", "subprocess.run(cmd, shell=True)"])
+        )
         cats = {x.category for x in f}
         assert "injection:eval" in cats
         assert "injection:shell-true" in cats
@@ -73,7 +77,9 @@ class TestGateDecision:
         assert d.blocking
 
     def test_medium_does_not_block_at_high_threshold(self):
-        d = gate_decision([SecurityFinding("medium", "tls:verify-disabled", "verify=False")])
+        d = gate_decision(
+            [SecurityFinding("medium", "tls:verify-disabled", "verify=False")]
+        )
         assert d.blocked is False
 
     def test_threshold_configurable(self):
@@ -99,7 +105,11 @@ class TestReviewDiff:
 
     async def test_llm_augmentation_merged(self):
         async def llm(diff):
-            return [SecurityFinding("critical", "authz:missing-check", "no owner check", source="llm")]
+            return [
+                SecurityFinding(
+                    "critical", "authz:missing-check", "no owner check", source="llm"
+                )
+            ]
 
         report = await review_diff(_diff(["x = 1"]), llm_scan=llm)
         assert any(f.source == "llm" for f in report.findings)

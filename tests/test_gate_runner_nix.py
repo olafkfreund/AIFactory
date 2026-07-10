@@ -45,7 +45,9 @@ def test_materialize_flake_into(tmp_path):
 
 
 def test_materialize_noop_for_non_nix(tmp_path):
-    assert materialize_flake_into(tmp_path, {"provisioning": {"method": "image"}}) is False
+    assert (
+        materialize_flake_into(tmp_path, {"provisioning": {"method": "image"}}) is False
+    )
     assert not (tmp_path / "flake.nix").exists()
 
 

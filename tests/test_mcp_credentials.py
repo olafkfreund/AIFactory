@@ -30,7 +30,9 @@ def isolate_env(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("HOME", str(tmp_path))
     # Re-point the module-level path to the new HOME
-    monkeypatch.setattr(mc, "OPERATOR_CONFIG_PATH", tmp_path / ".aifactory" / "mcp-credentials.json")
+    monkeypatch.setattr(
+        mc, "OPERATOR_CONFIG_PATH", tmp_path / ".aifactory" / "mcp-credentials.json"
+    )
     # K8s in-cluster token path — point at a definitely-non-existent file
     monkeypatch.setattr(
         mc,

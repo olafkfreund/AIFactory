@@ -23,7 +23,10 @@ from sqlalchemy import delete, select
 from ..config import get_settings
 from ..database import EmailAccount
 from ..database.engine import async_session_factory
-from .._get_email_oauth_credentials import get_email_oauth_credentials, get_google_oauth_credentials
+from .._get_email_oauth_credentials import (
+    get_email_oauth_credentials,
+    get_google_oauth_credentials,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,7 @@ def _get_oauth_redirect_uri(request: Request, provider: str = "outlook") -> str:
             return override.rstrip("/")
     return str(request.base_url).rstrip("/") + f"/api/email/auth/{provider}/callback"
 
+
 router = APIRouter(prefix="/api/email", tags=["Email"])
 
 # In-memory OAuth state store: state_token -> {user_id, provider, created_at}
@@ -52,7 +56,11 @@ _STATE_TTL_SECONDS = 600
 def _cleanup_expired_states() -> None:
     """Remove expired OAuth state entries."""
     now = time.time()
-    expired = [k for k, v in _oauth_states.items() if now - v["created_at"] > _STATE_TTL_SECONDS]
+    expired = [
+        k
+        for k, v in _oauth_states.items()
+        if now - v["created_at"] > _STATE_TTL_SECONDS
+    ]
     for k in expired:
         del _oauth_states[k]
 
@@ -120,9 +128,7 @@ async def disconnect_email_account(account_id: str, request: Request):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Email account not found",
             )
-        await session.execute(
-            delete(EmailAccount).where(EmailAccount.id == account_id)
-        )
+        await session.execute(delete(EmailAccount).where(EmailAccount.id == account_id))
         await session.commit()
 
     return {"success": True, "message": "Email account disconnected"}
@@ -397,9 +403,7 @@ async def outlook_oauth_callback(
             message="Failed to save email account to database",
         )
 
-    logger.info(
-        "Outlook account connected for user %s: %s", user_id, email_address
-    )
+    logger.info("Outlook account connected for user %s: %s", user_id, email_address)
 
     return _oauth_result_html(
         success=True,
@@ -619,9 +623,7 @@ async def gmail_oauth_callback(
             provider="gmail",
         )
 
-    logger.info(
-        "Gmail account connected for user %s: %s", user_id, email_address
-    )
+    logger.info("Gmail account connected for user %s: %s", user_id, email_address)
 
     return _oauth_result_html(
         success=True,

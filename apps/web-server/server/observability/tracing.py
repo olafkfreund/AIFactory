@@ -97,9 +97,11 @@ def init_tracing() -> None:
             try:
                 # Pick the right exporter based on protocol. The OTLP
                 # umbrella package ships both gRPC + HTTP variants.
-                protocol = os.environ.get(
-                    "OTEL_EXPORTER_OTLP_PROTOCOL", "grpc"
-                ).strip().lower()
+                protocol = (
+                    os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+                    .strip()
+                    .lower()
+                )
                 if protocol == "http/protobuf":
                     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                         OTLPSpanExporter,
@@ -109,12 +111,12 @@ def init_tracing() -> None:
                         OTLPSpanExporter,
                     )
                 exporter = OTLPSpanExporter()
-                _tracer_provider.add_span_processor(
-                    BatchSpanProcessor(exporter)
-                )
+                _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
                 logger.info(
                     "OTel tracing enabled — endpoint=%s protocol=%s service=%s",
-                    endpoint, protocol, service_name,
+                    endpoint,
+                    protocol,
+                    service_name,
                 )
             except Exception:
                 logger.warning(
@@ -164,7 +166,8 @@ def _instrument_one(name: str, fn) -> None:
     except Exception:
         logger.warning(
             "OTel %s instrumentation failed; spans for it won't appear",
-            name, exc_info=True,
+            name,
+            exc_info=True,
         )
 
 
@@ -179,21 +182,25 @@ def _instrument_fastapi() -> None:
 
 def _instrument_sqlalchemy() -> None:
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
     SQLAlchemyInstrumentor().instrument()
 
 
 def _instrument_asyncpg() -> None:
     from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
+
     AsyncPGInstrumentor().instrument()
 
 
 def _instrument_httpx() -> None:
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
     HTTPXClientInstrumentor().instrument()
 
 
 def _instrument_redis() -> None:
     from opentelemetry.instrumentation.redis import RedisInstrumentor
+
     RedisInstrumentor().instrument()
 
 
@@ -205,11 +212,12 @@ def instrument_fastapi_app(app) -> None:
     """
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
     except Exception:
         logger.warning(
-            "OTel FastAPI instrumentation failed; HTTP request spans "
-            "won't appear", exc_info=True,
+            "OTel FastAPI instrumentation failed; HTTP request spans won't appear",
+            exc_info=True,
         )
 
 
@@ -243,6 +251,7 @@ def task_phase_span(
     """
     try:
         from opentelemetry import trace
+
         tracer = trace.get_tracer("aifactory.agent_task")
         with tracer.start_as_current_span(f"task:phase:{phase}") as span:
             span.set_attribute("task.id", task_id)
@@ -286,6 +295,7 @@ def get_current_traceparent() -> str | None:
     """
     try:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span is None:
             return None
@@ -294,9 +304,6 @@ def get_current_traceparent() -> str | None:
             return None
         # Format the W3C traceparent. trace_id and span_id are ints;
         # format with leading zeros to the expected hex widths.
-        return (
-            f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-"
-            f"{ctx.trace_flags:02x}"
-        )
+        return f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{ctx.trace_flags:02x}"
     except Exception:
         return None

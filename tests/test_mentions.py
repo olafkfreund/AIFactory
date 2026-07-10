@@ -223,9 +223,7 @@ def test_enqueue_leading_at_routes_to_recipient(spec_dir: Path):
 
 
 def test_enqueue_attaches_task_refs(spec_dir: Path):
-    inbox_service.enqueue(
-        spec_dir, text="@coder fix #001-feature and check #002"
-    )
+    inbox_service.enqueue(spec_dir, text="@coder fix #001-feature and check #002")
     msgs = inbox_service.list_messages(spec_dir, recipient="coder")
     assert len(msgs) == 1
     refs = msgs[0]["taskRefs"]
@@ -235,9 +233,7 @@ def test_enqueue_attaches_task_refs(spec_dir: Path):
 
 def test_enqueue_explicit_recipient_wins_over_mention(spec_dir: Path):
     # An explicit recipient must not be overridden by a leading @mention.
-    result = inbox_service.enqueue(
-        spec_dir, text="@coder do X", recipient="planner"
-    )
+    result = inbox_service.enqueue(spec_dir, text="@coder do X", recipient="planner")
     assert result["recipient"] == "planner"
     assert inbox_service.list_messages(spec_dir, recipient="coder") == []
     assert len(inbox_service.list_messages(spec_dir, recipient="planner")) == 1
@@ -255,9 +251,7 @@ def test_enqueue_no_mention_uses_default_recipient(spec_dir: Path):
 def test_enqueue_mid_sentence_mention_does_not_route(spec_dir: Path):
     # A mention that is not at the start keeps the default recipient, but its
     # #task refs are still attached.
-    result = inbox_service.enqueue(
-        spec_dir, text="please tell @coder about #001"
-    )
+    result = inbox_service.enqueue(spec_dir, text="please tell @coder about #001")
     assert result["recipient"] == "agent"
     msgs = inbox_service.list_messages(spec_dir, recipient="agent")
     assert [r["value"] for r in msgs[0]["taskRefs"]] == ["001"]

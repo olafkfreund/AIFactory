@@ -18,15 +18,12 @@ router = APIRouter()
 # Git Routes
 # ============================================
 
+
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
         result = subprocess.run(
-            ["git"] + args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30
+            ["git"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -78,11 +75,7 @@ async def check_git_status(path: str = Query(...)):
     if not git_dir.exists():
         return {
             "success": True,
-            "data": {
-                "isGitRepo": False,
-                "hasCommits": False,
-                "currentBranch": None
-            }
+            "data": {"isGitRepo": False, "hasCommits": False, "currentBranch": None},
         }
 
     # Get current branch
@@ -98,8 +91,8 @@ async def check_git_status(path: str = Query(...)):
         "data": {
             "isGitRepo": True,
             "hasCommits": has_commits,
-            "currentBranch": current_branch
-        }
+            "currentBranch": current_branch,
+        },
     }
 
 
@@ -154,10 +147,7 @@ async def initialize_git(request: InitGitRequest):
 
     # Stage all files and create initial commit (only if no commits yet)
     run_git_command(["add", "-A"], path)
-    run_git_command(
-        ["commit", "-m", "Initial commit", "--allow-empty"],
-        path
-    )
+    run_git_command(["commit", "-m", "Initial commit", "--allow-empty"], path)
 
     return {"success": True}
 
@@ -172,6 +162,7 @@ ollama_router = APIRouter()
 def check_ollama_running(base_url: str | None = None) -> bool:
     """Check if Ollama server is running."""
     import urllib.request
+
     url = base_url or "http://localhost:11434"
     try:
         urllib.request.urlopen(f"{url}/api/tags", timeout=5)
@@ -186,10 +177,7 @@ async def check_ollama_status(baseUrl: str | None = Query(None)):
     running = check_ollama_running(baseUrl)
     return {
         "success": True,
-        "data": {
-            "running": running,
-            "baseUrl": baseUrl or "http://localhost:11434"
-        }
+        "data": {"running": running, "baseUrl": baseUrl or "http://localhost:11434"},
     }
 
 
@@ -205,9 +193,7 @@ async def install_ollama():
     """Provide instructions to install Ollama."""
     return {
         "success": True,
-        "data": {
-            "message": "Install Ollama from https://ollama.ai"
-        }
+        "data": {"message": "Install Ollama from https://ollama.ai"},
     }
 
 
@@ -282,7 +268,7 @@ async def pull_ollama_model(request: PullModelRequest):
             f"{url}/api/pull",
             data=req_data,
             headers={"Content-Type": "application/json"},
-            method="POST"
+            method="POST",
         )
         # This is a blocking call - for large models consider background task
         response = urllib.request.urlopen(req, timeout=600)  # 10 min timeout
@@ -291,7 +277,10 @@ async def pull_ollama_model(request: PullModelRequest):
         # Check if pull was successful
         status = result.get("status", "")
         if "success" in status.lower() or status == "":
-            return {"success": True, "data": {"status": "completed", "model": model_name}}
+            return {
+                "success": True,
+                "data": {"status": "completed", "model": model_name},
+            }
         else:
             return {"success": False, "error": f"Pull failed: {status}"}
 
@@ -325,7 +314,9 @@ async def check_claude_code_version():
         try:
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
@@ -336,7 +327,9 @@ async def check_claude_code_version():
         try:
             result = subprocess.run(
                 [claude_path, "--version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0:
                 return {
@@ -376,6 +369,7 @@ async def install_claude_code():
     All commands use `bash -l -c` so login profile PATH changes are visible.
     """
     import logging
+
     log = logging.getLogger(__name__)
 
     steps_completed: list[str] = []
@@ -429,7 +423,12 @@ async def install_claude_code():
             # Shell pipeline — cannot be split into an arg list.
             # Hardcoded URL, no user input, safe to pass as raw shell command.
             result = subprocess.run(
-                ["bash", "-l", "-c", "curl -fsSL https://fnm.vercel.app/install | bash"],
+                [
+                    "bash",
+                    "-l",
+                    "-c",
+                    "curl -fsSL https://fnm.vercel.app/install | bash",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -680,6 +679,7 @@ _HIDDEN_TEMPLATE_IDS = {"mcp-puppeteer", "mcp-playwright"}
 def _check_binary(binary: str) -> bool:
     """Check if a binary is available on PATH."""
     import shutil
+
     return shutil.which(binary) is not None
 
 
@@ -687,17 +687,19 @@ def _check_npm_package_installed(package: str) -> bool:
     """Check if an npm package is installed globally."""
     import shutil
     import subprocess
+
     if not shutil.which("npm"):
         return False
     try:
         result = subprocess.run(
             ["npm", "list", "-g", "--depth=0", package],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True,
+            text=True,
+            timeout=8,
         )
         return result.returncode == 0 and package in result.stdout
     except Exception:
         return False
-
 
 
 class McpServerConfig(BaseModel):
@@ -715,6 +717,7 @@ async def check_mcp_health(server: McpServerConfig):
     """Check health of an MCP server."""
     if server.type == "http" and server.url:
         import urllib.request
+
         try:
             req = urllib.request.Request(server.url, method="HEAD")
             if server.headers:
@@ -726,8 +729,8 @@ async def check_mcp_health(server: McpServerConfig):
                 "data": {
                     "serverId": server.id,
                     "status": "healthy",
-                    "message": "Server responded"
-                }
+                    "message": "Server responded",
+                },
             }
         except Exception as e:
             return {
@@ -735,8 +738,8 @@ async def check_mcp_health(server: McpServerConfig):
                 "data": {
                     "serverId": server.id,
                     "status": "unhealthy",
-                    "message": str(e)
-                }
+                    "message": str(e),
+                },
             }
 
     return {
@@ -744,8 +747,8 @@ async def check_mcp_health(server: McpServerConfig):
         "data": {
             "serverId": server.id,
             "status": "unknown",
-            "message": "Cannot check command-based servers"
-        }
+            "message": "Cannot check command-based servers",
+        },
     }
 
 
@@ -759,8 +762,8 @@ async def test_mcp_connection(server: McpServerConfig):
             "serverId": server.id,
             "success": False,
             "message": "MCP testing not implemented",
-            "tools": []
-        }
+            "tools": [],
+        },
     }
 
 
@@ -798,21 +801,22 @@ async def detect_mcp_services():
         if pkg and available:
             npm_installed = _check_npm_package_installed(pkg)
 
-        results.append({
-            "id": entry["id"],
-            "name": entry["name"],
-            "description": entry["description"],
-            "category": entry["category"],
-            "type": entry["type"],
-            "command": entry["command"],
-            "args": entry["args"],
-            "available": available,
-            "installed": npm_installed or hint_installed,
-            "reason": reason,
-        })
+        results.append(
+            {
+                "id": entry["id"],
+                "name": entry["name"],
+                "description": entry["description"],
+                "category": entry["category"],
+                "type": entry["type"],
+                "command": entry["command"],
+                "args": entry["args"],
+                "available": available,
+                "installed": npm_installed or hint_installed,
+                "reason": reason,
+            }
+        )
 
     return {"success": True, "data": results}
-
 
 
 # ============================================
@@ -830,8 +834,8 @@ async def check_source_update():
         "data": {
             "updateAvailable": False,
             "currentVersion": "1.0.0",
-            "latestVersion": "1.0.0"
-        }
+            "latestVersion": "1.0.0",
+        },
     }
 
 
@@ -866,7 +870,7 @@ async def download_source_update():
         if not git_dir.exists():
             return {
                 "success": False,
-                "error": "Magestic AI source directory is not a git repository"
+                "error": "Magestic AI source directory is not a git repository",
             }
 
         # Check for uncommitted changes
@@ -874,7 +878,7 @@ async def download_source_update():
         if not status_result["success"]:
             return {
                 "success": False,
-                "error": f"Failed to check git status: {status_result.get('error', 'Unknown error')}"
+                "error": f"Failed to check git status: {status_result.get('error', 'Unknown error')}",
             }
 
         has_changes = bool(status_result.get("output", "").strip())
@@ -884,7 +888,7 @@ async def download_source_update():
         if not branch_result["success"]:
             return {
                 "success": False,
-                "error": f"Failed to get current branch: {branch_result.get('error', 'Unknown error')}"
+                "error": f"Failed to get current branch: {branch_result.get('error', 'Unknown error')}",
             }
 
         current_branch = branch_result.get("output", "unknown").strip()
@@ -894,7 +898,7 @@ async def download_source_update():
         if not remote_result["success"] or not remote_result.get("output", "").strip():
             return {
                 "success": False,
-                "error": "No git remote configured. Cannot update source."
+                "error": "No git remote configured. Cannot update source.",
             }
 
         # Fetch updates from remote
@@ -902,14 +906,14 @@ async def download_source_update():
         if not fetch_result["success"]:
             return {
                 "success": False,
-                "error": f"Failed to fetch updates: {fetch_result.get('error', 'Unknown error')}"
+                "error": f"Failed to fetch updates: {fetch_result.get('error', 'Unknown error')}",
             }
 
         # Check if updates are available
         # Compare local HEAD with remote branch
         ahead_behind_result = run_git_command(
             ["rev-list", "--left-right", "--count", f"HEAD...origin/{current_branch}"],
-            source_path
+            source_path,
         )
 
         updates_available = False
@@ -932,8 +936,8 @@ async def download_source_update():
                     "updated": False,
                     "currentBranch": current_branch,
                     "hasUncommittedChanges": has_changes,
-                    "commitsBehind": 0
-                }
+                    "commitsBehind": 0,
+                },
             }
 
         # Warn if there are uncommitted changes
@@ -944,8 +948,8 @@ async def download_source_update():
                 "data": {
                     "hasUncommittedChanges": True,
                     "currentBranch": current_branch,
-                    "commitsBehind": commits_behind
-                }
+                    "commitsBehind": commits_behind,
+                },
             }
 
         # Perform git pull
@@ -953,12 +957,16 @@ async def download_source_update():
         if not pull_result["success"]:
             return {
                 "success": False,
-                "error": f"Failed to pull updates: {pull_result.get('error', 'Unknown error')}"
+                "error": f"Failed to pull updates: {pull_result.get('error', 'Unknown error')}",
             }
 
         # Get updated commit info
         commit_result = run_git_command(["rev-parse", "--short", "HEAD"], source_path)
-        new_commit = commit_result.get("output", "unknown").strip() if commit_result["success"] else "unknown"
+        new_commit = (
+            commit_result.get("output", "unknown").strip()
+            if commit_result["success"]
+            else "unknown"
+        )
 
         return {
             "success": True,
@@ -968,14 +976,14 @@ async def download_source_update():
                 "currentBranch": current_branch,
                 "newCommit": new_commit,
                 "commitsPulled": commits_behind,
-                "pullOutput": pull_result.get("output", "")
-            }
+                "pullOutput": pull_result.get("output", ""),
+            },
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to update Magestic AI source: {str(e)}"
+            "error": f"Failed to update Magestic AI source: {str(e)}",
         }
 
 
@@ -1008,8 +1016,11 @@ project_router = APIRouter()
 
 class SquashCommitsRequest(BaseModel):
     """Request model for squashing commits."""
+
     count: int = Field(..., ge=2, description="Number of commits to squash (minimum 2)")
-    message: str | None = Field(None, description="Custom commit message for the squashed commit")
+    message: str | None = Field(
+        None, description="Custom commit message for the squashed commit"
+    )
 
 
 @project_router.post("/{projectId}/git/squash")
@@ -1037,13 +1048,13 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     # Load projects to get project path
     try:
         from ..config import get_settings
+
         settings = get_settings()
         projects_file = settings.projects_file
 
         if not projects_file.exists():
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         with open(projects_file) as f:
@@ -1058,15 +1069,13 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
 
         if not project:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         project_path = project.get("path")
         if not project_path:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project path not found for {projectId}"
+                status_code=404, detail=f"Project path not found for {projectId}"
             )
 
     except HTTPException:
@@ -1080,10 +1089,7 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
         return {"success": False, "error": "Must squash at least 2 commits"}
 
     # Check if repository has enough commits
-    commit_count_result = run_git_command(
-        ["rev-list", "--count", "HEAD"],
-        project_path
-    )
+    commit_count_result = run_git_command(["rev-list", "--count", "HEAD"], project_path)
 
     if not commit_count_result["success"]:
         return {"success": False, "error": "Failed to count commits"}
@@ -1093,7 +1099,7 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
         if total_commits < count:
             return {
                 "success": False,
-                "error": f"Repository only has {total_commits} commit(s), cannot squash {count}"
+                "error": f"Repository only has {total_commits} commit(s), cannot squash {count}",
             }
     except ValueError:
         return {"success": False, "error": "Invalid commit count"}
@@ -1110,19 +1116,17 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     if status_result["success"] and status_result["output"].strip():
         return {
             "success": False,
-            "error": "Cannot squash with uncommitted changes. Please commit or stash your changes first."
+            "error": "Cannot squash with uncommitted changes. Please commit or stash your changes first.",
         }
 
     # Get the commit message of the oldest commit to be squashed (for default message)
     oldest_commit_msg_result = run_git_command(
-        ["log", f"HEAD~{count-1}", "-1", "--format=%s"],
-        project_path
+        ["log", f"HEAD~{count - 1}", "-1", "--format=%s"], project_path
     )
 
     # Get the commit message of the newest commit
     newest_commit_msg_result = run_git_command(
-        ["log", "HEAD", "-1", "--format=%s"],
-        project_path
+        ["log", "HEAD", "-1", "--format=%s"], project_path
     )
 
     # Determine the commit message
@@ -1130,8 +1134,16 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
         commit_message = request.message.strip()
     else:
         # Default message: combine first and last commit messages
-        oldest_msg = oldest_commit_msg_result.get("output", "").strip() if oldest_commit_msg_result["success"] else ""
-        newest_msg = newest_commit_msg_result.get("output", "").strip() if newest_commit_msg_result["success"] else ""
+        oldest_msg = (
+            oldest_commit_msg_result.get("output", "").strip()
+            if oldest_commit_msg_result["success"]
+            else ""
+        )
+        newest_msg = (
+            newest_commit_msg_result.get("output", "").strip()
+            if newest_commit_msg_result["success"]
+            else ""
+        )
 
         if oldest_msg and newest_msg and oldest_msg != newest_msg:
             commit_message = f"{oldest_msg} ... {newest_msg}"
@@ -1143,43 +1155,48 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
             commit_message = f"Squashed {count} commits"
 
     # Step 1: Reset soft to HEAD~<count> (keeps changes staged)
-    reset_result = run_git_command(
-        ["reset", "--soft", f"HEAD~{count}"],
-        project_path
-    )
+    reset_result = run_git_command(["reset", "--soft", f"HEAD~{count}"], project_path)
 
     if not reset_result["success"]:
         return {
             "success": False,
-            "error": f"Failed to reset commits: {reset_result.get('error')}"
+            "error": f"Failed to reset commits: {reset_result.get('error')}",
         }
 
     # Step 2: Create new commit with all the squashed changes
-    commit_result = run_git_command(
-        ["commit", "-m", commit_message],
-        project_path
-    )
+    commit_result = run_git_command(["commit", "-m", commit_message], project_path)
 
     if not commit_result["success"]:
         # Try to recover by resetting back
         run_git_command(["reset", "ORIG_HEAD"], project_path)
         return {
             "success": False,
-            "error": f"Failed to create squashed commit: {commit_result.get('error')}"
+            "error": f"Failed to create squashed commit: {commit_result.get('error')}",
         }
 
     return {
         "success": True,
         "message": f"Successfully squashed {count} commits on branch '{current_branch}'",
-        "commitMessage": commit_message
+        "commitMessage": commit_message,
     }
 
 
 class CreateWorktreeRequest(BaseModel):
     """Request model for creating a git worktree."""
-    name: str = Field(..., min_length=1, max_length=100, description="Worktree name (used for directory and branch)")
-    baseBranch: str | None = Field(None, description="Base branch to create worktree from (defaults to current branch)")
-    createBranch: bool = Field(True, description="Whether to create a new branch for the worktree")
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="Worktree name (used for directory and branch)",
+    )
+    baseBranch: str | None = Field(
+        None,
+        description="Base branch to create worktree from (defaults to current branch)",
+    )
+    createBranch: bool = Field(
+        True, description="Whether to create a new branch for the worktree"
+    )
 
 
 @project_router.post("/{projectId}/git/worktree")
@@ -1211,13 +1228,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     # Load projects to get project path
     try:
         from ..config import get_settings
+
         settings = get_settings()
         projects_file = settings.projects_file
 
         if not projects_file.exists():
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         with open(projects_file) as f:
@@ -1232,15 +1249,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
 
         if not project:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         project_path = project.get("path")
         if not project_path:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project path not found for {projectId}"
+                status_code=404, detail=f"Project path not found for {projectId}"
             )
 
     except HTTPException:
@@ -1253,10 +1268,10 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     if not name:
         return {"success": False, "error": "Worktree name cannot be empty"}
 
-    if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", name):
         return {
             "success": False,
-            "error": "Worktree name must contain only letters, numbers, dashes, and underscores"
+            "error": "Worktree name must contain only letters, numbers, dashes, and underscores",
         }
 
     # Determine base branch
@@ -1264,19 +1279,17 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         base_branch = request.baseBranch.strip()
         # Verify base branch exists
         branch_check = run_git_command(
-            ["rev-parse", "--verify", base_branch],
-            project_path
+            ["rev-parse", "--verify", base_branch], project_path
         )
         if not branch_check["success"]:
             return {
                 "success": False,
-                "error": f"Base branch '{base_branch}' does not exist"
+                "error": f"Base branch '{base_branch}' does not exist",
             }
     else:
         # Use current branch as base
         current_branch_result = run_git_command(
-            ["branch", "--show-current"],
-            project_path
+            ["branch", "--show-current"], project_path
         )
         if not current_branch_result["success"]:
             return {"success": False, "error": "Failed to get current branch"}
@@ -1290,7 +1303,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     if worktree_path.exists():
         return {
             "success": False,
-            "error": f"Worktree path already exists: {worktree_path}"
+            "error": f"Worktree path already exists: {worktree_path}",
         }
 
     # Create parent directories
@@ -1299,7 +1312,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to create worktree directory: {str(e)}"
+            "error": f"Failed to create worktree directory: {str(e)}",
         }
 
     # Build git worktree add command
@@ -1308,27 +1321,25 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     if request.createBranch:
         # Check if branch already exists
         branch_exists_check = run_git_command(
-            ["rev-parse", "--verify", worktree_branch],
-            project_path
+            ["rev-parse", "--verify", worktree_branch], project_path
         )
         if branch_exists_check["success"]:
             return {
                 "success": False,
-                "error": f"Branch '{worktree_branch}' already exists. Use a different worktree name or set createBranch to false."
+                "error": f"Branch '{worktree_branch}' already exists. Use a different worktree name or set createBranch to false.",
             }
 
         # Create worktree with new branch
         # git worktree add <path> -b <new-branch> <base-branch>
         worktree_result = run_git_command(
             ["worktree", "add", str(worktree_path), "-b", worktree_branch, base_branch],
-            project_path
+            project_path,
         )
     else:
         # Create worktree without new branch (checkout existing base branch)
         # git worktree add <path> <base-branch>
         worktree_result = run_git_command(
-            ["worktree", "add", str(worktree_path), base_branch],
-            project_path
+            ["worktree", "add", str(worktree_path), base_branch], project_path
         )
 
     if not worktree_result["success"]:
@@ -1336,13 +1347,14 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         try:
             if worktree_path.exists():
                 import shutil
+
                 shutil.rmtree(worktree_path)
         except Exception:
             pass
 
         return {
             "success": False,
-            "error": f"Failed to create worktree: {worktree_result.get('error')}"
+            "error": f"Failed to create worktree: {worktree_result.get('error')}",
         }
 
     return {
@@ -1350,7 +1362,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         "message": f"Worktree '{name}' created successfully",
         "worktreePath": str(worktree_path),
         "branch": worktree_branch if request.createBranch else base_branch,
-        "baseBranch": base_branch
+        "baseBranch": base_branch,
     }
 
 
@@ -1361,13 +1373,7 @@ class PreflightRequest(BaseModel):
 @releases_router.post("/preflight")
 async def run_release_preflight(projectId: str, request: PreflightRequest):
     """Run preflight checks for a release."""
-    return {
-        "success": True,
-        "data": {
-            "passed": True,
-            "checks": []
-        }
-    }
+    return {"success": True, "data": {"passed": True, "checks": []}}
 
 
 class CreateReleaseRequest(BaseModel):
@@ -1389,11 +1395,7 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     """
     try:
         result = subprocess.run(
-            ["gh"] + args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30
+            ["gh"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -1434,7 +1436,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
     if platform != "github":
         return {
             "success": False,
-            "error": f"Invalid platform '{request.platform}'. Must be 'github'"
+            "error": f"Invalid platform '{request.platform}'. Must be 'github'",
         }
 
     # Validate version
@@ -1450,13 +1452,13 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
     # Load projects to get project path
     try:
         from ..config import get_settings
+
         settings = get_settings()
         projects_file = settings.projects_file
 
         if not projects_file.exists():
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         with open(projects_file) as f:
@@ -1471,15 +1473,13 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
 
         if not project:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project {projectId} not found"
+                status_code=404, detail=f"Project {projectId} not found"
             )
 
         project_path = project.get("path")
         if not project_path:
             raise HTTPException(
-                status_code=404,
-                detail=f"Project path not found for {projectId}"
+                status_code=404, detail=f"Project path not found for {projectId}"
             )
 
     except HTTPException:
@@ -1488,7 +1488,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
         return {"success": False, "error": f"Failed to load project: {str(e)}"}
 
     # Ensure version starts with 'v' if not already present (conventional)
-    if not version.startswith('v'):
+    if not version.startswith("v"):
         version_tag = f"v{version}"
     else:
         version_tag = version
@@ -1497,14 +1497,13 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
     try:
         # GitHub: gh release create <tag> --notes <notes>
         result = run_gh_command(
-            ["release", "create", version_tag, "--notes", release_notes],
-            project_path
+            ["release", "create", version_tag, "--notes", release_notes], project_path
         )
 
         if not result["success"]:
             return {
                 "success": False,
-                "error": f"Failed to create GitHub release: {result.get('error', 'Unknown error')}"
+                "error": f"Failed to create GitHub release: {result.get('error', 'Unknown error')}",
             }
 
         return {
@@ -1512,11 +1511,8 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
             "message": f"Successfully created GitHub release {version_tag}",
             "version": version_tag,
             "platform": "github",
-            "output": result.get("output", "")
+            "output": result.get("output", ""),
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": f"Failed to create GitHub release: {str(e)}"
-        }
+        return {"success": False, "error": f"Failed to create GitHub release: {str(e)}"}

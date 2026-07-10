@@ -47,6 +47,7 @@ def real_app(monkeypatch):
     monkeypatch.setenv("APP_DISABLE_AUTH", "true")
 
     from server.main import create_app
+
     return create_app()
 
 

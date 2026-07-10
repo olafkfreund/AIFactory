@@ -80,8 +80,8 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
     # GitHub Copilot (V1) and GitLab Duo Workflow (V1.5) are both wired.
     # Azure DevOps has no autonomous agent equivalent — skip with a notice.
     provider_type_str = str(getattr(provider, "provider_type", "")).lower()
-    is_supported = (
-        provider_type_str.endswith("github") or provider_type_str.endswith("gitlab")
+    is_supported = provider_type_str.endswith("github") or provider_type_str.endswith(
+        "gitlab"
     )
     if not is_supported:
         return {
@@ -96,6 +96,7 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
 
     try:
         from runners.github.providers.protocol import PRFilters
+
         open_prs = await provider.fetch_prs(PRFilters(state="open", limit=200))
     except Exception as e:
         logger.warning(
@@ -103,7 +104,12 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
             project_id,
             e,
         )
-        return {"checked": len(delegated), "promoted": [], "declined": [], "error": str(e)}
+        return {
+            "checked": len(delegated),
+            "promoted": [],
+            "declined": [],
+            "error": str(e),
+        }
 
     now = datetime.now(timezone.utc)
 
@@ -211,7 +217,9 @@ async def _emit_status(
                 new_status,
                 pr_number,
             )
-    except Exception as e:  # pragma: no cover — never let WebSocket errors abort tracking
+    except (
+        Exception
+    ) as e:  # pragma: no cover — never let WebSocket errors abort tracking
         logger.warning(
             "[delegation_tracker] emit_status failed project=%s spec=%s err=%s",
             project_id,

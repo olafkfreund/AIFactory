@@ -343,7 +343,9 @@ class NotificationService:
             if setting_key and not notifications.get(setting_key, True):
                 return
         except Exception:
-            logger.debug("Could not load notification settings for email check", exc_info=True)
+            logger.debug(
+                "Could not load notification settings for email check", exc_info=True
+            )
             return
 
         # Send the email

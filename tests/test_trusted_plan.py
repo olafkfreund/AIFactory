@@ -139,8 +139,12 @@ class TestSignature:
         # different key order verify against the same signature.
         plan = _complete_plan()
         env = sign_plan(plan, key=KEY, approved_by="cfactory", approval_timestamp=TS)
-        reordered = {"workflow_type": plan["workflow_type"], "phases": plan["phases"],
-                     "feature": plan["feature"], APPROVAL_KEY: env}
+        reordered = {
+            "workflow_type": plan["workflow_type"],
+            "phases": plan["phases"],
+            "feature": plan["feature"],
+            APPROVAL_KEY: env,
+        }
         ok, reason = verify_plan_signature(reordered, keyring=KEYRING)
         assert ok, reason
 
@@ -187,7 +191,9 @@ class TestCompleteness:
         assert any("cycle" in r for r in reasons)
 
     def test_no_phases_rejected(self):
-        ok, reasons = check_plan_completeness({"feature": "x", "workflow_type": "feature", "phases": []})
+        ok, reasons = check_plan_completeness(
+            {"feature": "x", "workflow_type": "feature", "phases": []}
+        )
         assert not ok
 
 
@@ -219,7 +225,9 @@ class TestVerifyAndIngest:
 
     def test_ingest_success_writes_plan_and_provenance(self, tmp_path: Path):
         spec_dir = tmp_path / "spec"
-        result = ingest_trusted_plan(spec_dir, _signed(_complete_plan()), keyring=KEYRING)
+        result = ingest_trusted_plan(
+            spec_dir, _signed(_complete_plan()), keyring=KEYRING
+        )
 
         assert result.ok, result.reasons
         plan_file = spec_dir / "implementation_plan.json"
@@ -251,7 +259,9 @@ class TestVerifyAndIngest:
 
     def test_ingest_failure_writes_nothing(self, tmp_path: Path):
         spec_dir = tmp_path / "spec"
-        result = ingest_trusted_plan(spec_dir, _complete_plan(), keyring=KEYRING)  # unsigned
+        result = ingest_trusted_plan(
+            spec_dir, _complete_plan(), keyring=KEYRING
+        )  # unsigned
         assert not result.ok
         assert not (spec_dir / "implementation_plan.json").exists()
 
@@ -261,7 +271,9 @@ class TestVerifyAndIngest:
         plan[APPROVAL_KEY] = sign_plan(
             plan, key=KEY, approved_by="CFactory", approval_timestamp=TS
         )
-        result = verify_trusted_plan(plan, keyring=KEYRING)  # authority match is case-insensitive
+        result = verify_trusted_plan(
+            plan, keyring=KEYRING
+        )  # authority match is case-insensitive
         assert result.ok, result.reasons
         assert plan[APPROVAL_KEY]["plan_contract_version"] == CONTRACT_VERSION
 

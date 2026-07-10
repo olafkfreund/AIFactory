@@ -186,9 +186,7 @@ class TestResumePolicy:
         assert "max retries" in give_up.reason
 
     def test_respects_total_wait_cap(self):
-        policy = RateLimitResumePolicy(
-            max_retries=100, max_total_wait_seconds=100.0
-        )
+        policy = RateLimitResumePolicy(max_retries=100, max_total_wait_seconds=100.0)
         # Already waited 80s; a 30s cooldown would push us to 110 > 100 -> stop.
         decision = decide_rate_limit_resume(
             cooldown_seconds=30.0,
@@ -202,9 +200,7 @@ class TestResumePolicy:
         assert "total wait" in decision.reason
 
     def test_total_wait_cap_allows_within_budget(self):
-        policy = RateLimitResumePolicy(
-            max_retries=100, max_total_wait_seconds=100.0
-        )
+        policy = RateLimitResumePolicy(max_retries=100, max_total_wait_seconds=100.0)
         decision = decide_rate_limit_resume(
             cooldown_seconds=10.0,
             attempt=2,
@@ -217,9 +213,7 @@ class TestResumePolicy:
 
     def test_simulated_resume_loop_gives_up_at_cap(self):
         """Integration-style: loop until the policy stops us, with a fake clock."""
-        policy = RateLimitResumePolicy(
-            max_retries=10, max_total_wait_seconds=50.0
-        )
+        policy = RateLimitResumePolicy(max_retries=10, max_total_wait_seconds=50.0)
         elapsed = 0.0
         attempts = 0
         clock = 0.0  # injected "now" advanced by each wait

@@ -151,16 +151,21 @@ class TestRunning:
 
         fake_psutil = MagicMock()
         fake_psutil.Process.return_value = parent
-        fake_psutil.virtual_memory.return_value = MagicMock(total=1000 * 1024 * 1024)  # 1000 MB
+        fake_psutil.virtual_memory.return_value = MagicMock(
+            total=1000 * 1024 * 1024
+        )  # 1000 MB
         # Real exception classes so the route's except clauses behave.
         fake_psutil.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
         fake_psutil.AccessDenied = type("AccessDenied", (Exception,), {})
         fake_psutil.ZombieProcess = type("ZombieProcess", (Exception,), {})
 
-        with patch(
-            "server.services.agent_service.get_agent_service",
-            return_value=svc,
-        ), patch.dict("sys.modules", {"psutil": fake_psutil}):
+        with (
+            patch(
+                "server.services.agent_service.get_agent_service",
+                return_value=svc,
+            ),
+            patch.dict("sys.modules", {"psutil": fake_psutil}),
+        ):
             resp = client.get("/api/tasks/proj1:001-demo/resource-usage")
 
         assert resp.status_code == 200
@@ -194,10 +199,13 @@ class TestDefensiveSampling:
         # Constructing Process for a dead pid raises NoSuchProcess.
         fake_psutil.Process.side_effect = no_such()
 
-        with patch(
-            "server.services.agent_service.get_agent_service",
-            return_value=svc,
-        ), patch.dict("sys.modules", {"psutil": fake_psutil}):
+        with (
+            patch(
+                "server.services.agent_service.get_agent_service",
+                return_value=svc,
+            ),
+            patch.dict("sys.modules", {"psutil": fake_psutil}),
+        ):
             resp = client.get("/api/tasks/proj1:001-demo/resource-usage")
 
         assert resp.status_code == 200
@@ -218,10 +226,13 @@ class TestDefensiveSampling:
         # Some unexpected OS error during sampling.
         fake_psutil.Process.side_effect = RuntimeError("boom")
 
-        with patch(
-            "server.services.agent_service.get_agent_service",
-            return_value=svc,
-        ), patch.dict("sys.modules", {"psutil": fake_psutil}):
+        with (
+            patch(
+                "server.services.agent_service.get_agent_service",
+                return_value=svc,
+            ),
+            patch.dict("sys.modules", {"psutil": fake_psutil}),
+        ):
             resp = client.get("/api/tasks/proj1:001-demo/resource-usage")
 
         assert resp.status_code == 200

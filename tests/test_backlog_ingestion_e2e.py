@@ -31,8 +31,12 @@ from server.services import auto_fix_service as afs  # noqa: E402
 
 def _issue(number, title="Add health endpoint", body="do it", labels=None):
     return SimpleNamespace(
-        number=number, title=title, body=body, state="open",
-        labels=labels or [], url=f"https://github.com/o/r/issues/{number}",
+        number=number,
+        title=title,
+        body=body,
+        state="open",
+        labels=labels or [],
+        url=f"https://github.com/o/r/issues/{number}",
     )
 
 
@@ -58,7 +62,9 @@ class _StubAgent:
 def _setup(tmp_path, monkeypatch, *, issues, settings=None):
     project = tmp_path / "proj"
     (project / ".aifactory" / "specs").mkdir(parents=True)
-    projects = {"p": {"path": str(project), "settings": settings or {"gitProvider": "github"}}}
+    projects = {
+        "p": {"path": str(project), "settings": settings or {"gitProvider": "github"}}
+    }
 
     import server.routes.projects as projects_mod
     import server.services.agent_service as agent_mod
@@ -122,7 +128,11 @@ async def test_start_auto_fix_idempotent_reuses_spec(tmp_path, monkeypatch):
     r1 = await afs.start_auto_fix("p", 8)
     r2 = await afs.start_auto_fix("p", 8)
     assert r1["specId"] == r2["specId"]  # reused, not duplicated
-    specs = [d.name for d in (project / ".aifactory" / "specs").iterdir() if "-gh8-" in d.name]
+    specs = [
+        d.name
+        for d in (project / ".aifactory" / "specs").iterdir()
+        if "-gh8-" in d.name
+    ]
     assert len(specs) == 1
 
 
@@ -137,10 +147,13 @@ async def test_start_auto_fix_delegates_when_enabled(tmp_path, monkeypatch):
     spec = project / ".aifactory" / "specs" / "001-gh9-deleg"
     spec.mkdir(parents=True)
     (spec / "requirements.json").write_text(
-        json.dumps({"title": "x", "description": "y", "metadata": {"enableDelegation": True}})
+        json.dumps(
+            {"title": "x", "description": "y", "metadata": {"enableDelegation": True}}
+        )
     )
 
     import server.services.delegation_runner as dr
+
     calls = []
 
     async def _fake_delegation(**kw):
@@ -159,13 +172,17 @@ async def test_start_auto_fix_delegates_when_enabled(tmp_path, monkeypatch):
 async def test_no_delegation_for_non_github(tmp_path, monkeypatch):
     # Same enableDelegation flag, but a non-GitHub/GitLab provider → no delegation.
     project, stub = _setup(
-        tmp_path, monkeypatch, issues=[_issue(10)],
+        tmp_path,
+        monkeypatch,
+        issues=[_issue(10)],
         settings={"gitProvider": "azure_devops"},
     )
     spec = project / ".aifactory" / "specs" / "001-wi10-x"
     spec.mkdir(parents=True)
     (spec / "requirements.json").write_text(
-        json.dumps({"title": "x", "description": "y", "metadata": {"enableDelegation": True}})
+        json.dumps(
+            {"title": "x", "description": "y", "metadata": {"enableDelegation": True}}
+        )
     )
     result = await afs.start_auto_fix("p", 10)
     assert result["status"] == "started"

@@ -59,10 +59,11 @@ def idp_metadata_xml(idp_cert_pem) -> str:
     isn't a vendor-specific blob."""
     # Strip PEM wrappers — IdP metadata embeds the raw base64.
     cert_b64 = "".join(
-        line for line in idp_cert_pem.splitlines()
+        line
+        for line in idp_cert_pem.splitlines()
         if line.strip() and not line.startswith("-----")
     )
-    return f'''<?xml version="1.0" encoding="UTF-8"?>
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"
                   entityID="https://test-idp.example.com/saml">
   <IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
@@ -80,7 +81,7 @@ def idp_metadata_xml(idp_cert_pem) -> str:
         Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
         Location="https://test-idp.example.com/saml/sso"/>
   </IDPSSODescriptor>
-</EntityDescriptor>'''
+</EntityDescriptor>"""
 
 
 @pytest.fixture

@@ -28,7 +28,11 @@ def _write_plan(spec_dir: Path) -> None:
             {
                 "subtasks": [
                     {"id": "1.1", "title": "Set up schema", "status": "completed"},
-                    {"id": "1.2", "title": "Add auth endpoint", "status": "in_progress"},
+                    {
+                        "id": "1.2",
+                        "title": "Add auth endpoint",
+                        "status": "in_progress",
+                    },
                     {"id": "1.3", "title": "Wire frontend", "status": "pending"},
                 ]
             }
@@ -91,8 +95,8 @@ def test_detector_no_compaction_on_growth():
 
 def test_detector_fires_on_sharp_drop():
     det = CompactionDetector(drop_ratio=0.5, min_peak_tokens=20_000)
-    det.observe(50_000)   # peak grows
-    det.observe(80_000)   # peak = 80k
+    det.observe(50_000)  # peak grows
+    det.observe(80_000)  # peak = 80k
     # Drop to 20k (< 80k * 0.5 = 40k) -> compaction.
     assert det.observe(20_000) is True
     # Peak resets to the post-compaction level.
@@ -109,8 +113,8 @@ def test_detector_ignores_small_early_drop():
 def test_detector_can_fire_again_after_regrowth():
     det = CompactionDetector(drop_ratio=0.5, min_peak_tokens=20_000)
     det.observe(80_000)
-    assert det.observe(20_000) is True   # first compaction
+    assert det.observe(20_000) is True  # first compaction
     # Context regrows...
     det.observe(50_000)
     det.observe(90_000)
-    assert det.observe(10_000) is True   # second compaction
+    assert det.observe(10_000) is True  # second compaction

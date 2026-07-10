@@ -62,11 +62,16 @@ def fresh_db():
 async def _seed_org(SessionLocal, slug: str = "acme") -> Organization:
     async with SessionLocal() as db:
         user = User(
-            id=f"u-{slug}", email=f"{slug}@example.com",
-            password_hash="x", role="user", is_active=True,
+            id=f"u-{slug}",
+            email=f"{slug}@example.com",
+            password_hash="x",
+            role="user",
+            is_active=True,
         )
         org = Organization(
-            id=f"org-{slug}", name=slug.title(), slug=slug,
+            id=f"org-{slug}",
+            name=slug.title(),
+            slug=slug,
             owner_id=user.id,
         )
         db.add(user)
@@ -148,9 +153,13 @@ def test_apply_false_does_not_touch_clients(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=False,  # default
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
             )
 
     decision = _run(_go())
@@ -187,9 +196,13 @@ def test_apply_create_calls_k8s_aws_vault_in_order(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             decision = await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
             await db.commit()
@@ -240,7 +253,8 @@ def test_k8s_failure_records_reconcile_error(fresh_db, monkeypatch):
     _engine, SessionLocal = fresh_db
     monkeypatch.setenv("TENANT_S3_BUCKET", "aifactory-prod")
     monkeypatch.setenv(
-        "TENANT_OIDC_PROVIDER_ARN", "arn:aws:iam::123:oidc-provider/x",
+        "TENANT_OIDC_PROVIDER_ARN",
+        "arn:aws:iam::123:oidc-provider/x",
     )
     importlib.reload(svc)
 
@@ -254,9 +268,13 @@ def test_k8s_failure_records_reconcile_error(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             decision = await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
             await db.commit()
@@ -280,7 +298,8 @@ def test_vault_failure_is_non_fatal_for_k8s_path(fresh_db, monkeypatch):
     _engine, SessionLocal = fresh_db
     monkeypatch.setenv("TENANT_S3_BUCKET", "aifactory-prod")
     monkeypatch.setenv(
-        "TENANT_OIDC_PROVIDER_ARN", "arn:aws:iam::123:oidc-provider/x",
+        "TENANT_OIDC_PROVIDER_ARN",
+        "arn:aws:iam::123:oidc-provider/x",
     )
     importlib.reload(svc)
 
@@ -289,6 +308,7 @@ def test_vault_failure_is_non_fatal_for_k8s_path(fresh_db, monkeypatch):
     aws = _build_aws_mock(role_arn="arn:aws:iam::123:role/foo")
     vault = _build_vault_mock()
     from server.services.vault_client import VaultClientError
+
     vault.create_tenant_policy.side_effect = VaultClientError("vault down")
     redis = _build_redis_mock(lock_acquired=True)
 
@@ -296,9 +316,13 @@ def test_vault_failure_is_non_fatal_for_k8s_path(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             decision = await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
             await db.commit()
@@ -342,9 +366,13 @@ def test_leader_election_blocks_second_replica(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -374,9 +402,13 @@ def test_redis_unavailable_refuses_to_write(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             return await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=aws, vault_client=vault,
+                k8s_client=k8s,
+                aws_client=aws,
+                vault_client=vault,
                 redis_client=redis,
             )
 
@@ -399,9 +431,13 @@ def test_redis_none_means_single_replica_proceeds(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             org_db = await db.get(Organization, org.id)
             await svc.reconcile_org(
-                db, org_db, isolation_enabled=True,
+                db,
+                org_db,
+                isolation_enabled=True,
                 apply=True,
-                k8s_client=k8s, aws_client=None, vault_client=None,
+                k8s_client=k8s,
+                aws_client=None,
+                vault_client=None,
                 redis_client=None,
             )
             await db.commit()

@@ -37,12 +37,18 @@ def test_handoff_pushes_and_hands_off_source_aware(tmp_path):
         "contract": {"tfactory": {"lanes": ["unit"]}},
     }
     with (
-        patch.object(execution, "load_projects",
-                     return_value={project_id: {"path": str(project_path)}}),
-        patch("pfactory.tfactory_client.build_ingest_payload",
-              return_value=payload) as mock_build,
-        patch("pfactory.tfactory_client.send_handoff",
-              new=AsyncMock(return_value={"sent": True, "status": 200})) as mock_send,
+        patch.object(
+            execution,
+            "load_projects",
+            return_value={project_id: {"path": str(project_path)}},
+        ),
+        patch(
+            "pfactory.tfactory_client.build_ingest_payload", return_value=payload
+        ) as mock_build,
+        patch(
+            "pfactory.tfactory_client.send_handoff",
+            new=AsyncMock(return_value={"sent": True, "status": 200}),
+        ) as mock_send,
     ):
         result = asyncio.run(execution.handoff_to_tfactory(task_id, _access={}))
 
@@ -75,8 +81,9 @@ def test_handoff_unknown_spec_404(tmp_path):
 
     project_path = tmp_path / "repo"
     (project_path / ".aifactory" / "specs").mkdir(parents=True)
-    with patch.object(execution, "load_projects",
-                      return_value={"proj-1": {"path": str(project_path)}}):
+    with patch.object(
+        execution, "load_projects", return_value={"proj-1": {"path": str(project_path)}}
+    ):
         with pytest.raises(HTTPException) as ei:
             asyncio.run(execution.handoff_to_tfactory("proj-1:missing", _access={}))
     assert ei.value.status_code == 404

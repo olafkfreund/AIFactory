@@ -15,10 +15,17 @@ from server.services.completion import build_completion_event  # noqa: E402
 
 
 def _event(status: str, total_tokens: int | None):
-    usage = None if total_tokens is None else {"total_tokens": total_tokens, "cost_usd": 0.0}
+    usage = (
+        None
+        if total_tokens is None
+        else {"total_tokens": total_tokens, "cost_usd": 0.0}
+    )
     return build_completion_event(
-        task_id="proj:spec-001", spec_id="spec-001", status=status,
-        issue_number=42, usage=usage,
+        task_id="proj:spec-001",
+        spec_id="spec-001",
+        status=status,
+        issue_number=42,
+        usage=usage,
     )
 
 

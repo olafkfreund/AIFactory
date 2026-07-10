@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 # FIXTURES
 # ============================================================================
 
+
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for test files."""
@@ -64,7 +65,7 @@ def mock_projects_json(temp_dir: Path, mock_project_dir: Path) -> Path:
                 "name": "Test Project",
                 "path": str(mock_project_dir),
                 "createdAt": 1704067200000,
-                "updatedAt": 1704067200000
+                "updatedAt": 1704067200000,
             }
         ]
     }
@@ -75,6 +76,7 @@ def mock_projects_json(temp_dir: Path, mock_project_dir: Path) -> Path:
 # ============================================================================
 # WORKFLOW 1: Profile Management
 # ============================================================================
+
 
 class TestProfileManagementWorkflow:
     """Test complete profile management lifecycle."""
@@ -94,26 +96,25 @@ class TestProfileManagementWorkflow:
         """
         # Setup: Create initial profiles file
         profiles_file = mock_settings_dir.parent / "claude-profiles.json"
-        profiles_data = {
-            "activeProfileId": None,
-            "profiles": []
-        }
+        profiles_data = {"activeProfileId": None, "profiles": []}
         profiles_file.write_text(json.dumps(profiles_data, indent=2))
 
-        with patch("apps.web-server.server.routes.settings.CLAUDE_PROFILES_FILE", profiles_file):
+        with patch(
+            "apps.web-server.server.routes.settings.CLAUDE_PROFILES_FILE", profiles_file
+        ):
             from apps.web_server.server.routes.settings import (
                 save_claude_profile,
                 set_claude_profile_token,
                 rename_claude_profile,
                 set_active_claude_profile,
-                retry_with_profile
+                retry_with_profile,
             )
 
             # Step 1: Create first profile
             profile_data = {
                 "name": "Work Account",
                 "email": "work@example.com",
-                "token": "sess-" + "x" * 40
+                "token": "sess-" + "x" * 40,
             }
             # Mock ClaudeProfile model
             mock_profile = MagicMock()
@@ -144,7 +145,7 @@ class TestProfileManagementWorkflow:
             profile_data_2 = {
                 "name": "Personal Account",
                 "email": "personal@example.com",
-                "token": "sk-ant-" + "y" * 40
+                "token": "sk-ant-" + "y" * 40,
             }
             mock_profile_2 = MagicMock()
             mock_profile_2.name = profile_data_2["name"]
@@ -175,7 +176,9 @@ class TestProfileManagementWorkflow:
             updated_data = json.loads(profiles_file.read_text())
             assert updated_data["activeProfileId"] == profile_id_2
 
-    def test_api_profile_management_workflow(self, temp_dir: Path, mock_settings_dir: Path):
+    def test_api_profile_management_workflow(
+        self, temp_dir: Path, mock_settings_dir: Path
+    ):
         """
         Test API profile management workflow:
         1. Create API profile
@@ -187,10 +190,7 @@ class TestProfileManagementWorkflow:
         """
         # Setup: Create initial API profiles file
         profiles_file = mock_settings_dir.parent / "api-profiles.json"
-        profiles_data = {
-            "activeProfileId": None,
-            "profiles": []
-        }
+        profiles_data = {"activeProfileId": None, "profiles": []}
         profiles_file.write_text(json.dumps(profiles_data, indent=2))
 
         # This workflow would be implemented similarly to the Claude profile workflow
@@ -202,14 +202,12 @@ class TestProfileManagementWorkflow:
 # WORKFLOW 2: Roadmap & Ideation
 # ============================================================================
 
+
 class TestRoadmapIdeationWorkflow:
     """Test complete roadmap and ideation lifecycle."""
 
     def test_ideation_lifecycle_workflow(
-        self,
-        temp_dir: Path,
-        mock_project_dir: Path,
-        mock_projects_json: Path
+        self, temp_dir: Path, mock_project_dir: Path, mock_projects_json: Path
     ):
         """
         Test complete ideation workflow:
@@ -233,7 +231,7 @@ class TestRoadmapIdeationWorkflow:
                     "status": "new",
                     "type": "feature",
                     "dismissed": False,
-                    "archived": False
+                    "archived": False,
                 },
                 {
                     "id": "idea-2",
@@ -241,7 +239,7 @@ class TestRoadmapIdeationWorkflow:
                     "status": "new",
                     "type": "enhancement",
                     "dismissed": False,
-                    "archived": False
+                    "archived": False,
                 },
                 {
                     "id": "idea-3",
@@ -249,10 +247,10 @@ class TestRoadmapIdeationWorkflow:
                     "status": "new",
                     "type": "feature",
                     "dismissed": False,
-                    "archived": False
-                }
+                    "archived": False,
+                },
             ],
-            "updatedAt": 1704067200000
+            "updatedAt": 1704067200000,
         }
         ideation_file.write_text(json.dumps(ideation_data, indent=2))
 
@@ -264,10 +262,10 @@ class TestRoadmapIdeationWorkflow:
                     "id": "feature-1",
                     "title": "Dark Mode Support",
                     "status": "planned",
-                    "priority": "high"
+                    "priority": "high",
                 }
             ],
-            "updatedAt": 1704067200000
+            "updatedAt": 1704067200000,
         }
         roadmap_file.write_text(json.dumps(roadmap_data, indent=2))
 
@@ -279,13 +277,15 @@ class TestRoadmapIdeationWorkflow:
                 dismiss_idea,
                 archive_idea,
                 delete_multiple_ideas,
-                update_feature_status
+                update_feature_status,
             )
 
             # Step 1: Accept first idea
             mock_status_request = MagicMock()
             mock_status_request.status = "accepted"
-            result1 = update_idea_status("test-project-1", "idea-1", mock_status_request)
+            result1 = update_idea_status(
+                "test-project-1", "idea-1", mock_status_request
+            )
             assert result1["success"] is True
 
             # Verify idea status updated
@@ -294,7 +294,9 @@ class TestRoadmapIdeationWorkflow:
 
             # Step 2: Reject second idea
             mock_status_request.status = "rejected"
-            result2 = update_idea_status("test-project-1", "idea-2", mock_status_request)
+            result2 = update_idea_status(
+                "test-project-1", "idea-2", mock_status_request
+            )
             assert result2["success"] is True
 
             # Step 3: Dismiss the rejected idea
@@ -328,7 +330,9 @@ class TestRoadmapIdeationWorkflow:
             # Step 6: Update feature status based on accepted idea
             mock_feature_request = MagicMock()
             mock_feature_request.status = "in_progress"
-            result6 = update_feature_status("test-project-1", "feature-1", mock_feature_request)
+            result6 = update_feature_status(
+                "test-project-1", "feature-1", mock_feature_request
+            )
             assert result6["success"] is True
 
             updated_roadmap = json.loads(roadmap_file.read_text())
@@ -338,6 +342,7 @@ class TestRoadmapIdeationWorkflow:
 # ============================================================================
 # WORKFLOW 3: GitLab Issue to MR
 # ============================================================================
+
 
 class TestGitLabWorkflow:
     """Test complete GitLab workflow from issue investigation to MR merge."""
@@ -350,7 +355,7 @@ class TestGitLabWorkflow:
         mock_glab,
         temp_dir: Path,
         mock_project_dir: Path,
-        mock_projects_json: Path
+        mock_projects_json: Path,
     ):
         """
         Test complete GitLab workflow:
@@ -373,7 +378,7 @@ class TestGitLabWorkflow:
             "state": "opened",
             "labels": ["bug", "priority:high"],
             "user": {"login": "developer1"},
-            "createdAt": "2024-01-01T10:00:00Z"
+            "createdAt": "2024-01-01T10:00:00Z",
         }
 
         mr_diff = """
@@ -396,19 +401,21 @@ diff --git a/auth.py b/auth.py
             mr_diff,  # get MR diff for review
             "Review posted",  # post review
             "MR approved",  # approve MR
-            "MR merged"  # merge MR
+            "MR merged",  # merge MR
         ]
 
         # Mock AI responses
         mock_ai_response = MagicMock()
-        mock_ai_response.content = json.dumps({
-            "summary": "OAuth token validation missing",
-            "issue_type": "bug",
-            "complexity": "simple",
-            "suggestions": ["Add null/empty check for OAuth token"],
-            "affected_areas": ["auth.py"],
-            "risks": ["Users cannot authenticate"]
-        })
+        mock_ai_response.content = json.dumps(
+            {
+                "summary": "OAuth token validation missing",
+                "issue_type": "bug",
+                "complexity": "simple",
+                "suggestions": ["Add null/empty check for OAuth token"],
+                "affected_areas": ["auth.py"],
+                "risks": ["Users cannot authenticate"],
+            }
+        )
         mock_ai_client.return_value.messages.create.return_value = mock_ai_response
 
         with patch("apps.web-server.server.routes.gitlab.load_projects") as mock_load:
@@ -421,7 +428,7 @@ diff --git a/auth.py b/auth.py
                 run_mr_review,
                 post_mr_review,
                 approve_merge_request,
-                merge_merge_request
+                merge_merge_request,
             )
 
             project_id = "test-project-1"
@@ -431,14 +438,18 @@ diff --git a/auth.py b/auth.py
             # Step 1: Investigate issue
             mock_investigate_request = MagicMock()
             mock_investigate_request.selectedCommentIds = None
-            result1 = investigate_gitlab_issue(project_id, issue_iid, mock_investigate_request)
+            result1 = investigate_gitlab_issue(
+                project_id, issue_iid, mock_investigate_request
+            )
             assert result1["issue"] is not None
             assert "analysis" in result1
 
             # Step 2: Update MR (after creation)
             mock_update_request = MagicMock()
             mock_update_request.title = "Fix: Add OAuth token validation"
-            mock_update_request.description = "Closes #123 - Adds null check for OAuth token"
+            mock_update_request.description = (
+                "Closes #123 - Adds null check for OAuth token"
+            )
             mock_update_request.labels = ["bug-fix", "security"]
             result2 = update_merge_request(project_id, mr_iid, mock_update_request)
             assert result2["success"] is True
@@ -468,6 +479,7 @@ diff --git a/auth.py b/auth.py
 # WORKFLOW 4: Project Setup
 # ============================================================================
 
+
 class TestProjectSetupWorkflow:
     """Test complete project onboarding and configuration."""
 
@@ -488,7 +500,9 @@ class TestProjectSetupWorkflow:
         (project_dir / ".git").mkdir()
         (project_dir / "package.json").write_text('{"name": "my-app"}')
 
-        with patch("apps.web-server.server.routes.projects.scan_for_projects") as mock_scan:
+        with patch(
+            "apps.web-server.server.routes.projects.scan_for_projects"
+        ) as mock_scan:
             # Mock scan results
             mock_scan.return_value = [
                 {
@@ -496,7 +510,7 @@ class TestProjectSetupWorkflow:
                     "path": str(project_dir),
                     "has_git": True,
                     "has_package_json": True,
-                    "has_magestic_ai": False
+                    "has_magestic_ai": False,
                 }
             ]
 
@@ -519,6 +533,7 @@ class TestProjectSetupWorkflow:
 # ============================================================================
 # WORKFLOW 5: Settings Configuration
 # ============================================================================
+
 
 class TestSettingsConfigurationWorkflow:
     """Test complete settings configuration workflow."""
@@ -553,10 +568,13 @@ class TestSettingsConfigurationWorkflow:
 # WORKFLOW 6: Error Handling & Recovery
 # ============================================================================
 
+
 class TestErrorHandlingWorkflows:
     """Test workflows that involve error handling and recovery."""
 
-    def test_rate_limit_recovery_workflow(self, temp_dir: Path, mock_settings_dir: Path):
+    def test_rate_limit_recovery_workflow(
+        self, temp_dir: Path, mock_settings_dir: Path
+    ):
         """
         Test rate limit recovery workflow:
         1. Attempt operation (e.g., generate ideation)
@@ -590,11 +608,14 @@ class TestErrorHandlingWorkflows:
 # WORKFLOW 7: Git Operations
 # ============================================================================
 
+
 class TestGitOperationsWorkflow:
     """Test git-related workflows."""
 
     @patch("apps.web-server.server.routes.git.run_git_command")
-    def test_git_workflow_management(self, mock_git, temp_dir: Path, mock_project_dir: Path):
+    def test_git_workflow_management(
+        self, mock_git, temp_dir: Path, mock_project_dir: Path
+    ):
         """
         Test git workflow:
         1. Create worktree for new feature

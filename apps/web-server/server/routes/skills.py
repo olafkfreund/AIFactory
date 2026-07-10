@@ -26,17 +26,25 @@ class SkillCategory(BaseModel):
 
     name: str = Field(..., description="Category directory name")
     count: int = Field(..., description="Number of skills in this category")
-    description: Optional[str] = Field(None, description="Optional category description")
+    description: Optional[str] = Field(
+        None, description="Optional category description"
+    )
 
 
 class SkillSummary(BaseModel):
     """Lightweight skill metadata, without full content."""
 
-    id: str = Field(..., description="Unique skill identifier: '{category}/{skill_name}'")
+    id: str = Field(
+        ..., description="Unique skill identifier: '{category}/{skill_name}'"
+    )
     name: str = Field(..., description="Skill file stem (e.g. 'alpine-js')")
     category: str = Field(..., description="Parent category name")
-    description: str = Field(..., description="First prose paragraph from the skill file")
-    source: Optional[str] = Field(None, description="Source URL extracted from skill metadata")
+    description: str = Field(
+        ..., description="First prose paragraph from the skill file"
+    )
+    source: Optional[str] = Field(
+        None, description="Source URL extracted from skill metadata"
+    )
 
 
 class SkillDetail(SkillSummary):
@@ -49,8 +57,12 @@ class SkillSuggestion(BaseModel):
     """A scored skill suggestion derived from a task description."""
 
     skill: SkillSummary
-    relevance_score: float = Field(..., ge=0.0, le=1.0, description="Relevance score (0-1)")
-    reason: str = Field(..., description="Human-readable explanation of why this skill was matched")
+    relevance_score: float = Field(
+        ..., ge=0.0, le=1.0, description="Relevance score (0-1)"
+    )
+    reason: str = Field(
+        ..., description="Human-readable explanation of why this skill was matched"
+    )
 
 
 class PaginatedSkillList(BaseModel):
@@ -189,8 +201,12 @@ async def search_skills(
     ),
 )
 async def suggest_skills(
-    task_description: str = Query(..., min_length=1, description="Task description text"),
-    limit: int = Query(10, ge=1, le=50, description="Maximum number of suggestions to return"),
+    task_description: str = Query(
+        ..., min_length=1, description="Task description text"
+    ),
+    limit: int = Query(
+        10, ge=1, le=50, description="Maximum number of suggestions to return"
+    ),
 ) -> list[SkillSuggestion]:
     """Return ranked skill suggestions based on a task description."""
     service = get_skills_service()

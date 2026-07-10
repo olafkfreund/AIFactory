@@ -51,6 +51,7 @@ def _make_request_stub(monkeypatch, response, captured=None):
     ``response`` can be a callable ``(method, path, **kwargs) -> Any``
     or a static return value.
     """
+
     async def stub(method, path, **kwargs):
         if captured is not None:
             captured.append({"method": method, "path": path, "kwargs": kwargs})
@@ -59,9 +60,7 @@ def _make_request_stub(monkeypatch, response, captured=None):
         return response
 
     # Both the import site and the module level need to see the stub.
-    monkeypatch.setattr(
-        "agents.tools_pkg.tools.task_control.request", stub
-    )
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", stub)
 
 
 def _content_text(result):
@@ -224,9 +223,7 @@ async def test_http_error_becomes_isError_content(tools_by_name, monkeypatch):
     async def raise_it(method, path, **kwargs):
         raise hc.MCPHTTPError("web-server not reachable at http://x — start it")
 
-    monkeypatch.setattr(
-        "agents.tools_pkg.tools.task_control.request", raise_it
-    )
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", raise_it)
     result = await tools_by_name["task_list"]({})
     assert result.get("isError") is True
     assert "not reachable" in _content_text(result)
@@ -238,9 +235,7 @@ async def test_write_error_does_not_silently_swallow(tools_by_name, monkeypatch)
     async def raise_it(method, path, **kwargs):
         raise hc.MCPHTTPError("token rejected at ~/.aifactory/.token")
 
-    monkeypatch.setattr(
-        "agents.tools_pkg.tools.task_control.request", raise_it
-    )
+    monkeypatch.setattr("agents.tools_pkg.tools.task_control.request", raise_it)
     result = await tools_by_name["task_start"]({"task_id": "t8"})
     assert result.get("isError") is True
     assert "token rejected" in _content_text(result)
@@ -343,7 +338,11 @@ async def test_create_and_run_forwards_provenance(tools_by_name, monkeypatch):
             "project_id": "p1",
             "title": "Add login",
             "description": "Build a login form",
-            "provenance": {"session_id": "sess-1", "issue_number": 42, "source": "pfactory"},
+            "provenance": {
+                "session_id": "sess-1",
+                "issue_number": 42,
+                "source": "pfactory",
+            },
             "confirm": True,
         }
     )
@@ -379,7 +378,9 @@ async def test_recover_with_confirm(tools_by_name, monkeypatch):
 async def test_create_pr_with_confirm(tools_by_name, monkeypatch):
     captured: list = []
     _make_request_stub(
-        monkeypatch, {"pr_url": "https://github.com/x/y/pull/1", "pr_number": 1}, captured
+        monkeypatch,
+        {"pr_url": "https://github.com/x/y/pull/1", "pr_number": 1},
+        captured,
     )
     result = await tools_by_name["task_create_pr"](
         {"task_id": "t1", "title": "Add X", "confirm": True}
@@ -407,9 +408,7 @@ async def test_merge_pr_with_confirm(tools_by_name, monkeypatch):
 async def test_task_get_diff_truncates_at_max_lines(tools_by_name, monkeypatch):
     big_diff = "\n".join(f"+ line {i}" for i in range(5000))
     _make_request_stub(monkeypatch, {"diff": big_diff})
-    result = await tools_by_name["task_get_diff"](
-        {"task_id": "t1", "max_lines": 100}
-    )
+    result = await tools_by_name["task_get_diff"]({"task_id": "t1", "max_lines": 100})
     payload = json.loads(_content_text(result))
     assert payload["truncated"] is True
     assert payload["lines"] == 101  # 100 lines + truncation marker

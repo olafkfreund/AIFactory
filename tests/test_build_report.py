@@ -38,7 +38,12 @@ def _write_parallel_report(spec_dir: Path) -> None:
                         "concurrency": 3,
                         "duration_s": 10.0,
                     },
-                    {"wave": 2, "subtask_ids": ["st4"], "concurrency": 1, "duration_s": 5.0},
+                    {
+                        "wave": 2,
+                        "subtask_ids": ["st4"],
+                        "concurrency": 1,
+                        "duration_s": 5.0,
+                    },
                 ],
             }
         )

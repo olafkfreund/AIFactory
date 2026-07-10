@@ -29,7 +29,8 @@ def test_proxy_list_projects_returns_all_unfiltered(monkeypatch):
     }
     monkeypatch.setattr(projects_mod, "load_projects", lambda: fake)
     monkeypatch.setattr(
-        projects_mod, "project_to_response",
+        projects_mod,
+        "project_to_response",
         lambda pid, pdata: {"id": pid, "name": pdata["name"]},
     )
 

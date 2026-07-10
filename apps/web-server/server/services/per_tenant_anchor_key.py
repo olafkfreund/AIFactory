@@ -48,7 +48,9 @@ from ..services.audit_anchor import generate_new_key
 logger = logging.getLogger(__name__)
 
 # Feature flag — checked at call-site; callers should guard before calling.
-_PER_TENANT_ENABLED = os.environ.get("AUDIT_ANCHOR_PER_TENANT", "false").lower() == "true"
+_PER_TENANT_ENABLED = (
+    os.environ.get("AUDIT_ANCHOR_PER_TENANT", "false").lower() == "true"
+)
 
 # Vault path pattern. Flat (not nested) per design open-question #1 resolution.
 _VAULT_KEY_PATH_TMPL = "aifactory/orgs/{org_uuid}/anchor-key-wrapped"
@@ -85,7 +87,8 @@ async def issue_tenant_anchor_key(
     if existing is not None:
         logger.debug(
             "per-tenant anchor key already exists for org=%s (v%d); skipping issuance",
-            org_id, existing.version,
+            org_id,
+            existing.version,
         )
         return False
 
@@ -102,7 +105,8 @@ async def issue_tenant_anchor_key(
 
     logger.info(
         "per-tenant anchor key issued: org=%s version=%d",
-        org_id, key_row.version,
+        org_id,
+        key_row.version,
     )
 
     # Step 5: mirror to Vault (best-effort — DB row is authoritative).
@@ -115,7 +119,8 @@ async def issue_tenant_anchor_key(
             logger.warning(
                 "per-tenant anchor key: Vault write failed for org=%s; "
                 "DB row is the authoritative copy; reconciler will retry",
-                org_id, exc_info=True,
+                org_id,
+                exc_info=True,
             )
 
     # Step 6: upsert tenant_audit_state.  All three core steps (generate,
@@ -128,7 +133,8 @@ async def issue_tenant_anchor_key(
 
 
 async def _active_key_for_org(
-    db: AsyncSession, org_id: str,
+    db: AsyncSession,
+    org_id: str,
 ) -> AuditSigningKey | None:
     """Return the active (retired_at IS NULL) signing key for an org, or None."""
     stmt = (
@@ -217,8 +223,8 @@ async def ensure_vault_key_written(
     key_row = await _active_key_for_org(db, org_id)
     if key_row is None:
         logger.warning(
-            "ensure_vault_key_written: no active key for org=%s; "
-            "nothing to mirror", org_id,
+            "ensure_vault_key_written: no active key for org=%s; nothing to mirror",
+            org_id,
         )
         return
 
@@ -231,5 +237,6 @@ async def ensure_vault_key_written(
     except Exception:
         logger.warning(
             "per-tenant anchor key: Vault write retry failed for org=%s",
-            org_id, exc_info=True,
+            org_id,
+            exc_info=True,
         )

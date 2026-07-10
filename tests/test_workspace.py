@@ -87,7 +87,9 @@ class TestHasUncommittedChanges:
     def test_staged_file_has_changes(self, temp_git_repo: Path):
         """Staged file counts as changes."""
         (temp_git_repo / "README.md").write_text("modified")
-        subprocess.run(["git", "add", "README.md"], cwd=temp_git_repo, capture_output=True)
+        subprocess.run(
+            ["git", "add", "README.md"], cwd=temp_git_repo, capture_output=True
+        )
 
         result = has_uncommitted_changes(temp_git_repo)
         assert result is True
@@ -107,7 +109,8 @@ class TestGetCurrentBranch:
         """Gets feature branch name."""
         subprocess.run(
             ["git", "checkout", "-b", "feature/test-branch"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         branch = get_current_branch(temp_git_repo)
@@ -241,8 +244,7 @@ class TestWorkspaceIntegration:
         (working_dir / "feature.py").write_text("# New feature\n")
         subprocess.run(["git", "add", "."], cwd=working_dir, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Add feature"],
-            cwd=working_dir, capture_output=True
+            ["git", "commit", "-m", "Add feature"], cwd=working_dir, capture_output=True
         )
 
         # Merge back using merge_worktree
@@ -253,7 +255,8 @@ class TestWorkspaceIntegration:
         # Check changes are in main
         subprocess.run(
             ["git", "checkout", manager.base_branch],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
         assert (temp_git_repo / "feature.py").exists()
 
@@ -273,8 +276,7 @@ class TestWorkspaceCleanup:
         (working_dir / "test.py").write_text("test")
         subprocess.run(["git", "add", "."], cwd=working_dir, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Test"],
-            cwd=working_dir, capture_output=True
+            ["git", "commit", "-m", "Test"], cwd=working_dir, capture_output=True
         )
 
         # Merge with cleanup
@@ -295,8 +297,7 @@ class TestWorkspaceCleanup:
         (working_dir / "test.py").write_text("test")
         subprocess.run(["git", "add", "."], cwd=working_dir, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Test"],
-            cwd=working_dir, capture_output=True
+            ["git", "commit", "-m", "Test"], cwd=working_dir, capture_output=True
         )
 
         # Merge without cleanup

@@ -194,9 +194,7 @@ async def delete_git_credential(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(GitCredential).where(GitCredential.id == cred_id)
-    )
+    result = await db.execute(select(GitCredential).where(GitCredential.id == cred_id))
     cred = result.scalar_one_or_none()
     if cred is None:
         raise HTTPException(

@@ -106,9 +106,7 @@ class TestBuildCachedSystemBlocks:
 
     def test_ttl_1h_produces_correct_cache_control(self) -> None:
         """1h TTL must produce {"type": "ephemeral", "ttl": "1h"} — not "ephemeral_1h"."""
-        result = build_cached_system_blocks(
-            BASE, claude_md_content=CLAUDE_MD, ttl="1h"
-        )
+        result = build_cached_system_blocks(BASE, claude_md_content=CLAUDE_MD, ttl="1h")
         cc = result[0]["cache_control"]
         assert cc == {"type": "ephemeral", "ttl": "1h"}, (
             f"Expected ephemeral+1h TTL shape but got: {cc!r}"
@@ -124,7 +122,9 @@ class TestBuildCachedSystemBlocks:
         md_idx = texts.index(CLAUDE_MD)
         ctx_idx = texts.index(PROJECT_CTX)
         assert md_idx < base_idx, "CLAUDE.md block must come before base_instructions"
-        assert ctx_idx < base_idx, "project_context block must come before base_instructions"
+        assert ctx_idx < base_idx, (
+            "project_context block must come before base_instructions"
+        )
 
     def test_empty_string_claude_md_treated_as_absent(self) -> None:
         """An empty string for claude_md_content must not add a cached block."""
@@ -269,6 +269,7 @@ class TestArchitectAmendments:
     ) -> None:
         # Reset state — the module-level _PREFIX_HASHES is shared across tests.
         from core.cache import _PREFIX_HASHES
+
         _PREFIX_HASHES.pop("/tmp/project-hash-test", None)
 
         caplog.set_level("WARNING", logger="core.cache")
@@ -287,7 +288,9 @@ class TestArchitectAmendments:
             claude_md_content="# version 2 — edited",
             project_dir="/tmp/project-hash-test",
         )
-        second_warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
+        second_warnings = [
+            r.message for r in caplog.records if r.levelname == "WARNING"
+        ]
 
         assert not any("prefix changed" in m.lower() for m in first_warnings), (
             f"First call should not warn about prefix change; got: {first_warnings}"
@@ -300,15 +303,18 @@ class TestArchitectAmendments:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         from core.cache import _PREFIX_HASHES
+
         _PREFIX_HASHES.pop("/tmp/project-hash-stable", None)
 
         caplog.set_level("WARNING", logger="core.cache")
-        build_cached_system_str(BASE, claude_md_content="stable",
-                                project_dir="/tmp/project-hash-stable")
+        build_cached_system_str(
+            BASE, claude_md_content="stable", project_dir="/tmp/project-hash-stable"
+        )
         caplog.clear()
         # Identical content — no warning.
-        build_cached_system_str(BASE, claude_md_content="stable",
-                                project_dir="/tmp/project-hash-stable")
+        build_cached_system_str(
+            BASE, claude_md_content="stable", project_dir="/tmp/project-hash-stable"
+        )
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert all("prefix changed" not in r.message.lower() for r in warnings), (
             f"Identical static prefix must not trigger change warning; got: "
@@ -317,11 +323,13 @@ class TestArchitectAmendments:
 
     def test_ttl_invalid_value_raises_value_error(self) -> None:
         from core.cache import _make_cache_control
+
         with pytest.raises(ValueError, match="Invalid ttl"):
             _make_cache_control("forever")  # type: ignore[arg-type]
 
     def test_ttl_valid_values_accepted(self) -> None:
         from core.cache import _make_cache_control
+
         # Both must succeed without raising.
         assert _make_cache_control("ephemeral") == {"type": "ephemeral"}
         assert _make_cache_control("1h") == {"type": "ephemeral", "ttl": "1h"}

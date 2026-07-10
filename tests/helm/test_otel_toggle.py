@@ -35,7 +35,8 @@ def _render(chart_dir, set_values: list[str] | None = None) -> list[dict]:
 
 
 def _render_expect_error(
-    chart_dir, set_values: list[str] | None = None,
+    chart_dir,
+    set_values: list[str] | None = None,
 ) -> str:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
@@ -123,7 +124,9 @@ class TestOtelOnMinimal:
         assert arg["value"] in ("1", "1.0")
 
     def test_no_headers_secret_ref_when_unset(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -148,7 +151,9 @@ class TestOtelOnWithHeadersSecret:
         )
 
     def test_headers_env_from_secret_ref(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -159,7 +164,9 @@ class TestOtelOnWithHeadersSecret:
         assert ref["key"] == "OTEL_EXPORTER_OTLP_HEADERS"
 
     def test_http_protobuf_protocol_passes_through(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs_on(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -177,11 +184,18 @@ class TestOtelSamplingRatioZero:
         # `--set-json` is required because `--set foo=0.0` always
         # produces a string and the schema demands a number.
         cmd = [
-            "helm", "template", "test-release", str(chart_dir),
-            "--set", "postgres.externalSecretName=test-pg",
-            "--set", "otel.enabled=true",
-            "--set", "otel.endpoint=http://tempo:4317",
-            "--set-json", "otel.samplingRatio=0.0",
+            "helm",
+            "template",
+            "test-release",
+            str(chart_dir),
+            "--set",
+            "postgres.externalSecretName=test-pg",
+            "--set",
+            "otel.enabled=true",
+            "--set",
+            "otel.endpoint=http://tempo:4317",
+            "--set-json",
+            "otel.samplingRatio=0.0",
         ]
         out = subprocess.run(cmd, capture_output=True, text=True, check=True)
         docs = [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -197,7 +211,9 @@ class TestOtelValidation:
     """Required-validator + headers-without-enabled trap."""
 
     def test_enabled_without_endpoint_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -212,7 +228,9 @@ class TestOtelValidation:
         )
 
     def test_headers_secret_without_enabled_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Operator typo trap: setting headersSecretName without
         enabling OTel is almost certainly a misconfiguration — the

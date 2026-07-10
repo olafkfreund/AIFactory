@@ -62,14 +62,36 @@ def db_factory():
         async with SessionLocal() as s:
             s.add_all(
                 [
-                    User(id="alice", email="a@x", name="A", password_hash="x",
-                         role="user", is_active=True),
-                    User(id="bob", email="b@x", name="B", password_hash="x",
-                         role="user", is_active=True),
-                    Organization(id="org-1", name="Org1", slug="org1",
-                                 owner_id="alice", plan="free"),
-                    Organization(id="org-2", name="Org2", slug="org2",
-                                 owner_id="bob", plan="free"),
+                    User(
+                        id="alice",
+                        email="a@x",
+                        name="A",
+                        password_hash="x",
+                        role="user",
+                        is_active=True,
+                    ),
+                    User(
+                        id="bob",
+                        email="b@x",
+                        name="B",
+                        password_hash="x",
+                        role="user",
+                        is_active=True,
+                    ),
+                    Organization(
+                        id="org-1",
+                        name="Org1",
+                        slug="org1",
+                        owner_id="alice",
+                        plan="free",
+                    ),
+                    Organization(
+                        id="org-2",
+                        name="Org2",
+                        slug="org2",
+                        owner_id="bob",
+                        plan="free",
+                    ),
                     OrgMember(org_id="org-1", user_id="alice", role="member"),
                     OrgMember(org_id="org-2", user_id="bob", role="owner"),
                 ]
@@ -93,14 +115,18 @@ def patch_projects(monkeypatch):
 
 def _state(project_id):
     return SessionState(
-        spec_id="spec-x", session_name="s", fifo_path=Path("/tmp/x"),
+        spec_id="spec-x",
+        session_name="s",
+        fifo_path=Path("/tmp/x"),
         project_id=project_id,
     )
 
 
 async def _authorize(user, project_id, SessionLocal, role="member"):
     async with SessionLocal() as db:
-        return await bridge._authorize_console(user, _state(project_id), db, minimum_role=role)
+        return await bridge._authorize_console(
+            user, _state(project_id), db, minimum_role=role
+        )
 
 
 class TestConsoleAuthz:
@@ -110,7 +136,9 @@ class TestConsoleAuthz:
         assert org_id == "org-1"
 
     @pytest.mark.asyncio
-    async def test_non_member_cannot_reach_other_users_console(self, db_factory, patch_projects):
+    async def test_non_member_cannot_reach_other_users_console(
+        self, db_factory, patch_projects
+    ):
         # THE e2e property: bob (org-2) cannot attach to p1 (alice's org-1).
         with pytest.raises(HTTPException) as ei:
             await _authorize(BOB, "p1", db_factory, role="viewer")
@@ -129,7 +157,9 @@ class TestConsoleAuthz:
         assert await _authorize(SERVICE, None, db_factory, role="viewer") is None
 
     @pytest.mark.asyncio
-    async def test_authz_keys_on_session_project_not_path(self, db_factory, patch_projects):
+    async def test_authz_keys_on_session_project_not_path(
+        self, db_factory, patch_projects
+    ):
         # Even though bob owns *some* project, the session belongs to p1 (org-1);
         # authz keys on the session's project_id, so a borrowed prefix can't help.
         with pytest.raises(HTTPException):

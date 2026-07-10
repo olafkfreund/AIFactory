@@ -67,10 +67,12 @@ def app_with_in_memory_exporter(monkeypatch):
 
     # Stop init_tracing from clobbering our exporter on lifespan.
     from server.observability import tracing as tm
+
     tm._tracer_provider = trace.get_tracer_provider()
     tm._initialized = True
 
     from server.main import create_app
+
     app = create_app()
     return app, exporter
 
@@ -88,9 +90,7 @@ def test_http_request_creates_a_span(app_with_in_memory_exporter):
     with TestClient(app) as client:
         resp = client.get("/api/health")
 
-    assert resp.status_code == 200, (
-        f"/api/health should be 200; got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"/api/health should be 200; got {resp.status_code}"
 
     spans = exporter.get_finished_spans()
     # FastAPI instrumentor names HTTP spans after their route. The
@@ -98,7 +98,8 @@ def test_http_request_creates_a_span(app_with_in_memory_exporter):
     # emit a few internal spans alongside it; we just need ours to
     # exist).
     matching = [
-        s for s in spans
+        s
+        for s in spans
         if "health" in s.name or s.attributes.get("http.target") == "/api/health"
     ]
     assert matching, (

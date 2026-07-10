@@ -76,7 +76,9 @@ class SamlReplayCache:
         if exp_epoch <= now:
             logger.debug(
                 "replay cache: rejecting expired assertion id=%s exp=%s now=%s",
-                assertion_id, exp_epoch, now,
+                assertion_id,
+                exp_epoch,
+                now,
             )
             return False
 
@@ -87,7 +89,8 @@ class SamlReplayCache:
                 logger.warning(
                     "replay cache: REJECTED replay of assertion id=%s "
                     "(seen previously, original expiry=%s)",
-                    assertion_id, self._entries[assertion_id],
+                    assertion_id,
+                    self._entries[assertion_id],
                 )
                 return False
 
@@ -100,7 +103,9 @@ class SamlReplayCache:
                     "replay cache: at capacity (%d); evicted LRU id=%s "
                     "before inserting id=%s. Consider raising max_size if "
                     "this fires under steady-state load.",
-                    self._max_size, evicted_id, assertion_id,
+                    self._max_size,
+                    evicted_id,
+                    assertion_id,
                 )
 
             self._entries[assertion_id] = exp_epoch

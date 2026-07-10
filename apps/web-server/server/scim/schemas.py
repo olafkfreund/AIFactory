@@ -30,13 +30,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
 SCIM_GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
-SCIM_LIST_RESPONSE_SCHEMA = (
-    "urn:ietf:params:scim:api:messages:2.0:ListResponse"
-)
+SCIM_LIST_RESPONSE_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 SCIM_ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
-SCIM_PATCH_OP_SCHEMA = (
-    "urn:ietf:params:scim:api:messages:2.0:PatchOp"
-)
+SCIM_PATCH_OP_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 
 
 class ScimMeta(BaseModel):

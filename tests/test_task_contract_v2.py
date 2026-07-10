@@ -37,13 +37,21 @@ def _plan(execution: dict | None = None, tfactory: dict | None = None) -> dict:
         "contract_version": "2",
         "feature": "rate limiting",
         "workflow_type": "feature",
-        "phases": [{
-            "id": "p1", "name": "Modules", "parallel_safe": True,
-            "subtasks": [
-                {"id": "st1", "description": "middleware", "status": "pending",
-                 "files_to_create": ["app/middleware/ratelimit.py"]},
-            ],
-        }],
+        "phases": [
+            {
+                "id": "p1",
+                "name": "Modules",
+                "parallel_safe": True,
+                "subtasks": [
+                    {
+                        "id": "st1",
+                        "description": "middleware",
+                        "status": "pending",
+                        "files_to_create": ["app/middleware/ratelimit.py"],
+                    },
+                ],
+            }
+        ],
     }
     if execution is not None:
         p["execution"] = execution
@@ -54,11 +62,14 @@ def _plan(execution: dict | None = None, tfactory: dict | None = None) -> dict:
 
 def _signed(plan: dict) -> dict:
     plan = json.loads(json.dumps(plan))
-    plan[APPROVAL_KEY] = sign_plan(plan, key=KEY, approved_by="pfactory", approval_timestamp=TS)
+    plan[APPROVAL_KEY] = sign_plan(
+        plan, key=KEY, approved_by="pfactory", approval_timestamp=TS
+    )
     return plan
 
 
 # ---- contract_version 2 (#425) -------------------------------------------
+
 
 def test_version_2_is_supported():
     assert "2" in SUPPORTED_CONTRACT_VERSIONS and "1" in SUPPORTED_CONTRACT_VERSIONS
@@ -76,17 +87,22 @@ def test_signed_v2_plan_verifies_and_signature_covers_execution():
 
 # ---- execution profile mapping (#426) ------------------------------------
 
+
 def test_execution_profile_to_metadata_maps_keys():
-    meta = execution_profile_to_metadata({
-        "model": "claude-sonnet-4-6",
-        "phase_models": {"coding": "sonnet"},
-        "phase_thinking": {"qa": "high"},
-        "parallel": True, "workers": 4, "complexity": "standard",
-        "review_tier": "async",
-        "skills": [{"id": "python/fastapi"}],
-        "skip_planning": True,
-        "provider": "claude",  # unmapped — ignored
-    })
+    meta = execution_profile_to_metadata(
+        {
+            "model": "claude-sonnet-4-6",
+            "phase_models": {"coding": "sonnet"},
+            "phase_thinking": {"qa": "high"},
+            "parallel": True,
+            "workers": 4,
+            "complexity": "standard",
+            "review_tier": "async",
+            "skills": [{"id": "python/fastapi"}],
+            "skip_planning": True,
+            "provider": "claude",  # unmapped — ignored
+        }
+    )
     assert meta["model"] == "claude-sonnet-4-6"
     assert meta["phaseModels"] == {"coding": "sonnet"}
     assert meta["phaseThinking"] == {"qa": "high"}
@@ -114,7 +130,9 @@ def test_execution_profile_maps_budget_usd(tmp_path):
 
 def test_apply_execution_profile_writes_and_merges(tmp_path):
     (tmp_path / "task_metadata.json").write_text(json.dumps({"baseBranch": "dev"}))
-    written = apply_execution_profile(tmp_path, _plan(execution={"parallel": True, "workers": 3}))
+    written = apply_execution_profile(
+        tmp_path, _plan(execution={"parallel": True, "workers": 3})
+    )
     assert written == {"parallel": True, "workers": 3}
     meta = json.loads((tmp_path / "task_metadata.json").read_text())
     assert meta["parallel"] is True and meta["workers"] == 3
@@ -128,13 +146,21 @@ def test_apply_execution_profile_noop_without_block(tmp_path):
 
 # ---- end-to-end ingest (#425/#426/#427) ----------------------------------
 
+
 def test_ingest_v2_installs_plan_and_task_metadata(tmp_path):
     spec_dir = tmp_path / "spec"
-    plan = _signed(_plan(
-        execution={"model": "claude-sonnet-4-6", "parallel": True, "workers": 4,
-                   "complexity": "standard", "skip_planning": True},
-        tfactory={"lanes": ["unit"]},
-    ))
+    plan = _signed(
+        _plan(
+            execution={
+                "model": "claude-sonnet-4-6",
+                "parallel": True,
+                "workers": 4,
+                "complexity": "standard",
+                "skip_planning": True,
+            },
+            tfactory={"lanes": ["unit"]},
+        )
+    )
     result = ingest_trusted_plan(spec_dir, plan, keyring=KEYRING)
     assert result.ok, result.reasons
     # plan installed verbatim (tfactory block preserved for the TFactory handover)
@@ -149,7 +175,7 @@ def test_ingest_v2_installs_plan_and_task_metadata(tmp_path):
 
 def test_ingest_v1_plan_still_works_no_metadata(tmp_path):
     spec_dir = tmp_path / "spec"
-    plan = _plan()                       # no execution block
+    plan = _plan()  # no execution block
     plan["contract_version"] = "1"
     plan = _signed(plan)
     result = ingest_trusted_plan(spec_dir, plan, keyring=KEYRING)

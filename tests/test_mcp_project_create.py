@@ -33,6 +33,7 @@ if isinstance(sys.modules.get("claude_agent_sdk"), MagicMock):
 def _get_project_create_tool():
     """Return the SdkMcpTool wrapper for project_create from the registry."""
     from agents.tools_pkg.tools.task_control import create_task_control_tools
+
     for t in create_task_control_tools():
         if t.name == "project_create":
             return t
@@ -74,6 +75,7 @@ async def test_project_create_confirm_gate_blocks_without_confirm():
     tool = _get_project_create_tool()
     result = await tool.handler({"git_url": "https://example.test/me/r.git"})
     import json
+
     body = json.loads(result["content"][0]["text"])
     assert body["requires_confirmation"] is True
     assert body["verb"] == "create_project"
@@ -130,6 +132,7 @@ async def test_project_create_clone_mode_posts_gitUrl():
         "name": "r",
     }
     import json
+
     body = json.loads(result["content"][0]["text"])
     assert body["created"] is True
     assert body["project_id"] == "proj-xyz"
@@ -148,6 +151,7 @@ async def test_project_create_local_mode_posts_path():
         return {"id": "proj-local", "path": "/tmp/x"}
 
     import agents.tools_pkg.tools.task_control as tc
+
     original = getattr(tc, "request", None)
     tc.request = AsyncMock(side_effect=fake_request)
     try:

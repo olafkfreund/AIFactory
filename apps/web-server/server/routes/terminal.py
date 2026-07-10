@@ -99,7 +99,9 @@ class CreateTerminalWorktreeRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     terminalId: str = Field(..., description="Terminal ID")
-    name: str = Field(..., description="Worktree name (lowercase, alphanumeric, dashes, underscores)")
+    name: str = Field(
+        ..., description="Worktree name (lowercase, alphanumeric, dashes, underscores)"
+    )
     taskId: str | None = Field(None, description="Optional task ID association")
     createGitBranch: bool = Field(True, description="Whether to create a git branch")
     projectPath: str = Field(..., description="Project path")
@@ -140,8 +142,7 @@ async def list_terminals():
     settings = get_settings()
 
     terminals = [
-        TerminalInfo(**session_dict)
-        for session_dict in manager.list_sessions()
+        TerminalInfo(**session_dict) for session_dict in manager.list_sessions()
     ]
 
     return TerminalListResponse(
@@ -285,7 +286,9 @@ async def clear_terminal_sessions(project: str | None = None):
                     projects_list = projects_data
 
                 for proj in projects_list:
-                    proj_path = Path(proj.get("path", "") if isinstance(proj, dict) else proj)
+                    proj_path = Path(
+                        proj.get("path", "") if isinstance(proj, dict) else proj
+                    )
                     sessions_dir = proj_path / ".aifactory" / "terminal-sessions"
                     if sessions_dir.exists():
                         dirs_to_clear.append(sessions_dir)
@@ -309,8 +312,8 @@ async def clear_terminal_sessions(project: str | None = None):
         "success": True,
         "data": {
             "cleared": cleared_count,
-            "message": f"Cleared {cleared_count} terminal session(s)"
-        }
+            "message": f"Cleared {cleared_count} terminal session(s)",
+        },
     }
 
     if errors:
@@ -368,7 +371,9 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest):
             create_git_branch=request.createGitBranch,
             base_branch=request.baseBranch,
         )
-        return TerminalWorktreeResult(success=True, config=TerminalWorktreeConfig(**config))
+        return TerminalWorktreeResult(
+            success=True, config=TerminalWorktreeConfig(**config)
+        )
     except ValueError as e:
         # Validation errors (invalid name, already exists, etc.)
         return TerminalWorktreeResult(success=False, error=str(e))
@@ -382,9 +387,7 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest):
 
 @router.delete("/worktrees/{name}")
 async def remove_terminal_worktree(
-    name: str,
-    project: str = Query(...),
-    deleteBranch: bool = Query(False)
+    name: str, project: str = Query(...), deleteBranch: bool = Query(False)
 ):
     """Remove a terminal worktree.
 
@@ -493,7 +496,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Terminal {terminal_id} not found"
+            detail=f"Terminal {terminal_id} not found",
         )
 
     try:
@@ -502,7 +505,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
         if not isinstance(buffer_content, str):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Buffer content must be a string"
+                detail="Buffer content must be a string",
             )
 
         # Get project ID from request or use default
@@ -556,7 +559,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
             "message": "Terminal buffer saved successfully",
             "sessionFile": str(session_file),
             "size": file_size,
-            "timestamp": session_data["timestamp"]
+            "timestamp": session_data["timestamp"],
         }
 
     except HTTPException:
@@ -565,7 +568,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save terminal buffer: {str(e)}"
+            detail=f"Failed to save terminal buffer: {str(e)}",
         )
 
 

@@ -192,7 +192,9 @@ def test_usage_round_trip(monkeypatch, tmp_path):
     assert wf.maybe_fetch_usage(cp_spec, "042-x") is True
     import json as _json
 
-    assert _json.loads((cp_spec / "token_usage.json").read_text())["total_tokens"] == 123
+    assert (
+        _json.loads((cp_spec / "token_usage.json").read_text())["total_tokens"] == 123
+    )
 
 
 def test_fetch_usage_noop_when_present(monkeypatch, tmp_path):

@@ -84,7 +84,9 @@ class FakeWorld:
             route_low_medium=self.route_low_medium,
             route_hard=self.route_hard,
             mark_processed=partial(processed_store.mark_processed, path=self.db_path),
-            unmark_processed=partial(processed_store.unmark_processed, path=self.db_path),
+            unmark_processed=partial(
+                processed_store.unmark_processed, path=self.db_path
+            ),
         )
 
 

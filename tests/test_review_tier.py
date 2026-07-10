@@ -17,7 +17,11 @@ from review_tier import (
 
 
 def _plan(*subtasks: dict) -> dict:
-    return {"feature": "x", "workflow_type": "feature", "phases": [{"id": "p1", "name": "P", "subtasks": list(subtasks)}]}
+    return {
+        "feature": "x",
+        "workflow_type": "feature",
+        "phases": [{"id": "p1", "name": "P", "subtasks": list(subtasks)}],
+    }
 
 
 def _st(sid, create=None, modify=None):

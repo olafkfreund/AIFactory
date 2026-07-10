@@ -50,8 +50,10 @@ def upgrade() -> None:
     with op.batch_alter_table("organizations") as batch:
         batch.add_column(
             sa.Column(
-                "allowed_models", sa.JSON,
-                nullable=False, server_default='["*"]',
+                "allowed_models",
+                sa.JSON,
+                nullable=False,
+                server_default='["*"]',
             ),
         )
 

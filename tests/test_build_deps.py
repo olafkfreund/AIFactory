@@ -12,7 +12,9 @@ def _write(p: Path, text: str) -> None:
     p.write_text(text, encoding="utf-8")
 
 
-_TESTCLIENT = "from fastapi.testclient import TestClient\n\ndef test_root():\n    pass\n"
+_TESTCLIENT = (
+    "from fastapi.testclient import TestClient\n\ndef test_root():\n    pass\n"
+)
 
 
 def test_flags_testclient_without_httpx(tmp_path: Path) -> None:

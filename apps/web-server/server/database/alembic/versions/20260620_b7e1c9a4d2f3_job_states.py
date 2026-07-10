@@ -39,24 +39,33 @@ def upgrade() -> None:
     op.create_table(
         "job_states",
         sa.Column(
-            "schema_version", sa.String(length=8),
-            nullable=False, server_default="1",
+            "schema_version",
+            sa.String(length=8),
+            nullable=False,
+            server_default="1",
         ),
         sa.Column("job_id", sa.String(length=255), primary_key=True),
         sa.Column("correlation_key", sa.String(length=255), nullable=True),
         sa.Column(
-            "service", sa.String(length=16),
-            nullable=False, server_default="aifactory",
+            "service",
+            sa.String(length=16),
+            nullable=False,
+            server_default="aifactory",
         ),
         sa.Column(
-            "kind", sa.String(length=16),
-            nullable=False, server_default="build",
+            "kind",
+            sa.String(length=16),
+            nullable=False,
+            server_default="build",
         ),
         sa.Column("lifecycle_state", sa.String(length=16), nullable=False),
         sa.Column("service_status", sa.String(length=64), nullable=True),
         sa.Column("phase", sa.String(length=64), nullable=True),
         sa.Column(
-            "attempt", sa.Integer, nullable=False, server_default="1",
+            "attempt",
+            sa.Integer,
+            nullable=False,
+            server_default="1",
         ),
         sa.Column("admission", sa.JSON, nullable=True),
         sa.Column("worker_ref", sa.JSON, nullable=True),
@@ -65,12 +74,16 @@ def upgrade() -> None:
         sa.Column("usage", sa.JSON, nullable=True),
         sa.Column("error", sa.Text, nullable=True),
         sa.Column(
-            "created_at", sa.DateTime,
-            nullable=False, server_default=sa.func.now(),
+            "created_at",
+            sa.DateTime,
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column(
-            "updated_at", sa.DateTime,
-            nullable=False, server_default=sa.func.now(),
+            "updated_at",
+            sa.DateTime,
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column("ended_at", sa.DateTime, nullable=True),
     )
@@ -78,19 +91,23 @@ def upgrade() -> None:
     # columns so the FOR UPDATE count stays cheap as terminal history grows.
     op.create_index(
         "ix_job_states_service_lifecycle",
-        "job_states", ["service", "lifecycle_state"],
+        "job_states",
+        ["service", "lifecycle_state"],
     )
     op.create_index(
         "ix_job_states_correlation_key",
-        "job_states", ["correlation_key"],
+        "job_states",
+        ["correlation_key"],
     )
 
 
 def downgrade() -> None:
     op.drop_index(
-        "ix_job_states_correlation_key", table_name="job_states",
+        "ix_job_states_correlation_key",
+        table_name="job_states",
     )
     op.drop_index(
-        "ix_job_states_service_lifecycle", table_name="job_states",
+        "ix_job_states_service_lifecycle",
+        table_name="job_states",
     )
     op.drop_table("job_states")

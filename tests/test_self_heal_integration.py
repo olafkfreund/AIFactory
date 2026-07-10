@@ -25,24 +25,36 @@ def _enable(monkeypatch):
 
 # ---- flag ----------------------------------------------------------------
 
+
 def test_flag_default_off(monkeypatch):
     monkeypatch.delenv("AIFACTORY_SELF_HEAL", raising=False)
     assert shi.is_self_heal_enabled() is False
 
 
-@pytest.mark.parametrize("val,expected", [("1", True), ("true", True), ("on", True),
-                                          ("0", False), ("no", False), ("", False)])
+@pytest.mark.parametrize(
+    "val,expected",
+    [
+        ("1", True),
+        ("true", True),
+        ("on", True),
+        ("0", False),
+        ("no", False),
+        ("", False),
+    ],
+)
 def test_flag_parsing(val, expected):
     assert shi.is_self_heal_enabled({"AIFACTORY_SELF_HEAL": val}) is expected
 
 
 # ---- item 1: self_heal_subtask ------------------------------------------
 
+
 async def test_self_heal_subtask_noop_when_disabled(monkeypatch, tmp_path):
     monkeypatch.delenv("AIFACTORY_SELF_HEAL", raising=False)
     called = []
     out = await shi.self_heal_subtask(
-        label="st1", attempt=lambda n: called.append(n), project_dir=tmp_path)
+        label="st1", attempt=lambda n: called.append(n), project_dir=tmp_path
+    )
     assert out is None and called == []  # never ran the attempt
 
 
@@ -61,21 +73,28 @@ async def test_self_heal_subtask_runs_and_passes(monkeypatch, tmp_path):
         return _Pass()
 
     out = await shi.self_heal_subtask(
-        label="st1", attempt=attempt, project_dir=tmp_path, verify=verify)
+        label="st1", attempt=attempt, project_dir=tmp_path, verify=verify
+    )
     assert out is not None and out.ok and calls == [1]
 
 
 # ---- item 2: review tier --------------------------------------------------
 
+
 def test_assess_review_tier_flags_high_risk_paths():
-    plan = {"phases": [{"subtasks": [
-        {"id": "s1", "files_to_modify": ["app/auth/login.py"]}]}]}
+    plan = {
+        "phases": [
+            {"subtasks": [{"id": "s1", "files_to_modify": ["app/auth/login.py"]}]}
+        ]
+    }
     a = shi.assess_review_tier(plan)
     assert a is not None and a.pre_merge_gate is True
 
 
 def test_assess_review_tier_trusted_low_risk():
-    plan = {"phases": [{"subtasks": [{"id": "s1", "files_to_create": ["app/util.py"]}]}]}
+    plan = {
+        "phases": [{"subtasks": [{"id": "s1", "files_to_create": ["app/util.py"]}]}]
+    }
     a = shi.assess_review_tier(plan, trusted=True)
     assert a is not None and a.pre_merge_gate is False
 
@@ -103,7 +122,7 @@ async def test_security_gate_blocks_on_secret(monkeypatch, tmp_path):
 
 async def test_security_gate_passes_clean_diff(monkeypatch, tmp_path):
     _enable(monkeypatch)
-    clean = ("diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -0,0 +1 @@\n+def add(a, b):\n")
+    clean = "diff --git a/x.py b/x.py\n+++ b/x.py\n@@ -0,0 +1 @@\n+def add(a, b):\n"
     decision = await shi.security_pre_merge_gate(clean, project_dir=tmp_path)
     assert decision is not None and decision.blocked is False
 
@@ -115,6 +134,7 @@ async def test_security_gate_empty_diff_is_noop(monkeypatch):
 
 # ---- item 4: artifacts ---------------------------------------------------
 
+
 def test_emit_plan_artifact_noop_when_disabled(monkeypatch, tmp_path):
     monkeypatch.delenv("AIFACTORY_SELF_HEAL", raising=False)
     assert shi.emit_plan_artifact(tmp_path, {"feature": "x", "phases": []}) is None
@@ -122,8 +142,12 @@ def test_emit_plan_artifact_noop_when_disabled(monkeypatch, tmp_path):
 
 def test_emit_plan_artifact_writes(monkeypatch, tmp_path):
     _enable(monkeypatch)
-    plan = {"feature": "gw", "phases": [{"phase": 1, "name": "M",
-            "subtasks": [{"id": "s1", "description": "do"}]}]}
+    plan = {
+        "feature": "gw",
+        "phases": [
+            {"phase": 1, "name": "M", "subtasks": [{"id": "s1", "description": "do"}]}
+        ],
+    }
     art = shi.emit_plan_artifact(tmp_path, plan)
     assert art is not None
     assert (tmp_path / "artifacts" / "plan.md").exists()

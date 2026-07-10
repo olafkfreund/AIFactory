@@ -58,7 +58,9 @@ class TestWorkspaceStorageOff:
     """Default — chart byte-for-byte unchanged from PR-1 state."""
 
     def test_no_workspace_storage_env_vars(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = _render(chart_dir, ["postgres.externalSecretName=test-pg"])
         dep = _find_deployment(docs)
@@ -104,7 +106,9 @@ class TestWorkspaceStorageOnWithIRSA:
         assert "valueFrom" not in matching[0]
 
     def test_no_aws_creds_env_under_irsa(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """IRSA = no AWS_* envs in the pod. The Operator's SA annotation
         does the work; baking static creds in defeats the purpose."""
@@ -120,15 +124,20 @@ class TestWorkspaceStorageOnWithSecret:
     """Static-creds path for non-EKS / non-EC2 clusters."""
 
     def _docs(self, chart_dir) -> list[dict]:
-        return _render(chart_dir, [
-            "postgres.externalSecretName=test-pg",
-            "workspaces.storage.enabled=true",
-            "workspaces.storage.uriBase=s3://my-bucket/workspaces",
-            "workspaces.storage.aws.credentialsSecretName=aws-workspace-creds",
-        ])
+        return _render(
+            chart_dir,
+            [
+                "postgres.externalSecretName=test-pg",
+                "workspaces.storage.enabled=true",
+                "workspaces.storage.uriBase=s3://my-bucket/workspaces",
+                "workspaces.storage.aws.credentialsSecretName=aws-workspace-creds",
+            ],
+        )
 
     def test_aws_envs_from_secret_ref(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -158,7 +167,9 @@ class TestWorkspaceStorageMinIO:
         return _render(chart_dir, sets)
 
     def test_endpoint_url_env_injected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         dep = _find_deployment(self._docs(chart_dir))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
@@ -166,18 +177,20 @@ class TestWorkspaceStorageMinIO:
         assert ep["value"] == "http://minio.minio:9000"
 
     def test_addressing_style_path_env_injected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """MinIO usually wants path-style addressing."""
         dep = _find_deployment(self._docs(chart_dir, addressingStyle="path"))
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
-        style = next(
-            e for e in env if e["name"] == "AIFACTORY_S3_ADDRESSING_STYLE"
-        )
+        style = next(e for e in env if e["name"] == "AIFACTORY_S3_ADDRESSING_STYLE")
         assert style["value"] == "path"
 
     def test_auto_addressing_style_not_injected(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """``auto`` is boto3's default — no need to inject the env var.
         Avoids polluting the pod env with no-op settings."""
@@ -194,41 +207,56 @@ class TestWorkspaceStorageValidation:
     a single helm template invocation surfaces both."""
 
     def test_enabled_without_uri_base_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
-        stderr = _render_expect_error(chart_dir, [
-            "postgres.externalSecretName=test-pg",
-            "workspaces.storage.enabled=true",
-            # no uriBase
-        ])
+        stderr = _render_expect_error(
+            chart_dir,
+            [
+                "postgres.externalSecretName=test-pg",
+                "workspaces.storage.enabled=true",
+                # no uriBase
+            ],
+        )
         assert "workspaces.storage.enabled=true requires" in stderr
         assert "uriBase" in stderr
 
     def test_s3_uri_without_creds_or_irsa_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
-        stderr = _render_expect_error(chart_dir, [
-            "postgres.externalSecretName=test-pg",
-            "workspaces.storage.enabled=true",
-            "workspaces.storage.uriBase=s3://my-bucket/workspaces",
-            # neither useInstanceRole nor credentialsSecretName
-        ])
+        stderr = _render_expect_error(
+            chart_dir,
+            [
+                "postgres.externalSecretName=test-pg",
+                "workspaces.storage.enabled=true",
+                "workspaces.storage.uriBase=s3://my-bucket/workspaces",
+                # neither useInstanceRole nor credentialsSecretName
+            ],
+        )
         assert "uriBase=s3:// requires" in stderr
         # Names BOTH escape hatches so operator knows what to pick.
         assert "useInstanceRole" in stderr
         assert "credentialsSecretName" in stderr
 
     def test_non_s3_uri_does_not_require_aws_creds(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """``gs://`` or ``azure://`` URIs use their own auth chains via
         gcsfs / adlfs — the AWS-creds validator must not block them."""
         # Should NOT raise.
-        docs = _render(chart_dir, [
-            "postgres.externalSecretName=test-pg",
-            "workspaces.storage.enabled=true",
-            "workspaces.storage.uriBase=gs://my-gcs-bucket/workspaces",
-        ])
+        docs = _render(
+            chart_dir,
+            [
+                "postgres.externalSecretName=test-pg",
+                "workspaces.storage.enabled=true",
+                "workspaces.storage.uriBase=gs://my-gcs-bucket/workspaces",
+            ],
+        )
         dep = _find_deployment(docs)
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
         names = [e["name"] for e in env]
@@ -244,14 +272,17 @@ class TestWorkspaceStorageCoexistsWithRedis:
     independent template fragments but share the env: list."""
 
     def test_both_envs_render(self, helm_available, chart_dir) -> None:
-        docs = _render(chart_dir, [
-            "postgres.externalSecretName=test-pg",
-            "workspaces.storage.enabled=true",
-            "workspaces.storage.uriBase=s3://my-bucket/wsp",
-            "workspaces.storage.aws.useInstanceRole=true",
-            "redis.enabled=true",
-            "redis.url=redis://r:6379/0",
-        ])
+        docs = _render(
+            chart_dir,
+            [
+                "postgres.externalSecretName=test-pg",
+                "workspaces.storage.enabled=true",
+                "workspaces.storage.uriBase=s3://my-bucket/wsp",
+                "workspaces.storage.aws.useInstanceRole=true",
+                "redis.enabled=true",
+                "redis.url=redis://r:6379/0",
+            ],
+        )
         dep = _find_deployment(docs)
         env = dep["spec"]["template"]["spec"]["containers"][0]["env"]
         names = [e["name"] for e in env]

@@ -45,10 +45,12 @@ def test_write_spec_dir_injects_delegation_when_default_on(tmp_path: Path):
         "labels": [],
         "url": "https://example.test/i/42",
     }
-    spec_name = _write_spec_dir(
-        tmp_path, issue, "github", delegate_by_default=True
+    spec_name = _write_spec_dir(tmp_path, issue, "github", delegate_by_default=True)
+    req = json.loads(
+        (
+            tmp_path / ".aifactory" / "specs" / spec_name / "requirements.json"
+        ).read_text()
     )
-    req = json.loads((tmp_path / ".aifactory" / "specs" / spec_name / "requirements.json").read_text())
     assert req["metadata"]["enableDelegation"] is True
     assert req["metadata"]["githubIssueNumber"] == 42
 
@@ -65,7 +67,11 @@ def test_write_spec_dir_omits_delegation_when_default_off(tmp_path: Path):
         "url": "https://example.test/i/7",
     }
     spec_name = _write_spec_dir(tmp_path, issue, "github")
-    req = json.loads((tmp_path / ".aifactory" / "specs" / spec_name / "requirements.json").read_text())
+    req = json.loads(
+        (
+            tmp_path / ".aifactory" / "specs" / spec_name / "requirements.json"
+        ).read_text()
+    )
     assert "metadata" not in req
 
 
@@ -104,8 +110,10 @@ async def test_run_delegation_awaits_planner_before_reading_plan(tmp_path: Path)
     plan_payload = {
         "acceptance_criteria": ["it works"],
         "phases": [
-            {"name": "Impl", "subtasks": [{"description": "do it",
-                                            "affected_files": ["src/a.py"]}]}
+            {
+                "name": "Impl",
+                "subtasks": [{"description": "do it", "affected_files": ["src/a.py"]}],
+            }
         ],
     }
 
@@ -128,13 +136,13 @@ async def test_run_delegation_awaits_planner_before_reading_plan(tmp_path: Path)
     mock_provider.add_comment = AsyncMock(return_value=1)
     mock_provider.assign_to_user = AsyncMock(return_value=None)
 
-    with patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent,
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
+    with (
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent,
+        ),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
     ):
         result = await delegation_runner.run_delegation(
             project_id="proj-1",
@@ -156,7 +164,9 @@ async def test_run_delegation_awaits_planner_before_reading_plan(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_run_delegation_planner_timeout_does_not_block(tmp_path: Path, monkeypatch):
+async def test_run_delegation_planner_timeout_does_not_block(
+    tmp_path: Path, monkeypatch
+):
     """A hung planner is killed and the runner proceeds with degraded comment."""
     from server.services import delegation_runner
 
@@ -183,13 +193,13 @@ async def test_run_delegation_planner_timeout_does_not_block(tmp_path: Path, mon
     mock_provider.add_comment = AsyncMock(return_value=1)
     mock_provider.assign_to_user = AsyncMock(return_value=None)
 
-    with patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent,
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
+    with (
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent,
+        ),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
     ):
         result = await delegation_runner.run_delegation(
             project_id="proj-1",
@@ -241,13 +251,13 @@ async def test_run_delegation_skips_comment_if_marker_already_present(
     mock_provider.add_comment = AsyncMock(return_value=1)
     mock_provider.assign_to_user = AsyncMock(return_value=None)
 
-    with patch(
-        "server.services.agent_service.get_agent_service",
-        return_value=mock_agent,
-    ), patch(
-        "server.websockets.events.emit_task_status", new=AsyncMock()
-    ), patch(
-        "server.websockets.events.broadcast_event", new=AsyncMock()
+    with (
+        patch(
+            "server.services.agent_service.get_agent_service",
+            return_value=mock_agent,
+        ),
+        patch("server.websockets.events.emit_task_status", new=AsyncMock()),
+        patch("server.websockets.events.broadcast_event", new=AsyncMock()),
     ):
         result = await delegation_runner.run_delegation(
             project_id="proj-1",

@@ -1,4 +1,5 @@
 """KubeJobBackend (#68): manifest builder + gate_runner kubejob selection."""
+
 from __future__ import annotations
 
 import sys
@@ -12,14 +13,16 @@ from core.kube_sandbox import _pvc_subpath, build_job_manifest  # noqa: E402
 
 
 def test_manifest_is_one_shot_gc_hardened():
-    m = build_job_manifest("fsbx-abc", "ghcr.io/x/rust:1.90", ["cargo build", "cargo test"])
+    m = build_job_manifest(
+        "fsbx-abc", "ghcr.io/x/rust:1.90", ["cargo build", "cargo test"]
+    )
     assert m["kind"] == "Job" and m["metadata"]["name"] == "fsbx-abc"
     spec = m["spec"]
-    assert spec["backoffLimit"] == 0                    # one shot, no retries
-    assert spec["ttlSecondsAfterFinished"] == 120       # auto-GC
+    assert spec["backoffLimit"] == 0  # one shot, no retries
+    assert spec["ttlSecondsAfterFinished"] == 120  # auto-GC
     t = spec["template"]["spec"]
     assert t["restartPolicy"] == "Never"
-    assert t["automountServiceAccountToken"] is False   # gate needs no k8s API
+    assert t["automountServiceAccountToken"] is False  # gate needs no k8s API
     assert t["imagePullSecrets"] == [{"name": "ghcr-pull"}]
     c = t["containers"][0]
     assert c["image"] == "ghcr.io/x/rust:1.90"
@@ -38,15 +41,19 @@ def test_manifest_no_repo_mount_by_default():
 
 def test_manifest_co_mounts_worktree_via_pvc_subpath():
     m = build_job_manifest(
-        "fsbx-abc", "img", ["go build ./..."],
+        "fsbx-abc",
+        "img",
+        ["go build ./..."],
         repo_pvc="aifactory-data",
         repo_subpath="workspaces/olafkfreund-hello-go/.aifactory/worktrees/tasks/hello-go",
     )
     t = m["spec"]["template"]["spec"]
-    assert t["volumes"] == [{
-        "name": "repo",
-        "persistentVolumeClaim": {"claimName": "aifactory-data", "readOnly": False},
-    }]
+    assert t["volumes"] == [
+        {
+            "name": "repo",
+            "persistentVolumeClaim": {"claimName": "aifactory-data", "readOnly": False},
+        }
+    ]
     c = t["containers"][0]
     assert c["workingDir"] == "/work"
     vm = c["volumeMounts"][0]
@@ -77,7 +84,9 @@ def test_manifest_mounts_warm_nix_store_with_seed_init():
     t = m["spec"]["template"]["spec"]
     # store volume present alongside the repo co-mount
     vols = {v["name"]: v for v in t["volumes"]}
-    assert vols["nix-store"]["persistentVolumeClaim"]["claimName"] == "aifactory-nix-store"
+    assert (
+        vols["nix-store"]["persistentVolumeClaim"]["claimName"] == "aifactory-nix-store"
+    )
     assert "repo" in vols
     # gate container mounts the warm store at /nix
     mounts = {vm["name"]: vm for vm in t["containers"][0]["volumeMounts"]}
@@ -94,9 +103,9 @@ def test_pvc_subpath_strips_data_root():
     root = "/home/nonroot/.aifactory"
     wt = root + "/workspaces/proj/.aifactory/worktrees/tasks/spec-x"
     assert _pvc_subpath(wt, root) == "workspaces/proj/.aifactory/worktrees/tasks/spec-x"
-    assert _pvc_subpath(root, root) == ""              # PVC root itself
+    assert _pvc_subpath(root, root) == ""  # PVC root itself
     assert _pvc_subpath("/tmp/elsewhere", root) is None  # outside PVC -> no mount
-    assert _pvc_subpath(None, root) is None              # unset -> no mount
+    assert _pvc_subpath(None, root) is None  # unset -> no mount
 
 
 def test_select_runner_kubejob_backend(monkeypatch):
@@ -105,6 +114,7 @@ def test_select_runner_kubejob_backend(monkeypatch):
     monkeypatch.setenv("AIFACTORY_SANDBOX_BACKEND", "kubejob")
 
     import core.kube_sandbox as ks
+
     calls = {}
 
     class FakeKubeSandbox:
@@ -122,7 +132,7 @@ def test_select_runner_kubejob_backend(monkeypatch):
     code, out = runner(["go", "version"], Path("/work"))
     assert code == 0 and out == "go1.25"
     assert calls["image"] == "ghcr.io/x/go:1.25"
-    assert calls["commands"] == ["go version"]   # argv shlex-joined
+    assert calls["commands"] == ["go version"]  # argv shlex-joined
 
 
 def test_select_runner_defaults_to_docker_backend(monkeypatch):
@@ -141,7 +151,8 @@ def test_kube_backend_error_is_gate_failure(monkeypatch):
 
     class Boom:
         def __init__(self, *a, **k): ...
-        def run(self, *a, **k): raise RuntimeError("api down")
+        def run(self, *a, **k):
+            raise RuntimeError("api down")
 
     monkeypatch.setattr(ks, "KubeJobSandbox", Boom)
     code, out = _select_runner()(["x"], Path("/w"))
@@ -171,4 +182,7 @@ def test_exit_code_reads_real_container_code():
 def test_exit_code_falls_back_to_job_flag_when_no_terminated_state():
     # No terminated state available → synthetic fallback from the Job flag.
     assert _exit_code_from_pod(_pod(None), job_succeeded=True) == (True, 0)
-    assert _exit_code_from_pod(SimpleNamespace(status=SimpleNamespace(container_statuses=None)), job_succeeded=False) == (False, 1)
+    assert _exit_code_from_pod(
+        SimpleNamespace(status=SimpleNamespace(container_statuses=None)),
+        job_succeeded=False,
+    ) == (False, 1)

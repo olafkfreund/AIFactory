@@ -36,7 +36,9 @@ class TestReviewStateApproval:
 
         # Freeze time for consistent testing
         with patch("review.state.datetime") as mock_datetime:
-            mock_datetime.now.return_value.isoformat.return_value = "2024-07-01T10:00:00"
+            mock_datetime.now.return_value.isoformat.return_value = (
+                "2024-07-01T10:00:00"
+            )
             state.approve(review_spec_dir, approved_by="approver")
 
         assert state.approved is True
@@ -179,7 +181,9 @@ class TestReviewStateApproval:
         state_for_invalidate.invalidate(review_spec_dir, auto_save=False)
 
         assert not state_for_invalidate.approved
-        assert state_for_invalidate.approved_by == "original_approver"  # Kept as history
+        assert (
+            state_for_invalidate.approved_by == "original_approver"
+        )  # Kept as history
         assert state_for_invalidate.approved_at == ""  # Cleared
         assert state_for_invalidate.spec_hash == ""  # Cleared
         assert len(state_for_invalidate.feedback) == 1  # Preserved

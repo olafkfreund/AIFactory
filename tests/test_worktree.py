@@ -26,7 +26,10 @@ class TestWorktreeManagerInitialization:
         manager = WorktreeManager(temp_git_repo)
 
         assert manager.project_dir == temp_git_repo
-        assert manager.worktrees_dir == temp_git_repo / ".aifactory" / "worktrees" / "tasks"
+        assert (
+            manager.worktrees_dir
+            == temp_git_repo / ".aifactory" / "worktrees" / "tasks"
+        )
         assert manager.base_branch is not None
 
     def test_init_prefers_main_over_current_branch(self, temp_git_repo: Path):
@@ -34,7 +37,8 @@ class TestWorktreeManagerInitialization:
         # Create and switch to a new branch
         subprocess.run(
             ["git", "checkout", "-b", "feature-branch"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         # Even though we're on feature-branch, manager should prefer main
@@ -46,11 +50,11 @@ class TestWorktreeManagerInitialization:
         # Delete main branch to force fallback
         subprocess.run(
             ["git", "checkout", "-b", "feature-branch"],
-            cwd=temp_git_repo, capture_output=True
+            cwd=temp_git_repo,
+            capture_output=True,
         )
         subprocess.run(
-            ["git", "branch", "-D", "main"],
-            cwd=temp_git_repo, capture_output=True
+            ["git", "branch", "-D", "main"], cwd=temp_git_repo, capture_output=True
         )
 
         manager = WorktreeManager(temp_git_repo)
@@ -61,9 +65,7 @@ class TestWorktreeManagerInitialization:
         manager = WorktreeManager(temp_git_repo, base_branch="main")
         assert manager.base_branch == "main"
 
-    def test_init_invalid_base_branch_falls_back_to_detected(
-        self, temp_git_repo: Path
-    ):
+    def test_init_invalid_base_branch_falls_back_to_detected(self, temp_git_repo: Path):
         """A base_branch that doesn't resolve (e.g. a benchmark's `bench/go-hello`
         that exists only on origin, or nowhere) must NOT be used verbatim — that
         makes `git worktree add -b aifactory/<spec> <path> <base>` fail and the
@@ -89,14 +91,17 @@ class TestCoreBareSelfHeal:
     def _core_bare(repo: Path) -> str:
         return subprocess.run(
             ["git", "config", "--local", "core.bare"],
-            cwd=repo, capture_output=True, text=True,
+            cwd=repo,
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def test_init_resets_bare_flag(self, temp_git_repo: Path):
         """A checkout left with core.bare=true is healed back to false on init."""
         subprocess.run(
             ["git", "config", "--local", "core.bare", "true"],
-            cwd=temp_git_repo, capture_output=True,
+            cwd=temp_git_repo,
+            capture_output=True,
         )
         assert self._core_bare(temp_git_repo) == "true"
 
@@ -112,7 +117,8 @@ class TestCoreBareSelfHeal:
         # Simulate the external gremlin re-setting the flag post-construction.
         subprocess.run(
             ["git", "config", "--local", "core.bare", "true"],
-            cwd=temp_git_repo, capture_output=True,
+            cwd=temp_git_repo,
+            capture_output=True,
         )
 
         # _run_git injects -c core.bare=false, so this must still succeed.
@@ -187,7 +193,9 @@ class TestWorktreeRemoval:
         # Verify branch is deleted
         result = subprocess.run(
             ["git", "branch", "--list", branch_name],
-            cwd=temp_git_repo, capture_output=True, text=True
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
         )
         assert branch_name not in result.stdout
 
@@ -206,7 +214,8 @@ class TestWorktreeCommitAndMerge:
         subprocess.run(["git", "add", "."], cwd=worker_info.path, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "Worker commit"],
-            cwd=worker_info.path, capture_output=True
+            cwd=worker_info.path,
+            capture_output=True,
         )
 
         # Merge worktree back to main
@@ -215,7 +224,11 @@ class TestWorktreeCommitAndMerge:
         assert result is True
 
         # Verify file is in main branch
-        subprocess.run(["git", "checkout", manager.base_branch], cwd=temp_git_repo, capture_output=True)
+        subprocess.run(
+            ["git", "checkout", manager.base_branch],
+            cwd=temp_git_repo,
+            capture_output=True,
+        )
         assert (temp_git_repo / "worker-file.txt").exists()
 
 
@@ -250,8 +263,7 @@ class TestChangeTracking:
         (info.path / "README.md").write_text("modified")
         subprocess.run(["git", "add", "."], cwd=info.path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Changes"],
-            cwd=info.path, capture_output=True
+            ["git", "commit", "-m", "Changes"], cwd=info.path, capture_output=True
         )
 
         summary = manager.get_change_summary("test-spec")
@@ -271,8 +283,7 @@ class TestChangeTracking:
         (info.path / "added.txt").write_text("new file")
         subprocess.run(["git", "add", "."], cwd=info.path, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "Add file"],
-            cwd=info.path, capture_output=True
+            ["git", "commit", "-m", "Add file"], cwd=info.path, capture_output=True
         )
 
         files = manager.get_changed_files("test-spec")

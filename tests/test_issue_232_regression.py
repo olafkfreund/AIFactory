@@ -132,12 +132,13 @@ def test_create_and_run_assigns_stable_numbered_spec_id(project):
     app = FastAPI()
     app.include_router(execution_routes.router, prefix="/api/tasks")
 
-    with patch.object(
-        execution_routes,
-        "load_projects",
-        return_value={project_id: {"path": str(project_path)}},
-    ), patch.object(
-        execution_routes, "get_agent_service", return_value=fake_service
+    with (
+        patch.object(
+            execution_routes,
+            "load_projects",
+            return_value={project_id: {"path": str(project_path)}},
+        ),
+        patch.object(execution_routes, "get_agent_service", return_value=fake_service),
     ):
         client = TestClient(app)
         resp = client.post(
@@ -183,12 +184,13 @@ def test_create_and_run_slug_is_not_doubled(project):
     app = FastAPI()
     app.include_router(execution_routes.router, prefix="/api/tasks")
 
-    with patch.object(
-        execution_routes,
-        "load_projects",
-        return_value={project_id: {"path": str(project_path)}},
-    ), patch.object(
-        execution_routes, "get_agent_service", return_value=fake_service
+    with (
+        patch.object(
+            execution_routes,
+            "load_projects",
+            return_value={project_id: {"path": str(project_path)}},
+        ),
+        patch.object(execution_routes, "get_agent_service", return_value=fake_service),
     ):
         client = TestClient(app)
         resp = client.post(

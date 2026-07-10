@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BACKEND_ROOT = REPO_ROOT / 'apps' / 'backend'
-WEB_SERVER_ROOT = REPO_ROOT / 'apps' / 'web-server'
+BACKEND_ROOT = REPO_ROOT / "apps" / "backend"
+WEB_SERVER_ROOT = REPO_ROOT / "apps" / "web-server"
 
 # Both paths needed: enforcement.py imports from backend; audit hook
 # imports from web-server.  Order matters: web-server first so that

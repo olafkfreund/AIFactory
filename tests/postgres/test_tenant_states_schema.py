@@ -28,24 +28,36 @@ def test_tenant_states_table_created(test_postgres_url: str) -> None:
         pytest.skip("alembic CLI not on PATH")
 
     result = run_alembic(
-        ["upgrade", "head"], env={"DATABASE_URL": test_postgres_url},
+        ["upgrade", "head"],
+        env={"DATABASE_URL": test_postgres_url},
     )
-    assert result.returncode == 0, (
-        f"upgrade failed: {result.stderr[-1000:]}"
-    )
+    assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        cols = conn.execute(text("""
+        cols = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'tenant_states' ORDER BY ordinal_position
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
 
     for col in (
-        "org_id", "isolation_mode", "namespace_name", "service_account",
-        "iam_role_arn", "vault_policy_name", "reconciled_at",
-        "reconcile_error", "created_at", "updated_at",
+        "org_id",
+        "isolation_mode",
+        "namespace_name",
+        "service_account",
+        "iam_role_arn",
+        "vault_policy_name",
+        "reconciled_at",
+        "reconcile_error",
+        "created_at",
+        "updated_at",
     ):
         assert col in cols, f"tenant_states missing {col}"
 
@@ -60,11 +72,13 @@ def test_organizations_new_columns(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        cols = conn.execute(text("""
+        cols = conn.execute(
+            text("""
             SELECT column_name, is_nullable FROM information_schema.columns
             WHERE table_name = 'organizations'
               AND column_name IN ('tenant_namespace', 'deleted_at')
-        """)).fetchall()
+        """)
+        ).fetchall()
     engine.dispose()
 
     by_name = {c[0]: c[1] for c in cols}
@@ -85,23 +99,29 @@ def test_isolation_mode_defaults_to_shared(test_postgres_url: str) -> None:
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
         # Need a User + Org for the FK.
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('u-iso-test', 'iso@example.com', 'x', 'user', true)
             ON CONFLICT (id) DO NOTHING
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO organizations (id, name, slug, owner_id, plan)
             VALUES ('org-iso-test', 'Iso', 'iso-test', 'u-iso-test', 'free')
             ON CONFLICT (id) DO NOTHING
-        """))
+        """)
+        )
         # Insert with only the FK populated.
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO tenant_states (org_id) VALUES ('org-iso-test')
-        """))
-        mode = conn.execute(text(
-            "SELECT isolation_mode FROM tenant_states WHERE org_id='org-iso-test'"
-        )).scalar()
+        """)
+        )
+        mode = conn.execute(
+            text("SELECT isolation_mode FROM tenant_states WHERE org_id='org-iso-test'")
+        ).scalar()
 
         # Cleanup.
         conn.execute(text("DELETE FROM tenant_states WHERE org_id='org-iso-test'"))
@@ -124,27 +144,31 @@ def test_cascade_delete_wipes_tenant_state(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('u-cas-2', 'cas@example.com', 'x', 'user', true)
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO organizations (id, name, slug, owner_id, plan)
             VALUES ('org-cas-2', 'Cas', 'cas-2', 'u-cas-2', 'free')
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO tenant_states (org_id, isolation_mode)
             VALUES ('org-cas-2', 'isolated')
-        """))
+        """)
+        )
 
         conn.execute(text("DELETE FROM organizations WHERE id='org-cas-2'"))
 
-        remaining = conn.execute(text(
-            "SELECT COUNT(*) FROM tenant_states WHERE org_id='org-cas-2'"
-        )).scalar()
-        assert remaining == 0, (
-            "CASCADE delete did not fire — orphan tenant_state left"
-        )
+        remaining = conn.execute(
+            text("SELECT COUNT(*) FROM tenant_states WHERE org_id='org-cas-2'")
+        ).scalar()
+        assert remaining == 0, "CASCADE delete did not fire — orphan tenant_state left"
 
         # Cleanup the user.
         conn.execute(text("DELETE FROM users WHERE id='u-cas-2'"))
@@ -168,16 +192,28 @@ def test_downgrade_drops_everything(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        tables = conn.execute(text("""
+        tables = (
+            conn.execute(
+                text("""
             SELECT table_name FROM information_schema.tables
             WHERE table_name = 'tenant_states'
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
         # Organizations columns should also be dropped.
-        cols = conn.execute(text("""
+        cols = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name='organizations'
               AND column_name IN ('tenant_namespace', 'deleted_at')
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
 
     assert tables == [], "downgrade left tenant_states behind"

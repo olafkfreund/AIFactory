@@ -33,17 +33,27 @@ def _bash(command: str, cwd: str = "/tmp") -> dict:
     from security.hooks import bash_security_hook
 
     return asyncio.run(
-        bash_security_hook({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd})
+        bash_security_hook(
+            {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": cwd}
+        )
     )
 
 
 # ── AC2 — host secrets are not present in the agent environment ───────────────
 
 
-@pytest.mark.parametrize("secret", [
-    "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "GITHUB_TOKEN",
-    "APP_API_TOKEN", "JWT_SECRET", "VAULT_TOKEN", "OPENAI_API_KEY",
-])
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "GITHUB_TOKEN",
+        "APP_API_TOKEN",
+        "JWT_SECRET",
+        "VAULT_TOKEN",
+        "OPENAI_API_KEY",
+    ],
+)
 def test_ac2_cloud_and_controlplane_secrets_blanked(secret, monkeypatch):
     monkeypatch.setenv(secret, "super-secret-value")
     assert get_agent_env_blanks().get(secret) == "", f"{secret} must be scrubbed"

@@ -25,7 +25,12 @@ def _seed_parallel_report(spec: Path) -> None:
                 "total_waves": 1,
                 "observed_max_concurrency": 2,
                 "waves": [
-                    {"wave": 1, "subtask_ids": ["a", "b"], "concurrency": 2, "duration_s": 7.0}
+                    {
+                        "wave": 1,
+                        "subtask_ids": ["a", "b"],
+                        "concurrency": 2,
+                        "duration_s": 7.0,
+                    }
                 ],
             }
         )

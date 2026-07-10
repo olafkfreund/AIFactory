@@ -42,7 +42,11 @@ def test_grants_go_from_verification_run():
 
 def test_still_grants_from_command_keys():
     """The pre-existing `*_command` channels keep working."""
-    plan = {"subtasks": [{"test_command": "cargo test", "lint_command": "golangci-lint run"}]}
+    plan = {
+        "subtasks": [
+            {"test_command": "cargo test", "lint_command": "golangci-lint run"}
+        ]
+    }
     granted, _ = grantable_commands_from_plan(plan)
     assert {"cargo", "golangci-lint"} <= granted
 

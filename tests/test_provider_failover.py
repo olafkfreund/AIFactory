@@ -18,12 +18,16 @@ def test_configured_chain_default_when_unset():
 
 
 def test_configured_chain_env_override():
-    chain = pf.configured_chain({"AIFACTORY_PROVIDER_FAILOVER": "ollama, codex ,claude"})
+    chain = pf.configured_chain(
+        {"AIFACTORY_PROVIDER_FAILOVER": "ollama, codex ,claude"}
+    )
     assert chain == ("ollama", "codex", "claude")
 
 
 def test_configured_chain_blank_falls_back():
-    assert pf.configured_chain({"AIFACTORY_PROVIDER_FAILOVER": "   "}) == pf._DEFAULT_CHAIN
+    assert (
+        pf.configured_chain({"AIFACTORY_PROVIDER_FAILOVER": "   "}) == pf._DEFAULT_CHAIN
+    )
 
 
 def test_failover_chain_primary_first_and_deduped():
@@ -49,9 +53,7 @@ def test_next_provider_skips_used():
 
 
 def test_next_provider_none_when_exhausted():
-    nxt = pf.next_provider(
-        "claude", used={"claude", "codex", "antigravity"}, env={}
-    )
+    nxt = pf.next_provider("claude", used={"claude", "codex", "antigravity"}, env={})
     assert nxt is None
 
 
@@ -107,7 +109,10 @@ def test_deadline_expired_when_zero():
 
 
 def test_deadline_env_parse_and_fallback():
-    assert pf.DeadlineBudget(env={"AIFACTORY_PROVIDER_DEADLINE_S": "42"}).total_seconds == 42.0
+    assert (
+        pf.DeadlineBudget(env={"AIFACTORY_PROVIDER_DEADLINE_S": "42"}).total_seconds
+        == 42.0
+    )
     # invalid → default
     assert (
         pf.DeadlineBudget(env={"AIFACTORY_PROVIDER_DEADLINE_S": "abc"}).total_seconds

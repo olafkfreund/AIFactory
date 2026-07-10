@@ -80,12 +80,12 @@ class TestRmuxToggleOn:
         )
         dep = _find_deployment(docs)
         container = dep["spec"]["template"]["spec"]["containers"][0]
-        env = {e["name"]: e.get("value") for e in container.get("env", []) if "value" in e}
+        env = {
+            e["name"]: e.get("value") for e in container.get("env", []) if "value" in e
+        }
         assert env.get("AIFACTORY_RMUX_ENABLED") == "true"
 
-    def test_volumes_mounted_at_expected_paths(
-        self, helm_available, chart_dir
-    ) -> None:
+    def test_volumes_mounted_at_expected_paths(self, helm_available, chart_dir) -> None:
         docs = _render(
             chart_dir,
             ["postgres.externalSecretName=test-pg", "rmux.enabled=true"],
@@ -97,15 +97,12 @@ class TestRmuxToggleOn:
         assert "aifactory-panes" in volume_names
 
         mounts = {
-            m["name"]: m["mountPath"]
-            for m in spec["containers"][0]["volumeMounts"]
+            m["name"]: m["mountPath"] for m in spec["containers"][0]["volumeMounts"]
         }
         assert mounts.get("aifactory-rmux") == "/var/run/aifactory/rmux"
         assert mounts.get("aifactory-panes") == "/var/run/aifactory/panes"
 
-    def test_volumes_are_tmpfs_with_size_limit(
-        self, helm_available, chart_dir
-    ) -> None:
+    def test_volumes_are_tmpfs_with_size_limit(self, helm_available, chart_dir) -> None:
         """Volumes must be ``medium: Memory`` (tmpfs) for low-latency
         pipe-pane I/O, with sizeLimit set for capacity protection."""
         docs = _render(

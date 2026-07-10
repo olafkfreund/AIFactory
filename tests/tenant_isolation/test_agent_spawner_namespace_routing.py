@@ -64,16 +64,25 @@ def fresh_db():
 
 
 async def _seed_org_with_state(
-    SessionLocal, *, slug: str, isolation_mode: str,
-    namespace: str | None = None, service_account: str | None = None,
+    SessionLocal,
+    *,
+    slug: str,
+    isolation_mode: str,
+    namespace: str | None = None,
+    service_account: str | None = None,
 ) -> Organization:
     async with SessionLocal() as db:
         user = User(
-            id=f"u-{slug}", email=f"{slug}@example.com",
-            password_hash="x", role="user", is_active=True,
+            id=f"u-{slug}",
+            email=f"{slug}@example.com",
+            password_hash="x",
+            role="user",
+            is_active=True,
         )
         org = Organization(
-            id=f"org-{slug}", name=slug.title(), slug=slug,
+            id=f"org-{slug}",
+            name=slug.title(),
+            slug=slug,
             owner_id=user.id,
         )
         db.add(user)
@@ -82,8 +91,10 @@ async def _seed_org_with_state(
         await db.refresh(org)
 
         state = TenantState(
-            org_id=org.id, isolation_mode=isolation_mode,
-            namespace_name=namespace, service_account=service_account,
+            org_id=org.id,
+            isolation_mode=isolation_mode,
+            namespace_name=namespace,
+            service_account=service_account,
         )
         db.add(state)
         await db.commit()
@@ -97,12 +108,15 @@ async def _seed_org_with_state(
 
 def test_isolated_org_returns_per_tenant_namespace(fresh_db):
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org_with_state(
-        SessionLocal, slug="acme",
-        isolation_mode="isolated",
-        namespace="aifactory-tenant-acme",
-        service_account="aifactory-tenant-acme-agent",
-    ))
+    org = _run(
+        _seed_org_with_state(
+            SessionLocal,
+            slug="acme",
+            isolation_mode="isolated",
+            namespace="aifactory-tenant-acme",
+            service_account="aifactory-tenant-acme-agent",
+        )
+    )
 
     async def _go():
         async with SessionLocal() as db:
@@ -117,9 +131,13 @@ def test_isolated_org_returns_per_tenant_namespace(fresh_db):
 
 def test_shared_mode_returns_none_namespace(fresh_db):
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org_with_state(
-        SessionLocal, slug="legacy", isolation_mode="shared",
-    ))
+    org = _run(
+        _seed_org_with_state(
+            SessionLocal,
+            slug="legacy",
+            isolation_mode="shared",
+        )
+    )
 
     async def _go():
         async with SessionLocal() as db:
@@ -138,11 +156,17 @@ def test_no_state_row_returns_shared_fallback(fresh_db):
     async def _seed():
         async with SessionLocal() as db:
             user = User(
-                id="u-x", email="x@example.com",
-                password_hash="x", role="user", is_active=True,
+                id="u-x",
+                email="x@example.com",
+                password_hash="x",
+                role="user",
+                is_active=True,
             )
             org = Organization(
-                id="org-x", name="X", slug="x", owner_id=user.id,
+                id="org-x",
+                name="X",
+                slug="x",
+                owner_id=user.id,
             )
             db.add(user)
             db.add(org)
@@ -164,12 +188,15 @@ def test_deleted_mode_surfaced_for_spawner_refusal(fresh_db):
     """Soft-deleted orgs must be visible to the spawner so it refuses
     new tasks (design §7 stage-1)."""
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org_with_state(
-        SessionLocal, slug="gone",
-        isolation_mode="deleted",
-        namespace="aifactory-tenant-gone",
-        service_account="aifactory-tenant-gone-agent",
-    ))
+    org = _run(
+        _seed_org_with_state(
+            SessionLocal,
+            slug="gone",
+            isolation_mode="deleted",
+            namespace="aifactory-tenant-gone",
+            service_account="aifactory-tenant-gone-agent",
+        )
+    )
 
     async def _go():
         async with SessionLocal() as db:
@@ -184,6 +211,7 @@ def test_deleted_mode_surfaced_for_spawner_refusal(fresh_db):
 
 def test_none_org_id_returns_shared():
     """Legacy single-tenant deployments may pass org_id=None."""
+
     async def _go():
         # Even a None db is fine: we never touch it when org_id is None.
         return await resolve_tenant_target(None, None)
@@ -197,6 +225,7 @@ def test_db_error_falls_back_to_shared():
     """ANY exception on the lookup → shared fallback. The spawner
     must never crash because the tenant_state row couldn't be read."""
     from unittest.mock import AsyncMock
+
     bad_db = MagicMock()
     bad_db.get = AsyncMock(side_effect=RuntimeError("db down"))
 

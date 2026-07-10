@@ -50,10 +50,7 @@ def test_bedrock_llama_routes_to_openai_compatible(monkeypatch):
 def test_vertex_ai_gemini_routes_to_openai_compatible(monkeypatch):
     from phase_config import infer_provider_from_model
 
-    assert (
-        infer_provider_from_model("vertex_ai/gemini-2.5-pro")
-        == "openai-compatible"
-    )
+    assert infer_provider_from_model("vertex_ai/gemini-2.5-pro") == "openai-compatible"
 
 
 def test_vertex_ai_claude_routes_to_openai_compatible(monkeypatch):
@@ -78,10 +75,7 @@ def test_bedrock_prefix_case_insensitive(monkeypatch):
 def test_vertex_ai_prefix_case_insensitive(monkeypatch):
     from phase_config import infer_provider_from_model
 
-    assert (
-        infer_provider_from_model("VERTEX_AI/gemini-flash")
-        == "openai-compatible"
-    )
+    assert infer_provider_from_model("VERTEX_AI/gemini-flash") == "openai-compatible"
 
 
 # ---------------------------------------------------------------------------

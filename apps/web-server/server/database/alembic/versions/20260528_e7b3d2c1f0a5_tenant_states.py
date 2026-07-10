@@ -48,13 +48,16 @@ def upgrade() -> None:
     op.create_table(
         "tenant_states",
         sa.Column(
-            "org_id", sa.String(length=36),
+            "org_id",
+            sa.String(length=36),
             sa.ForeignKey("organizations.id", ondelete="CASCADE"),
             primary_key=True,
         ),
         sa.Column(
-            "isolation_mode", sa.String(length=16),
-            nullable=False, server_default="shared",
+            "isolation_mode",
+            sa.String(length=16),
+            nullable=False,
+            server_default="shared",
         ),
         sa.Column("namespace_name", sa.String(length=63), nullable=True),
         sa.Column("service_account", sa.String(length=63), nullable=True),
@@ -63,24 +66,30 @@ def upgrade() -> None:
         sa.Column("reconciled_at", sa.DateTime, nullable=True),
         sa.Column("reconcile_error", sa.Text, nullable=True),
         sa.Column(
-            "created_at", sa.DateTime,
-            nullable=False, server_default=sa.func.now(),
+            "created_at",
+            sa.DateTime,
+            nullable=False,
+            server_default=sa.func.now(),
         ),
         sa.Column(
-            "updated_at", sa.DateTime,
-            nullable=False, server_default=sa.func.now(),
+            "updated_at",
+            sa.DateTime,
+            nullable=False,
+            server_default=sa.func.now(),
         ),
     )
     op.create_index(
         "ix_tenant_states_isolation_mode",
-        "tenant_states", ["isolation_mode"],
+        "tenant_states",
+        ["isolation_mode"],
     )
     # Index on reconcile_error for the SQL-queryable health check
     # operators run: SELECT org_id, reconcile_error FROM tenant_states
     # WHERE reconcile_error IS NOT NULL.
     op.create_index(
         "ix_tenant_states_reconcile_error",
-        "tenant_states", ["reconcile_error"],
+        "tenant_states",
+        ["reconcile_error"],
         postgresql_where=sa.text("reconcile_error IS NOT NULL"),
     )
 
@@ -89,7 +98,9 @@ def upgrade() -> None:
     with op.batch_alter_table("organizations") as batch:
         batch.add_column(
             sa.Column(
-                "tenant_namespace", sa.String(length=63), nullable=True,
+                "tenant_namespace",
+                sa.String(length=63),
+                nullable=True,
             ),
         )
         # Organization.deleted_at (nullable; set by org-soft-delete).
@@ -104,9 +115,11 @@ def downgrade() -> None:
         batch.drop_column("tenant_namespace")
 
     op.drop_index(
-        "ix_tenant_states_reconcile_error", table_name="tenant_states",
+        "ix_tenant_states_reconcile_error",
+        table_name="tenant_states",
     )
     op.drop_index(
-        "ix_tenant_states_isolation_mode", table_name="tenant_states",
+        "ix_tenant_states_isolation_mode",
+        table_name="tenant_states",
     )
     op.drop_table("tenant_states")

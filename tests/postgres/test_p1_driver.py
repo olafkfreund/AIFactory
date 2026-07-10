@@ -43,10 +43,12 @@ def test_engine_uses_asyncpg_for_postgres_url(test_postgres_url: str) -> None:
     original = os.environ.get("DATABASE_URL", "")
     try:
         engine_module = _reimport_engine(test_postgres_url)
-        assert "asyncpg" in str(engine_module.engine.url), \
+        assert "asyncpg" in str(engine_module.engine.url), (
             f"engine URL did not select asyncpg: {engine_module.engine.url}"
-        assert engine_module.engine.dialect.name == "postgresql", \
+        )
+        assert engine_module.engine.dialect.name == "postgresql", (
             f"dialect is {engine_module.engine.dialect.name}, expected postgresql"
+        )
     finally:
         os.environ["DATABASE_URL"] = original
 
@@ -59,8 +61,9 @@ def test_engine_keeps_aiosqlite_for_sqlite_url(tmp_path: Path) -> None:
     original = os.environ.get("DATABASE_URL", "")
     try:
         engine_module = _reimport_engine(url)
-        assert engine_module.engine.dialect.name == "sqlite", \
+        assert engine_module.engine.dialect.name == "sqlite", (
             f"dialect is {engine_module.engine.dialect.name}, expected sqlite"
+        )
     finally:
         os.environ["DATABASE_URL"] = original
 
@@ -72,13 +75,11 @@ def test_wal_listener_skipped_for_postgres(test_postgres_url: str) -> None:
     try:
         engine_module = _reimport_engine(test_postgres_url)
         from sqlalchemy import event
-        has_listener = (
-            hasattr(engine_module, "_enable_wal_mode")
-            and event.contains(
-                engine_module.engine.sync_engine,
-                "connect",
-                engine_module._enable_wal_mode,
-            )
+
+        has_listener = hasattr(engine_module, "_enable_wal_mode") and event.contains(
+            engine_module.engine.sync_engine,
+            "connect",
+            engine_module._enable_wal_mode,
         )
         assert not has_listener, "WAL listener registered on Postgres engine"
     finally:

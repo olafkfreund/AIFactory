@@ -42,7 +42,9 @@ async def test_gate_runs_in_worktree_not_root(tmp_path, monkeypatch):
     project_dir, spec_dir, worktree = _setup(
         tmp_path, go_in_worktree=True, go_in_root=False
     )
-    monkeypatch.setattr(ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan()))
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
     seen = {}
 
     async def fake_run_gates(cwd, gates, **kw):
@@ -63,7 +65,9 @@ async def test_gate_runs_in_worktree_not_root(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_runs_only_once(tmp_path, monkeypatch):
     project_dir, spec_dir, _ = _setup(tmp_path, go_in_worktree=True, go_in_root=False)
-    monkeypatch.setattr(ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan()))
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
     calls = {"n": 0}
 
     async def fake_run_gates(cwd, gates, **kw):
@@ -73,7 +77,9 @@ async def test_runs_only_once(tmp_path, monkeypatch):
     monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
 
     await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
-    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)  # serial + parallel both reach here
+    await _run_trailing_gates_if_build_complete(
+        spec_dir, project_dir
+    )  # serial + parallel both reach here
     assert calls["n"] == 1  # run-once marker dedupes
 
 
@@ -82,7 +88,9 @@ async def test_no_gates_is_recorded_not_silent(tmp_path, monkeypatch):
     # Neither worktree nor root has a recognizable project -> no gates. The fix
     # records this visibly (honest) instead of returning with no trace.
     project_dir, spec_dir, _ = _setup(tmp_path, go_in_worktree=False, go_in_root=False)
-    monkeypatch.setattr(ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan()))
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
 
     async def boom(*a, **k):  # must never run when no gates
         raise AssertionError("run_gates called with no gates detected")

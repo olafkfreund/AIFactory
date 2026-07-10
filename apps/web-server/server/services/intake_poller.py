@@ -39,7 +39,13 @@ from pfactory.tiers import Tier  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["poller_enabled", "load_repo_configs", "interval_s", "build_deps", "poller_loop"]
+__all__ = [
+    "poller_enabled",
+    "load_repo_configs",
+    "interval_s",
+    "build_deps",
+    "poller_loop",
+]
 
 
 def poller_enabled() -> bool:
@@ -91,6 +97,7 @@ def load_repo_configs() -> list[RepoConfig]:
 # --------------------------------------------------------------------------
 # Real collaborators
 # --------------------------------------------------------------------------
+
 
 def _provider_for(cfg: RepoConfig):
     from ..routes.github import _get_project_provider
