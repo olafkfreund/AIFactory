@@ -34,7 +34,11 @@ def test_subtask_result_carries_provider_error_message(tmp_path):
     from agents.parallel_runner import SubtaskResult
 
     # Simulate what run_subtask now does: extract message from _err dict
-    _err = {"type": "other", "message": "Antigravity CLI not found: 'antigravity'", "exception_type": "RuntimeError"}
+    _err = {
+        "type": "other",
+        "message": "Antigravity CLI not found: 'antigravity'",
+        "exception_type": "RuntimeError",
+    }
     error_field = (_err or {}).get("message") or "agent session error"
 
     result = SubtaskResult(

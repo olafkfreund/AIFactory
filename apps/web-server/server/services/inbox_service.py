@@ -106,10 +106,7 @@ _LOCK_TIMEOUT_SECONDS = 5.0
 # ---------------------------------------------------------------------------
 
 _MENTIONS_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "backend"
-    / "agents"
-    / "mentions.py"
+    Path(__file__).resolve().parents[3] / "backend" / "agents" / "mentions.py"
 )
 
 
@@ -296,9 +293,7 @@ def build_message(
     }
 
 
-def _apply_mentions(
-    text: str, recipient: str
-) -> tuple[str, list[dict[str, Any]]]:
+def _apply_mentions(text: str, recipient: str) -> tuple[str, list[dict[str, Any]]]:
     """Resolve mention-based routing + task refs for an enqueue (#273).
 
     Returns ``(effective_recipient, task_refs)``. Pure and side-effect free;

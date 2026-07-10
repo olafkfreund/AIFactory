@@ -40,14 +40,23 @@ def _plan(integration_status: SubtaskStatus) -> ImplementationPlan:
     return ImplementationPlan(
         feature="gw",
         phases=[
-            Phase(phase=1, name="Scaffold",
-                  subtasks=[_sub("subtask-1-1", SubtaskStatus.COMPLETED)]),
-            Phase(phase=2, name="Parallel Module Implementation",
-                  depends_on=["phase-1-scaffold"],
-                  subtasks=[_sub("subtask-2-1", SubtaskStatus.COMPLETED)]),
-            Phase(phase=3, name="Integration",
-                  depends_on=["phase-2-modules"],
-                  subtasks=[_sub("subtask-3-1", integration_status)]),
+            Phase(
+                phase=1,
+                name="Scaffold",
+                subtasks=[_sub("subtask-1-1", SubtaskStatus.COMPLETED)],
+            ),
+            Phase(
+                phase=2,
+                name="Parallel Module Implementation",
+                depends_on=["phase-1-scaffold"],
+                subtasks=[_sub("subtask-2-1", SubtaskStatus.COMPLETED)],
+            ),
+            Phase(
+                phase=3,
+                name="Integration",
+                depends_on=["phase-2-modules"],
+                subtasks=[_sub("subtask-3-1", integration_status)],
+            ),
         ],
     )
 
@@ -90,10 +99,13 @@ def test_integer_deps_still_work():
     plan = ImplementationPlan(
         feature="gw",
         phases=[
-            Phase(phase=1, name="A",
-                  subtasks=[_sub("s1", SubtaskStatus.COMPLETED)]),
-            Phase(phase=2, name="B", depends_on=[1],
-                  subtasks=[_sub("s2", SubtaskStatus.PENDING)]),
+            Phase(phase=1, name="A", subtasks=[_sub("s1", SubtaskStatus.COMPLETED)]),
+            Phase(
+                phase=2,
+                name="B",
+                depends_on=[1],
+                subtasks=[_sub("s2", SubtaskStatus.PENDING)],
+            ),
         ],
     )
     assert [p.phase for p in plan.get_available_phases()] == [2]

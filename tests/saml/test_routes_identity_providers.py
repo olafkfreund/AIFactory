@@ -192,7 +192,9 @@ def test_oidc_flag_variants_accepted(monkeypatch):
     """APP_OIDC_ENABLED=1 and APP_OIDC_ENABLED=yes are both valid."""
     for flag_value in ("1", "yes", "YES", "True", "TRUE"):
         result = _list(monkeypatch, {**_OIDC_VARS, "APP_OIDC_ENABLED": flag_value})
-        assert len(result) == 1, f"Expected one OIDC entry for APP_OIDC_ENABLED={flag_value!r}"
+        assert len(result) == 1, (
+            f"Expected one OIDC entry for APP_OIDC_ENABLED={flag_value!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

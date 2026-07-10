@@ -36,7 +36,9 @@ def test_infer_github_models_full_path():
 def test_infer_github_models_meta_llama():
     from phase_config import infer_provider_from_model
 
-    assert infer_provider_from_model("github-models/meta/llama-3.3-70b") == "github-models"
+    assert (
+        infer_provider_from_model("github-models/meta/llama-3.3-70b") == "github-models"
+    )
 
 
 def test_infer_github_models_uppercase_resilience():
@@ -73,7 +75,10 @@ def test_strip_github_models_prefix():
 def test_strip_github_models_prefix_meta():
     from phase_config import strip_provider_prefix
 
-    assert strip_provider_prefix("github-models/meta/llama-3.3-70b") == "meta/llama-3.3-70b"
+    assert (
+        strip_provider_prefix("github-models/meta/llama-3.3-70b")
+        == "meta/llama-3.3-70b"
+    )
 
 
 def test_strip_does_not_touch_other_prefixes():

@@ -82,6 +82,7 @@ def _try_trace_id() -> str | None:
     fallback path runs."""
     try:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span is None:
             return None
@@ -127,9 +128,11 @@ def install_httpx_propagation() -> None:
     def _aclient_init(self, *args, **kwargs):
         event_hooks = kwargs.setdefault("event_hooks", {})
         req_hooks = list(event_hooks.get("request") or [])
+
         # AsyncClient hooks must be coroutines.
         async def _ahook(request):
             _add_correlation_header(request)
+
         req_hooks.append(_ahook)
         event_hooks["request"] = req_hooks
         _orig_aclient_init(self, *args, **kwargs)

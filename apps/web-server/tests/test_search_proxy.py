@@ -50,7 +50,9 @@ def _run(resp, captured, *, q="checkout", limit=20, settings=None):
 
     with (
         patch.object(search, "get_settings", return_value=settings or _settings()),
-        patch.object(search.httpx, "AsyncClient", lambda timeout=None: _Client(resp, captured)),
+        patch.object(
+            search.httpx, "AsyncClient", lambda timeout=None: _Client(resp, captured)
+        ),
     ):
         return asyncio.run(search.federated_search(q=q, limit=limit, _user=None))
 
@@ -101,7 +103,11 @@ def test_needs_you_proxies_and_forwards_read_key():
     captured: dict = {}
     with (
         patch.object(search, "get_settings", return_value=_settings()),
-        patch.object(search.httpx, "AsyncClient", lambda timeout=None: _Client(_Resp({"count": 3}), captured)),
+        patch.object(
+            search.httpx,
+            "AsyncClient",
+            lambda timeout=None: _Client(_Resp({"count": 3}), captured),
+        ),
     ):
         out = asyncio.run(search.needs_you_count(_user=None))
     assert out == {"count": 3}
@@ -125,7 +131,9 @@ def test_needs_you_cockpit_error_degrades_to_zero():
     resp = _Resp({}, error=httpx.HTTPError("boom"))
     with (
         patch.object(search, "get_settings", return_value=_settings()),
-        patch.object(search.httpx, "AsyncClient", lambda timeout=None: _Client(resp, captured)),
+        patch.object(
+            search.httpx, "AsyncClient", lambda timeout=None: _Client(resp, captured)
+        ),
     ):
         out = asyncio.run(search.needs_you_count(_user=None))
     assert out == {"count": 0}

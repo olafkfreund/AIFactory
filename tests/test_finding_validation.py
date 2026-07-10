@@ -256,7 +256,10 @@ class TestParallelFollowupResponseWithValidation:
             verdict_reasoning="Previous finding was a false positive, now dismissed",
         )
         assert len(response.finding_validations) == 1
-        assert response.finding_validations[0].validation_status == "dismissed_false_positive"
+        assert (
+            response.finding_validations[0].validation_status
+            == "dismissed_false_positive"
+        )
 
 
 # ============================================================================
@@ -383,11 +386,13 @@ class TestValidationIntegration:
 
         # Verify validation counts can be computed from the response
         confirmed_count = sum(
-            1 for fv in response.finding_validations
+            1
+            for fv in response.finding_validations
             if fv.validation_status == "confirmed_valid"
         )
         dismissed_count = sum(
-            1 for fv in response.finding_validations
+            1
+            for fv in response.finding_validations
             if fv.validation_status == "dismissed_false_positive"
         )
 
@@ -398,7 +403,11 @@ class TestValidationIntegration:
 
     def test_validation_status_enum_values(self):
         """Test all valid validation status values."""
-        valid_statuses = ["confirmed_valid", "dismissed_false_positive", "needs_human_review"]
+        valid_statuses = [
+            "confirmed_valid",
+            "dismissed_false_positive",
+            "needs_human_review",
+        ]
 
         for status in valid_statuses:
             result = FindingValidationResult(

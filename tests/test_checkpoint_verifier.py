@@ -20,7 +20,9 @@ from agents.verifier import verify_unit
 def _commit(repo: Path, name: str, content: str) -> str:
     (repo / name).write_text(content)
     subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
-    subprocess.run(["git", "commit", "-m", f"add {name}"], cwd=repo, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", f"add {name}"], cwd=repo, capture_output=True
+    )
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
     ).stdout.strip()
@@ -97,7 +99,9 @@ class TestVerifier:
     async def test_missing_tool_is_skipped_not_failed(self, tmp_path: Path):
         gates = [Gate("mypy", ["mypy", "."])]
         # exit_code None => tool missing => skipped => not a failure.
-        result = await verify_unit(tmp_path, gates=gates, runner=lambda c, d: (None, "not found"))
+        result = await verify_unit(
+            tmp_path, gates=gates, runner=lambda c, d: (None, "not found")
+        )
         assert result.passed is True
         assert result.failures == []
 

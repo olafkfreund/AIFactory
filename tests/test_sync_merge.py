@@ -61,7 +61,9 @@ def merge_implementation_plan(main_plan: dict, worktree_plan: dict) -> dict:
 class TestImplementationPlanMerge:
     """Tests for implementation plan merge preventing status regressions."""
 
-    def _make_plan(self, subtask_statuses: dict, status: str = None, review_reason: str = None) -> dict:
+    def _make_plan(
+        self, subtask_statuses: dict, status: str = None, review_reason: str = None
+    ) -> dict:
         """Helper to build a plan with given subtask statuses."""
         plan = {
             "phases": [
@@ -88,7 +90,9 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "completed"  # Regression prevented
         assert subtasks["st-2"] == "in_progress"  # Forward progress accepted
 
@@ -99,7 +103,9 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "in_progress"
 
     def test_allows_forward_progress(self):
@@ -109,12 +115,16 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "completed"
 
     def test_preserves_top_level_status(self):
         """Top-level status and reviewReason from main are preserved."""
-        main = self._make_plan({"st-1": "completed"}, status="in_review", review_reason="Needs QA")
+        main = self._make_plan(
+            {"st-1": "completed"}, status="in_review", review_reason="Needs QA"
+        )
         worktree = self._make_plan({"st-1": "completed"}, status="building")
 
         merged = merge_implementation_plan(main, worktree)
@@ -129,7 +139,9 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "completed"
         assert subtasks["st-2"] == "pending"
 
@@ -140,7 +152,9 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "failed"
 
     def test_multi_phase_merge(self):
@@ -160,7 +174,9 @@ class TestImplementationPlanMerge:
 
         merged = merge_implementation_plan(main, worktree)
 
-        subtasks = {s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]}
+        subtasks = {
+            s["id"]: s["status"] for p in merged["phases"] for s in p["subtasks"]
+        }
         assert subtasks["st-1"] == "completed"  # Regression prevented
         assert subtasks["st-2"] == "completed"  # Forward progress accepted
 

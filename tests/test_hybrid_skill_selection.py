@@ -59,18 +59,29 @@ class TestConverter:
 class TestSuggestSelectedSkills:
     def test_returns_selected_shaped_dicts(self, tmp_path, monkeypatch):
         # Empty skills dir → valid (empty) index; monkeypatch the matcher.
-        svc = SkillsService(skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl")
+        svc = SkillsService(
+            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl"
+        )
         monkeypatch.setattr(
-            svc, "suggest_skills",
-            lambda desc, max_results=10: [_suggestion("backend-engineering", "eng"), _suggestion()],
+            svc,
+            "suggest_skills",
+            lambda desc, max_results=10: [
+                _suggestion("backend-engineering", "eng"),
+                _suggestion(),
+            ],
         )
         out = svc.suggest_selected_skills("build a backend api", max_results=5)
         assert len(out) == 2
-        assert {o["id"] for o in out} == {"eng/backend-engineering", "quality/clean-code"}
+        assert {o["id"] for o in out} == {
+            "eng/backend-engineering",
+            "quality/clean-code",
+        }
         assert all(set(o) >= {"id", "name", "category", "source"} for o in out)
 
     def test_empty_when_no_matches(self, tmp_path, monkeypatch):
-        svc = SkillsService(skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl")
+        svc = SkillsService(
+            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl"
+        )
         monkeypatch.setattr(svc, "suggest_skills", lambda desc, max_results=10: [])
         assert svc.suggest_selected_skills("xyz") == []
 
@@ -84,7 +95,9 @@ class TestCreateAndRunProposes:
 
         project = tmp_path / "proj"
         (project / ".aifactory" / "specs").mkdir(parents=True)
-        monkeypatch.setattr(exec_mod, "load_projects", lambda: {"p": {"path": str(project)}})
+        monkeypatch.setattr(
+            exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
+        )
 
         class _Stub:
             async def start_spec_creation(self, **kw):
@@ -94,8 +107,14 @@ class TestCreateAndRunProposes:
 
         class _Skills:
             def suggest_selected_skills(self, desc, max_results=5):
-                return [{"id": "quality/clean-code", "name": "clean-code",
-                         "category": "quality", "source": None}]
+                return [
+                    {
+                        "id": "quality/clean-code",
+                        "name": "clean-code",
+                        "category": "quality",
+                        "source": None,
+                    }
+                ]
 
         monkeypatch.setattr(skills_mod, "get_skills_service", lambda: _Skills())
         return project, exec_mod
@@ -105,12 +124,16 @@ class TestCreateAndRunProposes:
 
         project, exec_mod = self._setup(tmp_path, monkeypatch)
         result = await exec_mod.create_and_run_task(
-            project_id="p", title="Clean up the code", description="refactor for clarity",
+            project_id="p",
+            title="Clean up the code",
+            description="refactor for clarity",
             request=CreateAndRunRequest(),
         )
         spec_id = result["task_id"].split(":", 1)[1]
         meta = json.loads(
-            (project / ".aifactory" / "specs" / spec_id / "task_metadata.json").read_text()
+            (
+                project / ".aifactory" / "specs" / spec_id / "task_metadata.json"
+            ).read_text()
         )
         assert meta["suggestedSkills"][0]["id"] == "quality/clean-code"
 

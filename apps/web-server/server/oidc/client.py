@@ -76,9 +76,15 @@ def get_oauth_client():
             # (RS/ES/PS families) makes the intent explicit and blocks an
             # HMAC-confusion downgrade.
             "id_token_signing_alg_values_supported": [
-                "RS256", "RS384", "RS512",
-                "ES256", "ES384", "ES512",
-                "PS256", "PS384", "PS512",
+                "RS256",
+                "RS384",
+                "RS512",
+                "ES256",
+                "ES384",
+                "ES512",
+                "PS256",
+                "PS384",
+                "PS512",
             ],
         },
     )

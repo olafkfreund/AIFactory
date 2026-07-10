@@ -40,9 +40,11 @@ def test_app():
     # as a package — required for the `from .auth import ...` relative
     # imports inside server/main.py to resolve.
     import sys
+
     sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
     from server.main import create_app
+
     return create_app()
 
 
@@ -95,6 +97,7 @@ def mock_file_system(temp_dir: Path):
             fs.write_json("test.json", {"key": "value"})
             assert fs.read_json("test.json")["key"] == "value"
     """
+
     class MockFileSystem:
         def __init__(self, base_path: Path):
             self.base_path = base_path
@@ -267,6 +270,7 @@ def mock_subprocess():
             result = subprocess.run(["git", "status"])
             assert result.returncode == 0
     """
+
     class MockSubprocess:
         def __init__(self):
             self.commands = {}
@@ -320,25 +324,27 @@ def mock_glab_cli(mock_subprocess):
             result = subprocess.run(["glab", "mr", "view", "123"])
             assert "Test MR" in result.stdout
     """
+
     class MockGlabCLI:
         def __init__(self, subprocess_mock):
             self.subprocess_mock = subprocess_mock
 
         def mock_command(self, subcommand: str, output: str = "", returncode: int = 0):
             """Mock a glab command."""
-            self.subprocess_mock.configure({
-                f"glab {subcommand}": {
-                    "returncode": returncode,
-                    "stdout": output,
+            self.subprocess_mock.configure(
+                {
+                    f"glab {subcommand}": {
+                        "returncode": returncode,
+                        "stdout": output,
+                    }
                 }
-            })
+            )
             return self
 
         def mock_mr_view(self, mr_id: int, mr_data: dict):
             """Mock glab mr view command."""
             return self.mock_command(
-                f"mr view {mr_id} --json",
-                output=json.dumps(mr_data)
+                f"mr view {mr_id} --json", output=json.dumps(mr_data)
             )
 
         def mock_mr_update(self, mr_id: int, success: bool = True):
@@ -346,7 +352,7 @@ def mock_glab_cli(mock_subprocess):
             return self.mock_command(
                 f"mr update {mr_id}",
                 output=f"MR !{mr_id} updated",
-                returncode=0 if success else 1
+                returncode=0 if success else 1,
             )
 
     return MockGlabCLI(mock_subprocess)
@@ -363,32 +369,33 @@ def mock_gh_cli(mock_subprocess):
             result = subprocess.run(["gh", "pr", "view", "123"])
             assert "Test PR" in result.stdout
     """
+
     class MockGhCLI:
         def __init__(self, subprocess_mock):
             self.subprocess_mock = subprocess_mock
 
         def mock_command(self, subcommand: str, output: str = "", returncode: int = 0):
             """Mock a gh command."""
-            self.subprocess_mock.configure({
-                f"gh {subcommand}": {
-                    "returncode": returncode,
-                    "stdout": output,
+            self.subprocess_mock.configure(
+                {
+                    f"gh {subcommand}": {
+                        "returncode": returncode,
+                        "stdout": output,
+                    }
                 }
-            })
+            )
             return self
 
         def mock_pr_view(self, pr_number: int, pr_data: dict):
             """Mock gh pr view command."""
             return self.mock_command(
-                f"pr view {pr_number} --json",
-                output=json.dumps(pr_data)
+                f"pr view {pr_number} --json", output=json.dumps(pr_data)
             )
 
         def mock_issue_view(self, issue_number: int, issue_data: dict):
             """Mock gh issue view command."""
             return self.mock_command(
-                f"issue view {issue_number} --json",
-                output=json.dumps(issue_data)
+                f"issue view {issue_number} --json", output=json.dumps(issue_data)
             )
 
     return MockGhCLI(mock_subprocess)
@@ -413,6 +420,7 @@ def mock_ai_service():
             result = ai_service.generate(prompt="Generate ideas")
             assert len(result["ideas"]) == 2
     """
+
     class MockAIService:
         def __init__(self):
             self.responses = {}
@@ -441,6 +449,7 @@ def mock_background_task():
             status = mock_background_task.get_status(task_id)
             assert status == "running"
     """
+
     class MockBackgroundTask:
         def __init__(self):
             self.tasks = {}
@@ -498,33 +507,28 @@ class EndpointTestDataFactory:
 
     @staticmethod
     def settings_profile_token_request(
-        profile_id: str = "profile-1",
-        token: str = "sk-ant-test-token"
+        profile_id: str = "profile-1", token: str = "sk-ant-test-token"
     ) -> dict:
         """Create profile token update request."""
         return {"profile_id": profile_id, "token": token}
 
     @staticmethod
     def roadmap_feature_status_request(
-        feature_id: str = "feature-1",
-        status: str = "in_progress"
+        feature_id: str = "feature-1", status: str = "in_progress"
     ) -> dict:
         """Create feature status update request."""
         return {"feature_id": feature_id, "status": status}
 
     @staticmethod
     def roadmap_idea_status_request(
-        idea_id: str = "idea-1",
-        status: str = "dismissed"
+        idea_id: str = "idea-1", status: str = "dismissed"
     ) -> dict:
         """Create idea status update request."""
         return {"idea_id": idea_id, "status": status}
 
     @staticmethod
     def gitlab_mr_update_request(
-        mr_id: int = 123,
-        title: str | None = None,
-        description: str | None = None
+        mr_id: int = 123, title: str | None = None, description: str | None = None
     ) -> dict:
         """Create GitLab MR update request."""
         return {
@@ -554,7 +558,7 @@ class EndpointTestDataFactory:
             "error": {
                 "code": code,
                 "message": message,
-            }
+            },
         }
 
 
@@ -594,9 +598,7 @@ class EndpointAssertions:
 
     @staticmethod
     def assert_error_response(
-        response,
-        expected_status: int = 400,
-        expected_message: str | None = None
+        response, expected_status: int = 400, expected_message: str | None = None
     ):
         """Assert response is an error."""
         assert response.status_code == expected_status
@@ -609,9 +611,7 @@ class EndpointAssertions:
 
     @staticmethod
     def assert_file_updated(
-        file_system,
-        filename: str,
-        expected_content: dict | None = None
+        file_system, filename: str, expected_content: dict | None = None
     ):
         """Assert file was updated correctly."""
         assert file_system.exists(filename)
@@ -623,8 +623,9 @@ class EndpointAssertions:
     @staticmethod
     def assert_cli_called(mock_subprocess, command: str):
         """Assert CLI command was called."""
-        assert any(command in call for call in mock_subprocess.call_history), \
+        assert any(command in call for call in mock_subprocess.call_history), (
             f"Expected command '{command}' not found in: {mock_subprocess.call_history}"
+        )
 
 
 @pytest.fixture
@@ -652,7 +653,7 @@ def endpoint_integration_helper(
     mock_subprocess,
     mock_ai_service,
     test_data_factory,
-    assert_endpoint
+    assert_endpoint,
 ):
     """
     Comprehensive helper combining all endpoint test utilities.
@@ -676,6 +677,7 @@ def endpoint_integration_helper(
                 helper.file_system, "config.json"
             )
     """
+
     class IntegrationHelper:
         def __init__(
             self,
@@ -684,7 +686,7 @@ def endpoint_integration_helper(
             subprocess_mock,
             ai_service,
             data_factory,
-            assertions
+            assertions,
         ):
             self.client = client
             self.file_system = file_system
@@ -699,5 +701,5 @@ def endpoint_integration_helper(
         mock_subprocess,
         mock_ai_service,
         test_data_factory,
-        assert_endpoint
+        assert_endpoint,
     )

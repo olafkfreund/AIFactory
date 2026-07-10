@@ -87,5 +87,6 @@ PRESETS: dict[str, OidcPreset] = {
 def current_preset() -> OidcPreset:
     """Return the active preset based on ``APP_OIDC_PROVIDER`` env."""
     import os
+
     name = (os.environ.get("APP_OIDC_PROVIDER") or "keycloak").lower()
     return PRESETS.get(name, PRESETS["keycloak"])

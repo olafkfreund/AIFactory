@@ -21,7 +21,9 @@ def test_full_pytest_suite_passes_against_postgres(test_postgres_url: str) -> No
     """
     venv_python = REPO_ROOT / "apps" / "backend" / ".venv" / "bin" / "python3"
     if not venv_python.exists():
-        pytest.skip("backend venv not present — `uv pip install -r tests/requirements-test.txt`")
+        pytest.skip(
+            "backend venv not present — `uv pip install -r tests/requirements-test.txt`"
+        )
 
     env = os.environ.copy()
     env["DATABASE_URL"] = test_postgres_url
@@ -34,9 +36,14 @@ def test_full_pytest_suite_passes_against_postgres(test_postgres_url: str) -> No
 
     result = subprocess.run(
         [
-            str(venv_python), "-m", "pytest",
-            "tests/", "-m", "not slow and not postgres",
-            "-q", "--tb=short",
+            str(venv_python),
+            "-m",
+            "pytest",
+            "tests/",
+            "-m",
+            "not slow and not postgres",
+            "-q",
+            "--tb=short",
         ],
         cwd=REPO_ROOT,
         env=env,

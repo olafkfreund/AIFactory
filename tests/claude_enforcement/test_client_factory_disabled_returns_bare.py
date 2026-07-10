@@ -11,37 +11,46 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-for _root in (REPO_ROOT / 'apps' / 'web-server', REPO_ROOT / 'apps' / 'backend'):
+for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
 
 def test_env_unset_returns_noop(monkeypatch):
-    monkeypatch.delenv('AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED', raising=False)
+    monkeypatch.delenv("AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED", raising=False)
     from core.enforcement import build_enforcement_context
+
     ctx = build_enforcement_context(
-        org_id='org-x', user_id=None,
-        model='claude-opus-4-7', allowed_models=['*'],
+        org_id="org-x",
+        user_id=None,
+        model="claude-opus-4-7",
+        allowed_models=["*"],
     )
     assert ctx._is_noop
 
 
 def test_env_false_returns_noop(monkeypatch):
-    monkeypatch.setenv('AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED', 'false')
+    monkeypatch.setenv("AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED", "false")
     from core.enforcement import build_enforcement_context
+
     ctx = build_enforcement_context(
-        org_id='org-x', user_id=None,
-        model='claude-opus-4-7', allowed_models=['*'],
+        org_id="org-x",
+        user_id=None,
+        model="claude-opus-4-7",
+        allowed_models=["*"],
     )
     assert ctx._is_noop
 
 
 def test_no_org_id_returns_noop(monkeypatch):
-    monkeypatch.setenv('AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED', 'true')
+    monkeypatch.setenv("AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED", "true")
     from core.enforcement import build_enforcement_context
+
     ctx = build_enforcement_context(
-        org_id=None, user_id=None,
-        model='claude-opus-4-7', allowed_models=['*'],
+        org_id=None,
+        user_id=None,
+        model="claude-opus-4-7",
+        allowed_models=["*"],
     )
     assert ctx._is_noop
 
@@ -54,7 +63,7 @@ def test_wrap_client_if_enforced_with_noop_returns_bare():
 
     noop = ClaudeEnforcementContext.noop()
     result = wrap_client_if_enforced(_FakeClient(), noop)
-    assert type(result).__name__ == '_FakeClient'
+    assert type(result).__name__ == "_FakeClient"
 
 
 def test_wrap_client_if_enforced_with_active_wraps():
@@ -69,8 +78,10 @@ def test_wrap_client_if_enforced_with_active_wraps():
         pass
 
     ctx = ClaudeEnforcementContext(
-        org_id='org-x', user_id=None,
-        model='claude-opus-4-7', allowed_models=['*'],
+        org_id="org-x",
+        user_id=None,
+        model="claude-opus-4-7",
+        allowed_models=["*"],
         budget_provider=_NoBudgetProvider(),
     )
     result = wrap_client_if_enforced(_FakeClient(), ctx)

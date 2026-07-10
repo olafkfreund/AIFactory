@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-for _root in (REPO_ROOT / 'apps' / 'web-server', REPO_ROOT / 'apps' / 'backend'):
+for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
@@ -76,20 +76,21 @@ def test_llm_call_writes_audit_row(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='user-alice',
-                model='gpt-4o-mini',
+                org_id="org-acme",
+                user_id="user-alice",
+                model="gpt-4o-mini",
                 input_tokens=1200,
                 output_tokens=450,
                 cost_usd=0.0234,
                 latency_ms=1847,
-                prompt_text='hello',
-                response_text='hi there',
-                litellm_request_id='req-1',
+                prompt_text="hello",
+                response_text="hi there",
+                litellm_request_id="req-1",
                 action=ACTION_LLM_CALL,
             )
 
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 rows = (await db.execute(select(AuditLog))).scalars().all()
                 return rows
@@ -97,24 +98,24 @@ def test_llm_call_writes_audit_row(fresh_db):
         rows = _run(_go())
         assert len(rows) == 1
         row = rows[0]
-        assert row.action == 'llm.call'
-        assert row.resource_type == 'llm'
-        assert row.resource_id == 'gpt-4o-mini'
-        assert row.org_id == 'org-acme'
-        assert row.user_id == 'user-alice'
+        assert row.action == "llm.call"
+        assert row.resource_type == "llm"
+        assert row.resource_id == "gpt-4o-mini"
+        assert row.org_id == "org-acme"
+        assert row.user_id == "user-alice"
         # Design §5 — confidential tier.
-        assert row.classification == 'confidential'
+        assert row.classification == "confidential"
 
         details = json.loads(row.details_json)
-        assert details['model'] == 'gpt-4o-mini'
-        assert details['input_tokens'] == 1200
-        assert details['output_tokens'] == 450
-        assert details['cost_usd'] == 0.0234
-        assert details['cost_source'] == 'litellm_estimate'
-        assert details['latency_ms'] == 1847
-        assert details['prompt_truncated'] == 'hello'
-        assert details['response_truncated'] == 'hi there'
-        assert details['litellm_request_id'] == 'req-1'
+        assert details["model"] == "gpt-4o-mini"
+        assert details["input_tokens"] == 1200
+        assert details["output_tokens"] == 450
+        assert details["cost_usd"] == 0.0234
+        assert details["cost_source"] == "litellm_estimate"
+        assert details["latency_ms"] == 1847
+        assert details["prompt_truncated"] == "hello"
+        assert details["response_truncated"] == "hi there"
+        assert details["litellm_request_id"] == "req-1"
     finally:
         restore()
 
@@ -136,26 +137,27 @@ def test_abandoned_call_sets_truncated_flag(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='agent',
-                model='gpt-4o-mini',
-                prompt_text='hello',
-                response_text='partial',
+                org_id="org-acme",
+                user_id="agent",
+                model="gpt-4o-mini",
+                prompt_text="hello",
+                response_text="partial",
                 action=ACTION_LLM_CALL_ABANDONED,
-                error='asyncio.CancelledError',
+                error="asyncio.CancelledError",
             )
 
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().all()
 
         rows = _run(_go())
         assert len(rows) == 1
-        assert rows[0].action == 'llm.call.abandoned'
+        assert rows[0].action == "llm.call.abandoned"
         details = json.loads(rows[0].details_json)
         # Design §5 — abandoned rows carry the truncated flag so
         # operators can filter `details_json->>'truncated' = true`.
-        assert details['truncated'] is True
+        assert details["truncated"] is True
     finally:
         restore()
 
@@ -177,24 +179,25 @@ def test_failed_call_records_error(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='agent',
-                model='gpt-4o-mini',
-                prompt_text='hello',
-                response_text='',
+                org_id="org-acme",
+                user_id="agent",
+                model="gpt-4o-mini",
+                prompt_text="hello",
+                response_text="",
                 action=ACTION_LLM_CALL_FAILED,
-                error='provider returned HTTP 503',
+                error="provider returned HTTP 503",
             )
 
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().all()
 
         rows = _run(_go())
         assert len(rows) == 1
-        assert rows[0].action == 'llm.call.failed'
+        assert rows[0].action == "llm.call.failed"
         details = json.loads(rows[0].details_json)
-        assert details['error'] == 'provider returned HTTP 503'
+        assert details["error"] == "provider returned HTTP 503"
     finally:
         restore()
 
@@ -213,24 +216,25 @@ def test_prompt_and_response_are_redacted(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='user-alice',
-                model='gpt-4o-mini',
-                prompt_text='User alice@example.com asked about SSN 123-45-6789',
-                response_text='Contact (555) 123-4567 to verify.',
+                org_id="org-acme",
+                user_id="user-alice",
+                model="gpt-4o-mini",
+                prompt_text="User alice@example.com asked about SSN 123-45-6789",
+                response_text="Contact (555) 123-4567 to verify.",
             )
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().one()
 
         row = _run(_go())
         details = json.loads(row.details_json)
-        assert 'alice@example.com' not in details['prompt_truncated']
-        assert '123-45-6789' not in details['prompt_truncated']
-        assert '[REDACTED_EMAIL]' in details['prompt_truncated']
-        assert '[REDACTED_SSN]' in details['prompt_truncated']
-        assert '(555) 123-4567' not in details['response_truncated']
-        assert '[REDACTED_PHONE]' in details['response_truncated']
+        assert "alice@example.com" not in details["prompt_truncated"]
+        assert "123-45-6789" not in details["prompt_truncated"]
+        assert "[REDACTED_EMAIL]" in details["prompt_truncated"]
+        assert "[REDACTED_SSN]" in details["prompt_truncated"]
+        assert "(555) 123-4567" not in details["response_truncated"]
+        assert "[REDACTED_PHONE]" in details["response_truncated"]
     finally:
         restore()
 
@@ -247,25 +251,27 @@ def test_prompt_over_4kb_is_truncated(fresh_db):
         from server.database.models import AuditLog
         from server.services.llm_audit_hook import write_llm_call_audit
 
-        big = 'A' * 10_000  # 10 KB
+        big = "A" * 10_000  # 10 KB
+
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='user-alice',
-                model='gpt-4o-mini',
+                org_id="org-acme",
+                user_id="user-alice",
+                model="gpt-4o-mini",
                 prompt_text=big,
                 response_text=big,
             )
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().one()
 
         row = _run(_go())
         details = json.loads(row.details_json)
-        assert len(details['prompt_truncated'].encode('utf-8')) <= 4 * 1024
-        assert len(details['response_truncated'].encode('utf-8')) <= 4 * 1024
-        assert details.get('prompt_truncated_to_max') is True
-        assert details.get('response_truncated_to_max') is True
+        assert len(details["prompt_truncated"].encode("utf-8")) <= 4 * 1024
+        assert len(details["response_truncated"].encode("utf-8")) <= 4 * 1024
+        assert details.get("prompt_truncated_to_max") is True
+        assert details.get("response_truncated_to_max") is True
     finally:
         restore()
 
@@ -287,12 +293,13 @@ def test_audit_write_failure_does_not_raise(fresh_db, monkeypatch):
             return self
 
         async def __aenter__(self):
-            raise RuntimeError('synthetic DB failure')
+            raise RuntimeError("synthetic DB failure")
 
         async def __aexit__(self, *_a):
             return False
 
     import server.database.engine as engine_module
+
     original = engine_module.async_session_factory
     engine_module.async_session_factory = _BoomFactory()
 
@@ -302,9 +309,11 @@ def test_audit_write_failure_does_not_raise(fresh_db, monkeypatch):
         async def _go():
             # Must NOT raise.
             await write_llm_call_audit(
-                org_id='org-acme', user_id='agent',
-                model='gpt-4o-mini',
-                prompt_text='hi', response_text='hello',
+                org_id="org-acme",
+                user_id="agent",
+                model="gpt-4o-mini",
+                prompt_text="hi",
+                response_text="hello",
             )
 
         # If this raises, the test fails.
@@ -331,19 +340,20 @@ def test_prompt_outbound_scrubbed_default_false(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='user-alice',
-                model='gpt-4o-mini',
-                prompt_text='hello',
-                response_text='hi',
+                org_id="org-acme",
+                user_id="user-alice",
+                model="gpt-4o-mini",
+                prompt_text="hello",
+                response_text="hi",
             )
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().one()
 
         row = _run(_go())
         details = json.loads(row.details_json)
-        assert details['prompt_outbound_scrubbed'] is False
+        assert details["prompt_outbound_scrubbed"] is False
     finally:
         restore()
 
@@ -359,22 +369,23 @@ def test_prompt_outbound_scrubbed_true_when_provider_scrubbed(fresh_db):
 
         async def _go():
             await write_llm_call_audit(
-                org_id='org-acme',
-                user_id='user-alice',
-                model='gpt-4o-mini',
-                prompt_text='User SSN: 123-45-6789',
-                response_text='ack',
+                org_id="org-acme",
+                user_id="user-alice",
+                model="gpt-4o-mini",
+                prompt_text="User SSN: 123-45-6789",
+                response_text="ack",
                 prompt_outbound_scrubbed=True,
             )
             from sqlalchemy import select
+
             async with SessionLocal() as db:
                 return (await db.execute(select(AuditLog))).scalars().one()
 
         row = _run(_go())
         details = json.loads(row.details_json)
-        assert details['prompt_outbound_scrubbed'] is True
+        assert details["prompt_outbound_scrubbed"] is True
         # Audit-row redaction still applies regardless of scrub-before-send.
-        assert '[REDACTED_SSN]' in details['prompt_truncated']
+        assert "[REDACTED_SSN]" in details["prompt_truncated"]
     finally:
         restore()
 
@@ -383,22 +394,24 @@ def test_scrub_before_send_when_enabled(monkeypatch):
     """Provider constructed with ``scrub_outbound=True`` sends the
     redacted prompt to the LLM. The HTTP body that hits the server
     contains ``[REDACTED_SSN]`` rather than the raw SSN."""
-    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
-    monkeypatch.delenv('LITELLM_AUDIT_SCRUB_OUTBOUND', raising=False)
+    monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_AUDIT_SCRUB_OUTBOUND", raising=False)
 
     from providers.openai_compatible import OpenAICompatibleProvider
 
     captured: dict[str, dict] = {}
 
     def _fake_http_post(self, url, payload):
-        captured['payload'] = payload
+        captured["payload"] = payload
         return {
-            'choices': [{'message': {'role': 'assistant', 'content': 'ack'}}],
-            'usage': {'prompt_tokens': 5, 'completion_tokens': 1},
+            "choices": [{"message": {"role": "assistant", "content": "ack"}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 1},
         }
 
     monkeypatch.setattr(
-        OpenAICompatibleProvider, '_http_post', _fake_http_post,
+        OpenAICompatibleProvider,
+        "_http_post",
+        _fake_http_post,
     )
 
     # Skip the real audit-row write — we're testing the outbound body.
@@ -406,97 +419,105 @@ def test_scrub_before_send_when_enabled(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        OpenAICompatibleProvider, '_write_audit', _noop_audit,
+        OpenAICompatibleProvider,
+        "_write_audit",
+        _noop_audit,
     )
 
     async def _go():
         provider = OpenAICompatibleProvider(
-            model='gpt-4o-mini',
-            base_url='http://fake.invalid',
-            api_key='sk-test',
+            model="gpt-4o-mini",
+            base_url="http://fake.invalid",
+            api_key="sk-test",
             scrub_outbound=True,
         )
-        await provider.query('User SSN: 123-45-6789, email alice@example.com')
+        await provider.query("User SSN: 123-45-6789, email alice@example.com")
         async for _ in provider.receive_response():
             pass
 
     import asyncio
+
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_go())
     finally:
         loop.close()
 
-    sent = captured['payload']['messages'][0]['content']
-    assert '123-45-6789' not in sent
-    assert '[REDACTED_SSN]' in sent
-    assert 'alice@example.com' not in sent
-    assert '[REDACTED_EMAIL]' in sent
+    sent = captured["payload"]["messages"][0]["content"]
+    assert "123-45-6789" not in sent
+    assert "[REDACTED_SSN]" in sent
+    assert "alice@example.com" not in sent
+    assert "[REDACTED_EMAIL]" in sent
 
 
 def test_no_scrub_when_disabled(monkeypatch):
     """Default (``scrub_outbound=False``) → outbound HTTP body is the
     raw prompt. v1.1 behaviour preserved for callers that haven't
     opted in."""
-    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
-    monkeypatch.delenv('LITELLM_AUDIT_SCRUB_OUTBOUND', raising=False)
+    monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_AUDIT_SCRUB_OUTBOUND", raising=False)
 
     from providers.openai_compatible import OpenAICompatibleProvider
 
     captured: dict[str, dict] = {}
 
     def _fake_http_post(self, url, payload):
-        captured['payload'] = payload
+        captured["payload"] = payload
         return {
-            'choices': [{'message': {'role': 'assistant', 'content': 'ack'}}],
+            "choices": [{"message": {"role": "assistant", "content": "ack"}}],
         }
 
     monkeypatch.setattr(
-        OpenAICompatibleProvider, '_http_post', _fake_http_post,
+        OpenAICompatibleProvider,
+        "_http_post",
+        _fake_http_post,
     )
 
     async def _noop_audit(self, **_kwargs):
         return None
 
     monkeypatch.setattr(
-        OpenAICompatibleProvider, '_write_audit', _noop_audit,
+        OpenAICompatibleProvider,
+        "_write_audit",
+        _noop_audit,
     )
 
     async def _go():
         provider = OpenAICompatibleProvider(
-            model='gpt-4o-mini',
-            base_url='http://fake.invalid',
-            api_key='sk-test',
+            model="gpt-4o-mini",
+            base_url="http://fake.invalid",
+            api_key="sk-test",
             # scrub_outbound omitted; env unset → default False.
         )
         assert provider._scrub_outbound is False
-        await provider.query('User SSN: 123-45-6789')
+        await provider.query("User SSN: 123-45-6789")
         async for _ in provider.receive_response():
             pass
 
     import asyncio
+
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_go())
     finally:
         loop.close()
 
-    sent = captured['payload']['messages'][0]['content']
+    sent = captured["payload"]["messages"][0]["content"]
     # v1.1 contract: raw PII hits the wire.
-    assert '123-45-6789' in sent
+    assert "123-45-6789" in sent
 
 
 def test_env_var_enables_scrub_outbound(monkeypatch):
     """``LITELLM_AUDIT_SCRUB_OUTBOUND=true`` enables scrubBeforeSend
     deployment-wide without per-provider plumbing."""
-    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
-    monkeypatch.setenv('LITELLM_AUDIT_SCRUB_OUTBOUND', 'true')
+    monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "true")
 
     from providers.openai_compatible import OpenAICompatibleProvider
 
     p = OpenAICompatibleProvider(
-        model='gpt-4o-mini',
-        base_url='http://fake.invalid',
+        model="gpt-4o-mini",
+        base_url="http://fake.invalid",
     )
     assert p._scrub_outbound is True
 
@@ -504,14 +525,14 @@ def test_env_var_enables_scrub_outbound(monkeypatch):
 def test_explicit_false_overrides_env(monkeypatch):
     """Explicit ctor ``scrub_outbound=False`` beats env=true (lets
     tests + per-tenant overrides pin behaviour deterministically)."""
-    monkeypatch.delenv('LITELLM_GATEWAY_URL', raising=False)
-    monkeypatch.setenv('LITELLM_AUDIT_SCRUB_OUTBOUND', 'true')
+    monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("LITELLM_AUDIT_SCRUB_OUTBOUND", "true")
 
     from providers.openai_compatible import OpenAICompatibleProvider
 
     p = OpenAICompatibleProvider(
-        model='gpt-4o-mini',
-        base_url='http://fake.invalid',
+        model="gpt-4o-mini",
+        base_url="http://fake.invalid",
         scrub_outbound=False,
     )
     assert p._scrub_outbound is False

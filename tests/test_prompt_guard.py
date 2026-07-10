@@ -80,7 +80,7 @@ class TestTriageSinkWrapsUntrusted:
         assert '<untrusted_input source="GitHub issue #42">' in out
         assert _CLOSE in out
         # The trusted scaffolding (issue number) sits outside the wrapper.
-        assert out.index("## Issue #42") < out.index('<untrusted_input')
+        assert out.index("## Issue #42") < out.index("<untrusted_input")
 
     def test_injection_in_body_is_contained(self):
         issue = {

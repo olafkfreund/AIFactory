@@ -66,9 +66,7 @@ def _make_service(
     return service, spawned
 
 
-async def _start(
-    service: AgentService, task_id: str, tmp_path: Path
-) -> Any:
+async def _start(service: AgentService, task_id: str, tmp_path: Path) -> Any:
     return await service.start_task_execution(
         task_id=task_id,
         project_path=tmp_path,

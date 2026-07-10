@@ -80,6 +80,8 @@ def fresh_db(tmp_path):
     SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
     return engine, SessionLocal
+
+
 @pytest.fixture(autouse=True)
 def _set_token_env(monkeypatch):
     """Ensure SCIM_BEARER_TOKEN is set for every test (overrideable)."""
@@ -171,12 +173,14 @@ async def _seed_group_member(SessionLocal, group_id: str, user_id: str) -> None:
     from server.database.models import ScimGroupMember
 
     async with SessionLocal() as s:
-        s.add(ScimGroupMember(
-            id=str(uuid.uuid4()),
-            group_id=group_id,
-            user_id=user_id,
-            display=None,
-        ))
+        s.add(
+            ScimGroupMember(
+                id=str(uuid.uuid4()),
+                group_id=group_id,
+                user_id=user_id,
+                display=None,
+            )
+        )
         await s.commit()
 
 
@@ -320,9 +324,7 @@ def test_list_users_filter_active_eq_false_includes_soft_deleted(fresh_db):
 
     app = _make_app(fresh_db)
     with TestClient(app) as c:
-        resp = c.get(
-            '/scim/v2/Users?filter=active+eq+false', headers=_HEADERS
-        )
+        resp = c.get("/scim/v2/Users?filter=active+eq+false", headers=_HEADERS)
     assert resp.status_code == 200
     emails = [r["userName"] for r in resp.json()["Resources"]]
     assert "deleted@example.com" in emails
@@ -425,9 +427,7 @@ def test_patch_user_add_capitalised_active(fresh_db):
             headers=_HEADERS,
             json={
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-                "Operations": [
-                    {"op": "Add", "path": "active", "value": False}
-                ],
+                "Operations": [{"op": "Add", "path": "active", "value": False}],
             },
         )
     assert resp.status_code == 200
@@ -465,9 +465,7 @@ def test_patch_user_remove_display_name(fresh_db):
             headers=_HEADERS,
             json={
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-                "Operations": [
-                    {"op": "Remove", "path": "displayName"}
-                ],
+                "Operations": [{"op": "Remove", "path": "displayName"}],
             },
         )
     assert resp.status_code == 200
@@ -488,7 +486,10 @@ def test_patch_user_whole_resource_without_path(fresh_db):
             json={
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
                 "Operations": [
-                    {"op": "Replace", "value": {"active": False, "displayName": "Deactivated"}}
+                    {
+                        "op": "Replace",
+                        "value": {"active": False, "displayName": "Deactivated"},
+                    }
                 ],
             },
         )

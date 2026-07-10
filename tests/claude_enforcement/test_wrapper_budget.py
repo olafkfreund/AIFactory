@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-for _root in (REPO_ROOT / 'apps' / 'web-server', REPO_ROOT / 'apps' / 'backend'):
+for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
@@ -45,15 +45,16 @@ class _FakeBudgetProvider:
 
 def _make_ctx(
     remaining: float | None,
-    failure_mode: str = 'open',
+    failure_mode: str = "open",
     raises: Exception | None = None,
 ):
     from core.enforcement import ClaudeEnforcementContext
+
     ctx = ClaudeEnforcementContext(
-        org_id='org-budget-test',
-        user_id='user-alice',
-        model='claude-opus-4-7',
-        allowed_models=['*'],
+        org_id="org-budget-test",
+        user_id="user-alice",
+        model="claude-opus-4-7",
+        allowed_models=["*"],
         failure_mode=failure_mode,
         budget_provider=_FakeBudgetProvider(remaining, raises),
     )
@@ -67,14 +68,16 @@ def test_under_budget_proceeds():
 
 def test_exactly_zero_budget_blocks():
     from core.enforcement import BudgetExceededError
+
     ctx = _make_ctx(remaining=0.0)
     with pytest.raises(BudgetExceededError) as excinfo:
         _run(ctx.enforce_budget())
-    assert 'org-budget-test' in str(excinfo.value)
+    assert "org-budget-test" in str(excinfo.value)
 
 
 def test_negative_budget_blocks():
     from core.enforcement import BudgetExceededError
+
     ctx = _make_ctx(remaining=-0.01)
     with pytest.raises(BudgetExceededError):
         _run(ctx.enforce_budget())
@@ -88,27 +91,29 @@ def test_none_remaining_unlimited():
 def test_budget_failure_open_mode_proceeds():
     ctx = _make_ctx(
         remaining=None,
-        failure_mode='open',
-        raises=RuntimeError('LiteLLM down'),
+        failure_mode="open",
+        raises=RuntimeError("LiteLLM down"),
     )
     _run(ctx.enforce_budget())  # must not raise in open mode
 
 
 def test_budget_failure_closed_mode_raises():
     from core.enforcement import BudgetCheckUnavailableError
+
     ctx = _make_ctx(
         remaining=None,
-        failure_mode='closed',
-        raises=RuntimeError('LiteLLM down'),
+        failure_mode="closed",
+        raises=RuntimeError("LiteLLM down"),
     )
     with pytest.raises(BudgetCheckUnavailableError) as excinfo:
         _run(ctx.enforce_budget())
-    assert 'org-budget-test' in str(excinfo.value)
-    assert 'failure_mode=closed' in str(excinfo.value)
+    assert "org-budget-test" in str(excinfo.value)
+    assert "failure_mode=closed" in str(excinfo.value)
 
 
 def test_noop_skips_budget_check():
     from core.enforcement import ClaudeEnforcementContext
+
     ctx = ClaudeEnforcementContext.noop()
     _run(ctx.enforce_budget())  # must not raise
 
@@ -119,10 +124,10 @@ def test_litellm_budget_provider_under_budget():
 
     class _FakeAdminClient:
         async def get_virtual_key_info(self, org_id):
-            return {'max_budget': 10.0, 'spend': 3.0}
+            return {"max_budget": 10.0, "spend": 3.0}
 
     provider = LiteLLMBudgetProvider(_FakeAdminClient())
-    remaining = _run(provider.remaining_usd('org-x'))
+    remaining = _run(provider.remaining_usd("org-x"))
     assert abs(remaining - 7.0) < 1e-9
 
 
@@ -135,7 +140,7 @@ def test_litellm_budget_provider_no_key_returns_none():
             return None
 
     provider = LiteLLMBudgetProvider(_FakeAdminClient())
-    remaining = _run(provider.remaining_usd('org-no-key'))
+    remaining = _run(provider.remaining_usd("org-no-key"))
     assert remaining is None
 
 
@@ -145,8 +150,8 @@ def test_litellm_budget_provider_zero_max_budget_unlimited():
 
     class _FakeAdminClient:
         async def get_virtual_key_info(self, org_id):
-            return {'max_budget': 0, 'spend': 0}
+            return {"max_budget": 0, "spend": 0}
 
     provider = LiteLLMBudgetProvider(_FakeAdminClient())
-    remaining = _run(provider.remaining_usd('org-x'))
+    remaining = _run(provider.remaining_usd("org-x"))
     assert remaining is None

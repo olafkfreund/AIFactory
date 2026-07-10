@@ -21,14 +21,14 @@ from security.url_guard import assert_url_not_ssrf
 
 # Hosts that must be refused (IP literals → no DNS needed).
 SSRF_URLS = [
-    "http://169.254.169.254/latest/meta-data/",   # AWS/GCP metadata (link-local)
-    "http://127.0.0.1:3101/api/admin",            # loopback — local control plane
-    "http://[::1]:8080/",                          # loopback v6
-    "http://10.0.0.5/internal",                    # RFC1918 private
-    "http://172.16.0.1/",                          # RFC1918 private
-    "http://192.168.1.10/admin",                   # RFC1918 private
-    "http://0.0.0.0/",                             # unspecified
-    "https://192.168.0.1/",                        # private over https
+    "http://169.254.169.254/latest/meta-data/",  # AWS/GCP metadata (link-local)
+    "http://127.0.0.1:3101/api/admin",  # loopback — local control plane
+    "http://[::1]:8080/",  # loopback v6
+    "http://10.0.0.5/internal",  # RFC1918 private
+    "http://172.16.0.1/",  # RFC1918 private
+    "http://192.168.1.10/admin",  # RFC1918 private
+    "http://0.0.0.0/",  # unspecified
+    "https://192.168.0.1/",  # private over https
 ]
 
 # Non-http(s) schemes must be refused outright.

@@ -33,22 +33,28 @@ def worktree():
 
 
 class TestRmContainment:
-    @pytest.mark.parametrize("cmd", [
-        "rm -rf build",
-        "rm -rf ./src/tmp",
-        "rm /work/proj/nested/a.txt",       # absolute but inside the worktree
-        "rm file.txt",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf build",
+            "rm -rf ./src/tmp",
+            "rm /work/proj/nested/a.txt",  # absolute but inside the worktree
+            "rm file.txt",
+        ],
+    )
     def test_in_worktree_allowed(self, cmd, worktree):
         ok, _ = validate_rm_command(cmd)
         assert ok is True
 
-    @pytest.mark.parametrize("cmd", [
-        "rm -rf /etc/passwd",               # absolute, outside
-        "rm -rf ../../etc",                 # .. escape
-        "rm /work/other/x",                 # sibling dir
-        "rm -rf --no-preserve-root /",      # the rm -rf / re-enabler
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "rm -rf /etc/passwd",  # absolute, outside
+            "rm -rf ../../etc",  # .. escape
+            "rm /work/other/x",  # sibling dir
+            "rm -rf --no-preserve-root /",  # the rm -rf / re-enabler
+        ],
+    )
     def test_escapes_blocked(self, cmd, worktree):
         ok, _ = validate_rm_command(cmd)
         assert ok is False
@@ -58,11 +64,14 @@ class TestChmodContainment:
     def test_in_worktree_allowed(self, worktree):
         assert validate_chmod_command("chmod +x scripts/run.sh")[0] is True
 
-    @pytest.mark.parametrize("cmd", [
-        "chmod -R 755 /etc",
-        "chmod +x ../escape.sh",
-        "chmod 755 /work/other/x",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "chmod -R 755 /etc",
+            "chmod +x ../escape.sh",
+            "chmod 755 /work/other/x",
+        ],
+    )
     def test_outside_blocked(self, cmd, worktree):
         assert validate_chmod_command(cmd)[0] is False
 
@@ -72,9 +81,16 @@ class TestKillScoping:
     def test_positive_pid_allowed(self, cmd):
         assert validate_kill_command(cmd)[0] is True
 
-    @pytest.mark.parametrize("cmd", [
-        "kill -1", "kill 0", "kill -- -1234", "kill -9 -1", "kill -15 -1",
-    ])
+    @pytest.mark.parametrize(
+        "cmd",
+        [
+            "kill -1",
+            "kill 0",
+            "kill -- -1234",
+            "kill -9 -1",
+            "kill -15 -1",
+        ],
+    )
     def test_group_and_all_blocked(self, cmd):
         assert validate_kill_command(cmd)[0] is False
 

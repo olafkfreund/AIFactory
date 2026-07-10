@@ -53,18 +53,22 @@ def test_aws_kms_roundtrip() -> None:
         aws_access_key_id="aifactory-test",
         aws_secret_access_key="aifactory-test",
     )
-    key_id = raw_kms.create_key(Description="aifactory-test-cmk")["KeyMetadata"]["KeyId"]
+    key_id = raw_kms.create_key(Description="aifactory-test-cmk")["KeyMetadata"][
+        "KeyId"
+    ]
 
     # Sanity: same client should see the key it just created.
     listed = [k["KeyId"] for k in raw_kms.list_keys()["Keys"]]
     assert key_id in listed, f"LocalStack lost the key it just created: {listed}"
 
     # Now drive the backend through our factory.
-    reimport_crypto({
-        "APP_KMS_BACKEND": "aws_kms",
-        "AWS_KMS_KEY_ID": key_id,
-        "AWS_ENDPOINT_URL": AWS_LOCALSTACK_URL,
-    })
+    reimport_crypto(
+        {
+            "APP_KMS_BACKEND": "aws_kms",
+            "AWS_KMS_KEY_ID": key_id,
+            "AWS_ENDPOINT_URL": AWS_LOCALSTACK_URL,
+        }
+    )
     from server.crypto import get_backend  # noqa: E402
 
     backend = get_backend()
@@ -74,10 +78,12 @@ def test_aws_kms_roundtrip() -> None:
     ciphertext = backend.encrypt(plaintext)
 
     assert isinstance(ciphertext, bytes), "encrypt must return bytes"
-    assert len(ciphertext) > len(plaintext), \
+    assert len(ciphertext) > len(plaintext), (
         "AWS KMS wrap should add metadata + auth tag"
-    assert plaintext not in ciphertext, \
+    )
+    assert plaintext not in ciphertext, (
         "plaintext key bytes must not appear inside the wrapped blob"
+    )
 
     decrypted = backend.decrypt(ciphertext)
     assert decrypted == plaintext, "round-trip must recover the data key exactly"
@@ -107,7 +113,9 @@ AZURE_KEYVAULT_KEY = os.environ.get("AZURE_KEYVAULT_KEY")
         "test runs only when a real Key Vault is wired"
     ),
 )
-@pytest.mark.skipif(not kms_backend_available("azure_kv"), reason="azure-keyvault-keys not installed")
+@pytest.mark.skipif(
+    not kms_backend_available("azure_kv"), reason="azure-keyvault-keys not installed"
+)
 def test_azure_kv_roundtrip() -> None:
     """envelope-encrypt + decrypt via Azure Key Vault (real tenant only).
 
@@ -125,11 +133,13 @@ def test_azure_kv_roundtrip() -> None:
     """
     from azure.core.exceptions import AzureError
 
-    reimport_crypto({
-        "APP_KMS_BACKEND": "azure_kv",
-        "AZURE_KEYVAULT_URL": AZURE_KEYVAULT_URL,
-        "AZURE_KEYVAULT_KEY": AZURE_KEYVAULT_KEY,
-    })
+    reimport_crypto(
+        {
+            "APP_KMS_BACKEND": "azure_kv",
+            "AZURE_KEYVAULT_URL": AZURE_KEYVAULT_URL,
+            "AZURE_KEYVAULT_KEY": AZURE_KEYVAULT_KEY,
+        }
+    )
     from server.crypto import get_backend  # noqa: E402
 
     backend = get_backend()
@@ -138,10 +148,12 @@ def test_azure_kv_roundtrip() -> None:
     ciphertext = backend.encrypt(plaintext)
 
     assert isinstance(ciphertext, bytes), "encrypt must return bytes"
-    assert len(ciphertext) >= 256, \
+    assert len(ciphertext) >= 256, (
         f"RSA-OAEP wrap of a 2048-bit key should be 256+ bytes; got {len(ciphertext)}"
-    assert plaintext not in ciphertext, \
+    )
+    assert plaintext not in ciphertext, (
         "plaintext bytes must not appear inside the wrapped blob"
+    )
 
     decrypted = backend.decrypt(ciphertext)
     assert decrypted == plaintext, "round-trip must recover the data key exactly"
@@ -166,7 +178,9 @@ GCP_KMS_KEY_NAME = os.environ.get("GCP_KMS_KEY_NAME")
         "name and ADC credentials are wired"
     ),
 )
-@pytest.mark.skipif(not kms_backend_available("gcp_kms"), reason="google-cloud-kms not installed")
+@pytest.mark.skipif(
+    not kms_backend_available("gcp_kms"), reason="google-cloud-kms not installed"
+)
 def test_gcp_kms_roundtrip() -> None:
     """envelope-encrypt + decrypt via Cloud KMS (real project only).
 
@@ -183,10 +197,12 @@ def test_gcp_kms_roundtrip() -> None:
     """
     from google.api_core.exceptions import GoogleAPIError
 
-    reimport_crypto({
-        "APP_KMS_BACKEND": "gcp_kms",
-        "GCP_KMS_KEY_NAME": GCP_KMS_KEY_NAME,
-    })
+    reimport_crypto(
+        {
+            "APP_KMS_BACKEND": "gcp_kms",
+            "GCP_KMS_KEY_NAME": GCP_KMS_KEY_NAME,
+        }
+    )
     from server.crypto import get_backend  # noqa: E402
 
     backend = get_backend()
@@ -195,10 +211,12 @@ def test_gcp_kms_roundtrip() -> None:
     ciphertext = backend.encrypt(plaintext)
 
     assert isinstance(ciphertext, bytes), "encrypt must return bytes"
-    assert len(ciphertext) > len(plaintext), \
+    assert len(ciphertext) > len(plaintext), (
         "Cloud KMS wrap should add metadata + auth tag"
-    assert plaintext not in ciphertext, \
+    )
+    assert plaintext not in ciphertext, (
         "plaintext bytes must not appear inside the wrapped blob"
+    )
 
     decrypted = backend.decrypt(ciphertext)
     assert decrypted == plaintext, "round-trip must recover the data key exactly"
@@ -220,7 +238,9 @@ VAULT_TOKEN = os.environ.get("VAULT_TOKEN")
     not (VAULT_ADDR and VAULT_TOKEN),
     reason="VAULT_ADDR + VAULT_TOKEN not set; Vault Transit test requires a Vault dev server",
 )
-@pytest.mark.skipif(not kms_backend_available("vault_transit"), reason="hvac not installed")
+@pytest.mark.skipif(
+    not kms_backend_available("vault_transit"), reason="hvac not installed"
+)
 def test_vault_transit_roundtrip() -> None:
     """envelope-encrypt + decrypt via HashiCorp Vault Transit (dev-mode locally / CI).
 
@@ -253,12 +273,14 @@ def test_vault_transit_roundtrip() -> None:
     key_name = "aifactory-test"
     bootstrap.secrets.transit.create_key(name=key_name)
 
-    reimport_crypto({
-        "APP_KMS_BACKEND": "vault_transit",
-        "VAULT_ADDR": VAULT_ADDR,
-        "VAULT_TOKEN": VAULT_TOKEN,
-        "VAULT_TRANSIT_KEY": key_name,
-    })
+    reimport_crypto(
+        {
+            "APP_KMS_BACKEND": "vault_transit",
+            "VAULT_ADDR": VAULT_ADDR,
+            "VAULT_TOKEN": VAULT_TOKEN,
+            "VAULT_TRANSIT_KEY": key_name,
+        }
+    )
     from server.crypto import get_backend  # noqa: E402
 
     backend = get_backend()
@@ -267,10 +289,12 @@ def test_vault_transit_roundtrip() -> None:
     ciphertext = backend.encrypt(plaintext)
 
     assert isinstance(ciphertext, bytes), "encrypt must return bytes"
-    assert ciphertext.startswith(b"vault:v1:"), \
+    assert ciphertext.startswith(b"vault:v1:"), (
         f"expected vault:v1: prefix on a fresh key, got {ciphertext[:32]!r}"
-    assert plaintext not in ciphertext, \
+    )
+    assert plaintext not in ciphertext, (
         "plaintext bytes must not appear inside the wrapped wire format"
+    )
 
     decrypted = backend.decrypt(ciphertext)
     assert decrypted == plaintext, "round-trip must recover the data key exactly"

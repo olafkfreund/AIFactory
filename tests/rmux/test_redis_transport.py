@@ -96,9 +96,7 @@ def fake_redis(monkeypatch):
     # route that to the same hub so publishes are visible to subscribers.
     import redis.asyncio as redis_asyncio
 
-    monkeypatch.setattr(
-        redis_asyncio, "from_url", lambda *_a, **_k: hub, raising=True
-    )
+    monkeypatch.setattr(redis_asyncio, "from_url", lambda *_a, **_k: hub, raising=True)
     yield hub
     rt._redis_client = None
 

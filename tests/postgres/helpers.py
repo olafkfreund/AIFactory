@@ -60,12 +60,15 @@ def alembic_available() -> bool:
     """
     try:
         import alembic  # noqa: F401
+
         return True
     except ImportError:
         return False
 
 
-def run_alembic(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def run_alembic(
+    args: list[str], env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     """Run alembic via the active Python interpreter (no PATH dependency).
 
     Uses `sys.executable -m alembic` rather than the `alembic` binary so

@@ -23,6 +23,7 @@ def _write_three_events(SessionLocal):
     from server.services.audit_service import log_audit_event
 
     ids: list[str] = []
+
     async def _go():
         async with SessionLocal() as session:
             for i in range(3):
@@ -39,11 +40,13 @@ def _write_three_events(SessionLocal):
             # Fetch the inserted rows ordered.
             from server.database.models import AuditLog
             from sqlalchemy import select
+
             result = await session.execute(
                 select(AuditLog).order_by(AuditLog.created_at.asc())
             )
             for row in result.scalars():
                 ids.append(row.id)
+
     asyncio.new_event_loop().run_until_complete(_go())
     return ids
 
@@ -72,6 +75,7 @@ def test_hash_chain_links_rows(fresh_db) -> None:
                 select(AuditLog).order_by(AuditLog.created_at.asc())
             )
             return [row_as_mapping(r) for r in result.scalars()]
+
     rows = asyncio.new_event_loop().run_until_complete(_fetch())
 
     # First row's prev_hash is genesis.
@@ -149,6 +153,7 @@ def test_export_roundtrip_json(fresh_db) -> None:
             async for chunk in stream_json(s):
                 chunks.append(chunk)
             return b"".join(chunks)
+
     payload = asyncio.new_event_loop().run_until_complete(_collect())
 
     # Parse NDJSON.
@@ -182,6 +187,7 @@ def test_export_csv(fresh_db) -> None:
             async for chunk in stream_csv(s):
                 chunks.append(chunk)
             return b"".join(chunks)
+
     payload = asyncio.new_event_loop().run_until_complete(_collect())
 
     reader = csv.reader(io.StringIO(payload.decode("utf-8")))
@@ -214,18 +220,23 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
 
     # Write the export to disk.
     out = tmp_path / "audit.ndjson"
+
     async def _dump():
         async with SessionLocal() as s:
             with open(out, "wb") as f:
                 async for chunk in stream_json(s):
                     f.write(chunk)
+
     asyncio.new_event_loop().run_until_complete(_dump())
 
     # Verify (should pass).
     env = {"PATH": "/usr/bin:/bin", "PYTHONPATH": str(WEB_SERVER_ROOT)}
     result = subprocess.run(
         [sys.executable, "-m", "server.audit", "verify-chain", str(out)],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
     )
     assert result.returncode == 0, (
         f"verify exited {result.returncode}; stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -235,6 +246,7 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
     # Tamper a row and verify again — should now fail.
     lines = out.read_text().splitlines()
     import json as _json
+
     row = _json.loads(lines[1])
     row["action"] = "tampered.from.disk"
     lines[1] = _json.dumps(row)
@@ -242,7 +254,10 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
 
     result = subprocess.run(
         [sys.executable, "-m", "server.audit", "verify-chain", str(out)],
-        capture_output=True, text=True, timeout=30, env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
     )
     assert result.returncode != 0, "tampered export should fail verification"
 
@@ -250,11 +265,11 @@ def test_external_verify_script_round_trip(fresh_db, tmp_path) -> None:
 @pytest.mark.audit
 def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
     """After GDPR erasure:
-      - users.email / users.name / users.avatar_url are NULL.
-      - users.gdpr_erased_at is set.
-      - audit_logs rows for the user have user_id = sha256(original)[:36].
-      - audit_logs details_json has no plaintext PII.
-      - The full audit chain still verifies via verify_chain.
+    - users.email / users.name / users.avatar_url are NULL.
+    - users.gdpr_erased_at is set.
+    - audit_logs rows for the user have user_id = sha256(original)[:36].
+    - audit_logs details_json has no plaintext PII.
+    - The full audit chain still verifies via verify_chain.
     """
     import asyncio
     import uuid
@@ -312,8 +327,8 @@ def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
             audit_rows = list(audit_result.scalars())
             return fresh_user, audit_rows, erasee.id
 
-    fresh_user, audit_rows, original_uid = (
-        asyncio.new_event_loop().run_until_complete(_setup_and_erase())
+    fresh_user, audit_rows, original_uid = asyncio.new_event_loop().run_until_complete(
+        _setup_and_erase()
     )
 
     # 1. PII on user row is NULL.
@@ -342,9 +357,7 @@ def test_erasure_deletes_pii_but_chain_still_verifies(fresh_db) -> None:
     # 4. The chain still verifies end-to-end.
     rows_for_verify = [row_as_mapping(r) for r in audit_rows]
     ok, bad_idx, reason = verify_chain(rows_for_verify)
-    assert ok, (
-        f"post-erasure chain failed verification at row {bad_idx}: {reason}"
-    )
+    assert ok, f"post-erasure chain failed verification at row {bad_idx}: {reason}"
 
 
 @pytest.mark.audit
@@ -368,8 +381,11 @@ def test_retention_deletes_expired(fresh_db) -> None:
             # the past so the retention job deletes them.
             for i in range(4):
                 await log_audit_event(
-                    db=s, action=f"test.{i}", resource_type="test",
-                    user_id=None, org_id=None,
+                    db=s,
+                    action=f"test.{i}",
+                    resource_type="test",
+                    user_id=None,
+                    org_id=None,
                 )
             await s.commit()
 
@@ -388,14 +404,10 @@ def test_retention_deletes_expired(fresh_db) -> None:
             remaining_rows = list(count_result.scalars())
             return summary, remaining_rows
 
-    summary, remaining = asyncio.new_event_loop().run_until_complete(
-        _setup_and_prune()
-    )
+    summary, remaining = asyncio.new_event_loop().run_until_complete(_setup_and_prune())
 
     assert summary["deleted"] == 2, (
         f"expected 2 expired rows deleted; got {summary['deleted']}"
     )
     assert summary["remaining"] == 2
-    assert len(remaining) == 2, (
-        f"expected 2 surviving rows; got {len(remaining)}"
-    )
+    assert len(remaining) == 2, f"expected 2 surviving rows; got {len(remaining)}"

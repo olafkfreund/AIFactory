@@ -23,16 +23,27 @@ from security.hooks import validate_command  # noqa: E402
 try:
     from security.main import reset_profile_cache
 except Exception:  # pragma: no cover
+
     def reset_profile_cache():  # type: ignore
         pass
 
 
-def _write_plan(spec_dir: Path, required: list[str], verify_cmd: str | None = None) -> Path:
+def _write_plan(
+    spec_dir: Path, required: list[str], verify_cmd: str | None = None
+) -> Path:
     spec_dir.mkdir(parents=True, exist_ok=True)
     plan = {"feature": "gw", "required_commands": required, "phases": []}
     if verify_cmd:
-        plan["phases"] = [{"subtasks": [
-            {"id": "s1", "verification": {"type": "command", "command": verify_cmd}}]}]
+        plan["phases"] = [
+            {
+                "subtasks": [
+                    {
+                        "id": "s1",
+                        "verification": {"type": "command", "command": verify_cmd},
+                    }
+                ]
+            }
+        ]
     p = spec_dir / "implementation_plan.json"
     p.write_text(json.dumps(plan))
     return p
@@ -77,7 +88,9 @@ def test_denylisted_plan_command_is_not_granted(tmp_path):
     granted = seed_profile_with_plan_commands(project_dir, plan_path)
     assert "sudo" not in granted
     assert "uv" in granted
-    data = json.loads((project_dir / ".aifactory" / ".aifactory-security.json").read_text())
+    data = json.loads(
+        (project_dir / ".aifactory" / ".aifactory-security.json").read_text()
+    )
     assert "sudo" not in data["custom_commands"]
 
 

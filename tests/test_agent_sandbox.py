@@ -58,8 +58,8 @@ class TestWrapped:
         out = sandbox.build_sandboxed_command(CMD, ROOT)
 
         assert out[0] == "/usr/bin/bwrap"
-        assert out[-len(CMD):] == CMD          # real command at the tail
-        assert out[-len(CMD) - 1] == "--"      # after the `--` separator
+        assert out[-len(CMD) :] == CMD  # real command at the tail
+        assert out[-len(CMD) - 1] == "--"  # after the `--` separator
         # RW only the worktree.
         assert _pair(out, "--bind") == (ROOT, ROOT)
         assert "--chdir" in out and out[out.index("--chdir") + 1] == ROOT

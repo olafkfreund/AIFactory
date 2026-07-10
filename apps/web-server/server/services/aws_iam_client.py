@@ -52,19 +52,21 @@ class AwsIamClient:
 
     def __init__(self) -> None:
         self._iam = None  # type: ignore[assignment]
-        self._s3 = None   # type: ignore[assignment]
+        self._s3 = None  # type: ignore[assignment]
 
     # -- Lazy client init ----------------------------------------------
 
     def _iam_client(self) -> Any:
         if self._iam is None:
             import boto3
+
             self._iam = boto3.client("iam")
         return self._iam
 
     def _s3_client(self) -> Any:
         if self._s3 is None:
             import boto3
+
             self._s3 = boto3.client("s3")
         return self._s3
 
@@ -72,7 +74,8 @@ class AwsIamClient:
 
     @staticmethod
     def build_tenant_policy_document(
-        bucket: str, org_uuid: str,
+        bucket: str,
+        org_uuid: str,
     ) -> dict[str, Any]:
         """Return the IAM policy JSON for one tenant (design §4).
 
@@ -109,7 +112,9 @@ class AwsIamClient:
 
     @staticmethod
     def build_irsa_trust_policy(
-        oidc_provider_arn: str, sa_namespace: str, sa_name: str,
+        oidc_provider_arn: str,
+        sa_namespace: str,
+        sa_name: str,
     ) -> dict[str, Any]:
         """Return the IRSA OIDC trust policy for one SA.
 
@@ -120,19 +125,21 @@ class AwsIamClient:
         oidc_host = oidc_provider_arn.split("oidc-provider/", 1)[-1]
         return {
             "Version": "2012-10-17",
-            "Statement": [{
-                "Effect": "Allow",
-                "Principal": {"Federated": oidc_provider_arn},
-                "Action": "sts:AssumeRoleWithWebIdentity",
-                "Condition": {
-                    "StringEquals": {
-                        f"{oidc_host}:aud": "sts.amazonaws.com",
-                        f"{oidc_host}:sub": (
-                            f"system:serviceaccount:{sa_namespace}:{sa_name}"
-                        ),
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"Federated": oidc_provider_arn},
+                    "Action": "sts:AssumeRoleWithWebIdentity",
+                    "Condition": {
+                        "StringEquals": {
+                            f"{oidc_host}:aud": "sts.amazonaws.com",
+                            f"{oidc_host}:sub": (
+                                f"system:serviceaccount:{sa_namespace}:{sa_name}"
+                            ),
+                        },
                     },
-                },
-            }],
+                }
+            ],
         }
 
     @staticmethod
@@ -148,8 +155,13 @@ class AwsIamClient:
     # -- IAM role lifecycle --------------------------------------------
 
     async def create_tenant_role(
-        self, *, org_uuid: str, bucket: str, oidc_provider_arn: str,
-        sa_namespace: str, sa_name: str,
+        self,
+        *,
+        org_uuid: str,
+        bucket: str,
+        oidc_provider_arn: str,
+        sa_namespace: str,
+        sa_name: str,
     ) -> str:
         """Create the role + attach the inline S3 policy. Returns role ARN.
 
@@ -162,7 +174,9 @@ class AwsIamClient:
         role_name = self._role_name(org_uuid)
         policy_name = self._policy_name(org_uuid)
         trust = self.build_irsa_trust_policy(
-            oidc_provider_arn, sa_namespace, sa_name,
+            oidc_provider_arn,
+            sa_namespace,
+            sa_name,
         )
         policy = self.build_tenant_policy_document(bucket, org_uuid)
 
@@ -216,7 +230,8 @@ class AwsIamClient:
             # Inline policy must be deleted before the role.
             try:
                 iam.delete_role_policy(
-                    RoleName=role_name, PolicyName=policy_name,
+                    RoleName=role_name,
+                    PolicyName=policy_name,
                 )
             except iam.exceptions.NoSuchEntityException:
                 pass
@@ -235,7 +250,10 @@ class AwsIamClient:
     # -- S3 recursive delete (with §4a safety) -------------------------
 
     async def s3_recursive_delete(
-        self, bucket: str, prefix: str, dry_run: bool,
+        self,
+        bucket: str,
+        prefix: str,
+        dry_run: bool,
     ) -> int:
         """Delete every object under ``s3://bucket/prefix``.
 
@@ -266,10 +284,7 @@ class AwsIamClient:
             count = 0
             paginator = s3.get_paginator("list_objects_v2")
             for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                keys = [
-                    {"Key": obj["Key"]}
-                    for obj in page.get("Contents", []) or []
-                ]
+                keys = [{"Key": obj["Key"]} for obj in page.get("Contents", []) or []]
                 if not keys:
                     continue
                 count += len(keys)
@@ -277,7 +292,10 @@ class AwsIamClient:
                     logger.info(
                         "dry-run s3 delete: bucket=%s prefix=%s would "
                         "delete %d keys (first: %r)",
-                        bucket, prefix, len(keys), keys[0]["Key"],
+                        bucket,
+                        prefix,
+                        len(keys),
+                        keys[0]["Key"],
                     )
                     continue
                 s3.delete_objects(

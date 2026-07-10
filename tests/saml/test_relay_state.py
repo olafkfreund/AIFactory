@@ -49,6 +49,7 @@ def test_expired_token_rejected(monkeypatch):
     # relay_state module's import (verify() does `import time`
     # at module top, so time.time inside it must also be patched).
     from server.saml import relay_state as rs_mod
+
     monkeypatch.setattr(rs_mod.time, "time", lambda: future)
 
     with pytest.raises(RelayStateInvalid):
@@ -68,8 +69,9 @@ def test_missing_required_field_rejected():
     import hmac
     import json
 
-    bad_payload = json.dumps({"nonce": "x", "exp": int(time.time()) + 60,
-                              "return_to": "https://x/"})
+    bad_payload = json.dumps(
+        {"nonce": "x", "exp": int(time.time()) + 60, "return_to": "https://x/"}
+    )
     b64 = base64.urlsafe_b64encode(bad_payload.encode()).rstrip(b"=").decode()
     sig = hmac.new(SECRET, b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode()

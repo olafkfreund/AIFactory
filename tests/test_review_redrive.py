@@ -157,19 +157,23 @@ class TestNoDoubleNudge:
         request_review(main)
         t1 = _aged(TIMEOUT + 1)
         first = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
-            timeout_seconds=TIMEOUT, now=t1,
+            timeout_seconds=TIMEOUT,
+            now=t1,
         )
         assert first["action"] == "nudged"
 
         # A second poll a few seconds later (same window) does nothing.
         second = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
-            timeout_seconds=TIMEOUT, now=t1 + timedelta(seconds=5),
+            timeout_seconds=TIMEOUT,
+            now=t1 + timedelta(seconds=5),
         )
         assert second is None
         # Still exactly one nudge, still one strike.
@@ -189,20 +193,24 @@ class TestSecondStrikeEscalation:
         t1 = _aged(TIMEOUT + 1)
         # First strike: nudge.
         r1 = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
-            timeout_seconds=TIMEOUT, now=t1,
+            timeout_seconds=TIMEOUT,
+            now=t1,
         )
         assert r1["action"] == "nudged"
 
         # Second strike: another full window later, still untouched → escalate.
         t2 = t1 + timedelta(seconds=TIMEOUT + 1)
         r2 = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
-            timeout_seconds=TIMEOUT, now=t2,
+            timeout_seconds=TIMEOUT,
+            now=t2,
         )
         assert r2 is not None
         assert r2["action"] == "escalated"
@@ -223,7 +231,8 @@ class TestSecondStrikeEscalation:
         main, worktree = dirs
         request_review(main)
         result = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
             timeout_seconds=TIMEOUT,
@@ -260,10 +269,12 @@ class TestRouting:
         main, worktree = dirs
         # No request_review() called → no cycle file.
         result = process_untouched_review(
-            main, worktree,
+            main,
+            worktree,
             enqueue=inbox_service.enqueue,
             write_control=task_control.write_control,
-            timeout_seconds=TIMEOUT, now=_aged(TIMEOUT + 1),
+            timeout_seconds=TIMEOUT,
+            now=_aged(TIMEOUT + 1),
         )
         assert result is None
 
@@ -276,10 +287,12 @@ class TestRouting:
 
         with pytest.raises(RuntimeError):
             process_untouched_review(
-                main, worktree,
+                main,
+                worktree,
                 enqueue=boom,
                 write_control=task_control.write_control,
-                timeout_seconds=TIMEOUT, now=_aged(TIMEOUT + 1),
+                timeout_seconds=TIMEOUT,
+                now=_aged(TIMEOUT + 1),
             )
         # Strike NOT recorded because enqueue failed before record_redrive.
         assert load_cycle(main).redrive_attempts == 0

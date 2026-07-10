@@ -62,8 +62,10 @@ def test_flag_on_with_image_routes_to_sandbox(monkeypatch):
 
     assert code == 0 and out == "ok"
     assert calls["image"] == "ghcr.io/x/rust:1.90"
-    assert calls["init_kw"]["repo_rw"] is True          # worktree mounted rw for the build
-    assert calls["commands"] == ["cargo test --all"]    # argv shlex-joined to a shell line
+    assert calls["init_kw"]["repo_rw"] is True  # worktree mounted rw for the build
+    assert calls["commands"] == [
+        "cargo test --all"
+    ]  # argv shlex-joined to a shell line
     assert calls["run_kw"]["workdir"] == "/work/spec"
 
 
@@ -72,7 +74,9 @@ def test_missing_tool_exit_127_maps_to_skipped(monkeypatch):
     monkeypatch.setenv("AIFACTORY_SANDBOX_IMAGE", "img")
     _install_fake_sandbox(monkeypatch, exit_code=127, output="cargo: not found")
     code, _ = _select_runner()(["cargo", "test"], Path("/w"))
-    assert code is None  # None => skipped, matching the host runner's missing-tool semantics
+    assert (
+        code is None
+    )  # None => skipped, matching the host runner's missing-tool semantics
 
 
 def test_sandbox_error_is_a_gate_failure_not_a_crash(monkeypatch):
@@ -82,7 +86,8 @@ def test_sandbox_error_is_a_gate_failure_not_a_crash(monkeypatch):
 
     class Boom:
         def __init__(self, *a, **k): ...
-        def run(self, *a, **k): raise RuntimeError("no runtime")
+        def run(self, *a, **k):
+            raise RuntimeError("no runtime")
 
     monkeypatch.setattr(fs, "FactorySandbox", Boom)
     code, out = _select_runner()(["x"], Path("/w"))

@@ -238,7 +238,9 @@ async def subscribe_pane_bytes(spec_id: str) -> AsyncIterator[bytes]:
         except Exception:  # noqa: BLE001 - reconnect on any transport error
             _log.debug(
                 "[rmux-redis] pane subscribe for %s dropped — retry in %.1fs",
-                spec_id, backoff, exc_info=True,
+                spec_id,
+                backoff,
+                exc_info=True,
             )
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)

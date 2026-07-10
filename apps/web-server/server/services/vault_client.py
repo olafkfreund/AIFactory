@@ -101,6 +101,7 @@ class VaultClient:
                     "VAULT_ADDR is not set; refusing to create Vault client",
                 )
             import hvac
+
             self._client = hvac.Client(url=self._addr)
         return self._client
 
@@ -125,7 +126,9 @@ class VaultClient:
 
         try:
             client.auth.kubernetes.login(
-                role=self._role, jwt=sa_token, mount_point=self._mount,
+                role=self._role,
+                jwt=sa_token,
+                mount_point=self._mount,
             )
         except Exception as exc:
             raise VaultClientError(
@@ -143,7 +146,8 @@ class VaultClient:
         name = _policy_name(org_uuid)
         try:
             client.sys.create_or_update_policy(
-                name=name, policy=build_tenant_policy_hcl(org_uuid),
+                name=name,
+                policy=build_tenant_policy_hcl(org_uuid),
             )
         except Exception as exc:
             raise VaultClientError(
@@ -152,8 +156,12 @@ class VaultClient:
         return name
 
     def create_tenant_kubernetes_role(
-        self, *, org_uuid: str, sa_namespace: str,
-        sa_name: str, policy_name: str,
+        self,
+        *,
+        org_uuid: str,
+        sa_namespace: str,
+        sa_name: str,
+        policy_name: str,
     ) -> None:
         """Bind a K8s-auth role: tenant SA → tenant policy.
 
@@ -191,14 +199,16 @@ class VaultClient:
 
         try:
             client.auth.kubernetes.delete_role(
-                name=role_name, mount_point=self._mount,
+                name=role_name,
+                mount_point=self._mount,
             )
         except Exception:
             # hvac raises ``InvalidPath`` for already-deleted roles;
             # we treat any error here as best-effort.
             logger.debug(
                 "vault delete kubernetes role %s failed (likely already gone)",
-                role_name, exc_info=True,
+                role_name,
+                exc_info=True,
             )
 
         try:
@@ -206,5 +216,6 @@ class VaultClient:
         except Exception:
             logger.debug(
                 "vault delete policy %s failed (likely already gone)",
-                policy_name, exc_info=True,
+                policy_name,
+                exc_info=True,
             )

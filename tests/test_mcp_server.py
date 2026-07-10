@@ -124,7 +124,9 @@ def mcp_subprocess(tmp_path: Path):
 
 
 class TestStdioJsonRpc:
-    def test_initialize_and_list_seven_tools(self, mcp_subprocess: subprocess.Popen) -> None:
+    def test_initialize_and_list_seven_tools(
+        self, mcp_subprocess: subprocess.Popen
+    ) -> None:
         # Step 1 — initialize
         _send_jsonrpc(
             mcp_subprocess,
@@ -170,8 +172,7 @@ class TestStdioJsonRpc:
         # The SDK may prefix tool names; allow either bare or mcp__aifactory__-prefixed
         normalised = {n.split("__")[-1] for n in returned_names}
         assert _EXPECTED_TOOL_NAMES.issubset(normalised), (
-            f"Missing tools: {_EXPECTED_TOOL_NAMES - normalised}\n"
-            f"Got: {returned_names}"
+            f"Missing tools: {_EXPECTED_TOOL_NAMES - normalised}\nGot: {returned_names}"
         )
 
 
@@ -189,9 +190,13 @@ class TestMcpJsonSchema:
 
     def test_aifactory_server_registered(self) -> None:
         data = json.loads((_REPO_ROOT / ".mcp.json").read_text())
-        assert "mcpServers" in data, "top-level key must be 'mcpServers' (per Claude Code docs)"
+        assert "mcpServers" in data, (
+            "top-level key must be 'mcpServers' (per Claude Code docs)"
+        )
         servers = data["mcpServers"]
-        assert "aifactory" in servers, f"expected 'aifactory' entry; got {list(servers)}"
+        assert "aifactory" in servers, (
+            f"expected 'aifactory' entry; got {list(servers)}"
+        )
         entry = servers["aifactory"]
         assert entry.get("type") == "stdio", "type must be 'stdio'"
         assert entry.get("command") == "bash"
@@ -211,4 +216,6 @@ class TestMcpJsonSchema:
     def test_windows_wrapper_present(self) -> None:
         # Existence only — we don't shell out to .cmd on POSIX CI.
         script = _REPO_ROOT / "scripts" / "start-aifactory-mcp.cmd"
-        assert script.exists(), "scripts/start-aifactory-mcp.cmd missing (Windows companion)"
+        assert script.exists(), (
+            "scripts/start-aifactory-mcp.cmd missing (Windows companion)"
+        )

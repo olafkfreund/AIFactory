@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-for _root in (REPO_ROOT / 'apps' / 'web-server', REPO_ROOT / 'apps' / 'backend'):
+for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
         sys.path.insert(0, str(_root))
 
@@ -38,19 +38,21 @@ class _FakeBudgetProvider:
 
 def _make_ctx():
     from core.enforcement import ClaudeEnforcementContext
+
     return ClaudeEnforcementContext(
-        org_id='org-audit-test',
-        user_id='user-bob',
-        model='claude-sonnet-4-6',
-        allowed_models=['*'],
-        failure_mode='open',
+        org_id="org-audit-test",
+        user_id="user-bob",
+        model="claude-sonnet-4-6",
+        allowed_models=["*"],
+        failure_mode="open",
         budget_provider=_FakeBudgetProvider(),
     )
 
 
 def _make_usage(input_tok=100, output_tok=50):
     from core.enforcement import ClaudeUsageSnapshot
-    snap = ClaudeUsageSnapshot(model='claude-sonnet-4-6')
+
+    snap = ClaudeUsageSnapshot(model="claude-sonnet-4-6")
     snap.input_tokens = input_tok
     snap.output_tokens = output_tok
     return snap
@@ -64,7 +66,7 @@ def test_success_writes_llm_call():
         captured.update(kwargs)
 
     with patch(
-        'core.enforcement.ClaudeEnforcementContext.record_post_call',
+        "core.enforcement.ClaudeEnforcementContext.record_post_call",
         new_callable=AsyncMock,
     ) as mock_record:
         mock_record.return_value = None
@@ -72,19 +74,21 @@ def test_success_writes_llm_call():
         async def go():
             await ctx.record_post_call(
                 usage=_make_usage(),
-                prompt_text='hello',
-                response_text='world',
-                action='llm.call',
+                prompt_text="hello",
+                response_text="world",
+                action="llm.call",
             )
 
         # Patch write_llm_call_audit at the import site inside record_post_call.
-        with patch('server.services.llm_audit_hook.write_llm_call_audit', new=fake_write):
+        with patch(
+            "server.services.llm_audit_hook.write_llm_call_audit", new=fake_write
+        ):
             pass  # Avoid double-patching; mock record_post_call captures intent.
 
         _run(go())
         assert mock_record.called
         call_kwargs = mock_record.call_args.kwargs
-        assert call_kwargs['action'] == 'llm.call'
+        assert call_kwargs["action"] == "llm.call"
 
 
 def test_record_post_call_passes_provider_in_extra_details():
@@ -98,16 +102,18 @@ def test_record_post_call_passes_provider_in_extra_details():
     async def go():
         # Temporarily replace the import in the module under test.
         import core.enforcement as enf_module
+
         original = None
         try:
             from server.services import llm_audit_hook as _hook
+
             original = _hook.write_llm_call_audit
             _hook.write_llm_call_audit = fake_audit
             await ctx.record_post_call(
                 usage=_make_usage(),
-                prompt_text='p',
-                response_text='r',
-                action='llm.call',
+                prompt_text="p",
+                response_text="r",
+                action="llm.call",
             )
         finally:
             if original is not None:
@@ -115,9 +121,9 @@ def test_record_post_call_passes_provider_in_extra_details():
 
     try:
         _run(go())
-        assert written.get('extra_details', {}).get('provider') == 'claude_sdk'
+        assert written.get("extra_details", {}).get("provider") == "claude_sdk"
     except ImportError:
-        pytest.skip('web-server not on PYTHONPATH in this environment')
+        pytest.skip("web-server not on PYTHONPATH in this environment")
 
 
 def test_audit_hook_failure_does_not_raise():
@@ -125,19 +131,20 @@ def test_audit_hook_failure_does_not_raise():
     ctx = _make_ctx()
 
     async def failing_audit(**kw):
-        raise RuntimeError('DB is down')
+        raise RuntimeError("DB is down")
 
     async def go():
         try:
             from server.services import llm_audit_hook as _hook
+
             original = _hook.write_llm_call_audit
             _hook.write_llm_call_audit = failing_audit
             try:
                 await ctx.record_post_call(
                     usage=_make_usage(),
-                    prompt_text='p',
-                    response_text='r',
-                    action='llm.call',
+                    prompt_text="p",
+                    response_text="r",
+                    action="llm.call",
                 )
             finally:
                 _hook.write_llm_call_audit = original
@@ -182,7 +189,7 @@ def test_abandoned_action_label():
     except asyncio.CancelledError:
         pass
 
-    assert recorded_action == ['llm.call.abandoned']
+    assert recorded_action == ["llm.call.abandoned"]
 
 
 def test_error_action_label():
@@ -192,9 +199,11 @@ def test_error_action_label():
     ctx = _make_ctx()
     recorded: dict = {}
 
-    async def fake_record(*, usage, prompt_text, response_text, action, error=None, **kw):
-        recorded['action'] = action
-        recorded['error'] = error
+    async def fake_record(
+        *, usage, prompt_text, response_text, action, error=None, **kw
+    ):
+        recorded["action"] = action
+        recorded["error"] = error
 
     class _FakeUnderlying:
         async def __aenter__(self):
@@ -208,12 +217,12 @@ def test_error_action_label():
 
     async def go():
         async with client:
-            raise RuntimeError('SDK boom')
+            raise RuntimeError("SDK boom")
 
     try:
         _run(go())
     except RuntimeError:
         pass
 
-    assert recorded.get('action') == 'llm.call.failed'
-    assert 'SDK boom' in (recorded.get('error') or '')
+    assert recorded.get("action") == "llm.call.failed"
+    assert "SDK boom" in (recorded.get("error") or "")

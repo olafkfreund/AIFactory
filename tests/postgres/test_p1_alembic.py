@@ -17,10 +17,12 @@ from tests.postgres.helpers import (
 @pytest.mark.slow
 def test_alembic_config_present() -> None:
     """P1.3 — alembic.ini and versions/ directory exist under apps/web-server/."""
-    assert (WEB_SERVER_ROOT / "alembic.ini").exists(), \
+    assert (WEB_SERVER_ROOT / "alembic.ini").exists(), (
         f"{WEB_SERVER_ROOT / 'alembic.ini'} missing"
-    assert (WEB_SERVER_ROOT / "server" / "database" / "alembic" / "versions").is_dir(), \
-        "Alembic versions/ directory missing"
+    )
+    assert (
+        WEB_SERVER_ROOT / "server" / "database" / "alembic" / "versions"
+    ).is_dir(), "Alembic versions/ directory missing"
 
 
 @pytest.mark.postgres
@@ -34,8 +36,9 @@ def test_alembic_upgrade_head_on_empty_postgres(test_postgres_url: str) -> None:
         ["upgrade", "head"],
         env={"DATABASE_URL": test_postgres_url},
     )
-    assert result.returncode == 0, \
+    assert result.returncode == 0, (
         f"alembic upgrade head failed:\n{result.stderr[-2000:]}"
+    )
 
 
 @pytest.mark.postgres
@@ -50,11 +53,14 @@ def test_alembic_upgrade_idempotent(test_postgres_url: str) -> None:
     assert first.returncode == 0, f"first upgrade failed: {first.stderr[-1000:]}"
 
     second = run_alembic(["upgrade", "head"], env=env)
-    assert second.returncode == 0, \
+    assert second.returncode == 0, (
         f"second upgrade was not idempotent: {second.stderr[-1000:]}"
+    )
 
 
-def _init_db_subprocess(test_postgres_url: str, auto_apply: bool) -> subprocess.CompletedProcess:
+def _init_db_subprocess(
+    test_postgres_url: str, auto_apply: bool
+) -> subprocess.CompletedProcess:
     """Invoke server.database.engine.init_db() in a fresh subprocess.
 
     Subprocess isolation keeps each test's module state clean (DATABASE_URL
@@ -70,14 +76,16 @@ def _init_db_subprocess(test_postgres_url: str, auto_apply: bool) -> subprocess.
         "print('init_db OK')"
     )
     env = os.environ.copy()
-    env.update({
-        "DATABASE_URL": test_postgres_url,
-        # Settings class has env_prefix="APP_" — the actual env var that
-        # MIGRATIONS_AUTO_APPLY: bool reads from is APP_MIGRATIONS_AUTO_APPLY.
-        "APP_MIGRATIONS_AUTO_APPLY": "true" if auto_apply else "false",
-        "APP_DISABLE_AUTH": "true",
-        "GRAPHITI_ENABLED": "false",
-    })
+    env.update(
+        {
+            "DATABASE_URL": test_postgres_url,
+            # Settings class has env_prefix="APP_" — the actual env var that
+            # MIGRATIONS_AUTO_APPLY: bool reads from is APP_MIGRATIONS_AUTO_APPLY.
+            "APP_MIGRATIONS_AUTO_APPLY": "true" if auto_apply else "false",
+            "APP_DISABLE_AUTH": "true",
+            "GRAPHITI_ENABLED": "false",
+        }
+    )
     repo_root = Path(__file__).resolve().parents[2]
     return subprocess.run(
         [sys.executable, "-c", code],
@@ -134,16 +142,18 @@ def test_app_boot_with_autoapply_false_fails_fast(test_postgres_url: str) -> Non
     RuntimeError fast (no schema bring-up; expects out-of-band Helm Job)."""
     _drop_schema(test_postgres_url)
     result = _init_db_subprocess(test_postgres_url, auto_apply=False)
-    assert result.returncode != 0, \
-        f"expected non-zero exit; got 0:\n{result.stdout}"
+    assert result.returncode != 0, f"expected non-zero exit; got 0:\n{result.stdout}"
     combined = result.stdout + result.stderr
-    assert "RuntimeError" in combined or "schema is at" in combined, \
+    assert "RuntimeError" in combined or "schema is at" in combined, (
         f"expected RuntimeError about schema mismatch:\n{combined[-2000:]}"
+    )
 
 
 @pytest.mark.postgres
 @pytest.mark.slow
-def test_alembic_succeeds_without_create_extension_privilege(test_postgres_url: str) -> None:
+def test_alembic_succeeds_without_create_extension_privilege(
+    test_postgres_url: str,
+) -> None:
     """P1.5 — Alembic upgrade succeeds when run as a role that LACKS the
     CREATE EXTENSION privilege and is NOT a superuser.
 
@@ -202,8 +212,12 @@ def test_alembic_succeeds_without_create_extension_privilege(test_postgres_url: 
                 await conn.execute(
                     text(f"CREATE ROLE {APP_ROLE} LOGIN PASSWORD '{APP_PASSWORD}'")
                 )
-                await conn.execute(text(f"GRANT CONNECT ON DATABASE aifactory_test TO {APP_ROLE}"))
-                await conn.execute(text(f"GRANT USAGE, CREATE ON SCHEMA public TO {APP_ROLE}"))
+                await conn.execute(
+                    text(f"GRANT CONNECT ON DATABASE aifactory_test TO {APP_ROLE}")
+                )
+                await conn.execute(
+                    text(f"GRANT USAGE, CREATE ON SCHEMA public TO {APP_ROLE}")
+                )
                 await conn.commit()
         finally:
             await admin.dispose()

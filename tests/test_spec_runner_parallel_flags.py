@@ -23,11 +23,21 @@ from runners.spec_runner import forward_parallel_flags  # noqa: E402
 
 
 def _base_cmd():
-    return ["python", "run.py", "--spec", "001-x", "--project-dir", "/p", "--auto-continue"]
+    return [
+        "python",
+        "run.py",
+        "--spec",
+        "001-x",
+        "--project-dir",
+        "/p",
+        "--auto-continue",
+    ]
 
 
 def test_forwards_parallel_and_workers(tmp_path: Path):
-    (tmp_path / "task_metadata.json").write_text(json.dumps({"parallel": True, "workers": 4}))
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"parallel": True, "workers": 4})
+    )
     cmd = forward_parallel_flags(_base_cmd(), tmp_path)
     assert "--parallel" in cmd
     assert cmd[cmd.index("--workers") + 1] == "4"
@@ -41,7 +51,9 @@ def test_parallel_without_workers(tmp_path: Path):
 
 
 def test_parallel_false_adds_nothing(tmp_path: Path):
-    (tmp_path / "task_metadata.json").write_text(json.dumps({"parallel": False, "workers": 4}))
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"parallel": False, "workers": 4})
+    )
     cmd = forward_parallel_flags(_base_cmd(), tmp_path)
     assert "--parallel" not in cmd
 
@@ -58,7 +70,9 @@ def test_corrupt_metadata_is_serial(tmp_path: Path):
 
 
 def test_zero_or_negative_workers_skips_workers_flag(tmp_path: Path):
-    (tmp_path / "task_metadata.json").write_text(json.dumps({"parallel": True, "workers": 0}))
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"parallel": True, "workers": 0})
+    )
     cmd = forward_parallel_flags(_base_cmd(), tmp_path)
     assert "--parallel" in cmd and "--workers" not in cmd
 

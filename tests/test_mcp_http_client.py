@@ -63,7 +63,9 @@ async def test_token_empty_returns_actionable_error(tmp_path, monkeypatch):
 
 async def test_request_sends_bearer_token(tmp_path, monkeypatch):
     _write_token(tmp_path, value="ghost-token-xyz")
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
 
     captured = {}
 
@@ -81,7 +83,9 @@ async def test_request_sends_bearer_token(tmp_path, monkeypatch):
 
 async def test_401_returns_actionable_error(tmp_path, monkeypatch):
     _write_token(tmp_path)
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unauthorized")
@@ -100,7 +104,9 @@ async def test_401_returns_actionable_error(tmp_path, monkeypatch):
 
 async def test_404_returns_resource_not_found(tmp_path, monkeypatch):
     _write_token(tmp_path)
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="nope")
@@ -116,7 +122,9 @@ async def test_404_returns_resource_not_found(tmp_path, monkeypatch):
 
 async def test_5xx_surfaces_truncated_body(tmp_path, monkeypatch):
     _write_token(tmp_path)
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
 
     huge = "x" * 5000  # forces truncation at 500
 
@@ -136,7 +144,9 @@ async def test_5xx_surfaces_truncated_body(tmp_path, monkeypatch):
 
 async def test_connection_refused_returns_start_guidance(tmp_path, monkeypatch):
     _write_token(tmp_path)
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
 
     def handler(req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("Connection refused")
@@ -153,7 +163,9 @@ async def test_connection_refused_returns_start_guidance(tmp_path, monkeypatch):
 
 async def test_api_url_env_override(tmp_path, monkeypatch):
     _write_token(tmp_path)
-    monkeypatch.setenv("AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token"))
+    monkeypatch.setenv(
+        "AIFACTORY_API_TOKEN_FILE", str(tmp_path / ".aifactory" / ".token")
+    )
     monkeypatch.setenv("AIFACTORY_API_URL", "http://custom-host:9999/")
     assert hc._state.base_url() == "http://custom-host:9999"
 

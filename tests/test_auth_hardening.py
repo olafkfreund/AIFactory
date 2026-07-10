@@ -38,7 +38,8 @@ class TestLegacyApiTokenConstantTime:
 
     def _patch_token(self, monkeypatch, configured: str) -> None:
         monkeypatch.setattr(
-            auth_mod, "get_settings",
+            auth_mod,
+            "get_settings",
             lambda: SimpleNamespace(API_TOKEN=configured),
         )
 
@@ -63,7 +64,9 @@ class TestLegacyApiTokenConstantTime:
 
 
 class TestHostIsLoopback:
-    @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", "", "  LocalHost "])
+    @pytest.mark.parametrize(
+        "host", ["127.0.0.1", "::1", "localhost", "", "  LocalHost "]
+    )
     def test_loopback_hosts(self, host):
         assert host_is_loopback(host) is True
 
@@ -151,7 +154,8 @@ class TestWebSocketTokenExtraction:
     def test_prefers_authorization_header(self, monkeypatch):
         called = {"n": 0}
         monkeypatch.setattr(
-            auth_mod, "_warn_ws_query_token_once",
+            auth_mod,
+            "_warn_ws_query_token_once",
             lambda: called.__setitem__("n", called["n"] + 1),
         )
         ws = self._ws(header="Bearer header-token", query="query-token")
@@ -162,7 +166,8 @@ class TestWebSocketTokenExtraction:
     def test_falls_back_to_query_param_with_warning(self, monkeypatch):
         called = {"n": 0}
         monkeypatch.setattr(
-            auth_mod, "_warn_ws_query_token_once",
+            auth_mod,
+            "_warn_ws_query_token_once",
             lambda: called.__setitem__("n", called["n"] + 1),
         )
         ws = self._ws(query="query-token")
@@ -187,7 +192,8 @@ class TestLegacyTokenDeprecationWarning:
         monkeypatch.setattr(auth_mod, "_LEGACY_TOKEN_DEPRECATION_LOGGED", False)
         records = []
         monkeypatch.setattr(
-            auth_mod.logger, "warning",
+            auth_mod.logger,
+            "warning",
             lambda *a, **k: records.append(a),
         )
         auth_mod._warn_legacy_api_token_once()

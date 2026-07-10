@@ -31,8 +31,8 @@ def test_appends_when_existing_lacks_artifacts(tmp_path):
     (tmp_path / ".gitignore").write_text("# project\n.env\n")
     _ensure_artifact_gitignore(tmp_path)
     gi = (tmp_path / ".gitignore").read_text()
-    assert ".env" in gi          # preserved
-    assert ".coverage" in gi     # added
+    assert ".env" in gi  # preserved
+    assert ".coverage" in gi  # added
 
 
 def test_idempotent_no_double_append(tmp_path):

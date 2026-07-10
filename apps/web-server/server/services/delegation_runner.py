@@ -175,9 +175,7 @@ async def run_delegation(
     }
 
 
-async def _existing_enrichment_comment(
-    provider: Any, issue_number: int
-) -> int | None:
+async def _existing_enrichment_comment(provider: Any, issue_number: int) -> int | None:
     """Return the comment ID of any prior AIFactory enrichment comment
     on this issue, or None.
 
@@ -189,7 +187,9 @@ async def _existing_enrichment_comment(
     if not repo:
         return None
     try:
-        comments = await provider.api_get(f"/repos/{repo}/issues/{issue_number}/comments")
+        comments = await provider.api_get(
+            f"/repos/{repo}/issues/{issue_number}/comments"
+        )
     except Exception as e:
         logger.debug(
             "[delegation_runner] could not list comments on issue=%d: %s",

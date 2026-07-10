@@ -220,7 +220,9 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
 
 @pytest.mark.asyncio
 class TestSoloSeam:
-    async def test_solo_on_uses_solo_prompt_and_coder_tools(self, tmp_path: Path, monkeypatch):
+    async def test_solo_on_uses_solo_prompt_and_coder_tools(
+        self, tmp_path: Path, monkeypatch
+    ):
         monkeypatch.setenv("AIFACTORY_SOLO_MODE", "true")
         spec_dir = _make_spec(tmp_path)
 
@@ -238,7 +240,9 @@ class TestSoloSeam:
             f"solo first session must use coder toolset, got {kwargs.get('agent_type')!r}"
         )
 
-    async def test_solo_off_uses_planner_prompt_and_planner_tools(self, tmp_path: Path, monkeypatch):
+    async def test_solo_off_uses_planner_prompt_and_planner_tools(
+        self, tmp_path: Path, monkeypatch
+    ):
         """Backward compatibility: with solo OFF the dedicated planner path runs."""
         monkeypatch.setenv("AIFACTORY_SOLO_MODE", "off")
         spec_dir = _make_spec(tmp_path)
@@ -294,11 +298,13 @@ class TestSoloSkipsQA:
             patch("cli.utils.validate_environment", MagicMock(return_value=True)),
             patch("cli.utils.print_banner", MagicMock()),
             patch.object(
-                build_commands, "choose_workspace",
+                build_commands,
+                "choose_workspace",
                 MagicMock(return_value=build_commands.WorkspaceMode.DIRECT),
             ),
             patch.object(
-                build_commands, "get_existing_build_worktree",
+                build_commands,
+                "get_existing_build_worktree",
                 MagicMock(return_value=None),
             ),
             # ReviewState is bound at module import time in build_commands.
@@ -366,12 +372,16 @@ class TestSoloSettingDrivesTaskCreation:
 
         # Avoid touching the real projects.json / Task model machinery.
         monkeypatch.setattr(
-            projects, "load_projects",
+            projects,
+            "load_projects",
             lambda: {project_id: {"path": str(project_path)}},
         )
         import server.routes.tasks as tasks_module
+
         monkeypatch.setattr(tasks_module, "spec_to_task", lambda pid, sd: sd)
-        monkeypatch.setattr(tasks_module, "task_to_dict", lambda task: {"spec_dir": str(task)})
+        monkeypatch.setattr(
+            tasks_module, "task_to_dict", lambda task: {"spec_dir": str(task)}
+        )
 
         req = projects.TaskCreateRequest(
             title="Add a thing", description="Do a small thing.", metadata=metadata
@@ -389,6 +399,7 @@ class TestSoloSettingDrivesTaskCreation:
         assert meta.get("soloMode") is True
 
         import solo_mode
+
         assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is True
 
     async def test_saved_solo_false_leaves_spec_disabled(self, tmp_path, monkeypatch):
@@ -403,9 +414,12 @@ class TestSoloSettingDrivesTaskCreation:
             assert "soloMode" not in json.loads(meta_file.read_text())
 
         import solo_mode
+
         assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
 
-    async def test_per_task_metadata_overrides_saved_setting(self, tmp_path, monkeypatch):
+    async def test_per_task_metadata_overrides_saved_setting(
+        self, tmp_path, monkeypatch
+    ):
         """An explicit per-task soloMode=False wins over a saved global True."""
         monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "home"))
@@ -415,6 +429,7 @@ class TestSoloSettingDrivesTaskCreation:
         )
 
         import solo_mode
+
         assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
 
     async def test_env_still_overrides_saved_setting(self, tmp_path, monkeypatch):
@@ -426,6 +441,7 @@ class TestSoloSettingDrivesTaskCreation:
         assert meta.get("soloMode") is True  # stamped...
 
         import solo_mode
+
         monkeypatch.setenv("AIFACTORY_SOLO_MODE", "off")  # ...but env wins
         assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
 
@@ -443,7 +459,8 @@ class TestSoloSettingMirrorsToGlobalConfig:
 
         # Point the app-settings file at a temp dir so we don't touch real data.
         monkeypatch.setattr(
-            settings_route, "get_settings_file",
+            settings_route,
+            "get_settings_file",
             lambda: tmp_path / "settings.json",
         )
 
@@ -453,6 +470,7 @@ class TestSoloSettingMirrorsToGlobalConfig:
         assert config["solo"]["enabled"] is True
 
         import solo_mode
+
         assert solo_mode.is_solo_mode_enabled() is True
 
     def test_save_preserves_other_global_keys(self, tmp_path, monkeypatch):
@@ -464,8 +482,10 @@ class TestSoloSettingMirrorsToGlobalConfig:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
 
         from server.routes import settings as settings_route
+
         monkeypatch.setattr(
-            settings_route, "get_settings_file",
+            settings_route,
+            "get_settings_file",
             lambda: tmp_path / "settings.json",
         )
 

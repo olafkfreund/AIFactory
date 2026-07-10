@@ -73,8 +73,7 @@ def test_alembic_upgrade_head_on_fresh_sqlite() -> None:
         combined = result.stdout + result.stderr
         for rev in expected_revisions:
             assert rev in combined, (
-                f"migration {rev} did not appear in alembic output:\n"
-                f"{combined[-1500:]}"
+                f"migration {rev} did not appear in alembic output:\n{combined[-1500:]}"
             )
     finally:
         Path(db_path).unlink(missing_ok=True)

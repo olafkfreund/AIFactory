@@ -170,7 +170,9 @@ class WorkspaceStore:
                 "project_id": project_id,
                 "triggered_by_task_id": triggered_by_task_id,
                 "triggered_by_phase": triggered_by_phase,
-                "uploaded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "uploaded_at": datetime.now(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
                 "uploaded_by_replica": _self_replica_id(),
                 "file_count": file_count,
                 "total_bytes": total_bytes,
@@ -187,12 +189,17 @@ class WorkspaceStore:
                 fh.write(json.dumps(manifest, indent=2))
             logger.info(
                 "workspace_store.upload_project: snapshotted %s (%d files, %d bytes) to %s",
-                local_path, file_count, total_bytes, key_root,
+                local_path,
+                file_count,
+                total_bytes,
+                key_root,
             )
         except Exception:
             logger.warning(
                 "workspace_store.upload_project: failed for org=%s project=%s",
-                org_id, project_id, exc_info=True,
+                org_id,
+                project_id,
+                exc_info=True,
             )
 
     # -------------------------------------------------------------------
@@ -248,7 +255,8 @@ class WorkspaceStore:
         except Exception:
             logger.warning(
                 "workspace_store.download_project: failed to read manifest %s",
-                manifest_key, exc_info=True,
+                manifest_key,
+                exc_info=True,
             )
             return False
 
@@ -256,13 +264,17 @@ class WorkspaceStore:
         if manifest.get("v") != MANIFEST_VERSION:
             logger.warning(
                 "workspace_store.download_project: manifest version %r != expected %d at %s",
-                manifest.get("v"), MANIFEST_VERSION, manifest_key,
+                manifest.get("v"),
+                MANIFEST_VERSION,
+                manifest_key,
             )
             return False
         if manifest.get("project_id") != project_id:
             logger.warning(
                 "workspace_store.download_project: manifest project_id %r != expected %r at %s",
-                manifest.get("project_id"), project_id, manifest_key,
+                manifest.get("project_id"),
+                project_id,
+                manifest_key,
             )
             return False
 
@@ -273,7 +285,7 @@ class WorkspaceStore:
         try:
             local_path.mkdir(parents=True, exist_ok=True)
             for remote in _list_files(fs, key_root):
-                rel = remote[len(key_root) + 1:]
+                rel = remote[len(key_root) + 1 :]
                 if rel == MANIFEST_FILENAME:
                     continue
                 dest = local_path / rel
@@ -284,14 +296,17 @@ class WorkspaceStore:
                     dest.chmod(mode | 0o111)  # u+x, g+x, o+x (matches `chmod +x`)
             logger.info(
                 "workspace_store.download_project: restored %s from %s",
-                local_path, key_root,
+                local_path,
+                key_root,
             )
             return True
         except Exception:
             logger.warning(
                 "workspace_store.download_project: failed mid-restore for org=%s project=%s — "
                 "scrubbing partial local dir to avoid half-restored worktree",
-                org_id, project_id, exc_info=True,
+                org_id,
+                project_id,
+                exc_info=True,
             )
             try:
                 shutil.rmtree(local_path, ignore_errors=True)
@@ -304,7 +319,10 @@ class WorkspaceStore:
     # -------------------------------------------------------------------
 
     async def project_exists(
-        self, *, org_id: str, project_id: str,
+        self,
+        *,
+        org_id: str,
+        project_id: str,
     ) -> bool:
         """Cheap existence check: does a complete snapshot exist?
 
@@ -315,11 +333,15 @@ class WorkspaceStore:
             return False
         try:
             fs, prefix = self._open_fs()
-            return bool(fs.exists(f"{prefix}/{org_id}/{project_id}/{MANIFEST_FILENAME}"))
+            return bool(
+                fs.exists(f"{prefix}/{org_id}/{project_id}/{MANIFEST_FILENAME}")
+            )
         except Exception:
             logger.warning(
                 "workspace_store.project_exists: probe failed for org=%s project=%s",
-                org_id, project_id, exc_info=True,
+                org_id,
+                project_id,
+                exc_info=True,
             )
             return False
 
@@ -395,7 +417,9 @@ def _self_replica_id() -> str:
     alone use (e.g. CLI / test contexts that don't start the bus)."""
     try:
         from ..websockets.event_bus import self_replica_id
+
         return self_replica_id
     except Exception:
         import uuid
+
         return str(uuid.uuid4())

@@ -55,7 +55,9 @@ def _container_envs(deployment: dict) -> list[dict]:
 
 
 def _volume_names(deployment: dict) -> set[str]:
-    return {v["name"] for v in deployment["spec"]["template"]["spec"].get("volumes", [])}
+    return {
+        v["name"] for v in deployment["spec"]["template"]["spec"].get("volumes", [])
+    }
 
 
 def _volume_mount_names(deployment: dict) -> set[str]:
@@ -81,6 +83,7 @@ def _find_mount(deployment: dict, name: str) -> dict:
 def chart_dir(request):
     """Chart root — assumes test invocation from repo root."""
     from pathlib import Path
+
     return Path(__file__).parent.parent.parent / "charts" / "aifactory"
 
 
@@ -198,7 +201,9 @@ def test_azure_provider_injects_service_principal_triplet(chart_dir):
         ],
     )
     env_names = [e["name"] for e in _container_envs(_find_deployment(docs))]
-    assert {"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"} <= set(env_names)
+    assert {"AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"} <= set(
+        env_names
+    )
 
 
 # ---------------------------------------------------------------------------

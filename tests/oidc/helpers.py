@@ -27,6 +27,7 @@ _MODULES_TO_EVICT = (
 def reimport_oidc(env: dict[str, str]) -> None:
     """Re-import ``server.oidc`` with fresh OIDC env vars."""
     import os
+
     for k, v in env.items():
         os.environ[k] = v
     for m in _MODULES_TO_EVICT:
@@ -78,9 +79,7 @@ def keycloak_drive_login_url(
             )
         match = re.search(r'action="([^"]+)"', resp.text)
         if not match:
-            raise RuntimeError(
-                "Could not find <form action=> in Keycloak login page"
-            )
+            raise RuntimeError("Could not find <form action=> in Keycloak login page")
         action = match.group(1).replace("&amp;", "&")
 
         resp = client.post(

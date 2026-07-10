@@ -20,12 +20,12 @@ import pytest
 # Store original modules before mocking (for cleanup)
 _original_modules = {}
 _mocked_module_names = [
-    'claude_code_sdk',
-    'claude_code_sdk.types',
-    'claude_agent_sdk',
-    'graphiti_providers',
-    'validate_spec',
-    'client',
+    "claude_code_sdk",
+    "claude_code_sdk.types",
+    "claude_agent_sdk",
+    "graphiti_providers",
+    "validate_spec",
+    "client",
 ]
 
 for name in _mocked_module_names:
@@ -38,30 +38,30 @@ mock_sdk = MagicMock()
 mock_sdk.ClaudeSDKClient = MagicMock()
 mock_sdk.ClaudeCodeOptions = MagicMock()
 mock_sdk.HookMatcher = MagicMock()
-sys.modules['claude_code_sdk'] = mock_sdk
-sys.modules['claude_code_sdk.types'] = mock_sdk
+sys.modules["claude_code_sdk"] = mock_sdk
+sys.modules["claude_code_sdk.types"] = mock_sdk
 
 # Mock claude_agent_sdk
 mock_agent_sdk = MagicMock()
 mock_agent_sdk.ClaudeSDKClient = MagicMock()
 mock_agent_sdk.ClaudeAgentOptions = MagicMock()
-sys.modules['claude_agent_sdk'] = mock_agent_sdk
+sys.modules["claude_agent_sdk"] = mock_agent_sdk
 
 # Mock graphiti_providers module
 mock_graphiti = MagicMock()
 mock_graphiti.is_graphiti_enabled = MagicMock(return_value=False)
 mock_graphiti.get_graph_hints = AsyncMock(return_value=[])
-sys.modules['graphiti_providers'] = mock_graphiti
+sys.modules["graphiti_providers"] = mock_graphiti
 
 # Mock validate_spec module
 mock_validate_spec = MagicMock()
 mock_validate_spec.auto_fix_plan = MagicMock(return_value=False)
-sys.modules['validate_spec'] = mock_validate_spec
+sys.modules["validate_spec"] = mock_validate_spec
 
 # Mock client module to avoid circular imports
 mock_client = MagicMock()
 mock_client.create_client = MagicMock()
-sys.modules['client'] = mock_client
+sys.modules["client"] = mock_client
 
 # Now import the phases module directly (bypasses __init__.py issues)
 from spec.phases import MAX_RETRIES, PhaseExecutor, PhaseResult
@@ -198,7 +198,9 @@ class TestPhaseDiscovery:
         """Discovery phase succeeds when script creates project_index.json."""
         # Create the project_index.json file
         index_file = spec_dir / "project_index.json"
-        index_file.write_text(json.dumps({"files": [1, 2, 3], "project_type": "python"}))
+        index_file.write_text(
+            json.dumps({"files": [1, 2, 3], "project_type": "python"})
+        )
 
         executor = PhaseExecutor(
             project_dir=temp_dir,
@@ -210,8 +212,12 @@ class TestPhaseDiscovery:
             ui_module=mock_ui_module,
         )
 
-        with patch('spec.discovery.run_discovery_script', return_value=(True, "Created")):
-            with patch('spec.discovery.get_project_index_stats', return_value={"file_count": 3}):
+        with patch(
+            "spec.discovery.run_discovery_script", return_value=(True, "Created")
+        ):
+            with patch(
+                "spec.discovery.get_project_index_stats", return_value={"file_count": 3}
+            ):
                 result = await executor.phase_discovery()
 
         assert result.success is True
@@ -240,7 +246,9 @@ class TestPhaseDiscovery:
         )
 
         # Always fail
-        with patch('spec.discovery.run_discovery_script', return_value=(False, "Script failed")):
+        with patch(
+            "spec.discovery.run_discovery_script", return_value=(False, "Script failed")
+        ):
             result = await executor.phase_discovery()
 
         assert result.success is False
@@ -302,7 +310,7 @@ class TestPhaseHistoricalContext:
             ui_module=mock_ui_module,
         )
 
-        with patch('graphiti_providers.is_graphiti_enabled', return_value=False):
+        with patch("graphiti_providers.is_graphiti_enabled", return_value=False):
             result = await executor.phase_historical_context()
 
         assert result.success is True
@@ -428,8 +436,12 @@ class TestPhaseContext:
             ui_module=mock_ui_module,
         )
 
-        with patch('spec.context.run_context_discovery', return_value=(True, "Success")):
-            with patch('spec.context.get_context_stats', return_value={"files_to_modify": 5}):
+        with patch(
+            "spec.context.run_context_discovery", return_value=(True, "Success")
+        ):
+            with patch(
+                "spec.context.get_context_stats", return_value={"files_to_modify": 5}
+            ):
                 result = await executor.phase_context()
 
         assert result.success is True
@@ -455,8 +467,10 @@ class TestPhaseContext:
             ui_module=mock_ui_module,
         )
 
-        with patch('spec.context.run_context_discovery', return_value=(False, "Failed")):
-            with patch('spec.context.create_minimal_context') as mock_minimal:
+        with patch(
+            "spec.context.run_context_discovery", return_value=(False, "Failed")
+        ):
+            with patch("spec.context.create_minimal_context") as mock_minimal:
                 result = await executor.phase_context()
 
         mock_minimal.assert_called_once()
@@ -507,6 +521,7 @@ class TestPhaseQuickSpec:
         mock_spec_validator,
     ):
         """Quick spec phase runs agent to create spec."""
+
         # Agent creates spec.md on success
         async def agent_side_effect(*args, **kwargs):
             (spec_dir / "spec.md").write_text("# Generated Spec")
@@ -658,6 +673,7 @@ class TestPhaseSpecWriting:
                 self.fixes = self.fixes or []
 
         call_count = [0]
+
         def validate_spec_side_effect():
             call_count[0] += 1
             if call_count[0] == 1:
@@ -723,10 +739,14 @@ class TestPhaseSelfCritique:
     ):
         """Self-critique returns early if already completed."""
         (spec_dir / "spec.md").write_text("# Test Spec")
-        (spec_dir / "critique_report.json").write_text(json.dumps({
-            "issues_fixed": True,
-            "no_issues_found": False,
-        }))
+        (spec_dir / "critique_report.json").write_text(
+            json.dumps(
+                {
+                    "issues_fixed": True,
+                    "no_issues_found": False,
+                }
+            )
+        )
 
         executor = PhaseExecutor(
             project_dir=temp_dir,
@@ -758,9 +778,9 @@ class TestPhasePlanning:
         mock_spec_validator,
     ):
         """Planning phase returns early if valid plan exists."""
-        (spec_dir / "implementation_plan.json").write_text(json.dumps({
-            "phases": [{"phase": 1, "subtasks": []}]
-        }))
+        (spec_dir / "implementation_plan.json").write_text(
+            json.dumps({"phases": [{"phase": 1, "subtasks": []}]})
+        )
 
         executor = PhaseExecutor(
             project_dir=temp_dir,
@@ -900,7 +920,9 @@ class TestPhaseWorkflow:
     ):
         """Running a phase twice with existing output is idempotent."""
         # Pre-create files
-        (spec_dir / "requirements.json").write_text(json.dumps({"task_description": "Test"}))
+        (spec_dir / "requirements.json").write_text(
+            json.dumps({"task_description": "Test"})
+        )
         (spec_dir / "context.json").write_text(json.dumps({"task_description": "Test"}))
 
         executor = PhaseExecutor(
@@ -945,8 +967,13 @@ class TestPhaseWorkflow:
             ui_module=mock_ui_module,
         )
 
-        with patch('spec.discovery.run_discovery_script', return_value=(True, "Success")):
-            with patch('spec.discovery.get_project_index_stats', return_value={"file_count": 10}):
+        with patch(
+            "spec.discovery.run_discovery_script", return_value=(True, "Success")
+        ):
+            with patch(
+                "spec.discovery.get_project_index_stats",
+                return_value={"file_count": 10},
+            ):
                 await executor.phase_discovery()
 
         # Verify logger was called

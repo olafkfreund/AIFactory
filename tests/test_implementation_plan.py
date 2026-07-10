@@ -499,12 +499,19 @@ class TestDependencyResolution:
         plan = ImplementationPlan(
             feature="Test",
             phases=[
-                Phase(phase=1, name="Setup", subtasks=[
-                    Chunk(id="c1", description="Setup", status=ChunkStatus.PENDING)
-                ]),
-                Phase(phase=2, name="Build", depends_on=[1], subtasks=[
-                    Chunk(id="c2", description="Build")
-                ]),
+                Phase(
+                    phase=1,
+                    name="Setup",
+                    subtasks=[
+                        Chunk(id="c1", description="Setup", status=ChunkStatus.PENDING)
+                    ],
+                ),
+                Phase(
+                    phase=2,
+                    name="Build",
+                    depends_on=[1],
+                    subtasks=[Chunk(id="c2", description="Build")],
+                ),
             ],
         )
 
@@ -519,15 +526,27 @@ class TestDependencyResolution:
         plan = ImplementationPlan(
             feature="Test",
             phases=[
-                Phase(phase=1, name="Setup", subtasks=[
-                    Chunk(id="c1", description="Setup", status=ChunkStatus.COMPLETED)
-                ]),
-                Phase(phase=2, name="Backend", depends_on=[1], subtasks=[
-                    Chunk(id="c2", description="Backend")
-                ]),
-                Phase(phase=3, name="Frontend", depends_on=[1], subtasks=[
-                    Chunk(id="c3", description="Frontend")
-                ]),
+                Phase(
+                    phase=1,
+                    name="Setup",
+                    subtasks=[
+                        Chunk(
+                            id="c1", description="Setup", status=ChunkStatus.COMPLETED
+                        )
+                    ],
+                ),
+                Phase(
+                    phase=2,
+                    name="Backend",
+                    depends_on=[1],
+                    subtasks=[Chunk(id="c2", description="Backend")],
+                ),
+                Phase(
+                    phase=3,
+                    name="Frontend",
+                    depends_on=[1],
+                    subtasks=[Chunk(id="c3", description="Frontend")],
+                ),
             ],
         )
 
@@ -544,15 +563,26 @@ class TestDependencyResolution:
         plan = ImplementationPlan(
             feature="Test",
             phases=[
-                Phase(phase=1, name="Phase1", subtasks=[
-                    Chunk(id="c1", description="C1", status=ChunkStatus.COMPLETED)
-                ]),
-                Phase(phase=2, name="Phase2", subtasks=[
-                    Chunk(id="c2", description="C2", status=ChunkStatus.PENDING)
-                ]),
-                Phase(phase=3, name="Phase3", depends_on=[1, 2], subtasks=[
-                    Chunk(id="c3", description="C3")
-                ]),
+                Phase(
+                    phase=1,
+                    name="Phase1",
+                    subtasks=[
+                        Chunk(id="c1", description="C1", status=ChunkStatus.COMPLETED)
+                    ],
+                ),
+                Phase(
+                    phase=2,
+                    name="Phase2",
+                    subtasks=[
+                        Chunk(id="c2", description="C2", status=ChunkStatus.PENDING)
+                    ],
+                ),
+                Phase(
+                    phase=3,
+                    name="Phase3",
+                    depends_on=[1, 2],
+                    subtasks=[Chunk(id="c3", description="C3")],
+                ),
             ],
         )
 
@@ -604,6 +634,7 @@ class TestChunkCritique:
 
 # --- RFC-0008 #616: testing/cicd subtasks are handoff, not coder work ---
 
+
 def test_handoff_subtasks_do_not_block_coding_completion():
     """A plan whose only-pending subtasks are testing/cicd (service-tagged) is
     coding-complete: the coder skips them (TFactory/CI own them) and they must
@@ -614,11 +645,15 @@ def test_handoff_subtasks_do_not_block_coding_completion():
     from implementation_plan.subtask import Subtask
 
     impl = Phase(
-        phase=1, name="Implementation", type=PhaseType.IMPLEMENTATION,
+        phase=1,
+        name="Implementation",
+        type=PhaseType.IMPLEMENTATION,
         subtasks=[Subtask(id="C1", description="impl", status=SubtaskStatus.COMPLETED)],
     )
     testing = Phase(
-        phase=2, name="Testing", type=PhaseType.INTEGRATION,
+        phase=2,
+        name="Testing",
+        type=PhaseType.INTEGRATION,
         subtasks=[
             Subtask(id="TEST", description="set up testing", service="testing"),
             Subtask(id="CICD", description="set up ci", service="cicd"),
@@ -626,11 +661,11 @@ def test_handoff_subtasks_do_not_block_coding_completion():
     )
     assert testing.subtasks[0].is_handoff and testing.subtasks[1].is_handoff
     assert impl.is_complete()
-    assert testing.is_complete()                 # all-handoff phase doesn't block
+    assert testing.is_complete()  # all-handoff phase doesn't block
     assert testing.get_pending_subtasks() == []  # coder skips handoff work
 
     plan = ImplementationPlan(
         feature="x", workflow_type=WorkflowType.FEATURE, phases=[impl, testing]
     )
-    assert plan.get_next_subtask() is None       # nothing left for the coder
+    assert plan.get_next_subtask() is None  # nothing left for the coder
     assert plan.get_progress()["is_complete"] is True

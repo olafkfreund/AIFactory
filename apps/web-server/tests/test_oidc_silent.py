@@ -26,7 +26,9 @@ def test_login_forwards_prompt_none():
     with (
         patch.object(oidc_routes, "is_oidc_enabled", return_value=True),
         patch.object(oidc_routes, "get_oauth_client", return_value=_oauth(captured)),
-        patch.dict("os.environ", {"APP_OIDC_REDIRECT_URI": "https://x/api/auth/oidc/callback"}),
+        patch.dict(
+            "os.environ", {"APP_OIDC_REDIRECT_URI": "https://x/api/auth/oidc/callback"}
+        ),
     ):
         out = asyncio.run(oidc_routes.oidc_login(req))
     assert out == "REDIRECT"

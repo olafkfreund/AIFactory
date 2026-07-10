@@ -34,7 +34,11 @@ def test_env_moved_out_of_server_config():
 def test_token_absent_from_mcp_config_argv():
     sink: dict = {}
     cfg = _externalize_secret_env(
-        {"command": "npx", "args": ["x"], "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": _TOKEN}},
+        {
+            "command": "npx",
+            "args": ["x"],
+            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": _TOKEN},
+        },
         sink,
     )
     # This is exactly what the SDK json.dumps into the --mcp-config argv.

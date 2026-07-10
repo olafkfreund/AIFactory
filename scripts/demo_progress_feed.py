@@ -50,7 +50,7 @@ MAGENTA = "\033[35m"
 GREY = "\033[90m"
 INVERSE = "\033[7m"
 
-CLEAR = "\033[2J\033[H"      # clear screen + home
+CLEAR = "\033[2J\033[H"  # clear screen + home
 HIDE_CURSOR = "\033[?25l"
 SHOW_CURSOR = "\033[?25h"
 
@@ -103,10 +103,13 @@ class Portal:
 
     def _get(self, path: str):
         url = f"{self.base}{path}"
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {self.token}",
-            "Accept": "application/json",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/json",
+            },
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
@@ -125,8 +128,15 @@ class Portal:
     def _scan_projects(self) -> list[str]:
         # A task is "interesting" to the feed if it's actively building OR
         # parked at a review gate (so the feed locks on at the gate too).
-        active = {"in_progress", "human_review", "ai_review", "qa",
-                  "coding", "planning", "blocked"}
+        active = {
+            "in_progress",
+            "human_review",
+            "ai_review",
+            "qa",
+            "coding",
+            "planning",
+            "blocked",
+        }
         out: list[str] = []
         try:
             projects = self._get("/api/projects")
@@ -145,7 +155,11 @@ class Portal:
             if not isinstance(tasks, list):
                 continue
             for t in tasks:
-                if isinstance(t, dict) and (t.get("status") or "").lower() in active and t.get("id"):
+                if (
+                    isinstance(t, dict)
+                    and (t.get("status") or "").lower() in active
+                    and t.get("id")
+                ):
                     out.append(t["id"])
         # Prefer real specs over the transient ":pending-..." placeholder.
         out.sort(key=lambda x: (":pending-" in x))
@@ -169,7 +183,14 @@ class Portal:
                 if isinstance(it, str):
                     out.append(it)
                 elif isinstance(it, dict):
-                    out.append(str(it.get("content") or it.get("message") or it.get("line") or ""))
+                    out.append(
+                        str(
+                            it.get("content")
+                            or it.get("message")
+                            or it.get("line")
+                            or ""
+                        )
+                    )
         return [s for s in out if s.strip()]
 
 
@@ -227,7 +248,12 @@ def overall_pct(detail: dict, idx: int) -> float:
         return 95.0  # final review gate: build is done, awaiting merge
     subs = detail.get("subtasks") or []
     if subs:
-        done = sum(1 for s in subs if isinstance(s, dict) and (s.get("status") or "").lower() in ("completed", "done"))
+        done = sum(
+            1
+            for s in subs
+            if isinstance(s, dict)
+            and (s.get("status") or "").lower() in ("completed", "done")
+        )
         if done:
             # Coding spans the middle of the bar; scale subtask completion there.
             return 25 + 55 * (done / max(1, len(subs)))
@@ -272,13 +298,21 @@ def gate_banner(detail: dict, width: int) -> list[str]:
     ]
 
 
-def render(detail: dict | None, task_id: str | None, logs: list[str], portal: str, waiting: bool) -> str:
+def render(
+    detail: dict | None,
+    task_id: str | None,
+    logs: list[str],
+    portal: str,
+    waiting: bool,
+) -> str:
     w = min(cols(), 100)
     out = [CLEAR]
     host = portal.replace("http://", "").replace("https://", "")
 
     title = f"{BOLD}{MAGENTA}AIFACTORY{RESET}{BOLD} · LIVE BUILD FEED{RESET}"
-    out.append(f"{title}{' ' * max(1, w - 32 - len(host) - 9)}{GREY}portal: {host}{RESET}")
+    out.append(
+        f"{title}{' ' * max(1, w - 32 - len(host) - 9)}{GREY}portal: {host}{RESET}"
+    )
     out.append(f"{GREY}{'─' * w}{RESET}")
 
     if waiting or detail is None:
@@ -286,9 +320,13 @@ def render(detail: dict | None, task_id: str | None, logs: list[str], portal: st
         out.append(f"  {YELLOW}● waiting for a handover…{RESET}")
         out.append("")
         out.append(f"  {DIM}In the left pane, run:{RESET}")
-        out.append(f"    {CYAN}/handover Add a /metrics endpoint returning request counts, with a test{RESET}")
+        out.append(
+            f"    {CYAN}/handover Add a /metrics endpoint returning request counts, with a test{RESET}"
+        )
         out.append("")
-        out.append(f"  {DIM}The moment the task starts, it locks on here and you'll see it build.{RESET}")
+        out.append(
+            f"  {DIM}The moment the task starts, it locks on here and you'll see it build.{RESET}"
+        )
         return "\n".join(out)
 
     idx = stage_index(detail)
@@ -310,7 +348,9 @@ def render(detail: dict | None, task_id: str | None, logs: list[str], portal: st
     status = detail.get("status") or "-"
     pct = overall_pct(detail, idx)
     running_dot = f"{GREEN}●{RESET}" if status == "in_progress" else f"{GREY}●{RESET}"
-    out.append(f"  {running_dot} {BOLD}phase:{RESET} {phase:<14}  {BOLD}status:{RESET} {status}")
+    out.append(
+        f"  {running_dot} {BOLD}phase:{RESET} {phase:<14}  {BOLD}status:{RESET} {status}"
+    )
     out.append(f"    {bar(pct)} {BOLD}{pct:4.0f}%{RESET}")
     out.append("")
 
@@ -327,7 +367,9 @@ def render(detail: dict | None, task_id: str | None, logs: list[str], portal: st
             if len(label) > w - 12:
                 label = label[: w - 15] + "..."
             colour = GREY if st == "pending" else ""
-            out.append(f"    {icon} {colour}{str(sid):<5}{RESET}{colour} {label}{RESET}")
+            out.append(
+                f"    {icon} {colour}{str(sid):<5}{RESET}{colour} {label}{RESET}"
+            )
         out.append("")
 
     banner = gate_banner(detail, w)
@@ -355,16 +397,23 @@ def render(detail: dict | None, task_id: str | None, logs: list[str], portal: st
 def read_token(token_file: str) -> str:
     p = Path(os.path.expanduser(token_file))
     if not p.exists():
-        sys.stderr.write(f"Token file not found: {p}\n"
-                         f"Start the portal once to create it.\n")
+        sys.stderr.write(
+            f"Token file not found: {p}\nStart the portal once to create it.\n"
+        )
         sys.exit(1)
     return p.read_text().strip()
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="AIFactory live build feed (demo right pane).")
-    ap.add_argument("--portal", default=os.environ.get("AIFACTORY_PORTAL", "http://localhost:3101"))
-    ap.add_argument("--task", default=None, help="Lock onto a specific task id (project:spec).")
+    ap = argparse.ArgumentParser(
+        description="AIFactory live build feed (demo right pane)."
+    )
+    ap.add_argument(
+        "--portal", default=os.environ.get("AIFACTORY_PORTAL", "http://localhost:3101")
+    )
+    ap.add_argument(
+        "--task", default=None, help="Lock onto a specific task id (project:spec)."
+    )
     ap.add_argument("--token-file", default="~/.aifactory/.token")
     ap.add_argument("--interval", type=float, default=1.5)
     args = ap.parse_args()
@@ -376,8 +425,10 @@ def main() -> int:
     try:
         urllib.request.urlopen(f"{args.portal.rstrip('/')}/api/health", timeout=5)
     except Exception:
-        sys.stderr.write(f"Portal not reachable at {args.portal}.\n"
-                         f"Start it: cd apps/web-server && python -m server.main\n")
+        sys.stderr.write(
+            f"Portal not reachable at {args.portal}.\n"
+            f"Start it: cd apps/web-server && python -m server.main\n"
+        )
         return 1
 
     locked: str | None = args.task

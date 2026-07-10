@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     # SSL configuration
     SSL_ENABLED: bool = False
     SSL_CERTFILE: str = ""  # Path to SSL certificate
-    SSL_KEYFILE: str = ""   # Path to SSL private key
+    SSL_KEYFILE: str = ""  # Path to SSL private key
 
     # Authentication
     API_TOKEN: str = ""  # Will generate default if not set
@@ -230,18 +230,14 @@ class Settings(BaseSettings):
         # Set default paths
         if not self.BACKEND_PATH:
             # Assume we're in apps/web-server, backend is at ../backend
-            self.BACKEND_PATH = str(
-                Path(__file__).parent.parent.parent / "backend"
-            )
+            self.BACKEND_PATH = str(Path(__file__).parent.parent.parent / "backend")
 
         if not self.PROJECTS_DATA_DIR:
             self.PROJECTS_DATA_DIR = str(get_data_dir())
 
         # Set default database URL
         if not self.DATABASE_URL:
-            self.DATABASE_URL = (
-                f"sqlite+aiosqlite:///{self.PROJECTS_DATA_DIR}/data.db"
-            )
+            self.DATABASE_URL = f"sqlite+aiosqlite:///{self.PROJECTS_DATA_DIR}/data.db"
 
         # Set up SSL paths if enabled
         if self.SSL_ENABLED:
@@ -264,15 +260,15 @@ class Settings(BaseSettings):
 
         # #324 (M1): never print the token value — stdout lands in container /
         # CI / journald logs. Point operators at the 0600 file instead.
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("AIFactory - First Run Setup")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Generated API token saved to: {token_file}")
         print("Read it with:")
         print(f"  cat {token_file}")
         print("Then authenticate API requests with:")
         print("  Authorization: Bearer <token>")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         return token
 
@@ -318,34 +314,46 @@ class Settings(BaseSettings):
 
         # Generate self-signed certificate if not exists
         if not cert_file.exists() or not key_file.exists():
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print("AIFactory - SSL Setup")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print("Generating self-signed SSL certificate...")
 
             try:
                 subprocess.run(
                     [
-                        "openssl", "req", "-x509", "-newkey", "rsa:4096",
-                        "-keyout", str(key_file),
-                        "-out", str(cert_file),
-                        "-days", "365",
+                        "openssl",
+                        "req",
+                        "-x509",
+                        "-newkey",
+                        "rsa:4096",
+                        "-keyout",
+                        str(key_file),
+                        "-out",
+                        str(cert_file),
+                        "-days",
+                        "365",
                         "-nodes",
-                        "-subj", "/CN=localhost/O=AIFactory/C=US"
+                        "-subj",
+                        "/CN=localhost/O=AIFactory/C=US",
                     ],
                     check=True,
-                    capture_output=True
+                    capture_output=True,
                 )
                 key_file.chmod(0o600)
                 print(f"Certificate generated: {cert_file}")
                 print(f"Private key generated: {key_file}")
                 print("\nNOTE: This is a self-signed certificate.")
                 print("Your browser will show a security warning.")
-                print(f"{'='*60}\n")
+                print(f"{'=' * 60}\n")
             except subprocess.CalledProcessError as e:
-                raise RuntimeError(f"Failed to generate SSL certificate: {e.stderr.decode()}")
+                raise RuntimeError(
+                    f"Failed to generate SSL certificate: {e.stderr.decode()}"
+                )
             except FileNotFoundError:
-                raise RuntimeError("OpenSSL not found. Install OpenSSL to enable HTTPS.")
+                raise RuntimeError(
+                    "OpenSSL not found. Install OpenSSL to enable HTTPS."
+                )
 
         # Set paths to generated certificates
         self.SSL_CERTFILE = str(cert_file)

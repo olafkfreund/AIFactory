@@ -422,4 +422,3 @@ async def detect_worktree_tools():
         )
 
     return {"success": True, "data": {"ides": ides, "terminals": terminals}}
-

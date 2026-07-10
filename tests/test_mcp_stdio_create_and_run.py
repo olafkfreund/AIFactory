@@ -48,9 +48,7 @@ def test_proxy_create_and_run_passes_provenance_capable_request(monkeypatch):
     monkeypatch.setattr(r, "_audit_mcp_write", _noop_audit)
 
     req = _FakeRequest(json.dumps({"model": "gemini-3.5-flash"}).encode())
-    result = asyncio.run(
-        r.proxy_create_and_run_task(req, "p1", "title", "desc", None)
-    )
+    result = asyncio.run(r.proxy_create_and_run_task(req, "p1", "title", "desc", None))
 
     assert result == {"task_id": "t1"}
     # The model passed must expose `provenance` (i.e. it's a CreateAndRunRequest).

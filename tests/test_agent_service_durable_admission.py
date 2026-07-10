@@ -161,7 +161,9 @@ async def test_durable_reconcile_on_startup_drains_dead_replica_slots(
     service2 = AgentService()
     service2.settings.MAX_CONCURRENT_TASKS = 1
     service2._store_enabled = True
-    service2._job_store = JobStateStore(session_factory=service1._job_store._session_factory)
+    service2._job_store = JobStateStore(
+        session_factory=service1._job_store._session_factory
+    )
     spawned2: list[str] = []
 
     async def fake_spawn2(*, task_id: str, **_kwargs: Any) -> _FakeProc:

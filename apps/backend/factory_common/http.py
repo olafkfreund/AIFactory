@@ -147,7 +147,9 @@ class HttpClient:
             return path
         return f"{self.base_url.rstrip('/')}{path}"
 
-    def _headers(self, extra: Mapping[str, str] | None, has_body: bool) -> dict[str, str]:
+    def _headers(
+        self, extra: Mapping[str, str] | None, has_body: bool
+    ) -> dict[str, str]:
         headers = {"User-Agent": self.user_agent}
         if has_body:
             headers["Content-Type"] = "application/json"
@@ -199,10 +201,14 @@ class HttpClient:
     def get(self, path: str, **kwargs: Any) -> HttpResponse:
         return self.request("GET", path, **kwargs)
 
-    def post(self, path: str, body: JsonBody | None = None, **kwargs: Any) -> HttpResponse:
+    def post(
+        self, path: str, body: JsonBody | None = None, **kwargs: Any
+    ) -> HttpResponse:
         return self.request("POST", path, body=body, **kwargs)
 
-    def put(self, path: str, body: JsonBody | None = None, **kwargs: Any) -> HttpResponse:
+    def put(
+        self, path: str, body: JsonBody | None = None, **kwargs: Any
+    ) -> HttpResponse:
         return self.request("PUT", path, body=body, **kwargs)
 
     def delete(self, path: str, **kwargs: Any) -> HttpResponse:

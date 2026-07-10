@@ -92,8 +92,10 @@ def build_sandboxed_command(
         "--die-with-parent",
         "--unshare-ipc",
         "--unshare-uts",
-        "--dev", "/dev",
-        "--tmpfs", "/tmp",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
     ]
     # PID isolation needs a fresh /proc, which requires privilege the
     # unprivileged in-pod path lacks. Default: keep the host PID namespace with a

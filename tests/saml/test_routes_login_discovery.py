@@ -141,8 +141,7 @@ def test_public_prefixes_covers_identity_providers_path():
 
     path = "/api/auth/identity-providers"
     assert any(
-        path.startswith(prefix)
-        for prefix in TokenAuthMiddleware.PUBLIC_PREFIXES
+        path.startswith(prefix) for prefix in TokenAuthMiddleware.PUBLIC_PREFIXES
     ), (
         f"Expected {path!r} to be covered by PUBLIC_PREFIXES; "
         f"got {TokenAuthMiddleware.PUBLIC_PREFIXES!r}"

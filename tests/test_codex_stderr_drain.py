@@ -12,6 +12,7 @@
    content text.  Without this guard every subtask fails silently after 3
    retries with no files written.  (#286)
 """
+
 import asyncio
 import sys
 from pathlib import Path
@@ -22,8 +23,13 @@ BACKEND = Path(__file__).resolve().parents[1] / "apps" / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-SRC = (Path(__file__).resolve().parents[1] / "apps" / "backend"
-       / "providers" / "codex_agentic.py").read_text()
+SRC = (
+    Path(__file__).resolve().parents[1]
+    / "apps"
+    / "backend"
+    / "providers"
+    / "codex_agentic.py"
+).read_text()
 
 
 def test_codex_binary_falls_back_to_codex_cli():
@@ -31,8 +37,9 @@ def test_codex_binary_falls_back_to_codex_cli():
 
 
 def test_codex_drains_stderr_concurrently():
-    assert "_drain_stderr" in SRC and "create_task" in SRC, \
+    assert "_drain_stderr" in SRC and "create_task" in SRC, (
         "stderr must be drained concurrently to avoid the 64KB pipe deadlock"
+    )
 
 
 def test_codex_error_json_in_content_raises_runtime_error(monkeypatch):

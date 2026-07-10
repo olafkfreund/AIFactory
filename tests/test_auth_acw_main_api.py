@@ -38,7 +38,9 @@ def no_disable_auth(monkeypatch):
     # Force auth ON, no legacy token match, JWT decode fails → reach Strategy 3.
     monkeypatch.setattr(
         "server.auth.get_settings",
-        lambda: SimpleNamespace(DISABLE_AUTH=False, API_TOKEN="legacy-xyz", JWT_SECRET="s"),
+        lambda: SimpleNamespace(
+            DISABLE_AUTH=False, API_TOKEN="legacy-xyz", JWT_SECRET="s"
+        ),
     )
     monkeypatch.setattr("server.auth._try_decode_jwt", lambda token: None)
     monkeypatch.setattr("server.auth._is_legacy_api_token", lambda token: False)

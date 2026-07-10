@@ -383,4 +383,3 @@ async def create_pr_from_task(
             "baseBranch": base_branch,
         },
     }
-

@@ -63,7 +63,9 @@ async def test_low_tier_from_payload(project):
     assert res["tier"] == "low"
     assert res["issue_number"] == 11
     # haiku or ollama:* — never sonnet/opus for low
-    assert res["execution"]["model"] in ("haiku",) or res["execution"]["model"].startswith("ollama:")
+    assert res["execution"]["model"] in ("haiku",) or res["execution"][
+        "model"
+    ].startswith("ollama:")
     assert res["execution"]["review_tier"] == "auto"
     assert res["execution"]["skip_planning"] is True
 

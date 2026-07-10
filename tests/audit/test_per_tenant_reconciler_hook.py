@@ -54,11 +54,14 @@ class TestIssueTenantAnchorKey:
         db = _make_db(existing_key_row=None)
         vault = _make_vault_client()
 
-        with patch(
-            "server.services.per_tenant_anchor_key.get_backend",
-        ) as mock_kms, patch(
-            "server.services.per_tenant_anchor_key.generate_new_key",
-            return_value=b"\x55" * 32,
+        with (
+            patch(
+                "server.services.per_tenant_anchor_key.get_backend",
+            ) as mock_kms,
+            patch(
+                "server.services.per_tenant_anchor_key.generate_new_key",
+                return_value=b"\x55" * 32,
+            ),
         ):
             mock_kms.return_value.encrypt.return_value = b"\xaa" * 64
 
@@ -98,11 +101,14 @@ class TestIssueTenantAnchorKey:
         vault = _make_vault_client()
         vault.kv_put.side_effect = RuntimeError("Vault unreachable")
 
-        with patch(
-            "server.services.per_tenant_anchor_key.get_backend",
-        ) as mock_kms, patch(
-            "server.services.per_tenant_anchor_key.generate_new_key",
-            return_value=b"\x55" * 32,
+        with (
+            patch(
+                "server.services.per_tenant_anchor_key.get_backend",
+            ) as mock_kms,
+            patch(
+                "server.services.per_tenant_anchor_key.generate_new_key",
+                return_value=b"\x55" * 32,
+            ),
         ):
             mock_kms.return_value.encrypt.return_value = b"\xaa" * 64
 
@@ -117,11 +123,14 @@ class TestIssueTenantAnchorKey:
         """When vault_client=None, issuance skips Vault write silently."""
         db = _make_db(existing_key_row=None)
 
-        with patch(
-            "server.services.per_tenant_anchor_key.get_backend",
-        ) as mock_kms, patch(
-            "server.services.per_tenant_anchor_key.generate_new_key",
-            return_value=b"\x55" * 32,
+        with (
+            patch(
+                "server.services.per_tenant_anchor_key.get_backend",
+            ) as mock_kms,
+            patch(
+                "server.services.per_tenant_anchor_key.generate_new_key",
+                return_value=b"\x55" * 32,
+            ),
         ):
             mock_kms.return_value.encrypt.return_value = b"\xaa" * 64
 

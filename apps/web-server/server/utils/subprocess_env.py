@@ -75,6 +75,7 @@ def _inject_traceparent(env: dict[str, str]) -> None:
     """
     try:
         from ..observability.tracing import get_current_traceparent
+
         tp = get_current_traceparent()
         if tp:
             env["TRACEPARENT"] = tp

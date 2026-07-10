@@ -101,8 +101,13 @@ def _model_available(model: str, base_url: str = "http://localhost:11434") -> bo
             data = json.loads(resp.read().decode())
         names = {m.get("name", "") for m in data.get("models", [])}
         # Accept an exact match or the same model without an explicit ":latest".
-        return model in names or f"{model}:latest" in names or any(
-            n.split(":", 1)[0] == model.split(":", 1)[0] and n == model for n in names
+        return (
+            model in names
+            or f"{model}:latest" in names
+            or any(
+                n.split(":", 1)[0] == model.split(":", 1)[0] and n == model
+                for n in names
+            )
         )
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
         return False
@@ -152,7 +157,11 @@ class TestToolExecutorSecurity:
     def test_path_traversal_blocked(self, tmp_path):
         executor = ToolExecutor(working_dir=tmp_path)
         # ../../../etc/passwd  should resolve outside working_dir
-        result = _run(executor.execute("Read", {"file_path": str(tmp_path / ".." / ".." / "etc" / "passwd")}))
+        result = _run(
+            executor.execute(
+                "Read", {"file_path": str(tmp_path / ".." / ".." / "etc" / "passwd")}
+            )
+        )
         assert result.is_error
         assert "outside" in result.content.lower() or "denied" in result.content.lower()
 
@@ -195,7 +204,9 @@ class TestToolExecutorReadWrite:
         content = "Hello from test!"
 
         # Write
-        w_result = _run(executor.execute("Write", {"file_path": target, "content": content}))
+        w_result = _run(
+            executor.execute("Write", {"file_path": target, "content": content})
+        )
         assert not w_result.is_error
         assert "Successfully wrote" in w_result.content
 
@@ -209,11 +220,16 @@ class TestToolExecutorReadWrite:
         test_file.write_text("def foo():\n    return 42\n")
 
         executor = ToolExecutor(working_dir=tmp_path)
-        result = _run(executor.execute("Edit", {
-            "file_path": str(test_file),
-            "old_string": "return 42",
-            "new_string": "return 99",
-        }))
+        result = _run(
+            executor.execute(
+                "Edit",
+                {
+                    "file_path": str(test_file),
+                    "old_string": "return 42",
+                    "new_string": "return 99",
+                },
+            )
+        )
         assert not result.is_error
         assert "Successfully edited" in result.content
 
@@ -242,7 +258,9 @@ class TestAgenticProviderInit:
             extra_options={"temperature": 0.7},
         )
         assert p._model == "qwen3:30b"
-        assert p._base_url == "http://ollama.example.com:11434"  # matches custom base_url
+        assert (
+            p._base_url == "http://ollama.example.com:11434"
+        )  # matches custom base_url
         assert p._max_turns == 10
         assert p._timeout == 300
 
@@ -284,7 +302,9 @@ class TestAgenticProviderLoop:
         assert len(messages) == 1
         msg = messages[0]
         assert type(msg).__name__ == "AssistantMessage"
-        assert any(type(b).__name__ == "TextBlock" and "42" in b.text for b in msg.content)
+        assert any(
+            type(b).__name__ == "TextBlock" and "42" in b.text for b in msg.content
+        )
 
     def test_tool_call_response_yields_assistant_and_user(self, tmp_path):
         """When the model calls a tool, we get AssistantMessage + UserMessage pair."""
@@ -299,12 +319,14 @@ class TestAgenticProviderLoop:
             "message": {
                 "role": "assistant",
                 "content": "Let me read that file.",
-                "tool_calls": [{
-                    "function": {
-                        "name": "Read",
-                        "arguments": {"file_path": str(test_file)},
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "Read",
+                            "arguments": {"file_path": str(test_file)},
+                        }
                     }
-                }],
+                ],
             }
         }
         # Turn 2: model provides final text
@@ -336,12 +358,16 @@ class TestAgenticProviderLoop:
         assert type(messages[2]).__name__ == "AssistantMessage"
 
         # Verify the tool use block
-        tool_blocks = [b for b in messages[0].content if type(b).__name__ == "ToolUseBlock"]
+        tool_blocks = [
+            b for b in messages[0].content if type(b).__name__ == "ToolUseBlock"
+        ]
         assert len(tool_blocks) == 1
         assert tool_blocks[0].name == "Read"
 
         # Verify the tool result
-        result_blocks = [b for b in messages[1].content if type(b).__name__ == "ToolResultBlock"]
+        result_blocks = [
+            b for b in messages[1].content if type(b).__name__ == "ToolResultBlock"
+        ]
         assert len(result_blocks) == 1
         assert "secret content" in str(result_blocks[0].content)
 
@@ -354,12 +380,14 @@ class TestAgenticProviderLoop:
             "message": {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{
-                    "function": {
-                        "name": "Glob",
-                        "arguments": {"pattern": "*.py"},
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "Glob",
+                            "arguments": {"pattern": "*.py"},
+                        }
                     }
-                }],
+                ],
             }
         }
 
@@ -372,7 +400,11 @@ class TestAgenticProviderLoop:
         assert len(messages) == 5
         last = messages[-1]
         assert type(last).__name__ == "AssistantMessage"
-        assert any("maximum" in b.text.lower() for b in last.content if type(b).__name__ == "TextBlock")
+        assert any(
+            "maximum" in b.text.lower()
+            for b in last.content
+            if type(b).__name__ == "TextBlock"
+        )
 
     def test_text_block_tool_call_is_executed(self, tmp_path):
         """Small/local models emit a tool call as a ```json``` TEXT block instead
@@ -387,16 +419,23 @@ class TestAgenticProviderLoop:
                 "content": (
                     "I'll create the file now.\n"
                     "```json\n"
-                    + json.dumps({
-                        "name": "Write",
-                        "arguments": {"file_path": str(target), "content": "print('hi')\n"},
-                    })
+                    + json.dumps(
+                        {
+                            "name": "Write",
+                            "arguments": {
+                                "file_path": str(target),
+                                "content": "print('hi')\n",
+                            },
+                        }
+                    )
                     + "\n```"
                 ),
                 "tool_calls": None,  # NOT in the native field
             }
         }
-        final = {"message": {"role": "assistant", "content": "Done.", "tool_calls": None}}
+        final = {
+            "message": {"role": "assistant", "content": "Done.", "tool_calls": None}
+        }
 
         calls = {"n": 0}
 
@@ -409,12 +448,17 @@ class TestAgenticProviderLoop:
             messages = _run(_collect(p.receive_response()))
 
         # The Write must have been executed → file exists on disk.
-        assert target.exists(), "text-block tool call was not executed (no file written)"
+        assert target.exists(), (
+            "text-block tool call was not executed (no file written)"
+        )
         assert "print('hi')" in target.read_text()
         # And a ToolUseBlock(Write) should have been surfaced.
         tool_uses = [
-            b for m in messages if type(m).__name__ == "AssistantMessage"
-            for b in m.content if type(b).__name__ == "ToolUseBlock"
+            b
+            for m in messages
+            if type(m).__name__ == "AssistantMessage"
+            for b in m.content
+            if type(b).__name__ == "ToolUseBlock"
         ]
         assert any(b.name == "Write" for b in tool_uses)
 
@@ -429,7 +473,14 @@ class TestAgenticProviderLoop:
             "message": {
                 "role": "assistant",
                 "content": "",
-                "tool_calls": [{"function": {"name": "Read", "arguments": {"file_path": str(tmp_path / "a.py")}}}],
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "Read",
+                            "arguments": {"file_path": str(tmp_path / "a.py")},
+                        }
+                    }
+                ],
             }
         }
 
@@ -445,7 +496,10 @@ class TestAgenticProviderLoop:
 
         # A later request payload must contain the injected nudge instruction.
         nudged = any(
-            any("Write tool exactly once" in str(m.get("content", "")) for m in pl.get("messages", []))
+            any(
+                "Write tool exactly once" in str(m.get("content", ""))
+                for m in pl.get("messages", [])
+            )
             for pl in seen_payloads
         )
         assert nudged, "expected a convergence nudge after repeated read-only turns"
@@ -456,17 +510,31 @@ class TestExtractTextToolCalls:
 
     def test_fenced_json_block(self):
         from providers.ollama_agentic import _extract_text_tool_calls
+
         text = 'do it\n```json\n{"name": "Write", "arguments": {"file_path": "a.py", "content": "x"}}\n```'
         out = _extract_text_tool_calls(text)
-        assert out == [{"function": {"name": "Write", "arguments": {"file_path": "a.py", "content": "x"}}}]
+        assert out == [
+            {
+                "function": {
+                    "name": "Write",
+                    "arguments": {"file_path": "a.py", "content": "x"},
+                }
+            }
+        ]
 
     def test_bare_json_object(self):
         from providers.ollama_agentic import _extract_text_tool_calls
-        out = _extract_text_tool_calls('{"name": "Read", "arguments": {"file_path": "b.py"}}')
-        assert out == [{"function": {"name": "Read", "arguments": {"file_path": "b.py"}}}]
+
+        out = _extract_text_tool_calls(
+            '{"name": "Read", "arguments": {"file_path": "b.py"}}'
+        )
+        assert out == [
+            {"function": {"name": "Read", "arguments": {"file_path": "b.py"}}}
+        ]
 
     def test_prose_returns_nothing(self):
         from providers.ollama_agentic import _extract_text_tool_calls
+
         assert _extract_text_tool_calls("I will now write the file.") == []
 
 
@@ -544,12 +612,19 @@ class TestOllamaAgenticLive:
                         if "Hello from AIFactory" in str(block.content):
                             tool_result_found = True
 
-        assert tool_use_found, f"Expected Read tool call in messages: {self._summarize(messages)}"
-        assert tool_result_found, f"Expected tool result with file content: {self._summarize(messages)}"
+        assert tool_use_found, (
+            f"Expected Read tool call in messages: {self._summarize(messages)}"
+        )
+        assert tool_result_found, (
+            f"Expected tool result with file content: {self._summarize(messages)}"
+        )
         # The final text should reference the file content in some way
-        assert ("hello" in final_text.lower() or "aifactory" in final_text.lower()
-                or "greeting" in final_text.lower() or "integration" in final_text.lower()), \
-            f"Expected final text to reference file content. Got: {final_text[:500]}"
+        assert (
+            "hello" in final_text.lower()
+            or "aifactory" in final_text.lower()
+            or "greeting" in final_text.lower()
+            or "integration" in final_text.lower()
+        ), f"Expected final text to reference file content. Got: {final_text[:500]}"
 
     def test_live_write_and_verify(self, provider, tmp_path):
         """Model should write a Python file and then read it back."""
@@ -572,10 +647,12 @@ class TestOllamaAgenticLive:
                     if type(block).__name__ == "ToolUseBlock":
                         tool_names_used.add(block.name)
 
-        assert "Write" in tool_names_used, \
+        assert "Write" in tool_names_used, (
             f"Expected Write tool call. Tools used: {tool_names_used}. Messages: {self._summarize(messages)}"
-        assert "Read" in tool_names_used, \
+        )
+        assert "Read" in tool_names_used, (
             f"Expected Read tool call. Tools used: {tool_names_used}. Messages: {self._summarize(messages)}"
+        )
 
         # The file should actually exist on disk
         assert target.exists(), f"Expected {target} to exist on disk after Write"
@@ -614,10 +691,13 @@ class TestOllamaAgenticLive:
                     if type(block).__name__ == "ToolResultBlock" and not block.is_error:
                         glob_result_content += str(block.content)
 
-        assert glob_called, f"Expected Glob tool call. Messages: {self._summarize(messages)}"
+        assert glob_called, (
+            f"Expected Glob tool call. Messages: {self._summarize(messages)}"
+        )
         # Results should contain .py files
-        assert ".py" in glob_result_content, \
+        assert ".py" in glob_result_content, (
             f"Expected .py files in Glob results. Got: {glob_result_content[:500]}"
+        )
 
     # ------------------------------------------------------------------
     # Helpers

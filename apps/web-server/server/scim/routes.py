@@ -100,7 +100,9 @@ router = APIRouter(prefix="/scim/v2", tags=["SCIM"])
 _SCIM_CONTENT_TYPE = "application/scim+json"
 
 
-def _scim_error(http_status: int, detail: str, scim_type: str | None = None) -> JSONResponse:
+def _scim_error(
+    http_status: int, detail: str, scim_type: str | None = None
+) -> JSONResponse:
     """Build a RFC 7644 §3.12 error response.
 
     We never echo attacker-controlled inputs in the ``detail`` field —
@@ -112,7 +114,9 @@ def _scim_error(http_status: int, detail: str, scim_type: str | None = None) -> 
         detail=detail,
         scim_type=scim_type,
     ).model_dump(by_alias=True, exclude_none=True)
-    return JSONResponse(content=body, status_code=http_status, media_type=_SCIM_CONTENT_TYPE)
+    return JSONResponse(
+        content=body, status_code=http_status, media_type=_SCIM_CONTENT_TYPE
+    )
 
 
 def _now_iso() -> str:
@@ -136,7 +140,9 @@ def _user_to_scim(user: User, request: Request) -> dict[str, Any]:
             given_name=given_name,
             family_name=family_name,
             formatted=user.name,
-        ) if user.name else None,
+        )
+        if user.name
+        else None,
         display_name=user.name,
         emails=[ScimEmail(value=user.email or "", primary=True, type="work")]
         if user.email
@@ -144,8 +150,12 @@ def _user_to_scim(user: User, request: Request) -> dict[str, Any]:
         active=user.is_active,
         meta=ScimMeta(
             resource_type="User",
-            created=user.created_at.isoformat(timespec="seconds") if user.created_at else None,
-            last_modified=user.updated_at.isoformat(timespec="seconds") if user.updated_at else None,
+            created=user.created_at.isoformat(timespec="seconds")
+            if user.created_at
+            else None,
+            last_modified=user.updated_at.isoformat(timespec="seconds")
+            if user.updated_at
+            else None,
             location=str(request.url_for("scim_get_user", user_id=user.id)),
         ),
     )
@@ -165,8 +175,12 @@ def _group_to_scim(group: ScimGroup, request: Request) -> dict[str, Any]:
         members=members,
         meta=ScimMeta(
             resource_type="Group",
-            created=group.created_at.isoformat(timespec="seconds") if group.created_at else None,
-            last_modified=group.updated_at.isoformat(timespec="seconds") if group.updated_at else None,
+            created=group.created_at.isoformat(timespec="seconds")
+            if group.created_at
+            else None,
+            last_modified=group.updated_at.isoformat(timespec="seconds")
+            if group.updated_at
+            else None,
             location=str(request.url_for("scim_get_group", group_id=group.id)),
         ),
     )
@@ -238,7 +252,9 @@ def _apply_user_patch(user: User, patch: ScimPatchRequest) -> None:
                 logger.info("SCIM PATCH User: ignoring unknown remove path %r", path)
 
 
-def _apply_group_patch(group: ScimGroup, patch: ScimPatchRequest, db: AsyncSession) -> list[dict]:
+def _apply_group_patch(
+    group: ScimGroup, patch: ScimPatchRequest, db: AsyncSession
+) -> list[dict]:
     """Return a list of member mutation dicts: {"action": add|remove, "user_id": ..., "display": ...}
 
     Callers apply these against the DB session. Returns the list so the
@@ -263,9 +279,13 @@ def _apply_group_patch(group: ScimGroup, patch: ScimPatchRequest, db: AsyncSessi
                     user_id = m.get("value", "") if isinstance(m, dict) else str(m)
                     display = m.get("display") if isinstance(m, dict) else None
                     if user_id:
-                        member_ops.append({"action": "add", "user_id": user_id, "display": display})
+                        member_ops.append(
+                            {"action": "add", "user_id": user_id, "display": display}
+                        )
             elif path == "displayname":
-                group.display_name = str(op.value) if op.value is not None else group.display_name
+                group.display_name = (
+                    str(op.value) if op.value is not None else group.display_name
+                )
             else:
                 logger.info("SCIM PATCH Group: ignoring unknown path %r", path)
 
@@ -275,13 +295,17 @@ def _apply_group_patch(group: ScimGroup, patch: ScimPatchRequest, db: AsyncSessi
                 for m in member_list:
                     user_id = m.get("value", "") if isinstance(m, dict) else str(m)
                     if user_id:
-                        member_ops.append({"action": "remove", "user_id": user_id, "display": None})
+                        member_ops.append(
+                            {"action": "remove", "user_id": user_id, "display": None}
+                        )
             elif path.startswith("members[value eq "):
                 # Path filter syntax: members[value eq "<user_id>"]
-                raw = path[len("members[value eq "):]
+                raw = path[len("members[value eq ") :]
                 user_id = raw.rstrip("]").strip('"').strip("'")
                 if user_id:
-                    member_ops.append({"action": "remove", "user_id": user_id, "display": None})
+                    member_ops.append(
+                        {"action": "remove", "user_id": user_id, "display": None}
+                    )
             else:
                 logger.info("SCIM PATCH Group: ignoring unknown remove path %r", path)
 
@@ -322,9 +346,7 @@ async def scim_create_user(
         return _scim_error(400, "userName is required", "invalidValue")
 
     # Check for existing user (case-insensitive per design doc).
-    existing = await db.scalar(
-        select(User).where(User.email == email.lower())
-    )
+    existing = await db.scalar(select(User).where(User.email == email.lower()))
     if existing is not None:
         logger.warning("SCIM create user: email collision (not echoed)")
         return _scim_error(409, "User with this email already exists", "uniqueness")
@@ -428,6 +450,7 @@ async def scim_list_users(
     # Count before paging (RFC 7644 §3.4.2 requires totalResults of the
     # full matching set, not just the page).
     from sqlalchemy import func as sqlfunc
+
     count_stmt = select(sqlfunc.count()).select_from(stmt.subquery())
     total = await db.scalar(count_stmt) or 0
 
@@ -630,7 +653,9 @@ async def scim_create_group(
             select(ScimGroup).where(ScimGroup.external_id == body.external_id)
         )
         if dup is not None:
-            return _scim_error(409, "Group with this externalId already exists", "uniqueness")
+            return _scim_error(
+                409, "Group with this externalId already exists", "uniqueness"
+            )
 
     group = ScimGroup(
         display_name=body.display_name,
@@ -652,6 +677,7 @@ async def scim_create_group(
     # Re-fetch with members loaded; db.refresh() doesn't populate
     # selectin relationships, so we re-query explicitly.
     from sqlalchemy.orm import selectinload as _sil
+
     group = await db.scalar(
         select(ScimGroup)
         .options(_sil(ScimGroup.members))
@@ -714,6 +740,7 @@ async def scim_list_groups(
         stmt = stmt.where(ScimGroup.active == True)  # noqa: E712
 
     from sqlalchemy import func as sqlfunc
+
     count_stmt = select(sqlfunc.count()).select_from(stmt.subquery())
     total = await db.scalar(count_stmt) or 0
 
@@ -809,11 +836,13 @@ async def scim_patch_group(
         action = op_dict["action"]
         uid = op_dict["user_id"]
         if action == "add" and uid not in existing_user_ids:
-            db.add(ScimGroupMember(
-                group_id=group.id,
-                user_id=uid,
-                display=op_dict.get("display"),
-            ))
+            db.add(
+                ScimGroupMember(
+                    group_id=group.id,
+                    user_id=uid,
+                    display=op_dict.get("display"),
+                )
+            )
             existing_user_ids.add(uid)
         elif action == "remove":
             for m in group.members:
@@ -877,11 +906,13 @@ async def scim_replace_group(
     await db.flush()
 
     for member in body.members:
-        db.add(ScimGroupMember(
-            group_id=group.id,
-            user_id=member.value,
-            display=member.display,
-        ))
+        db.add(
+            ScimGroupMember(
+                group_id=group.id,
+                user_id=member.value,
+                display=member.display,
+            )
+        )
 
     await db.commit()
 

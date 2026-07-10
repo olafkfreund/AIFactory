@@ -9,6 +9,7 @@ Revises: 1b386c99e615
 Create Date: 2026-05-25
 
 """
+
 from __future__ import annotations
 
 from typing import Sequence, Union

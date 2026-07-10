@@ -61,7 +61,8 @@ def _render(chart_dir, set_values: list[str] | None = None) -> list[dict]:
 
 
 def _render_expect_error(
-    chart_dir, set_values: list[str] | None = None,
+    chart_dir,
+    set_values: list[str] | None = None,
 ) -> str:
     cmd = ["helm", "template", "test-release", str(chart_dir)]
     for kv in set_values or []:
@@ -187,22 +188,32 @@ class TestSamlOnUrlMetadata:
     def test_no_sp_cert_envs(self, helm_available, chart_dir) -> None:
         """No spCertSecretName ⇒ no SP_CERT/KEY/PREVIOUS env vars."""
         names = _env_names(self._docs_on(chart_dir))
-        for n in ("SAML_SP_CERT_FILE", "SAML_SP_KEY_FILE",
-                  "SAML_SP_CERT_PREVIOUS_FILE"):
+        for n in (
+            "SAML_SP_CERT_FILE",
+            "SAML_SP_KEY_FILE",
+            "SAML_SP_CERT_PREVIOUS_FILE",
+        ):
             assert n not in names
 
     def test_require_encrypted_default_false(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         e = _env(self._docs_on(chart_dir), "SAML_REQUIRE_ENCRYPTED_ASSERTION")
         assert e["value"] == "false"
 
     def test_optional_idp_name_envs_absent_when_unset(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         names = _env_names(self._docs_on(chart_dir))
-        for n in ("SAML_IDP_NAME", "SAML_IDP_DISPLAY_NAME",
-                  "SAML_IDP_INIT_DEFAULT_RETURN_TO"):
+        for n in (
+            "SAML_IDP_NAME",
+            "SAML_IDP_DISPLAY_NAME",
+            "SAML_IDP_INIT_DEFAULT_RETURN_TO",
+        ):
             assert n not in names
 
 
@@ -233,7 +244,9 @@ class TestSamlOnSecretMetadataAndSpCert:
         )
 
     def test_metadata_file_env_points_at_mount(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         e = _env(self._docs_on(chart_dir), "SAML_IDP_METADATA_FILE")
         assert e["value"] == "/etc/saml/idp-metadata.xml"
@@ -251,7 +264,9 @@ class TestSamlOnSecretMetadataAndSpCert:
         assert prev["value"] == "/etc/saml/sp/cert.pem.previous"
 
     def test_idp_metadata_volume_mounted(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         docs = self._docs_on(chart_dir)
         assert "saml-idp-metadata" in _volume_names(docs)
@@ -262,7 +277,9 @@ class TestSamlOnSecretMetadataAndSpCert:
         assert mount["readOnly"] is True
 
     def test_sp_cert_volume_mounted_as_dir(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """SP cert mounts as a directory (no subPath) so the optional
         cert.pem.previous file shows up alongside cert.pem + key.pem
@@ -276,7 +293,9 @@ class TestSamlOnSecretMetadataAndSpCert:
         assert mount["readOnly"] is True
 
     def test_sp_cert_volume_projects_previous_as_optional(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """The rotation-overlap key (cert.pem.previous) must come from
         an ``optional: true`` source so steady-state operation doesn't
@@ -305,7 +324,9 @@ class TestSamlOnSecretMetadataAndSpCert:
         assert e["value"] == "Corp SSO (SAML)"
 
     def test_idp_init_default_return_to_env(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         e = _env(self._docs_on(chart_dir), "SAML_IDP_INIT_DEFAULT_RETURN_TO")
         assert e["value"] == "https://aifactory.example.com/"
@@ -331,7 +352,9 @@ class TestScimOn:
         )
 
     def test_bearer_token_env_from_secret(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         e = _env(self._docs_on(chart_dir), "SCIM_BEARER_TOKEN")
         assert "value" not in e
@@ -340,7 +363,9 @@ class TestScimOn:
         assert ref["key"] == "SCIM_BEARER_TOKEN"
 
     def test_no_saml_envs_when_only_scim_on(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """SCIM is independent of SAML — turning one on doesn't drag
         the other in."""
@@ -359,7 +384,9 @@ class TestSamlScimValidators:
     with a clear, operator-actionable error message."""
 
     def test_saml_enabled_without_metadata_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -377,7 +404,9 @@ class TestSamlScimValidators:
         ) in stderr, f"got stderr={stderr[:600]}"
 
     def test_saml_enabled_with_both_metadata_sources_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -395,7 +424,9 @@ class TestSamlScimValidators:
         ) in stderr, f"got stderr={stderr[:600]}"
 
     def test_saml_enabled_without_sp_entity_id_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -412,7 +443,9 @@ class TestSamlScimValidators:
         )
 
     def test_saml_enabled_without_acs_url_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,
@@ -429,7 +462,9 @@ class TestSamlScimValidators:
         )
 
     def test_require_encrypted_without_enabled_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Operator typo trap: encryption requirement is meaningless
         without SAML being on at all. Fail loud at template time."""
@@ -446,7 +481,9 @@ class TestSamlScimValidators:
         ) in stderr, f"got stderr={stderr[:600]}"
 
     def test_require_encrypted_without_sp_cert_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         """Encryption needs the SP private key. Without spCertSecretName
         the SDK can't decrypt; fail at template time."""
@@ -467,7 +504,9 @@ class TestSamlScimValidators:
         ) in stderr, f"got stderr={stderr[:600]}"
 
     def test_scim_enabled_without_token_secret_fails(
-        self, helm_available, chart_dir,
+        self,
+        helm_available,
+        chart_dir,
     ) -> None:
         stderr = _render_expect_error(
             chart_dir,

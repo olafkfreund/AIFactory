@@ -62,11 +62,11 @@ def _make_async_db(
     org_result.scalars.return_value.all.return_value = isolated_orgs or []
 
     db.execute.side_effect = [
-        anchor_result,   # _existing_anchor_for_org_day
-        key_result,      # _load_tenant_signing_key
-        anchor_result,   # _latest_tenant_chain_head_before (last row)
-        anchor_result,   # _classifications_hash_before_for_org
-        state_result,    # tenant_audit_state head update
+        anchor_result,  # _existing_anchor_for_org_day
+        key_result,  # _load_tenant_signing_key
+        anchor_result,  # _latest_tenant_chain_head_before (last row)
+        anchor_result,  # _classifications_hash_before_for_org
+        state_result,  # tenant_audit_state head update
     ]
     db.add = MagicMock()
     db.flush = AsyncMock()
@@ -110,11 +110,11 @@ class TestEmitTenantAnchorForDay:
         no_state.scalar_one_or_none.return_value = None
 
         db.execute.side_effect = [
-            no_anchor,   # _existing_anchor_for_org_day
+            no_anchor,  # _existing_anchor_for_org_day
             key_result,  # _load_tenant_signing_key
-            no_rows,     # _latest_tenant_chain_head_before
-            empty_cls,   # _classifications_hash_before_for_org
-            no_state,    # tenant_audit_state update
+            no_rows,  # _latest_tenant_chain_head_before
+            empty_cls,  # _classifications_hash_before_for_org
+            no_state,  # tenant_audit_state update
         ]
         db.add = MagicMock()
         db.flush = AsyncMock()
@@ -193,12 +193,15 @@ class TestCronPerTenantIteration:
         db = AsyncMock()
         db.commit = AsyncMock()
 
-        with patch(
-            "server.jobs.audit_anchor_cron._select_isolated_org_ids",
-            AsyncMock(return_value=[ORG_A, ORG_B]),
-        ), patch(
-            "server.jobs.audit_anchor_cron.emit_tenant_anchor_for_day",
-            side_effect=_mock_emit,
+        with (
+            patch(
+                "server.jobs.audit_anchor_cron._select_isolated_org_ids",
+                AsyncMock(return_value=[ORG_A, ORG_B]),
+            ),
+            patch(
+                "server.jobs.audit_anchor_cron.emit_tenant_anchor_for_day",
+                side_effect=_mock_emit,
+            ),
         ):
             emitted = await _emit_tenant_anchors_for_day(db, TARGET_DAY)
 
@@ -227,14 +230,20 @@ class TestCronPerTenantIteration:
             emit_tenant_called.append(org_id)
             return None
 
-        with patch.dict("os.environ", {"AUDIT_ANCHOR_PER_TENANT": "false"}), patch(
-            "server.jobs.audit_anchor_cron._PER_TENANT", False,
-        ), patch(
-            "server.jobs.audit_anchor_cron.emit_anchor_for_day",
-            AsyncMock(return_value=None),
-        ), patch(
-            "server.jobs.audit_anchor_cron.emit_tenant_anchor_for_day",
-            side_effect=_mock_emit_tenant,
+        with (
+            patch.dict("os.environ", {"AUDIT_ANCHOR_PER_TENANT": "false"}),
+            patch(
+                "server.jobs.audit_anchor_cron._PER_TENANT",
+                False,
+            ),
+            patch(
+                "server.jobs.audit_anchor_cron.emit_anchor_for_day",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "server.jobs.audit_anchor_cron.emit_tenant_anchor_for_day",
+                side_effect=_mock_emit_tenant,
+            ),
         ):
             await run_once_for_today(db)
 

@@ -27,7 +27,10 @@ _AUTH_OUT = "Failed to authenticate. API Error: 401 Invalid authentication crede
 
 def test_detail_detects_auth_failure():
     assert _auth_failure_detail(_AUTH_OUT)
-    assert _auth_failure_detail("noise\nfailed to authenticate\nmore") == "failed to authenticate"
+    assert (
+        _auth_failure_detail("noise\nfailed to authenticate\nmore")
+        == "failed to authenticate"
+    )
     assert _auth_failure_detail("all good, spec written") is None
     assert _auth_failure_detail("") is None
     assert _auth_failure_detail(None) is None

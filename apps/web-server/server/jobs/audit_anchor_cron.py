@@ -138,7 +138,8 @@ def _cached_unwrap_key(version: int, wrapped_hex: str) -> bytes:
 
 
 async def emit_anchor_for_day(
-    db: AsyncSession, target_day: date,
+    db: AsyncSession,
+    target_day: date,
 ) -> AuditAnchor | None:
     """Emit a signed anchor covering rows with ``created_at < day_end(target_day)``.
 
@@ -153,7 +154,8 @@ async def emit_anchor_for_day(
         if existing is not None:
             logger.debug(
                 "audit anchor: %s already has an anchor (v%d); skipping",
-                target_day, existing.key_version,
+                target_day,
+                existing.key_version,
             )
             return None
 
@@ -175,7 +177,9 @@ async def emit_anchor_for_day(
         await db.flush()
         logger.info(
             "audit anchor: emitted for %s (chain_head=%s..., v%d)",
-            target_day, chain_head[:8], signing_key.version,
+            target_day,
+            chain_head[:8],
+            signing_key.version,
         )
         return row
     except IntegrityError:
@@ -189,14 +193,17 @@ async def emit_anchor_for_day(
     except Exception:
         logger.warning(
             "audit anchor: emit failed for %s; will retry on next tick",
-            target_day, exc_info=True,
+            target_day,
+            exc_info=True,
         )
         await db.rollback()
         return None
 
 
 async def backfill_missing_anchors(
-    db: AsyncSession, *, today_utc: date | None = None,
+    db: AsyncSession,
+    *,
+    today_utc: date | None = None,
 ) -> int:
     """Emit anchors for every UTC day between the last-anchored date
     and yesterday (inclusive). Returns the count of newly-emitted rows.
@@ -285,7 +292,9 @@ async def emit_tenant_anchor_for_day(
         if existing is not None:
             logger.debug(
                 "audit anchor: org=%s %s already anchored (v%d); skipping",
-                org_id, target_day, existing.key_version,
+                org_id,
+                target_day,
+                existing.key_version,
             )
             return None
 
@@ -302,10 +311,14 @@ async def emit_tenant_anchor_for_day(
         day_end_utc = _day_end_utc(target_day)
 
         chain_head = await _latest_tenant_chain_head_before(
-            db, org_id, day_end_utc,
+            db,
+            org_id,
+            day_end_utc,
         )
         cls_hash = await _classifications_hash_before_for_org(
-            db, org_id, day_end_utc,
+            db,
+            org_id,
+            day_end_utc,
         )
         anchor_input = f"{chain_head}|{cls_hash}"
         signature = sign_anchor(anchor_input, signing_key)
@@ -332,9 +345,11 @@ async def emit_tenant_anchor_for_day(
             state.last_anchor_at = day_end_utc.replace(tzinfo=None)
 
         logger.info(
-            "audit anchor: per-tenant emitted for org=%s %s "
-            "(chain_head=%s..., v%d)",
-            org_id, target_day, chain_head[:8], signing_key.version,
+            "audit anchor: per-tenant emitted for org=%s %s (chain_head=%s..., v%d)",
+            org_id,
+            target_day,
+            chain_head[:8],
+            signing_key.version,
         )
         return anchor_row
 
@@ -343,21 +358,25 @@ async def emit_tenant_anchor_for_day(
         await db.rollback()
         logger.info(
             "audit anchor: lost race for org=%s %s; already written",
-            org_id, target_day,
+            org_id,
+            target_day,
         )
         return None
     except Exception:
         logger.warning(
             "audit anchor: per-tenant emit failed for org=%s %s; "
             "will retry on next tick",
-            org_id, target_day, exc_info=True,
+            org_id,
+            target_day,
+            exc_info=True,
         )
         await db.rollback()
         return None
 
 
 async def _emit_tenant_anchors_for_day(
-    db: AsyncSession, target_day: date,
+    db: AsyncSession,
+    target_day: date,
 ) -> int:
     """Iterate over isolated orgs and emit one anchor per org.
 
@@ -381,7 +400,8 @@ async def _emit_tenant_anchors_for_day(
             logger.warning(
                 "audit anchor: unexpected error in per-tenant loop for org=%s; "
                 "continuing to next tenant",
-                org_id, exc_info=True,
+                org_id,
+                exc_info=True,
             )
             row = None
         if row is not None:
@@ -396,7 +416,8 @@ async def _emit_tenant_anchors_for_day(
 
     logger.info(
         "audit anchor: per-tenant pass complete — %d emitted / %d orgs",
-        emitted, len(iso_org_ids),
+        emitted,
+        len(iso_org_ids),
     )
     return emitted
 
@@ -428,7 +449,8 @@ async def _select_isolated_org_ids(db: AsyncSession) -> list[str]:
 
 
 async def _load_tenant_signing_key(
-    db: AsyncSession, org_id: str,
+    db: AsyncSession,
+    org_id: str,
 ) -> _SigningKey | None:
     """Load + unwrap the active signing key for ``org_id``.
 
@@ -454,7 +476,9 @@ async def _load_tenant_signing_key(
 
 
 async def _existing_anchor_for_org_day(
-    db: AsyncSession, org_id: str, d: date,
+    db: AsyncSession,
+    org_id: str,
+    d: date,
 ) -> AuditAnchor | None:
     """Look up an anchor for (org_id, day d). Used by per-tenant idempotency."""
     day_start = datetime.combine(d, time(0, 0, 0))
@@ -471,7 +495,9 @@ async def _existing_anchor_for_org_day(
 
 
 async def _latest_tenant_chain_head_before(
-    db: AsyncSession, org_id: str, before_utc: datetime,
+    db: AsyncSession,
+    org_id: str,
+    before_utc: datetime,
 ) -> str:
     """Per-tenant equivalent of ``_latest_chain_head_before`` scoped to org.
 
@@ -506,7 +532,9 @@ async def _latest_tenant_chain_head_before(
 
 
 async def _classifications_hash_before_for_org(
-    db: AsyncSession, org_id: str, before_utc: datetime,
+    db: AsyncSession,
+    org_id: str,
+    before_utc: datetime,
 ) -> str:
     """Per-tenant classifications hash, scoped to ``org_id``."""
     before_naive = before_utc.replace(tzinfo=None)
@@ -551,9 +579,13 @@ def _day_end_utc(d: date) -> datetime:
 
 async def _last_anchored_date(db: AsyncSession) -> date | None:
     """Return the UTC date of the most recent anchor, or None."""
-    stmt = select(AuditAnchor.signed_at).order_by(
-        AuditAnchor.signed_at.desc(),
-    ).limit(1)
+    stmt = (
+        select(AuditAnchor.signed_at)
+        .order_by(
+            AuditAnchor.signed_at.desc(),
+        )
+        .limit(1)
+    )
     result = await db.execute(stmt)
     last = result.scalar_one_or_none()
     if last is None:
@@ -565,22 +597,28 @@ async def _last_anchored_date(db: AsyncSession) -> date | None:
 
 
 async def _existing_anchor_for_day(
-    db: AsyncSession, d: date,
+    db: AsyncSession,
+    d: date,
 ) -> AuditAnchor | None:
     """Look up an anchor whose signed_at falls on day d (UTC)."""
     day_start = datetime.combine(d, time(0, 0, 0))
     day_end = datetime.combine(d + timedelta(days=1), time(0, 0, 0))
     # signed_at is naive-UTC; SQLAlchemy compares cleanly.
-    stmt = select(AuditAnchor).where(
-        AuditAnchor.signed_at > day_start,
-        AuditAnchor.signed_at <= day_end,
-    ).limit(1)
+    stmt = (
+        select(AuditAnchor)
+        .where(
+            AuditAnchor.signed_at > day_start,
+            AuditAnchor.signed_at <= day_end,
+        )
+        .limit(1)
+    )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
 
 async def _latest_chain_head_before(
-    db: AsyncSession, before_utc: datetime,
+    db: AsyncSession,
+    before_utc: datetime,
 ) -> str:
     """The chain head AFTER the last audit_logs row with
     created_at < before_utc.
@@ -596,21 +634,28 @@ async def _latest_chain_head_before(
     from ..services.audit_chain import compute_hash, serialize_for_export
 
     before_naive = before_utc.replace(tzinfo=None)
-    stmt = select(AuditLog).where(
-        AuditLog.created_at < before_naive,
-    ).order_by(AuditLog.created_at.desc()).limit(1)
+    stmt = (
+        select(AuditLog)
+        .where(
+            AuditLog.created_at < before_naive,
+        )
+        .order_by(AuditLog.created_at.desc())
+        .limit(1)
+    )
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
         return GENESIS_CHAIN_HEAD
     # Outgoing hash of the last row = next-row's expected prev_hash.
     return compute_hash(
-        row.prev_hash or GENESIS_CHAIN_HEAD, serialize_for_export(row),
+        row.prev_hash or GENESIS_CHAIN_HEAD,
+        serialize_for_export(row),
     )
 
 
 async def _classifications_hash_before(
-    db: AsyncSession, before_utc: datetime,
+    db: AsyncSession,
+    before_utc: datetime,
 ) -> str:
     """SHA-256 hex of the canonical (id, classification) list, sorted
     by id, for every audit_logs row with created_at < before_utc.
@@ -618,9 +663,13 @@ async def _classifications_hash_before(
     Empty window → SHA-256 of empty bytes (deterministic sentinel).
     """
     before_naive = before_utc.replace(tzinfo=None)
-    stmt = select(AuditLog.id, AuditLog.classification).where(
-        AuditLog.created_at < before_naive,
-    ).order_by(AuditLog.id.asc())
+    stmt = (
+        select(AuditLog.id, AuditLog.classification)
+        .where(
+            AuditLog.created_at < before_naive,
+        )
+        .order_by(AuditLog.id.asc())
+    )
     result = await db.execute(stmt)
     h = hashlib.sha256()
     any_rows = False
@@ -661,7 +710,8 @@ def main() -> None:
             else:
                 logger.info(
                     "audit anchor: emitted v%d for %s",
-                    row.key_version, row.signed_at,
+                    row.key_version,
+                    row.signed_at,
                 )
 
     asyncio.run(_go())

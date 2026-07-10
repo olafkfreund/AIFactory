@@ -104,6 +104,7 @@ async def _audit_mcp_write(
 # Read operations — mcp:read
 # =============================================================================
 
+
 @router.get("/projects")
 async def proxy_list_projects(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
     # M2M / admin proxy: return ALL registered projects (service-principal
@@ -114,6 +115,7 @@ async def proxy_list_projects(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
     # (Earlier #488 forwarded request+db to list_projects, which fixed the 500
     # but returned an empty list for this principal.)
     from ..routes.projects import load_projects, project_to_response
+
     projects = load_projects()
     return [project_to_response(pid, pdata) for pid, pdata in projects.items()]
 
@@ -125,24 +127,30 @@ async def proxy_list_tasks(
     _=Depends(require_acw_scope(MCP_READ_SCOPE)),
 ):
     from ..routes.tasks import list_tasks
+
     return await list_tasks(project_id=project_id, status=status)
 
 
 @router.get("/tasks/running")
 async def proxy_get_running_tasks(_=Depends(require_acw_scope(MCP_READ_SCOPE))):
     from ..routes.execution import get_running_tasks
+
     return await get_running_tasks()
 
 
 @router.get("/tasks/{task_id}")
 async def proxy_get_task(task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))):
     from ..routes.tasks import get_task
+
     return await get_task(task_id)
 
 
 @router.get("/tasks/{task_id}/status")
-async def proxy_get_task_status(task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))):
+async def proxy_get_task_status(
+    task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))
+):
     from ..routes.execution import get_task_status
+
     return await get_task_status(task_id)
 
 
@@ -153,6 +161,7 @@ async def proxy_get_task_logs(
     _=Depends(require_acw_scope(MCP_READ_SCOPE)),
 ):
     from ..routes.tasks import get_task_logs
+
     # get_task_logs returns the full phase-based log set and has no `tail`
     # parameter — forwarding tail= raised TypeError → HTTP 500. `tail` is kept
     # in the proxy signature for client compatibility but intentionally not
@@ -162,8 +171,11 @@ async def proxy_get_task_logs(
 
 
 @router.get("/tasks/{task_id}/worktree/diff")
-async def proxy_get_worktree_diff(task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))):
+async def proxy_get_worktree_diff(
+    task_id: str, _=Depends(require_acw_scope(MCP_READ_SCOPE))
+):
     from ..routes.tasks import get_worktree_diff
+
     return await get_worktree_diff(task_id)
 
 
@@ -171,18 +183,24 @@ async def proxy_get_worktree_diff(task_id: str, _=Depends(require_acw_scope(MCP_
 # Project mutation — project:write
 # =============================================================================
 
+
 @router.post("/projects", status_code=201)
 async def proxy_add_project(
     request: FastAPIRequest,
     key=Depends(require_acw_scope(PROJECT_WRITE_SCOPE)),
 ):
     from ..routes.projects import ProjectCreate, add_project
+
     body = await _read_json_body(request)
     result = await add_project(ProjectCreate(**body))
     # ``add_project`` returns the project dict with an ``id`` field.
     project_id = result.get("id") if isinstance(result, dict) else None
     await _audit_mcp_write(
-        key, ACTION_MCP_PROJECT_CREATE, "project", project_id, request,
+        key,
+        ACTION_MCP_PROJECT_CREATE,
+        "project",
+        project_id,
+        request,
     )
     return result
 
@@ -190,6 +208,7 @@ async def proxy_add_project(
 # =============================================================================
 # Task mutation — task:write
 # =============================================================================
+
 
 @router.post("/tasks/create-and-run")
 async def proxy_create_and_run_task(
@@ -204,13 +223,18 @@ async def proxy_create_and_run_task(
     # Passing a bare StartTaskRequest → AttributeError: no attribute
     # 'provenance' → HTTP 500 (broke the /handover write-path).
     from ..routes.execution import CreateAndRunRequest, create_and_run_task
+
     body = await _read_json_body(request)
     result = await create_and_run_task(
         project_id, title, description, CreateAndRunRequest(**body)
     )
     task_id = result.get("task_id") if isinstance(result, dict) else None
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_CREATE_AND_RUN, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_CREATE_AND_RUN,
+        "task",
+        task_id,
+        request,
         details={"project_id": project_id, "title": title},
     )
     return result
@@ -223,10 +247,15 @@ async def proxy_start_task(
     key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import StartTaskRequest, start_task
+
     body = await _read_json_body(request)
     result = await start_task(task_id, StartTaskRequest(**body), request)
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_START, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_START,
+        "task",
+        task_id,
+        request,
     )
     return result
 
@@ -238,9 +267,14 @@ async def proxy_stop_task(
     key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import stop_task
+
     result = await stop_task(task_id)
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_STOP, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_STOP,
+        "task",
+        task_id,
+        request,
     )
     return result
 
@@ -252,10 +286,15 @@ async def proxy_recover_task(
     key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
 ):
     from ..routes.execution import RecoverTaskRequest, recover_task
+
     body = await _read_json_body(request)
     result = await recover_task(task_id, RecoverTaskRequest(**body))
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_RECOVER, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_RECOVER,
+        "task",
+        task_id,
+        request,
     )
     return result
 
@@ -267,10 +306,15 @@ async def proxy_approve_plan(
     key=Depends(require_acw_scope(TASK_WRITE_SCOPE)),
 ):
     from ..routes.tasks import ApprovePlanRequest, approve_plan
+
     body = await _read_json_body(request)
     result = await approve_plan(task_id, ApprovePlanRequest(**body))
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_APPROVE_PLAN, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_APPROVE_PLAN,
+        "task",
+        task_id,
+        request,
     )
     return result
 
@@ -279,6 +323,7 @@ async def proxy_approve_plan(
 # PR / merge — task:merge (higher blast radius)
 # =============================================================================
 
+
 @router.post("/tasks/{task_id}/worktree/create-pr")
 async def proxy_create_pr(
     task_id: str,
@@ -286,12 +331,17 @@ async def proxy_create_pr(
     key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task
+
     body = await _read_json_body(request)
     result = await create_pr_from_task(
         task_id, CreatePRFromTaskOptions(**body) if body else None
     )
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_CREATE_PR, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_CREATE_PR,
+        "task",
+        task_id,
+        request,
     )
     return result
 
@@ -303,11 +353,16 @@ async def proxy_merge_worktree(
     key=Depends(require_acw_scope(TASK_MERGE_SCOPE)),
 ):
     from ..routes.tasks import WorktreeMergeOptions, merge_worktree
+
     body = await _read_json_body(request)
     result = await merge_worktree(
         task_id, WorktreeMergeOptions(**body) if body else None
     )
     await _audit_mcp_write(
-        key, ACTION_MCP_TASK_MERGE, "task", task_id, request,
+        key,
+        ACTION_MCP_TASK_MERGE,
+        "task",
+        task_id,
+        request,
     )
     return result

@@ -37,38 +37,37 @@ CLI_ENDPOINTS = {
             "name": "update_merge_request",
             "function": "update_merge_request",
             "cli_tool": "glab",
-            "description": "Update MR title/description using glab CLI"
+            "description": "Update MR title/description using glab CLI",
         },
         {
             "id": "7.2",
             "name": "assign_merge_request",
             "function": "assign_merge_request",
             "cli_tool": "glab",
-            "description": "Assign users to MR using glab CLI"
+            "description": "Assign users to MR using glab CLI",
         },
         {
             "id": "7.3",
             "name": "approve_merge_request",
             "function": "approve_merge_request",
             "cli_tool": "glab",
-            "description": "Approve MR using glab CLI"
+            "description": "Approve MR using glab CLI",
         },
         {
             "id": "7.4",
             "name": "merge_merge_request",
             "function": "merge_merge_request",
             "cli_tool": "glab",
-            "description": "Merge MR using glab CLI with safety checks"
+            "description": "Merge MR using glab CLI with safety checks",
         },
         {
             "id": "7.5",
             "name": "post_merge_request_note",
             "function": "post_mr_note",
             "cli_tool": "glab",
-            "description": "Post comment on MR using glab CLI"
+            "description": "Post comment on MR using glab CLI",
         },
     ],
-
     # Phase 9: Context (1 endpoint)
     "context.py": [
         {
@@ -76,10 +75,9 @@ CLI_ENDPOINTS = {
             "name": "invoke_claude_setup",
             "function": "invoke_claude_setup",
             "cli_tool": "claude",
-            "description": "Run 'claude setup' CLI command interactively"
+            "description": "Run 'claude setup' CLI command interactively",
         },
     ],
-
     # Phase 10: Git Operations (2 endpoints)
     "git.py": [
         {
@@ -87,38 +85,39 @@ CLI_ENDPOINTS = {
             "name": "squash_commits",
             "function": "squash_commits",
             "cli_tool": "git",
-            "description": "Automated git squash with interactive rebase"
+            "description": "Automated git squash with interactive rebase",
         },
         {
             "id": "10.2",
             "name": "create_worktree",
             "function": "create_worktree",
             "cli_tool": "git",
-            "description": "Create git worktree for parallel task work"
+            "description": "Create git worktree for parallel task work",
         },
     ],
-
     # Phase 14: Git Maintenance (3 endpoints)
     # Note: git.py endpoints from Phase 14
 }
 
 # Phase 14 endpoints are also in git.py
-CLI_ENDPOINTS["git.py"].extend([
-    {
-        "id": "14.1",
-        "name": "download_source_update",
-        "function": "download_source_update",
-        "cli_tool": "git",
-        "description": "Update Magestic AI source via git pull"
-    },
-    {
-        "id": "14.2",
-        "name": "create_release",
-        "function": "create_release",
-        "cli_tool": "gh/glab",
-        "description": "Create release using gh/glab CLI"
-    },
-])
+CLI_ENDPOINTS["git.py"].extend(
+    [
+        {
+            "id": "14.1",
+            "name": "download_source_update",
+            "function": "download_source_update",
+            "cli_tool": "git",
+            "description": "Update Magestic AI source via git pull",
+        },
+        {
+            "id": "14.2",
+            "name": "create_release",
+            "function": "create_release",
+            "cli_tool": "gh/glab",
+            "description": "Create release using gh/glab CLI",
+        },
+    ]
+)
 
 
 # =============================================================================
@@ -126,7 +125,9 @@ CLI_ENDPOINTS["git.py"].extend([
 # =============================================================================
 
 
-def find_endpoint_implementation(file_path: Path, function_name: str) -> tuple[bool, int, list[str]]:
+def find_endpoint_implementation(
+    file_path: Path, function_name: str
+) -> tuple[bool, int, list[str]]:
     """
     Find and analyze endpoint implementation.
 
@@ -137,10 +138,10 @@ def find_endpoint_implementation(file_path: Path, function_name: str) -> tuple[b
         return False, 0, []
 
     content = file_path.read_text()
-    lines = content.split('\n')
+    lines = content.split("\n")
 
     # Find function definition
-    function_pattern = rf'^(async\s+)?def\s+{function_name}\s*\('
+    function_pattern = rf"^(async\s+)?def\s+{function_name}\s*\("
     implementation_lines = []
     found = False
     line_number = 0
@@ -152,7 +153,7 @@ def find_endpoint_implementation(file_path: Path, function_name: str) -> tuple[b
             # Collect next 100 lines or until next function
             for j in range(i - 1, min(i + 99, len(lines))):
                 implementation_lines.append(lines[j])
-                if j > i and re.match(r'^(async\s+)?def\s+\w+\s*\(', lines[j]):
+                if j > i and re.match(r"^(async\s+)?def\s+\w+\s*\(", lines[j]):
                     break
 
     return found, line_number, implementation_lines
@@ -164,7 +165,7 @@ def is_stub_implementation(implementation_lines: list[str]) -> bool:
 
     A stub typically just returns {"success": True} without real logic.
     """
-    impl_text = '\n'.join(implementation_lines)
+    impl_text = "\n".join(implementation_lines)
 
     # Check for stub patterns
     stub_patterns = [
@@ -176,10 +177,19 @@ def is_stub_implementation(implementation_lines: list[str]) -> bool:
         if re.search(pattern, impl_text):
             # Also check if there's actual implementation (not just the stub return)
             # Look for subprocess, CLI commands, etc.
-            if not any(keyword in impl_text for keyword in [
-                'subprocess', 'run_glab_command', 'run_gh_command', 'run_git_command',
-                'glab ', 'gh ', 'git ', 'claude '
-            ]):
+            if not any(
+                keyword in impl_text
+                for keyword in [
+                    "subprocess",
+                    "run_glab_command",
+                    "run_gh_command",
+                    "run_git_command",
+                    "glab ",
+                    "gh ",
+                    "git ",
+                    "claude ",
+                ]
+            ):
                 return True
 
     return False
@@ -187,20 +197,20 @@ def is_stub_implementation(implementation_lines: list[str]) -> bool:
 
 def has_cli_integration(implementation_lines: list[str], cli_tool: str) -> bool:
     """Check if implementation includes CLI command execution"""
-    impl_text = '\n'.join(implementation_lines)
+    impl_text = "\n".join(implementation_lines)
 
     cli_indicators = [
-        'subprocess.run',
-        'subprocess.Popen',
-        'run_glab_command',
-        'run_gh_command',
-        'run_git_command',
+        "subprocess.run",
+        "subprocess.Popen",
+        "run_glab_command",
+        "run_gh_command",
+        "run_git_command",
         f'"{cli_tool}"',
         f"'{cli_tool}'",
-        'glab ',
-        'gh ',
-        'git ',
-        'claude ',
+        "glab ",
+        "gh ",
+        "git ",
+        "claude ",
     ]
 
     return any(indicator in impl_text for indicator in cli_indicators)
@@ -217,10 +227,12 @@ def verify_endpoint(file_path: Path, endpoint: dict) -> dict:
         "is_stub": True,
         "has_cli": False,
         "line_number": 0,
-        "status": "❌ NOT FOUND"
+        "status": "❌ NOT FOUND",
     }
 
-    exists, line_num, impl_lines = find_endpoint_implementation(file_path, endpoint["function"])
+    exists, line_num, impl_lines = find_endpoint_implementation(
+        file_path, endpoint["function"]
+    )
 
     if not exists:
         return result
@@ -274,7 +286,9 @@ def main():
             all_results.append(result)
 
             status_icon = result["status"].split()[0]
-            print(f"{status_icon} {endpoint['id']:6} {endpoint['name']:30} (line {result['line_number'] if result['line_number'] > 0 else 'N/A'})")
+            print(
+                f"{status_icon} {endpoint['id']:6} {endpoint['name']:30} (line {result['line_number'] if result['line_number'] > 0 else 'N/A'})"
+            )
             print(f"         CLI Tool: {endpoint['cli_tool']}")
 
             if result["status"] == "✅ IMPLEMENTED":
@@ -289,7 +303,9 @@ def main():
     print("VERIFICATION SUMMARY")
     print("=" * 80)
     print(f"Total CLI Integration Endpoints: {total_endpoints}")
-    print(f"✅ Implemented: {implemented_count} ({implemented_count/total_endpoints*100:.1f}%)")
+    print(
+        f"✅ Implemented: {implemented_count} ({implemented_count / total_endpoints * 100:.1f}%)"
+    )
     print(f"⚠️  Still Stubs: {stub_count}")
     print(f"❌ Not Found: {missing_count}")
     print()
@@ -299,8 +315,12 @@ def main():
     cli_tools = set(r["cli_tool"] for r in all_results)
     for tool in sorted(cli_tools):
         endpoints_for_tool = [r for r in all_results if r["cli_tool"] == tool]
-        impl_for_tool = [r for r in endpoints_for_tool if r["status"] == "✅ IMPLEMENTED"]
-        print(f"  • {tool}: {len(impl_for_tool)}/{len(endpoints_for_tool)} endpoints implemented")
+        impl_for_tool = [
+            r for r in endpoints_for_tool if r["status"] == "✅ IMPLEMENTED"
+        ]
+        print(
+            f"  • {tool}: {len(impl_for_tool)}/{len(endpoints_for_tool)} endpoints implemented"
+        )
 
     print()
 

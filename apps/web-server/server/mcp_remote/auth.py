@@ -93,7 +93,9 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
     """
     raw = _strip_bearer(authorization_header)
     if not raw:
-        raise MCPAuthError("Missing or malformed Authorization header (expected 'Bearer <token>')")
+        raise MCPAuthError(
+            "Missing or malformed Authorization header (expected 'Bearer <token>')"
+        )
 
     digest = _hash_key(raw)
 

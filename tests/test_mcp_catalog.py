@@ -98,7 +98,9 @@ def test_kubernetes_pins_safe_version():
     entry = mcp_catalog.get_catalog_entry("kubernetes")
     assert entry is not None
     joined = " ".join(entry.launcher_args)
-    assert ">=3.6.0" in joined, "kubernetes-mcp-server must be pinned >=3.6.0 (CVE-2026-46519)"
+    assert ">=3.6.0" in joined, (
+        "kubernetes-mcp-server must be pinned >=3.6.0 (CVE-2026-46519)"
+    )
 
 
 def test_kubernetes_uses_readonly_flag():
@@ -125,7 +127,9 @@ def test_is_catalog_server():
 
 def test_build_server_config_with_creds():
     entry = mcp_catalog.get_catalog_entry("github")
-    creds = CredentialStatus(True, "env:GITHUB_TOKEN", {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"})
+    creds = CredentialStatus(
+        True, "env:GITHUB_TOKEN", {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"}
+    )
     cfg = entry.build_server_config(creds, read_only=True)
     assert cfg["command"] == "npx"
     assert cfg["args"][0] == "-y"
@@ -174,6 +178,7 @@ def test_existing_servers_still_map():
 
 def _stub_creds(monkeypatch, **provider_to_available):
     """Stub get_credential_status to return ``available=True`` for each named provider."""
+
     def fake(provider: str) -> CredentialStatus:
         if provider_to_available.get(provider):
             return CredentialStatus(True, "stub", {})
@@ -209,16 +214,22 @@ def test_github_skipped_when_no_creds(monkeypatch):
 def test_kubernetes_requires_has_kubernetes_marker(monkeypatch):
     _stub_creds(monkeypatch, kubernetes=True)
     # No marker — should NOT enable
-    servers = get_required_mcp_servers("coder", None, {}, infra_markers={"has_kubernetes": False})
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_kubernetes": False}
+    )
     assert "kubernetes" not in servers
     # With marker — should enable
-    servers = get_required_mcp_servers("coder", None, {}, infra_markers={"has_kubernetes": True})
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_kubernetes": True}
+    )
     assert "kubernetes" in servers
 
 
 def test_aws_requires_has_aws_marker(monkeypatch):
     _stub_creds(monkeypatch, aws=True)
-    servers = get_required_mcp_servers("coder", None, {}, infra_markers={"has_aws": True})
+    servers = get_required_mcp_servers(
+        "coder", None, {}, infra_markers={"has_aws": True}
+    )
     assert "aws" in servers
     servers = get_required_mcp_servers("coder", None, {}, infra_markers={})
     assert "aws" not in servers

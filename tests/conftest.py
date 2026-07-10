@@ -40,6 +40,7 @@ os.environ.setdefault("APP_DISABLE_AUTH", "true")
 # These SDK modules may not be installed, so we mock them before any imports
 # that might trigger loading code that depends on them.
 
+
 def _create_sdk_mock():
     """Create a comprehensive mock for SDK modules."""
     mock = MagicMock()
@@ -48,15 +49,16 @@ def _create_sdk_mock():
     mock.HookMatcher = MagicMock
     return mock
 
+
 # Pre-mock claude_agent_sdk if not installed
-if 'claude_agent_sdk' not in sys.modules:
-    sys.modules['claude_agent_sdk'] = _create_sdk_mock()
-    sys.modules['claude_agent_sdk.types'] = MagicMock()
+if "claude_agent_sdk" not in sys.modules:
+    sys.modules["claude_agent_sdk"] = _create_sdk_mock()
+    sys.modules["claude_agent_sdk.types"] = MagicMock()
 
 # Pre-mock claude_code_sdk if not installed
-if 'claude_code_sdk' not in sys.modules:
-    sys.modules['claude_code_sdk'] = _create_sdk_mock()
-    sys.modules['claude_code_sdk.types'] = MagicMock()
+if "claude_code_sdk" not in sys.modules:
+    sys.modules["claude_code_sdk"] = _create_sdk_mock()
+    sys.modules["claude_code_sdk.types"] = MagicMock()
 
 # Add apps/backend directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
@@ -69,19 +71,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 # List of modules that might be mocked by test files
 # These need to be cleaned up between test modules to prevent leakage
 _POTENTIALLY_MOCKED_MODULES = [
-    'claude_code_sdk',
-    'claude_code_sdk.types',
-    'claude_agent_sdk',
-    'claude_agent_sdk.types',
-    'ui',
-    'progress',
-    'task_logger',
-    'linear_updater',
-    'client',
-    'init',
-    'review',
-    'validate_spec',
-    'graphiti_providers',
+    "claude_code_sdk",
+    "claude_code_sdk.types",
+    "claude_agent_sdk",
+    "claude_agent_sdk.types",
+    "ui",
+    "progress",
+    "task_logger",
+    "linear_updater",
+    "client",
+    "init",
+    "review",
+    "validate_spec",
+    "graphiti_providers",
 ]
 
 # Store original module references at import time (before any mocking)
@@ -118,17 +120,92 @@ def pytest_runtest_setup(item):
     # Map of which test modules mock which specific modules
     # Each test module should only preserve the mocks it installed
     module_mocks = {
-        'test_qa_criteria': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report_iteration': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report_recurring': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report_project_detection': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report_manual_plan': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_report_config': {'claude_agent_sdk', 'ui', 'progress', 'task_logger', 'linear_updater', 'client'},
-        'test_qa_loop': {'claude_code_sdk', 'claude_code_sdk.types', 'claude_agent_sdk', 'claude_agent_sdk.types'},
-        'test_spec_pipeline': {'claude_code_sdk', 'claude_code_sdk.types', 'init', 'client', 'review', 'task_logger', 'ui', 'validate_spec'},
-        'test_spec_complexity': {'claude_code_sdk', 'claude_code_sdk.types', 'claude_agent_sdk', 'claude_agent_sdk.types'},
-        'test_spec_phases': {'claude_code_sdk', 'claude_code_sdk.types', 'claude_agent_sdk', 'graphiti_providers', 'validate_spec', 'client'},
+        "test_qa_criteria": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report_iteration": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report_recurring": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report_project_detection": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report_manual_plan": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_report_config": {
+            "claude_agent_sdk",
+            "ui",
+            "progress",
+            "task_logger",
+            "linear_updater",
+            "client",
+        },
+        "test_qa_loop": {
+            "claude_code_sdk",
+            "claude_code_sdk.types",
+            "claude_agent_sdk",
+            "claude_agent_sdk.types",
+        },
+        "test_spec_pipeline": {
+            "claude_code_sdk",
+            "claude_code_sdk.types",
+            "init",
+            "client",
+            "review",
+            "task_logger",
+            "ui",
+            "validate_spec",
+        },
+        "test_spec_complexity": {
+            "claude_code_sdk",
+            "claude_code_sdk.types",
+            "claude_agent_sdk",
+            "claude_agent_sdk.types",
+        },
+        "test_spec_phases": {
+            "claude_code_sdk",
+            "claude_code_sdk.types",
+            "claude_agent_sdk",
+            "graphiti_providers",
+            "validate_spec",
+            "client",
+        },
     }
 
     # Get the mocks that the current test module needs to preserve
@@ -158,19 +235,23 @@ def pytest_runtest_setup(item):
     # an earlier test against the REAL progress module — its module-level
     # bindings then point at the wrong object. Reload the qa chain so the
     # mocks take effect.
-    if cleaned_up and module_name in ('test_qa_loop', 'test_review', 'test_qa_criteria'):
+    if cleaned_up and module_name in (
+        "test_qa_loop",
+        "test_review",
+        "test_qa_criteria",
+    ):
         # Reload progress first
-        if 'progress' in sys.modules:
-            importlib.reload(sys.modules['progress'])
+        if "progress" in sys.modules:
+            importlib.reload(sys.modules["progress"])
         # Reload the entire qa module chain which imports progress
-        for qa_module in ['qa.criteria', 'qa.report', 'qa.loop', 'qa']:
+        for qa_module in ["qa.criteria", "qa.report", "qa.loop", "qa"]:
             if qa_module in sys.modules:
                 try:
                     importlib.reload(sys.modules[qa_module])
                 except Exception:
                     pass  # Some modules may fail to reload due to circular imports
         # Reload review module chain
-        for review_module in ['review.state', 'review.formatters', 'review']:
+        for review_module in ["review.state", "review.formatters", "review"]:
             if review_module in sys.modules:
                 try:
                     importlib.reload(sys.modules[review_module])
@@ -181,6 +262,7 @@ def pytest_runtest_setup(item):
 # =============================================================================
 # DIRECTORY FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
@@ -197,11 +279,11 @@ def temp_git_repo(temp_dir: Path) -> Generator[Path, None, None]:
     subprocess.run(["git", "init"], cwd=temp_dir, capture_output=True, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@example.com"],
-        cwd=temp_dir, capture_output=True
+        cwd=temp_dir,
+        capture_output=True,
     )
     subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=temp_dir, capture_output=True
+        ["git", "config", "user.name", "Test User"], cwd=temp_dir, capture_output=True
     )
 
     # Create initial commit
@@ -209,8 +291,7 @@ def temp_git_repo(temp_dir: Path) -> Generator[Path, None, None]:
     test_file.write_text("# Test Project\n")
     subprocess.run(["git", "add", "."], cwd=temp_dir, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=temp_dir, capture_output=True
+        ["git", "commit", "-m", "Initial commit"], cwd=temp_dir, capture_output=True
     )
 
     # Ensure branch is named 'main' (some git configs default to 'master')
@@ -242,6 +323,7 @@ from tests.review_fixtures import (  # noqa: E402, F401
 # =============================================================================
 # PROJECT STRUCTURE FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def python_project(temp_git_repo: Path) -> Path:
@@ -293,7 +375,8 @@ line-length = 100
     subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Add Python project structure"],
-        cwd=temp_git_repo, capture_output=True
+        cwd=temp_git_repo,
+        capture_output=True,
     )
 
     return temp_git_repo
@@ -334,7 +417,8 @@ def node_project(temp_git_repo: Path) -> Path:
     subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Add Node.js project structure"],
-        cwd=temp_git_repo, capture_output=True
+        cwd=temp_git_repo,
+        capture_output=True,
     )
 
     return temp_git_repo
@@ -374,7 +458,8 @@ CMD ["python", "main.py"]
     subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Add Docker configuration"],
-        cwd=temp_git_repo, capture_output=True
+        cwd=temp_git_repo,
+        capture_output=True,
     )
 
     return temp_git_repo
@@ -383,6 +468,7 @@ CMD ["python", "main.py"]
 # =============================================================================
 # IMPLEMENTATION PLAN FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def sample_implementation_plan() -> dict:
@@ -465,6 +551,7 @@ def implementation_plan_file(spec_dir: Path, sample_implementation_plan: dict) -
 # SPEC FIXTURES
 # =============================================================================
 
+
 @pytest.fixture
 def sample_spec() -> str:
     """Return a sample spec content."""
@@ -498,6 +585,7 @@ def spec_file(spec_dir: Path, sample_spec: str) -> Path:
 # =============================================================================
 # QA FIXTURES
 # =============================================================================
+
 
 @pytest.fixture
 def qa_signoff_approved() -> dict:
@@ -544,7 +632,7 @@ def spec_with_plan(spec_dir: Path) -> Path:
         "qa_signoff": {
             "status": "pending",
             "qa_session": 0,
-        }
+        },
     }
     plan_file = spec_dir / "implementation_plan.json"
     with open(plan_file, "w") as f:
@@ -556,41 +644,48 @@ def spec_with_plan(spec_dir: Path) -> Path:
 # HELPER FUNCTIONS
 # =============================================================================
 
+
 @pytest.fixture
 def make_commit(temp_git_repo: Path):
     """Factory fixture to create commits."""
+
     def _make_commit(filename: str, content: str, message: str) -> str:
         filepath = temp_git_repo / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)
         filepath.write_text(content)
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", message],
-            cwd=temp_git_repo, capture_output=True
+            ["git", "commit", "-m", message], cwd=temp_git_repo, capture_output=True
         )
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=temp_git_repo, capture_output=True, text=True
+            cwd=temp_git_repo,
+            capture_output=True,
+            text=True,
         )
         return result.stdout.strip()
+
     return _make_commit
 
 
 @pytest.fixture
 def stage_files(temp_git_repo: Path):
     """Factory fixture to stage files without committing."""
+
     def _stage_files(files: dict[str, str]) -> None:
         for filename, content in files.items():
             filepath = temp_git_repo / filename
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(content)
         subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
+
     return _stage_files
 
 
 # =============================================================================
 # PHASE TESTING FIXTURES - Mock functions for spec/phases.py testing
 # =============================================================================
+
 
 @pytest.fixture
 def mock_run_agent_fn():
@@ -605,6 +700,7 @@ def mock_run_agent_fn():
             result = await agent_fn("prompt.md")
             assert result == (True, "Done")
     """
+
     def _create_mock(
         success: bool = True,
         output: str = "Agent completed successfully",
@@ -776,6 +872,7 @@ def mock_spec_validator():
 # =============================================================================
 # SAMPLE DATA FIXTURES - Sample JSON data for phase testing
 # =============================================================================
+
 
 @pytest.fixture
 def sample_requirements_json() -> dict:
@@ -1008,10 +1105,16 @@ def populated_spec_dir(
     Useful for testing phases that depend on earlier phase outputs.
     """
     # Write all JSON files
-    (spec_dir / "requirements.json").write_text(json.dumps(sample_requirements_json, indent=2))
-    (spec_dir / "complexity_assessment.json").write_text(json.dumps(sample_complexity_assessment, indent=2))
+    (spec_dir / "requirements.json").write_text(
+        json.dumps(sample_requirements_json, indent=2)
+    )
+    (spec_dir / "complexity_assessment.json").write_text(
+        json.dumps(sample_complexity_assessment, indent=2)
+    )
     (spec_dir / "context.json").write_text(json.dumps(sample_context_json, indent=2))
-    (spec_dir / "project_index.json").write_text(json.dumps(sample_project_index, indent=2))
+    (spec_dir / "project_index.json").write_text(
+        json.dumps(sample_project_index, indent=2)
+    )
 
     # Write sample spec.md
     spec_content = """# User Authentication with OAuth2
@@ -1056,6 +1159,7 @@ except ImportError:
 def semantic_analyzer():
     """Create a SemanticAnalyzer instance."""
     from merge import SemanticAnalyzer
+
     return SemanticAnalyzer()
 
 
@@ -1063,6 +1167,7 @@ def semantic_analyzer():
 def conflict_detector():
     """Create a ConflictDetector instance."""
     from merge import ConflictDetector
+
     return ConflictDetector()
 
 
@@ -1070,6 +1175,7 @@ def conflict_detector():
 def auto_merger():
     """Create an AutoMerger instance."""
     from merge import AutoMerger
+
     return AutoMerger()
 
 
@@ -1077,6 +1183,7 @@ def auto_merger():
 def file_tracker(temp_git_repo: Path):
     """Create a FileEvolutionTracker instance."""
     from merge import FileEvolutionTracker
+
     return FileEvolutionTracker(temp_git_repo)
 
 
@@ -1084,6 +1191,7 @@ def file_tracker(temp_git_repo: Path):
 def ai_resolver():
     """Create an AIResolver without AI function (for unit tests)."""
     from merge import AIResolver
+
     return AIResolver()
 
 
@@ -1098,6 +1206,7 @@ def mock_ai_resolver():
         code += "const other = useOther();\n"
         code += "return <div>Merged</div>;"
         return code
+
     return AIResolver(ai_call_fn=mock_ai_call)
 
 
@@ -1128,7 +1237,8 @@ def temp_project(temp_git_repo: Path):
     subprocess.run(["git", "add", "."], cwd=temp_git_repo, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Add source files"],
-        cwd=temp_git_repo, capture_output=True
+        cwd=temp_git_repo,
+        capture_output=True,
     )
 
     return temp_git_repo
@@ -1170,15 +1280,28 @@ except ImportError:
     def _make_skip_fixture(name: str):
         @_pytest.fixture(name=name)
         def _skipped():
-            _pytest.skip(f"FastAPI not installed – endpoint fixture '{name}' unavailable")
+            _pytest.skip(
+                f"FastAPI not installed – endpoint fixture '{name}' unavailable"
+            )
+
         return _skipped
 
     for _name in (
-        "test_app", "client", "authenticated_client",
-        "mock_file_system", "mock_claude_profiles", "mock_api_profiles",
-        "mock_roadmap_json", "mock_ideation_json", "mock_subprocess",
-        "mock_glab_cli", "mock_gh_cli", "mock_ai_service",
-        "mock_background_task", "test_data_factory",
-        "assert_endpoint", "endpoint_integration_helper",
+        "test_app",
+        "client",
+        "authenticated_client",
+        "mock_file_system",
+        "mock_claude_profiles",
+        "mock_api_profiles",
+        "mock_roadmap_json",
+        "mock_ideation_json",
+        "mock_subprocess",
+        "mock_glab_cli",
+        "mock_gh_cli",
+        "mock_ai_service",
+        "mock_background_task",
+        "test_data_factory",
+        "assert_endpoint",
+        "endpoint_integration_helper",
     ):
         globals()[_name] = _make_skip_fixture(_name)

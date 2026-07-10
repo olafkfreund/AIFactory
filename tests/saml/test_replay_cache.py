@@ -109,9 +109,7 @@ def test_concurrent_replay_only_one_succeeds():
     for t in threads:
         t.join()
 
-    assert results.count(True) == 1, (
-        f"exactly one thread should win; got {results}"
-    )
+    assert results.count(True) == 1, f"exactly one thread should win; got {results}"
     assert results.count(False) == 7
 
 

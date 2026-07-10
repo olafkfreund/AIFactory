@@ -22,8 +22,23 @@ sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from security import validate_spec_name, validate_task_id  # noqa: E402
 
-BAD_SPEC_NAMES = ["../../etc/passwd", "..", "a/b", "/abs", "\\win", ".hidden", "x" * 201, ""]
-GOOD_SPEC_NAMES = ["001-add-auth", "feature_x", "a", "v2.1-thing", "042-correction-receiver"]
+BAD_SPEC_NAMES = [
+    "../../etc/passwd",
+    "..",
+    "a/b",
+    "/abs",
+    "\\win",
+    ".hidden",
+    "x" * 201,
+    "",
+]
+GOOD_SPEC_NAMES = [
+    "001-add-auth",
+    "feature_x",
+    "a",
+    "v2.1-thing",
+    "042-correction-receiver",
+]
 
 BAD_TASK_IDS = ["../../admin/reset", "a/b", "..", "proj/spec", "x" * 201, ""]
 GOOD_TASK_IDS = ["proj:001-x", "task-123", "a", "my-project:042-correction-receiver"]
@@ -77,6 +92,7 @@ class TestTaskControlToolRejectsBadId:
             def deco(fn):
                 captured[name] = fn
                 return fn
+
             return deco
 
         monkeypatch.setattr(task_control, "tool", fake_tool)

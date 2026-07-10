@@ -31,7 +31,9 @@ class _StubAgentService:
 def _setup(tmp_path, monkeypatch):
     project = tmp_path / "proj"
     (project / ".aifactory" / "specs").mkdir(parents=True)
-    monkeypatch.setattr(exec_mod, "load_projects", lambda: {"p": {"path": str(project)}})
+    monkeypatch.setattr(
+        exec_mod, "load_projects", lambda: {"p": {"path": str(project)}}
+    )
     monkeypatch.setattr(exec_mod, "get_agent_service", lambda: _StubAgentService())
     return project
 

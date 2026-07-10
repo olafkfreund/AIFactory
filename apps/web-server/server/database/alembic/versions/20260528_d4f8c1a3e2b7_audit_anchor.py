@@ -51,8 +51,10 @@ def upgrade() -> None:
         sa.Column("version", sa.Integer, primary_key=True, autoincrement=True),
         sa.Column("wrapped_key", sa.LargeBinary, nullable=False),
         sa.Column(
-            "created_at", sa.DateTime,
-            server_default=sa.func.now(), nullable=False,
+            "created_at",
+            sa.DateTime,
+            server_default=sa.func.now(),
+            nullable=False,
         ),
         # retired_at: NULL = currently signing; non-NULL = verify-only.
         # The cron job picks up MAX(version) WHERE retired_at IS NULL.
@@ -67,17 +69,22 @@ def upgrade() -> None:
         sa.Column("signature", sa.String(length=64), nullable=False),
         sa.Column("signed_at", sa.DateTime, nullable=False),
         sa.Column(
-            "key_version", sa.Integer,
+            "key_version",
+            sa.Integer,
             sa.ForeignKey("audit_signing_keys.version"),
             nullable=False,
         ),
         sa.Column(
-            "created_at", sa.DateTime,
-            server_default=sa.func.now(), nullable=False,
+            "created_at",
+            sa.DateTime,
+            server_default=sa.func.now(),
+            nullable=False,
         ),
     )
     op.create_index(
-        "ix_audit_anchors_signed_at", "audit_anchors", ["signed_at"],
+        "ix_audit_anchors_signed_at",
+        "audit_anchors",
+        ["signed_at"],
     )
     # Idempotency: only ONE anchor per UTC date. Two concurrent triggers
     # racing for the same day's anchor — one wins.
@@ -108,8 +115,10 @@ def upgrade() -> None:
     with op.batch_alter_table("audit_logs") as batch:
         batch.add_column(
             sa.Column(
-                "classification", sa.String(length=16),
-                nullable=False, server_default="internal",
+                "classification",
+                sa.String(length=16),
+                nullable=False,
+                server_default="internal",
             ),
         )
 
@@ -128,7 +137,8 @@ def downgrade() -> None:
         batch.drop_column("classification")
 
     op.drop_index(
-        "ix_audit_anchors_signed_at", table_name="audit_anchors",
+        "ix_audit_anchors_signed_at",
+        table_name="audit_anchors",
     )
     bind = op.get_bind()
     if bind.dialect.name == "postgresql":

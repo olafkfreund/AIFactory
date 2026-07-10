@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WEB_SERVER = REPO_ROOT / 'apps' / 'web-server'
+WEB_SERVER = REPO_ROOT / "apps" / "web-server"
 if str(WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(WEB_SERVER))
 
@@ -48,27 +48,29 @@ class _FakeAdminClient:
         self.raise_on: set[str] = set()
 
     async def create_virtual_key(self, org_id, allowed_models, **kwargs):
-        if 'create' in self.raise_on:
-            raise RuntimeError('synthetic admin failure')
-        self.created.append({
-            'org_id': org_id,
-            'allowed_models': list(allowed_models),
-        })
-        return f'sk-{org_id}'
+        if "create" in self.raise_on:
+            raise RuntimeError("synthetic admin failure")
+        self.created.append(
+            {
+                "org_id": org_id,
+                "allowed_models": list(allowed_models),
+            }
+        )
+        return f"sk-{org_id}"
 
     async def disable_virtual_key(self, org_id):
-        if 'disable' in self.raise_on:
-            raise RuntimeError('synthetic admin failure')
+        if "disable" in self.raise_on:
+            raise RuntimeError("synthetic admin failure")
         self.disabled.append(org_id)
 
     async def delete_virtual_key(self, org_id):
-        if 'delete' in self.raise_on:
-            raise RuntimeError('synthetic admin failure')
+        if "delete" in self.raise_on:
+            raise RuntimeError("synthetic admin failure")
         self.deleted.append(org_id)
 
     async def list_virtual_keys(self):
-        if 'list' in self.raise_on:
-            raise RuntimeError('synthetic admin failure')
+        if "list" in self.raise_on:
+            raise RuntimeError("synthetic admin failure")
         return list(self.list_response)
 
 
@@ -84,8 +86,8 @@ def fresh_db():
 
     nonce = secrets.token_hex(8)
     engine = create_async_engine(
-        f'sqlite+aiosqlite:///file:recon-lifecycle-{nonce}'
-        f'?mode=memory&cache=shared&uri=true',
+        f"sqlite+aiosqlite:///file:recon-lifecycle-{nonce}"
+        f"?mode=memory&cache=shared&uri=true",
     )
 
     async def _init():
@@ -98,18 +100,23 @@ def fresh_db():
     return engine, SessionLocal
 
 
-async def _seed_org(SessionLocal, slug='acme', allowed_models=None, deleted_at=None):
+async def _seed_org(SessionLocal, slug="acme", allowed_models=None, deleted_at=None):
     from server.database.models import Organization, User
 
     async with SessionLocal() as db:
         user = User(
-            id=f'u-{slug}', email=f'{slug}@example.com',
-            password_hash='x', role='user', is_active=True,
+            id=f"u-{slug}",
+            email=f"{slug}@example.com",
+            password_hash="x",
+            role="user",
+            is_active=True,
         )
         org = Organization(
-            id=f'org-{slug}', name=slug.title(), slug=slug,
+            id=f"org-{slug}",
+            name=slug.title(),
+            slug=slug,
             owner_id=user.id,
-            allowed_models=allowed_models or ['*'],
+            allowed_models=allowed_models or ["*"],
             deleted_at=deleted_at,
         )
         db.add(user)
@@ -126,15 +133,15 @@ async def _seed_org(SessionLocal, slug='acme', allowed_models=None, deleted_at=N
 
 def test_create_calls_admin_with_org_allowlist(fresh_db):
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org(SessionLocal, slug='acme', allowed_models=['claude-*']))
+    org = _run(_seed_org(SessionLocal, slug="acme", allowed_models=["claude-*"]))
     admin = _FakeAdminClient()
 
     from server.services.tenant_reconciler import sync_virtual_key_on_create
 
     key = _run(sync_virtual_key_on_create(org, admin))
-    assert key == 'sk-org-acme'
+    assert key == "sk-org-acme"
     assert admin.created == [
-        {'org_id': 'org-acme', 'allowed_models': ['claude-*']},
+        {"org_id": "org-acme", "allowed_models": ["claude-*"]},
     ]
 
 
@@ -142,7 +149,7 @@ def test_create_failure_returns_none(fresh_db):
     _engine, SessionLocal = fresh_db
     org = _run(_seed_org(SessionLocal))
     admin = _FakeAdminClient()
-    admin.raise_on.add('create')
+    admin.raise_on.add("create")
 
     from server.services.tenant_reconciler import sync_virtual_key_on_create
 
@@ -158,21 +165,21 @@ def test_create_failure_returns_none(fresh_db):
 
 def test_soft_delete_disables_key(fresh_db):
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org(SessionLocal, slug='acme'))
+    org = _run(_seed_org(SessionLocal, slug="acme"))
     admin = _FakeAdminClient()
 
     from server.services.tenant_reconciler import sync_virtual_key_on_soft_delete
 
     ok = _run(sync_virtual_key_on_soft_delete(org, admin))
     assert ok is True
-    assert admin.disabled == ['org-acme']
+    assert admin.disabled == ["org-acme"]
 
 
 def test_soft_delete_failure_returns_false(fresh_db):
     _engine, SessionLocal = fresh_db
     org = _run(_seed_org(SessionLocal))
     admin = _FakeAdminClient()
-    admin.raise_on.add('disable')
+    admin.raise_on.add("disable")
 
     from server.services.tenant_reconciler import sync_virtual_key_on_soft_delete
 
@@ -187,21 +194,21 @@ def test_soft_delete_failure_returns_false(fresh_db):
 
 def test_hard_delete_deletes_key(fresh_db):
     _engine, SessionLocal = fresh_db
-    org = _run(_seed_org(SessionLocal, slug='acme'))
+    org = _run(_seed_org(SessionLocal, slug="acme"))
     admin = _FakeAdminClient()
 
     from server.services.tenant_reconciler import sync_virtual_key_on_hard_delete
 
     ok = _run(sync_virtual_key_on_hard_delete(org, admin))
     assert ok is True
-    assert admin.deleted == ['org-acme']
+    assert admin.deleted == ["org-acme"]
 
 
 def test_hard_delete_failure_returns_false(fresh_db):
     _engine, SessionLocal = fresh_db
     org = _run(_seed_org(SessionLocal))
     admin = _FakeAdminClient()
-    admin.raise_on.add('delete')
+    admin.raise_on.add("delete")
 
     from server.services.tenant_reconciler import sync_virtual_key_on_hard_delete
 
@@ -216,8 +223,8 @@ def test_hard_delete_failure_returns_false(fresh_db):
 
 def test_drift_sweep_creates_keys_for_orgs_without_one(fresh_db):
     _engine, SessionLocal = fresh_db
-    _run(_seed_org(SessionLocal, slug='a'))
-    _run(_seed_org(SessionLocal, slug='b'))
+    _run(_seed_org(SessionLocal, slug="a"))
+    _run(_seed_org(SessionLocal, slug="b"))
 
     admin = _FakeAdminClient()
     admin.list_response = []  # no keys on LiteLLM side
@@ -229,22 +236,22 @@ def test_drift_sweep_creates_keys_for_orgs_without_one(fresh_db):
             return await reconcile_virtual_keys_drift(db, admin)
 
     counts = _run(_go())
-    assert counts['created'] == 2
-    assert counts['revoked'] == 0
-    assert counts['errors'] == 0
-    assert {c['org_id'] for c in admin.created} == {'org-a', 'org-b'}
+    assert counts["created"] == 2
+    assert counts["revoked"] == 0
+    assert counts["errors"] == 0
+    assert {c["org_id"] for c in admin.created} == {"org-a", "org-b"}
 
 
 def test_drift_sweep_revokes_orphan_keys(fresh_db):
     _engine, SessionLocal = fresh_db
-    _run(_seed_org(SessionLocal, slug='a'))  # only this org exists
+    _run(_seed_org(SessionLocal, slug="a"))  # only this org exists
 
     admin = _FakeAdminClient()
     # LiteLLM has keys for 3 orgs (a stays, b + c are orphans).
     admin.list_response = [
-        {'metadata': {'aifactory_org_id': 'org-a'}},
-        {'metadata': {'aifactory_org_id': 'org-b'}},
-        {'metadata': {'aifactory_org_id': 'org-c'}},
+        {"metadata": {"aifactory_org_id": "org-a"}},
+        {"metadata": {"aifactory_org_id": "org-b"}},
+        {"metadata": {"aifactory_org_id": "org-c"}},
     ]
 
     from server.services.tenant_reconciler import reconcile_virtual_keys_drift
@@ -254,19 +261,19 @@ def test_drift_sweep_revokes_orphan_keys(fresh_db):
             return await reconcile_virtual_keys_drift(db, admin)
 
     counts = _run(_go())
-    assert counts['created'] == 0
-    assert counts['revoked'] == 2
-    assert counts['errors'] == 0
-    assert set(admin.deleted) == {'org-b', 'org-c'}
+    assert counts["created"] == 0
+    assert counts["revoked"] == 2
+    assert counts["errors"] == 0
+    assert set(admin.deleted) == {"org-b", "org-c"}
 
 
 def test_drift_sweep_no_op_when_in_sync(fresh_db):
     _engine, SessionLocal = fresh_db
-    _run(_seed_org(SessionLocal, slug='a'))
+    _run(_seed_org(SessionLocal, slug="a"))
 
     admin = _FakeAdminClient()
     admin.list_response = [
-        {'metadata': {'aifactory_org_id': 'org-a'}},
+        {"metadata": {"aifactory_org_id": "org-a"}},
     ]
 
     from server.services.tenant_reconciler import reconcile_virtual_keys_drift
@@ -276,17 +283,17 @@ def test_drift_sweep_no_op_when_in_sync(fresh_db):
             return await reconcile_virtual_keys_drift(db, admin)
 
     counts = _run(_go())
-    assert counts == {'created': 0, 'revoked': 0, 'errors': 0}
+    assert counts == {"created": 0, "revoked": 0, "errors": 0}
     assert admin.created == []
     assert admin.deleted == []
 
 
 def test_drift_sweep_list_failure_does_not_crash(fresh_db):
     _engine, SessionLocal = fresh_db
-    _run(_seed_org(SessionLocal, slug='a'))
+    _run(_seed_org(SessionLocal, slug="a"))
 
     admin = _FakeAdminClient()
-    admin.raise_on.add('list')
+    admin.raise_on.add("list")
 
     from server.services.tenant_reconciler import reconcile_virtual_keys_drift
 
@@ -295,5 +302,5 @@ def test_drift_sweep_list_failure_does_not_crash(fresh_db):
             return await reconcile_virtual_keys_drift(db, admin)
 
     counts = _run(_go())
-    assert counts['errors'] == 1
-    assert counts['created'] == 0
+    assert counts["errors"] == 1
+    assert counts["created"] == 0

@@ -28,27 +28,26 @@ def test_allowed_models_column_created(test_postgres_url: str) -> None:
         pytest.skip("alembic CLI not on PATH")
 
     result = run_alembic(
-        ["upgrade", "head"], env={"DATABASE_URL": test_postgres_url},
+        ["upgrade", "head"],
+        env={"DATABASE_URL": test_postgres_url},
     )
-    assert result.returncode == 0, (
-        f"upgrade failed: {result.stderr[-1000:]}"
-    )
+    assert result.returncode == 0, f"upgrade failed: {result.stderr[-1000:]}"
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        info = conn.execute(text("""
+        info = conn.execute(
+            text("""
             SELECT column_name, data_type, is_nullable
             FROM information_schema.columns
             WHERE table_name = 'organizations'
               AND column_name = 'allowed_models'
-        """)).fetchone()
+        """)
+        ).fetchone()
     engine.dispose()
 
     assert info is not None, "allowed_models column missing"
     # Postgres reports JSONB as 'jsonb'; SQLAlchemy's JSON type maps to JSONB.
-    assert info[1] in ("jsonb", "json", "text"), (
-        f"unexpected data_type: {info[1]}"
-    )
+    assert info[1] in ("jsonb", "json", "text"), f"unexpected data_type: {info[1]}"
     assert info[2] == "NO", "allowed_models should be NOT NULL"
 
 
@@ -64,19 +63,23 @@ def test_allowed_models_defaults_to_wildcard(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('u-am-1', 'am1@example.com', 'x', 'user', true)
             ON CONFLICT (id) DO NOTHING
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO organizations (id, name, slug, owner_id, plan)
             VALUES ('org-am-1', 'AM', 'am-1', 'u-am-1', 'free')
             ON CONFLICT (id) DO NOTHING
-        """))
-        result = conn.execute(text(
-            "SELECT allowed_models FROM organizations WHERE id='org-am-1'"
-        )).scalar()
+        """)
+        )
+        result = conn.execute(
+            text("SELECT allowed_models FROM organizations WHERE id='org-am-1'")
+        ).scalar()
 
         # Cleanup before assertions so test is idempotent.
         conn.execute(text("DELETE FROM organizations WHERE id='org-am-1'"))
@@ -101,19 +104,23 @@ def test_allowed_models_accepts_explicit_array(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.begin() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO users (id, email, password_hash, role, is_active)
             VALUES ('u-am-2', 'am2@example.com', 'x', 'user', true)
-        """))
-        conn.execute(text("""
+        """)
+        )
+        conn.execute(
+            text("""
             INSERT INTO organizations (id, name, slug, owner_id, plan,
                                        allowed_models)
             VALUES ('org-am-2', 'AM', 'am-2', 'u-am-2', 'free',
                     '["claude-*", "gpt-4o-mini"]'::jsonb)
-        """))
-        result = conn.execute(text(
-            "SELECT allowed_models FROM organizations WHERE id='org-am-2'"
-        )).scalar()
+        """)
+        )
+        result = conn.execute(
+            text("SELECT allowed_models FROM organizations WHERE id='org-am-2'")
+        ).scalar()
 
         # Cleanup.
         conn.execute(text("DELETE FROM organizations WHERE id='org-am-2'"))
@@ -141,10 +148,16 @@ def test_downgrade_drops_column(test_postgres_url: str) -> None:
 
     engine = create_engine(_sync_url(test_postgres_url))
     with engine.connect() as conn:
-        cols = conn.execute(text("""
+        cols = (
+            conn.execute(
+                text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name='organizations' AND column_name='allowed_models'
-        """)).scalars().all()
+        """)
+            )
+            .scalars()
+            .all()
+        )
     engine.dispose()
 
     assert cols == [], "downgrade left allowed_models column behind"

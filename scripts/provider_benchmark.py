@@ -60,19 +60,39 @@ TASK = (
 CONFIGS: dict[str, dict] = {
     "claude_only": {
         "label": "Claude only (Claude Code)",
-        "phase_models": {"planning": "opus", "coding": "sonnet", "qa": "sonnet", "qa_fixer": "sonnet"},
+        "phase_models": {
+            "planning": "opus",
+            "coding": "sonnet",
+            "qa": "sonnet",
+            "qa_fixer": "sonnet",
+        },
     },
     "antigravity_only": {
         "label": "Antigravity only (Gemini CLI)",
-        "phase_models": {"planning": "antigravity", "coding": "antigravity", "qa": "antigravity", "qa_fixer": "antigravity"},
+        "phase_models": {
+            "planning": "antigravity",
+            "coding": "antigravity",
+            "qa": "antigravity",
+            "qa_fixer": "antigravity",
+        },
     },
     "claude_antigravity": {
         "label": "Claude (plan/QA) + Antigravity (code)",
-        "phase_models": {"planning": "opus", "coding": "antigravity", "qa": "sonnet", "qa_fixer": "sonnet"},
+        "phase_models": {
+            "planning": "opus",
+            "coding": "antigravity",
+            "qa": "sonnet",
+            "qa_fixer": "sonnet",
+        },
     },
     "copilot_auto": {
         "label": "Copilot (code) + Claude (plan/QA)",
-        "phase_models": {"planning": "sonnet", "coding": "copilot:claude-sonnet-4.5", "qa": "sonnet", "qa_fixer": "sonnet"},
+        "phase_models": {
+            "planning": "sonnet",
+            "coding": "copilot:claude-sonnet-4.5",
+            "qa": "sonnet",
+            "qa_fixer": "sonnet",
+        },
     },
 }
 
@@ -87,9 +107,11 @@ DEFAULT_PROJECT = "/mnt/data/Source-home/GitHub/aif-bench-gateway"
 
 # ── provider availability ──────────────────────────────────────────────────
 
+
 def _infer_provider(model: str) -> str:
     sys.path.insert(0, str(BACKEND))
     from phase_config import infer_provider_from_model
+
     return infer_provider_from_model(model)
 
 
@@ -103,13 +125,19 @@ def provider_available(provider: str) -> tuple[bool, str]:
         try:
             sys.path.insert(0, str(BACKEND))
             from providers.antigravity_agentic import get_antigravity_binary
+
             resolved = get_antigravity_binary()
-            found = (os.path.isabs(resolved) and Path(resolved).exists()) or bool(shutil.which(resolved))
+            found = (os.path.isabs(resolved) and Path(resolved).exists()) or bool(
+                shutil.which(resolved)
+            )
         except Exception:
             found = bool(shutil.which("antigravity") or shutil.which("gemini"))
         if found:
             return True, "ok (antigravity CLI resolved; needs GEMINI auth)"
-        return False, "antigravity/gemini CLI not installed (install + auth the Antigravity CLI)"
+        return (
+            False,
+            "antigravity/gemini CLI not installed (install + auth the Antigravity CLI)",
+        )
     if provider == "copilot":
         if shutil.which("copilot"):
             return True, "ok (ensure `copilot` is authenticated)"
@@ -136,6 +164,7 @@ def config_availability(name: str) -> tuple[bool, list[str]]:
 
 # ── build run ──────────────────────────────────────────────────────────────
 
+
 def _fresh_project(tag: str) -> Path:
     base = Path("/tmp") / f"aif-bench-{tag}-{int(time.time())}"
     if base.exists():
@@ -157,13 +186,18 @@ def _latest_spec_dir(project: Path) -> Path | None:
     # Pick the real spec dir: it must carry requirements.json, and skip any
     # orphan "*-pending" stub. Choose the most recently modified match.
     cands = [
-        d for d in specs.iterdir()
-        if d.is_dir() and not d.name.endswith("-pending")
+        d
+        for d in specs.iterdir()
+        if d.is_dir()
+        and not d.name.endswith("-pending")
         and (d / "requirements.json").exists()
     ]
     if not cands:  # fall back to anything with requirements.json
-        cands = [d for d in specs.iterdir()
-                 if d.is_dir() and (d / "requirements.json").exists()]
+        cands = [
+            d
+            for d in specs.iterdir()
+            if d.is_dir() and (d / "requirements.json").exists()
+        ]
     if not cands:  # last resort: any dir
         cands = [d for d in specs.iterdir() if d.is_dir()]
     if not cands:
@@ -194,7 +228,9 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
     project = Path(project_dir) if project_dir else _fresh_project(name)
     started = time.time()
     result: dict = {
-        "config": name, "label": cfg["label"], "project": str(project),
+        "config": name,
+        "label": cfg["label"],
+        "project": str(project),
         "started_at": datetime.now().isoformat(),
     }
 
@@ -203,16 +239,32 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
     # models — before we can seed phaseModels below. --auto-approve skips the
     # interactive review gate.
     spec = subprocess.run(
-        [PY, str(BACKEND / "runners" / "spec_runner.py"),
-         "--task", TASK, "--project-dir", str(project),
-         "--complexity", "standard", "--no-ai-assessment",
-         "--no-build", "--auto-approve"],
-        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=BUILD_TIMEOUT_S,
+        [
+            PY,
+            str(BACKEND / "runners" / "spec_runner.py"),
+            "--task",
+            TASK,
+            "--project-dir",
+            str(project),
+            "--complexity",
+            "standard",
+            "--no-ai-assessment",
+            "--no-build",
+            "--auto-approve",
+        ],
+        cwd=BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=BUILD_TIMEOUT_S,
     )
     spec_dir = _latest_spec_dir(project)
     if spec_dir is None:
-        result.update(ok=False, error="spec creation produced no spec dir",
-                      spec_stderr=spec.stderr[-2000:])
+        result.update(
+            ok=False,
+            error="spec creation produced no spec dir",
+            spec_stderr=spec.stderr[-2000:],
+        )
         return result
     result["spec_id"] = spec_dir.name
 
@@ -221,10 +273,24 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
 
     # 3) build
     subprocess.run(
-        [PY, str(BACKEND / "run.py"),
-         "--spec", spec_dir.name, "--project-dir", str(project),
-         "--auto-continue", "--force", "--parallel", "--workers", str(WORKERS)],
-        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=BUILD_TIMEOUT_S,
+        [
+            PY,
+            str(BACKEND / "run.py"),
+            "--spec",
+            spec_dir.name,
+            "--project-dir",
+            str(project),
+            "--auto-continue",
+            "--force",
+            "--parallel",
+            "--workers",
+            str(WORKERS),
+        ],
+        cwd=BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=BUILD_TIMEOUT_S,
     )
 
     # 4) collect metrics
@@ -240,20 +306,39 @@ def run_config(name: str, project_dir: str | None = None) -> dict:
     br = spec_dir / "build_report.json"
     if br.exists():
         b = json.loads(br.read_text())
-        for k in ("total_waves", "observed_max_concurrency", "parallel_wall_s",
-                  "speedup_vs_serial", "cost_usd", "total_tokens", "qa_rounds"):
+        for k in (
+            "total_waves",
+            "observed_max_concurrency",
+            "parallel_wall_s",
+            "speedup_vs_serial",
+            "cost_usd",
+            "total_tokens",
+            "qa_rounds",
+        ):
             result[k] = b.get(k)
     result["qa_report"] = (spec_dir / "qa_report.md").exists()
-    result["ok"] = result.get("subtasks_total", 0) > 0 and \
-        result.get("subtasks_done", 0) == result.get("subtasks_total", -1)
+    result["ok"] = result.get("subtasks_total", 0) > 0 and result.get(
+        "subtasks_done", 0
+    ) == result.get("subtasks_total", -1)
     return result
 
 
 # ── cli ────────────────────────────────────────────────────────────────────
 
+
 def _print_table(rows: list[dict]) -> None:
-    cols = ["config", "ok", "wall_s", "parallel_wall_s", "observed_max_concurrency",
-            "subtasks_done", "subtasks_total", "cost_usd", "qa_rounds", "status"]
+    cols = [
+        "config",
+        "ok",
+        "wall_s",
+        "parallel_wall_s",
+        "observed_max_concurrency",
+        "subtasks_done",
+        "subtasks_total",
+        "cost_usd",
+        "qa_rounds",
+        "status",
+    ]
     print("\n" + " | ".join(c.ljust(12) for c in cols))
     print("-" * (15 * len(cols)))
     for r in rows:
@@ -266,9 +351,12 @@ def main() -> int:
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--rounds", type=int, default=1)
     ap.add_argument("--list", action="store_true")
-    ap.add_argument("--project", default=DEFAULT_PROJECT,
-                    help="Registered project dir to build in (shows in portal). "
-                         "Pass '' for a throwaway /tmp repo per run.")
+    ap.add_argument(
+        "--project",
+        default=DEFAULT_PROJECT,
+        help="Registered project dir to build in (shows in portal). "
+        "Pass '' for a throwaway /tmp repo per run.",
+    )
     args = ap.parse_args()
 
     if args.list or (not args.config and not args.all):
@@ -299,10 +387,25 @@ def main() -> int:
             with RESULTS.open("a") as f:
                 f.write(json.dumps(res) + "\n")
             rows.append(res)
-            print(json.dumps({k: res.get(k) for k in
-                  ("ok", "wall_s", "parallel_wall_s", "observed_max_concurrency",
-                   "subtasks_done", "subtasks_total", "cost_usd",
-                   "qa_rounds", "status")}, indent=2))
+            print(
+                json.dumps(
+                    {
+                        k: res.get(k)
+                        for k in (
+                            "ok",
+                            "wall_s",
+                            "parallel_wall_s",
+                            "observed_max_concurrency",
+                            "subtasks_done",
+                            "subtasks_total",
+                            "cost_usd",
+                            "qa_rounds",
+                            "status",
+                        )
+                    },
+                    indent=2,
+                )
+            )
 
     _print_table(rows)
     return 0

@@ -79,6 +79,7 @@ class PTYManager:
         settings = get_settings()
         profiles_file = Path(settings.PROJECTS_DATA_DIR) / "claude-profiles.json"
         from ..paths import get_data_file
+
         legacy_profiles_file = get_data_file("claude-profiles.json")
         if not profiles_file.exists() and legacy_profiles_file.exists():
             profiles_file = legacy_profiles_file
@@ -89,20 +90,25 @@ class PTYManager:
                 profiles = data.get("profiles", [])
                 active_id = data.get("activeProfileId")
 
-                usable = [
-                    p for p in profiles
-                    if p.get("oauthToken") or p.get("token")
-                ]
+                usable = [p for p in profiles if p.get("oauthToken") or p.get("token")]
 
                 for profile in usable:
                     if profile.get("id") == active_id:
                         token = profile.get("oauthToken") or profile.get("token")
-                        return (token, profile.get("id"), profile.get("name", "Active Profile"))
+                        return (
+                            token,
+                            profile.get("id"),
+                            profile.get("name", "Active Profile"),
+                        )
 
                 if usable:
                     profile = usable[0]
                     token = profile.get("oauthToken") or profile.get("token")
-                    return (token, profile.get("id"), profile.get("name", "Default Profile"))
+                    return (
+                        token,
+                        profile.get("id"),
+                        profile.get("name", "Default Profile"),
+                    )
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -151,8 +157,7 @@ class PTYManager:
         """Remove sessions whose PTY processes have exited."""
         with self._lock:
             dead_sessions = [
-                sid for sid, session in self.sessions.items()
-                if not session.is_alive()
+                sid for sid, session in self.sessions.items() if not session.is_alive()
             ]
             for sid in dead_sessions:
                 del self.sessions[sid]

@@ -125,7 +125,8 @@ def test_ensure_active_key_bootstraps_when_empty(fresh_db, monkeypatch):
 
 
 def test_ensure_active_key_returns_existing_on_second_call(
-    fresh_db, monkeypatch,
+    fresh_db,
+    monkeypatch,
 ):
     """Calling twice returns the same key, doesn't create a second row."""
     monkeypatch.setenv("KMS_BACKEND", "fernet")
@@ -230,6 +231,7 @@ def test_unwrap_rejects_non_bytes(monkeypatch):
     class _BadBackend:
         def encrypt(self, b: bytes) -> bytes:
             return b
+
         def decrypt(self, b: bytes):
             return "not-bytes"
 
@@ -251,6 +253,7 @@ def test_unwrap_rejects_wrong_length(monkeypatch):
     class _ShortBackend:
         def encrypt(self, b: bytes) -> bytes:
             return b
+
         def decrypt(self, b: bytes) -> bytes:
             return b"\x00" * 16
 
@@ -314,4 +317,5 @@ def _fernet_test_key() -> str:
     set this via env from a Secret; tests just need any valid 32-byte
     base64 key."""
     import base64
+
     return base64.urlsafe_b64encode(b"\xaa" * 32).decode()

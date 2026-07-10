@@ -54,6 +54,7 @@ async def _redis_reachable(url: str) -> bool:
     """Cheap reachability check — open a connection, PING, close."""
     try:
         import redis.asyncio as redis_asyncio
+
         client = redis_asyncio.from_url(url, socket_connect_timeout=2.0)
         try:
             await asyncio.wait_for(client.ping(), timeout=2.0)
@@ -107,18 +108,21 @@ class _ReplicaSim:
 
     def __init__(self, redis_url: str, channel: str):
         import uuid
+
         self.replica_id = str(uuid.uuid4())
         self.redis_url = redis_url
         self.channel = channel
         self.clients: dict = {}  # ws -> ConnectedClient-ish
 
         import redis.asyncio as redis_asyncio
+
         self._publisher = redis_asyncio.from_url(redis_url, decode_responses=True)
         self._sub_task: asyncio.Task | None = None
         self._sub_client = None
 
     async def start(self) -> None:
         import redis.asyncio as redis_asyncio
+
         self._sub_client = redis_asyncio.from_url(self.redis_url, decode_responses=True)
         self._sub_task = asyncio.create_task(self._subscribe_loop())
         # Give the subscriber a moment to actually SUBSCRIBE before the
@@ -150,6 +154,7 @@ class _ReplicaSim:
             if message.get("type") != "message":
                 continue
             import json
+
             try:
                 envelope = json.loads(message.get("data"))
             except Exception:
@@ -159,28 +164,31 @@ class _ReplicaSim:
             # Deliver to local clients
             for ws, _client in list(self.clients.items()):
                 await ws.send_text(
-                    json.dumps({
-                        "type": envelope["type"],
-                        "payload": envelope["payload"],
-                    })
+                    json.dumps(
+                        {
+                            "type": envelope["type"],
+                            "payload": envelope["payload"],
+                        }
+                    )
                 )
 
     async def publish_broadcast(self, event_type: str, payload: dict) -> None:
         """publish_event analog — local delivery + Redis publish."""
         import json
+
         # Local delivery first
         for ws in list(self.clients.keys()):
-            await ws.send_text(
-                json.dumps({"type": event_type, "payload": payload})
-            )
+            await ws.send_text(json.dumps({"type": event_type, "payload": payload}))
         # Then Redis
-        envelope = json.dumps({
-            "v": 1,
-            "source": self.replica_id,
-            "scope": {"kind": "broadcast"},
-            "type": event_type,
-            "payload": payload,
-        })
+        envelope = json.dumps(
+            {
+                "v": 1,
+                "source": self.replica_id,
+                "scope": {"kind": "broadcast"},
+                "type": event_type,
+                "payload": payload,
+            }
+        )
         await self._publisher.publish(self.channel, envelope)
 
 
@@ -234,6 +242,7 @@ async def test_cross_replica_broadcast_delivery(test_redis_url):
 
         # Both got the exact same payload
         import json
+
         msg_a = json.loads(client_a.sent[0])
         msg_b = json.loads(client_b.sent[0])
         assert msg_a == msg_b

@@ -107,7 +107,9 @@ def test_correlation_id_propagates_to_httpx() -> None:
         reset_correlation_id(token)
 
     assert resp.status_code == 200
-    assert captured["headers"].get(CORRELATION_ID_HEADER.lower()) == "rid-propagated-9876"
+    assert (
+        captured["headers"].get(CORRELATION_ID_HEADER.lower()) == "rid-propagated-9876"
+    )
 
 
 @pytest.mark.obs
@@ -228,9 +230,12 @@ def test_metrics_requires_token_when_configured(fresh_obs_app) -> None:
 
 def _grafana_dashboard_missing() -> bool:
     from pathlib import Path
+
     return not (
         Path(__file__).resolve().parents[2]
-        / "guides" / "observability" / "grafana-aifactory.json"
+        / "guides"
+        / "observability"
+        / "grafana-aifactory.json"
     ).is_file()
 
 
@@ -254,7 +259,11 @@ def test_grafana_dashboard_json_is_valid() -> None:
     panel_titles = {p.get("title", "").lower() for p in data["panels"]}
     # Required panels per issue #33.
     required = [
-        "request rate", "latency", "error", "audit", "oidc",
+        "request rate",
+        "latency",
+        "error",
+        "audit",
+        "oidc",
     ]
     for token in required:
         assert any(token in title for title in panel_titles), (

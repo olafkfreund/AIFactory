@@ -65,13 +65,13 @@ class SamlSpConfig:
     can touch."""
 
     enabled: bool
-    sp_entity_id: str            # https://aifactory.example.com/saml
-    acs_url: str                 # https://aifactory.example.com/saml/acs
-    idp_metadata_url: str | None       # one of these two must be set
+    sp_entity_id: str  # https://aifactory.example.com/saml
+    acs_url: str  # https://aifactory.example.com/saml/acs
+    idp_metadata_url: str | None  # one of these two must be set
     idp_metadata_file: str | Path | None
-    sp_cert_pem: str | None             # current cert (PEM)
-    sp_key_pem: str | None              # current key (PEM)
-    sp_cert_previous_pem: str | None    # rotation-overlap previous cert
+    sp_cert_pem: str | None  # current cert (PEM)
+    sp_key_pem: str | None  # current key (PEM)
+    sp_cert_previous_pem: str | None  # rotation-overlap previous cert
     require_encrypted_assertion: bool = False
     idp_init_default_return_to: str | None = None
     # v1.2 — SAML SLO (Epic #35 #209). Both fields default to OFF/None
@@ -212,9 +212,7 @@ class SamlClient:
             )
 
         # Parser returns {"idp": {...}}.
-        parsed = OneLogin_Saml2_IdPMetadataParser.parse(
-            self._idp_metadata_xml
-        )
+        parsed = OneLogin_Saml2_IdPMetadataParser.parse(self._idp_metadata_xml)
         return parsed.get("idp", {})
 
     def _load_metadata_blocking(self) -> None:
@@ -266,7 +264,8 @@ class SamlClient:
             except Exception:
                 logger.warning(
                     "SAML metadata refresh failed; will retry in %.0fs",
-                    backoff, exc_info=True,
+                    backoff,
+                    exc_info=True,
                 )
                 # Spend backoff sleeping (allow shutdown to wake us).
                 if self._stop_refresh.wait(backoff):
@@ -279,7 +278,8 @@ class SamlClient:
                 logger.warning(
                     "SAML metadata cache is %d hours stale — IdP at %s "
                     "may be unreachable",
-                    int(age / 3600), self._config.idp_metadata_url,
+                    int(age / 3600),
+                    self._config.idp_metadata_url,
                 )
 
     def metadata_age_seconds(self) -> float | None:
@@ -293,7 +293,8 @@ def _strip_pem(pem: str) -> str:
     """OneLogin wants the raw base64 between the PEM headers, not the
     full -----BEGIN-----/-----END----- wrapper."""
     lines = [
-        line for line in pem.splitlines()
+        line
+        for line in pem.splitlines()
         if line.strip() and not line.startswith("-----")
     ]
     return "".join(lines)
@@ -316,6 +317,7 @@ def config_from_env() -> SamlSpConfig:
     Reads PEMs from file paths so they can be mounted from Secrets
     without leaking through `kubectl describe pod`.
     """
+
     def _read(env_var: str) -> str | None:
         p = os.environ.get(env_var, "").strip()
         if not p:
@@ -326,26 +328,29 @@ def config_from_env() -> SamlSpConfig:
         enabled=os.environ.get("SAML_ENABLED", "").lower() == "true",
         sp_entity_id=os.environ.get("SAML_SP_ENTITY_ID", "").strip(),
         acs_url=os.environ.get("SAML_ACS_URL", "").strip(),
-        idp_metadata_url=os.environ.get("SAML_IDP_METADATA_URL", "").strip()
-        or None,
+        idp_metadata_url=os.environ.get("SAML_IDP_METADATA_URL", "").strip() or None,
         idp_metadata_file=os.environ.get(
-            "SAML_IDP_METADATA_FILE", "",
-        ).strip() or None,
+            "SAML_IDP_METADATA_FILE",
+            "",
+        ).strip()
+        or None,
         sp_cert_pem=_read("SAML_SP_CERT_FILE"),
         sp_key_pem=_read("SAML_SP_KEY_FILE"),
         sp_cert_previous_pem=_read("SAML_SP_CERT_PREVIOUS_FILE"),
         require_encrypted_assertion=(
             os.environ.get(
-                "SAML_REQUIRE_ENCRYPTED_ASSERTION", "",
-            ).lower() == "true"
+                "SAML_REQUIRE_ENCRYPTED_ASSERTION",
+                "",
+            ).lower()
+            == "true"
         ),
         idp_init_default_return_to=os.environ.get(
-            "SAML_IDP_INIT_DEFAULT_RETURN_TO", "",
-        ).strip() or None,
+            "SAML_IDP_INIT_DEFAULT_RETURN_TO",
+            "",
+        ).strip()
+        or None,
         # v1.2 SLO fields (default OFF for backward compat).
-        slo_enabled=(
-            os.environ.get("SAML_SLO_ENABLED", "").lower() == "true"
-        ),
+        slo_enabled=(os.environ.get("SAML_SLO_ENABLED", "").lower() == "true"),
         slo_url=os.environ.get("SAML_SLO_URL", "").strip() or None,
         idp_slo_url=os.environ.get("SAML_IDP_SLO_URL", "").strip() or None,
     )

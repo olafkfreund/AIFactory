@@ -59,9 +59,7 @@ def _role_for_userinfo(userinfo: dict) -> str:
     return default_role
 
 
-async def _get_or_create_default_org(
-    db: AsyncSession, owner: User
-) -> Organization:
+async def _get_or_create_default_org(db: AsyncSession, owner: User) -> Organization:
     """Return the Organization JIT users join. Creates it on first call."""
     slug = os.environ.get("APP_OIDC_DEFAULT_ORG_SLUG", "default")
     result = await db.execute(select(Organization).where(Organization.slug == slug))
@@ -114,9 +112,7 @@ async def jit_provision_user(
         user = result.scalar_one_or_none()
         if user is not None:
             user.oidc_sub = sub  # bind for future logins
-            logger.info(
-                "OIDC bound existing local user %s to sub=%s", email, sub
-            )
+            logger.info("OIDC bound existing local user %s to sub=%s", email, sub)
 
     if user is None:
         # Genuine new user — JIT-provision.
@@ -150,9 +146,7 @@ async def jit_provision_user(
         membership = OrgMember(org_id=org.id, user_id=user.id, role=role)
         db.add(membership)
         await db.commit()
-        logger.info(
-            "OIDC added user %s to org %s with role %s", email, org.slug, role
-        )
+        logger.info("OIDC added user %s to org %s with role %s", email, org.slug, role)
     elif membership.role != role:
         # IdP-side role changed; sync.
         membership.role = role

@@ -49,6 +49,8 @@ def test_provider_never_emits_model_antigravity():
     """The bug: --model antigravity. Building the command must not contain it."""
     p = AntigravityAgenticProvider(model="antigravity")
     cmd = p._build_command()
-    assert "antigravity" not in cmd[cmd.index("--model") + 1] if "--model" in cmd else True
+    assert (
+        "antigravity" not in cmd[cmd.index("--model") + 1] if "--model" in cmd else True
+    )
     # And the resolved model is the default
     assert p._model == _DEFAULT_MODEL

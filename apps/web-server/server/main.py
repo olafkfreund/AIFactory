@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     backend_path = Path(settings.BACKEND_PATH)
     if backend_path.exists():
         from .routes.settings import load_app_settings, save_app_settings
+
         app_settings = load_app_settings()
         if not app_settings.autoBuildPath:
             app_settings.autoBuildPath = str(backend_path)
@@ -106,11 +107,10 @@ async def lifespan(app: FastAPI):
     # in-memory view. No-op when DATABASE_URL is unset (in-memory fallback).
     try:
         from .services.agent_service import get_agent_service
+
         await get_agent_service().reconcile_on_startup()
     except Exception:
-        logger.warning(
-            "RFC-0016 startup reconcile failed (non-fatal)", exc_info=True
-        )
+        logger.warning("RFC-0016 startup reconcile failed (non-fatal)", exc_info=True)
 
     # Initialize skills service singleton once at startup
     init_skills_service()
@@ -122,17 +122,20 @@ async def lifespan(app: FastAPI):
     # below depends on tracing running BEFORE CorrelationIdMiddleware
     # so the FastAPI auto-instrumentor opens the root span first.
     from .observability.tracing import init_tracing
+
     init_tracing()
 
     # Start the Redis pub/sub subscriber when REDIS_URL is configured
     # (Epic #35 #40 PR-1). No-op when unset — the event bus runs in
     # in-process-only mode and own-replica delivery still works.
     from .websockets import event_bus
+
     if settings.REDIS_URL:
         await event_bus.start_redis_subscriber()
         logger.info(
             "Redis pub/sub enabled — replica %s, channel %r",
-            event_bus.self_replica_id, settings.REDIS_CHANNEL,
+            event_bus.self_replica_id,
+            settings.REDIS_CHANNEL,
         )
     else:
         logger.info(
@@ -152,10 +155,14 @@ async def lifespan(app: FastAPI):
     if _outbox.outbox_enabled():
         stop = _asyncio.Event()
         app.state.outbox_relay_stop = stop
-        app.state.outbox_relay_task = _asyncio.create_task(_outbox.relay_loop(stop=stop))
+        app.state.outbox_relay_task = _asyncio.create_task(
+            _outbox.relay_loop(stop=stop)
+        )
         logger.info("Completion outbox relay enabled (at-least-once delivery)")
     else:
-        logger.info("Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)")
+        logger.info(
+            "Completion outbox relay disabled (AIFACTORY_COMPLETION_OUTBOX unset)"
+        )
 
     # Start the RFC-0011 label-driven intake poller when enabled (#636). Off by
     # default — only runs when AIFACTORY_INTAKE_POLLER is set. Polls the
@@ -190,7 +197,9 @@ async def lifespan(app: FastAPI):
         app.state.kubejob_reconcile_task = _asyncio.create_task(
             get_agent_service().kubejob_reconcile_loop(stop=kj_stop)
         )
-        logger.info("RFC-0016 #671 kubejob build backend enabled — reconcile loop started")
+        logger.info(
+            "RFC-0016 #671 kubejob build backend enabled — reconcile loop started"
+        )
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
@@ -303,9 +312,7 @@ class SPAStaticFiles(StaticFiles):
         if content_type.startswith("text/html"):
             response.headers["Cache-Control"] = "no-cache, must-revalidate"
         elif "/assets/" in (scope.get("path") or ""):
-            response.headers["Cache-Control"] = (
-                "public, max-age=31536000, immutable"
-            )
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
 
@@ -322,6 +329,7 @@ def create_app() -> FastAPI:
     # lifespan startup is JSON-formatted from the very first event.
     # Idempotent: re-calling overrides the processor chain wholesale.
     from .observability import configure_structlog
+
     configure_structlog(level="DEBUG" if settings.DEBUG else "INFO")
 
     # Version comes from apps/backend/__init__.py — the canonical source
@@ -345,6 +353,7 @@ def create_app() -> FastAPI:
     # lets CorrelationIdMiddleware source request_id from trace_id.
     # No-op when OTel isn't installed (failure-safe per the helper).
     from .observability.tracing import instrument_fastapi_app
+
     instrument_fastapi_app(app)
 
     # Add CORS middleware. Never combine a wildcard origin with credentials
@@ -367,6 +376,7 @@ def create_app() -> FastAPI:
     # secret is the JWT secret (already a strong process secret).
     # Cookie is scoped to the OIDC routes via SameSite=Lax + HTTP-only.
     from starlette.middleware.sessions import SessionMiddleware
+
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.JWT_SECRET,
@@ -382,6 +392,7 @@ def create_app() -> FastAPI:
     # carry the ID in their response, which auditors rely on to trace
     # failed auth attempts).
     from .observability import CorrelationIdMiddleware, install_httpx_propagation
+
     app.add_middleware(CorrelationIdMiddleware)
     # Patch httpx clients to forward the correlation ID on outbound
     # calls. Idempotent.
@@ -394,6 +405,7 @@ def create_app() -> FastAPI:
     # Endpoints return 404 when APP_OIDC_ENABLED isn't set, so this is a
     # no-op for installations that haven't configured an IdP.
     from .routes import oidc_routes
+
     app.include_router(oidc_routes.router)
 
     # Epic #35 #41 PR-1b4 — IdP discovery endpoint.  Always mounted (no
@@ -410,11 +422,14 @@ def create_app() -> FastAPI:
     # deployment + test runs unaffected; production deployments that enable
     # SAML or SCIM via Helm get the routers mounted at pod start.
     import os
+
     if os.environ.get("SAML_ENABLED", "").lower() == "true":
         from .saml import routes as saml_routes
+
         app.include_router(saml_routes.router)
     if os.environ.get("SCIM_ENABLED", "").lower() == "true":
         from .scim import routes as scim_routes
+
         app.include_router(scim_routes.router)
 
     # Organization routes (prefix defined in router: /api/orgs)
@@ -432,11 +447,13 @@ def create_app() -> FastAPI:
     # Epic #26 P5.3 — /api/audit/export streaming + P5.5 GDPR erasure.
     app.include_router(audit.export_router)
     from .routes import gdpr as gdpr_routes
+
     app.include_router(gdpr_routes.router)
 
     # Epic #35 #43 PR-1b4 — /api/admin/access-review endpoint for
     # SOC2 CC6.2 + ISO 27001 A.9.2.5 quarterly access reviews.
     from .routes import access_review as access_review_routes
+
     app.include_router(access_review_routes.router)
 
     # Notification routes (prefix defined in router: /api/notifications)
@@ -452,8 +469,12 @@ def create_app() -> FastAPI:
     # before tasks.router so its specific path isn't shadowed by the catch-all.
     app.include_router(from_issue.router, prefix="/api/tasks", tags=["Intake"])
     app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
-    app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
-    app.include_router(cli_accounts_routes.router, prefix="/api/settings", tags=["CLI Accounts"])
+    app.include_router(
+        settings_routes.router, prefix="/api/settings", tags=["Settings"]
+    )
+    app.include_router(
+        cli_accounts_routes.router, prefix="/api/settings", tags=["CLI Accounts"]
+    )
     app.include_router(llm_endpoints_routes.router)
     app.include_router(files.router, prefix="/api/files", tags=["Files"])
     app.include_router(terminal.router, prefix="/api/terminals", tags=["Terminals"])
@@ -504,7 +525,9 @@ def create_app() -> FastAPI:
     # Git and utility routes
     app.include_router(git.router, prefix="/api/git", tags=["Git"])
     app.include_router(git.ollama_router, prefix="/api/ollama", tags=["Ollama"])
-    app.include_router(git.claude_code_router, prefix="/api/claude-code", tags=["Claude Code"])
+    app.include_router(
+        git.claude_code_router, prefix="/api/claude-code", tags=["Claude Code"]
+    )
     app.include_router(git.mcp_router, prefix="/api/mcp", tags=["MCP"])
     app.include_router(git.updates_router, prefix="/api/updates", tags=["Updates"])
 
@@ -530,8 +553,10 @@ def create_app() -> FastAPI:
     # the rmux/ package imports break at module load when the
     # bundled binary isn't present.
     from .rmux import is_rmux_enabled
+
     if is_rmux_enabled():
         from .rmux import console_router
+
         app.include_router(console_router)
         logger.info("[main] rmux Live Agent Console enabled — bridge router mounted")
 
@@ -541,6 +566,7 @@ def create_app() -> FastAPI:
     # Optional METRICS_SCRAPE_TOKEN bearer gate is read from env at
     # install time.
     from .observability import install_metrics
+
     install_metrics(app)
 
     # Health check endpoint (no auth required)
@@ -567,7 +593,9 @@ def create_app() -> FastAPI:
     # content-hashed assets under /assets/ → long-lived immutable cache.
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
-        app.mount("/", SPAStaticFiles(directory=str(static_dir), html=True), name="static")
+        app.mount(
+            "/", SPAStaticFiles(directory=str(static_dir), html=True), name="static"
+        )
     else:
         # Placeholder for development
         @app.get("/")

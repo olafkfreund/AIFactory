@@ -44,7 +44,9 @@ def _env_value(deployment: dict, name: str) -> str | None:
 
 
 def _volume_names(deployment: dict) -> set[str]:
-    return {v["name"] for v in deployment["spec"]["template"]["spec"].get("volumes", [])}
+    return {
+        v["name"] for v in deployment["spec"]["template"]["spec"].get("volumes", [])
+    }
 
 
 def _find_volume(deployment: dict, name: str) -> dict:
@@ -64,6 +66,7 @@ def _find_mount(deployment: dict, name: str) -> dict:
 @pytest.fixture
 def chart_dir():
     from pathlib import Path
+
     return Path(__file__).parent.parent.parent / "charts" / "aifactory"
 
 
@@ -175,7 +178,9 @@ def test_gcp_secret_name_override_does_not_affect_other_volumes(chart_dir):
 @pytest.mark.helm
 def test_gcp_endpoint_override_injects_GCP_MCP_ENDPOINT(chart_dir):
     """endpointOverride wires GCP_MCP_ENDPOINT env var into the pod."""
-    staging_url = "https://cloudaicompanion-staging.googleapis.com/v1/extensions/default/mcp"
+    staging_url = (
+        "https://cloudaicompanion-staging.googleapis.com/v1/extensions/default/mcp"
+    )
     docs = _render(
         chart_dir,
         set_values=[
@@ -187,9 +192,7 @@ def test_gcp_endpoint_override_injects_GCP_MCP_ENDPOINT(chart_dir):
     )
     deployment = _find_deployment(docs)
     val = _env_value(deployment, "GCP_MCP_ENDPOINT")
-    assert val == staging_url, (
-        f"GCP_MCP_ENDPOINT={val!r}, expected {staging_url!r}"
-    )
+    assert val == staging_url, f"GCP_MCP_ENDPOINT={val!r}, expected {staging_url!r}"
 
 
 @pytest.mark.helm

@@ -76,9 +76,9 @@ def test_kms_data_key_created_on_first_use(fernet_key: str) -> None:
 
     # And there's exactly ONE row in kms_data_keys.
     with engine.connect() as conn:
-        n = conn.execute(text(
-            "SELECT COUNT(*) FROM kms_data_keys WHERE org_id = :o"
-        ), {"o": org_id}).scalar()
+        n = conn.execute(
+            text("SELECT COUNT(*) FROM kms_data_keys WHERE org_id = :o"), {"o": org_id}
+        ).scalar()
     assert n == 1, f"expected 1 kms_data_keys row, found {n}"
 
 
@@ -118,8 +118,9 @@ def test_lru_cache_evicts_on_rotation(fernet_key: str) -> None:
     # Inspect manager state: the cached_at should be very recent (just refreshed).
     assert org_id in manager._cache  # type: ignore[attr-defined]
     cached_rotated_at = manager._cache[org_id].rotated_at  # type: ignore[attr-defined]
-    assert cached_rotated_at == new_rotated_at, \
+    assert cached_rotated_at == new_rotated_at, (
         "cache should now hold the new rotated_at timestamp"
+    )
 
 
 @pytest.mark.secrets
@@ -134,13 +135,20 @@ def test_data_key_isolation_between_orgs(fernet_key: str) -> None:
 
     # Add a second org sharing the same owner.
     from server.database.models import Organization
+
     org_b_id = str(uuid.uuid4())
     with Session(engine) as session:
         # Reuse the owner from _setup_db (the only User in the DB).
         owner_id = session.execute(text("SELECT id FROM users LIMIT 1")).scalar()
-        session.add(Organization(
-            id=org_b_id, name="Org B", slug="org-b", owner_id=owner_id, plan="free",
-        ))
+        session.add(
+            Organization(
+                id=org_b_id,
+                name="Org B",
+                slug="org-b",
+                owner_id=owner_id,
+                plan="free",
+            )
+        )
         session.commit()
 
     key_a = manager.get_or_create_data_key(org_a_id)
@@ -151,6 +159,7 @@ def test_data_key_isolation_between_orgs(fernet_key: str) -> None:
     # Stronger assertion: encrypting with A and decrypting with B fails.
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     nonce = b"\x00" * 12
     ciphertext = AESGCM(key_a).encrypt(nonce, b"secret-from-A", associated_data=None)
     with pytest.raises(InvalidTag):

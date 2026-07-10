@@ -68,7 +68,9 @@ def verify(secret_key: bytes, token: str) -> RelayPayload:
         raise RelayStateInvalid("malformed RelayState (missing signature)") from exc
 
     expected_sig = hmac.new(
-        secret_key, payload_b64.encode(), hashlib.sha256,
+        secret_key,
+        payload_b64.encode(),
+        hashlib.sha256,
     ).digest()
     try:
         actual_sig = _b64url_decode(sig_b64)

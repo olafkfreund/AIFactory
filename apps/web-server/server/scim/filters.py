@@ -38,7 +38,7 @@ _ALLOWED_ATTRIBUTES = frozenset({"userName", "externalId", "active"})
 # Regex matches: <attr> eq "<quoted-value>"  OR  <attr> eq true|false
 # (whitespace flexible; case-insensitive for the operator only).
 _FILTER_RE = re.compile(
-    r'^\s*(?P<attr>\w+)\s+(?i:eq)\s+'
+    r"^\s*(?P<attr>\w+)\s+(?i:eq)\s+"
     r'(?:"(?P<str_value>[^"]*)"|(?P<bool_value>true|false))\s*$',
 )
 
@@ -93,9 +93,7 @@ def parse(filter_str: str) -> ScimFilter:
         # client that quotes booleans.
         if attr == "active":
             if str_value.lower() not in ("true", "false"):
-                raise ScimFilterInvalid(
-                    f"active must be true/false; got {str_value!r}"
-                )
+                raise ScimFilterInvalid(f"active must be true/false; got {str_value!r}")
             return ScimFilter(attribute=attr, value=str_value.lower() == "true")
         return ScimFilter(attribute=attr, value=str_value)
 

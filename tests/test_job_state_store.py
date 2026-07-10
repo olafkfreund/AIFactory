@@ -69,12 +69,16 @@ def _spawn(spec_id: str, path: Path) -> SpawnArgs:
 # --------------------------------------------------------------------------
 
 
-def test_store_disabled_when_database_url_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_store_disabled_when_database_url_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert store_enabled() is False
 
 
-def test_store_disabled_when_database_url_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_store_disabled_when_database_url_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DATABASE_URL", "   ")
     assert store_enabled() is False
 
