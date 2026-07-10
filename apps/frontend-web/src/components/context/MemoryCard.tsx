@@ -155,7 +155,7 @@ export function MemoryCard({ memory }: MemoryCardProps) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setExpanded(!expanded)}
+              onClick={() => { setExpanded(!expanded); }}
               className="shrink-0 gap-1"
             >
               {expanded ? (

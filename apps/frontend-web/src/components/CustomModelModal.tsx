@@ -45,7 +45,7 @@ export function CustomModelModal({
     currentConfig?.model || DEFAULT_FEATURE_MODELS.insights
   );
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
-    currentConfig?.thinkingLevel || DEFAULT_FEATURE_THINKING.insights as ThinkingLevel
+    currentConfig?.thinkingLevel || DEFAULT_FEATURE_THINKING.insights
   );
 
   // Sync internal state when modal opens or config changes
@@ -53,7 +53,7 @@ export function CustomModelModal({
     if (open) {
       setProvider(currentConfig?.provider || 'claude');
       setModel(currentConfig?.model || DEFAULT_FEATURE_MODELS.insights);
-      setThinkingLevel(currentConfig?.thinkingLevel || DEFAULT_FEATURE_THINKING.insights as ThinkingLevel);
+      setThinkingLevel(currentConfig?.thinkingLevel || DEFAULT_FEATURE_THINKING.insights);
     }
   }, [open, currentConfig]);
 
@@ -112,7 +112,7 @@ export function CustomModelModal({
           {/* Provider selector */}
           <div className="space-y-2">
             <Label htmlFor="provider-select">{t('customModel.provider', 'Provider')}</Label>
-            <Select value={provider} onValueChange={(v) => setProvider(v as InsightsProvider)}>
+            <Select value={provider} onValueChange={(v) => { setProvider(v as InsightsProvider); }}>
               <SelectTrigger id="provider-select">
                 <SelectValue />
               </SelectTrigger>
@@ -147,7 +147,7 @@ export function CustomModelModal({
           {showThinking && (
             <div className="space-y-2">
               <Label htmlFor="thinking-select">{t('customModel.thinkingLevel')}</Label>
-              <Select value={thinkingLevel} onValueChange={(v) => setThinkingLevel(v as ThinkingLevel)}>
+              <Select value={thinkingLevel} onValueChange={(v) => { setThinkingLevel(v as ThinkingLevel); }}>
                 <SelectTrigger id="thinking-select">
                   <SelectValue />
                 </SelectTrigger>

@@ -137,7 +137,7 @@ export function IssueListHeader({
           <Input
             placeholder="Search issues..."
             value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onChange={(e) => { onSearchChange(e.target.value); }}
             className="pl-9"
           />
         </div>

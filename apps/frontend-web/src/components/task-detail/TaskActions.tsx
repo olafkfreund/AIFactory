@@ -103,7 +103,7 @@ export function TaskActions({
           variant="ghost"
           size="sm"
           className="w-full mt-3 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          onClick={() => onShowDeleteDialog(true)}
+          onClick={() => { onShowDeleteDialog(true); }}
           disabled={isRunning && !isStuck}
         >
           <Trash2 className="mr-2 h-4 w-4" />

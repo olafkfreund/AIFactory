@@ -298,7 +298,7 @@ export function CLIToolStatusBadge({ className, iconOnly = false }: CLIToolStatu
   useEffect(() => {
     detect();
     const interval = setInterval(detect, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [detect]);
 
   // Listen for WebSocket auth events for immediate refresh

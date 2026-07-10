@@ -289,7 +289,7 @@ export function CustomMcpDialog({
             <div className="border border-border rounded-lg overflow-hidden">
               <button
                 type="button"
-                onClick={() => setShowTemplates(!showTemplates)}
+                onClick={() => { setShowTemplates(!showTemplates); }}
                 className="w-full flex items-center justify-between px-3 py-2 bg-muted/40 hover:bg-muted/60 transition-colors text-sm font-medium"
               >
                 <span className="flex items-center gap-1.5">
@@ -319,7 +319,7 @@ export function CustomMcpDialog({
                           <button
                             key={service.id}
                             type="button"
-                            onClick={() => applyTemplate(service)}
+                            onClick={() => { applyTemplate(service); }}
                             disabled={!service.available}
                             title={service.reason}
                             className={[
@@ -367,7 +367,7 @@ export function CustomMcpDialog({
             <RadioGroup
               value={formData.type}
               onValueChange={(value: 'command' | 'http') =>
-                setFormData(prev => ({ ...prev, type: value }))
+                { setFormData(prev => ({ ...prev, type: value })); }
               }
               className="flex gap-4"
             >
@@ -415,7 +415,7 @@ export function CustomMcpDialog({
             <Input
               id="description"
               value={formData.description || ''}
-              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+              onChange={(e) => { setFormData(prev => ({ ...prev, description: e.target.value })); }}
               placeholder={t('mcp.serverDescriptionPlaceholder')}
             />
           </div>
@@ -440,7 +440,7 @@ export function CustomMcpDialog({
                 <Input
                   id="args"
                   value={argsInput}
-                  onChange={(e) => setArgsInput(e.target.value)}
+                  onChange={(e) => { setArgsInput(e.target.value); }}
                   placeholder="-y @myorg/my-mcp-server"
                 />
                 <p className="text-xs text-muted-foreground">{t('mcp.argsHint')}</p>
@@ -495,7 +495,7 @@ export function CustomMcpDialog({
                 <Input
                   id="bearerToken"
                   value={bearerToken}
-                  onChange={(e) => setBearerToken(e.target.value)}
+                  onChange={(e) => { setBearerToken(e.target.value); }}
                   placeholder={t('mcp.authTokenPlaceholder')}
                   type="password"
                 />
@@ -506,7 +506,7 @@ export function CustomMcpDialog({
               <div className="space-y-2">
                 <button
                   type="button"
-                  onClick={() => setShowAdvancedHeaders(!showAdvancedHeaders)}
+                  onClick={() => { setShowAdvancedHeaders(!showAdvancedHeaders); }}
                   className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <span className={`transition-transform ${showAdvancedHeaders ? 'rotate-90' : ''}`}>▶</span>
@@ -518,13 +518,13 @@ export function CustomMcpDialog({
                     <div className="flex gap-2">
                       <Input
                         value={headerKey}
-                        onChange={(e) => setHeaderKey(e.target.value)}
+                        onChange={(e) => { setHeaderKey(e.target.value); }}
                         placeholder={t('mcp.headerName')}
                         className="flex-1"
                       />
                       <Input
                         value={headerValue}
-                        onChange={(e) => setHeaderValue(e.target.value)}
+                        onChange={(e) => { setHeaderValue(e.target.value); }}
                         placeholder={t('mcp.headerValue')}
                         className="flex-1"
                         type="password"
@@ -553,7 +553,7 @@ export function CustomMcpDialog({
                                 </span>
                               </span>
                               <button
-                                onClick={() => removeHeader(key)}
+                                onClick={() => { removeHeader(key); }}
                                 className="text-muted-foreground hover:text-destructive transition-colors"
                               >
                                 <X className="h-3 w-3" />
@@ -570,7 +570,7 @@ export function CustomMcpDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => { onOpenChange(false); }}>
             {t('common:cancel')}
           </Button>
           <Button onClick={handleSave} disabled={!isValid}>

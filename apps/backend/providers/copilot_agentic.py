@@ -49,10 +49,17 @@ from providers.types import AssistantMessage, TextBlock
 logger = logging.getLogger(__name__)
 
 _DEFAULT_COPILOT_PATH: str = "copilot"
-# Copilot CLI exposes a fixed model menu; default to the strongest available.
-_DEFAULT_MODEL: str = "claude-sonnet-4.5"
+# Copilot CLI exposes a fixed model menu (Anthropic/OpenAI/Google); default to a
+# strong current model. Unknown requests warn + fall back to the default below.
+_DEFAULT_MODEL: str = "claude-sonnet-4.6"
 _KNOWN_MODELS: frozenset[str] = frozenset(
-    {"claude-sonnet-4.5", "claude-sonnet-4", "gpt-5"}
+    {
+        "claude-opus-4.6",
+        "claude-sonnet-4.6",
+        "claude-haiku-4.5",
+        "gpt-5.3-codex",
+        "gemini-3-pro",
+    }
 )
 _DEFAULT_TIMEOUT: int = 600  # 10 minutes for agentic tasks
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")

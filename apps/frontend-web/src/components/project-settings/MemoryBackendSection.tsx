@@ -153,7 +153,7 @@ export function MemoryBackendSection({
             <Switch
               checked={settings.graphitiMcpEnabled}
               onCheckedChange={(checked) =>
-                onUpdateSettings({ graphitiMcpEnabled: checked })
+                { onUpdateSettings({ graphitiMcpEnabled: checked }); }
               }
             />
           </div>
@@ -167,7 +167,7 @@ export function MemoryBackendSection({
               <Input
                 placeholder="http://localhost:3101/mcp/"
                 value={settings.graphitiMcpUrl || ''}
-                onChange={(e) => onUpdateSettings({ graphitiMcpUrl: e.target.value || undefined })}
+                onChange={(e) => { onUpdateSettings({ graphitiMcpUrl: e.target.value || undefined }); }}
               />
             </div>
           )}
@@ -182,12 +182,12 @@ export function MemoryBackendSection({
             </p>
             <Select
               value={embeddingProvider}
-              onValueChange={(value) => onUpdateConfig({
+              onValueChange={(value) => { onUpdateConfig({
                 graphitiProviderConfig: {
                   ...envConfig.graphitiProviderConfig,
                   embeddingProvider: value as 'openai' | 'voyage' | 'azure_openai' | 'ollama' | 'google',
                 }
-              })}
+              }); }}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select embedding provider" />
@@ -230,7 +230,7 @@ export function MemoryBackendSection({
               )}
               <PasswordInput
                 value={envConfig.openaiKeyIsGlobal ? '' : (envConfig.openaiApiKey || '')}
-                onChange={(value) => onUpdateConfig({ openaiApiKey: value || undefined })}
+                onChange={(value) => { onUpdateConfig({ openaiApiKey: value || undefined }); }}
                 placeholder={envConfig.openaiKeyIsGlobal ? 'Enter to override global key...' : 'sk-xxxxxxxx'}
               />
             </div>
@@ -245,13 +245,13 @@ export function MemoryBackendSection({
               </p>
               <PasswordInput
                 value={envConfig.graphitiProviderConfig?.voyageApiKey || ''}
-                onChange={(value) => onUpdateConfig({
+                onChange={(value) => { onUpdateConfig({
                   graphitiProviderConfig: {
                     ...envConfig.graphitiProviderConfig,
                     embeddingProvider: 'voyage',
                     voyageApiKey: value || undefined,
                   }
-                })}
+                }); }}
                 placeholder="pa-xxxxxxxx"
               />
               <div className="space-y-1">
@@ -259,13 +259,13 @@ export function MemoryBackendSection({
                 <Input
                   placeholder="voyage-3"
                   value={envConfig.graphitiProviderConfig?.voyageEmbeddingModel || ''}
-                  onChange={(e) => onUpdateConfig({
+                  onChange={(e) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'voyage',
                       voyageEmbeddingModel: e.target.value || undefined,
                     }
-                  })}
+                  }); }}
                 />
               </div>
             </div>
@@ -280,13 +280,13 @@ export function MemoryBackendSection({
               </p>
               <PasswordInput
                 value={envConfig.graphitiProviderConfig?.googleApiKey || ''}
-                onChange={(value) => onUpdateConfig({
+                onChange={(value) => { onUpdateConfig({
                   graphitiProviderConfig: {
                     ...envConfig.graphitiProviderConfig,
                     embeddingProvider: 'google',
                     googleApiKey: value || undefined,
                   }
-                })}
+                }); }}
                 placeholder="AIzaSy..."
               />
             </div>
@@ -300,13 +300,13 @@ export function MemoryBackendSection({
                 <Label className="text-xs text-muted-foreground">API Key</Label>
                 <PasswordInput
                   value={envConfig.graphitiProviderConfig?.azureOpenaiApiKey || ''}
-                  onChange={(value) => onUpdateConfig({
+                  onChange={(value) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'azure_openai',
                       azureOpenaiApiKey: value || undefined,
                     }
-                  })}
+                  }); }}
                   placeholder="Azure API Key"
                 />
               </div>
@@ -315,13 +315,13 @@ export function MemoryBackendSection({
                 <Input
                   placeholder="https://your-resource.openai.azure.com"
                   value={envConfig.graphitiProviderConfig?.azureOpenaiBaseUrl || ''}
-                  onChange={(e) => onUpdateConfig({
+                  onChange={(e) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'azure_openai',
                       azureOpenaiBaseUrl: e.target.value || undefined,
                     }
-                  })}
+                  }); }}
                 />
               </div>
               <div className="space-y-1">
@@ -329,13 +329,13 @@ export function MemoryBackendSection({
                 <Input
                   placeholder="text-embedding-ada-002"
                   value={envConfig.graphitiProviderConfig?.azureOpenaiEmbeddingDeployment || ''}
-                  onChange={(e) => onUpdateConfig({
+                  onChange={(e) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'azure_openai',
                       azureOpenaiEmbeddingDeployment: e.target.value || undefined,
                     }
-                  })}
+                  }); }}
                 />
               </div>
             </div>
@@ -382,13 +382,13 @@ export function MemoryBackendSection({
                 <Input
                   placeholder="http://localhost:11434"
                   value={envConfig.graphitiProviderConfig?.ollamaBaseUrl || ''}
-                  onChange={(e) => onUpdateConfig({
+                  onChange={(e) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'ollama',
                       ollamaBaseUrl: e.target.value || undefined,
                     }
-                  })}
+                  }); }}
                 />
               </div>
 
@@ -437,13 +437,13 @@ export function MemoryBackendSection({
                   <Input
                     placeholder="nomic-embed-text"
                     value={envConfig.graphitiProviderConfig?.ollamaEmbeddingModel || ''}
-                    onChange={(e) => onUpdateConfig({
+                    onChange={(e) => { onUpdateConfig({
                       graphitiProviderConfig: {
                         ...envConfig.graphitiProviderConfig,
                         embeddingProvider: 'ollama',
                         ollamaEmbeddingModel: e.target.value || undefined,
                       }
-                    })}
+                    }); }}
                   />
                 )}
                 <p className="text-xs text-muted-foreground">
@@ -457,13 +457,13 @@ export function MemoryBackendSection({
                   type="number"
                   placeholder="768"
                   value={envConfig.graphitiProviderConfig?.ollamaEmbeddingDim || ''}
-                  onChange={(e) => onUpdateConfig({
+                  onChange={(e) => { onUpdateConfig({
                     graphitiProviderConfig: {
                       ...envConfig.graphitiProviderConfig,
                       embeddingProvider: 'ollama',
                       ollamaEmbeddingDim: parseInt(e.target.value) || undefined,
                     }
-                  })}
+                  }); }}
                 />
                 <p className="text-xs text-muted-foreground">
                   Required for Ollama embeddings (e.g., 768 for nomic-embed-text)
@@ -483,7 +483,7 @@ export function MemoryBackendSection({
             <Input
               placeholder="aifactory_memory"
               value={envConfig.graphitiDatabase || ''}
-              onChange={(e) => onUpdateConfig({ graphitiDatabase: e.target.value })}
+              onChange={(e) => { onUpdateConfig({ graphitiDatabase: e.target.value }); }}
             />
           </div>
 
@@ -495,7 +495,7 @@ export function MemoryBackendSection({
             <Input
               placeholder="~/.aifactory/memories"
               value={envConfig.graphitiDbPath || ''}
-              onChange={(e) => onUpdateConfig({ graphitiDbPath: e.target.value || undefined })}
+              onChange={(e) => { onUpdateConfig({ graphitiDbPath: e.target.value || undefined }); }}
             />
           </div>
         </>

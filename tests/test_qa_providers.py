@@ -522,7 +522,7 @@ class TestCodexCLIProviderInit:
     def test_default_values(self):
         """Default model, path, and timeout are set."""
         provider = CodexCLIProvider()
-        assert provider._model == "o4-mini"
+        assert provider._model == "gpt-5.3-codex"
         assert provider._codex_path == "codex"
         assert provider._timeout == 300
         assert provider._working_dir is None
@@ -558,13 +558,13 @@ class TestCodexCLIProviderBuildCommand:
     """Tests for CodexCLIProvider._build_command()."""
 
     def test_default_command_shape(self):
-        """Default command: [codex, -q, --model, o4-mini, --]."""
+        """Default command: [codex, -q, --model, gpt-5.3-codex, --]."""
         provider = CodexCLIProvider()
         cmd = provider._build_command()
         assert cmd[0] == "codex"
         assert "-q" in cmd
         assert "--model" in cmd
-        assert "o4-mini" in cmd
+        assert "gpt-5.3-codex" in cmd
         assert cmd[-1] == "--"
 
     def test_model_flag_present_when_set(self):

@@ -283,7 +283,7 @@ export function Insights({ projectId, onNavigate }: InsightsProps) {
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => setShowSidebar(!showSidebar)}
+              onClick={() => { setShowSidebar(!showSidebar); }}
               title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
             >
               {showSidebar ? (
@@ -466,7 +466,7 @@ export function Insights({ projectId, onNavigate }: InsightsProps) {
           <Textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={(e) => { setInputValue(e.target.value); }}
             onKeyDown={handleKeyDown}
             placeholder="Ask about your codebase..."
             className="min-h-[80px] resize-none"
@@ -648,10 +648,10 @@ function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
   if (tools.length === 0) return null;
 
   // Group tools by name for summary
-  const toolCounts = tools.reduce((acc, tool) => {
+  const toolCounts = tools.reduce<Record<string, number>>((acc, tool) => {
     acc[tool.name] = (acc[tool.name] || 0) + 1;
     return acc;
-  }, {} as Record<string, number>);
+  }, {});
 
   const getToolIcon = (toolName: string) => {
     switch (toolName) {
@@ -682,7 +682,7 @@ function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
   return (
     <div className="mt-2">
       <button
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => { setExpanded(!expanded); }}
         className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         <span className="flex items-center gap-1">

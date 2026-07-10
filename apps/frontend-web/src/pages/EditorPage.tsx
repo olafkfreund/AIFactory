@@ -208,7 +208,7 @@ export function EditorPage({ projectPath }: EditorPageProps) {
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => { window.removeEventListener('keydown', handleKeyDown); };
   }, [activeTab, tabs]);
 
   // Load directory listing
@@ -375,7 +375,7 @@ export function EditorPage({ projectPath }: EditorPageProps) {
                     ? 'bg-background text-foreground'
                     : 'text-muted-foreground hover:bg-accent'
                 }`}
-                onClick={() => setActiveTab(tab.path)}
+                onClick={() => { setActiveTab(tab.path); }}
               >
                 <span className="truncate max-w-[150px]">
                   {tab.isDirty && <span className="text-primary mr-1">*</span>}
@@ -405,7 +405,7 @@ export function EditorPage({ projectPath }: EditorPageProps) {
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-accent'
               }`}
-              onClick={() => setViewMode('editor')}
+              onClick={() => { setViewMode('editor'); }}
             >
               <Code className="h-3 w-3" />
               Edit
@@ -416,7 +416,7 @@ export function EditorPage({ projectPath }: EditorPageProps) {
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-accent'
               }`}
-              onClick={() => setViewMode('preview')}
+              onClick={() => { setViewMode('preview'); }}
             >
               <Eye className="h-3 w-3" />
               Preview
@@ -427,7 +427,7 @@ export function EditorPage({ projectPath }: EditorPageProps) {
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-accent'
               }`}
-              onClick={() => setViewMode('split')}
+              onClick={() => { setViewMode('split'); }}
             >
               <Columns className="h-3 w-3" />
               Split

@@ -115,7 +115,7 @@ export function GeneralSettings({
               <Switch
                 checked={settings.useClaudeMd ?? true}
                 onCheckedChange={(checked) =>
-                  setSettings({ ...settings, useClaudeMd: checked })
+                  { setSettings({ ...settings, useClaudeMd: checked }); }
                 }
               />
             </div>
@@ -153,7 +153,7 @@ export function GeneralSettings({
               <Switch
                 checked={settings.remoteControlByDefault ?? false}
                 onCheckedChange={(checked) =>
-                  setSettings({ ...settings, remoteControlByDefault: checked })
+                  { setSettings({ ...settings, remoteControlByDefault: checked }); }
                 }
               />
             </div>
@@ -182,7 +182,7 @@ export function GeneralSettings({
               <Switch
                 checked={settings.delegateByDefault ?? false}
                 onCheckedChange={(checked) =>
-                  setSettings({ ...settings, delegateByDefault: checked })
+                  { setSettings({ ...settings, delegateByDefault: checked }); }
                 }
               />
             </div>
@@ -207,7 +207,7 @@ export function GeneralSettings({
               <Switch
                 checked={settings.autoPr ?? false}
                 onCheckedChange={(checked) =>
-                  setSettings({ ...settings, autoPr: checked })
+                  { setSettings({ ...settings, autoPr: checked }); }
                 }
               />
             </div>
@@ -229,7 +229,7 @@ export function GeneralSettings({
                 checked={settings.autoMerge ?? false}
                 disabled={!(settings.autoPr ?? false)}
                 onCheckedChange={(checked) =>
-                  setSettings({ ...settings, autoMerge: checked })
+                  { setSettings({ ...settings, autoMerge: checked }); }
                 }
               />
             </div>
@@ -251,10 +251,10 @@ export function GeneralSettings({
                 value={settings.prReviewer ?? 'aifactory'}
                 disabled={!(settings.autoPr ?? false)}
                 onChange={(e) =>
-                  setSettings({
+                  { setSettings({
                     ...settings,
                     prReviewer: e.target.value as 'aifactory' | 'copilot' | 'any',
-                  })
+                  }); }
                 }
               >
                 <option value="aifactory">AIFactory (Claude/Ollama)</option>
@@ -275,13 +275,13 @@ export function GeneralSettings({
                 <Switch
                   checked={settings.notifications.onTaskComplete}
                   onCheckedChange={(checked) =>
-                    setSettings({
+                    { setSettings({
                       ...settings,
                       notifications: {
                         ...settings.notifications,
                         onTaskComplete: checked
                       }
-                    })
+                    }); }
                   }
                 />
               </div>
@@ -290,13 +290,13 @@ export function GeneralSettings({
                 <Switch
                   checked={settings.notifications.onTaskFailed}
                   onCheckedChange={(checked) =>
-                    setSettings({
+                    { setSettings({
                       ...settings,
                       notifications: {
                         ...settings.notifications,
                         onTaskFailed: checked
                       }
-                    })
+                    }); }
                   }
                 />
               </div>
@@ -305,13 +305,13 @@ export function GeneralSettings({
                 <Switch
                   checked={settings.notifications.onReviewNeeded}
                   onCheckedChange={(checked) =>
-                    setSettings({
+                    { setSettings({
                       ...settings,
                       notifications: {
                         ...settings.notifications,
                         onReviewNeeded: checked
                       }
-                    })
+                    }); }
                   }
                 />
               </div>
@@ -320,13 +320,13 @@ export function GeneralSettings({
                 <Switch
                   checked={settings.notifications.sound}
                   onCheckedChange={(checked) =>
-                    setSettings({
+                    { setSettings({
                       ...settings,
                       notifications: {
                         ...settings.notifications,
                         sound: checked
                       }
-                    })
+                    }); }
                   }
                 />
               </div>

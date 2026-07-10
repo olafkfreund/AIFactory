@@ -439,7 +439,7 @@ export function OllamaModelSelector({
                  isSelected && 'border-primary bg-primary/5',
                  !model.installed && 'bg-muted/30'
                )}
-               onClick={() => handleSelect(model)}
+               onClick={() => { handleSelect(model); }}
              >
                <div className="flex items-center justify-between p-3">
                  <div className="flex items-center gap-3">

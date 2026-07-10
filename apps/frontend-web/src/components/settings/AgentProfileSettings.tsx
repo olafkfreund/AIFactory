@@ -204,7 +204,7 @@ export function AgentProfileSettings() {
             {/* Header - Collapsible */}
             <button
               type="button"
-              onClick={() => setShowPhaseConfig(!showPhaseConfig)}
+              onClick={() => { setShowPhaseConfig(!showPhaseConfig); }}
               className="flex w-full items-center justify-between p-4 text-left hover:bg-muted/50 transition-colors rounded-t-lg"
             >
               <div>
