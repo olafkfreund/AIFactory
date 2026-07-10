@@ -185,7 +185,7 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         "/assets/",
         "/static/",
         "/api/auth/",  # Auth endpoints (register, login, refresh, logout)
-                       # Includes /api/auth/saml/* and /api/auth/identity-providers
+        # Includes /api/auth/saml/* and /api/auth/identity-providers
         "/api/email/auth/",  # OAuth callbacks (redirect from Microsoft/Google)
         # SCIM 2.0 (Epic #35 #41) — uses its own static Bearer-token auth
         # (``scim/auth.py``).  Bypassing the JWT middleware here lets the

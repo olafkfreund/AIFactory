@@ -39,9 +39,7 @@ class CredentialMixin:
         legacy_profiles_file = get_data_file("claude-profiles.json")
         if not profiles_file.exists() and legacy_profiles_file.exists():
             profiles_file = legacy_profiles_file
-            _log.debug(
-                f"[AgentService] Using legacy profiles file at {profiles_file}"
-            )
+            _log.debug(f"[AgentService] Using legacy profiles file at {profiles_file}")
         return profiles_file
 
     def _resolve_claude_token(

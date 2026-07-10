@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # Key conversion helpers
 # ============================================================================
 
+
 def _snake_to_camel(key: str) -> str:
     """Convert a snake_case string to camelCase."""
     parts = key.split("_")
@@ -42,6 +43,7 @@ def _convert_keys(obj: Any) -> Any:
 # ============================================================================
 # gh CLI helper (shared with routes/github.py)
 # ============================================================================
+
 
 def _run_gh(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict:
     """Run a gh CLI command and return the result.
@@ -93,7 +95,9 @@ def _map_gh_pr(pr: dict) -> dict:
         "body": pr.get("body", ""),
         "state": (pr.get("state", "OPEN") or "OPEN").lower(),
         "author": {
-            "login": author.get("login", "") if isinstance(author, dict) else str(author),
+            "login": author.get("login", "")
+            if isinstance(author, dict)
+            else str(author),
         },
         "headRefName": pr.get("headRefName", ""),
         "baseRefName": pr.get("baseRefName", ""),
@@ -125,6 +129,7 @@ def _map_gh_pr(pr: dict) -> dict:
 # Review file helpers
 # ============================================================================
 
+
 def _review_file_path(project_path: Path, pr_number: int) -> Path:
     """Canonical path for a stored PR review result."""
     return project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}.json"
@@ -137,12 +142,15 @@ def _review_index_path(project_path: Path) -> Path:
 
 def _review_logs_path(project_path: Path, pr_number: int) -> Path:
     """Canonical path for PR review execution logs."""
-    return project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}_logs.json"
+    return (
+        project_path / ".aifactory" / "github" / "pr" / f"review_{pr_number}_logs.json"
+    )
 
 
 # ============================================================================
 # Service class
 # ============================================================================
+
 
 class PRDataService:
     """Service class wrapping gh CLI commands for PR operations.
@@ -181,16 +189,22 @@ class PRDataService:
             ``{"success": False, "error": "..."}`` on failure.
         """
         args = [
-            "pr", "list",
-            "--json", _PR_JSON_FIELDS,
-            "--limit", "100",
+            "pr",
+            "list",
+            "--json",
+            _PR_JSON_FIELDS,
+            "--limit",
+            "100",
         ]
         if state and state in ("open", "closed", "merged", "all"):
             args.extend(["--state", state])
 
         result = _run_gh(args, cwd=str(project_path))
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to fetch pull requests")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to fetch pull requests"),
+            }
 
         try:
             prs_raw = json.loads(result["output"])
@@ -249,7 +263,9 @@ class PRDataService:
 
         # Build formatted markdown body
         review_body = self._build_review_comment_body(
-            pr_number, review_data, findings,
+            pr_number,
+            review_data,
+            findings,
         )
 
         # Post via gh CLI
@@ -258,7 +274,10 @@ class PRDataService:
             cwd=str(project_path),
         )
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to post review")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to post review"),
+            }
 
         # Update review metadata on disk (snake_case — matches backend format)
         posted_ids = [f.get("id") for f in findings if f.get("id")]
@@ -274,7 +293,10 @@ class PRDataService:
         except OSError:
             pass  # Non-fatal: review was posted but metadata update failed
 
-        return {"success": True, "data": {"posted": True, "findingsPosted": len(findings)}}
+        return {
+            "success": True,
+            "data": {"posted": True, "findingsPosted": len(findings)},
+        }
 
     # ------------------------------------------------------------------
     # Post general comment
@@ -305,7 +327,10 @@ class PRDataService:
             cwd=str(project_path),
         )
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to post comment")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to post comment"),
+            }
 
         return {"success": True, "data": {"posted": True}}
 
@@ -340,7 +365,10 @@ class PRDataService:
 
         result = _run_gh(args, cwd=str(project_path))
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to approve PR")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to approve PR"),
+            }
 
         return {"success": True, "data": {"approved": True}}
 
@@ -376,7 +404,10 @@ class PRDataService:
             cwd=str(project_path),
         )
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to merge PR")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to merge PR"),
+            }
 
         return {"success": True, "data": {"merged": True, "method": method}}
 
@@ -409,7 +440,10 @@ class PRDataService:
             cwd=str(project_path),
         )
         if not result["success"]:
-            return {"success": False, "error": result.get("error", "Failed to assign user")}
+            return {
+                "success": False,
+                "error": result.get("error", "Failed to assign user"),
+            }
 
         return {"success": True, "data": {"assigned": True, "username": username}}
 
@@ -455,13 +489,19 @@ class PRDataService:
         # SHA for PRs with more than 100 commits.
         result = _run_gh(
             [
-                "pr", "view", str(pr_number),
-                "--json", "headRefOid",
-                "--jq", ".headRefOid",
+                "pr",
+                "view",
+                str(pr_number),
+                "--json",
+                "headRefOid",
+                "--jq",
+                ".headRefOid",
             ],
             cwd=str(project_path),
         )
-        current_head_commit = result.get("output", "").strip() if result["success"] else None
+        current_head_commit = (
+            result.get("output", "").strip() if result["success"] else None
+        )
 
         # If no prior review, there are no "new" commits relative to a review
         if not last_reviewed_commit:
@@ -488,7 +528,8 @@ class PRDataService:
                 [
                     "api",
                     f"repos/{{owner}}/{{repo}}/compare/{last_reviewed_commit}...{current_head_commit}",
-                    "--jq", ".total_commits",
+                    "--jq",
+                    ".total_commits",
                 ],
                 cwd=str(project_path),
             )
@@ -550,7 +591,10 @@ class PRDataService:
         """
         review_file = _review_file_path(project_path, pr_number)
         if not review_file.exists():
-            return {"success": True, "data": {"deleted": False, "reason": "No review found"}}
+            return {
+                "success": True,
+                "data": {"deleted": False, "reason": "No review found"},
+            }
 
         try:
             review_file.unlink()
@@ -608,7 +652,9 @@ class PRDataService:
         """Build formatted markdown body from review findings."""
         parts: list[str] = []
         parts.append(f"## AI Code Review - PR #{pr_number}\n")
-        parts.append(f"**Overall Status:** {review_data.get('overall_status', 'comment')}\n")
+        parts.append(
+            f"**Overall Status:** {review_data.get('overall_status', 'comment')}\n"
+        )
 
         if review_data.get("summary"):
             parts.append(f"### Summary\n{review_data['summary']}\n")
@@ -640,6 +686,7 @@ class PRDataService:
 # ============================================================================
 # Singleton
 # ============================================================================
+
 
 @functools.cache
 def get_pr_data_service() -> PRDataService:

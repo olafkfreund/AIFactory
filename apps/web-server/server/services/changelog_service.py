@@ -20,6 +20,7 @@ from ..websockets.events import broadcast_event
 
 class ChangelogPhase(str, Enum):
     """Changelog generation phases."""
+
     STARTING = "starting"
     LOADING_DATA = "loading_data"
     ANALYZING = "analyzing"
@@ -55,6 +56,7 @@ PHASE_PATTERNS = [
 @dataclass
 class ChangelogProgress:
     """Changelog generation progress information."""
+
     project_id: str
     phase: ChangelogPhase
     progress: int
@@ -102,7 +104,9 @@ class ChangelogService:
     ) -> bool:
         """Start changelog generation for a project."""
         if self.is_running(project_id):
-            logger.warning(f"Changelog generation already running for project {project_id}")
+            logger.warning(
+                f"Changelog generation already running for project {project_id}"
+            )
             return False
 
         settings = get_settings()
@@ -117,18 +121,25 @@ class ChangelogService:
         # Use the web server's Python (which has shared dependencies)
         import os
         import sys
+
         python_path = sys.executable
 
         # Build command with request parameters
         cmd = [
             str(python_path),
             str(changelog_runner),
-            "--project", str(project_path),
-            "--source-mode", request.get("sourceMode", "tasks"),
-            "--version", request.get("version", "1.0.0"),
-            "--date", request.get("date", datetime.now().strftime("%Y-%m-%d")),
-            "--format", request.get("format", "keep-a-changelog"),
-            "--audience", request.get("audience", "user-facing"),
+            "--project",
+            str(project_path),
+            "--source-mode",
+            request.get("sourceMode", "tasks"),
+            "--version",
+            request.get("version", "1.0.0"),
+            "--date",
+            request.get("date", datetime.now().strftime("%Y-%m-%d")),
+            "--format",
+            request.get("format", "keep-a-changelog"),
+            "--audience",
+            request.get("audience", "user-facing"),
         ]
 
         # Add task IDs if present
@@ -154,8 +165,12 @@ class ChangelogService:
         if request.get("branchDiff"):
             branch_diff = request["branchDiff"]
             # Use ref (git-resolvable) if provided, fall back to display name
-            base = branch_diff.get("baseBranchRef") or branch_diff.get("baseBranch", "main")
-            compare = branch_diff.get("compareBranchRef") or branch_diff.get("compareBranch", "HEAD")
+            base = branch_diff.get("baseBranchRef") or branch_diff.get(
+                "baseBranch", "main"
+            )
+            compare = branch_diff.get("compareBranchRef") or branch_diff.get(
+                "compareBranch", "HEAD"
+            )
             cmd.extend(["--base-branch", base])
             cmd.extend(["--compare-branch", compare])
 
@@ -172,6 +187,7 @@ class ChangelogService:
         # Set up environment with PYTHONPATH pointing to backend.
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         from ..utils.subprocess_env import make_subprocess_env
+
         env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -180,7 +196,9 @@ class ChangelogService:
         backend_pythonpath = str(backend_path)
         runners_path = str(backend_path / "runners")
         if existing_pythonpath:
-            env["PYTHONPATH"] = f"{backend_pythonpath}:{runners_path}:{existing_pythonpath}"
+            env["PYTHONPATH"] = (
+                f"{backend_pythonpath}:{runners_path}:{existing_pythonpath}"
+            )
         else:
             env["PYTHONPATH"] = f"{backend_pythonpath}:{runners_path}"
 
@@ -194,7 +212,9 @@ class ChangelogService:
                     with open(backend_env_file, "r") as f:
                         for line in f:
                             if line.startswith("CLAUDE_CODE_OAUTH_TOKEN="):
-                                token = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                token = (
+                                    line.split("=", 1)[1].strip().strip('"').strip("'")
+                                )
                                 if token:
                                     env["CLAUDE_CODE_OAUTH_TOKEN"] = token
                                 break
@@ -215,7 +235,9 @@ class ChangelogService:
             self._current_phases[project_id] = ChangelogPhase.STARTING
 
             # Emit initial progress
-            await self._emit_progress(project_id, ChangelogPhase.STARTING, "Starting changelog generation...")
+            await self._emit_progress(
+                project_id, ChangelogPhase.STARTING, "Starting changelog generation..."
+            )
 
             # Start output processing in background
             asyncio.create_task(self._process_output(project_id, project_path, proc))
@@ -291,7 +313,11 @@ class ChangelogService:
                 await self._emit_complete(project_id, project_path)
             else:
                 # Failure - emit error with stderr
-                error_msg = "\n".join(stderr_lines) if stderr_lines else f"Changelog generation failed with exit code {return_code}"
+                error_msg = (
+                    "\n".join(stderr_lines)
+                    if stderr_lines
+                    else f"Changelog generation failed with exit code {return_code}"
+                )
                 logger.error(f"Changelog generation failed: {error_msg}")
                 await self._emit_error(project_id, error_msg)
 
@@ -312,27 +338,23 @@ class ChangelogService:
         return None
 
     async def _emit_progress(
-        self,
-        project_id: str,
-        phase: ChangelogPhase,
-        message: str
+        self, project_id: str, phase: ChangelogPhase, message: str
     ):
         """Emit progress event via WebSocket."""
         progress = PHASE_PROGRESS.get(phase, 0)
         logger.info(f"[{project_id}] Phase: {phase.value} ({progress}%) - {message}")
 
-        await broadcast_event("changelog:progress", {
-            "projectId": project_id,
-            "phase": phase.value,
-            "progress": progress,
-            "message": message
-        })
+        await broadcast_event(
+            "changelog:progress",
+            {
+                "projectId": project_id,
+                "phase": phase.value,
+                "progress": progress,
+                "message": message,
+            },
+        )
 
-    async def _emit_complete(
-        self,
-        project_id: str,
-        project_path: Path
-    ):
+    async def _emit_complete(self, project_id: str, project_path: Path):
         """Load generated file and emit completion event."""
         try:
             # Read the generated changelog
@@ -341,39 +363,49 @@ class ChangelogService:
                 content = changelog_path.read_text(encoding="utf-8")
             else:
                 content = "# Changelog\n\nNo changelog content was generated."
-                logger.warning(f"Generated changelog file not found at {changelog_path}")
+                logger.warning(
+                    f"Generated changelog file not found at {changelog_path}"
+                )
 
             logger.info(f"[{project_id}] Changelog generation complete")
 
-            await broadcast_event("changelog:complete", {
-                "projectId": project_id,
-                "success": True,
-                "changelog": content,
-                "version": "generated",  # Could extract from content if needed
-                "tasksIncluded": 0  # Could track this if needed
-            })
+            await broadcast_event(
+                "changelog:complete",
+                {
+                    "projectId": project_id,
+                    "success": True,
+                    "changelog": content,
+                    "version": "generated",  # Could extract from content if needed
+                    "tasksIncluded": 0,  # Could track this if needed
+                },
+            )
 
         except Exception as e:
             logger.error(f"Error reading generated changelog: {e}")
-            await self._emit_error(project_id, f"Failed to read generated changelog: {str(e)}")
+            await self._emit_error(
+                project_id, f"Failed to read generated changelog: {str(e)}"
+            )
 
     async def _emit_error(self, project_id: str, error: str):
         """Emit error event."""
         logger.error(f"[{project_id}] Error: {error}")
 
-        await broadcast_event("changelog:error", {
-            "projectId": project_id,
-            "error": error,
-            "phase": self._current_phases.get(project_id, ChangelogPhase.FAILED).value
-        })
+        await broadcast_event(
+            "changelog:error",
+            {
+                "projectId": project_id,
+                "error": error,
+                "phase": self._current_phases.get(
+                    project_id, ChangelogPhase.FAILED
+                ).value,
+            },
+        )
 
     async def _emit_stopped(self, project_id: str):
         """Emit stopped event."""
         logger.info(f"[{project_id}] Generation stopped")
 
-        await broadcast_event("changelog:stopped", {
-            "projectId": project_id
-        })
+        await broadcast_event("changelog:stopped", {"projectId": project_id})
 
     def _cleanup(self, project_id: str):
         """Clean up process references."""
