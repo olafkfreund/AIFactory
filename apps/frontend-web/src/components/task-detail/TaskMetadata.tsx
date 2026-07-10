@@ -202,7 +202,7 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
                 className={cn('text-xs', TASK_CATEGORY_COLORS[task.metadata.category])}
               >
                 {CategoryIcon[task.metadata.category] && (() => {
-                  const Icon = CategoryIcon[task.metadata.category!];
+                  const Icon = CategoryIcon[task.metadata.category];
                   return <Icon className="h-3 w-3 mr-1" />;
                 })()}
                 {TASK_CATEGORY_LABELS[task.metadata.category]}

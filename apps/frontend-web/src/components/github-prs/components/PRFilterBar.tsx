@@ -204,8 +204,8 @@ function FilterDropdown<T extends string>({
                 placeholder={searchPlaceholder}
                 className="h-7 text-xs pl-7 bg-muted/50 border-none focus-visible:ring-1 focus-visible:ring-primary/50"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                onKeyDown={(e) => e.stopPropagation()}
+                onChange={(e) => { setSearchTerm(e.target.value); }}
+                onKeyDown={(e) => { e.stopPropagation(); }}
               />
             </div>
           )}
@@ -268,7 +268,7 @@ function FilterDropdown<T extends string>({
               variant="ghost"
               size="sm"
               className="w-full justify-center text-xs h-7 hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => onChange([])}
+              onClick={() => { onChange([]); }}
             >
               {clearLabel}
             </Button>
@@ -303,12 +303,12 @@ export function PRFilterBar({
           <Input
             placeholder={t('prReview.searchPlaceholder')}
             value={filters.searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onChange={(e) => { onSearchChange(e.target.value); }}
             className="h-8 pl-9 bg-background/50 focus:bg-background transition-colors"
           />
           {filters.searchQuery && (
             <button
-              onClick={() => onSearchChange('')}
+              onClick={() => { onSearchChange(''); }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               aria-label={t('prReview.clearSearch')}
             >

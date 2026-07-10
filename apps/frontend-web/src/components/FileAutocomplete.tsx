@@ -159,7 +159,7 @@ export function FileAutocomplete({
   // Attach keyboard listener
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    return () => { document.removeEventListener('keydown', handleKeyDown); };
   }, [handleKeyDown]);
 
   // Get relative path from project root
@@ -210,8 +210,8 @@ export function FileAutocomplete({
               'focus:outline-none transition-colors',
               index === selectedIndex && 'bg-accent text-accent-foreground'
             )}
-            onClick={() => onSelect(file.name, file.path)}
-            onMouseEnter={() => setSelectedIndex(index)}
+            onClick={() => { onSelect(file.name, file.path); }}
+            onMouseEnter={() => { setSelectedIndex(index); }}
           >
             {file.isDirectory ? (
               <Folder className="h-4 w-4 text-muted-foreground shrink-0" />

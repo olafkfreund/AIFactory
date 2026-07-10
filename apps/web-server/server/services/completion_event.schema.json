@@ -11,7 +11,6 @@
     "task_id",
     "status",
     "phase",
-    "updated_at",
     "id",
     "specversion",
     "source",
@@ -25,9 +24,6 @@
     "task_id": { "type": "string", "minLength": 1 },
     "status": { "type": "string", "minLength": 1 },
     "phase": { "type": "string", "minLength": 1 },
-    "updated_at": { "type": "string", "format": "date-time" },
-    "event": { "type": "string" },
-    "schema_version": { "type": "string" },
     "correlation": {
       "type": "object",
       "properties": {

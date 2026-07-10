@@ -175,7 +175,7 @@ export function GitHubIssues({ onOpenSettings, onNavigateToTask }: GitHubIssuesP
           {selectedIssue ? (
             <IssueDetail
               issue={selectedIssue}
-              onInvestigate={() => handleInvestigate(selectedIssue)}
+              onInvestigate={() => { handleInvestigate(selectedIssue); }}
               investigationResult={
                 lastInvestigationResult?.issueNumber === selectedIssue.number
                   ? lastInvestigationResult
@@ -232,7 +232,7 @@ export function GitHubIssues({ onOpenSettings, onNavigateToTask }: GitHubIssuesP
             openWizard();
             startAnalysis();
           }}
-          onSkip={() => setShowGitHubSetup(false)}
+          onSkip={() => { setShowGitHubSetup(false); }}
         />
       )}
     </div>

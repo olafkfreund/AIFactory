@@ -160,7 +160,7 @@ export function DiffViewDialog({
                   key={idx}
                   file={file}
                   isExpanded={expandedFiles.has(idx)}
-                  onToggle={() => toggleFile(idx)}
+                  onToggle={() => { toggleFile(idx); }}
                 />
               ))}
             </div>

@@ -332,7 +332,7 @@ export function EnvConfigModal({
                     {claudeProfiles.map((profile) => (
                       <button
                         key={profile.id}
-                        onClick={() => setSelectedProfileId(profile.id)}
+                        onClick={() => { setSelectedProfileId(profile.id); }}
                         className={cn(
                           "w-full flex items-center gap-3 p-3 rounded-lg border-2 transition-colors text-left",
                           selectedProfileId === profile.id
@@ -466,7 +466,7 @@ export function EnvConfigModal({
             {/* Secondary: Manual Token Entry (Collapsible) */}
             <div className="space-y-3">
               <button
-                onClick={() => setShowManualEntry(!showManualEntry)}
+                onClick={() => { setShowManualEntry(!showManualEntry); }}
                 className="w-full flex items-center justify-between text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
                 <span>Enter token manually</span>
@@ -518,7 +518,7 @@ export function EnvConfigModal({
                         id="token"
                         type={showToken ? 'text' : 'password'}
                         value={token}
-                        onChange={(e) => setToken(e.target.value)}
+                        onChange={(e) => { setToken(e.target.value); }}
                         placeholder="Enter your token..."
                         className="pr-10 font-mono text-sm"
                         disabled={isSaving || isAuthenticating}
@@ -527,7 +527,7 @@ export function EnvConfigModal({
                         <TooltipTrigger asChild>
                           <button
                             type="button"
-                            onClick={() => setShowToken(!showToken)}
+                            onClick={() => { setShowToken(!showToken); }}
                             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                           >
                             {showToken ? (

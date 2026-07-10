@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { MotionConfig } from 'motion/react';
 import App from './App';
 // Distinctive self-hosted type — warm humanist UI sans + a terminal/retro mono
 import '@fontsource/hanken-grotesk/400.css';
@@ -24,7 +25,12 @@ initializeGitHubListeners();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <App />
+      {/* Respect prefers-reduced-motion for every Framer Motion animation
+          (pipeline rings, flying package-box, card springs) — the CSS keyframes
+          were already gated, this closes the JS-motion gap. */}
+      <MotionConfig reducedMotion="user">
+        <App />
+      </MotionConfig>
     </BrowserRouter>
   </React.StrictMode>
 );

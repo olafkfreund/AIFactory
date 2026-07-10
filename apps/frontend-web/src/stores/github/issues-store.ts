@@ -38,31 +38,31 @@ export const useIssuesStore = create<IssuesState>((set, get) => ({
   filterState: 'open',
 
   // Actions
-  setIssues: (issues) => set({ issues, error: null }),
+  setIssues: (issues) => { set({ issues, error: null }); },
 
-  addIssue: (issue) => set((state) => ({
+  addIssue: (issue) => { set((state) => ({
     issues: [issue, ...state.issues.filter(i => i.number !== issue.number)]
-  })),
+  })); },
 
-  updateIssue: (issueNumber, updates) => set((state) => ({
+  updateIssue: (issueNumber, updates) => { set((state) => ({
     issues: state.issues.map(issue =>
       issue.number === issueNumber ? { ...issue, ...updates } : issue
     )
-  })),
+  })); },
 
-  setLoading: (isLoading) => set({ isLoading }),
+  setLoading: (isLoading) => { set({ isLoading }); },
 
-  setError: (error) => set({ error, isLoading: false }),
+  setError: (error) => { set({ error, isLoading: false }); },
 
-  selectIssue: (selectedIssueNumber) => set({ selectedIssueNumber }),
+  selectIssue: (selectedIssueNumber) => { set({ selectedIssueNumber }); },
 
-  setFilterState: (filterState) => set({ filterState }),
+  setFilterState: (filterState) => { set({ filterState }); },
 
-  clearIssues: () => set({
+  clearIssues: () => { set({
     issues: [],
     selectedIssueNumber: null,
     error: null
-  }),
+  }); },
 
   // Selectors
   getSelectedIssue: () => {

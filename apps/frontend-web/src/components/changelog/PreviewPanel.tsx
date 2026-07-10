@@ -132,7 +132,7 @@ export function PreviewPanel({
             <Button
               variant={viewMode === 'markdown' ? 'default' : 'ghost'}
               size="sm"
-              onClick={() => setViewMode('markdown')}
+              onClick={() => { setViewMode('markdown'); }}
               className="h-7 px-3 text-xs"
             >
               Markdown
@@ -140,7 +140,7 @@ export function PreviewPanel({
             <Button
               variant={viewMode === 'preview' ? 'default' : 'ghost'}
               size="sm"
-              onClick={() => setViewMode('preview')}
+              onClick={() => { setViewMode('preview'); }}
               className="h-7 px-3 text-xs"
             >
               Preview
@@ -219,7 +219,7 @@ export function PreviewPanel({
                   ref={textareaRef}
                   className="flex-1 w-full resize-none font-mono text-sm"
                   value={generatedChangelog}
-                  onChange={(e) => onChangelogEdit(e.target.value)}
+                  onChange={(e) => { onChangelogEdit(e.target.value); }}
                   onPaste={onPaste}
                   placeholder="Generated changelog will appear here..."
                 />

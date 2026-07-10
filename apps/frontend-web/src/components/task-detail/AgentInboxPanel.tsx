@@ -141,7 +141,7 @@ export function AgentInboxPanel({ taskId }: AgentInboxPanelProps) {
       <div className="space-y-2">
         <Textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); }}
           onKeyDown={handleKeyDown}
           placeholder={t('tasks:agentInbox.placeholder')}
           rows={2}

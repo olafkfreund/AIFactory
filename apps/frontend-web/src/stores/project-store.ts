@@ -55,15 +55,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   activeProjectId: null,
   tabOrder: [],
 
-  setProjects: (projects) => set({ projects }),
+  setProjects: (projects) => { set({ projects }); },
 
   addProject: (project) =>
-    set((state) => ({
+    { set((state) => ({
       projects: [...state.projects, project]
-    })),
+    })); },
 
   removeProject: (projectId) =>
-    set((state) => {
+    { set((state) => {
       const isSelectedProject = state.selectedProjectId === projectId;
       // Clear localStorage if we're removing the currently selected project
       if (isSelectedProject) {
@@ -73,14 +73,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         projects: state.projects.filter((p) => p.id !== projectId),
         selectedProjectId: isSelectedProject ? null : state.selectedProjectId
       };
-    }),
+    }); },
 
   updateProject: (projectId, updates) =>
-    set((state) => ({
+    { set((state) => ({
       projects: state.projects.map((p) =>
         p.id === projectId ? { ...p, ...updates } : p
       )
-    })),
+    })); },
 
   selectProject: (projectId) => {
     // Persist to localStorage for restoration on app reload
@@ -92,9 +92,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ selectedProjectId: projectId });
   },
 
-  setLoading: (isLoading) => set({ isLoading }),
+  setLoading: (isLoading) => { set({ isLoading }); },
 
-  setError: (error) => set({ error }),
+  setError: (error) => { set({ error }); },
 
   // Tab management actions
   openProjectTab: (projectId) => {
@@ -188,7 +188,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     console.log('[ProjectStore] restoreTabState called - now handled by IPC');
   },
 
-  clearSwitchingState: () => set({ isSwitchingProject: false }),
+  clearSwitchingState: () => { set({ isSwitchingProject: false }); },
 
   // Original selectors
   getSelectedProject: () => {
@@ -343,7 +343,7 @@ export async function loadProjects(): Promise<void> {
         // consistent from the very first render.
         const lastSelectedId = localStorage.getItem(LAST_SELECTED_PROJECT_KEY);
         const projectExists = lastSelectedId && result.data.some((p) => p.id === lastSelectedId);
-        const targetId = projectExists ? lastSelectedId! : result.data[0].id;
+        const targetId = projectExists ? lastSelectedId : result.data[0].id;
         store.selectProject(targetId);
         store.openProjectTab(targetId); // also sets activeProjectId
       }

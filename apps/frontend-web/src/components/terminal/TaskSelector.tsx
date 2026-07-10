@@ -41,7 +41,7 @@ export function TaskSelector({
               phaseConfig.color,
               'hover:opacity-80 cursor-pointer'
             )}
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); }}
           >
             {executionPhase === 'planning' || executionPhase === 'coding' || executionPhase === 'qa_review' || executionPhase === 'qa_fixing' ? (
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -77,7 +77,7 @@ export function TaskSelector({
               {backlogTasks.filter(t => t.id !== associatedTask.id).slice(0, 5).map((task) => (
                 <DropdownMenuItem
                   key={task.id}
-                  onClick={() => onTaskSelect(task.id)}
+                  onClick={() => { onTaskSelect(task.id); }}
                   className="text-xs"
                 >
                   <ListTodo className="h-3 w-3 mr-2 text-muted-foreground" />
@@ -110,7 +110,7 @@ export function TaskSelector({
       <DropdownMenuTrigger asChild>
         <button
           className="flex items-center gap-1.5 h-6 px-2 rounded text-[10px] font-medium transition-colors border border-border/50 bg-card/50 hover:bg-card hover:border-border text-muted-foreground hover:text-foreground"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
         >
           <ListTodo className="h-3 w-3" />
           <span>Select task...</span>
@@ -126,7 +126,7 @@ export function TaskSelector({
             {backlogTasks.slice(0, 8).map((task) => (
               <DropdownMenuItem
                 key={task.id}
-                onClick={() => onTaskSelect(task.id)}
+                onClick={() => { onTaskSelect(task.id); }}
                 className="text-xs"
               >
                 <ListTodo className="h-3 w-3 mr-2 text-muted-foreground" />

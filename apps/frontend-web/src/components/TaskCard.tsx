@@ -428,7 +428,7 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
                 href={task.metadata.copilotDispatch.issue_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); }}
                 className="text-[10px] px-1.5 py-0.5 rounded-sm bg-warning/10 text-warning hover:bg-warning/20 transition-colors"
               >
                 #{task.metadata.copilotDispatch.issue_number}
@@ -439,7 +439,7 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
                 href={task.metadata.copilotDispatch.pr_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); }}
                 className="text-[10px] px-1.5 py-0.5 rounded-sm bg-info/10 text-info hover:bg-info/20 transition-colors"
               >
                 PR #{task.metadata.copilotDispatch.pr_number}
@@ -453,7 +453,7 @@ export const TaskCard = memo(function TaskCard({ task, onClick }: TaskCardProps)
               >
                 {CategoryIcon[task.metadata.category] && (
                   (() => {
-                    const Icon = CategoryIcon[task.metadata.category!];
+                    const Icon = CategoryIcon[task.metadata.category];
                     return <Icon className="h-2.5 w-2.5 mr-0.5" />;
                   })()
                 )}

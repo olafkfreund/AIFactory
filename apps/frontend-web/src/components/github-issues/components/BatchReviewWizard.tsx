@@ -280,8 +280,8 @@ export function BatchReviewWizard({
                 index={idx}
                 isSelected={selectedBatchIds.has(idx)}
                 isExpanded={expandedBatchIds.has(idx)}
-                onToggleSelect={() => toggleBatchSelection(idx)}
-                onToggleExpand={() => toggleBatchExpanded(idx)}
+                onToggleSelect={() => { toggleBatchSelection(idx); }}
+                onToggleExpand={() => { toggleBatchExpanded(idx); }}
               />
             ))}
           </div>
@@ -296,7 +296,7 @@ export function BatchReviewWizard({
                 {singleIssues.slice(0, 10).map((issue) => (
                   <div
                     key={issue.issueNumber}
-                    onClick={() => toggleSingleIssueSelection(issue.issueNumber)}
+                    onClick={() => { toggleSingleIssueSelection(issue.issueNumber); }}
                     className={`p-2 rounded border text-sm truncate cursor-pointer transition-colors ${
                       selectedSingleIssueNumbers.has(issue.issueNumber)
                         ? 'border-primary bg-primary/5'
@@ -306,8 +306,8 @@ export function BatchReviewWizard({
                     <Checkbox
                       checked={selectedSingleIssueNumbers.has(issue.issueNumber)}
                       className="inline-block mr-2"
-                      onClick={(e) => e.stopPropagation()}
-                      onCheckedChange={() => toggleSingleIssueSelection(issue.issueNumber)}
+                      onClick={(e) => { e.stopPropagation(); }}
+                      onCheckedChange={() => { toggleSingleIssueSelection(issue.issueNumber); }}
                     />
                     <span className="text-muted-foreground">#{issue.issueNumber}</span>{' '}
                     {issue.title}

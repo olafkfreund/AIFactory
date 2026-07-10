@@ -37,7 +37,7 @@ export function InsightsModelSelector({
   useEffect(() => {
     loadInsightsProviders(projectId);
     const interval = setInterval(() => loadInsightsProviders(projectId), 30000);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [projectId]);
 
   const currentProvider = currentConfig?.provider || 'claude';
@@ -111,11 +111,11 @@ export function InsightsModelSelector({
                     return (
                       <DropdownMenuItem
                         key={`${provider.provider}-${model.id}`}
-                        onClick={() => handleSelectProviderModel(
-                          provider.provider as InsightsProvider,
+                        onClick={() => { handleSelectProviderModel(
+                          provider.provider,
                           model.id,
                           model.label
-                        )}
+                        ); }}
                         className="flex cursor-pointer items-center gap-2 pl-4"
                       >
                         <div className="min-w-0 flex-1">
@@ -135,7 +135,7 @@ export function InsightsModelSelector({
           {/* Custom */}
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onClick={() => setShowCustomModal(true)}
+            onClick={() => { setShowCustomModal(true); }}
             className="flex cursor-pointer items-center gap-2"
           >
             <Sliders className="h-4 w-4 shrink-0" />
@@ -154,7 +154,7 @@ export function InsightsModelSelector({
         currentConfig={currentConfig}
         availableProviders={availableProviders}
         onSave={handleCustomSave}
-        onClose={() => setShowCustomModal(false)}
+        onClose={() => { setShowCustomModal(false); }}
       />
     </>
   );

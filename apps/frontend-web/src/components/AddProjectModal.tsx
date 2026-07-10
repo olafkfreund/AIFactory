@@ -217,7 +217,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
           <div className="flex rounded-lg border border-border p-1 bg-muted/30">
             <button
               type="button"
-              onClick={() => setMode('local')}
+              onClick={() => { setMode('local'); }}
               className={cn(
                 'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
                 mode === 'local'
@@ -229,7 +229,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
             </button>
             <button
               type="button"
-              onClick={() => setMode('clone')}
+              onClick={() => { setMode('clone'); }}
               className={cn(
                 'flex-1 text-sm font-medium rounded-md px-3 py-1.5 transition-colors',
                 mode === 'clone'
@@ -251,7 +251,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                   id="git-url"
                   placeholder={t('addProject.gitUrlPlaceholder', 'https://github.com/owner/repo.git')}
                   value={gitUrl}
-                  onChange={(e) => setGitUrl(e.target.value)}
+                  onChange={(e) => { setGitUrl(e.target.value); }}
                   onKeyDown={handleKeyDown}
                   autoFocus
                 />
@@ -271,7 +271,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                     id="git-branch"
                     placeholder={t('addProject.gitBranchPlaceholder', 'main')}
                     value={gitBranch}
-                    onChange={(e) => setGitBranch(e.target.value)}
+                    onChange={(e) => { setGitBranch(e.target.value); }}
                     onKeyDown={handleKeyDown}
                   />
                 </div>
@@ -283,7 +283,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                     id="git-name"
                     placeholder={t('addProject.gitNamePlaceholder', 'Defaults to repo basename')}
                     value={gitName}
-                    onChange={(e) => setGitName(e.target.value)}
+                    onChange={(e) => { setGitName(e.target.value); }}
                     onKeyDown={handleKeyDown}
                   />
                 </div>
@@ -301,7 +301,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                 id="projects-folder"
                 placeholder="/home/user/projects"
                 value={projectsFolder}
-                onChange={(e) => setProjectsFolder(e.target.value)}
+                onChange={(e) => { setProjectsFolder(e.target.value); }}
                 onKeyDown={handleKeyDown}
               />
               <Button
@@ -330,7 +330,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                   <Button
                     variant={showClaudeReadyOnly ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setShowClaudeReadyOnly(!showClaudeReadyOnly)}
+                    onClick={() => { setShowClaudeReadyOnly(!showClaudeReadyOnly); }}
                     className="h-6 text-xs"
                   >
                     <FileText className="h-3 w-3 mr-1" />
@@ -343,7 +343,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                   {filteredProjects.map((proj) => (
                     <button
                       key={proj.path}
-                      onClick={() => setSelectedProject(proj)}
+                      onClick={() => { setSelectedProject(proj); }}
                       className={cn(
                         'w-full flex items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors',
                         'hover:bg-accent/50',
@@ -405,7 +405,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
                 id="custom-path"
                 placeholder="/home/user/projects/my-project"
                 value={customPath}
-                onChange={(e) => setCustomPath(e.target.value)}
+                onChange={(e) => { setCustomPath(e.target.value); }}
                 onKeyDown={handleKeyDown}
                 autoFocus
               />
@@ -431,7 +431,7 @@ export function AddProjectModal({ open, onOpenChange, onProjectAdded }: AddProje
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isAdding}>
+          <Button variant="outline" onClick={() => { onOpenChange(false); }} disabled={isAdding}>
             Cancel
           </Button>
           <Button

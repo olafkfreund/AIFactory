@@ -84,7 +84,7 @@ export function GitHubIntegrationSection({
         </div>
         <Switch
           checked={envConfig.githubEnabled}
-          onCheckedChange={(checked) => onUpdateConfig({ githubEnabled: checked })}
+          onCheckedChange={(checked) => { onUpdateConfig({ githubEnabled: checked }); }}
         />
       </div>
 
@@ -98,7 +98,7 @@ export function GitHubIntegrationSection({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => onUpdateConfig({ githubToken: '', githubAuthMethod: undefined })}
+                  onClick={() => { onUpdateConfig({ githubToken: '', githubAuthMethod: undefined }); }}
                   className="text-muted-foreground hover:text-foreground"
                 >
                   Use Manual Token
@@ -116,7 +116,7 @@ export function GitHubIntegrationSection({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setShowOAuthFlow(false)}
+                  onClick={() => { setShowOAuthFlow(false); }}
                 >
                   Use Manual Token
                 </Button>
@@ -124,7 +124,7 @@ export function GitHubIntegrationSection({
               <GitHubOAuthFlow
                 projectId={projectId}
                 onSuccess={handleOAuthSuccess}
-                onCancel={() => setShowOAuthFlow(false)}
+                onCancel={() => { setShowOAuthFlow(false); }}
               />
             </div>
           ) : (
@@ -134,7 +134,7 @@ export function GitHubIntegrationSection({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setShowOAuthFlow(true)}
+                  onClick={() => { setShowOAuthFlow(true); }}
                   className="gap-2"
                 >
                   <KeyRound className="h-3 w-3" />
@@ -168,7 +168,7 @@ export function GitHubIntegrationSection({
             <Input
               placeholder="owner/repository"
               value={envConfig.githubRepo || ''}
-              onChange={(e) => onUpdateConfig({ githubRepo: e.target.value })}
+              onChange={(e) => { onUpdateConfig({ githubRepo: e.target.value }); }}
             />
           </div>
 
@@ -214,7 +214,7 @@ export function GitHubIntegrationSection({
             </div>
             <Switch
               checked={envConfig.githubAutoSync || false}
-              onCheckedChange={(checked) => onUpdateConfig({ githubAutoSync: checked })}
+              onCheckedChange={(checked) => { onUpdateConfig({ githubAutoSync: checked }); }}
             />
           </div>
         </>
