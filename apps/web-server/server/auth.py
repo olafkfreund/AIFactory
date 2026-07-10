@@ -45,7 +45,6 @@ import hmac
 import logging
 
 from fastapi import HTTPException, Request, WebSocket, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -53,9 +52,6 @@ from starlette.responses import JSONResponse
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# Bearer token security scheme for OpenAPI docs
-bearer_scheme = HTTPBearer(auto_error=False)
 
 # One-time deprecation flags (#555). The legacy wildcard API_TOKEN and the
 # WS-terminal ``?token=`` query param are still honored for backward
@@ -327,38 +323,6 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
             {"error": "Invalid token"},
             status_code=status.HTTP_401_UNAUTHORIZED,
         )
-
-
-async def verify_token(
-    credentials: HTTPAuthorizationCredentials | None = None,
-) -> str:
-    """Dependency to verify bearer token in route handlers.
-
-    Accepts both JWT tokens and legacy API tokens.
-    """
-    if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    token = credentials.credentials
-
-    # Accept valid JWT access tokens
-    if _try_decode_jwt(token) is not None:
-        return token
-
-    # Accept legacy API token (deprecated wildcard — see #555)
-    if _is_legacy_api_token(token):
-        _warn_legacy_api_token_once()
-        return token
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid token",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
 
 
 async def verify_websocket_token(websocket: WebSocket) -> bool:
