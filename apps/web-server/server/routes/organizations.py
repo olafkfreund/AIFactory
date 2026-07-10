@@ -14,7 +14,6 @@ Provides:
 """
 
 import logging
-import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
+from ..utils.slug import slugify
 from .auth_routes import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -52,16 +52,6 @@ def _role_level(role: str) -> int:
 # ---------------------------------------------------------------------------
 # Slug helpers
 # ---------------------------------------------------------------------------
-
-
-def _slugify(text: str) -> str:
-    """Convert a string to a URL-friendly slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    text = text.strip("-")
-    return text
 
 
 async def _ensure_unique_slug(
@@ -248,7 +238,7 @@ async def create_organization(
     """Create a new organization and add the current user as owner."""
 
     # Generate or validate slug
-    raw_slug = _slugify(body.slug) if body.slug else _slugify(body.name)
+    raw_slug = slugify(body.slug) if body.slug else slugify(body.name)
     if not raw_slug:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -419,7 +409,7 @@ async def update_organization(
         org.name = body.name
 
     if body.slug is not None:
-        new_slug = _slugify(body.slug)
+        new_slug = slugify(body.slug)
         if not new_slug:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

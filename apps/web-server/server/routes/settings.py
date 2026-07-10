@@ -345,6 +345,25 @@ def get_settings_file() -> Path:
     return Path(settings.PROJECTS_DATA_DIR) / "settings.json"
 
 
+def _read_json_store(name: str, default: Any) -> Any:
+    """Read <name> from PROJECTS_DATA_DIR, returning default if missing/corrupt."""
+    store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
+    if store_file.exists():
+        try:
+            return json.loads(store_file.read_text())
+        except json.JSONDecodeError:
+            pass
+    return default
+
+
+def _write_json_store(name: str, data: Any) -> None:
+    """Write data as pretty JSON to <name> in PROJECTS_DATA_DIR with 0o600 perms."""
+    store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
+    store_file.parent.mkdir(parents=True, exist_ok=True)
+    store_file.write_text(json.dumps(data, indent=2))
+    store_file.chmod(0o600)
+
+
 def load_app_settings() -> AppSettings:
     """Load application settings from disk."""
     settings_file = get_settings_file()
@@ -998,14 +1017,8 @@ def get_tab_state_file() -> Path:
 @router.get("/tab-state")
 async def get_tab_state():
     """Get saved tab state."""
-    tab_file = get_tab_state_file()
-    if tab_file.exists():
-        try:
-            data = json.loads(tab_file.read_text())
-            return {"success": True, "data": data}
-        except json.JSONDecodeError:
-            pass
-    return {"success": True, "data": {"tabs": [], "activeTabId": None}}
+    data = _read_json_store("tab-state.json", {"tabs": [], "activeTabId": None})
+    return {"success": True, "data": data}
 
 
 @router.put("/tab-state")
@@ -1081,11 +1094,7 @@ def load_profiles() -> dict:
 
 def save_profiles(data: dict) -> None:
     """Save Claude profiles with secure file permissions."""
-    profiles_file = get_profiles_file()
-    profiles_file.parent.mkdir(parents=True, exist_ok=True)
-    profiles_file.write_text(json.dumps(data, indent=2))
-    # Set secure file permissions (owner read/write only) since profiles contain tokens
-    profiles_file.chmod(0o600)
+    _write_json_store("claude-profiles.json", data)
     # Drop the cached Claude token pool so a profile change made here (the single
     # chokepoint for every profile mutation: create / update / activate / delete /
     # oauth-poll) takes effect on the NEXT build with no pod restart — the pool is
@@ -1577,16 +1586,9 @@ def get_auto_switch_file() -> Path:
 @router.get("/auto-switch")
 async def get_auto_switch_settings():
     """Get auto-switch settings."""
-    auto_switch_file = get_auto_switch_file()
-    if auto_switch_file.exists():
-        try:
-            data = json.loads(auto_switch_file.read_text())
-            return {"success": True, "data": data}
-        except json.JSONDecodeError:
-            pass
-    return {
-        "success": True,
-        "data": {
+    data = _read_json_store(
+        "auto-switch.json",
+        {
             "enabled": False,
             "threshold": 80,
             "proactiveSwapEnabled": True,
@@ -1595,7 +1597,8 @@ async def get_auto_switch_settings():
             "sessionThreshold": 95,
             "weeklyThreshold": 99,
         },
-    }
+    )
+    return {"success": True, "data": data}
 
 
 @router.patch("/auto-switch")
@@ -1637,16 +1640,8 @@ async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate)
         update_dict = settings_update.model_dump(exclude_none=True)
         current.update(update_dict)
         
-        # Ensure parent directory exists
-        auto_switch_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write updated settings with pretty formatting
-        auto_switch_file.write_text(json.dumps(current, indent=2))
-        
-        # Set secure file permissions (owner read/write only)
-        # Following security pattern from save_profiles() and other Phase 2/3 endpoints
-        auto_switch_file.chmod(0o600)
-        
+        _write_json_store("auto-switch.json", current)
+
         return {"success": True, "data": current}
         
     except Exception as e:
@@ -1851,13 +1846,9 @@ def get_api_profiles_file() -> Path:
 
 def load_api_profiles() -> dict:
     """Load API profiles."""
-    profiles_file = get_api_profiles_file()
-    if profiles_file.exists():
-        try:
-            return json.loads(profiles_file.read_text())
-        except json.JSONDecodeError:
-            pass
-    return {"profiles": [], "activeProfileId": None}
+    return _read_json_store(
+        "api-profiles.json", {"profiles": [], "activeProfileId": None}
+    )
 
 
 def save_api_profiles(data: dict) -> None:
@@ -1866,11 +1857,7 @@ def save_api_profiles(data: dict) -> None:
     Security: Sets file permissions to 0o600 (owner read/write only) to protect
     sensitive API keys and tokens stored in the profiles.
     """
-    profiles_file = get_api_profiles_file()
-    profiles_file.parent.mkdir(parents=True, exist_ok=True)
-    profiles_file.write_text(json.dumps(data, indent=2))
-    # Set secure file permissions to protect API keys (owner read/write only)
-    profiles_file.chmod(0o600)
+    _write_json_store("api-profiles.json", data)
 
 
 @router.get("/api-profiles")

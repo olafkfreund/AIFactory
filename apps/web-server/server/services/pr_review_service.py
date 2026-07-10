@@ -13,6 +13,7 @@ Follows the same subprocess + WebSocket pattern as agent_service.py:
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -539,12 +540,7 @@ class PRReviewService:
 
 
 # Singleton instance
-_pr_review_service: PRReviewService | None = None
-
-
+@functools.cache
 def get_pr_review_service() -> PRReviewService:
     """Get the singleton PRReviewService instance."""
-    global _pr_review_service
-    if _pr_review_service is None:
-        _pr_review_service = PRReviewService()
-    return _pr_review_service
+    return PRReviewService()

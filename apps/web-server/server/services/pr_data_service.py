@@ -10,6 +10,7 @@ All operations accept a project_path parameter so that `gh` runs with
 the correct working directory (and therefore the correct GitHub remote).
 """
 
+import functools
 import json
 import logging
 from datetime import datetime
@@ -640,12 +641,7 @@ class PRDataService:
 # Singleton
 # ============================================================================
 
-_pr_data_service: PRDataService | None = None
-
-
+@functools.cache
 def get_pr_data_service() -> PRDataService:
     """Get the singleton PRDataService instance."""
-    global _pr_data_service
-    if _pr_data_service is None:
-        _pr_data_service = PRDataService()
-    return _pr_data_service
+    return PRDataService()

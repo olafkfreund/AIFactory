@@ -5,6 +5,7 @@ Wraps the changelog_runner.py CLI as an async service with real-time progress st
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -381,12 +382,7 @@ class ChangelogService:
 
 
 # Singleton instance
-_changelog_service: ChangelogService | None = None
-
-
+@functools.cache
 def get_changelog_service() -> ChangelogService:
     """Get the global changelog service instance."""
-    global _changelog_service
-    if _changelog_service is None:
-        _changelog_service = ChangelogService()
-    return _changelog_service
+    return ChangelogService()

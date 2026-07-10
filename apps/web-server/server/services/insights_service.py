@@ -6,6 +6,7 @@ Streams responses via WebSocket and persists sessions to disk.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -534,12 +535,7 @@ class InsightsService:
 
 
 # Global service instance
-_insights_service: InsightsService | None = None
-
-
+@functools.cache
 def get_insights_service() -> InsightsService:
     """Get the global insights service instance."""
-    global _insights_service
-    if _insights_service is None:
-        _insights_service = InsightsService()
-    return _insights_service
+    return InsightsService()
