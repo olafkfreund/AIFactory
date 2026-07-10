@@ -504,7 +504,7 @@ def load_claude_md(project_dir: Path) -> str | None:
     return None
 
 
-def _graphify_server_config(agent_type: str, graph_json: Path) -> dict | None:
+def _graphify_server_config(agent_type: str, graph_json: Path) -> dict[str, Any] | None:
     """MCP server dict for the opt-in graphify code-graph tool, or None.
 
     Returns None (tool stays off) unless ALL hold: agent is the coder, the
