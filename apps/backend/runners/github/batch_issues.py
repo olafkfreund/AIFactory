@@ -28,8 +28,8 @@ try:
     from .batch_validator import BatchValidator
     from .file_lock import locked_json_write
 except (ImportError, ValueError, SystemError):
-    from batch_validator import BatchValidator
-    from file_lock import locked_json_write
+    from batch_validator import BatchValidator  # type: ignore[no-redef]
+    from file_lock import locked_json_write  # type: ignore[no-redef]
 
 
 class ClaudeBatchAnalyzer:
