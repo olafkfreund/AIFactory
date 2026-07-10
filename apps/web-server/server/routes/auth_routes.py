@@ -10,7 +10,6 @@ Provides:
 """
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 import bcrypt as _bcrypt
@@ -24,6 +23,7 @@ from ..auth import _try_decode_jwt
 from ..config import get_settings
 from ..database import Organization, OrgMember, User
 from ..database.engine import get_db
+from ..utils.slug import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -126,15 +126,6 @@ def _create_refresh_token(user: User) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
 
-def _slugify(text: str) -> str:
-    """Convert a string to a URL-friendly slug."""
-    text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
-    text = re.sub(r"-+", "-", text)
-    return text
-
-
 # ---------------------------------------------------------------------------
 # Dependency: get current user from JWT in request.state
 # ---------------------------------------------------------------------------
@@ -235,7 +226,7 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.flush()  # Populate user.id before creating org
 
     # Create default organization
-    slug = _slugify(body.name) + "-personal"
+    slug = slugify(body.name) + "-personal"
     # Ensure slug uniqueness by appending a short suffix if needed
     existing_slug = await db.execute(
         select(Organization).where(Organization.slug == slug)

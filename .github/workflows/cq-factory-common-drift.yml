@@ -1,0 +1,72 @@
+name: factory_common drift
+
+# Keeps the vendored apps/backend/factory_common/ copy byte-identical to the
+# canonical shared/factory-common/factory_common/ layer in the Factory hub
+# (epic Factory#154, issue Factory#161). The hub is the single source of truth;
+# this gate fails the build if the local copy drifts from the hub at the SHA
+# pinned in apps/backend/factory_common/.hub-sha.
+#
+# This mirrors the config-drift job in cq-ratchet.yml (which does the same for
+# the vendored standards/ baseline): check out the hub at the pinned SHA and
+# diff the tracked files byte-for-byte.
+
+on:
+  pull_request:
+    branches: [dev, main, "feat/**", "release/**"]
+    paths:
+      - "apps/backend/factory_common/**"
+      - ".github/workflows/cq-factory-common-drift.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "apps/backend/factory_common/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-common-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: vendored factory_common matches the hub canonical
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aifactory
+
+      - name: Read pinned hub SHA
+        id: pin
+        run: echo "sha=$(cat aifactory/apps/backend/factory_common/.hub-sha)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out hub factory-common at the pinned SHA
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: ${{ steps.pin.outputs.sha }}
+          path: factory-hub
+          # If Factory is private, a token with read access is needed here.
+        continue-on-error: true
+        id: hub
+
+      - name: Diff vendored factory_common against the pinned hub canonical
+        if: steps.hub.outcome == 'success'
+        run: |
+          set -e
+          canonical="factory-hub/shared/factory-common/factory_common"
+          vendored="aifactory/apps/backend/factory_common"
+          for f in __init__.py http.py secrets.py; do
+            if ! diff "$vendored/$f" "$canonical/$f"; then
+              echo "DRIFT: $vendored/$f diverged from the hub canonical ($canonical/$f)."
+              echo "Re-vendor from the hub and bump apps/backend/factory_common/.hub-sha,"
+              echo "or land the change in shared/factory-common/ in the hub first."
+              exit 1
+            fi
+          done
+          echo "No drift: vendored factory_common matches the pinned hub canonical."
+
+      - name: Hub unavailable (private repo / no token)
+        if: steps.hub.outcome != 'success'
+        run: echo "Hub checkout unavailable; skipping drift diff (configure a read token to enforce)."

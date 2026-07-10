@@ -6,6 +6,7 @@ enabling task execution with real-time streaming of logs and progress.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -1483,12 +1484,7 @@ class AgentService(
 
 
 # Global service instance
-_agent_service: AgentService | None = None
-
-
+@functools.cache
 def get_agent_service() -> AgentService:
     """Get the global agent service instance."""
-    global _agent_service
-    if _agent_service is None:
-        _agent_service = AgentService()
-    return _agent_service
+    return AgentService()

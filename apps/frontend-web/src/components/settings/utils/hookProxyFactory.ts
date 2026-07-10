@@ -11,38 +11,7 @@ import type { MutableRefObject } from 'react';
 export function createHookProxy(
   hookRef: MutableRefObject<UseProjectSettingsReturn>
 ): UseProjectSettingsReturn {
-  return {
-    get settings() { return hookRef.current.settings; },
-    get setSettings() { return hookRef.current.setSettings; },
-    get isSaving() { return hookRef.current.isSaving; },
-    get error() { return hookRef.current.error; },
-    get setError() { return hookRef.current.setError; },
-    get versionInfo() { return hookRef.current.versionInfo; },
-    get isCheckingVersion() { return hookRef.current.isCheckingVersion; },
-    get isUpdating() { return hookRef.current.isUpdating; },
-    get envConfig() { return hookRef.current.envConfig; },
-    get setEnvConfig() { return hookRef.current.setEnvConfig; },
-    get isLoadingEnv() { return hookRef.current.isLoadingEnv; },
-    get envError() { return hookRef.current.envError; },
-    get setEnvError() { return hookRef.current.setEnvError; },
-    get isSavingEnv() { return hookRef.current.isSavingEnv; },
-    get updateEnvConfig() { return hookRef.current.updateEnvConfig; },
-    get showClaudeToken() { return hookRef.current.showClaudeToken; },
-    get setShowClaudeToken() { return hookRef.current.setShowClaudeToken; },
-    get showOpenAIKey() { return hookRef.current.showOpenAIKey; },
-    get setShowOpenAIKey() { return hookRef.current.setShowOpenAIKey; },
-    get showGitHubToken() { return hookRef.current.showGitHubToken; },
-    get setShowGitHubToken() { return hookRef.current.setShowGitHubToken; },
-    get expandedSections() { return hookRef.current.expandedSections; },
-    get toggleSection() { return hookRef.current.toggleSection; },
-    get gitHubConnectionStatus() { return hookRef.current.gitHubConnectionStatus; },
-    get isCheckingGitHub() { return hookRef.current.isCheckingGitHub; },
-    get isCheckingClaudeAuth() { return hookRef.current.isCheckingClaudeAuth; },
-    get claudeAuthStatus() { return hookRef.current.claudeAuthStatus; },
-    get setClaudeAuthStatus() { return hookRef.current.setClaudeAuthStatus; },
-    get handleInitialize() { return hookRef.current.handleInitialize; },
-    get handleSaveEnv() { return hookRef.current.handleSaveEnv; },
-    get handleClaudeSetup() { return hookRef.current.handleClaudeSetup; },
-    get handleSave() { return hookRef.current.handleSave; },
-  };
+  return new Proxy(hookRef, {
+    get: (target, prop) => (target.current as never)[prop as keyof UseProjectSettingsReturn],
+  }) as unknown as UseProjectSettingsReturn;
 }

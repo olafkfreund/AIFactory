@@ -6,6 +6,7 @@ Streams responses via WebSocket and persists sessions to disk.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import re
@@ -54,11 +55,13 @@ def _parse_task_json(raw: str) -> dict:
                 depth -= 1
                 if depth == 0:
                     try:
-                        parsed = json.loads(cleaned[start:i + 1])
+                        parsed = json.loads(cleaned[start : i + 1])
                         if isinstance(parsed, dict):
                             return {
                                 "title": str(parsed.get("title", "")).strip(),
-                                "description": str(parsed.get("description", "")).strip(),
+                                "description": str(
+                                    parsed.get("description", "")
+                                ).strip(),
                             }
                     except json.JSONDecodeError:
                         break
@@ -70,19 +73,21 @@ def _parse_task_json(raw: str) -> dict:
 @dataclass
 class InsightsMessage:
     """A single chat message."""
+
     id: str
     role: str  # 'user' or 'assistant'
     content: str
     timestamp: str
     suggested_task: dict | None = None
     tools_used: list | None = None
-    provider: str | None = None        # e.g. 'claude', 'ollama', 'codex'
-    provider_model: str | None = None   # e.g. 'opus', 'llama3:8b'
+    provider: str | None = None  # e.g. 'claude', 'ollama', 'codex'
+    provider_model: str | None = None  # e.g. 'opus', 'llama3:8b'
 
 
 @dataclass
 class InsightsSession:
     """A chat session with history."""
+
     id: str
     project_id: str
     title: str
@@ -96,7 +101,9 @@ class InsightsService:
     """Service for AI-powered insights chat."""
 
     def __init__(self):
-        self._running_tasks: dict[str, asyncio.Task] = {}  # projectId -> running asyncio task
+        self._running_tasks: dict[
+            str, asyncio.Task
+        ] = {}  # projectId -> running asyncio task
         self._sessions: dict[str, InsightsSession] = {}  # Cache
 
     def _get_sessions_dir(self, project_path: Path) -> Path:
@@ -140,12 +147,14 @@ class InsightsService:
             "updatedAt": session.updated_at,
         }
 
-        with open(session_file, 'w') as f:
+        with open(session_file, "w") as f:
             json.dump(data, f, indent=2)
 
         self._sessions[session.id] = session
 
-    def _load_session(self, project_path: Path, session_id: str) -> InsightsSession | None:
+    def _load_session(
+        self, project_path: Path, session_id: str
+    ) -> InsightsSession | None:
         """Load a session from disk."""
         if session_id in self._sessions:
             return self._sessions[session_id]
@@ -186,7 +195,9 @@ class InsightsService:
             logger.warning(f"Failed to load session {session_id}: {e}")
             return None
 
-    def get_current_session(self, project_path: Path, project_id: str) -> InsightsSession:
+    def get_current_session(
+        self, project_path: Path, project_id: str
+    ) -> InsightsSession:
         """Get or create the current session for a project."""
         current_file = self._get_current_session_file(project_path)
 
@@ -221,7 +232,9 @@ class InsightsService:
 
         return session
 
-    def switch_session(self, project_path: Path, session_id: str) -> InsightsSession | None:
+    def switch_session(
+        self, project_path: Path, session_id: str
+    ) -> InsightsSession | None:
         """Switch to a different session."""
         session = self._load_session(project_path, session_id)
         if session:
@@ -240,13 +253,15 @@ class InsightsService:
             try:
                 with open(session_file) as f:
                     data = json.load(f)
-                sessions.append({
-                    "id": data["id"],
-                    "title": data.get("title", "Untitled"),
-                    "messageCount": len(data.get("messages", [])),
-                    "createdAt": data.get("createdAt"),
-                    "updatedAt": data.get("updatedAt"),
-                })
+                sessions.append(
+                    {
+                        "id": data["id"],
+                        "title": data.get("title", "Untitled"),
+                        "messageCount": len(data.get("messages", [])),
+                        "createdAt": data.get("createdAt"),
+                        "updatedAt": data.get("updatedAt"),
+                    }
+                )
             except (json.JSONDecodeError, KeyError):
                 continue
 
@@ -282,7 +297,9 @@ class InsightsService:
 
         return {"deleted": True, "switchedTo": switched_to}
 
-    def rename_session(self, project_path: Path, session_id: str, new_title: str) -> bool:
+    def rename_session(
+        self, project_path: Path, session_id: str, new_title: str
+    ) -> bool:
         """Rename a session."""
         session = self._load_session(project_path, session_id)
         if session:
@@ -291,7 +308,9 @@ class InsightsService:
             return True
         return False
 
-    def update_model_config(self, project_path: Path, session_id: str, model_config: dict) -> bool:
+    def update_model_config(
+        self, project_path: Path, session_id: str, model_config: dict
+    ) -> bool:
         """Update model config for a session."""
         session = self._load_session(project_path, session_id)
         if session:
@@ -314,9 +333,13 @@ class InsightsService:
         # Merge session config with message-level config (message takes precedence)
         effective_config = dict(self.DEFAULT_MODEL_CONFIG)
         if session.model_config:
-            effective_config.update({k: v for k, v in session.model_config.items() if v is not None})
+            effective_config.update(
+                {k: v for k, v in session.model_config.items() if v is not None}
+            )
         if model_config:
-            effective_config.update({k: v for k, v in model_config.items() if v is not None})
+            effective_config.update(
+                {k: v for k, v in model_config.items() if v is not None}
+            )
         model_config = effective_config
 
         # Determine provider from model_config (default: claude)
@@ -346,7 +369,9 @@ class InsightsService:
 
         # Route to provider
         provider = get_provider(provider_id)
-        logger.info(f"[InsightsService] Routing to provider: {provider_id} (model: {provider_model})")
+        logger.info(
+            f"[InsightsService] Routing to provider: {provider_id} (model: {provider_model})"
+        )
 
         try:
             response_content = await provider.send_message(
@@ -355,7 +380,9 @@ class InsightsService:
                 message=message,
                 model=provider_model,
                 model_config=model_config,
-                conversation_history=conversation_history if provider_id != "claude" else None,
+                conversation_history=conversation_history
+                if provider_id != "claude"
+                else None,
             )
 
             # Persist the assistant response to disk
@@ -374,17 +401,23 @@ class InsightsService:
         except asyncio.CancelledError:
             logger.info(f"[InsightsService] Chat cancelled for project {project_id}")
             # Finalize partial content if any
-            await broadcast_event("insights:chunk", {
-                "projectId": project_id,
-                "type": "done",
-            })
+            await broadcast_event(
+                "insights:chunk",
+                {
+                    "projectId": project_id,
+                    "type": "done",
+                },
+            )
         except Exception as e:
             logger.error(f"[InsightsService] Provider error: {e}", exc_info=True)
-            await broadcast_event("insights:chunk", {
-                "projectId": project_id,
-                "type": "error",
-                "error": str(e),
-            })
+            await broadcast_event(
+                "insights:chunk",
+                {
+                    "projectId": project_id,
+                    "type": "error",
+                    "error": str(e),
+                },
+            )
         finally:
             self._running_tasks.pop(project_id, None)
 
@@ -409,7 +442,9 @@ class InsightsService:
         task = self._running_tasks.pop(project_id, None)
         if task and not task.done():
             task.cancel()
-            logger.info(f"[InsightsService] Cancelled running task for project {project_id}")
+            logger.info(
+                f"[InsightsService] Cancelled running task for project {project_id}"
+            )
             return True
         return False
 
@@ -453,9 +488,13 @@ class InsightsService:
         # Resolve model
         effective_config = dict(self.DEFAULT_MODEL_CONFIG)
         if session.model_config:
-            effective_config.update({k: v for k, v in session.model_config.items() if v is not None})
+            effective_config.update(
+                {k: v for k, v in session.model_config.items() if v is not None}
+            )
         if model_config:
-            effective_config.update({k: v for k, v in model_config.items() if v is not None})
+            effective_config.update(
+                {k: v for k, v in model_config.items() if v is not None}
+            )
 
         # Use session's configured model, defaulting to haiku for fast summarization
         model_value = effective_config.get("model", "haiku")
@@ -468,6 +507,7 @@ class InsightsService:
 
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
         from ..utils.subprocess_env import make_subprocess_env
+
         env = make_subprocess_env()
         env["PYTHONUNBUFFERED"] = "1"
         env.pop("CLAUDECODE", None)
@@ -478,11 +518,15 @@ class InsightsService:
             token, _pid, profile_name = provider._resolve_claude_token()
             if token:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-                logger.info(f"[InsightsService] generate_task using profile: {profile_name}")
+                logger.info(
+                    f"[InsightsService] generate_task using profile: {profile_name}"
+                )
         except Exception:
             pass
 
-        logger.info(f"[InsightsService] Generating task via claude --print (model={model_value})")
+        logger.info(
+            f"[InsightsService] Generating task via claude --print (model={model_value})"
+        )
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -496,14 +540,18 @@ class InsightsService:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             response = stdout.decode("utf-8", errors="replace").strip()
 
-            stderr_text = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            stderr_text = (
+                stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+            )
             logger.info(
                 f"[InsightsService] generate_task CLI finished: "
                 f"rc={proc.returncode}, stdout_len={len(response)}, "
                 f"stderr_len={len(stderr_text)}"
             )
             if stderr_text:
-                logger.info(f"[InsightsService] generate_task stderr: {stderr_text[:500]}")
+                logger.info(
+                    f"[InsightsService] generate_task stderr: {stderr_text[:500]}"
+                )
             if response:
                 logger.info(f"[InsightsService] generate_task stdout: {response[:300]}")
 
@@ -519,7 +567,9 @@ class InsightsService:
             logger.error("[InsightsService] generate_task_from_chat timed out (120s)")
             return {"title": "", "description": ""}
         except Exception as e:
-            logger.error(f"[InsightsService] generate_task_from_chat failed: {e}", exc_info=True)
+            logger.error(
+                f"[InsightsService] generate_task_from_chat failed: {e}", exc_info=True
+            )
             return {"title": "", "description": ""}
 
     def clear_session(self, project_path: Path, project_id: str) -> InsightsSession:
@@ -534,12 +584,7 @@ class InsightsService:
 
 
 # Global service instance
-_insights_service: InsightsService | None = None
-
-
+@functools.cache
 def get_insights_service() -> InsightsService:
     """Get the global insights service instance."""
-    global _insights_service
-    if _insights_service is None:
-        _insights_service = InsightsService()
-    return _insights_service
+    return InsightsService()
