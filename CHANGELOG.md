@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.29 - 2026-07-10
+
+### Changed
+
+- **Repo-wide `ruff format` sweep (#799).** Formatted the whole tree with the pinned ruff 0.14.10 (`standards/ruff.toml`). The `cq-ratchet` gate only enforced `ruff format --check apps/backend`, so `apps/web-server`, `tests`, and `scripts` had drifted unformatted despite the "formatter-clean repo-wide" intent; `ruff format --check .` is now clean. Formatting-only — no logic changes.
+
+
 ## 3.6.28 - 2026-07-10
 
 ### Fixed
