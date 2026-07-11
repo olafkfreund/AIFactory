@@ -50,6 +50,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from routing_policy import tier_for_model
+
 # Documented heuristic: average English-prose / source-code tokenization is
 # ~3.5–4 chars per token for Claude models. We use 4.0 as a stable, widely
 # cited default. Only affects the *relative* split, never SDK-sourced totals.
@@ -390,6 +392,12 @@ def _fold_worker(
     rec["subtask_id"] = subtask_id if subtask_id is not None else rec.get("subtask_id")
     rec["provider"] = provider if provider is not None else rec.get("provider")
     rec["model"] = model if model is not None else rec.get("model")
+    # RFC-0014 (#803): stamp the routing tier the active policy attributes to
+    # this worker's model, so the completion envelope carries model + tier.
+    # No policy (or no matching tier) -> no key -> envelope unchanged.
+    tier = tier_for_model(rec.get("model"))
+    if tier is not None:
+        rec["routing_tier"] = tier
     rec["input_tokens"] = int(rec.get("input_tokens", 0)) + int(input_tokens)
     rec["output_tokens"] = int(rec.get("output_tokens", 0)) + int(output_tokens)
     rec["total_tokens"] = int(rec["input_tokens"]) + int(rec["output_tokens"])
