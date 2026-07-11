@@ -496,6 +496,52 @@ def test_read_usage_two_workers_rollups(tmp_path):
     assert usage["total_tokens"] == 900
 
 
+def test_read_usage_echoes_routing_tier_when_stamped(tmp_path) -> None:
+    """RFC-0014 (#803): a worker record carrying routing_tier surfaces it in the
+    envelope's per-worker block, next to the actually-used model."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    rec = _worker("main", "claude", "claude-sonnet-4-6", in_t=100, out_t=10, cost=0.1)
+    rec["routing_tier"] = "mid"
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 100,
+                "outputTokens": 10,
+                "workers": {"main": rec},
+            }
+        )
+    )
+    worker = read_usage(spec)["workers"][0]
+    assert worker["routing_tier"] == "mid"
+    assert worker["model"] == "claude-sonnet-4-6"
+
+
+def test_read_usage_omits_routing_tier_when_absent(tmp_path) -> None:
+    """No routing policy → no routing_tier key anywhere (byte-identical v1.3)."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 100,
+                "outputTokens": 10,
+                "workers": {
+                    "main": _worker(
+                        "main",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=100,
+                        out_t=10,
+                        cost=0.1,
+                    )
+                },
+            }
+        )
+    )
+    assert "routing_tier" not in read_usage(spec)["workers"][0]
+
+
 def test_read_usage_no_workers_map_omits_new_fields(tmp_path):
     """An old token_usage.json without a workers map → scalar block only, no
     workers[]/by_provider/by_model keys (additive omission)."""

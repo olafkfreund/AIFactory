@@ -371,6 +371,13 @@ def execution_profile_to_metadata(execution: dict) -> dict:
     for src, dst in _EXECUTION_TO_METADATA.items():
         if src in execution and execution[src] is not None:
             meta[dst] = execution[src]
+    # RFC-0014 (#803): a contract-pinned model outranks every other model
+    # source (per-task override, routing policy, defaults) in phase_config.
+    routing = execution.get("routing")
+    if isinstance(routing, dict):
+        pinned = routing.get("pinned_model")
+        if isinstance(pinned, str) and pinned:
+            meta["pinnedModel"] = pinned
     if meta.get("phaseModels") or meta.get("phaseThinking"):
         meta["isAutoProfile"] = True
     return meta
