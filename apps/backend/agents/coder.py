@@ -177,6 +177,15 @@ async def run_autonomous_agent(
     # Initialize task logger for persistent logging
     task_logger = get_task_logger(spec_dir)
 
+    # Pre-coder untrusted-content scan gate (#805 / Factory#273). Deterministic
+    # and fail-closed: flagged spec/repo content routes the task to human_review
+    # BEFORE any agent session sees it. Runs on every start, but an operator
+    # approval (the existing plan-review flow) is the false-positive escape
+    # hatch and lets a flagged task proceed on resume.
+    if _injection_scan_blocks(spec_dir, project_dir, source_spec_dir):
+        status_manager.update(state=BuildState.PAUSED)
+        return
+
     # Debug: Print memory system status at startup
     debug_memory_system_status()
 
@@ -1051,6 +1060,109 @@ async def run_autonomous_agent(
 
     # Emit the profiling artifact (#397 Phase 1) — observability only.
     _emit_build_report(spec_dir, source_spec_dir)
+
+
+def _injection_scan_blocks(
+    spec_dir: Path,
+    project_dir: Path,
+    source_spec_dir: Path | None,
+) -> bool:
+    """Run the pre-coder injection scan gate (#805). True = task blocked.
+
+    Scans the spec text and high-risk repo prose with the deterministic
+    ``security.content_scan`` pass, stamps the verdict to
+    ``injection_scan.json`` (synced to the source spec dir so the web-server
+    can read it), and on a blocking flag routes the task to human_review
+    exactly like the plan-review gate. Fail-closed: a scanner crash is a
+    flagged verdict. An operator approval via the existing plan-review flow
+    (review.ReviewState) is the documented false-positive escape hatch.
+    """
+    from security.content_scan import (  # noqa: PLC0415 - deferred, heavy pkg
+        RESULT_FILENAME,
+        run_scan_gate,
+    )
+
+    result = run_scan_gate(spec_dir, project_dir)
+
+    # Mirror sync_plan_to_source: the web-server reads artifacts from the
+    # source spec dir, so the verdict stamp must land there too.
+    if source_spec_dir and source_spec_dir.resolve() != spec_dir.resolve():
+        try:
+            (source_spec_dir / RESULT_FILENAME).write_text(
+                json.dumps(result.to_dict(), indent=2)
+            )
+        except OSError:
+            logger.warning("Could not sync %s to source spec dir", RESULT_FILENAME)
+
+    if result.verdict != "flagged":
+        return False
+
+    matched = ", ".join(sorted({m["pattern"] for m in result.matched})) or "unknown"
+    if not result.blocks:
+        # warn mode: stamp the verdict but do not block (rollout escape hatch).
+        print_status(
+            f"Injection scan FLAGGED (warn mode - continuing): {matched}",
+            "warning",
+        )
+        return False
+
+    from review import ReviewState  # noqa: PLC0415 - deferred, mirrors gate above
+
+    if ReviewState.load(spec_dir).is_approval_valid(spec_dir):
+        print_status(
+            "Injection scan flagged, but a human approved this task - continuing",
+            "warning",
+        )
+        return False
+
+    logger.info("Injection scan flagged - pausing execution for human review")
+    emit_phase(
+        ExecutionPhase.PLAN_REVIEW, "Injection scan flagged - waiting for human review"
+    )
+
+    # Route to human_review via the same plan-status mechanism as the
+    # plan-review gate. A skeleton plan is written when none exists yet (the
+    # gate fires before the planner ever runs).
+    plan_file = spec_dir / "implementation_plan.json"
+    plan: dict[str, object] = {"phases": []}
+    if plan_file.exists():
+        try:
+            plan = json.loads(plan_file.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to read plan for injection gate: {e}")
+    plan["status"] = "human_review"
+    plan["reviewReason"] = "injection_scan"
+    try:
+        plan_file.write_text(json.dumps(plan, indent=2))
+    except OSError as e:
+        logger.warning(f"Failed to update plan status: {e}")
+
+    if source_spec_dir:
+        sync_plan_to_source(spec_dir, source_spec_dir)
+
+    print()  # noqa: T201 - console UX, same as the plan-review gate
+    print(  # noqa: T201
+        box(
+            [
+                bold(f"{icon(Icons.WARNING)} INJECTION SCAN FLAGGED"),
+                "",
+                "The pre-coder scan found likely prompt-injection payloads in",
+                "the spec or repository content. The task is paused before any",
+                "coding session starts.",
+                "",
+                f"Matched patterns: {matched}",
+                "",
+                "Review the flagged content; approving the task in the web UI",
+                "lets it proceed (false-positive escape hatch).",
+                "",
+                highlight("Task Status: human_review (injection_scan)"),
+            ],
+            width=70,
+            style="heavy",
+        )
+    )
+    print()  # noqa: T201 - console UX, same as the plan-review gate
+    return True
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:

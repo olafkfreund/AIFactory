@@ -385,6 +385,7 @@ def build_completion_event(
     traceparent: str | None = None,
     tracestate: str | None = None,
     halt_reason: str | None = None,
+    injection_scan: dict | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -457,6 +458,10 @@ def build_completion_event(
     # the typed reason so CFactory can show *why* a WorkItem stalled.
     if halt_reason:
         event["halt_reason"] = halt_reason
+    # Pre-coder untrusted-content scan verdict (#805 / Factory#273): additive
+    # block so CFactory can surface pass/flagged/skipped + matched patterns.
+    if injection_scan:
+        event["injection_scan"] = injection_scan
     return event
 
 
@@ -850,6 +855,7 @@ def emit_terminal_completion(
         project_id=project_id,
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
+        injection_scan=_read_injection_scan(spec_dir),
     )
     # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
     # emit their live sub-event as they finish (agents/parallel_integration.py);
@@ -907,12 +913,34 @@ def emit_usage_snapshot(
             issue_number=read_issue_number(spec_dir),
             project_id=project_id,
             usage=usage,
+            injection_scan=_read_injection_scan(spec_dir),
         )
         notify_completion(event, spec_dir=spec_dir)
         return event
     except Exception:  # noqa: BLE001 — usage reporting must never break the caller
         logger.debug("usage snapshot emit failed (best-effort)", exc_info=True)
         return None
+
+
+def _read_injection_scan(spec_dir: Path) -> dict | None:
+    """The pre-coder untrusted-content scan verdict for this task, if any
+    (#805 / Factory#273). Written by ``security.content_scan`` to
+    ``injection_scan.json`` in the spec dir (synced from the worktree)."""
+    try:
+        data = json.loads((spec_dir / "injection_scan.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    verdict = data.get("verdict")
+    if verdict not in ("pass", "flagged", "skipped"):
+        return None
+    scan: dict = {"verdict": verdict}
+    if isinstance(data.get("mode"), str):
+        scan["mode"] = data["mode"]
+    if isinstance(data.get("matched"), list):
+        scan["matched"] = data["matched"]
+    return scan
 
 
 def _read_halt_reason(spec_dir: Path) -> str | None:
