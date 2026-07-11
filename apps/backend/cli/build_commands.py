@@ -6,6 +6,7 @@ CLI commands for building specs and handling the main build flow.
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ if str(_PARENT_DIR) not in sys.path:
 
 # Import only what we need at module level
 # Heavy imports are lazy-loaded in functions to avoid import errors
-from progress import print_paused_banner
+from progress import count_subtasks, print_paused_banner
 from review import ReviewState
 from ui import (
     BuildState,
@@ -47,6 +48,33 @@ from .input_handlers import (
     read_from_file,
     read_multiline_input,
 )
+
+
+def build_is_silent_noop(spec_dir: Path) -> bool:
+    """True when a finished agent run implemented NOTHING (#779).
+
+    A run whose plan has subtasks but ZERO completed produced no code — every
+    subtask failed or was never started. Exiting 0 in that state makes a
+    headless build Job report Complete with an empty branch, which is worse
+    than a hard failure. Legitimate 0-completed exits are excluded:
+
+    - PAUSE file present (human paused the build)
+    - plan status ``human_review`` (paused for plan approval)
+    """
+    completed, total = count_subtasks(spec_dir)
+    if total == 0 or completed > 0:
+        return False
+    # "PAUSE" mirrors agents.base.HUMAN_INTERVENTION_FILE (not imported here:
+    # module-level agents imports would regress the strict-import ratchet).
+    if (spec_dir / "PAUSE").exists():
+        return False
+    try:
+        plan: dict = json.loads(
+            (spec_dir / "implementation_plan.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        plan = {}
+    return plan.get("status") != "human_review"
 
 
 def handle_build_command(
@@ -329,6 +357,25 @@ def handle_build_command(
                 "Stop-after-planning: planner done, returning to delegation caller",
             )
             return
+
+        # Silent no-op guard (#779): a run that finished with 0/N subtasks
+        # completed and is not paused produced no code. Fail the process so a
+        # headless build Job is marked Failed instead of Complete — a silent
+        # no-op build (codex agentic auth mismatch, dead provider, ...) must
+        # surface as a failure, not as a green build with an empty branch.
+        if build_is_silent_noop(spec_dir):
+            _completed, _total = count_subtasks(spec_dir)
+            emit_phase(
+                ExecutionPhase.FAILED,
+                f"Build produced no code: {_completed}/{_total} subtasks completed",
+            )
+            print_status(
+                f"BUILD FAILED - no subtasks completed ({_completed}/{_total}). "
+                "The coder implemented nothing; check the coding-provider "
+                "credentials/model and the session logs.",
+                "error",
+            )
+            sys.exit(1)
 
         # Run QA validation BEFORE finalization (while worktree still exists)
         # QA must sign off before the build is considered complete
