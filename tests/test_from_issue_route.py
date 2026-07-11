@@ -164,3 +164,23 @@ async def test_unknown_project_is_404(monkeypatch):
     with pytest.raises(HTTPException) as ei:
         await create_from_issue(req)
     assert ei.value.status_code == 404
+
+
+async def test_write_spec_creates_spec_md(project):
+    """#806: find_spec requires spec.md; without it every tier dies at spawn."""
+    tmp_path, _started = project
+    req = FromIssueRequest(
+        project_id="p",
+        payload={
+            "number": 12,
+            "title": "Add Min/Max printer",
+            "body": "support Min and Max in pycode",
+            "labels": [{"name": "tier:medium"}],
+        },
+    )
+    res = await create_from_issue(req)
+    spec_md = tmp_path / ".aifactory" / "specs" / res["spec_id"] / "spec.md"
+    assert spec_md.exists()
+    content = spec_md.read_text()
+    assert "Add Min/Max printer" in content
+    assert "support Min and Max in pycode" in content
