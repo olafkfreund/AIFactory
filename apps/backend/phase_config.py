@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Literal, TypedDict
 
+from routing_policy import policy_route
+
 logger = logging.getLogger(__name__)
 
 # Model shorthand to full model ID mapping
@@ -360,13 +362,16 @@ def get_phase_model(
     """
     Get the resolved model ID for a specific execution phase.
 
-    Priority:
-    1. Phase-specific config from task_metadata.json (if auto profile) — wins
+    Priority (RFC-0014 #803: pinned > per-task override > policy tier > default):
+    1. Contract pinned model (task_metadata.json ``pinnedModel``, carried from
+       the Task Contract's ``execution.routing.pinned_model``)
+    2. Phase-specific config from task_metadata.json (if auto profile) — wins
        over CLI default because the auto profile is the user's explicit
        per-phase choice (e.g. Claude plans, Ollama codes).
-    2. CLI argument (if provided)
-    3. Single model from task_metadata.json (if not auto profile)
-    4. Default phase configuration
+    3. CLI argument (if provided)
+    4. Single model from task_metadata.json (if not auto profile)
+    5. Routing-policy tier (AIFACTORY_ROUTING_POLICY; absent = no-op)
+    6. Default phase configuration
 
     Args:
         spec_dir: Path to the spec directory
@@ -383,6 +388,10 @@ def get_phase_model(
     # selected ollama:qwen3:14b for the coding phase.)
     metadata = load_task_metadata(spec_dir)
 
+    # Contract-pinned model wins over everything (RFC-0014 routing block).
+    if metadata and metadata.get("pinnedModel"):
+        return resolve_model_id(metadata["pinnedModel"])
+
     if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
         phase_models = metadata["phaseModels"]
         model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
@@ -395,6 +404,12 @@ def get_phase_model(
     # Non-auto profile: use single model from metadata
     if metadata and metadata.get("model"):
         return resolve_model_id(metadata["model"])
+
+    # Routing-policy tier (RFC-0014 #803). Fail-closed: absent policy, unmapped
+    # stage, or unknown tier all return None and fall through to the default.
+    routed = policy_route(phase)
+    if routed is not None:
+        return resolve_model_id(routed[0])
 
     # Fall back to default phase configuration
     return resolve_model_id(DEFAULT_PHASE_MODELS[phase])
@@ -422,6 +437,9 @@ def get_phase_model_betas(
     # Same precedence as get_phase_model: auto profile metadata wins over CLI.
     metadata = load_task_metadata(spec_dir)
 
+    if metadata and metadata.get("pinnedModel"):
+        return get_model_betas(metadata["pinnedModel"])
+
     if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
         phase_models = metadata["phaseModels"]
         model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
@@ -432,6 +450,10 @@ def get_phase_model_betas(
 
     if metadata and metadata.get("model"):
         return get_model_betas(metadata["model"])
+
+    routed = policy_route(phase)
+    if routed is not None:
+        return get_model_betas(routed[0])
 
     return get_model_betas(DEFAULT_PHASE_MODELS[phase])
 

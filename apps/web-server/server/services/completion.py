@@ -182,25 +182,28 @@ def _worker_records(agg: dict) -> list[dict]:
             continue
         in_tok = int(rec.get("input_tokens", 0) or 0)
         out_tok = int(rec.get("output_tokens", 0) or 0)
-        records.append(
-            {
-                "worker_id": rec.get("worker_id") or wid,
-                "phase": rec.get("phase"),
-                "subtask_id": rec.get("subtask_id"),
-                "provider": rec.get("provider"),
-                "model": rec.get("model"),
-                "input_tokens": in_tok,
-                "output_tokens": out_tok,
-                "total_tokens": int(rec.get("total_tokens", 0) or 0)
-                or (in_tok + out_tok),
-                "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
-                "duration_ms": int(rec.get("duration_ms", 0) or 0),
-                # Billing mode (#96): api/cloud are metered (show cost);
-                # subscription/local are not (show tokens + time). Lets CFactory
-                # avoid surfacing a notional dollar cost for subscription/local work.
-                "billing_mode": classify_billing_mode(rec.get("provider")),
-            }
-        )
+        record = {
+            "worker_id": rec.get("worker_id") or wid,
+            "phase": rec.get("phase"),
+            "subtask_id": rec.get("subtask_id"),
+            "provider": rec.get("provider"),
+            "model": rec.get("model"),
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+            "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+            "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            # Billing mode (#96): api/cloud are metered (show cost);
+            # subscription/local are not (show tokens + time). Lets CFactory
+            # avoid surfacing a notional dollar cost for subscription/local work.
+            "billing_mode": classify_billing_mode(rec.get("provider")),
+        }
+        # RFC-0014 (#803, additive): echo the routing tier the backend's token
+        # attribution stamped when a routing policy was active. Omitted entirely
+        # when absent (policy off), keeping the envelope byte-identical to v1.3.
+        if rec.get("routing_tier"):
+            record["routing_tier"] = rec["routing_tier"]
+        records.append(record)
     # Deterministic order for stable events/tests.
     records.sort(key=lambda r: str(r["worker_id"]))
     return records
