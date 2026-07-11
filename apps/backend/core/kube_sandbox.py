@@ -62,15 +62,29 @@ def build_job_manifest(
     when ``nix_store_pvc`` is None, leaving cold-fetch behavior unchanged.
     """
     command = " && ".join(commands)
+    # #812 (Factory#274 compensating controls): same hardening as the shared
+    # job_dispatch builder. No readOnlyRootFilesystem — nix writes /nix/var.
+    container_hardening: dict[str, Any] = {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
     container: dict[str, Any] = {
         "name": "gate",
         "image": image,
         "command": ["bash", "-c", command],
         "resources": {"limits": {"cpu": cpus, "memory": memory}},
+        "securityContext": dict(container_hardening),
     }
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,  # the gate needs no k8s API
+        # #812: enforce non-root at the kubelet (task images declare a non-root
+        # USER; no runAsUser so worktree/store file ownership keeps matching it)
+        # and pin the default seccomp profile.
+        "securityContext": {
+            "runAsNonRoot": True,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
         "imagePullSecrets": [{"name": image_pull_secret}],
         "containers": [container],
     }
@@ -114,6 +128,9 @@ def build_job_manifest(
                     "cp -a /nix/. /warm/ && echo 'seeded warm nix store'; "
                     "else echo 'warm nix store already populated'; fi",
                 ],
+                # Same image as the gate → same non-root uid; just pin the
+                # escalation/capability hardening (#812).
+                "securityContext": dict(container_hardening),
                 "volumeMounts": [{"name": "nix-store", "mountPath": "/warm"}],
             }
         ]
@@ -134,7 +151,16 @@ def build_job_manifest(
             "backoffLimit": 0,  # no retries — one shot
             "activeDeadlineSeconds": timeout,
             "template": {
-                "metadata": {"labels": {"app": "aifactory-sandbox", "job-name": name}},
+                # factory.io/kind=task puts gate pods under the chart's
+                # per-task NetworkPolicy (#812) — the selectorLabels policy
+                # never matches Job pods.
+                "metadata": {
+                    "labels": {
+                        "app": "aifactory-sandbox",
+                        "job-name": name,
+                        "factory.io/kind": "task",
+                    }
+                },
                 "spec": pod_spec,
             },
         },
