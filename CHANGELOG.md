@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Security
+
+- **Per-task Job pods hardened: pinned securityContext + NetworkPolicy coverage (#812, Factory#274 checklist).** Both per-task Job builders (`core/job_dispatch.py` build Jobs and `core/kube_sandbox.py` gate Jobs) now pin `runAsNonRoot` + `seccompProfile: RuntimeDefault` at pod level and `allowPrivilegeEscalation: false` + `capabilities: drop ALL` on every container (the non-root guarantee previously came only from the image; no seccomp profile was pinned). The `install-clis`/`seed-creds` initContainers pin explicit non-root uids so the kubelet accepts them under `runAsNonRoot`. Job pods now also carry the `factory.io/kind: task` label and the chart gained a second NetworkPolicy (`networkPolicy.tasks`, default on) selecting it — Job pods previously matched no policy at all — with default-deny ingress and egress limited to DNS, public 443 (nix binary caches, git remotes, LLM APIs) and the chart's own pods (control-plane API + bundled Postgres); in-cluster MinIO/external Postgres are opted in via `networkPolicy.tasks.egress.extraRules`. Also adds the missing `guides/security/gvisor.md` that `values.yaml` references (gVisor caveats: no bwrap `strict` mode, no Nix local builds). No `readOnlyRootFilesystem` — nix writes `/nix/var` and the task writes `$HOME` on the rootfs.
+
 
 ## 3.6.29 - 2026-07-10
 

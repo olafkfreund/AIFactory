@@ -1,0 +1,65 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.tasks.enabled -}}
+# Per-task Job pods (build/gate Jobs dispatched by core/job_dispatch.py and
+# core/kube_sandbox.py) carry only app/factory.io labels, so the selectorLabels
+# policy in networkpolicy.yaml never matches them — without this policy the
+# untrusted per-task workload has unrestricted network access (#812, the
+# Factory#274 sandbox-evaluation compensating-controls checklist).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aifactory.fullname" . }}-tasks
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      factory.io/kind: task
+  policyTypes:
+    - Ingress
+    - Egress
+  # No ingress rules: default-deny — nothing needs to reach into a task pod.
+  egress:
+    # DNS lookup — task pods resolve caches, registries and git remotes.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.networkPolicy.tasks.egress.allowExternalHttps }}
+    # 443/tcp to public addresses: nix binary caches, git remotes, package
+    # registries, LLM provider APIs. Private RFC1918 ranges stay blocked —
+    # in-cluster endpoints must be opted in explicitly (below / extraRules).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    # This chart's own pods: the control-plane API (result reporting) and the
+    # bundled Postgres (the Job writes its own job-state row) both carry the
+    # chart selectorLabels.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aifactory.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+        - protocol: TCP
+          port: 5432
+    {{- with .Values.networkPolicy.tasks.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

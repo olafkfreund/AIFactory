@@ -922,6 +922,37 @@ def test_install_clis_initcontainer_present(monkeypatch: pytest.MonkeyPatch) -> 
     assert "/home/nonroot/.npm-global/bin" in path_env["value"]
 
 
+def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #812 (Factory#274 compensating controls): the Job pod pins runAsNonRoot +
+    # RuntimeDefault seccomp, every container drops all capabilities and forbids
+    # privilege escalation, and the pod carries the factory.io/kind=task label
+    # the chart's per-task NetworkPolicy selects. The injected initContainers
+    # (busybox / node images default to root) must each pin a non-root uid or
+    # the kubelet rejects the pod under runAsNonRoot.
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    tpl = m["spec"]["template"]
+    assert tpl["metadata"]["labels"]["factory.io/kind"] == "task"
+    pod = tpl["spec"]
+    assert pod["securityContext"] == {
+        "runAsNonRoot": True,
+        "seccompProfile": {"type": "RuntimeDefault"},
+    }
+    assert pod["containers"][0]["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
+    by_name = {c["name"]: c for c in pod["initContainers"]}
+    for name, uid in (("install-clis", 1000), ("seed-creds", 65532)):
+        sc = by_name[name]["securityContext"]
+        assert sc["runAsUser"] == uid
+        assert sc["allowPrivilegeEscalation"] is False
+        assert sc["capabilities"] == {"drop": ["ALL"]}
+
+
 def test_install_clis_unaffected_by_seed_creds_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

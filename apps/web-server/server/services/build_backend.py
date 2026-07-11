@@ -436,6 +436,18 @@ _BUILD_PATH_ENV = (
 )
 
 
+def _init_container_security_context(run_as_user: int) -> dict[str, Any]:
+    """#812: the shared job_dispatch builder sets pod-level ``runAsNonRoot``;
+    the injected initContainer images (busybox, node) default to root, so each
+    must pin an explicit non-root uid or the kubelet rejects the pod. Same
+    escalation/capability hardening as the task container."""
+    return {
+        "runAsUser": run_as_user,
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+
 def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
     credentials into the build Job pod (#690). No-op unless a secret name is
@@ -473,6 +485,9 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
             "image": "busybox:1.36",
             "command": ["sh", "-c"],
             "args": ["\n".join(lines)],
+            # Build-image nonroot uid (65532): copied cred files land owned by
+            # the uid the task container runs as; emptyDirs are world-writable.
+            "securityContext": _init_container_security_context(65532),
             "volumeMounts": [
                 *home_mounts,
                 {"name": "cli-creds", "mountPath": "/seed", "readOnly": True},
@@ -499,6 +514,9 @@ def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
             "image": _INSTALL_CLIS_IMAGE,
             "command": ["sh", "-c"],
             "args": [_INSTALL_CLIS_SCRIPT],
+            # node image's "node" user (uid 1000): HOME=/home/node stays
+            # writable for the npm cache; /clis is a world-writable emptyDir.
+            "securityContext": _init_container_security_context(1000),
             "volumeMounts": [
                 {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
             ],
