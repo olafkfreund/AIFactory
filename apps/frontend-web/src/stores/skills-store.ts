@@ -53,37 +53,37 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
   error: null,
 
   // Actions
-  setCategories: (categories) => set({ categories }),
+  setCategories: (categories) => { set({ categories }); },
 
   setSkillsForCategory: (category, skills) =>
-    set((state) => ({
+    { set((state) => ({
       skillsByCategory: {
         ...state.skillsByCategory,
         [category]: skills,
       },
-    })),
+    })); },
 
-  setSearchResults: (searchResults) => set({ searchResults }),
+  setSearchResults: (searchResults) => { set({ searchResults }); },
 
-  setSuggestions: (suggestions) => set({ suggestions }),
+  setSuggestions: (suggestions) => { set({ suggestions }); },
 
-  setSelectedSkillDetail: (selectedSkillDetail) => set({ selectedSkillDetail }),
+  setSelectedSkillDetail: (selectedSkillDetail) => { set({ selectedSkillDetail }); },
 
-  setLoadingCategories: (loading) => set({ isLoadingCategories: loading }),
+  setLoadingCategories: (loading) => { set({ isLoadingCategories: loading }); },
 
-  setLoadingSkills: (loading) => set({ isLoadingSkills: loading }),
+  setLoadingSkills: (loading) => { set({ isLoadingSkills: loading }); },
 
-  setSearching: (searching) => set({ isSearching: searching }),
+  setSearching: (searching) => { set({ isSearching: searching }); },
 
-  setFetchingSuggestions: (fetching) => set({ isFetchingSuggestions: fetching }),
+  setFetchingSuggestions: (fetching) => { set({ isFetchingSuggestions: fetching }); },
 
-  setError: (error) => set({ error }),
+  setError: (error) => { set({ error }); },
 
-  clearSearch: () => set({ searchResults: [] }),
+  clearSearch: () => { set({ searchResults: [] }); },
 
-  clearSuggestions: () => set({ suggestions: [] }),
+  clearSuggestions: () => { set({ suggestions: [] }); },
 
-  clearError: () => set({ error: null }),
+  clearError: () => { set({ error: null }); },
 
   // Selectors
   getSkillsForCategory: (category) => get().skillsByCategory[category],

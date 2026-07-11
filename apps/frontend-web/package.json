@@ -1,13 +1,13 @@
 {
   "name": "aifactory-web",
-  "version": "3.6.26",
+  "version": "3.6.29",
   "type": "module",
   "description": "Web UI for AIFactory autonomous coding framework",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint . --max-warnings 2710",
+    "lint": "eslint . --max-warnings 2039",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "capture-screenshots": "tsx ../../scripts/capture-screenshots.ts",
@@ -86,7 +86,7 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.61.1",
-    "vite": "^7.2.7",
+    "vite": "^7.3.6",
     "vitest": "^4.0.16"
   }
 }

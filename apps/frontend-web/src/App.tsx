@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { TooltipProvider } from './components/ui/tooltip';
 import { Toaster } from './components/ui/toaster';
 import { Sidebar, type SidebarView } from './components/Sidebar';
+import { CommandPalette, type PaletteCommand, type PaletteTask } from './components/CommandPalette';
+import { apiRequest } from './lib/api-client';
 import { ProjectTabBar } from './components/ProjectTabBar';
 import { PipelineBoard } from './components/pipeline/PipelineBoard';
 import { TerminalGrid } from './components/TerminalGrid';
@@ -22,7 +24,6 @@ import { TaskCreationWizard } from './components/TaskCreationWizard';
 import { TaskDetailModal } from './components/task-detail';
 import { MissionControl } from './components/MissionControl';
 import { OnboardingWizard } from './components/onboarding';
-import { LoadingScreen } from './components/LoadingScreen';
 import { ProjectSwitchLoadingModal } from './components/ProjectSwitchLoadingModal';
 import { LoginPage } from './pages/LoginPage';
 import { EditorPage } from './pages/EditorPage';
@@ -38,12 +39,6 @@ import type { Task, Project } from './shared/types';
 
 function AuthenticatedApp() {
   // Loading screen state - show for 5 seconds on every page load
-  const [isLoading, setIsLoading] = useState(true);
-
-  const handleLoadingComplete = useCallback(() => {
-    setIsLoading(false);
-  }, []);
-
   // Stores
   const projects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
@@ -109,6 +104,67 @@ function AuthenticatedApp() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Command palette (⌘K / Ctrl-K): jump to any view or task, run actions.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('keydown', onKey); };
+  }, []);
+
+  const paletteCommands: PaletteCommand[] = useMemo(() => {
+    const views: { id: SidebarView; label: string }[] = [
+      { id: 'kanban', label: 'Tasks (Kanban)' },
+      { id: 'editor', label: 'Editor' },
+      { id: 'insights', label: 'Insights' },
+      { id: 'terminals', label: 'Terminals' },
+      { id: 'agent-tools', label: 'Agent Tools' },
+      { id: 'skills', label: 'Skills' },
+      { id: 'changelog', label: 'Changelog' },
+      { id: 'worktrees', label: 'Worktrees' },
+      { id: 'context', label: 'Context' },
+    ];
+    const nav: PaletteCommand[] = views.map((v) => ({
+      id: `view-${v.id}`,
+      group: 'Go to',
+      label: v.label,
+      keywords: v.id,
+      run: () => { setActiveView(v.id); },
+    }));
+    const actions: PaletteCommand[] = [
+      { id: 'act-new-task', group: 'Actions', label: 'New task', keywords: 'create add build', run: () => { setIsNewTaskDialogOpen(true); } },
+      { id: 'act-settings', group: 'Actions', label: 'Open settings', keywords: 'preferences config theme', run: () => { setIsSettingsDialogOpen(true); } },
+    ];
+    return [...nav, ...actions];
+  }, []);
+
+  // Federated fleet search (#149): the cockpit aggregates every portal's work
+  // and exposes a ranked /api/search; this portal proxies it same-origin
+  // (/api/search) so ⌘K searches across all four portals. Results deep-link into
+  // the cockpit's cross-portal task view.
+  const rawCockpit: unknown = import.meta.env.VITE_CFACTORY_URL;
+  const cockpitUrl = (
+    typeof rawCockpit === 'string' && rawCockpit.trim()
+      ? rawCockpit
+      : 'https://cfactory.freundcloud.org.uk'
+  ).replace(/\/+$/, '');
+  const searchFleet = useCallback(async (q: string): Promise<PaletteTask[]> => {
+    const res = await apiRequest<{
+      results: { correlation_key: string; title: string | null; status: string | null }[];
+    }>(`/search?q=${encodeURIComponent(q)}`);
+    if (!res.success || !res.data) return [];
+    return res.data.results.map((r) => ({
+      id: r.correlation_key,
+      title: r.title ?? `#${r.correlation_key}`,
+      hint: r.status ?? undefined,
+    }));
+  }, []);
 
   const selectedProject = projects.find((p) => p.id === (activeProjectId || selectedProjectId));
 
@@ -181,7 +237,7 @@ function AuthenticatedApp() {
     const timeout = setTimeout(() => {
       useProjectStore.getState().clearSwitchingState();
     }, 10_000);
-    return () => clearTimeout(timeout);
+    return () => { clearTimeout(timeout); };
   }, [isSwitchingProject]);
 
   // Apply theme (light/dark mode — Gruvbox palette is the default in index.css)
@@ -280,19 +336,14 @@ function AuthenticatedApp() {
     setActiveView('terminals');
   }, []);
 
-  // Show loading screen for 2 seconds on page load
-  if (isLoading) {
-    return <LoadingScreen duration={2000} onComplete={handleLoadingComplete} />;
-  }
-
   return (
     <TooltipProvider>
         <div className="flex h-screen bg-background">
           {/* Sidebar */}
           <Sidebar
-            onSettingsClick={() => setIsSettingsDialogOpen(true)}
-            onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
-            onOpenOnboarding={() => setIsOnboardingOpen(true)}
+            onSettingsClick={() => { setIsSettingsDialogOpen(true); }}
+            onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
+            onOpenOnboarding={() => { setIsOnboardingOpen(true); }}
             activeView={activeView}
             onViewChange={setActiveView}
           />
@@ -312,11 +363,11 @@ function AuthenticatedApp() {
                 // Also update selectedProjectId so components use the correct project context
                 useProjectStore.getState().selectProject(projectId);
               }}
-              onProjectClose={(projectId) => closeProjectTab(projectId)}
+              onProjectClose={(projectId) => { closeProjectTab(projectId); }}
               onAddProject={handleAddProject}
               onProjectAdded={handleProjectAdded}
-              onSettingsClick={() => setIsSettingsDialogOpen(true)}
-              onOpenOnboarding={() => setIsOnboardingOpen(true)}
+              onSettingsClick={() => { setIsSettingsDialogOpen(true); }}
+              onOpenOnboarding={() => { setIsOnboardingOpen(true); }}
             />
 
             <main className="flex-1 overflow-hidden">
@@ -326,7 +377,7 @@ function AuthenticatedApp() {
                     <PipelineBoard
                       tasks={tasks}
                       onTaskClick={handleTaskClick}
-                      onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
+                      onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
                       isInitialized={!!selectedProject?.autoBuildPath}
                     />
                   )}
@@ -334,7 +385,7 @@ function AuthenticatedApp() {
                   <div className={activeView === 'terminals' ? 'h-full' : 'hidden'}>
                     <TerminalGrid
                       projectPath={selectedProject?.path}
-                      onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
+                      onNewTaskClick={() => { setIsNewTaskDialogOpen(true); }}
                       isActive={activeView === 'terminals'}
                     />
                   </div>
@@ -349,7 +400,7 @@ function AuthenticatedApp() {
                   )}
                   {activeView === 'github-issues' && (
                     <GitHubIssues
-                      onOpenSettings={() => setIsSettingsDialogOpen(true)}
+                      onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
                       onNavigateToTask={(taskId) => {
                         setSelectedTaskId(taskId);
                         setActiveView('kanban');
@@ -358,7 +409,7 @@ function AuthenticatedApp() {
                   )}
                   {activeView === 'github-prs' && (
                     <GitHubPRs
-                      onOpenSettings={() => setIsSettingsDialogOpen(true)}
+                      onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
                       isActive={true}
                     />
                   )}
@@ -398,6 +449,17 @@ function AuthenticatedApp() {
             onProjectAdded={handleProjectAdded}
           />
 
+          {/* Command palette (⌘K) */}
+          <CommandPalette
+            open={paletteOpen}
+            onClose={() => { setPaletteOpen(false); }}
+            commands={paletteCommands}
+            onSearch={searchFleet}
+            onOpenTask={(t) => {
+              window.location.href = `${cockpitUrl}/?task=${encodeURIComponent(t.id)}`;
+            }}
+          />
+
           {/* Settings Dialog */}
           <AppSettingsDialog
             open={isSettingsDialogOpen}
@@ -427,7 +489,7 @@ function AuthenticatedApp() {
             onOpenChange={(open) => {
               if (!open) setSelectedTaskId(null);
             }}
-            onSwitchToTerminals={() => setActiveView('terminals')}
+            onSwitchToTerminals={() => { setActiveView('terminals'); }}
             onOpenInbuiltTerminal={handleOpenInbuiltTerminal}
             onExpandMissionControl={(taskId) => {
               setSelectedTaskId(null);
@@ -439,7 +501,7 @@ function AuthenticatedApp() {
           {missionControlTask && (
             <MissionControl
               task={missionControlTask}
-              onClose={() => setMissionControlId(null)}
+              onClose={() => { setMissionControlId(null); }}
               onCollapse={(taskId) => {
                 setMissionControlId(null);
                 setSelectedTaskId(taskId);
@@ -451,8 +513,8 @@ function AuthenticatedApp() {
           <OnboardingWizard
             open={isOnboardingOpen}
             onOpenChange={setIsOnboardingOpen}
-            onOpenTaskCreator={() => setIsNewTaskDialogOpen(true)}
-            onOpenSettings={() => setIsSettingsDialogOpen(true)}
+            onOpenTaskCreator={() => { setIsNewTaskDialogOpen(true); }}
+            onOpenSettings={() => { setIsSettingsDialogOpen(true); }}
           />
         </div>
       </TooltipProvider>

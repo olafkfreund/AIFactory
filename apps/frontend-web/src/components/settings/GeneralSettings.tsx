@@ -60,7 +60,7 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
             <p className="text-sm text-muted-foreground">{t('general.agentFrameworkDescription')}</p>
             <Select
               value={settings.agentFramework}
-              onValueChange={(value) => onSettingsChange({ ...settings, agentFramework: value })}
+              onValueChange={(value) => { onSettingsChange({ ...settings, agentFramework: value }); }}
             >
               <SelectTrigger id="agentFramework" className="w-full max-w-md">
                 <SelectValue />
@@ -83,7 +83,7 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
               <Switch
                 id="autoNameTerminals"
                 checked={settings.autoNameTerminals}
-                onCheckedChange={(checked) => onSettingsChange({ ...settings, autoNameTerminals: checked })}
+                onCheckedChange={(checked) => { onSettingsChange({ ...settings, autoNameTerminals: checked }); }}
               />
             </div>
           </div>
@@ -101,7 +101,7 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
               <Switch
                 id="soloMode"
                 checked={settings.soloMode ?? false}
-                onCheckedChange={(checked) => onSettingsChange({ ...settings, soloMode: checked })}
+                onCheckedChange={(checked) => { onSettingsChange({ ...settings, soloMode: checked }); }}
               />
             </div>
           </div>
@@ -119,7 +119,7 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
               <Switch
                 id="bmadSessionSegmentation"
                 checked={settings.bmadSessionSegmentation ?? false}
-                onCheckedChange={(checked) => onSettingsChange({ ...settings, bmadSessionSegmentation: checked })}
+                onCheckedChange={(checked) => { onSettingsChange({ ...settings, bmadSessionSegmentation: checked }); }}
               />
             </div>
           </div>

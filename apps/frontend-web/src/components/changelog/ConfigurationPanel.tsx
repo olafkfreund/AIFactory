@@ -114,7 +114,7 @@ export function ConfigurationPanel({
               <Input
                 id="version"
                 value={version}
-                onChange={(e) => onVersionChange(e.target.value)}
+                onChange={(e) => { onVersionChange(e.target.value); }}
                 placeholder="1.0.0"
               />
             </div>
@@ -124,7 +124,7 @@ export function ConfigurationPanel({
                 id="date"
                 type="date"
                 value={date}
-                onChange={(e) => onDateChange(e.target.value)}
+                onChange={(e) => { onDateChange(e.target.value); }}
               />
             </div>
             {(existingChangelog?.lastVersion || versionBumpDescription) && (
@@ -150,7 +150,7 @@ export function ConfigurationPanel({
               <Label>Format</Label>
               <Select
                 value={format}
-                onValueChange={(value) => onFormatChange(value as ChangelogFormat)}
+                onValueChange={(value) => { onFormatChange(value as ChangelogFormat); }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -174,7 +174,7 @@ export function ConfigurationPanel({
               <Label>Audience</Label>
               <Select
                 value={audience}
-                onValueChange={(value) => onAudienceChange(value as ChangelogAudience)}
+                onValueChange={(value) => { onAudienceChange(value as ChangelogAudience); }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -198,7 +198,7 @@ export function ConfigurationPanel({
               <Label>Emojis</Label>
               <Select
                 value={emojiLevel}
-                onValueChange={(value) => onEmojiLevelChange(value as ChangelogEmojiLevel)}
+                onValueChange={(value) => { onEmojiLevelChange(value as ChangelogEmojiLevel); }}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -240,7 +240,7 @@ export function ConfigurationPanel({
                   <Textarea
                     id="instructions"
                     value={customInstructions}
-                    onChange={(e) => onCustomInstructionsChange(e.target.value)}
+                    onChange={(e) => { onCustomInstructionsChange(e.target.value); }}
                     placeholder="Add any special instructions for the AI..."
                     rows={3}
                   />

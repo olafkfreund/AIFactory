@@ -26,14 +26,14 @@ export const useInvestigationStore = create<InvestigationState>((set) => ({
   lastInvestigationResult: null,
 
   // Actions
-  setInvestigationStatus: (investigationStatus) => set({ investigationStatus }),
+  setInvestigationStatus: (investigationStatus) => { set({ investigationStatus }); },
 
-  setInvestigationResult: (lastInvestigationResult) => set({ lastInvestigationResult }),
+  setInvestigationResult: (lastInvestigationResult) => { set({ lastInvestigationResult }); },
 
-  clearInvestigation: () => set({
+  clearInvestigation: () => { set({
     investigationStatus: { phase: 'idle', progress: 0, message: '' },
     lastInvestigationResult: null
-  })
+  }); }
 }));
 
 /**

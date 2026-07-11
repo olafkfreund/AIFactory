@@ -75,21 +75,21 @@ export function ProviderChoiceStep({ onChoose, onBack }: ProviderChoiceStepProps
             icon={<Bot className="h-6 w-6" />}
             title={t('providerChoice.claude.title')}
             description={t('providerChoice.claude.description')}
-            onClick={() => onChoose('claude')}
+            onClick={() => { onChoose('claude'); }}
             data-testid="provider-choice-claude"
           />
           <ProviderCard
             icon={<Server className="h-6 w-6" />}
             title={t('providerChoice.openaiCompat.title')}
             description={t('providerChoice.openaiCompat.description')}
-            onClick={() => onChoose('openai_compat')}
+            onClick={() => { onChoose('openai_compat'); }}
             data-testid="provider-choice-openai-compat"
           />
           <ProviderCard
             icon={<Clock className="h-6 w-6" />}
             title={t('providerChoice.skip.title')}
             description={t('providerChoice.skip.description')}
-            onClick={() => onChoose('skip')}
+            onClick={() => { onChoose('skip'); }}
             data-testid="provider-choice-skip"
           />
         </div>

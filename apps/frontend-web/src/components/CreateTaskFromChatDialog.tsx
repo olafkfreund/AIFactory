@@ -77,7 +77,7 @@ export function CreateTaskFromChatDialog({
               <Input
                 id="task-title"
                 value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => { setTitle(e.target.value); }}
                 placeholder={t('common:insights.createTask.titlePlaceholder')}
                 disabled={isCreating}
                 autoFocus
@@ -90,7 +90,7 @@ export function CreateTaskFromChatDialog({
               <Textarea
                 id="task-description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => { setDescription(e.target.value); }}
                 placeholder={t('common:insights.createTask.descriptionPlaceholder')}
                 disabled={isCreating}
                 className="min-h-[200px] resize-y"
@@ -102,7 +102,7 @@ export function CreateTaskFromChatDialog({
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => { onOpenChange(false); }}
             disabled={isCreating}
           >
             {t('common:insights.createTask.cancel')}

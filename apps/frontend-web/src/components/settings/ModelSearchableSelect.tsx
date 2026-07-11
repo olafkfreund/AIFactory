@@ -90,7 +90,7 @@ export function ModelSearchableSelect({
    * Uses store's discoverModels action which has built-in caching.
    */
   const fetchModels = async () => {
-    console.log('[ModelSearchableSelect] fetchModels called with:', { baseUrl, apiKey: `${apiKey.slice(-4)}` });
+    console.log('[ModelSearchableSelect] fetchModels called with:', { baseUrl, apiKey: apiKey.slice(-4) });
     // Fetch from API
     setIsLoading(true);
     setError(null);
@@ -261,7 +261,7 @@ export function ModelSearchableSelect({
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); }}
                 placeholder="Search models..."
                 className="pl-8"
                 autoFocus
@@ -280,7 +280,7 @@ export function ModelSearchableSelect({
                 <button
                   key={model.id}
                   type="button"
-                  onClick={() => handleSelectModel(model.id)}
+                  onClick={() => { handleSelectModel(model.id); }}
                   className={cn(
                     'w-full px-3 py-2 text-left text-sm hover:bg-accent flex items-start gap-2',
                     value === model.id && 'bg-accent'

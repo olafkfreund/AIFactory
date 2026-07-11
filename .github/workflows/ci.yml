@@ -628,14 +628,10 @@ jobs:
   frontend-test:
     name: frontend (vitest)
     runs-on: ubuntu-latest
-    # Runs the apps/frontend-web vitest component suite (14 .test.tsx
-    # files) so the tests can no longer silently rot. Started NON-blocking
-    # (continue-on-error) because the suite currently has 5 pre-existing
-    # failures in OnboardingWizard.test.tsx (stale assertions vs. the
-    # component's current copy) that this CI-gating change deliberately
-    # surfaces but does not fix. Flip continue-on-error to false to make
-    # this a required check once those 5 tests are repaired.
-    continue-on-error: true
+    # Runs the apps/frontend-web vitest component suite (16 .test.tsx
+    # files) so the tests can no longer silently rot. Now BLOCKING: the
+    # OnboardingWizard.test.tsx assertions were repaired to the current
+    # provider-choice flow (#772), so the suite is green and gates merges.
     steps:
       - uses: actions/checkout@v4
 

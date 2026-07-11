@@ -99,7 +99,7 @@ describe('MemoriesTab', () => {
       // Simulate search flow: loading -> complete with no results
       const searchQuery = 'missing memory';
       let searchLoading = true;
-      let searchResults: Array<{ type: string; content: string; score: number }> = [];
+      const searchResults: Array<{ type: string; content: string; score: number }> = [];
 
       // During loading - should NOT show alert
       let shouldShowAlert: boolean = Boolean(searchQuery) && searchResults.length === 0 && !searchLoading;
@@ -530,7 +530,7 @@ describe('MemoriesTab', () => {
     it('should handle complete failed search flow', () => {
       // Initial state
       let searchQuery = '';
-      let searchResults: Array<{ type: string; content: string; score: number }> = [];
+      const searchResults: Array<{ type: string; content: string; score: number }> = [];
       let searchLoading = false;
       let shouldShowAlert = Boolean(searchQuery) && searchResults.length === 0 && !searchLoading;
       expect(shouldShowAlert).toBeFalsy();

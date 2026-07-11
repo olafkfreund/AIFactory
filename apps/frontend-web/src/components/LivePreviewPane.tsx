@@ -46,7 +46,7 @@ export function LivePreviewPane() {
     setReloadKey((k) => k + 1);
   };
 
-  const setPort = (port: number) => navigate(`http://localhost:${port}`);
+  const setPort = (port: number) => { navigate(`http://localhost:${port}`); };
   const reload = () => {
     setLoaded(false);
     setReloadKey((k) => k + 1);
@@ -64,7 +64,7 @@ export function LivePreviewPane() {
           <input
             ref={inputRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => { setDraft(e.target.value); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') navigate(draft);
             }}
@@ -92,7 +92,7 @@ export function LivePreviewPane() {
           return (
             <button
               key={port}
-              onClick={() => setPort(port)}
+              onClick={() => { setPort(port); }}
               className={cn(
                 'rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums transition-colors',
                 active
@@ -124,7 +124,7 @@ export function LivePreviewPane() {
           title="Live app preview"
           className="h-full w-full border-0 bg-white"
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-          onLoad={() => setLoaded(true)}
+          onLoad={() => { setLoaded(true); }}
         />
       </div>
     </div>

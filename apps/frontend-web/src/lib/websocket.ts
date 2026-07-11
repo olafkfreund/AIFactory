@@ -43,22 +43,22 @@ class WebSocketManager {
     ws.onopen = () => {
       console.log(`[WebSocket] Connected: ${endpoint}`);
       connection.reconnectAttempts = 0;
-      this.onConnectHandlers.get(endpoint)?.forEach((h) => h());
+      this.onConnectHandlers.get(endpoint)?.forEach((h) => { h(); });
     };
 
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        connection.handlers.forEach((handler) => handler(data));
+        connection.handlers.forEach((handler) => { handler(data); });
       } catch {
         // Handle non-JSON messages (e.g., terminal raw output)
-        connection.handlers.forEach((handler) => handler(event.data));
+        connection.handlers.forEach((handler) => { handler(event.data); });
       }
     };
 
     ws.onclose = (event) => {
       console.log(`[WebSocket] Disconnected: ${endpoint}`, event.code, event.reason);
-      this.onDisconnectHandlers.get(endpoint)?.forEach((h) => h());
+      this.onDisconnectHandlers.get(endpoint)?.forEach((h) => { h(); });
 
       // Attempt reconnect for non-normal closures
       if (event.code !== 1000 && connection.reconnectAttempts < this.maxReconnectAttempts) {
@@ -180,19 +180,19 @@ export const terminalWs = {
   send: (terminalId: string, data: string) =>
     wsManager.send(`/ws/terminal/${terminalId}`, data),
   disconnect: (terminalId: string) =>
-    wsManager.disconnect(`/ws/terminal/${terminalId}`),
+    { wsManager.disconnect(`/ws/terminal/${terminalId}`); },
 };
 
 export const taskLogsWs = {
   subscribe: (taskId: string, handler: MessageHandler) =>
     wsManager.subscribe(`/ws/tasks/${taskId}/logs`, handler),
   disconnect: (taskId: string) =>
-    wsManager.disconnect(`/ws/tasks/${taskId}/logs`),
+    { wsManager.disconnect(`/ws/tasks/${taskId}/logs`); },
 };
 
 export const taskProgressWs = {
   subscribe: (taskId: string, handler: MessageHandler) =>
     wsManager.subscribe(`/ws/tasks/${taskId}/progress`, handler),
   disconnect: (taskId: string) =>
-    wsManager.disconnect(`/ws/tasks/${taskId}/progress`),
+    { wsManager.disconnect(`/ws/tasks/${taskId}/progress`); },
 };

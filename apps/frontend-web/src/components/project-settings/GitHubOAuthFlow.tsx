@@ -290,7 +290,7 @@ export function GitHubOAuthFlow({ projectId, onSuccess, onCancel }: GitHubOAuthF
       await navigator.clipboard.writeText(deviceCode);
       setCodeCopied(true);
       if (codeCopyTimeoutRef.current) clearTimeout(codeCopyTimeoutRef.current);
-      codeCopyTimeoutRef.current = setTimeout(() => setCodeCopied(false), 2000);
+      codeCopyTimeoutRef.current = setTimeout(() => { setCodeCopied(false); }, 2000);
     } catch (err) {
       debugLog('Failed to copy device code:', err);
     }

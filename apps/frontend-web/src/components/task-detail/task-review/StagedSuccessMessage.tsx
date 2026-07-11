@@ -23,7 +23,7 @@ export function StagedSuccessMessage({
     try {
       await navigator.clipboard.writeText(commitMessage);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => { setCopied(false); }, 2000);
     } catch (err) {
       console.error('Failed to copy:', err);
     }
@@ -69,7 +69,7 @@ export function StagedSuccessMessage({
           </div>
           <Textarea
             value={commitMessage}
-            onChange={(e) => setCommitMessage(e.target.value)}
+            onChange={(e) => { setCommitMessage(e.target.value); }}
             className="font-mono text-xs min-h-[100px] bg-background/80 resize-y"
             placeholder="Commit message..."
           />

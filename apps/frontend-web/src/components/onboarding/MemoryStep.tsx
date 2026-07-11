@@ -233,14 +233,14 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               id="openai-key"
               type={showApiKey['openai'] ? 'text' : 'password'}
               value={config.openaiApiKey}
-              onChange={(e) => setConfig(prev => ({ ...prev, openaiApiKey: e.target.value }))}
+              onChange={(e) => { setConfig(prev => ({ ...prev, openaiApiKey: e.target.value })); }}
               placeholder="sk-..."
               className="pr-10 font-mono text-sm"
               disabled={isSaving}
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('openai')}
+              onClick={() => { toggleShowApiKey('openai'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               {showApiKey['openai'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -267,14 +267,14 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               id="voyage-key"
               type={showApiKey['voyage'] ? 'text' : 'password'}
               value={config.voyageApiKey}
-              onChange={(e) => setConfig(prev => ({ ...prev, voyageApiKey: e.target.value }))}
+              onChange={(e) => { setConfig(prev => ({ ...prev, voyageApiKey: e.target.value })); }}
               placeholder="pa-..."
               className="pr-10 font-mono text-sm"
               disabled={isSaving}
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('voyage')}
+              onClick={() => { toggleShowApiKey('voyage'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               {showApiKey['voyage'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -301,14 +301,14 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               id="google-key"
               type={showApiKey['google'] ? 'text' : 'password'}
               value={config.googleApiKey}
-              onChange={(e) => setConfig(prev => ({ ...prev, googleApiKey: e.target.value }))}
+              onChange={(e) => { setConfig(prev => ({ ...prev, googleApiKey: e.target.value })); }}
               placeholder="AIza..."
               className="pr-10 font-mono text-sm"
               disabled={isSaving}
             />
             <button
               type="button"
-              onClick={() => toggleShowApiKey('google')}
+              onClick={() => { toggleShowApiKey('google'); }}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               {showApiKey['google'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -335,14 +335,14 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
                 id="azure-key"
                 type={showApiKey['azure'] ? 'text' : 'password'}
                 value={config.azureOpenaiApiKey}
-                onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiApiKey: e.target.value }))}
+                onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiApiKey: e.target.value })); }}
                 placeholder="Azure API key"
                 className="pr-10 font-mono text-sm"
                 disabled={isSaving}
               />
               <button
                 type="button"
-                onClick={() => toggleShowApiKey('azure')}
+                onClick={() => { toggleShowApiKey('azure'); }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showApiKey['azure'] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -355,7 +355,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               id="azure-url"
               type="text"
               value={config.azureOpenaiBaseUrl}
-              onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiBaseUrl: e.target.value }))}
+              onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiBaseUrl: e.target.value })); }}
               placeholder="https://your-resource.openai.azure.com"
               className="font-mono text-sm"
               disabled={isSaving}
@@ -367,7 +367,7 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
               id="azure-embedding-deployment"
               type="text"
               value={config.azureOpenaiEmbeddingDeployment}
-              onChange={(e) => setConfig(prev => ({ ...prev, azureOpenaiEmbeddingDeployment: e.target.value }))}
+              onChange={(e) => { setConfig(prev => ({ ...prev, azureOpenaiEmbeddingDeployment: e.target.value })); }}
               placeholder="text-embedding-ada-002"
               className="font-mono text-sm"
               disabled={isSaving}

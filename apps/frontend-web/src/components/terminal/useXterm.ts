@@ -192,7 +192,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize }: UseXtermOptio
       attributes: true,
       attributeFilter: ['class', 'data-theme'],
     });
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); };
   }, []);
 
   // Handle resize on container resize and window resize

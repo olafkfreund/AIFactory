@@ -150,7 +150,7 @@ export function TaskLogs({
                 phase={phase}
                 phaseLog={phaseLogs.phases[phase]}
                 isExpanded={expandedPhases.has(phase)}
-                onToggle={() => onTogglePhase(phase)}
+                onToggle={() => { onTogglePhase(phase); }}
                 isTaskStuck={isStuck}
                 phaseConfig={getPhaseConfig(task.metadata, phase)}
               />
@@ -378,7 +378,7 @@ function LogEntry({ entry }: LogEntryProps) {
           </div>
           {hasDetail && (
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={() => { setIsExpanded(!isExpanded); }}
               className={cn(
                 'flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded',
                 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors',
@@ -419,7 +419,7 @@ function LogEntry({ entry }: LogEntryProps) {
           <SubphaseBadge />
           {hasDetail && (
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={() => { setIsExpanded(!isExpanded); }}
               className={cn(
                 'flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded shrink-0',
                 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors',
@@ -472,7 +472,7 @@ function LogEntry({ entry }: LogEntryProps) {
         <SubphaseBadge />
         {hasDetail && (
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={() => { setIsExpanded(!isExpanded); }}
             className={cn(
               'flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded shrink-0',
               'text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors',

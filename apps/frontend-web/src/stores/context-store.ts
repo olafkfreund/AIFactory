@@ -66,20 +66,20 @@ export const useContextStore = create<ContextState>((set) => ({
   searchQuery: '',
 
   // Actions
-  setProjectIndex: (index) => set({ projectIndex: index }),
-  setIndexLoading: (loading) => set({ indexLoading: loading }),
-  setIndexError: (error) => set({ indexError: error }),
-  setMemoryStatus: (status) => set({ memoryStatus: status }),
-  setMemoryState: (state) => set({ memoryState: state }),
-  setMemoryLoading: (loading) => set({ memoryLoading: loading }),
-  setMemoryError: (error) => set({ memoryError: error }),
-  setRecentMemories: (memories) => set({ recentMemories: memories }),
-  setMemoriesLoading: (loading) => set({ memoriesLoading: loading }),
-  setSearchResults: (results) => set({ searchResults: results }),
-  setSearchLoading: (loading) => set({ searchLoading: loading }),
-  setSearchQuery: (query) => set({ searchQuery: query }),
+  setProjectIndex: (index) => { set({ projectIndex: index }); },
+  setIndexLoading: (loading) => { set({ indexLoading: loading }); },
+  setIndexError: (error) => { set({ indexError: error }); },
+  setMemoryStatus: (status) => { set({ memoryStatus: status }); },
+  setMemoryState: (state) => { set({ memoryState: state }); },
+  setMemoryLoading: (loading) => { set({ memoryLoading: loading }); },
+  setMemoryError: (error) => { set({ memoryError: error }); },
+  setRecentMemories: (memories) => { set({ recentMemories: memories }); },
+  setMemoriesLoading: (loading) => { set({ memoriesLoading: loading }); },
+  setSearchResults: (results) => { set({ searchResults: results }); },
+  setSearchLoading: (loading) => { set({ searchLoading: loading }); },
+  setSearchQuery: (query) => { set({ searchQuery: query }); },
   clearAll: () =>
-    set({
+    { set({
       projectIndex: null,
       indexLoading: false,
       indexError: null,
@@ -92,7 +92,7 @@ export const useContextStore = create<ContextState>((set) => ({
       searchResults: [],
       searchLoading: false,
       searchQuery: ''
-    })
+    }); }
 }));
 
 /**

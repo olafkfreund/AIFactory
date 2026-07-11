@@ -115,7 +115,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
 
   // Cleanup polling on unmount
   useEffect(() => {
-    return () => stopPolling();
+    return () => { stopPolling(); };
   }, []);
 
   const stopPolling = () => {
@@ -448,7 +448,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                                 <div className="flex items-center gap-2">
                                   <Input
                                     value={editingProfileName}
-                                    onChange={(e) => setEditingProfileName(e.target.value)}
+                                    onChange={(e) => { setEditingProfileName(e.target.value); }}
                                     className="h-7 text-sm w-40"
                                     autoFocus
                                     onKeyDown={(e) => {
@@ -528,7 +528,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => toggleTokenEntry(profile.id)}
+                                onClick={() => { toggleTokenEntry(profile.id); }}
                                 className="h-7 w-7 text-muted-foreground hover:text-foreground"
                                 title={expandedTokenProfileId === profile.id ? "Hide token entry" : "Enter token manually"}
                               >
@@ -541,7 +541,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => startEditingProfile(profile)}
+                                onClick={() => { startEditingProfile(profile); }}
                                 className="h-7 w-7 text-muted-foreground hover:text-foreground"
                                 title="Rename profile"
                               >
@@ -613,7 +613,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                               <EmbeddedTerminal
                                 initialCommand="claude setup-token"
                                 height={350}
-                                onUrlDetected={(url) => setDetectedUrls(prev => [...prev, url])}
+                                onUrlDetected={(url) => { setDetectedUrls(prev => [...prev, url]); }}
                                 onTokenDetected={handleTokenDetected}
                               />
 
@@ -647,12 +647,12 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                                     type={showManualToken ? 'text' : 'password'}
                                     placeholder="sk-ant-oat01-..."
                                     value={manualToken}
-                                    onChange={(e) => setManualToken(e.target.value)}
+                                    onChange={(e) => { setManualToken(e.target.value); }}
                                     className="pr-10 font-mono text-xs h-8"
                                   />
                                   <button
                                     type="button"
-                                    onClick={() => setShowManualToken(!showManualToken)}
+                                    onClick={() => { setShowManualToken(!showManualToken); }}
                                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                                   >
                                     {showManualToken ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
@@ -663,7 +663,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                                   type="email"
                                   placeholder="Email (optional, for display)"
                                   value={manualTokenEmail}
-                                  onChange={(e) => setManualTokenEmail(e.target.value)}
+                                  onChange={(e) => { setManualTokenEmail(e.target.value); }}
                                   className="text-xs h-8"
                                 />
                               </div>
@@ -672,7 +672,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => toggleTokenEntry(profile.id)}
+                                  onClick={() => { toggleTokenEntry(profile.id); }}
                                   className="h-7 text-xs"
                                 >
                                   Cancel
@@ -705,7 +705,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                 <Input
                   placeholder="Account name (e.g., Work, Personal)"
                   value={newProfileName}
-                  onChange={(e) => setNewProfileName(e.target.value)}
+                  onChange={(e) => { setNewProfileName(e.target.value); }}
                   className="flex-1 h-8 text-sm"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && newProfileName.trim()) {

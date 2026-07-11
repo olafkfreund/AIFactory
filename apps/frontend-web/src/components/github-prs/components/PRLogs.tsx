@@ -120,7 +120,7 @@ export function PRLogs({ prNumber, logs, isLoading, isStreaming = false }: PRLog
                 phase={phase}
                 phaseLog={logs.phases[phase]}
                 isExpanded={expandedPhases.has(phase)}
-                onToggle={() => togglePhase(phase)}
+                onToggle={() => { togglePhase(phase); }}
                 isStreaming={isStreaming}
               />
             ))}
@@ -280,7 +280,7 @@ function LogEntry({ entry }: LogEntryProps) {
           <span className="break-words flex-1">{entry.content}</span>
           {hasDetail && (
             <button
-              onClick={() => setIsExpanded(!isExpanded)}
+              onClick={() => { setIsExpanded(!isExpanded); }}
               className={cn(
                 'flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded shrink-0',
                 'text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors',
@@ -335,7 +335,7 @@ function LogEntry({ entry }: LogEntryProps) {
         <span className="break-words whitespace-pre-wrap flex-1">{entry.content}</span>
         {hasDetail && (
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={() => { setIsExpanded(!isExpanded); }}
             className={cn(
               'flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded shrink-0',
               'text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors',

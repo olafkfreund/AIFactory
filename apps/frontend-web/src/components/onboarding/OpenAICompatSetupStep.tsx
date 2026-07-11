@@ -151,7 +151,7 @@ export function OpenAICompatSetupStep({ onNext, onBack }: OpenAICompatSetupStepP
               id="openai-compat-api-key"
               type="password"
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              onChange={(e) => { setApiKey(e.target.value); }}
               placeholder={t('openaiCompatSetup.apiKeyPlaceholder')}
               autoComplete="off"
             />

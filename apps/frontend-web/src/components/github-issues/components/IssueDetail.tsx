@@ -58,7 +58,7 @@ export function IssueDetail({
             <div className="flex items-center gap-2">
               <Badge
                 variant="outline"
-                className={`${GITHUB_ISSUE_STATE_COLORS[issue.state]}`}
+                className={GITHUB_ISSUE_STATE_COLORS[issue.state]}
               >
                 {GITHUB_ISSUE_STATE_LABELS[issue.state]}
               </Badge>

@@ -178,8 +178,8 @@ export function PRDetail({
   // Clear success message after 3 seconds
   useEffect(() => {
     if (postSuccess) {
-      const timer = setTimeout(() => setPostSuccess(null), 3000);
-      return () => clearTimeout(timer);
+      const timer = setTimeout(() => { setPostSuccess(null); }, 3000);
+      return () => { clearTimeout(timer); };
     }
     return undefined;
   }, [postSuccess]);
@@ -197,9 +197,9 @@ export function PRDetail({
       logsLoadedRef.current = true;
       setIsLoadingLogs(true);
       onGetLogs()
-        .then(logs => setPrLogs(logs))
-        .catch(() => setPrLogs(null))
-        .finally(() => setIsLoadingLogs(false));
+        .then(logs => { setPrLogs(logs); })
+        .catch(() => { setPrLogs(null); })
+        .finally(() => { setIsLoadingLogs(false); });
     }
   }, [logsExpanded, onGetLogs, isLoadingLogs]);
 
@@ -214,8 +214,8 @@ export function PRDetail({
     // Do one final refresh when review just completed to get final phase status
     if (wasReviewing && !isReviewing) {
       onGetLogs()
-        .then(logs => setPrLogs(logs))
-        .catch(err => console.error('Failed to fetch final logs:', err));
+        .then(logs => { setPrLogs(logs); })
+        .catch(err => { console.error('Failed to fetch final logs:', err); });
       return;
     }
 
@@ -238,7 +238,7 @@ export function PRDetail({
     // Refresh immediately, then every 1.5 seconds while reviewing for smoother streaming
     refreshLogs();
     const interval = setInterval(refreshLogs, 1500);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [isReviewing, onGetLogs]);
 
   // Reset logs state when PR changes

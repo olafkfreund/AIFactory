@@ -69,7 +69,7 @@ export function WorktreeSelector({
             'flex items-center gap-1 h-6 px-2 rounded text-xs font-medium transition-colors',
             'hover:bg-amber-500/10 hover:text-amber-500 text-muted-foreground'
           )}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); }}
         >
           <FolderGit className="h-3 w-3" />
           <span>{t('terminal:worktree.create')}</span>

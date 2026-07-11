@@ -254,7 +254,7 @@ export function WorkspaceStatus({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => onShowDiffDialog(true)}
+            onClick={() => { onShowDiffDialog(true); }}
             className="h-7 px-2 text-xs"
           >
             <Eye className="h-3.5 w-3.5 mr-1" />
@@ -426,7 +426,7 @@ export function WorkspaceStatus({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => onShowConflictDialog(true)}
+                  onClick={() => { onShowConflictDialog(true); }}
                   className="h-7 text-xs"
                 >
                   Details
@@ -504,7 +504,7 @@ export function WorkspaceStatus({
           <label className="inline-flex items-center gap-2.5 text-sm cursor-pointer select-none px-3 py-2 rounded-lg border border-border bg-background/50 hover:bg-background/80 transition-colors">
             <Checkbox
               checked={stageOnly}
-              onCheckedChange={(checked) => onStageOnlyChange(checked === true)}
+              onCheckedChange={(checked) => { onStageOnlyChange(checked === true); }}
               className="border-muted-foreground/50 data-[state=checked]:border-primary"
             />
             <span className={cn(
@@ -619,7 +619,7 @@ export function WorkspaceStatus({
               type="button"
               variant="outline"
               size="icon"
-              onClick={() => onShowDiscardDialog(true)}
+              onClick={() => { onShowDiscardDialog(true); }}
               disabled={isMerging || isDiscarding || isCreatingPR}
               className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 hover:border-destructive/30"
               title="Discard build"

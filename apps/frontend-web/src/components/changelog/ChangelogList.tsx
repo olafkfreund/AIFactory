@@ -109,7 +109,7 @@ export function ChangelogList({
                     key={task.id}
                     task={task}
                     isSelected={selectedTaskIds.includes(task.id)}
-                    onToggle={() => onToggleTask(task.id)}
+                    onToggle={() => { onToggleTask(task.id); }}
                   />
                 ))}
               </div>

@@ -52,7 +52,7 @@ export function LanguageSettings({ settings, onSettingsChange }: LanguageSetting
               return (
                 <button
                   key={lang.value}
-                  onClick={() => handleLanguageChange(lang.value)}
+                  onClick={() => { handleLanguageChange(lang.value); }}
                   className={cn(
                     'flex items-center gap-3 p-4 rounded-lg border-2 transition-all',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
