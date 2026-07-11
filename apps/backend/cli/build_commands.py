@@ -483,7 +483,7 @@ def handle_build_command(
 def _handle_build_interrupt(
     spec_dir: Path,
     project_dir: Path,
-    worktree_manager,
+    worktree_manager: object,
     working_dir: Path,
     model: str,
     max_iterations: int | None,
@@ -558,7 +558,7 @@ def _handle_build_interrupt(
             status_manager.set_inactive()
             sys.exit(0)
 
-        human_input = ""
+        human_input: str | None = ""
 
         if choice == "file":
             # Read from file
