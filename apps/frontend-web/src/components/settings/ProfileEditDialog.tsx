@@ -89,7 +89,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
       const timeoutId = setTimeout(() => {
         setShowTestResult(false);
       }, 5000);
-      return () => clearTimeout(timeoutId);
+      return () => { clearTimeout(timeoutId); };
     }
     return undefined;
   }, [testConnectionResult]);
@@ -297,7 +297,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
               id="profile-name"
               placeholder="My Custom API"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => { setName(e.target.value); }}
               className={nameError ? 'border-destructive' : ''}
             />
             {nameError && <p className="text-sm text-destructive">{nameError}</p>}
@@ -312,7 +312,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
               id="profile-url"
               placeholder="https://api.anthropic.com"
               value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
+              onChange={(e) => { setBaseUrl(e.target.value); }}
               className={urlError ? 'border-destructive' : ''}
             />
             {urlError && <p className="text-sm text-destructive">{urlError}</p>}
@@ -339,7 +339,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setIsChangingApiKey(true)}
+                  onClick={() => { setIsChangingApiKey(true); }}
                 >
                   Change
                 </Button>
@@ -352,7 +352,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
                   type="password"
                   placeholder="sk-ant-..."
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={(e) => { setApiKey(e.target.value); }}
                   className={keyError ? 'border-destructive' : ''}
                 />
                 {isEditMode && (
@@ -497,7 +497,7 @@ export function ProfileEditDialog({ open, onOpenChange, onSaved, profile }: Prof
           <Button
             type="button"
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => { onOpenChange(false); }}
             disabled={profilesLoading}
           >
             Cancel

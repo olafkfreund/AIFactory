@@ -164,6 +164,12 @@ USER nonroot
 RUN mkdir -p /home/nonroot/.npm-global \
  && npm config set prefix /home/nonroot/.npm-global
 
+# GitHub Copilot CLI — pre-installed so the CopilotAgenticProvider finds `copilot`
+# on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
+# The provider requires the CLI present; runtime selection is still gated by
+# AIFACTORY_RUNTIMES + a Copilot subscription sign-in on the pod (AIFactory #790).
+RUN npm install -g @github/copilot
+
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
 RUN python3 -m venv /home/projects/MagesticAI/.venv

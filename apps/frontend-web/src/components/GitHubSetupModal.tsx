@@ -479,7 +479,7 @@ export function GitHubSetupModal({
               {!repoAction && (
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => setRepoAction('create')}
+                    onClick={() => { setRepoAction('create'); }}
                     className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 border-dashed hover:border-primary hover:bg-primary/5 transition-colors"
                   >
                     <Plus className="h-8 w-8 text-muted-foreground" />
@@ -489,7 +489,7 @@ export function GitHubSetupModal({
                     </span>
                   </button>
                   <button
-                    onClick={() => setRepoAction('link')}
+                    onClick={() => { setRepoAction('link'); }}
                     className="flex flex-col items-center gap-2 p-4 rounded-lg border-2 border-dashed hover:border-primary hover:bg-primary/5 transition-colors"
                   >
                     <Link className="h-8 w-8 text-muted-foreground" />
@@ -506,7 +506,7 @@ export function GitHubSetupModal({
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <button
-                      onClick={() => setRepoAction(null)}
+                      onClick={() => { setRepoAction(null); }}
                       className="text-primary hover:underline"
                     >
                       ← Back
@@ -527,7 +527,7 @@ export function GitHubSetupModal({
                         {/* Personal account */}
                         {githubUsername && (
                           <button
-                            onClick={() => setSelectedOwner(githubUsername)}
+                            onClick={() => { setSelectedOwner(githubUsername); }}
                             className={`flex items-center gap-2 px-3 py-2 rounded-md border ${
                               selectedOwner === githubUsername
                                 ? 'border-primary bg-primary/10 text-primary'
@@ -543,7 +543,7 @@ export function GitHubSetupModal({
                         {organizations.map((org) => (
                           <button
                             key={org.login}
-                            onClick={() => setSelectedOwner(org.login)}
+                            onClick={() => { setSelectedOwner(org.login); }}
                             className={`flex items-center gap-2 px-3 py-2 rounded-md border ${
                               selectedOwner === org.login
                                 ? 'border-primary bg-primary/10 text-primary'
@@ -573,7 +573,7 @@ export function GitHubSetupModal({
                       <Input
                         id="repo-name"
                         value={newRepoName}
-                        onChange={(e) => setNewRepoName(e.target.value)}
+                        onChange={(e) => { setNewRepoName(e.target.value); }}
                         placeholder="my-project"
                         disabled={isCreatingRepo}
                         className="flex-1"
@@ -585,7 +585,7 @@ export function GitHubSetupModal({
                     <Label>Visibility</Label>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => setIsPrivateRepo(true)}
+                        onClick={() => { setIsPrivateRepo(true); }}
                         className={`flex items-center gap-2 px-3 py-2 rounded-md border ${
                           isPrivateRepo
                             ? 'border-primary bg-primary/10 text-primary'
@@ -597,7 +597,7 @@ export function GitHubSetupModal({
                         <span className="text-sm">Private</span>
                       </button>
                       <button
-                        onClick={() => setIsPrivateRepo(false)}
+                        onClick={() => { setIsPrivateRepo(false); }}
                         className={`flex items-center gap-2 px-3 py-2 rounded-md border ${
                           !isPrivateRepo
                             ? 'border-primary bg-primary/10 text-primary'
@@ -618,7 +618,7 @@ export function GitHubSetupModal({
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <button
-                      onClick={() => setRepoAction(null)}
+                      onClick={() => { setRepoAction(null); }}
                       className="text-primary hover:underline"
                     >
                       ← Back
@@ -631,7 +631,7 @@ export function GitHubSetupModal({
                     <Input
                       id="existing-repo"
                       value={existingRepoName}
-                      onChange={(e) => setExistingRepoName(e.target.value)}
+                      onChange={(e) => { setExistingRepoName(e.target.value); }}
                       placeholder="username/repository"
                       disabled={isCreatingRepo}
                     />

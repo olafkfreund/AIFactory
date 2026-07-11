@@ -113,7 +113,7 @@ export function MemoriesTab({
             <Input
               placeholder="Search for patterns, insights, gotchas..."
               value={localSearchQuery}
-              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              onChange={(e) => { setLocalSearchQuery(e.target.value); }}
               onKeyDown={handleSearchKeyDown}
             />
             <Button onClick={handleSearch} disabled={searchLoading}>

@@ -97,7 +97,7 @@ describe('calculateProgress', () => {
       const statuses: SubtaskStatus[] = Array(100)
         .fill('completed', 0, 73)
         .fill('pending', 73);
-      const subtasks = createSubtasks(statuses as SubtaskStatus[]);
+      const subtasks = createSubtasks(statuses);
       const progress = calculateProgress(subtasks);
       expect(progress).toBe(73);
     });

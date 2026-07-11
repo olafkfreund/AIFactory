@@ -17,12 +17,12 @@ export function NotificationsSection({ settings, onUpdateSettings }: Notificatio
           <Switch
             checked={settings.notifications.onTaskComplete}
             onCheckedChange={(checked) =>
-              onUpdateSettings({
+              { onUpdateSettings({
                 notifications: {
                   ...settings.notifications,
                   onTaskComplete: checked
                 }
-              })
+              }); }
             }
           />
         </div>
@@ -31,12 +31,12 @@ export function NotificationsSection({ settings, onUpdateSettings }: Notificatio
           <Switch
             checked={settings.notifications.onTaskFailed}
             onCheckedChange={(checked) =>
-              onUpdateSettings({
+              { onUpdateSettings({
                 notifications: {
                   ...settings.notifications,
                   onTaskFailed: checked
                 }
-              })
+              }); }
             }
           />
         </div>
@@ -45,12 +45,12 @@ export function NotificationsSection({ settings, onUpdateSettings }: Notificatio
           <Switch
             checked={settings.notifications.onReviewNeeded}
             onCheckedChange={(checked) =>
-              onUpdateSettings({
+              { onUpdateSettings({
                 notifications: {
                   ...settings.notifications,
                   onReviewNeeded: checked
                 }
-              })
+              }); }
             }
           />
         </div>
@@ -59,12 +59,12 @@ export function NotificationsSection({ settings, onUpdateSettings }: Notificatio
           <Switch
             checked={settings.notifications.sound}
             onCheckedChange={(checked) =>
-              onUpdateSettings({
+              { onUpdateSettings({
                 notifications: {
                   ...settings.notifications,
                   sound: checked
                 }
-              })
+              }); }
             }
           />
         </div>

@@ -85,7 +85,7 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
     );
 
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); };
   }, []);
 
   // Only animate when visible and running

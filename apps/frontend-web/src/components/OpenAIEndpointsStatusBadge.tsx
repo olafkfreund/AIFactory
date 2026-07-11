@@ -272,7 +272,7 @@ export function OpenAIEndpointsStatusBadge({
     if (endpoints.length === 0) return;
     probeAll();
     const interval = setInterval(probeAll, REFRESH_INTERVAL_MS);
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [endpoints, probeAll]);
 
   if (isLoading || endpoints.length === 0) return null;

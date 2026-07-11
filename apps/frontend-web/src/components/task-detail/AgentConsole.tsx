@@ -136,9 +136,9 @@ export function AgentConsole({ taskId }: AgentConsoleProps) {
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
-    ws.onopen = () => setWsStatus('open');
-    ws.onclose = () => setWsStatus('closed');
-    ws.onerror = () => setWsStatus('closed');
+    ws.onopen = () => { setWsStatus('open'); };
+    ws.onclose = () => { setWsStatus('closed'); };
+    ws.onerror = () => { setWsStatus('closed'); };
 
     ws.onmessage = (ev) => {
       // First frame is the JSON `connected` envelope.  Everything
@@ -295,7 +295,7 @@ export function AgentConsole({ taskId }: AgentConsoleProps) {
               variant="default"
               size="sm"
               disabled={!canAttach}
-              onClick={() => setShowAttachConfirm(true)}
+              onClick={() => { setShowAttachConfirm(true); }}
               data-testid="agent-console-attach"
             >
               {t('tasks:agentConsole.attachButton')}

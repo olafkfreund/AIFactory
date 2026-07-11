@@ -111,7 +111,7 @@ export function ClaudeCodeStatusBadge({ className, onOpenOnboarding, iconOnly = 
       checkAuth();
     }, CHECK_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+    return () => { clearInterval(interval); };
   }, [checkVersion, checkAuth]);
 
   // Immediate refresh when onboarding wizard closes
@@ -121,7 +121,7 @@ export function ClaudeCodeStatusBadge({ className, onOpenOnboarding, iconOnly = 
       checkAuth();
     };
     window.addEventListener('claude-code-refresh', handler);
-    return () => window.removeEventListener('claude-code-refresh', handler);
+    return () => { window.removeEventListener('claude-code-refresh', handler); };
   }, [checkVersion, checkAuth]);
 
   // Fast polling (30s) when setup is incomplete — auto-detects install/auth changes
@@ -135,7 +135,7 @@ export function ClaudeCodeStatusBadge({ className, onOpenOnboarding, iconOnly = 
       checkAuth();
     }, 30_000);
 
-    return () => clearInterval(fastInterval);
+    return () => { clearInterval(fastInterval); };
   }, [status, hasToken, isInstalling, checkVersion, checkAuth]);
 
   // Perform the actual install/update

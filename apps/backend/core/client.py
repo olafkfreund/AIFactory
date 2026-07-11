@@ -429,10 +429,7 @@ def load_project_mcp_config(project_dir: Path) -> dict:
                     key = key.strip()
                     value = value.strip().strip("\"'")
                     # Include global MCP toggles
-                    if key in mcp_keys:
-                        config[key] = value
-                    # Include per-agent MCP overrides (AGENT_MCP_<agent>_ADD/REMOVE)
-                    elif key.startswith("AGENT_MCP_"):
+                    if key in mcp_keys or key.startswith("AGENT_MCP_"):
                         config[key] = value
                     # Include custom MCP servers (parse JSON with schema validation)
                     elif key == "CUSTOM_MCP_SERVERS":
@@ -502,6 +499,23 @@ def load_claude_md(project_dir: Path) -> str | None:
         except Exception:
             return None
     return None
+
+
+def _graphify_server_config(agent_type: str, graph_json: Path) -> dict[str, Any] | None:
+    """MCP server dict for the opt-in graphify code-graph tool, or None.
+
+    Returns None (tool stays off) unless ALL hold: agent is the coder, the
+    ``AIFACTORY_GRAPHIFY_ENABLED`` flag is "true", and the graph file exists.
+    Pure — no side effects — so the gate is unit-testable. Graph building is the
+    caller's job.
+    """
+    if agent_type != "coder":
+        return None
+    if os.environ.get("AIFACTORY_GRAPHIFY_ENABLED") != "true":
+        return None
+    if not graph_json.exists():
+        return None
+    return {"command": "graphify-mcp", "args": [str(graph_json)]}
 
 
 def create_client(
@@ -911,6 +925,29 @@ def create_client(
             if custom.get("headers"):
                 server_config["headers"] = custom["headers"]
             mcp_servers[server_id] = server_config
+
+    # Graphify code-graph query server (opt-in, coder only). Lets the coder pull a
+    # scoped subgraph via mcp__graphify__query_graph instead of blind file reads —
+    # a build-quality A/B showed ~23% fewer input tokens with correctness preserved.
+    # Self-contained + gated: only when AIFACTORY_GRAPHIFY_ENABLED=true, and the
+    # graph is built here on demand (token-free Tree-sitter, best-effort). We append
+    # the tool straight onto the allowlist rather than threading it through
+    # AGENT_CONFIGS/permissions, since permission_mode is bypassPermissions anyway.
+    # ponytail: one place, flag-gated, no-op unless the flag and graph both exist.
+    if agent_type == "coder" and os.environ.get("AIFACTORY_GRAPHIFY_ENABLED") == "true":
+        graph_json = project_dir / "graphify-out" / "graph.json"
+        if not graph_json.exists():
+            # Cache-first fetch-or-build (#804): an exact repo+commit hit from
+            # MinIO skips the token-free build; a miss builds then uploads
+            # best-effort. Cache errors are swallowed — never fail the task.
+            from core.graphify_cache import ensure_graph  # noqa: PLC0415
+
+            ensure_graph(project_dir, graph_json)
+        graphify_cfg = _graphify_server_config(agent_type, graph_json)
+        if graphify_cfg:
+            mcp_servers["graphify"] = graphify_cfg
+            if "mcp__graphify__query_graph" not in allowed_tools_list:
+                allowed_tools_list.append("mcp__graphify__query_graph")
 
     # Build system prompt
     # Static content (CLAUDE.md) is placed before the dynamic base instructions so

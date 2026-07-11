@@ -200,7 +200,7 @@ export function GitCredentialsSettings() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setFormOpen((open) => !open)}
+              onClick={() => { setFormOpen((open) => !open); }}
               disabled={!orgId}
             >
               <Plus className="h-3 w-3 mr-1" />
@@ -267,7 +267,7 @@ export function GitCredentialsSettings() {
               <Input
                 id="gc-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => { setName(e.target.value); }}
                 placeholder="github-deploy-bot"
               />
             </div>
@@ -277,7 +277,7 @@ export function GitCredentialsSettings() {
                 <Input
                   id="gc-host"
                   value={host}
-                  onChange={(e) => setHost(e.target.value)}
+                  onChange={(e) => { setHost(e.target.value); }}
                   placeholder="github.com"
                 />
               </div>
@@ -288,7 +288,7 @@ export function GitCredentialsSettings() {
                 <Input
                   id="gc-username"
                   value={username}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => { setUsername(e.target.value); }}
                   placeholder="oauth2"
                 />
               </div>
@@ -302,13 +302,13 @@ export function GitCredentialsSettings() {
                   id="gc-token"
                   type={showToken ? 'text' : 'password'}
                   value={token}
-                  onChange={(e) => setToken(e.target.value)}
+                  onChange={(e) => { setToken(e.target.value); }}
                   placeholder="ghp_…"
                   className="pr-10 font-mono text-sm"
                 />
                 <button
                   type="button"
-                  onClick={() => setShowToken(!showToken)}
+                  onClick={() => { setShowToken(!showToken); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
@@ -322,7 +322,7 @@ export function GitCredentialsSettings() {
               </p>
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" size="sm" onClick={() => setFormOpen(false)} disabled={submitting}>
+              <Button variant="outline" size="sm" onClick={() => { setFormOpen(false); }} disabled={submitting}>
                 {t('sections.gitCredentials.cancel', 'Cancel')}
               </Button>
               <Button size="sm" onClick={handleCreate} disabled={submitting || !name.trim() || !token.trim()}>

@@ -118,7 +118,7 @@ export function ProjectIndexTab({
                   <div className="flex flex-wrap gap-1">
                     {Object.entries(projectIndex.languages).slice(0, 8).map(([ext, count]) => (
                       <Badge key={ext} variant="outline" className="text-xs">
-                        {ext}: {count as number}
+                        {ext}: {count}
                       </Badge>
                     ))}
                   </div>

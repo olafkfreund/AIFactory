@@ -159,12 +159,12 @@ export function InvestigationDialog({
                       <div
                         key={comment.id}
                         className="flex gap-3 p-3 rounded-lg border border-border bg-card hover:bg-accent/50 transition-colors cursor-pointer"
-                        onClick={() => toggleComment(comment.id)}
+                        onClick={() => { toggleComment(comment.id); }}
                       >
                         <Checkbox
                           checked={selectedCommentIds.includes(comment.id)}
-                          onCheckedChange={() => toggleComment(comment.id)}
-                          onClick={(e) => e.stopPropagation()}
+                          onCheckedChange={() => { toggleComment(comment.id); }}
+                          onClick={(e) => { e.stopPropagation(); }}
                         />
                         <div className="flex-1 space-y-1 min-w-0">
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -221,7 +221,7 @@ export function InvestigationDialog({
         <DialogFooter>
           {investigationStatus.phase === 'idle' && (
             <>
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
+              <Button variant="outline" onClick={() => { onOpenChange(false); }}>
                 Cancel
               </Button>
               <Button onClick={handleStartInvestigation}>

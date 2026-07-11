@@ -82,27 +82,27 @@ function setupTerminalWebSocket(terminalId: string): void {
     // Handle different message types
     if (typeof data === 'string') {
       // Plain text output
-      terminalOutputCallbacks.forEach((cb) => cb(terminalId, data));
+      terminalOutputCallbacks.forEach((cb) => { cb(terminalId, data); });
     } else if (typeof data === 'object' && data !== null) {
       const msg = data as { type?: string; [key: string]: unknown };
 
       if (msg.type === 'exit') {
         const exitCode = typeof msg.code === 'number' ? msg.code : 0;
-        terminalExitCallbacks.forEach((cb) => cb(terminalId, exitCode));
+        terminalExitCallbacks.forEach((cb) => { cb(terminalId, exitCode); });
         // Clean up subscription on exit
         cleanupTerminalWebSocket(terminalId);
       } else if (msg.type === 'title') {
         const title = typeof msg.title === 'string' ? msg.title : '';
-        terminalTitleCallbacks.forEach((cb) => cb(terminalId, title));
+        terminalTitleCallbacks.forEach((cb) => { cb(terminalId, title); });
       } else if (msg.type === 'claude-session') {
         const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
-        terminalClaudeSessionCallbacks.forEach((cb) => cb(terminalId, sessionId));
+        terminalClaudeSessionCallbacks.forEach((cb) => { cb(terminalId, sessionId); });
       } else if (msg.type === 'rate-limit') {
         // Rate limit passes full info object including terminalId
-        terminalRateLimitCallbacks.forEach((cb) => cb({ ...msg, terminalId }));
+        terminalRateLimitCallbacks.forEach((cb) => { cb({ ...msg, terminalId }); });
       } else if (msg.type === 'oauth-token') {
         // OAuth token passes full info object including terminalId
-        terminalOAuthTokenCallbacks.forEach((cb) => cb({ ...msg, terminalId }));
+        terminalOAuthTokenCallbacks.forEach((cb) => { cb({ ...msg, terminalId }); });
       } else if (msg.type === 'connected') {
         // Connection confirmed, nothing to do
         log.debug(`Terminal ${terminalId} WebSocket connected`);
@@ -129,7 +129,7 @@ function cleanupTerminalWebSocket(terminalId: string): void {
 }
 
 function emitEvent<T>(event: string, data: T): void {
-  eventCallbacks.get(event)?.forEach((cb) => cb(data));
+  eventCallbacks.get(event)?.forEach((cb) => { cb(data); });
 }
 
 // GitHub API subset (nested object in API)
@@ -186,7 +186,7 @@ const githubAPI: API['github'] = {
     // "already running" ValueError that we swallow.
     const result = await post(`/projects/${projectId}/auto-fix/check-new`, {});
     const data = (result.success ? result.data : null) as { started?: Array<{ number: number }> } | null;
-    return (data?.started ?? []) as never;
+    return (data?.started ?? []);
   },
   startAutoFix: (projectId: string, issueNumber: number) => {
     post(`/projects/${projectId}/auto-fix/${issueNumber}/start`, {});
@@ -206,7 +206,7 @@ const githubAPI: API['github'] = {
     registerCallback('auto_fix:error',
       (payload: { projectId: string; issueNumber: number; error: string }) => {
         const { projectId, ...errorData } = payload;
-        callback(projectId, errorData as never);
+        callback(projectId, errorData);
       }),
   listPRs: async (projectId) => {
     const result = await get(`/projects/${projectId}/github/prs`);
@@ -284,7 +284,7 @@ const githubAPI: API['github'] = {
     registerCallback('pr:review-error',
       (payload: { projectId: string; prNumber: number; error: string }) => {
         const { projectId, prNumber, error } = payload;
-        callback(projectId, { prNumber, error } as never);
+        callback(projectId, { prNumber, error });
       }),
   batchAutoFix: () => {},
   getBatches: async () => [],
@@ -325,7 +325,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   createGitCredential: (body: import('../shared/types/ipc').CreateGitCredentialBody) =>
     post<import('../shared/types/ipc').GitCredentialSummary>(
       '/git-credentials',
-      body as unknown as Record<string, unknown>,
+      body,
     ),
   deleteGitCredential: (credentialId: string) =>
     del(`/git-credentials/${credentialId}`),
@@ -336,7 +336,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   createApiKey: (body: import('../shared/types/ipc').CreateApiKeyBody) =>
     post<import('../shared/types/ipc').CreateApiKeyResponse>(
       '/keys',
-      body as unknown as Record<string, unknown>,
+      body,
     ),
   revokeApiKey: (keyId: string) => del(`/keys/${keyId}`),
   getProjects: () => get<Project[]>('/projects'),
@@ -385,7 +385,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
       if (!result.success) {
         log.error(`Failed to stop task ${taskId}`, result.error);
       }
-    }).catch((e) => log.error(`Failed to stop task ${taskId}`, e));
+    }).catch((e) => { log.error(`Failed to stop task ${taskId}`, e); });
   },
   submitReview: (taskId: string, approved: boolean, feedback?: string) =>
     post(`/tasks/${taskId}/review`, { approved, feedback }),
@@ -471,7 +471,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   onTaskProfileSwitch: (callback) => {
     return registerCallback('task:profile-switch', (payload: { taskId: string; [key: string]: unknown }) => {
       const { taskId, ...rest } = payload;
-      callback(taskId, rest as never);
+      callback(taskId, rest);
     });
   },
   onTaskExecutionProgress: (callback) => {
@@ -526,10 +526,10 @@ export const webAPI: API & { _isWebMode: boolean } = {
     terminalWs.send(id, data);
   },
   resizeTerminal: (id: string, cols: number, rows: number) => {
-    post(`/terminals/${id}/resize`, { cols, rows }).catch((e) => log.error(`Failed to resize terminal ${id}`, e));
+    post(`/terminals/${id}/resize`, { cols, rows }).catch((e) => { log.error(`Failed to resize terminal ${id}`, e); });
   },
   invokeClaudeInTerminal: (id: string, cwd?: string) => {
-    post(`/terminals/${id}/invoke-claude`, { cwd }).catch((e) => log.error(`Failed to invoke Claude in terminal ${id}`, e));
+    post(`/terminals/${id}/invoke-claude`, { cwd }).catch((e) => { log.error(`Failed to invoke Claude in terminal ${id}`, e); });
   },
   generateTerminalName: (command: string, cwd?: string) =>
     post('/terminals/generate-name', { command, cwd }),
@@ -564,7 +564,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
   // Terminal worktree operations
   createTerminalWorktree: async (request: CreateTerminalWorktreeRequest) => {
     const result = await post('/terminals/worktrees', request);
-    return result as never; // Type coercion for compatibility
+    return result; // Type coercion for compatibility
   },
   listTerminalWorktrees: (projectPath: string) =>
     get(`/terminals/worktrees?project=${encodeURIComponent(projectPath)}`),
@@ -814,7 +814,7 @@ export const webAPI: API & { _isWebMode: boolean } = {
     registerCallback('changelog:complete',
       (payload: { projectId: string; success: boolean; changelog: string; version: string; tasksIncluded: number }) => {
         const { projectId, ...result } = payload;
-        callback(projectId, result as never);
+        callback(projectId, result);
       }),
   onChangelogGenerationError: (callback) =>
     registerCallback('changelog:error',

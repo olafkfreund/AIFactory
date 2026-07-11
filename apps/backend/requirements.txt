@@ -44,3 +44,9 @@ hvac>=2.3.0
 # execute (nested bash -c / env / xargs / find -exec / $() substitutions) so
 # the allowlist can no longer be bypassed by name-only parsing.
 bashlex>=0.18
+
+# graphify code-graph query tool (opt-in via AIFACTORY_GRAPHIFY_ENABLED). Provides
+# the `graphify` CLI (token-free Tree-sitter graph build) and the `graphify-mcp`
+# stdio MCP server the coder queries instead of blind file reads. The [mcp] extra
+# pulls the mcp SDK the server needs. See core/client.py graphify block.
+graphifyy[mcp]>=0.9.11

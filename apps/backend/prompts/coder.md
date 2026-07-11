@@ -221,6 +221,16 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:[PORT]
 
 For your selected subtask, read the relevant files.
 
+### 5.0: Locate Code via the Code Graph (if available)
+
+If the `mcp__graphify__query_graph` tool is available, prefer it over reading or
+grepping many files to understand the codebase. Ask it a natural-language question
+(e.g. "where is the request logging middleware and what calls it") and it returns a
+compact, relevant subgraph — which functions/files are connected and how. Use it to
+find integration points and the files you actually need, then `Read` only those. This
+is faster and uses far fewer tokens than scanning the tree. If the tool is not
+present, use the file tools below as normal.
+
 ### 5.1: Read Files to Modify
 
 ```bash

@@ -41,7 +41,17 @@ vi.mock('react-i18next', () => ({
         'authChoice.apiKeyTitle': 'Use Custom API Key',
         'authChoice.apiKeyDesc': 'Enter your own API key',
         'authChoice.skip': 'Skip for now',
+        // Provider-choice step (current onboarding flow)
+        'providerChoice.title': 'Choose Your AI Provider',
+        'providerChoice.subtitle': 'Select how you want to connect',
+        'providerChoice.claude.title': 'Claude',
+        'providerChoice.claude.description': 'Sign in with your Anthropic account',
+        'providerChoice.openaiCompat.title': 'OpenAI Compatible',
+        'providerChoice.openaiCompat.description': 'Any OpenAI-compatible server',
+        'providerChoice.skip.title': 'Skip for now',
+        'providerChoice.skip.description': 'Set up later in Settings',
         // Common translations
+        'common:back': 'Back',
         'common:actions.close': 'Close'
       };
       return translations[key] || key;
@@ -84,6 +94,15 @@ Object.defineProperty(window, 'electronAPI', {
     startOAuthFlow: vi.fn().mockResolvedValue({ success: true }),
     loadProfiles: vi.fn().mockResolvedValue([])
   },
+  writable: true
+});
+
+// The wizard persists completion via window.API.saveSettings (the web API
+// adapter that replaces the legacy window.electronAPI — see main.tsx initWebAPI).
+const mockApiSaveSettings = vi.fn().mockResolvedValue({ success: true });
+
+Object.defineProperty(window, 'API', {
+  value: { saveSettings: mockApiSaveSettings },
   writable: true
 });
 
@@ -170,42 +189,35 @@ describe('OnboardingWizard Integration Tests', () => {
       }
     });
 
-    it('should not show OAuth step text on auth-choice screen', async () => {
+    it('should not show OAuth step text on the provider-choice screen', async () => {
       render(<OnboardingWizard {...defaultProps} />);
 
-      // Navigate to auth-choice
+      // Navigate: welcome → provider-choice
       fireEvent.click(screen.getByRole('button', { name: /Get Started/ }));
       await waitFor(() => {
-        expect(screen.getByText(/Choose Your Authentication Method/)).toBeInTheDocument();
+        expect(screen.getByText(/Choose Your AI Provider/)).toBeInTheDocument();
       });
 
-      // When profile is created via API key path, should skip oauth
-      // This is tested via component behavior - the wizard should advance
-      // directly to graphiti step, bypassing oauth
-      const oauthStepText = screen.queryByText(/OAuth Authentication/);
-      // Before API key selection, oauth text from different context shouldn't be visible
-      expect(oauthStepText).toBeNull();
+      // Before a provider is chosen, no OAuth step content should be visible
+      expect(screen.queryByText(/OAuth Authentication/)).toBeNull();
     });
   });
 
-  describe('Back Button Behavior After API Key Path', () => {
-    it('should go back to auth-choice (not oauth) when coming from API key path', async () => {
+  describe('Back Button Behavior on the provider-choice step', () => {
+    it('should return to the welcome step when Back is pressed', async () => {
       render(<OnboardingWizard {...defaultProps} />);
 
-      // This test verifies that when oauth is bypassed (API key path taken),
-      // going back from graphiti returns to auth-choice, not oauth
-
-      // Navigate: welcome → auth-choice
-      fireEvent.click(screen.getByText(/Get Started/));
+      // Navigate: welcome → provider-choice
+      fireEvent.click(screen.getByRole('button', { name: /Get Started/ }));
       await waitFor(() => {
-        expect(screen.getByText(/Choose Your Authentication Method/)).toBeInTheDocument();
+        expect(screen.getByText(/Choose Your AI Provider/)).toBeInTheDocument();
       });
 
-      // The back button behavior is controlled by oauthBypassed state
-      // When API key path is taken, oauthBypassed=true
-      // Going back from graphiti should skip oauth step
-      const authChoiceHeading = screen.getByText(/Choose Your Authentication Method/);
-      expect(authChoiceHeading).toBeInTheDocument();
+      // Back goes to the previous step (welcome)
+      fireEvent.click(screen.getByRole('button', { name: /Back/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/Welcome to AIFactory/)).toBeInTheDocument();
+      });
     });
   });
 
@@ -248,9 +260,9 @@ describe('OnboardingWizard Integration Tests', () => {
       const skipButton = screen.getByRole('button', { name: /Skip Setup/ });
       fireEvent.click(skipButton);
 
-      // Should call saveSettings
+      // Should persist completion via window.API.saveSettings
       await waitFor(() => {
-        expect(mockSaveSettings).toHaveBeenCalledWith({ onboardingCompleted: true });
+        expect(mockApiSaveSettings).toHaveBeenCalledWith({ onboardingCompleted: true });
       });
     });
 
@@ -315,18 +327,19 @@ describe('OnboardingWizard Integration Tests', () => {
   });
 
   describe('AC Coverage', () => {
-    it('AC1: First-run screen displays with two auth options', async () => {
+    it('AC1: provider-choice screen displays the three provider options', async () => {
       render(<OnboardingWizard {...defaultProps} />);
 
-      // Navigate to auth-choice
+      // Navigate to provider-choice
       fireEvent.click(screen.getByRole('button', { name: /Get Started/ }));
       await waitFor(() => {
-        expect(screen.getByText(/Choose Your Authentication Method/)).toBeInTheDocument();
+        expect(screen.getByText(/Choose Your AI Provider/)).toBeInTheDocument();
       });
 
-      // Both options should be visible
-      expect(screen.getByText(/Sign in with Anthropic/)).toBeInTheDocument();
-      expect(screen.getByText(/Use Custom API Key/)).toBeInTheDocument();
+      // All three provider cards should be visible
+      expect(screen.getByTestId('provider-choice-claude')).toBeInTheDocument();
+      expect(screen.getByTestId('provider-choice-openai-compat')).toBeInTheDocument();
+      expect(screen.getByTestId('provider-choice-skip')).toBeInTheDocument();
     });
 
     // Skipped: OAuth path test requires full OAuth step mocking
@@ -348,20 +361,19 @@ describe('OnboardingWizard Integration Tests', () => {
       });
     });
 
-    it('AC3: API Key path opens profile management dialog', async () => {
+    it('AC3: choosing the Claude provider advances past the provider-choice step', async () => {
       render(<OnboardingWizard {...defaultProps} />);
 
-      fireEvent.click(screen.getByText(/Get Started/));
+      fireEvent.click(screen.getByRole('button', { name: /Get Started/ }));
       await waitFor(() => {
-        expect(screen.getByText(/Choose Your Authentication Method/)).toBeInTheDocument();
+        expect(screen.getByText(/Choose Your AI Provider/)).toBeInTheDocument();
       });
 
-      const apiKeyButton = screen.getByTestId('auth-option-apikey');
-      fireEvent.click(apiKeyButton);
-
-      // ProfileEditDialog should open
+      // Choosing Claude routes into the Claude setup path (import-credentials),
+      // so the provider-choice screen is no longer shown.
+      fireEvent.click(screen.getByTestId('provider-choice-claude'));
       await waitFor(() => {
-        expect(screen.getByTestId('profile-edit-dialog')).toBeInTheDocument();
+        expect(screen.queryByText(/Choose Your AI Provider/)).not.toBeInTheDocument();
       });
     });
 

@@ -300,7 +300,7 @@ export function CreateWorktreeDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isCreating}>
+          <Button variant="outline" onClick={() => { onOpenChange(false); }} disabled={isCreating}>
             {t('common:buttons.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={isCreating || !name.trim()}>

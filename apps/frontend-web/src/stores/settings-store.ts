@@ -44,7 +44,7 @@ interface SettingsState {
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
-  settings: DEFAULT_APP_SETTINGS as AppSettings,
+  settings: DEFAULT_APP_SETTINGS,
   isLoading: true,  // Start as true since we load settings on app init
   error: null,
 
@@ -63,23 +63,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   modelsError: null,
   discoveredModels: new Map<string, ModelInfo[]>(),
 
-  setSettings: (settings) => set({ settings }),
+  setSettings: (settings) => { set({ settings }); },
 
   updateSettings: (updates) =>
-    set((state) => ({
+    { set((state) => ({
       settings: { ...state.settings, ...updates }
-    })),
+    })); },
 
-  setLoading: (isLoading) => set({ isLoading }),
+  setLoading: (isLoading) => { set({ isLoading }); },
 
-  setError: (error) => set({ error }),
+  setError: (error) => { set({ error }); },
 
   // Profile actions
-  setProfiles: (profiles, activeProfileId) => set({ profiles, activeProfileId }),
+  setProfiles: (profiles, activeProfileId) => { set({ profiles, activeProfileId }); },
 
-  setProfilesLoading: (profilesLoading) => set({ profilesLoading }),
+  setProfilesLoading: (profilesLoading) => { set({ profilesLoading }); },
 
-  setProfilesError: (profilesError) => set({ profilesError }),
+  setProfilesError: (profilesError) => { set({ profilesError }); },
 
   saveProfile: async (profile: ProfileFormData): Promise<boolean> => {
     set({ profilesLoading: true, profilesError: null });
@@ -251,7 +251,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   discoverModels: async (baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<ModelInfo[] | null> => {
-    console.log('[settings-store] discoverModels called with:', { baseUrl, apiKey: `${apiKey.slice(-4)}` });
+    console.log('[settings-store] discoverModels called with:', { baseUrl, apiKey: apiKey.slice(-4) });
     // Generate cache key from baseUrl and apiKey (last 4 chars)
     const cacheKey = `${baseUrl}::${apiKey.slice(-4)}`;
 

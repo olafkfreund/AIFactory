@@ -104,9 +104,9 @@ export function ClaudeAuthSection({
             )}
             <PasswordInput
               value={envConfig.claudeTokenIsGlobal ? '' : (envConfig.claudeOAuthToken || '')}
-              onChange={(value) => onUpdateConfig({
+              onChange={(value) => { onUpdateConfig({
                 claudeOAuthToken: value || undefined,
-              })}
+              }); }}
               placeholder={envConfig.claudeTokenIsGlobal ? 'Enter to override global token...' : 'your-oauth-token-here'}
             />
           </div>

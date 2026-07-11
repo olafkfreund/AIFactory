@@ -425,20 +425,17 @@ def build_completion_event(
         "task_id": task_id,
         "status": status,
         "phase": phase,
-        "updated_at": when,
         "correlation": {
             "issue_number": issue_number,
             "spec_id": spec_id,
             "project_id": project_id,
         },
-        # Additive (RFC §7): retained for parity with the other services.
-        "schema_version": _SCHEMA_VERSION,
-        "event": "completion",
         # Per-event idempotency key (#466) — consumers dedup on this; stable
         # across relay re-delivery because the built event is persisted verbatim.
         "id": event_id or _new_event_id(),
-        # CloudEvents-core alignment (#466) — additive siblings of the legacy
-        # fields above; ``time`` mirrors the occurrence time (``updated_at``).
+        # CloudEvents-core (#466 envelope; #471 cutover removed the legacy
+        # ``schema_version``/``event``/``updated_at`` duplicates). ``time`` is the
+        # canonical occurrence time consumers read.
         "specversion": _CE_SPECVERSION,
         "source": _ce_source(),
         "type": _CE_TYPE,
@@ -520,14 +517,13 @@ def build_worker_event(
         "task_id": task_id,
         "status": _WORKER_STATUS,
         "phase": _WORKER_PHASE,
-        "updated_at": when,
         "correlation": {
             "issue_number": issue_number,
             "spec_id": spec_id,
             "project_id": project_id,
         },
-        "schema_version": _SCHEMA_VERSION,
-        "event": "completion",
+        # #471 cutover: legacy schema_version/event/updated_at dropped; ``time`` is
+        # the canonical occurrence time.
         "id": event_id or _new_event_id(),
         "specversion": _CE_SPECVERSION,
         "source": _ce_source(),
@@ -591,14 +587,13 @@ def build_worker_progress_event(
         "task_id": task_id,
         "status": _WORKER_PROGRESS_STATUS,
         "phase": _WORKER_PROGRESS_PHASE,
-        "updated_at": when,
         "correlation": {
             "issue_number": issue_number,
             "spec_id": spec_id,
             "project_id": project_id,
         },
-        "schema_version": _SCHEMA_VERSION,
-        "event": "completion",
+        # #471 cutover: legacy schema_version/event/updated_at dropped; ``time`` is
+        # the canonical occurrence time.
         "id": event_id or _new_event_id(),
         "specversion": _CE_SPECVERSION,
         "source": _ce_source(),

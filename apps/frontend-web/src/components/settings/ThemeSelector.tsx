@@ -58,7 +58,7 @@ export function ThemeSelector({ settings, onSettingsChange }: ThemeSelectorProps
           {(['system', 'light', 'dark'] as const).map((mode) => (
             <button
               key={mode}
-              onClick={() => handleModeChange(mode)}
+              onClick={() => { handleModeChange(mode); }}
               className={cn(
                 'flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
@@ -74,7 +74,9 @@ export function ThemeSelector({ settings, onSettingsChange }: ThemeSelectorProps
         </div>
       </div>
 
-      {/* Color Theme */}
+      {/* Color Theme — only shown once a second palette exists; a one-option
+          picker reads as unfinished, so hide it until then. */}
+      {COLOR_THEMES.length > 1 && (
       <div className="space-y-3">
         <Label className="text-sm font-medium text-foreground">Color Theme</Label>
         <p className="text-sm text-muted-foreground">
@@ -87,7 +89,7 @@ export function ThemeSelector({ settings, onSettingsChange }: ThemeSelectorProps
             return (
               <button
                 key={ct.id}
-                onClick={() => handleColorThemeChange(ct.id)}
+                onClick={() => { handleColorThemeChange(ct.id); }}
                 className={cn(
                   'flex items-center gap-3 p-3 rounded-lg border-2 text-left transition-all',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
@@ -124,6 +126,7 @@ export function ThemeSelector({ settings, onSettingsChange }: ThemeSelectorProps
           })}
         </div>
       </div>
+      )}
 
     </div>
   );

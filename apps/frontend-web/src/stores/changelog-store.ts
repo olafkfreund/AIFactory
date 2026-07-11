@@ -207,25 +207,25 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
   ...initialState,
 
   // Data actions
-  setDoneTasks: (tasks) => set({ doneTasks: tasks }),
+  setDoneTasks: (tasks) => { set({ doneTasks: tasks }); },
 
-  setSelectedTaskIds: (ids) => set({ selectedTaskIds: ids }),
+  setSelectedTaskIds: (ids) => { set({ selectedTaskIds: ids }); },
 
   toggleTaskSelection: (taskId) =>
-    set((state) => ({
+    { set((state) => ({
       selectedTaskIds: state.selectedTaskIds.includes(taskId)
         ? state.selectedTaskIds.filter((id) => id !== taskId)
         : [...state.selectedTaskIds, taskId]
-    })),
+    })); },
 
   selectAllTasks: () =>
-    set((state) => ({
+    { set((state) => ({
       selectedTaskIds: state.doneTasks.map((task) => task.id)
-    })),
+    })); },
 
-  deselectAllTasks: () => set({ selectedTaskIds: [] }),
+  deselectAllTasks: () => { set({ selectedTaskIds: [] }); },
 
-  setLoadedSpecs: (specs) => set({ loadedSpecs: specs }),
+  setLoadedSpecs: (specs) => { set({ loadedSpecs: specs }); },
 
   setExistingChangelog: (changelog) => {
     set({ existingChangelog: changelog });
@@ -259,9 +259,9 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
   },
 
   // Git data actions
-  setBranches: (branches) => set({ branches }),
-  setTags: (tags) => set({ tags }),
-  setCurrentBranch: (branch) => set({ currentBranch: branch }),
+  setBranches: (branches) => { set({ branches }); },
+  setTags: (tags) => { set({ tags }); },
+  setCurrentBranch: (branch) => { set({ currentBranch: branch }); },
   setDefaultBranch: (branch) => {
     set({ defaultBranch: branch });
     // Auto-set base branch if not already set - find the ref from loaded branches
@@ -271,26 +271,26 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
       set({ baseBranch: branch, baseBranchRef: branchInfo?.ref || branch });
     }
   },
-  setPreviewCommits: (commits) => set({ previewCommits: commits }),
-  setIsLoadingGitData: (loading) => set({ isLoadingGitData: loading }),
-  setIsLoadingCommits: (loading) => set({ isLoadingCommits: loading }),
+  setPreviewCommits: (commits) => { set({ previewCommits: commits }); },
+  setIsLoadingGitData: (loading) => { set({ isLoadingGitData: loading }); },
+  setIsLoadingCommits: (loading) => { set({ isLoadingCommits: loading }); },
 
   // Git history options actions
-  setGitHistoryType: (type) => set({ gitHistoryType: type, previewCommits: [] }),
-  setGitHistoryCount: (count) => set({ gitHistoryCount: count }),
-  setGitHistorySinceDate: (date) => set({ gitHistorySinceDate: date }),
-  setGitHistoryFromTag: (tag) => set({ gitHistoryFromTag: tag }),
-  setGitHistoryToTag: (tag) => set({ gitHistoryToTag: tag }),
-  setGitHistorySinceVersion: (version) => set({ gitHistorySinceVersion: version }),
-  setIncludeMergeCommits: (include) => set({ includeMergeCommits: include }),
+  setGitHistoryType: (type) => { set({ gitHistoryType: type, previewCommits: [] }); },
+  setGitHistoryCount: (count) => { set({ gitHistoryCount: count }); },
+  setGitHistorySinceDate: (date) => { set({ gitHistorySinceDate: date }); },
+  setGitHistoryFromTag: (tag) => { set({ gitHistoryFromTag: tag }); },
+  setGitHistoryToTag: (tag) => { set({ gitHistoryToTag: tag }); },
+  setGitHistorySinceVersion: (version) => { set({ gitHistorySinceVersion: version }); },
+  setIncludeMergeCommits: (include) => { set({ includeMergeCommits: include }); },
 
   // Branch diff options actions
-  setBaseBranch: (branch, ref) => set({ baseBranch: branch, baseBranchRef: ref || branch, previewCommits: [] }),
-  setCompareBranch: (branch, ref) => set({ compareBranch: branch, compareBranchRef: ref || branch, previewCommits: [] }),
+  setBaseBranch: (branch, ref) => { set({ baseBranch: branch, baseBranchRef: ref || branch, previewCommits: [] }); },
+  setCompareBranch: (branch, ref) => { set({ compareBranch: branch, compareBranchRef: ref || branch, previewCommits: [] }); },
 
   // Config actions
-  setVersion: (version) => set({ version }),
-  setDate: (date) => set({ date }),
+  setVersion: (version) => { set({ version }); },
+  setDate: (date) => { set({ date }); },
   setFormat: (format) => {
     set({ format });
     saveSettings({ changelogFormat: format });
@@ -303,7 +303,7 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
     set({ emojiLevel: level });
     saveSettings({ changelogEmojiLevel: level });
   },
-  setCustomInstructions: (instructions) => set({ customInstructions: instructions }),
+  setCustomInstructions: (instructions) => { set({ customInstructions: instructions }); },
   initializeFromSettings: () => {
     const settings = useSettingsStore.getState().settings;
     set({
@@ -314,15 +314,15 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
   },
 
   // Generation actions
-  setGenerationProgress: (progress) => set({ generationProgress: progress }),
-  setGeneratedChangelog: (changelog) => set({ generatedChangelog: changelog }),
-  setIsGenerating: (isGenerating) => set({ isGenerating }),
-  setError: (error) => set({ error }),
+  setGenerationProgress: (progress) => { set({ generationProgress: progress }); },
+  setGeneratedChangelog: (changelog) => { set({ generatedChangelog: changelog }); },
+  setIsGenerating: (isGenerating) => { set({ isGenerating }); },
+  setError: (error) => { set({ error }); },
 
   // Compound actions
-  reset: () => set({ ...initialState, date: getDefaultDate() }),
+  reset: () => { set({ ...initialState, date: getDefaultDate() }); },
 
-  updateGeneratedChangelog: (changelog) => set({ generatedChangelog: changelog })
+  updateGeneratedChangelog: (changelog) => { set({ generatedChangelog: changelog }); }
 }));
 
 // Helper functions for loading data
