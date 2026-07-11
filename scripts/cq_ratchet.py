@@ -150,14 +150,18 @@ def base_count(base: str, counter, config: str, path: str) -> int:
     )
     if blob.returncode != 0:
         return 0  # file did not exist on base -> new file, base count is 0
-    suffix = "".join(Path(path).suffixes) or ".py"
-    with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False) as tmp:
-        tmp.write(blob.stdout)
-        tmp_path = tmp.name
+    # Write under the REAL basename inside a fresh temp dir: a random-prefixed
+    # name (the old NamedTemporaryFile suffix trick) defeats per-file-ignores
+    # like `**/test_*.py` / `**/tests/**`, so test files were held to the
+    # non-test strict bar (S101 asserts, PLR2004 magic values, etc.).
+    tmp_dir = Path(tempfile.mkdtemp())
+    tmp_path = tmp_dir / Path(path).name
+    tmp_path.write_text(blob.stdout)
     try:
-        return counter(config, tmp_path)
+        return counter(config, str(tmp_path))
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
+        tmp_dir.rmdir()
 
 
 def main() -> int:
