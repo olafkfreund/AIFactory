@@ -155,7 +155,7 @@ def _make_spec(tmp_path: Path) -> Path:
 async def _run_one_turn(spec_dir: Path, project_dir: Path):
     """Drive run_autonomous_agent for a single (mocked) session.
 
-    All heavy collaborators are mocked. ``run_agent_session`` returns
+    All heavy collaborators are mocked. ``run_session_guarded`` returns
     ``complete`` so the loop exits after the first turn, letting us assert
     which prompt + agent_type the seam selected.
     """
@@ -178,7 +178,7 @@ async def _run_one_turn(spec_dir: Path, project_dir: Path):
         "create_client": create_client_mock,
         "get_solo_prompt": solo_p,
         "generate_planner_prompt": plan_p,
-        "run_agent_session": AsyncMock(return_value=("complete", "", {})),
+        "run_session_guarded": AsyncMock(return_value=("complete", "", {})),
         "get_graphiti_context": AsyncMock(return_value=""),
         "RecoveryManager": MagicMock(),
         "StatusManager": MagicMock(),
