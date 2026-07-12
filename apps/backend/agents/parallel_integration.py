@@ -51,7 +51,7 @@ from task_logger import LogPhase, TaskLogger
 
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
-from .session import run_agent_session
+from .session import run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import record_subtask_completion, sync_plan_to_source
 from .wave_log import WaveRecorder
@@ -481,10 +481,11 @@ async def run_parallel_coding_phase(
             sub_model = getattr(subtask, "model", None) or phase_model
             client = _make_client(child_path, child_spec_dir, sub_model)
             _t_start = time.monotonic()
-            async with client:
-                status, _resp, _err = await run_agent_session(
-                    client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING
-                )
+            # Watchdog on the client enter (#816): a stalled MCP connect becomes a
+            # session_stall error (session_ok False) instead of a silent hang.
+            status, _resp, _err = await run_session_guarded(
+                client, prompt, child_spec_dir, verbose, phase=LogPhase.CODING
+            )
             _t_end = time.monotonic()
 
             session_ok = status != "error"

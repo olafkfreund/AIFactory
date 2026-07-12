@@ -6,10 +6,13 @@ Handles running agent sessions and post-session processing including
 memory updates and recovery tracking.
 """
 
+import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import ClaudeSDKClient
 from core.error_utils import (
@@ -337,6 +340,67 @@ async def post_session_processing(
             logger.debug(f"Failed to save failed session memory: {e}")
 
         return False
+
+
+# Watchdog on the client ENTER (#816). Entering the client (bare or the
+# enforced adapter) spawns the claude CLI + its MCP stdio servers and blocks on
+# their initialize handshake; two of those servers launch via `npx` at connect
+# (core/client.py context7 + playwright). On a cold or network-restricted runner
+# the npx package fetch stalls, the CLI never issues the first API request, and
+# with no timeout on the enter the session burns SILENTLY to the k8s build
+# deadline (job_dispatch.py deadline_seconds, ~3600s) -> empty patch. This was
+# the dominant empty-patch cause in the 2026-07-11 SWE-bench baseline (20/22).
+FIRST_TOKEN_TIMEOUT_SECONDS = float(
+    os.environ.get("AIFACTORY_FIRST_TOKEN_TIMEOUT", "120")
+)
+
+
+async def run_session_guarded(
+    client: ClaudeSDKClient,
+    message: str,
+    spec_dir: Path,
+    verbose: bool = False,
+    phase: LogPhase = LogPhase.CODING,
+) -> tuple[str, str, dict[str, Any]]:
+    """``run_agent_session`` with a watchdog on the client enter (#816).
+
+    Replaces ``async with client:`` at the coder + parallel session sites. Bounds
+    the enter (MCP connect) with ``FIRST_TOKEN_TIMEOUT_SECONDS`` so a stalled MCP
+    handshake becomes a ~120s ``session_stall`` error instead of a silent hour to
+    the build deadline. The error tuple routes through the existing failover: the
+    serial loop retries with a fresh session (coder.py "Will retry" path), and the
+    parallel path marks the worker failed — no new orchestration.
+    """
+    try:
+        # Catch Exception (not BaseException): a genuine outer CancelledError must
+        # still propagate; asyncio.wait_for's own timeout raises TimeoutError,
+        # which IS an Exception, and any connect-time error also routes to failover.
+        await asyncio.wait_for(client.__aenter__(), timeout=FIRST_TOKEN_TIMEOUT_SECONDS)
+    except Exception as enter_exc:  # noqa: BLE001 - any enter failure -> failover
+        # The enter did not return, so there is no entered context to __aexit__;
+        # asyncio.wait_for cancels the coroutine and anyio tears down any
+        # half-spawned transport. Surface a retryable error.
+        logger.warning(
+            "Session enter (MCP connect) exceeded %.0fs watchdog: %s",
+            FIRST_TOKEN_TIMEOUT_SECONDS,
+            enter_exc,
+        )
+        return (
+            "error",
+            "",
+            {
+                "type": "session_stall",
+                "message": (
+                    f"session enter (MCP connect) exceeded "
+                    f"{FIRST_TOKEN_TIMEOUT_SECONDS:.0f}s watchdog: {enter_exc}"
+                ),
+                "exception_type": type(enter_exc).__name__,
+            },
+        )
+    try:
+        return await run_agent_session(client, message, spec_dir, verbose, phase=phase)
+    finally:
+        await client.__aexit__(None, None, None)
 
 
 async def run_agent_session(

@@ -66,7 +66,7 @@ from .deploy_scaffold import scaffold_deploy_for_spec
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
-from .session import post_session_processing, run_agent_session
+from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import (
     find_phase_for_subtask,
@@ -727,11 +727,12 @@ async def run_autonomous_agent(
             )
             pending_recovery_block = None
 
-        # Run session with async context manager
-        async with client:
-            status, response, error_info = await run_agent_session(
-                client, prompt, spec_dir, verbose, phase=current_log_phase
-            )
+        # Run session with a watchdog on the client enter (#816): a stalled MCP
+        # connect becomes a ~120s session_stall error + fresh-session retry
+        # instead of a silent hang to the build deadline.
+        status, response, error_info = await run_session_guarded(
+            client, prompt, spec_dir, verbose, phase=current_log_phase
+        )
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and
