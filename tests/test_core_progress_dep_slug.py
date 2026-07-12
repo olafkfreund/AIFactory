@@ -133,5 +133,30 @@ def test_integer_depends_on_still_works(tmp_path):
     assert nxt is not None and nxt["id"] == "s2"
 
 
+def test_subtask_missing_status_is_selected(tmp_path):
+    # #817: a verbatim/trusted-contract plan whose subtasks omit `status`
+    # (e.g. django-16429 keys were description/id/verification only) must still
+    # be selectable — a missing status defaults to "pending", matching
+    # ImplementationPlan.from_dict. Before the fix get_next_subtask returned None
+    # and the coder silently no-op'd with no code written.
+    plan = {
+        "feature": "gw",
+        "phases": [
+            {
+                "phase": 1,
+                "name": "Implement",
+                "subtasks": [
+                    # No "status" key at all.
+                    {"id": "subtask-1-1", "description": "do it", "verification": "x"}
+                ],
+            }
+        ],
+    }
+    (tmp_path / "implementation_plan.json").write_text(json.dumps(plan))
+    nxt = get_next_subtask(tmp_path)
+    assert nxt is not None  # was None before the #817 fix
+    assert nxt["id"] == "subtask-1-1"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

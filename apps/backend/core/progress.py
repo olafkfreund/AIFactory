@@ -457,9 +457,13 @@ def get_next_subtask(spec_dir: Path) -> dict | None:
             if not deps_satisfied:
                 continue
 
-            # Find first pending subtask in this phase
+            # Find first pending subtask in this phase. Default a missing status
+            # to "pending" so this loader agrees with ImplementationPlan.from_dict
+            # (plan.py) — a verbatim/trusted-contract plan whose subtasks omit
+            # `status` (e.g. django-16429) would otherwise select NOTHING and the
+            # coder would silently no-op with no code written (#817).
             for subtask in phase.get("subtasks", []):
-                if subtask.get("status") == "pending":
+                if subtask.get("status", "pending") == "pending":
                     return {
                         "phase_id": phase_id,
                         "phase_name": phase.get("name"),
