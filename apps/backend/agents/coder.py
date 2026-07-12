@@ -607,7 +607,21 @@ async def run_autonomous_agent(
                     )
 
             if not next_subtask:
-                print("No pending subtasks found - build may be complete!")
+                # No runnable subtask. Normally the completion signal — but it
+                # also fires when subtasks exist yet none is selectable (unresolved
+                # phase deps, or a plan whose subtasks lack a pending status). Report
+                # the counts so a silent no-op build is diagnosable (#817).
+                _c = count_subtasks_detailed(spec_dir)
+                if _c["total"] > 0 and _c["completed"] >= _c["total"]:
+                    _no_task_msg = "No pending subtasks found - build complete!"
+                else:
+                    _no_task_msg = (
+                        f"No runnable subtask (completed {_c['completed']}/"
+                        f"{_c['total']}, in_progress {_c['in_progress']}) - "
+                        "unresolved phase deps or a plan missing subtask 'status'. "
+                        "Check implementation_plan.json."
+                    )
+                print(_no_task_msg)
                 break
 
             # === PARALLEL WAVE DISPATCH (#376) ===
