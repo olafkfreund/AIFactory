@@ -15,7 +15,13 @@ from typing import Any
 import pytest
 from agents.token_attribution import PromptSegments, TurnUsage, record_turn
 from phase_config import DEFAULT_PHASE_MODELS, get_phase_model, resolve_model_id
-from routing_policy import ENV_VAR, load_policy, policy_route, tier_for_model
+from routing_policy import (
+    ENV_VAR,
+    contract_route,
+    load_policy,
+    policy_route,
+    tier_for_model,
+)
 from trusted_plan import execution_profile_to_metadata
 
 _POLICY: dict[str, Any] = {
@@ -77,7 +83,7 @@ def test_policy_routes_stage_to_tier_model(
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     spec = _spec_dir(tmp_path)
     assert get_phase_model(spec, "planning") == "claude-opus-4-8"
-    assert get_phase_model(spec, "coding") == "claude-sonnet-4-6"
+    assert get_phase_model(spec, "coding") == "claude-sonnet-5"
     assert get_phase_model(spec, "qa") == "claude-haiku-4-5-20251001"
 
 
@@ -185,7 +191,7 @@ def _record_one_turn(spec: Path) -> dict[str, Any]:
         spec,
         PromptSegments(user_prompt="do the thing"),
         TurnUsage(input_tokens=100, output_tokens=50, cost_usd=0.01),
-        model="claude-sonnet-4-6",
+        model="claude-sonnet-5",
         provider="claude",
     )
     data: dict[str, Any] = json.loads((spec / "token_usage.json").read_text())
@@ -197,7 +203,7 @@ def test_worker_record_stamps_routing_tier_with_policy(
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     rec = _record_one_turn(_spec_dir(tmp_path))
-    assert rec["model"] == "claude-sonnet-4-6"
+    assert rec["model"] == "claude-sonnet-5"
     assert rec["routing_tier"] == "mid"
 
 
@@ -211,7 +217,131 @@ def test_tier_for_model_matches_shorthand_and_full_id(
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
     assert tier_for_model("sonnet") == "mid"
-    assert tier_for_model("claude-sonnet-4-6") == "mid"
+    assert tier_for_model("claude-sonnet-5") == "mid"
     assert tier_for_model("claude-opus-4-8") == "frontier"
     assert tier_for_model("ollama:qwen3:14b") is None
     assert tier_for_model(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# Contract routing block: requested / overrides / RFC-0011 floor (#803 delta)
+# --------------------------------------------------------------------------- #
+
+
+def test_contract_route_absent_block_is_none() -> None:
+    # No metadata / empty metadata -> no-op (env policy or default handles it).
+    assert contract_route("coding", None) is None
+    assert contract_route("coding", {}) is None
+
+
+def test_contract_requested_maps_tier_without_env_policy() -> None:
+    # No AIFACTORY_ROUTING_POLICY: the contract's requested tier is mapped via
+    # the built-in DEFAULT_TIERS so PFactory's policy alone can drive AIFactory.
+    assert contract_route("coding", {"routingRequested": {"coding": "mid"}}) == (
+        "sonnet",
+        "mid",
+    )
+    assert contract_route("qa", {"routingRequested": {"qa": "small"}}) == (
+        "haiku",
+        "small",
+    )
+
+
+def test_contract_override_beats_requested() -> None:
+    d = contract_route(
+        "coding",
+        {
+            "routingRequested": {"coding": "frontier"},
+            "routingOverrides": {"coding": "small"},
+        },
+    )
+    assert d == ("haiku", "small")
+
+
+def test_contract_uses_env_policy_tiers_map_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A local policy that maps mid -> a specific model wins the tier->model step.
+    monkeypatch.setenv(
+        ENV_VAR, json.dumps({"tiers": {"mid": "claude-sonnet-5"}, "stages": {}})
+    )
+    assert contract_route("coding", {"routingRequested": {"coding": "mid"}}) == (
+        "claude-sonnet-5",
+        "mid",
+    )
+
+
+def test_rfc0011_hard_floor_raises_coding_to_frontier() -> None:
+    # Policy asked for mid, but a hard task's capability floor is frontier.
+    assert contract_route(
+        "coding", {"routingRequested": {"coding": "mid"}, "difficultyTier": "hard"}
+    ) == ("opus", "frontier")
+
+
+def test_floor_never_lowers_below_the_requested_tier() -> None:
+    # A low task must NOT drag a frontier qa_full stage down.
+    assert contract_route(
+        "qa_full",
+        {"routingRequested": {"qa_full": "frontier"}, "difficultyTier": "low"},
+    ) == ("opus", "frontier")
+
+
+def test_contract_unrouted_stage_is_none() -> None:
+    assert contract_route("planning", {"routingRequested": {"coding": "mid"}}) is None
+
+
+def test_contract_unknown_tier_is_ignored() -> None:
+    assert (
+        contract_route("coding", {"routingRequested": {"coding": "gigantic"}}) is None
+    )
+
+
+def test_get_phase_model_consumes_contract_requested(tmp_path: Path) -> None:
+    # End to end through phase_config, no env policy: contract requested drives it.
+    spec = _spec_dir(tmp_path, {"routingRequested": {"coding": "mid"}})
+    assert get_phase_model(spec, "coding") == "claude-sonnet-5"
+    # A stage the contract does not route falls back to the default.
+    assert get_phase_model(spec, "planning") == resolve_model_id(
+        DEFAULT_PHASE_MODELS["planning"]
+    )
+
+
+def test_contract_pinned_still_beats_requested(tmp_path: Path) -> None:
+    spec = _spec_dir(
+        tmp_path,
+        {"pinnedModel": "opus", "routingRequested": {"coding": "small"}},
+    )
+    # pinnedModel wins over the routing block entirely.
+    assert get_phase_model(spec, "coding") == resolve_model_id("opus")
+
+
+def test_tier_for_model_stamps_from_contract_without_env_policy() -> None:
+    # A contract routing block makes the tier stampable even with no env policy.
+    meta = {"routingRequested": {"coding": "mid"}}
+    assert tier_for_model("claude-sonnet-5", meta) == "mid"
+    assert tier_for_model("claude-opus-4-8", meta) == "frontier"
+    # Still None when neither a policy nor a contract block is present.
+    assert tier_for_model("claude-sonnet-5", None) is None
+
+
+def test_execution_profile_carries_routing_tiers() -> None:
+    meta = execution_profile_to_metadata(
+        {
+            "complexity": "hard",
+            "routing": {
+                "requested": {"coding": "mid", "qa": "small"},
+                "overrides": {"coding": "frontier"},
+                "difficulty": "hard",
+            },
+        }
+    )
+    assert meta["routingRequested"] == {"coding": "mid", "qa": "small"}
+    assert meta["routingOverrides"] == {"coding": "frontier"}
+    assert meta["difficultyTier"] == "hard"
+
+
+def test_execution_profile_difficulty_falls_back_to_complexity() -> None:
+    meta = execution_profile_to_metadata(
+        {"complexity": "medium", "routing": {"requested": {"coding": "small"}}}
+    )
+    assert meta["difficultyTier"] == "medium"

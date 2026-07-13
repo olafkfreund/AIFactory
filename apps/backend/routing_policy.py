@@ -36,6 +36,23 @@ logger = logging.getLogger(__name__)
 
 ENV_VAR = "AIFACTORY_ROUTING_POLICY"
 
+# Default tier -> model (RFC-0014 §2b catalog mapping: cheap->small, balanced->
+# mid, frontier->frontier). Used to map a CONTRACT-supplied stage tier when the
+# local AIFACTORY_ROUTING_POLICY provides no `tiers` map of its own. Shorthands;
+# phase_config.resolve_model_id expands them.
+DEFAULT_TIERS = {"small": "haiku", "mid": "sonnet", "frontier": "opus"}
+
+# Model tier rank, weakest -> strongest. A contract tier is never floored BELOW
+# the RFC-0011 difficulty tier's requirement (a `hard` task keeps a frontier
+# coder even if the policy asked for `mid`); the floor may only RAISE it.
+_TIER_RANK = {"small": 0, "mid": 1, "frontier": 2}
+_RANK_TIER = {v: k for k, v in _TIER_RANK.items()}
+
+# RFC-0011 difficulty tier -> capability floor (model tier). Unknown/missing
+# tiers impose no floor (None) so an unrecognized signal cannot cheapen OR
+# inflate a task beyond what the routing policy asked for.
+_RFC0011_FLOOR = {"low": "small", "medium": "mid", "hard": "frontier"}
+
 
 def load_policy() -> dict[str, Any] | None:
     """Parse the routing policy from ``AIFACTORY_ROUTING_POLICY``.
@@ -97,25 +114,81 @@ def policy_route(stage: str) -> tuple[str, str] | None:
     return model, tier
 
 
-def tier_for_model(model: str | None) -> str | None:
-    """Reverse lookup: the policy tier whose model resolves to ``model``.
+def _floor_tier(tier: str, difficulty_tier: str | None) -> str:
+    """Raise *tier* to the RFC-0011 difficulty capability floor; never lower it."""
+    floor = _RFC0011_FLOOR.get(str(difficulty_tier or "").lower())
+    if floor is None:
+        return tier
+    return _RANK_TIER[max(_TIER_RANK[tier], _TIER_RANK[floor])]
+
+
+def contract_route(
+    stage: str, metadata: dict[str, Any] | None
+) -> tuple[str, str] | None:
+    """Resolve ``stage`` through the contract routing block in task metadata.
+
+    Consumes the RFC-0014 ``routing.requested`` / ``routing.overrides`` tiers
+    that PFactory writes into the signed contract (carried to task_metadata as
+    ``routingRequested`` / ``routingOverrides``). Precedence within the contract:
+    ``overrides[stage]`` > ``requested[stage]``. The tier is floored by the
+    RFC-0011 difficulty tier (``difficultyTier``), then mapped to a model via the
+    local policy's ``tiers`` map, else :data:`DEFAULT_TIERS`.
+
+    Returns ``(model, tier)`` or ``None`` when the contract routes no tier for
+    this stage — the caller then falls through to the env policy / default, so a
+    contract without a routing block is byte-identical to today.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    overrides = metadata.get("routingOverrides")
+    requested = metadata.get("routingRequested")
+    tier = None
+    if isinstance(overrides, dict) and overrides.get(stage) in _TIER_RANK:
+        tier = overrides[stage]
+    elif isinstance(requested, dict) and requested.get(stage) in _TIER_RANK:
+        tier = requested[stage]
+    if tier is None:
+        return None
+    tier = _floor_tier(tier, metadata.get("difficultyTier"))
+    policy = load_policy() or {}
+    tiers_map = _str_map(policy, "tiers") or DEFAULT_TIERS
+    model = tiers_map.get(tier)
+    if model is None:
+        return None
+    return model, tier
+
+
+def tier_for_model(
+    model: str | None, metadata: dict[str, Any] | None = None
+) -> str | None:
+    """Reverse lookup: the tier whose model resolves to ``model``.
 
     Used to stamp ``routing_tier`` next to the actually-used model in the
-    per-worker usage records (completion envelope v1.3). Returns ``None`` when
-    no policy is active or the model matches no tier — the stamp is then
-    simply omitted, keeping the envelope byte-identical to today.
+    per-worker usage records (completion envelope v1.3). Consults the env
+    policy's ``tiers`` map; when a CONTRACT routing block is active for this
+    build (``metadata`` carries ``routingRequested``/``routingOverrides``) it
+    also reverse-maps against :data:`DEFAULT_TIERS` so contract-driven runs stamp
+    the tier even without a local env policy. Returns ``None`` — no stamp — when
+    neither a policy nor a contract routing block is present, keeping the
+    envelope byte-identical to today.
     """
     if not model:
         return None
     policy = load_policy()
-    if policy is None:
+    tiers = _str_map(policy, "tiers") if policy else {}
+    contract_active = isinstance(metadata, dict) and bool(
+        metadata.get("routingRequested") or metadata.get("routingOverrides")
+    )
+    if not tiers and not contract_active:
         return None
+    if not tiers:
+        tiers = DEFAULT_TIERS
     # Lazy import: phase_config imports this module for resolution, so the
     # shorthand resolver must be imported at call time to avoid a cycle.
     from phase_config import resolve_model_id  # noqa: PLC0415
 
     target = resolve_model_id(model)
-    for tier, tier_model in _str_map(policy, "tiers").items():
+    for tier, tier_model in tiers.items():
         if tier_model == model or resolve_model_id(tier_model) == target:
             return tier
     return None
