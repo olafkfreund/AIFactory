@@ -405,22 +405,25 @@ def get_phase_model(
     if cli_model:
         return resolve_model_id(cli_model)
 
-    # Non-auto profile: use single model from metadata
-    if metadata and metadata.get("model"):
-        return resolve_model_id(metadata["model"])
-
-    # Contract routing block (RFC-0014 requested/overrides tiers, floored by the
-    # RFC-0011 difficulty tier). A signed PFactory contract's per-stage policy
-    # beats the local AIFACTORY_ROUTING_POLICY; absent routing block = None.
+    # RFC-0014 routing (contract requested/overrides, then the local
+    # AIFACTORY_ROUTING_POLICY) is consulted BEFORE the tier's static
+    # metadata.model (#825). The RFC-0011 tier assigns a per-tier model into
+    # metadata.model as a DEFAULT; a routing policy is the operator's per-stage
+    # override and wins over that default — while staying below pinnedModel,
+    # auto-profile phaseModels, and an explicit cli_model (handled above). Both
+    # return None when nothing routes the stage, so with routing OFF this is
+    # byte-identical: metadata.model below drives exactly as before.
     contracted = contract_route(phase, metadata)
     if contracted is not None:
         return resolve_model_id(contracted[0])
-
-    # Routing-policy tier (RFC-0014 #803). Fail-closed: absent policy, unmapped
-    # stage, or unknown tier all return None and fall through to the default.
     routed = policy_route(phase)
     if routed is not None:
         return resolve_model_id(routed[0])
+
+    # Non-auto profile: the tier's static model (RFC-0011) or a user's saved
+    # single model from task_metadata.json — the default when nothing routes.
+    if metadata and metadata.get("model"):
+        return resolve_model_id(metadata["model"])
 
     # Fall back to default phase configuration
     return resolve_model_id(DEFAULT_PHASE_MODELS[phase])
@@ -459,16 +462,17 @@ def get_phase_model_betas(
     if cli_model:
         return get_model_betas(cli_model)
 
-    if metadata and metadata.get("model"):
-        return get_model_betas(metadata["model"])
-
+    # Routing before the tier's static metadata.model (#825), mirroring
+    # get_phase_model so a routed model gets the right beta headers.
     contracted = contract_route(phase, metadata)
     if contracted is not None:
         return get_model_betas(contracted[0])
-
     routed = policy_route(phase)
     if routed is not None:
         return get_model_betas(routed[0])
+
+    if metadata and metadata.get("model"):
+        return get_model_betas(metadata["model"])
 
     return get_model_betas(DEFAULT_PHASE_MODELS[phase])
 

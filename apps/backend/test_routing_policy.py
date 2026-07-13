@@ -113,7 +113,7 @@ def test_pinned_model_outranks_everything(
     assert get_phase_model(spec, "coding", cli_model="haiku") == "claude-opus-4-8"
 
 
-def test_per_task_override_outranks_policy(
+def test_explicit_choices_outrank_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
@@ -127,9 +127,22 @@ def test_per_task_override_outranks_policy(
     assert get_phase_model(plain, "coding", cli_model="haiku") == (
         "claude-haiku-4-5-20251001"
     )
-    # Single-model metadata beats the policy tier.
-    meta = _spec_dir(tmp_path / "c", {"model": "haiku"})
-    assert get_phase_model(meta, "coding") == "claude-haiku-4-5-20251001"
+
+
+def test_policy_overrides_tier_static_metadata_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#825: the RFC-0011 tier's static ``metadata.model`` is a DEFAULT, not a
+    hard pin — an active routing policy overrides it (this is what makes RFC-0014
+    routing engage in the tier-labeled from-issue path). Without a policy the
+    same metadata.model drives, byte-identical to before."""
+    meta = _spec_dir(tmp_path, {"model": "opus"})
+    # Policy ON: coding routes to the mid tier (sonnet), beating metadata.model.
+    monkeypatch.setenv(ENV_VAR, json.dumps(_POLICY))
+    assert get_phase_model(meta, "coding") == "claude-sonnet-5"
+    # Policy OFF: metadata.model (the tier default) drives unchanged.
+    monkeypatch.delenv(ENV_VAR, raising=False)
+    assert get_phase_model(meta, "coding") == resolve_model_id("opus")
 
 
 def test_unknown_tier_fails_closed_to_default(
