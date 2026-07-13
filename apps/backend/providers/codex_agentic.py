@@ -74,6 +74,43 @@ def _is_account_default(model: str | None) -> bool:
     return model.strip().lower() in _ACCOUNT_DEFAULT_MODELS
 
 
+# stderr substrings that mark a codex hard failure (auth / model / http) rather
+# than benign progress chatter. Used to decide whether an EMPTY codex response
+# is a real error to surface, vs a possibly-legitimate silent turn (#779). Codex
+# runs with `sandbox: danger-full-access` and edits files directly, so an empty
+# response text alone does NOT prove a no-op — but empty text plus one of these
+# stderr markers does.
+_CODEX_ERROR_MARKERS = (
+    "unauthorized",
+    "forbidden",
+    "authentication",
+    "invalid api key",
+    "invalid_api_key",
+    "not supported when using codex",  # ChatGPT-account explicit-model rejection
+    "http 400",
+    "http 401",
+    "http 403",
+    "http 429",
+    "http 500",
+    " 401 ",
+    " 403 ",
+    " 429 ",
+    "rate limit",
+    "quota",
+)
+
+
+def _looks_like_codex_error(stderr_tail: str) -> bool:
+    """True when codex stderr indicates a hard failure (auth/model/http).
+
+    When it does, an EMPTY codex response should be raised as an error turn (so
+    the coder loop counts it and #810 fails the build with the reason visible)
+    rather than yielded as a silent, "successful" no-op turn (#779).
+    """
+    low = stderr_tail.lower()
+    return any(marker in low for marker in _CODEX_ERROR_MARKERS)
+
+
 # MCP protocol constants
 _MCP_PROTOCOL_VERSION = "2024-11-05"
 _CLIENT_INFO = {"name": "aifactory", "version": "1.0"}
@@ -284,6 +321,34 @@ class CodexAgenticProvider(BaseLLMProvider):
         """Return an async generator that calls the Codex MCP tool."""
         return self._run_codex_mcp()
 
+    def _text_for_empty_response(self, structured: dict[str, Any]) -> str:
+        """Diagnose an EMPTY codex MCP response (#779).
+
+        Surfaces the drained stderr tail — otherwise discarded behind a bland
+        placeholder and a silent no-op turn. Raises RuntimeError when the tail
+        looks like a hard failure (auth/model/http) so the coder loop counts an
+        error turn and #810 fails the build with the reason visible; otherwise
+        folds the tail into the placeholder text.
+        """
+        stderr_tail = "".join(getattr(self, "_stderr_tail", []) or []).strip()
+        if not stderr_tail:
+            content = structured.get("content")
+            return (
+                content
+                if isinstance(content, str) and content
+                else "(no output from Codex MCP)"
+            )
+        logger.error(
+            "CodexAgenticProvider: empty response — codex stderr tail:\n%s",
+            stderr_tail[-2000:],
+        )
+        if _looks_like_codex_error(stderr_tail):
+            raise RuntimeError(
+                "Codex produced no output and its stderr indicates a failure "
+                f"(likely auth/model): {stderr_tail[-800:]}"
+            )
+        return f"(no output from Codex MCP; stderr tail: {stderr_tail[-500:]})"
+
     async def _run_codex_mcp(self) -> AsyncGenerator[Any, None]:
         """Call the 'codex' tool via MCP and yield the response."""
         if not self._pending_prompt:
@@ -356,7 +421,7 @@ class CodexAgenticProvider(BaseLLMProvider):
                 response_text += block.get("text", "")
 
         if not response_text:
-            response_text = structured.get("content", "(no output from Codex MCP)")
+            response_text = self._text_for_empty_response(structured)
 
         logger.info(
             "CodexAgenticProvider: response received (len=%d, threadId=%s)",
