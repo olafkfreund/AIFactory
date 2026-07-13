@@ -358,3 +358,55 @@ def test_execution_profile_difficulty_falls_back_to_complexity() -> None:
         {"complexity": "medium", "routing": {"requested": {"coding": "small"}}}
     )
     assert meta["difficultyTier"] == "medium"
+
+
+# --------------------------------------------------------------------------- #
+# RFC-0011 capability floor on the env policy path (#825 follow-up)
+# --------------------------------------------------------------------------- #
+
+
+def test_policy_route_floors_up_to_difficulty_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Policy asks coding->small, but a HARD task's floor is frontier: raise it.
+    cheap = {"tiers": _POLICY["tiers"], "stages": {"coding": "small"}}
+    monkeypatch.setenv(ENV_VAR, json.dumps(cheap))
+    assert policy_route("coding") == ("haiku", "small")  # no difficulty -> unchanged
+    assert policy_route("coding", "hard") == ("opus", "frontier")  # floored up
+    assert policy_route("coding", "medium") == ("sonnet", "mid")  # floored to mid
+
+
+def test_policy_route_floor_never_lowers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Policy asks coding->frontier; a LOW task must NOT drag it down.
+    rich = {"tiers": _POLICY["tiers"], "stages": {"coding": "frontier"}}
+    monkeypatch.setenv(ENV_VAR, json.dumps(rich))
+    assert policy_route("coding", "low") == ("opus", "frontier")
+
+
+def test_get_phase_model_applies_floor_from_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hard task with a cheap coding policy is floored back to opus end to end.
+    cheap = {"tiers": _POLICY["tiers"], "stages": {"coding": "small"}}
+    monkeypatch.setenv(ENV_VAR, json.dumps(cheap))
+    spec = _spec_dir(tmp_path, {"model": "sonnet", "difficultyTier": "hard"})
+    assert get_phase_model(spec, "coding") == "claude-opus-4-8"
+
+
+def test_floored_tier_falls_back_to_default_tiers_map(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Policy defines only the small tier but floors up to frontier -> use the
+    # built-in DEFAULT_TIERS for the tier the operator did not map.
+    partial = {"tiers": {"small": "haiku"}, "stages": {"coding": "small"}}
+    monkeypatch.setenv(ENV_VAR, json.dumps(partial))
+    assert policy_route("coding", "hard") == ("opus", "frontier")
+
+
+def test_execution_profile_carries_autonomy_tier_as_difficulty() -> None:
+    from trusted_plan import execution_profile_to_metadata
+
+    meta = execution_profile_to_metadata(
+        {"model": "opus", "autonomy_tier": "hard", "complexity": "complex"}
+    )
+    assert meta["difficultyTier"] == "hard"

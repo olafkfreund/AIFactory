@@ -351,6 +351,11 @@ _EXECUTION_TO_METADATA = {
     "review_tier": "reviewTier",
     "skills": "selectedSkills",
     "skip_planning": "skipPlanning",
+    # RFC-0011 difficulty tier (low/medium/hard) -> the capability FLOOR the
+    # RFC-0014 router must not route a stage below (#825 follow-up). The tier
+    # path emits it as `autonomy_tier`; carrying it lets contract_route and the
+    # env policy_route floor the routed model on the from-issue path too.
+    "autonomy_tier": "difficultyTier",
     # Soft budget alert (#45 P2): carry the optional contract cost budget into
     # task metadata so completion.py can surface a usage.budget warning when the
     # rolled-up spend exceeds it. OBSERVE-ONLY — never used to abort a build.
