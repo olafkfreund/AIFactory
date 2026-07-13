@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from routing_policy import policy_route
+from routing_policy import contract_route, policy_route
 
 logger = logging.getLogger(__name__)
 
@@ -409,6 +409,13 @@ def get_phase_model(
     if metadata and metadata.get("model"):
         return resolve_model_id(metadata["model"])
 
+    # Contract routing block (RFC-0014 requested/overrides tiers, floored by the
+    # RFC-0011 difficulty tier). A signed PFactory contract's per-stage policy
+    # beats the local AIFACTORY_ROUTING_POLICY; absent routing block = None.
+    contracted = contract_route(phase, metadata)
+    if contracted is not None:
+        return resolve_model_id(contracted[0])
+
     # Routing-policy tier (RFC-0014 #803). Fail-closed: absent policy, unmapped
     # stage, or unknown tier all return None and fall through to the default.
     routed = policy_route(phase)
@@ -454,6 +461,10 @@ def get_phase_model_betas(
 
     if metadata and metadata.get("model"):
         return get_model_betas(metadata["model"])
+
+    contracted = contract_route(phase, metadata)
+    if contracted is not None:
+        return get_model_betas(contracted[0])
 
     routed = policy_route(phase)
     if routed is not None:
