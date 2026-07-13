@@ -6,6 +6,7 @@ Shared imports, types, and constants used across agent modules.
 """
 
 import logging
+import os
 import re
 
 # Canonical fleet secret-redaction layer (vendored byte-for-byte from the Factory
@@ -38,9 +39,17 @@ RATE_LIMIT_PAUSE_FILE = "RATE_LIMIT_PAUSE"  # Created when rate limited
 AUTH_FAILURE_PAUSE_FILE = "AUTH_PAUSE"  # Created when auth fails
 RESUME_FILE = "RESUME"  # Created by frontend to signal resume
 
-# Maximum time to wait for rate limit reset (2 hours)
-# If reset time is beyond this, task should fail rather than wait indefinitely
-MAX_RATE_LIMIT_WAIT_SECONDS = 7200
+# Maximum time to wait for a rate-limit reset before failing the task. Kept
+# BELOW the k8s build deadline (job_dispatch.py deadline_seconds, default 3600s)
+# so a rate-limit wait can never silently consume the whole deadline and leave an
+# empty patch (#816 fix #3) — a wait that would outlast the build fails fast so
+# the task can retry. NOTE: the live #272 auto-resume path is separately bounded
+# by RateLimitResumePolicy.max_total_wait_seconds (1800s, error_utils.py); this
+# constant guards the legacy pause-file wait. Override via the env if the
+# deadline is raised.
+MAX_RATE_LIMIT_WAIT_SECONDS = int(
+    os.environ.get("AIFACTORY_MAX_RATE_LIMIT_WAIT_SECONDS", "3300")
+)
 
 # Wait intervals for pause/resume checking
 RATE_LIMIT_CHECK_INTERVAL_SECONDS = (

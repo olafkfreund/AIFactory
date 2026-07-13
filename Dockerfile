@@ -168,7 +168,17 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
 # The provider requires the CLI present; runtime selection is still gated by
 # AIFACTORY_RUNTIMES + a Copilot subscription sign-in on the pod (AIFactory #790).
-RUN npm install -g @github/copilot
+#
+# Pre-bake the coder's MCP stdio servers too (#816). The Claude session spawns
+# them via `npx` at connect (core/client.py); on a cold or network-restricted
+# runner that npx fetch stalls and — historically — burned the whole build to the
+# deadline. Installing them globally means npx resolves them locally and never
+# hits the registry at connect. The connect watchdog (#816 fix #1) is the safety
+# net; this removes the stall itself for batch/offline runs.
+RUN npm install -g \
+    @github/copilot \
+    @upstash/context7-mcp \
+    @playwright/mcp
 
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
