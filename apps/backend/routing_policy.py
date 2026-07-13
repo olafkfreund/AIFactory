@@ -89,7 +89,9 @@ def _str_map(policy: dict[str, Any], key: str) -> dict[str, str]:
     return {str(k): v for k, v in raw.items() if isinstance(v, str) and v}
 
 
-def policy_route(stage: str) -> tuple[str, str] | None:
+def policy_route(
+    stage: str, difficulty_tier: str | None = None
+) -> tuple[str, str] | None:
     """Resolve ``stage`` through the active policy to ``(model, tier)``.
 
     ``model`` is the raw policy value (shorthand or full id — the caller
@@ -103,7 +105,14 @@ def policy_route(stage: str) -> tuple[str, str] | None:
     tier = _str_map(policy, "stages").get(stage)
     if tier is None:
         return None
-    model = _str_map(policy, "tiers").get(tier)
+    # RFC-0011 capability floor (#825 follow-up): never route a stage BELOW the
+    # difficulty tier's floor (a hard task keeps a frontier coder even if the
+    # policy asked for something cheaper). Only raises; a policy already at/above
+    # the floor is unchanged, and a custom (non-small/mid/frontier) tier name is
+    # left as-is since it has no rank to floor against.
+    if tier in _TIER_RANK:
+        tier = _floor_tier(tier, difficulty_tier)
+    model = _str_map(policy, "tiers").get(tier) or DEFAULT_TIERS.get(tier)
     if model is None:
         logger.warning(
             "routing policy maps stage %r to unknown tier %r; using default",

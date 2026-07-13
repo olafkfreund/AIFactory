@@ -358,6 +358,17 @@ def load_task_metadata(spec_dir: Path) -> TaskMetadataConfig | None:
     return None
 
 
+def _difficulty_tier(metadata: TaskMetadataConfig | None) -> str | None:
+    """The RFC-0011 difficulty tier from task metadata, for the routing floor.
+
+    ``difficultyTier`` is carried into task_metadata from the tier path (#825
+    follow-up) but is not a declared TaskMetadataConfig key, so ``.get`` returns
+    ``object``; narrow it to ``str | None`` for ``policy_route``'s floor arg.
+    """
+    value = metadata.get("difficultyTier") if metadata else None
+    return value if isinstance(value, str) else None
+
+
 def get_phase_model(
     spec_dir: Path,
     phase: Phase,
@@ -416,7 +427,7 @@ def get_phase_model(
     contracted = contract_route(phase, metadata)
     if contracted is not None:
         return resolve_model_id(contracted[0])
-    routed = policy_route(phase)
+    routed = policy_route(phase, _difficulty_tier(metadata))
     if routed is not None:
         return resolve_model_id(routed[0])
 
@@ -467,7 +478,7 @@ def get_phase_model_betas(
     contracted = contract_route(phase, metadata)
     if contracted is not None:
         return get_model_betas(contracted[0])
-    routed = policy_route(phase)
+    routed = policy_route(phase, _difficulty_tier(metadata))
     if routed is not None:
         return get_model_betas(routed[0])
 
