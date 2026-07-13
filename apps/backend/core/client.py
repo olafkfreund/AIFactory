@@ -850,11 +850,15 @@ def create_client(
         }
 
     if "playwright" in required_servers:
-        # Playwright for web frontends (headless Chromium)
+        # Playwright for web frontends (headless Chromium). No `@latest` tag: the
+        # server is pre-baked into the runner image (#816), and a version tag
+        # makes npx hit the registry to check for a newer release even when a
+        # copy is installed — defeating the offline pre-bake. Bare name resolves
+        # to the globally installed version.
         mcp_servers["playwright"] = {
             "command": "npx",
             "args": [
-                "@playwright/mcp@latest",
+                "@playwright/mcp",
                 "--headless",
                 "--browser",
                 "chromium",
