@@ -31,22 +31,67 @@ def test_manifest_is_one_shot_gc_hardened():
 
 
 def test_manifest_pod_hardening_and_task_label():
-    # #812 (Factory#274 compensating controls): pinned securityContext on every
-    # gate Job pod/container, and the factory.io/kind=task pod label that puts
-    # the pod under the chart's per-task NetworkPolicy.
+    # #812 (Factory#274 compensating controls), corrected by #840: pinned
+    # securityContext on every gate Job pod/container, and the factory.io/kind=task
+    # pod label that puts the pod under the chart's per-task NetworkPolicy.
     m = build_job_manifest(
         "fsbx-abc", "img", ["nix --version"], nix_store_pvc="aifactory-nix-store"
     )
     tpl = m["spec"]["template"]
     assert tpl["metadata"]["labels"]["factory.io/kind"] == "task"
     t = tpl["spec"]
-    assert t["securityContext"] == {
-        "runAsNonRoot": True,
-        "seccompProfile": {"type": "RuntimeDefault"},
+    assert t["securityContext"] == {"seccompProfile": {"type": "RuntimeDefault"}}
+    hardened = {
+        "allowPrivilegeEscalation": False,
+        "privileged": False,
+        "capabilities": {
+            "drop": ["ALL"],
+            "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"],
+        },
     }
-    hardened = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
     assert t["containers"][0]["securityContext"] == hardened
     assert t["initContainers"][0]["securityContext"] == hardened
+
+
+def test_gate_keeps_caps_nix_local_builds_need():
+    """#840: the image ships `build-users-group = nixbld`, so a local build makes
+    nix setuid to a build user and reap it. Dropping SETUID/SETGID/KILL kills
+    `nix develop` with "setting uid: Operation not permitted" the moment a
+    derivation cannot be substituted from the binary cache — proven on the live
+    cluster, where adding exactly these three turned a failing gate Job into a
+    succeeding one that built python3-*-env.drv and nix-shell-env.drv locally.
+
+    Load-bearing since #830/#253 removed the warm store: a cold /nix substitutes
+    most paths but still builds the shell env.
+    """
+    t = build_job_manifest("fsbx-abc", "img", ["nix --version"])["spec"]["template"][
+        "spec"
+    ]
+    add = set(t["containers"][0]["securityContext"]["capabilities"]["add"])
+    assert {"SETUID", "SETGID", "KILL"} <= add, add
+
+
+def test_gate_pod_never_pins_runasnonroot():
+    """#840 regression: the gate image (tfactory-runner-nix) is USER 0:0 because
+    nix builds run as root and nix must write /nix/var. #812 set runAsNonRoot
+    here on the premise that "task images declare a non-root USER" — true of the
+    BUILD image, false of this one — and the kubelet then refused the container
+    outright ("container has runAsNonRoot and image will run as root",
+    CreateContainerConfigError), so every gate Job died before running a single
+    command. TFactory#651 declined to set it for exactly this reason.
+
+    Do not "fix" a recurrence with runAsUser: the image's /nix is root-owned.
+    """
+    t = build_job_manifest("fsbx-abc", "img", ["nix --version"])["spec"]["template"][
+        "spec"
+    ]
+    assert "runAsNonRoot" not in t["securityContext"], t["securityContext"]
+    assert "runAsUser" not in t["securityContext"], t["securityContext"]
+    # The rest of the #812 hardening must survive this correction.
+    assert t["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+    sc = t["containers"][0]["securityContext"]
+    assert sc["allowPrivilegeEscalation"] is False
+    assert sc["capabilities"]["drop"] == ["ALL"]
 
 
 def test_manifest_no_repo_mount_by_default():

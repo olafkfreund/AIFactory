@@ -62,11 +62,29 @@ def build_job_manifest(
     when ``nix_store_pvc`` is None, leaving cold-fetch behavior unchanged.
     """
     command = " && ".join(commands)
-    # #812 (Factory#274 compensating controls): same hardening as the shared
-    # job_dispatch builder. No readOnlyRootFilesystem — nix writes /nix/var.
+    # #812 (Factory#274 compensating controls), corrected by #840.
+    # No readOnlyRootFilesystem — nix writes /nix/var.
+    #
+    # Capabilities are dropped, then the minimum added back for the root nix user,
+    # each one established by a real gate Job on the cluster, not by argument:
+    #   DAC_OVERRIDE — write the uid-65532 worktree the control plane co-mounts
+    #   FOWNER       — chmod/utimes on those 65532-owned files (git/tar)
+    #   CHOWN        — ownership preservation on `cp -a`
+    #   SETUID/SETGID/KILL — the image ships `build-users-group = nixbld` (+32
+    #     nixbld users), so any LOCAL build makes nix setuid to a build user and
+    #     reap it. Without these, `nix develop` dies "setting uid: Operation not
+    #     permitted / cannot kill processes for uid '30001'" the moment a
+    #     derivation cannot be substituted from the binary cache. This matters
+    #     MORE since #830/#253 dropped the warm store: a cold /nix substitutes
+    #     most paths but still builds the shell env locally (observed:
+    #     python3-*-env.drv, nix-shell-env.drv).
     container_hardening: dict[str, Any] = {
         "allowPrivilegeEscalation": False,
-        "capabilities": {"drop": ["ALL"]},
+        "privileged": False,
+        "capabilities": {
+            "drop": ["ALL"],
+            "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"],
+        },
     }
     container: dict[str, Any] = {
         "name": "gate",
@@ -78,11 +96,21 @@ def build_job_manifest(
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,  # the gate needs no k8s API
-        # #812: enforce non-root at the kubelet (task images declare a non-root
-        # USER; no runAsUser so worktree/store file ownership keeps matching it)
-        # and pin the default seccomp profile.
+        # Pin the default seccomp profile (previously unset = Unconfined on most
+        # CRI defaults).
+        #
+        # runAsNonRoot is deliberately NOT set (#840). #812 set it here on the
+        # premise that "task images declare a non-root USER" — true of the BUILD
+        # image (aifactory:*-nix is USER nonroot, and job_dispatch rightly keeps
+        # runAsNonRoot), false of the GATE image: AIFACTORY_SANDBOX_IMAGE is
+        # tfactory-runner-nix, which is USER 0:0 because nix builds run as root
+        # and nix must write /nix/var. The kubelet then refused the container
+        # outright — "container has runAsNonRoot and image will run as root",
+        # CreateContainerConfigError — so every gate Job died before running a
+        # single command. TFactory#651 reached this conclusion first and declined
+        # to set it for exactly this reason; this restores parity. Do NOT "fix"
+        # a future recurrence with runAsUser: the image's /nix is root-owned.
         "securityContext": {
-            "runAsNonRoot": True,
             "seccompProfile": {"type": "RuntimeDefault"},
         },
         "imagePullSecrets": [{"name": image_pull_secret}],
