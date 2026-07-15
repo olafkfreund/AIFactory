@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.32 - 2026-07-15
+
+### Fixed
+
+- **The web-server ran blind after startup: alembic's `fileConfig` destroyed the app's logging (#844).** `MIGRATIONS_AUTO_APPLY=true` runs `alembic upgrade head` inside the long-running server, which imports `env.py`, which calls `fileConfig`. The existing `disable_existing_loggers=False` preserves logger *objects* but `fileConfig` still rewrites the **root** logger from `alembic.ini`'s `[logger_root]` (`level=WARN`, `handlers=console`). Since `server.*` loggers propagate to root, the app lost both `RotatingFileHandler`s and every INFO one line into boot — measured in the running pod: `INFO/[Stream,RotatingFile,RotatingFile]` -> `WARNING/[Stream]`, `logger.info visible? False`. That is why `server.log` stops dead at "running `alembic upgrade head`" and only ERROR noise reaches stdout afterwards: no request logs, no lifecycle lines, nothing to debug with. It also made the RFC-0011 intake poller appear never to start — neither its enabled *nor* its disabled log line could be emitted. Now `fileConfig` is only called when nothing else has configured logging (root has no handlers), so standalone `alembic upgrade` is unchanged while the in-process path inherits the app's handlers.
+
+
 ## 3.6.31 - 2026-07-15
 
 Hotfix for a gate-lane regression that 3.6.30 shipped, plus CI cleanup.
