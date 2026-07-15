@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.34 - 2026-07-15
+
+### Fixed
+
+- **Every successful packed build escalated to `human_review`: the Job's `implementation_plan.json` never reached the control plane (#852, Factory#253 "output propagation").** The packed Job unpacks into `/work` — an emptyDir, deliberately, since that is what makes it node-agnostic (RFC-0017 #190) — and records each subtask `completed` in the plan there. The control plane counts completed subtasks from the data-PVC spec dir, which the packed path never populates, so it saw **0** and applied the #287 guard ("a clean exit with no successful subtask is emitted as FAILED"). Correct guard, stale input. Proven on the first autonomous handover (`aifactory-demo#320`): a correct patch, branch pushed, and still `human_review` / `errors` / `subtasks: 0` — the control-plane spec dir held only `requirements.json`, `spec.md`, `task_metadata.json` while the branch carried the finished plan. The branch escapes via `git push` (#751); the plan did not. Fixed by extending the existing return leg (`maybe_push_usage`/`maybe_fetch_usage` for `token_usage.json`, `maybe_push_task_logs`/`maybe_fetch_task_logs` for `task_logs.json`) with `maybe_push_plan`/`maybe_fetch_plan` at the same two call sites — `implementation_plan.json` was simply never added to it. Unlike its siblings the fetch **overwrites**: the control plane wrote the pre-dispatch original (all subtasks `pending`), so a bail-if-present guard would keep the stale copy and preserve the bug. This unblocks the AIFactory -> TFactory handoff, which never fired because no build ever reported success.
+
+
 ## 3.6.33 - 2026-07-15
 
 ### Fixed
