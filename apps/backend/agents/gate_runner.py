@@ -30,6 +30,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.nix_env import nix_in_image
+
 logger = logging.getLogger(__name__)
 
 # How long any single gate may run before we treat it as failed (seconds).
@@ -240,9 +242,20 @@ def _nix_kube_runner(image: str) -> Callable[[list[str], Path], tuple[int | None
     # RFC-0016 #197: opt-in warm /nix/store PVC so the toolchain closure persists
     # across Nix Jobs instead of cold-fetching each run. Absent/empty → cold
     # behavior (no mount), so nothing breaks if the PVC is not provisioned.
-    nix_store_pvc = os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None
+    # #253: but drop it when nix is baked into the image. This Job already mounts
+    # the RWO repo PVC; adding the RWO nix-store PVC makes the pod unschedulable
+    # whenever the two PVs stranded on different nodes (the live factory cluster:
+    # aifactory-data on the server, aifactory-nix-store on the agent). See
+    # nix_in_image for why the image is a sufficient /nix source.
+    nix_store_pvc = (
+        None
+        if nix_in_image()
+        else (os.environ.get("AIFACTORY_NIX_STORE_PVC", "") or None)
+    )
     if nix_store_pvc:
         logger.info("[gate] warm Nix store PVC %s mounted at /nix", nix_store_pvc)
+    else:
+        logger.info("[gate] no warm Nix store PVC — /nix resolves from image %s", image)
 
     def run(command: list[str], cwd: Path) -> tuple[int | None, str]:
         try:

@@ -7,11 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
-from agents.gate_runner import _nix_wrap, _select_runner  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from agents.gate_runner import _nix_kube_runner, _nix_wrap, _select_runner  # noqa: E402
 from core.nix_env import (  # noqa: E402
     environment_of,
     is_nix_environment,
     materialize_flake_into,
+    nix_in_image,
 )
 
 _NIX_ENV = {
@@ -62,3 +65,56 @@ def test_repo_owned_flake_respected(tmp_path):
     env = dict(_NIX_ENV, provisioning={"method": "nix", "generated": False})
     assert materialize_flake_into(tmp_path, env) is True
     assert (tmp_path / "flake.nix").read_text() == "# hand-written\n"  # not overwritten
+
+
+def _capture_sandbox(monkeypatch) -> dict:
+    """Swap KubeJobSandbox for a recorder; returns the kwargs it was built with."""
+    seen: dict = {}
+
+    class _FakeSandbox:
+        def __init__(self, image, **kwargs):
+            seen["image"] = image
+            seen.update(kwargs)
+
+        def run(self, *_a, **_k):
+            return SimpleNamespace(ok=True, exit_code=0, output="ok")
+
+    import core.kube_sandbox as ks
+
+    monkeypatch.setattr(ks, "KubeJobSandbox", _FakeSandbox)
+    return seen
+
+
+def test_gate_drops_warm_store_pvc_when_nix_in_image(monkeypatch):
+    """#253: with /nix baked into the image the gate Job must NOT mount the warm
+    store. It already mounts the RWO repo PVC; the RWO nix-store PVC strands its
+    PV on whichever node first consumed it, and when the two land on different
+    nodes (the live cluster: data on the server, nix-store on the agent) no node
+    satisfies both and the pod is unschedulable forever.
+    """
+    seen = _capture_sandbox(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", "true")
+    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], Path("/work"))
+    assert seen["nix_store_pvc"] is None, seen
+    assert seen["repo_pvc"] == "aifactory-data", seen  # repo co-mount unchanged
+
+
+def test_gate_keeps_warm_store_pvc_when_flag_off(monkeypatch):
+    """Default OFF stays warm — this fix must not silently drop the cache."""
+    seen = _capture_sandbox(monkeypatch)
+    monkeypatch.setenv("AIFACTORY_NIX_STORE_PVC", "aifactory-nix-store")
+    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    _nix_kube_runner("ghcr.io/x/nix:latest")(["pytest", "-q"], Path("/work"))
+    assert seen["nix_store_pvc"] == "aifactory-nix-store", seen
+
+
+def test_nix_in_image_flag_parsing(monkeypatch):
+    monkeypatch.delenv("AIFACTORY_PACKED_NIX_IN_IMAGE", raising=False)
+    assert nix_in_image() is False
+    for on in ("1", "true", "TRUE", " yes ", "on"):
+        monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", on)
+        assert nix_in_image() is True, on
+    for off in ("", "0", "false", "no"):
+        monkeypatch.setenv("AIFACTORY_PACKED_NIX_IN_IMAGE", off)
+        assert nix_in_image() is False, off
