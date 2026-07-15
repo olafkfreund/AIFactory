@@ -312,3 +312,92 @@ def maybe_fetch_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> boo
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched task_logs: %s", exc)
         return False
+
+
+_PLAN_FILE = "implementation_plan.json"
+
+
+def _plan_key(spec_id: str) -> str:
+    """Deterministic object key for a task's implementation_plan.json (#852).
+
+    Same derivation as :func:`_usage_key` / :func:`_task_logs_key`: both sides
+    compute it from ``spec_id`` alone, so no URI threading is needed.
+    """
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_PLAN_FILE
+        ).key()
+    )
+
+
+def maybe_push_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's ``implementation_plan.json`` to object storage (#852).
+
+    The third file with the same propagation gap as
+    :func:`maybe_push_workspace_branch` / :func:`maybe_push_usage` — and the most
+    consequential. The build marks each subtask ``completed`` in the plan inside
+    its ephemeral ``/work``, but the control plane counts completed subtasks from
+    the data-PVC spec dir, which the packed path never populates. It therefore
+    sees 0 completed and applies the #287 guard — "a clean exit with no successful
+    subtask is emitted as FAILED" — so EVERY successful packed build escalated to
+    human_review + errors, blocking the TFactory handoff behind a bookkeeping gap
+    (Factory#253 "output propagation").
+
+    No-op off the packed path (``WORKSPACE_URI`` unset) where the spec dir is on
+    the data PVC already. Best-effort: never raises — a push failure must not turn
+    a green build red.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _PLAN_FILE
+    if not src.is_file():
+        _log.warning("[workspace_fetch] no %s to push", _PLAN_FILE)
+        return False
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        ArtifactStore().put_bytes(
+            _plan_key(spec_id), src.read_bytes(), "application/json"
+        )
+        _log.info(
+            "[workspace_fetch] pushed %s to object store (packed path)", _PLAN_FILE
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - must never break a green build
+        _log.warning("[workspace_fetch] plan push failed: %s", exc)
+        return False
+
+
+def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Control-plane counterpart to :func:`maybe_push_plan` (#852).
+
+    Unlike its siblings this OVERWRITES an existing local file. The others fetch
+    artifacts the control plane never has; the plan is different — the control
+    plane wrote the ORIGINAL (all subtasks ``pending``) before dispatch, so a
+    bail-if-present guard would keep the stale pre-build copy and preserve the
+    exact bug this fixes. The Job's copy is authoritative: it is the same file,
+    advanced.
+
+    No-op off the packed path or when nothing was pushed. Best-effort: never
+    raises.
+    """
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_plan_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - no pushed plan / store unreachable
+        _log.debug("[workspace_fetch] no pushed plan to fetch: %s", exc)
+        return False
+    dest = Path(spec_dir) / _PLAN_FILE
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        _log.info(
+            "[workspace_fetch] fetched %s from object store (packed path)", _PLAN_FILE
+        )
+        return True
+    except OSError as exc:
+        _log.warning("[workspace_fetch] could not write fetched plan: %s", exc)
+        return False
