@@ -30,6 +30,25 @@ def test_manifest_is_one_shot_gc_hardened():
     assert c["resources"]["limits"]["memory"] == "2Gi"
 
 
+def test_manifest_pod_hardening_and_task_label():
+    # #812 (Factory#274 compensating controls): pinned securityContext on every
+    # gate Job pod/container, and the factory.io/kind=task pod label that puts
+    # the pod under the chart's per-task NetworkPolicy.
+    m = build_job_manifest(
+        "fsbx-abc", "img", ["nix --version"], nix_store_pvc="aifactory-nix-store"
+    )
+    tpl = m["spec"]["template"]
+    assert tpl["metadata"]["labels"]["factory.io/kind"] == "task"
+    t = tpl["spec"]
+    assert t["securityContext"] == {
+        "runAsNonRoot": True,
+        "seccompProfile": {"type": "RuntimeDefault"},
+    }
+    hardened = {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+    assert t["containers"][0]["securityContext"] == hardened
+    assert t["initContainers"][0]["securityContext"] == hardened
+
+
 def test_manifest_no_repo_mount_by_default():
     # Toolchain-only Job (back-compat): no PVC volume, no workingDir.
     m = build_job_manifest("fsbx-abc", "img", ["go version"])

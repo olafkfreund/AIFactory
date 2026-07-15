@@ -182,25 +182,28 @@ def _worker_records(agg: dict) -> list[dict]:
             continue
         in_tok = int(rec.get("input_tokens", 0) or 0)
         out_tok = int(rec.get("output_tokens", 0) or 0)
-        records.append(
-            {
-                "worker_id": rec.get("worker_id") or wid,
-                "phase": rec.get("phase"),
-                "subtask_id": rec.get("subtask_id"),
-                "provider": rec.get("provider"),
-                "model": rec.get("model"),
-                "input_tokens": in_tok,
-                "output_tokens": out_tok,
-                "total_tokens": int(rec.get("total_tokens", 0) or 0)
-                or (in_tok + out_tok),
-                "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
-                "duration_ms": int(rec.get("duration_ms", 0) or 0),
-                # Billing mode (#96): api/cloud are metered (show cost);
-                # subscription/local are not (show tokens + time). Lets CFactory
-                # avoid surfacing a notional dollar cost for subscription/local work.
-                "billing_mode": classify_billing_mode(rec.get("provider")),
-            }
-        )
+        record = {
+            "worker_id": rec.get("worker_id") or wid,
+            "phase": rec.get("phase"),
+            "subtask_id": rec.get("subtask_id"),
+            "provider": rec.get("provider"),
+            "model": rec.get("model"),
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "total_tokens": int(rec.get("total_tokens", 0) or 0) or (in_tok + out_tok),
+            "cost_usd": round(float(rec.get("cost_usd", 0.0) or 0.0), 6),
+            "duration_ms": int(rec.get("duration_ms", 0) or 0),
+            # Billing mode (#96): api/cloud are metered (show cost);
+            # subscription/local are not (show tokens + time). Lets CFactory
+            # avoid surfacing a notional dollar cost for subscription/local work.
+            "billing_mode": classify_billing_mode(rec.get("provider")),
+        }
+        # RFC-0014 (#803, additive): echo the routing tier the backend's token
+        # attribution stamped when a routing policy was active. Omitted entirely
+        # when absent (policy off), keeping the envelope byte-identical to v1.3.
+        if rec.get("routing_tier"):
+            record["routing_tier"] = rec["routing_tier"]
+        records.append(record)
     # Deterministic order for stable events/tests.
     records.sort(key=lambda r: str(r["worker_id"]))
     return records
@@ -385,6 +388,7 @@ def build_completion_event(
     traceparent: str | None = None,
     tracestate: str | None = None,
     halt_reason: str | None = None,
+    injection_scan: dict | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -454,6 +458,10 @@ def build_completion_event(
     # the typed reason so CFactory can show *why* a WorkItem stalled.
     if halt_reason:
         event["halt_reason"] = halt_reason
+    # Pre-coder untrusted-content scan verdict (#805 / Factory#273): additive
+    # block so CFactory can surface pass/flagged/skipped + matched patterns.
+    if injection_scan:
+        event["injection_scan"] = injection_scan
     return event
 
 
@@ -845,6 +853,7 @@ def emit_terminal_completion(
         project_id=project_id,
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
+        injection_scan=_read_injection_scan(spec_dir),
     )
     # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
     # emit their live sub-event as they finish (agents/parallel_integration.py);
@@ -902,12 +911,34 @@ def emit_usage_snapshot(
             issue_number=read_issue_number(spec_dir),
             project_id=project_id,
             usage=usage,
+            injection_scan=_read_injection_scan(spec_dir),
         )
         notify_completion(event, spec_dir=spec_dir)
         return event
     except Exception:  # noqa: BLE001 — usage reporting must never break the caller
         logger.debug("usage snapshot emit failed (best-effort)", exc_info=True)
         return None
+
+
+def _read_injection_scan(spec_dir: Path) -> dict | None:
+    """The pre-coder untrusted-content scan verdict for this task, if any
+    (#805 / Factory#273). Written by ``security.content_scan`` to
+    ``injection_scan.json`` in the spec dir (synced from the worktree)."""
+    try:
+        data = json.loads((spec_dir / "injection_scan.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    verdict = data.get("verdict")
+    if verdict not in ("pass", "flagged", "skipped"):
+        return None
+    scan: dict = {"verdict": verdict}
+    if isinstance(data.get("mode"), str):
+        scan["mode"] = data["mode"]
+    if isinstance(data.get("matched"), list):
+        scan["matched"] = data["matched"]
+    return scan
 
 
 def _read_halt_reason(spec_dir: Path) -> str | None:

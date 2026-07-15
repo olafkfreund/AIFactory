@@ -216,3 +216,40 @@ def test_bare_codex_routes_to_codex_provider():
 
     for m in ("codex", "codex:default", "default", "gpt-5.3-codex"):
         assert infer_provider_from_model(m) == "codex", m
+
+
+def test_looks_like_codex_error_detects_auth_and_http_failures():
+    """#779: an EMPTY codex response paired with an auth/model/http stderr
+    marker is a hard failure to surface, not a silent no-op."""
+    from providers.codex_agentic import _looks_like_codex_error
+
+    for tail in (
+        "Error: 401 Unauthorized",
+        "model is not supported when using Codex with a ChatGPT account",
+        "HTTP 400 Bad Request",
+        "invalid_api_key: the provided key is not valid",
+        "you have hit your rate limit",
+        "quota exceeded for this account",
+    ):
+        assert _looks_like_codex_error(tail), tail
+
+
+def test_looks_like_codex_error_ignores_benign_stderr():
+    """Benign progress chatter must NOT be flagged as an error (avoid
+    false-failing a legitimate silent-edit codex turn)."""
+    from providers.codex_agentic import _looks_like_codex_error
+
+    for tail in (
+        "",
+        "applying patch to main.py",
+        "codex: thinking...",
+        "wrote 3 files, 0 warnings",
+    ):
+        assert not _looks_like_codex_error(tail), tail
+
+
+def test_empty_response_surfaces_stderr_and_raises_on_error():
+    """The empty-response branch must consult the stderr tail and raise when it
+    looks like a codex failure (source-level guard for #779)."""
+    assert "_looks_like_codex_error(stderr_tail)" in SRC
+    assert "_stderr_tail" in SRC and "empty response" in SRC

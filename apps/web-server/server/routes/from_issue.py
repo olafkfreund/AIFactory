@@ -134,6 +134,16 @@ def _write_spec(
 
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
+    # #806: run.py's find_spec only recognizes a spec dir that contains
+    # spec.md, and _start_build spawns run.py directly (it never passes the
+    # execution.py simple fast path that generates one). Without this file
+    # every from-issue tier dies at spawn with "Spec not found".
+    spec_md = spec_dir / "spec.md"
+    if not spec_md.exists():
+        spec_md.write_text(
+            f"# {requirements['title']}\n\n{requirements['description']}\n"
+        )
+
     # Reuse the trusted-plan execution-profile writer: maps the snake_case
     # execution block into task_metadata.json (model/skipPlanning/reviewTier/...).
     apply_execution_profile(spec_dir, {"execution": execution})

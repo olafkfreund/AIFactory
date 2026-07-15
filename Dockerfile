@@ -48,7 +48,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:369768c6ee466cc726ebab82e1b590f2d5a78507d134b17912f3e5c58de950ff AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:55cd38584d1bba1913a1d58da07184cbe512724bc03e822e269404c73cd4c9cd AS runtime
 
 USER root
 
@@ -168,7 +168,17 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
 # The provider requires the CLI present; runtime selection is still gated by
 # AIFACTORY_RUNTIMES + a Copilot subscription sign-in on the pod (AIFactory #790).
-RUN npm install -g @github/copilot
+#
+# Pre-bake the coder's MCP stdio servers too (#816). The Claude session spawns
+# them via `npx` at connect (core/client.py); on a cold or network-restricted
+# runner that npx fetch stalls and — historically — burned the whole build to the
+# deadline. Installing them globally means npx resolves them locally and never
+# hits the registry at connect. The connect watchdog (#816 fix #1) is the safety
+# net; this removes the stall itself for batch/offline runs.
+RUN npm install -g \
+    @github/copilot \
+    @upstash/context7-mcp \
+    @playwright/mcp
 
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)

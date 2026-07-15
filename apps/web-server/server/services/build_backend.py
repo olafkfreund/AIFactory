@@ -135,9 +135,7 @@ _ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
 # build-image variant), the node-pinned RWO ``aifactory-nix-store`` warm-cache
 # PVC must NOT be co-mounted on the packed path — that mount both re-pins the
 # Job to the PVC's single node AND masks the image's baked store. This flag
-# (default OFF) drops the PVC only on the packed path; flip it in gitops in the
-# same change that points ``AIFACTORY_BUILD_IMAGE`` at the nix-baked image.
-_ENV_PACKED_NIX_IN_IMAGE = "AIFACTORY_PACKED_NIX_IN_IMAGE"
+# The nix-source flag itself now lives in core.nix_env (both Job paths read it).
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -436,6 +434,18 @@ _BUILD_PATH_ENV = (
 )
 
 
+def _init_container_security_context(run_as_user: int) -> dict[str, Any]:
+    """#812: the shared job_dispatch builder sets pod-level ``runAsNonRoot``;
+    the injected initContainer images (busybox, node) default to root, so each
+    must pin an explicit non-root uid or the kubelet rejects the pod. Same
+    escalation/capability hardening as the task container."""
+    return {
+        "runAsUser": run_as_user,
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+
 def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
     """Add a ``seed-creds`` initContainer that materializes the file-auth CLI
     credentials into the build Job pod (#690). No-op unless a secret name is
@@ -473,6 +483,9 @@ def _inject_seed_creds(manifest: dict[str, Any]) -> dict[str, Any]:
             "image": "busybox:1.36",
             "command": ["sh", "-c"],
             "args": ["\n".join(lines)],
+            # Build-image nonroot uid (65532): copied cred files land owned by
+            # the uid the task container runs as; emptyDirs are world-writable.
+            "securityContext": _init_container_security_context(65532),
             "volumeMounts": [
                 *home_mounts,
                 {"name": "cli-creds", "mountPath": "/seed", "readOnly": True},
@@ -499,6 +512,9 @@ def _inject_install_clis(manifest: dict[str, Any]) -> dict[str, Any]:
             "image": _INSTALL_CLIS_IMAGE,
             "command": ["sh", "-c"],
             "args": [_INSTALL_CLIS_SCRIPT],
+            # node image's "node" user (uid 1000): HOME=/home/node stays
+            # writable for the npm cache; /clis is a world-writable emptyDir.
+            "securityContext": _init_container_security_context(1000),
             "volumeMounts": [
                 {"name": _CLIS_VOLUME_NAME, "mountPath": _CLIS_MOUNT_PATH}
             ],
@@ -723,13 +739,15 @@ def _packed_nix_in_image() -> bool:
     the build image instead, making the Job node-agnostic. Only meaningful once
     ``AIFACTORY_BUILD_IMAGE`` points at the nix-baked ``-nix`` image; flip both
     together in gitops. Off → the warm-store co-mount is unchanged.
+
+    Delegates to ``core.nix_env.nix_in_image`` so the build and gate paths read
+    one predicate — two copies is how the gate path missed the #258 flip (#253).
     """
-    return os.environ.get(_ENV_PACKED_NIX_IN_IMAGE, "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+    from core.nix_env import (
+        nix_in_image,  # noqa: PLC0415 - core is a startup sys.path add
     )
+
+    return nix_in_image()
 
 
 def _maybe_pack_workspace(

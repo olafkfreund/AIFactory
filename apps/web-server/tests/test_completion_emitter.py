@@ -25,7 +25,9 @@ from server.services.completion import (  # noqa: E402
     read_usage,
 )
 
-_RFC_CORE = {"correlation_key", "service", "task_id", "status", "phase", "updated_at"}
+# Post-#471 CloudEvents core: the legacy `updated_at` duplicate was dropped in
+# favour of the canonical CloudEvents `time`.
+_RFC_CORE = {"correlation_key", "service", "task_id", "status", "phase", "time"}
 
 
 def _spec_with_issue(tmp_path: Path, issue=None, *, key="metadata") -> Path:
@@ -237,7 +239,7 @@ def test_envelope_includes_usage_when_supplied():
         },
     )
     assert ev["usage"]["total_tokens"] == 12
-    assert ev["schema_version"] == "1.3"
+    assert ev["specversion"] == "1.0"
 
 
 def test_envelope_omits_usage_when_absent():
@@ -284,28 +286,34 @@ _TRACEPARENT_RE = re.compile(r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2
 
 
 def _base_event(**overrides):
-    kw = dict(task_id="proj:spec-9", spec_id="spec-9", status="done", issue_number=412)
+    kw = {
+        "task_id": "proj:spec-9",
+        "spec_id": "spec-9",
+        "status": "done",
+        "issue_number": 412,
+    }
     kw.update(overrides)
     return build_completion_event(**kw)
 
 
-def test_envelope_keeps_all_legacy_fields():
-    """Additive: nothing the old consumers read was removed or renamed."""
+def test_471_cutover_dropped_legacy_duplicates():
+    """The #471 CloudEvents cutover removed the legacy ``schema_version`` /
+    ``event`` / ``updated_at`` duplicates. The bespoke correlation fields
+    consumers still read remain, and ``time`` is the canonical occurrence time."""
     ev = _base_event(updated_at="2026-06-04T16:00:00+00:00")
-    for legacy in (
+    for kept in (
         "correlation_key",
         "service",
         "task_id",
         "status",
         "phase",
-        "updated_at",
         "correlation",
-        "schema_version",
-        "event",
     ):
-        assert legacy in ev, legacy
+        assert kept in ev, kept
+    for dropped in ("updated_at", "schema_version", "event"):
+        assert dropped not in ev, dropped
     assert ev["service"] == "aifactory"
-    assert ev["event"] == "completion"
+    assert ev["time"] == "2026-06-04T16:00:00+00:00"
 
 
 def test_envelope_has_idempotency_id():
@@ -329,7 +337,7 @@ def test_envelope_has_cloudevents_core_fields(monkeypatch):
     assert ev["type"] == "io.factory.aifactory.completion"
     assert ev["source"] == "/aifactory"
     # CloudEvents `time` mirrors the occurrence time.
-    assert ev["time"] == ev["updated_at"] == "2026-06-04T16:00:00+00:00"
+    assert ev["time"] == "2026-06-04T16:00:00+00:00"
 
 
 def test_source_overridable_by_env(monkeypatch):
@@ -496,6 +504,52 @@ def test_read_usage_two_workers_rollups(tmp_path):
     assert usage["total_tokens"] == 900
 
 
+def test_read_usage_echoes_routing_tier_when_stamped(tmp_path) -> None:
+    """RFC-0014 (#803): a worker record carrying routing_tier surfaces it in the
+    envelope's per-worker block, next to the actually-used model."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    rec = _worker("main", "claude", "claude-sonnet-4-6", in_t=100, out_t=10, cost=0.1)
+    rec["routing_tier"] = "mid"
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 100,
+                "outputTokens": 10,
+                "workers": {"main": rec},
+            }
+        )
+    )
+    worker = read_usage(spec)["workers"][0]
+    assert worker["routing_tier"] == "mid"
+    assert worker["model"] == "claude-sonnet-4-6"
+
+
+def test_read_usage_omits_routing_tier_when_absent(tmp_path) -> None:
+    """No routing policy → no routing_tier key anywhere (byte-identical v1.3)."""
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / "token_usage.json").write_text(
+        json.dumps(
+            {
+                "totalInputTokens": 100,
+                "outputTokens": 10,
+                "workers": {
+                    "main": _worker(
+                        "main",
+                        "claude",
+                        "claude-sonnet-4-6",
+                        in_t=100,
+                        out_t=10,
+                        cost=0.1,
+                    )
+                },
+            }
+        )
+    )
+    assert "routing_tier" not in read_usage(spec)["workers"][0]
+
+
 def test_read_usage_no_workers_map_omits_new_fields(tmp_path):
     """An old token_usage.json without a workers map → scalar block only, no
     workers[]/by_provider/by_model keys (additive omission)."""
@@ -563,7 +617,7 @@ def test_v13_usage_round_trips_through_build_completion_event(tmp_path):
         issue_number=1,
         usage=read_usage(spec),
     )
-    assert ev["schema_version"] == "1.3"
+    assert ev["specversion"] == "1.0"
     assert len(ev["usage"]["workers"]) == 2
     assert "claude" in ev["usage"]["by_provider"]
     assert "ollama:llama3" in ev["usage"]["by_model"]
@@ -635,10 +689,10 @@ def test_build_worker_event_exact_shape():
     assert ev["service"] == "aifactory"
     assert ev["correlation_key"] == "412"
     assert ev["task_id"] == "proj:spec-9"
-    assert ev["schema_version"] == "1.3"
+    assert ev["specversion"] == "1.0"
     assert ev["status"] == "worker_done"
     assert ev["phase"] == "worker"
-    assert ev["time"] == ev["updated_at"] == "2026-06-13T12:00:00+00:00"
+    assert ev["time"] == "2026-06-13T12:00:00+00:00"
     assert _UUID_RE.match(ev["id"])
     assert _TRACEPARENT_RE.match(ev["traceparent"])
     assert ev["worker"] == {
@@ -1063,11 +1117,11 @@ def test_build_worker_progress_event_exact_shape():
     assert ev["service"] == "aifactory"
     assert ev["correlation_key"] == "412"
     assert ev["task_id"] == "proj:spec-9"
-    assert ev["schema_version"] == "1.3"
+    assert ev["specversion"] == "1.0"
     assert ev["status"] == "running"
     assert ev["phase"] == "worker_progress"
     assert ev["type"] == "io.factory.aifactory.worker_progress"
-    assert ev["time"] == ev["updated_at"] == "2026-06-13T12:00:00+00:00"
+    assert ev["time"] == "2026-06-13T12:00:00+00:00"
     assert _UUID_RE.match(ev["id"])
     assert _TRACEPARENT_RE.match(ev["traceparent"])
     assert ev["worker"] == {

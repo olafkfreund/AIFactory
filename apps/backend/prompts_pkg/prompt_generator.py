@@ -283,6 +283,11 @@ not in the spec directory.
 ---
 
 """
+    # #805 / Factory#273: spec text is issue-derived (untrusted) - frame it as
+    # data, not instructions, before the planner reads it.
+    from .prompts import UNTRUSTED_CONTENT_BOUNDARY  # noqa: PLC0415 - no cycle
+
+    header += UNTRUSTED_CONTENT_BOUNDARY
     return header + prompt
 
 

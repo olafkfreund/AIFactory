@@ -12,12 +12,10 @@ The client factory now uses AGENT_CONFIGS from agents/tools_pkg/models.py as the
 single source of truth for phase-aware tool and MCP server configuration.
 """
 
-import contextlib
 import copy
 import json
 import logging
 import os
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -852,11 +850,15 @@ def create_client(
         }
 
     if "playwright" in required_servers:
-        # Playwright for web frontends (headless Chromium)
+        # Playwright for web frontends (headless Chromium). No `@latest` tag: the
+        # server is pre-baked into the runner image (#816), and a version tag
+        # makes npx hit the registry to check for a newer release even when a
+        # copy is installed — defeating the offline pre-bake. Bare name resolves
+        # to the globally installed version.
         mcp_servers["playwright"] = {
             "command": "npx",
             "args": [
-                "@playwright/mcp@latest",
+                "@playwright/mcp",
                 "--headless",
                 "--browser",
                 "chromium",
@@ -939,16 +941,12 @@ def create_client(
     if agent_type == "coder" and os.environ.get("AIFACTORY_GRAPHIFY_ENABLED") == "true":
         graph_json = project_dir / "graphify-out" / "graph.json"
         if not graph_json.exists():
-            # best-effort token-free build; degrade to no graph tool on any failure.
+            # Cache-first fetch-or-build (#804): an exact repo+commit hit from
+            # MinIO skips the token-free build; a miss builds then uploads
+            # best-effort. Cache errors are swallowed — never fail the task.
+            from core.graphify_cache import ensure_graph  # noqa: PLC0415
 
-            # is our own CLI on PATH in the coder image.
-            with contextlib.suppress(FileNotFoundError, subprocess.SubprocessError):
-                subprocess.run(  # noqa: S603
-                    ["graphify", "update", str(project_dir), "--no-cluster"],  # noqa: S607
-                    timeout=180,
-                    capture_output=True,
-                    check=False,
-                )
+            ensure_graph(project_dir, graph_json)
         graphify_cfg = _graphify_server_config(agent_type, graph_json)
         if graphify_cfg:
             mcp_servers["graphify"] = graphify_cfg

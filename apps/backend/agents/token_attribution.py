@@ -50,6 +50,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from routing_policy import tier_for_model
+
 # Documented heuristic: average English-prose / source-code tokenization is
 # ~3.5–4 chars per token for Claude models. We use 4.0 as a stable, widely
 # cited default. Only affects the *relative* split, never SDK-sourced totals.
@@ -355,6 +357,7 @@ def _fold_worker(
     subtask_id: str | None,
     provider: str | None,
     model: str | None,
+    routing_metadata: dict[str, Any] | None = None,
     input_tokens: int,
     output_tokens: int,
     cost_usd: float,
@@ -390,6 +393,13 @@ def _fold_worker(
     rec["subtask_id"] = subtask_id if subtask_id is not None else rec.get("subtask_id")
     rec["provider"] = provider if provider is not None else rec.get("provider")
     rec["model"] = model if model is not None else rec.get("model")
+    # RFC-0014 (#803): stamp the routing tier the active policy (env) OR the
+    # contract routing block attributes to this worker's model, so the
+    # completion envelope carries model + tier. No policy and no contract routing
+    # block -> no key -> envelope unchanged.
+    tier = tier_for_model(rec.get("model"), routing_metadata)
+    if tier is not None:
+        rec["routing_tier"] = tier
     rec["input_tokens"] = int(rec.get("input_tokens", 0)) + int(input_tokens)
     rec["output_tokens"] = int(rec.get("output_tokens", 0)) + int(output_tokens)
     rec["total_tokens"] = int(rec["input_tokens"]) + int(rec["output_tokens"])
@@ -432,6 +442,19 @@ def record_turn(
         if subtask_id is not None
         else (worker_id if worker_id and worker_id != DEFAULT_WORKER_ID else None)
     )
+    # Routing metadata for the per-worker tier stamp (#803): when a contract
+    # routing block is present it lets tier_for_model reverse-map the tier even
+    # without a local env policy. Lazy import avoids a phase_config <->
+    # token_attribution cycle; best-effort — the stamp must never break
+    # accounting.
+    routing_metadata: dict[str, Any] | None = None
+    try:
+        from phase_config import load_task_metadata  # noqa: PLC0415
+
+        loaded = load_task_metadata(spec_dir)
+        routing_metadata = loaded if isinstance(loaded, dict) else None
+    except Exception:  # noqa: BLE001 - stamping is best-effort
+        routing_metadata = None
 
     try:
         agg = _read_aggregate(usage_file_path(spec_dir))
@@ -465,6 +488,7 @@ def record_turn(
             subtask_id=sub_id,
             provider=provider,
             model=model,
+            routing_metadata=routing_metadata,
             input_tokens=attribution.total_input_tokens,
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,
@@ -497,6 +521,7 @@ def record_turn(
             subtask_id=sub_id,
             provider=provider,
             model=model,
+            routing_metadata=routing_metadata,
             input_tokens=attribution.total_input_tokens,
             output_tokens=attribution.output_tokens,
             cost_usd=attribution.cost_usd,

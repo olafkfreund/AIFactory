@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Literal, TypedDict
 
+from routing_policy import contract_route, policy_route
+
 logger = logging.getLogger(__name__)
 
 # Model shorthand to full model ID mapping
@@ -356,6 +358,17 @@ def load_task_metadata(spec_dir: Path) -> TaskMetadataConfig | None:
     return None
 
 
+def _difficulty_tier(metadata: TaskMetadataConfig | None) -> str | None:
+    """The RFC-0011 difficulty tier from task metadata, for the routing floor.
+
+    ``difficultyTier`` is carried into task_metadata from the tier path (#825
+    follow-up) but is not a declared TaskMetadataConfig key, so ``.get`` returns
+    ``object``; narrow it to ``str | None`` for ``policy_route``'s floor arg.
+    """
+    value = metadata.get("difficultyTier") if metadata else None
+    return value if isinstance(value, str) else None
+
+
 def get_phase_model(
     spec_dir: Path,
     phase: Phase,
@@ -364,13 +377,16 @@ def get_phase_model(
     """
     Get the resolved model ID for a specific execution phase.
 
-    Priority:
-    1. Phase-specific config from task_metadata.json (if auto profile) — wins
+    Priority (RFC-0014 #803: pinned > per-task override > policy tier > default):
+    1. Contract pinned model (task_metadata.json ``pinnedModel``, carried from
+       the Task Contract's ``execution.routing.pinned_model``)
+    2. Phase-specific config from task_metadata.json (if auto profile) — wins
        over CLI default because the auto profile is the user's explicit
        per-phase choice (e.g. Claude plans, Ollama codes).
-    2. CLI argument (if provided)
-    3. Single model from task_metadata.json (if not auto profile)
-    4. Default phase configuration
+    3. CLI argument (if provided)
+    4. Single model from task_metadata.json (if not auto profile)
+    5. Routing-policy tier (AIFACTORY_ROUTING_POLICY; absent = no-op)
+    6. Default phase configuration
 
     Args:
         spec_dir: Path to the spec directory
@@ -387,6 +403,10 @@ def get_phase_model(
     # selected ollama:qwen3:14b for the coding phase.)
     metadata = load_task_metadata(spec_dir)
 
+    # Contract-pinned model wins over everything (RFC-0014 routing block).
+    if metadata and metadata.get("pinnedModel"):
+        return resolve_model_id(metadata["pinnedModel"])
+
     if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
         phase_models = metadata["phaseModels"]
         model = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
@@ -396,7 +416,23 @@ def get_phase_model(
     if cli_model:
         return resolve_model_id(cli_model)
 
-    # Non-auto profile: use single model from metadata
+    # RFC-0014 routing (contract requested/overrides, then the local
+    # AIFACTORY_ROUTING_POLICY) is consulted BEFORE the tier's static
+    # metadata.model (#825). The RFC-0011 tier assigns a per-tier model into
+    # metadata.model as a DEFAULT; a routing policy is the operator's per-stage
+    # override and wins over that default — while staying below pinnedModel,
+    # auto-profile phaseModels, and an explicit cli_model (handled above). Both
+    # return None when nothing routes the stage, so with routing OFF this is
+    # byte-identical: metadata.model below drives exactly as before.
+    contracted = contract_route(phase, metadata)
+    if contracted is not None:
+        return resolve_model_id(contracted[0])
+    routed = policy_route(phase, _difficulty_tier(metadata))
+    if routed is not None:
+        return resolve_model_id(routed[0])
+
+    # Non-auto profile: the tier's static model (RFC-0011) or a user's saved
+    # single model from task_metadata.json — the default when nothing routes.
     if metadata and metadata.get("model"):
         return resolve_model_id(metadata["model"])
 
@@ -426,6 +462,9 @@ def get_phase_model_betas(
     # Same precedence as get_phase_model: auto profile metadata wins over CLI.
     metadata = load_task_metadata(spec_dir)
 
+    if metadata and metadata.get("pinnedModel"):
+        return get_model_betas(metadata["pinnedModel"])
+
     if metadata and metadata.get("isAutoProfile") and metadata.get("phaseModels"):
         phase_models = metadata["phaseModels"]
         model_short = phase_models.get(phase, DEFAULT_PHASE_MODELS[phase])
@@ -433,6 +472,15 @@ def get_phase_model_betas(
 
     if cli_model:
         return get_model_betas(cli_model)
+
+    # Routing before the tier's static metadata.model (#825), mirroring
+    # get_phase_model so a routed model gets the right beta headers.
+    contracted = contract_route(phase, metadata)
+    if contracted is not None:
+        return get_model_betas(contracted[0])
+    routed = policy_route(phase, _difficulty_tier(metadata))
+    if routed is not None:
+        return get_model_betas(routed[0])
 
     if metadata and metadata.get("model"):
         return get_model_betas(metadata["model"])

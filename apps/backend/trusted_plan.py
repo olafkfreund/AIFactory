@@ -351,6 +351,11 @@ _EXECUTION_TO_METADATA = {
     "review_tier": "reviewTier",
     "skills": "selectedSkills",
     "skip_planning": "skipPlanning",
+    # RFC-0011 difficulty tier (low/medium/hard) -> the capability FLOOR the
+    # RFC-0014 router must not route a stage below (#825 follow-up). The tier
+    # path emits it as `autonomy_tier`; carrying it lets contract_route and the
+    # env policy_route floor the routed model on the from-issue path too.
+    "autonomy_tier": "difficultyTier",
     # Soft budget alert (#45 P2): carry the optional contract cost budget into
     # task metadata so completion.py can surface a usage.budget warning when the
     # rolled-up spend exceeds it. OBSERVE-ONLY — never used to abort a build.
@@ -371,6 +376,34 @@ def execution_profile_to_metadata(execution: dict) -> dict:
     for src, dst in _EXECUTION_TO_METADATA.items():
         if src in execution and execution[src] is not None:
             meta[dst] = execution[src]
+    # RFC-0014 (#803): a contract-pinned model outranks every other model
+    # source (per-task override, routing policy, defaults) in phase_config.
+    routing = execution.get("routing")
+    if isinstance(routing, dict):
+        pinned = routing.get("pinned_model")
+        if isinstance(pinned, str) and pinned:
+            meta["pinnedModel"] = pinned
+        # RFC-0014 (#803): carry the per-stage tier requests so phase_config's
+        # contract_route can drive AIFactory's coding/qa models from PFactory's
+        # signed policy (not just a local env policy). Tier values only.
+        for src_key, dst_key in (
+            ("requested", "routingRequested"),
+            ("overrides", "routingOverrides"),
+        ):
+            block = routing.get(src_key)
+            if isinstance(block, dict):
+                tiers = {
+                    str(stage): tier
+                    for stage, tier in block.items()
+                    if isinstance(tier, str) and tier
+                }
+                if tiers:
+                    meta[dst_key] = tiers
+        # RFC-0011 difficulty tier — the capability floor contract_route applies
+        # (never routes a stage below the difficulty's required tier).
+        difficulty = routing.get("difficulty") or execution.get("complexity")
+        if isinstance(difficulty, str) and difficulty:
+            meta["difficultyTier"] = difficulty
     if meta.get("phaseModels") or meta.get("phaseThinking"):
         meta["isAutoProfile"] = True
     return meta

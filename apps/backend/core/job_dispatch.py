@@ -164,6 +164,14 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         "workingDir": "/work" if (work_co_mount or spec.workspace_uri) else "/",
         "env": env,
         "resources": {"limits": {"cpu": spec.cpu_limit, "memory": spec.mem_limit}},
+        # #812 (Factory#274 compensating controls): pin the hardening in the
+        # manifest instead of relying on the image alone. No
+        # readOnlyRootFilesystem — nix writes /nix/var (builder db) and the
+        # task writes $HOME on the rootfs, so the substrate can't tolerate it.
+        "securityContext": {
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+        },
     }
     if mounts:
         container["volumeMounts"] = mounts
@@ -171,6 +179,14 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
+        # #812: non-root enforced by the kubelet (not just the image USER) and
+        # the default seccomp profile pinned. No runAsUser — the task images
+        # (Wolfi nonroot / nix runner) each declare their own non-root uid, and
+        # the worktree/warm-store files must keep matching that uid.
+        "securityContext": {
+            "runAsNonRoot": True,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
         "containers": [container],
     }
     if spec.service_account:
@@ -197,7 +213,12 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
             "ttlSecondsAfterFinished": spec.ttl_seconds,
             "activeDeadlineSeconds": spec.deadline_seconds,
             "template": {
-                "metadata": {"labels": {"app": spec.service}},
+                # #812: the pod (not just the Job) must carry factory.io/kind so
+                # the chart's per-task NetworkPolicy (podSelector) covers it —
+                # the Helm selectorLabels policies never match Job pods.
+                "metadata": {
+                    "labels": {"app": spec.service, "factory.io/kind": "task"}
+                },
                 "spec": pod_spec,
             },
         },
@@ -235,7 +256,21 @@ def _selftest() -> None:
     ps = m["spec"]["template"]["spec"]
     _require(ps["serviceAccountName"] == "aifactory-sandbox", "SA")
     _require(ps["automountServiceAccountToken"] is False, "no token automount")
+    _require(
+        ps["securityContext"]
+        == {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
+        "pod securityContext (#812)",
+    )
+    _require(
+        m["spec"]["template"]["metadata"]["labels"]["factory.io/kind"] == "task",
+        "pod label factory.io/kind=task (NetworkPolicy selector, #812)",
+    )
     c = ps["containers"][0]
+    _require(
+        c["securityContext"]
+        == {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+        "container securityContext (#812)",
+    )
     _require(c["image"] == DEFAULT_NIX_IMAGE, "nix-base image")
     _require("nix develop path:/work#default" in c["command"][2], "nix develop wrap")
     _require("go test ./..." in c["command"][2], "task command present")

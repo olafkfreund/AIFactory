@@ -106,8 +106,10 @@ def test_network_policy_present_and_strict(helm_template) -> None:
 
     docs = [d for d in yaml.safe_load_all(helm_template) if d]
     netpols = [d for d in docs if d.get("kind") == "NetworkPolicy"]
-    assert len(netpols) == 1, f"expected 1 NetworkPolicy, got {len(netpols)}"
-    np = netpols[0]
+    # Two policies: the selectorLabels one for the app pods, plus the
+    # per-task Job-pod policy (#812) — verified in test_task_network_policy.
+    assert len(netpols) == 2, f"expected 2 NetworkPolicies, got {len(netpols)}"
+    np = next(d for d in netpols if not d["metadata"]["name"].endswith("-tasks"))
     policy_types = set(np["spec"]["policyTypes"])
     assert policy_types == {"Ingress", "Egress"}, (
         f"NetworkPolicy must declare both types for default-deny; got {policy_types}"
@@ -129,6 +131,48 @@ def test_network_policy_present_and_strict(helm_template) -> None:
         any(p.get("port") == 53 for p in rule.get("ports", [])) for rule in egress_rules
     )
     assert has_dns, "NetworkPolicy egress must allow DNS (port 53)"
+
+
+@pytest.mark.helm
+def test_task_network_policy(helm_template) -> None:
+    """The per-task Job-pod NetworkPolicy (#812, Factory#274 checklist).
+
+    Job pods carry only app/factory.io labels, so the selectorLabels policy
+    never matches them. Asserts the -tasks policy selects factory.io/kind=task,
+    default-denies ingress, and allows DNS + public 443 + the chart's own pods.
+    """
+    import yaml
+
+    docs = [d for d in yaml.safe_load_all(helm_template) if d]
+    np = next(
+        d
+        for d in docs
+        if d.get("kind") == "NetworkPolicy" and d["metadata"]["name"].endswith("-tasks")
+    )
+    spec = np["spec"]
+    assert spec["podSelector"]["matchLabels"] == {"factory.io/kind": "task"}
+    assert set(spec["policyTypes"]) == {"Ingress", "Egress"}
+    # Default-deny ingress: Ingress declared with no ingress rules.
+    assert not spec.get("ingress")
+    egress = spec["egress"]
+    assert any(any(p.get("port") == 53 for p in r.get("ports", [])) for r in egress), (
+        "task egress must allow DNS"
+    )
+    assert any(
+        any(
+            p.get("port") == 443 and p.get("protocol") == "TCP"
+            for p in r.get("ports", [])
+        )
+        for r in egress
+    ), "task egress must allow public 443 (nix caches, git remotes, LLM APIs)"
+    # The chart's own pods (control-plane API + bundled Postgres).
+    own_pods = next(
+        r
+        for r in egress
+        if any("podSelector" in t and "namespaceSelector" not in t for t in r["to"])
+    )
+    ports = {p["port"] for p in own_pods["ports"]}
+    assert 5432 in ports, "task egress must reach bundled Postgres"
 
 
 @pytest.mark.helm
