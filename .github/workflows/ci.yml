@@ -680,43 +680,22 @@ jobs:
       - name: Prettier --check (PR-owned files)
         run: npm -w apps/frontend-web run format:check
 
-  python-typecheck:
-    name: python (mypy)
-    runs-on: ubuntu-latest
-    # Runs mypy over apps/backend + apps/web-server. mypy is already
-    # declared in tests/requirements-test.txt. The backend is large and
-    # only partially annotated, so this job is NON-blocking for now
-    # (continue-on-error) — it surfaces type errors as annotations without
-    # gating merges. Flip continue-on-error to false to make it required
-    # once the error count is driven to zero.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-        with:
-          version: "latest"
-
-      - name: Install deps
-        working-directory: apps/backend
-        run: |
-          uv venv
-          uv pip install -r requirements.txt
-          uv pip install -r ../web-server/requirements.txt
-          uv pip install -r ../../tests/requirements-test.txt
-
-      - name: Mypy (backend + web-server)
-        run: |
-          apps/backend/.venv/bin/mypy \
-            --ignore-missing-imports \
-            --follow-imports=silent \
-            apps/backend apps/web-server/server
+  # The `python (mypy)` job lived here (#832). Removed: it reported 974 errors
+  # across 185 files and was never green in its entire life (0/30 runs sampled),
+  # so its annotations were unread noise and its permanent red X taught everyone
+  # that a failing check is normal — the exact habit that lets a real regression
+  # through. It was already `continue-on-error: true`, so it gated nothing.
+  #
+  # Changed-file mypy coverage is NOT lost; it moved somewhere stricter. This job
+  # ran plain `--ignore-missing-imports --follow-imports=silent` (no --strict);
+  # cq-ratchet.yml runs mypy `--strict` (standards/mypy.ini) per changed file and
+  # fails when a touched file's error COUNT increases. Strictly a higher bar on
+  # the code a PR actually touches, and it passes — so it carries signal.
+  #
+  # What IS lost: the whole-repo view (a change in A breaking types in B). It was
+  # only ever theoretical here — unreadable at 974 and non-blocking by design. If
+  # we want it back, the honest form is baselining the whole-repo count and failing
+  # on increase, not restoring a check that cries wolf every run.
 
   docker-acceptance:
     name: docker (P0 acceptance)
