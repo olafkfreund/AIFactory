@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -52,11 +53,19 @@ class _ApiError(Exception):
 class _FakeBatch:
     """Minimal kubernetes_asyncio BatchV1Api stand-in."""
 
-    def __init__(self, existing: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        existing: set[str] | None = None,
+        statuses: dict[str, tuple[int, int]] | None = None,
+    ) -> None:
         self.created: list[tuple[str, dict]] = []
         self.deleted: list[tuple[str, str]] = []
         # job_names that "exist" in the cluster (for read/reap).
         self._existing: set[str] = set(existing or ())
+        # #857: job_name -> (succeeded, failed) counts, as the kubelet reports
+        # them on .status. Absent -> a Job with no status (still running), which
+        # is what a bare object() modelled before.
+        self._statuses: dict[str, tuple[int, int]] = dict(statuses or {})
         self.api_client = None
 
     async def create_namespaced_job(self, namespace: str, manifest: dict) -> None:
@@ -65,7 +74,12 @@ class _FakeBatch:
 
     async def read_namespaced_job(self, name: str, namespace: str) -> Any:
         if name in self._existing:
-            return object()
+            succeeded, failed = self._statuses.get(name, (0, 0))
+            return SimpleNamespace(
+                status=SimpleNamespace(
+                    succeeded=succeeded or None, failed=failed or None
+                )
+            )
         raise _ApiError(404)
 
     async def delete_namespaced_job(
@@ -571,6 +585,61 @@ async def test_reaper_fails_vanished_job(tmp_path: Path) -> None:
     assert state is not None
     assert state["lifecycle_state"] == "failed"
     assert "disappeared" in (state["error"] or "")
+
+
+async def test_succeeded_job_is_marked_done_not_reaped(tmp_path: Path) -> None:
+    """#857: the whole bug.
+
+    The Job CANNOT write its own job-state row — ``mark_terminal`` exists only in
+    the control plane and ``run.py`` has no job-state write. So a successful build
+    sat "running" until ttlSecondsAfterFinished (300s) GC'd the Job, and the next
+    reaper tick marked it FAILED -> human_review. Proven live on
+    aifactory-demo#320/#322: correct patch, branch pushed, task escalated ~300s
+    after the Job finished — exactly the TTL.
+
+    The kubelet's verdict was already in hand on every 15s tick (the reaper reads
+    the Job object) and was thrown away. Take it.
+    """
+    store = await _make_store(tmp_path / "done.db")
+    await store.admit("p:ok", _spawn_args("ok"), cap=2)
+    await store.set_worker_ref(
+        "p:ok", {"kind": "k8s-job", "namespace": "factory", "job_name": "winner"}
+    )
+    backend = bb.KubeJobBuildBackend(store)
+
+    # Job present AND succeeded — the state a finished build sits in for its TTL.
+    fake = _FakeBatch(existing={"winner"}, statuses={"winner": (1, 0)})
+    reaped = await backend.reap_vanished_jobs(batch=fake)
+
+    assert reaped == [], "a succeeded build must not be reaped"
+    state = await store.get_state("p:ok")
+    assert state is not None
+    assert state["lifecycle_state"] == "done", (
+        "a k8s Job reporting .status.succeeded must mark the build done; leaving "
+        "it running means the TTL GCs the Job and the reaper fails a GREEN build "
+        f"(#857). Got: {state['lifecycle_state']}"
+    )
+
+
+async def test_failed_job_is_marked_failed_from_its_own_status(tmp_path: Path) -> None:
+    """#857: a Job that reports failed is failed now, not after the TTL.
+
+    backoffLimit=0 -> one attempt, so .status.failed is unambiguous.
+    """
+    store = await _make_store(tmp_path / "failed.db")
+    await store.admit("p:bad", _spawn_args("bad"), cap=2)
+    await store.set_worker_ref(
+        "p:bad", {"kind": "k8s-job", "namespace": "factory", "job_name": "loser"}
+    )
+    backend = bb.KubeJobBuildBackend(store)
+
+    fake = _FakeBatch(existing={"loser"}, statuses={"loser": (0, 1)})
+    reaped = await backend.reap_vanished_jobs(batch=fake)
+
+    assert reaped == ["p:bad"]
+    state = await store.get_state("p:bad")
+    assert state is not None and state["lifecycle_state"] == "failed"
+    assert "reported failed" in (state["error"] or "")
 
 
 async def test_reaper_leaves_present_job_running(tmp_path: Path) -> None:
