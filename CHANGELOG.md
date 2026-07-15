@@ -1,9 +1,57 @@
 ## [Unreleased]
 
+
+## 3.6.30 - 2026-07-15
+
+The July 2026 cycle: the first external benchmark, the reliability fixes it exposed, and cost-aware model routing measured at a 55 percent reduction.
+
+### Added
+
+- **Per-stage cost-aware model router, RFC-0014 v1 (#803, #811, #822).** Each stage now routes to an appropriately sized model tier (`small`/`mid`/`frontier`) instead of every stage paying frontier prices. The router consumes the contract's `routing.requested`/`overrides` tiers and applies the RFC-0011 difficulty tier as a **capability floor**, so a hard task can never be routed below the model it needs. Every worker in the completion event is stamped with the tier it ran at, so the routing decision is visible in the cockpit rather than taken on faith. Measured on three identical tasks: **6.48 USD -> 2.91 USD, a 55 percent reduction at essentially the same token volume** (13.285M vs 13.291M) — the saving is the model mix, not less work.
+- **Graphify code-graph cache in MinIO, keyed by repo+commit (#804, #809).** The Tree-sitter graph was rebuilt per task and lost with the Job. It is now cached on the existing artifact_store/MinIO seam (`graphify/{repo_slug}/{head_commit_sha}/graph.json`): an exact hit skips the build, a miss builds then uploads best-effort. Cache errors are always swallowed and never fail a build. Still default OFF behind `AIFACTORY_GRAPHIFY_ENABLED`.
+
+### Fixed
+
+- **Empty patches: the coding session could stall on connect and burn to the Job deadline (#816, #818, #823).** The external SWE-bench Verified baseline showed 22 of 50 runs produced **no patch at all** — nearly half of all failures were silent no-ops, not wrong answers. Root cause: entering the agent client spawns the CLI and its MCP stdio servers, two of which were fetched over the network at connect time; on a cold or network-restricted runner that fetch hung, no first model call ever happened, and with no timeout on the path the session burned silently to the Kubernetes deadline. Fixed in depth: (1) a connect/first-token watchdog (`run_session_guarded`, `AIFACTORY_FIRST_TOKEN_TIMEOUT`, default 120s) fails fast into the existing retry path instead of hanging for an hour; (2) the MCP servers are pre-baked into the runner image so the fetch does not happen at run time at all; (3) the rate-limit wait is bounded below the build deadline so no single wait can consume the whole build.
+- **Plans with subtasks missing a `status` field silently no-opped (#817, #820).** A one-line divergence between two loaders meant such plans selected nothing and the coder exited reporting there was nothing to do — writing zero code on real plans.
+- **A build with 0/N subtasks completed reported success (#779, #810).** The run now fails instead of exiting 0.
+- **Codex exited quietly on an empty response (#779, #827).** The discarded stderr tail is now surfaced, exposing the cause of the no-op rather than hiding it.
+- **Routing was completely inert: the RFC-0011 difficulty tier's static `metadata.model` outranked the router (#825, #826, #828).** Found because the first cost measurement showed routing on and off costing exactly the same. Routing is now consulted **before** the static tier model, and the capability floor is applied on the env policy path too.
+- **Gate Jobs mounted a node-stranded RWO Nix-store PVC and could not schedule (#253, #830).** `local-path` is `WaitForFirstConsumer`, so each PV lands on whichever node first consumed it; on the factory cluster `aifactory-data` and `aifactory-nix-store` stranded on **different** nodes, and a pod mounting both satisfies no node's affinity. #258 had fixed this for the build path only — the flip landed on one path and silently missed the other. The nix-source predicate now lives in one shared place (`core.nix_env.nix_in_image`) that both Job paths read. Also removes the RWO mutex that serialised concurrent Jobs (TFactory#623).
+- **`from-issue` intake did not write `spec.md`, so `run.py` could not find the spec (#806, #807).**
+- **`cq_ratchet` wrote base-version temp files under a mangled basename (#815).**
+- **Vendored `factory_common` restored and excluded from ruff (#802).**
+
 ### Security
 
+- **Pre-coder untrusted-content scan gate (#805, #813, Factory#273).** Spec/issue-derived text originates from untrusted sources (GitHub issue bodies, brownfield repos); prompts that point the agent at that content now carry an explicit "data, not instructions" boundary, and inline interpolations are wrapped by the fleet's delimiter wrapper.
+- **`chainguard/python` digest bumped to clear libexpat1 HIGH CVEs (#808).**
 - **Per-task Job pods hardened: pinned securityContext + NetworkPolicy coverage (#812, Factory#274 checklist).** Both per-task Job builders (`core/job_dispatch.py` build Jobs and `core/kube_sandbox.py` gate Jobs) now pin `runAsNonRoot` + `seccompProfile: RuntimeDefault` at pod level and `allowPrivilegeEscalation: false` + `capabilities: drop ALL` on every container (the non-root guarantee previously came only from the image; no seccomp profile was pinned). The `install-clis`/`seed-creds` initContainers pin explicit non-root uids so the kubelet accepts them under `runAsNonRoot`. Job pods now also carry the `factory.io/kind: task` label and the chart gained a second NetworkPolicy (`networkPolicy.tasks`, default on) selecting it — Job pods previously matched no policy at all — with default-deny ingress and egress limited to DNS, public 443 (nix binary caches, git remotes, LLM APIs) and the chart's own pods (control-plane API + bundled Postgres); in-cluster MinIO/external Postgres are opted in via `networkPolicy.tasks.egress.extraRules`. Also adds the missing `guides/security/gvisor.md` that `values.yaml` references (gVisor caveats: no bwrap `strict` mode, no Nix local builds). No `readOnlyRootFilesystem` — nix writes `/nix/var` and the task writes `$HOME` on the rootfs.
 
+
+## 3.6.29 - 2026-07-10
+
+### Changed
+
+- **Repo-wide `ruff format` sweep (#799).** Formatted the whole tree with the pinned ruff 0.14.10 (`standards/ruff.toml`). The `cq-ratchet` gate only enforced `ruff format --check apps/backend`, so `apps/web-server`, `tests`, and `scripts` had drifted unformatted despite the "formatter-clean repo-wide" intent; `ruff format --check .` is now clean. Formatting-only — no logic changes.
+
+
+## 3.6.28 - 2026-07-10
+
+### Fixed
+
+- **Release pipeline can pull the private `tfactory-runner-nix` base image.** `release.yml` logged into GHCR with `GITHUB_TOKEN`, which can't read the private, repo-unlinked `ghcr.io/olafkfreund/tfactory-runner-nix` package the image build `COPY`s from (`Dockerfile:255`) — so the first version-bumped release (`v3.6.27`) 403'd on the baked-Nix-store image step. Now uses `GHCR_PAT || GITHUB_TOKEN`, mirroring `deploy.yml`. This release also regenerates the full release artifacts (image, SBOM, cosign signature) that `v3.6.27` could not produce.
+
+
+## 3.6.27 - 2026-07-10
+
+### Removed
+
+- **Repo-wide over-engineering cleanup (ponytail-audit) — ~10.5k lines, 7 deps (#797).** Deleted verified-dead code: backend `runners/github/` review-intelligence modules (trust, learning, confidence, duplicates, multi_repo, cleanup, onboarding, memory_integration), the `bmad/` subagent framework + context_shard/agent_adapter/session_spawner, and 18 unraised exception classes; web-server dead `verify_token`/`bearer_scheme`; frontend dead components/shims (DevTools\*, DisplaySettings, TerminalDropdown, AddWorkspaceModal, release-store, shell-escape, `components/` barrel). Removed unused dependencies `gitpython`, `aiofiles`, `python-dotenv`, `zod`, `react-resizable-panels`, `uuid`, `@types/uuid`. Test-covered modules (qa/providers, gemini shims, output_validator, build_cached_system_blocks) and live CLI shims were kept; the required backend gate (ruff + pytest) is green.
+
+### Changed
+
+- **Behavior-preserving refactors to stdlib/native (#797).** Frontend `use-toast` hand-rolled reducer → zustand, `uuid` → `crypto.randomUUID()`, `hookProxyFactory` → native `Proxy`, inlined single-consumer wrappers; web-server lazy singletons → `@functools.cache`, extracted a `_json_store` helper, and deduped `_slugify` (→ `server/utils/slug.py`) and profiles-path resolution.
 
 ## 3.6.29 - 2026-07-10
 
