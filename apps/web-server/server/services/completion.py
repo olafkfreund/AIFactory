@@ -833,6 +833,7 @@ def emit_terminal_completion(
     # already present) and best-effort (never raises).
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_plan,
             maybe_fetch_task_logs,
             maybe_fetch_usage,
         )
@@ -842,6 +843,12 @@ def emit_terminal_completion(
         # reports the real terminal status (done/failed) on the packed path
         # instead of defaulting to backlog/queued.
         maybe_fetch_task_logs(spec_dir, spec_id)
+        # #852: and the plan, whose subtask statuses decide build_succeeded. The
+        # control plane's copy is the pre-dispatch original (all pending), so
+        # without this every successful packed build counts 0 completed subtasks
+        # and escalates to human_review — blocking the TFactory handoff behind a
+        # bookkeeping gap (Factory#253 "output propagation").
+        maybe_fetch_plan(spec_dir, spec_id)
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)

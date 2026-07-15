@@ -502,12 +502,19 @@ def main() -> None:
     # for planning-only runs (no build branch yet).
     if not args.stop_after_planning:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_push_plan,
             maybe_push_task_logs,
             maybe_push_usage,
             maybe_push_workspace_branch,
         )
 
         maybe_push_workspace_branch(project_dir, spec_dir.name)
+        # #852: the same gap, for the file that decides whether the build is
+        # considered successful at all. The plan here records each subtask
+        # completed; the control plane counts them from the data-PVC copy the
+        # packed path never touches, sees 0, and escalates every green build to
+        # human_review (#287 guard on stale input).
+        maybe_push_plan(spec_dir, spec_dir.name)
         # Same packed-path propagation gap: token_usage.json is written here in the
         # Job's ephemeral /work but the control-plane completion emitter reads the
         # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
