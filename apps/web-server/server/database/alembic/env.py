@@ -8,16 +8,16 @@ so migrations work with the same asyncpg driver our runtime uses.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # --- Make the web-server source importable for Base.metadata --------------
 # env.py lives at apps/web-server/server/database/alembic/env.py
@@ -37,12 +37,28 @@ _env_url = os.environ.get("DATABASE_URL")
 if _env_url:
     config.set_main_option("sqlalchemy.url", _env_url)
 
-if config.config_file_name is not None:
-    # disable_existing_loggers=False — fileConfig defaults to True, which
-    # silences every logger that existed when this module imports. That's
-    # fine for `alembic upgrade` invoked as its own process, but env.py is
-    # also imported when migrations run inside the long-running web-server
-    # (or under pytest), where killing app/caplog loggers is a real bug.
+if config.config_file_name is not None and not logging.getLogger().handlers:
+    # Only configure logging when NOTHING else has (i.e. `alembic upgrade` run
+    # as its own process, where root has no handlers yet).
+    #
+    # #844: disable_existing_loggers=False is necessary but NOT sufficient. It
+    # preserves existing logger OBJECTS, but fileConfig still rewrites the ROOT
+    # logger from alembic.ini's [logger_root] — level=WARN, handlers=console.
+    # Measured inside the running pod:
+    #
+    #   after app setup_logging : level=INFO     handlers=[Stream, RotatingFile, RotatingFile]
+    #   after alembic fileConfig: level=WARNING  handlers=[Stream]
+    #   logger.info visible now? False
+    #
+    # Since server.* loggers propagate to root, MIGRATIONS_AUTO_APPLY=true meant
+    # the web-server lost both file handlers and every INFO the moment it booted
+    # — it ran blind for the rest of its life. That is how the RFC-0011 intake
+    # poller appeared "never to start": its enabled/disabled log simply could not
+    # be emitted (#844).
+    #
+    # Guarding on root having no handlers keeps standalone `alembic upgrade`
+    # logging exactly as before, and makes the in-process path inherit the app's
+    # handlers instead of destroying them.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
