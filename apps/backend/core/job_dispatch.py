@@ -42,6 +42,13 @@ DEFAULT_NIX_IMAGE = "ghcr.io/olafkfreund/tfactory-runner-nix:latest"
 # Dispatch/reconcile contract (apis/concurrency-conventions.md §3).
 JOB_NAME_PREFIX = "factory"  # Job named factory-<service>-<job_id_short>
 _DNS_LABEL_MAX = 63  # Kubernetes object-name (DNS-1123 label) length limit
+# The numeric uid behind the build image's `USER nonroot` (Wolfi/apko standard).
+# Verified from the image itself, not assumed:
+#   $ docker run --rm --entrypoint sh <build-image> -c id
+#   uid=65532(nonroot) gid=65532(nonroot) groups=65532(nonroot)
+# It is also the uid the control plane creates worktree files as, so pinning it
+# preserves ownership rather than changing it (#848).
+NONROOT_UID = 65532
 TERMINAL_STATES = ("done", "failed", "stuck")
 # The control plane reconciles by polling the job-state table, so a missed
 # completion event never strands a job; reporting is idempotent on (job_id, state).
@@ -180,11 +187,31 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
         # #812: non-root enforced by the kubelet (not just the image USER) and
-        # the default seccomp profile pinned. No runAsUser — the task images
-        # (Wolfi nonroot / nix runner) each declare their own non-root uid, and
-        # the worktree/warm-store files must keep matching that uid.
+        # the default seccomp profile pinned.
+        #
+        # runAsUser is REQUIRED alongside runAsNonRoot (#848). #812 deliberately
+        # omitted it — "the task images declare their own non-root uid" — but the
+        # kubelet cannot verify a NAME. The build image declares `USER nonroot`,
+        # so every build Job died before starting:
+        #
+        #   "container has runAsNonRoot and image has non-numeric user
+        #    (nonroot), cannot verify user is non-root"
+        #   -> the pod sticks in CreateContainerConfigError, forever.
+        #
+        # Observed live: 342 retries over 76 minutes, zero code written — the task
+        # sat "in_progress" while nothing ran. (The gate path hit the SAME #812
+        # premise from the other side: its image IS root, so it needs runAsNonRoot
+        # dropped entirely — see kube_sandbox / #840.)
+        #
+        # 65532 is not a guess: `id` in the build image reports
+        # uid=65532(nonroot) gid=65532(nonroot), and it is the uid the control
+        # plane already creates worktree files as — so pinning it explicitly
+        # changes no behaviour, it only lets the kubelet verify what was already
+        # true. Keep runAsNonRoot: unlike the gate image, this one genuinely is
+        # non-root and the hardening is worth having.
         "securityContext": {
             "runAsNonRoot": True,
+            "runAsUser": NONROOT_UID,
             "seccompProfile": {"type": "RuntimeDefault"},
         },
         "containers": [container],
@@ -258,8 +285,14 @@ def _selftest() -> None:
     _require(ps["automountServiceAccountToken"] is False, "no token automount")
     _require(
         ps["securityContext"]
-        == {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}},
-        "pod securityContext (#812)",
+        == {
+            "runAsNonRoot": True,
+            "runAsUser": NONROOT_UID,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
+        "pod securityContext (#812) with a NUMERIC uid (#848) — runAsNonRoot "
+        "alone cannot verify the image's `USER nonroot` name and every build "
+        "Job dies CreateContainerConfigError",
     )
     _require(
         m["spec"]["template"]["metadata"]["labels"]["factory.io/kind"] == "task",

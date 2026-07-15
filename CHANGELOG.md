@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.33 - 2026-07-15
+
+### Fixed
+
+- **Every build Job died before starting: `runAsNonRoot` without a numeric `runAsUser` (#848).** #812 set `runAsNonRoot` and deliberately omitted `runAsUser` ("the task images declare their own non-root uid"), but the kubelet cannot verify a *name*. The build image declares `USER nonroot`, so the kubelet refused every task container: `container has runAsNonRoot and image has non-numeric user (nonroot), cannot verify user is non-root` -> `CreateContainerConfigError`. Observed on the first Claude Code -> Factory handover run: **342 retries over 76 minutes, zero code written**, while the task reported `in_progress` and the Job showed `Running` — the exact silent-no-op class the July benchmark measured as 22/50 empty patches. The initContainers already pinned numeric uids (busybox/node default to root), which is why *they* started and the task container did not. This is the second victim of the same #812 premise from the opposite direction: the gate image *is* root and needed `runAsNonRoot` dropped (#840/#841); the build image is non-root *by name* and needs a numeric uid. Now pins `runAsUser: 65532` — verified from the image (`id` reports `uid=65532(nonroot)`) and already the uid the control plane creates worktree files as, so it changes no behaviour and only lets the kubelet verify what was already true. `runAsNonRoot` is kept: unlike the gate image, this one genuinely is non-root.
+
+
 ## 3.6.32 - 2026-07-15
 
 ### Fixed

@@ -939,6 +939,7 @@ def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
     pod = tpl["spec"]
     assert pod["securityContext"] == {
         "runAsNonRoot": True,
+        "runAsUser": 65532,
         "seccompProfile": {"type": "RuntimeDefault"},
     }
     assert pod["containers"][0]["securityContext"] == {
@@ -951,6 +952,40 @@ def test_build_job_pod_hardening(monkeypatch: pytest.MonkeyPatch) -> None:
         assert sc["runAsUser"] == uid
         assert sc["allowPrivilegeEscalation"] is False
         assert sc["capabilities"] == {"drop": ["ALL"]}
+
+
+def test_build_job_pins_a_numeric_uid_not_just_runasnonroot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#848: runAsNonRoot WITHOUT runAsUser kills every build Job.
+
+    The build image declares `USER nonroot` — a NAME. The kubelet cannot verify a
+    name is non-root, so it refuses the container outright:
+
+        container has runAsNonRoot and image has non-numeric user (nonroot),
+        cannot verify user is non-root
+        reason: CreateContainerConfigError
+
+    Observed live: 342 retries over 76 minutes, zero code written, while the task
+    sat "in_progress". The initContainers already pinned numeric uids (busybox /
+    node default to root) — which is exactly why THEY started and the task
+    container did not.
+
+    65532 is the uid `id` reports in the build image, and the uid the control
+    plane creates worktree files as, so this pins what was already true rather
+    than changing ownership.
+    """
+    monkeypatch.setenv("AIFACTORY_CLI_CREDS_SECRET", "factory-cli-creds")
+    project_path = _seed_env(monkeypatch)
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:s", project_path=project_path, spec_id="s"
+    )
+    sc = m["spec"]["template"]["spec"]["securityContext"]
+    assert sc.get("runAsNonRoot") is True, sc
+    assert sc.get("runAsUser") == 65532, (
+        "runAsNonRoot without a numeric runAsUser cannot be verified against the "
+        f"image's `USER nonroot` name — every build Job dies unstarted. Got: {sc}"
+    )
 
 
 def test_install_clis_unaffected_by_seed_creds_flag(
