@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.35 - 2026-07-15
+
+### Fixed
+
+- **Every kubejob build was reaped as "stranded" and escalated to `human_review`, however well it went (#857).** `job_dispatch`'s contract said "the Job writes its own job-state row; the control plane reconciles by polling Postgres" — **that contract was never implemented**. `run.py` has no job-state write, and `mark_terminal` does not exist anywhere in `apps/backend`; every writer lives in the control plane. So no build ever wrote a terminal row: the reaper waited out `ttlSecondsAfterFinished` (300s), found the Job GC'd, and failed it. Proven live on `aifactory-demo#320`/`#322` — correct patch, branch pushed, task escalated ~300s after the Job finished, exactly the TTL. The answer was already in hand: `_job_exists` fetched the Job object every 15s and returned a bool, discarding `.status.succeeded`, so the reaper saw the succeeded Job ~20 times and ignored it each time. Now `_job_outcome` returns `succeeded | failed | running | gone` and the caller acts on it (`succeeded` -> done, `failed` -> failed, `running` -> the existing deadline guard, `gone` -> the existing stranded reap, now a genuine anomaly). `.status` is authoritative because `backoffLimit: 0` means one attempt. Chosen over implementing the documented contract: needs no Job-side code, no `DATABASE_URL` in a container running agent-authored code, and no new build image — so it cannot ship dead behind the stale-image trap (#856). The module docstring, which asserted the unimplemented contract, is corrected too.
+
+
 ## 3.6.34 - 2026-07-15
 
 ### Fixed

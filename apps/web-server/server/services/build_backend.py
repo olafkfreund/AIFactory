@@ -36,13 +36,28 @@ Design (apis/concurrency-conventions.md §3 + the proven ``kube_sandbox`` shape)
   / the downward-API ``AIFACTORY_IMAGE`` (the #671 fix: the thin nix gate image
   has no bash/python on PATH outside ``nix develop`` → StartError, no logs).
   ``AIFACTORY_SANDBOX_IMAGE`` stays the thin nix image for gates and is untouched.
-* The Job writes its own job-state row (``running`` → terminal) + artifacts; the
-  control plane **reconciles by polling Postgres** (``reconcile_by_poll``), so a
-  missed completion event never strands a build.
+* The control plane reconciles a build from the **k8s Job's own status**
+  (``reap_vanished_jobs`` → ``_job_outcome``): ``.status.succeeded`` → ``done``,
+  ``.status.failed`` → ``failed``. ``backoffLimit: 0`` means one attempt, so the
+  counts are unambiguous.
+
+  #857 — this used to say "the Job writes its own job-state row (running →
+  terminal); the control plane reconciles by polling Postgres". **That contract
+  was never implemented.** ``mark_terminal`` exists only in the control plane
+  (``job_state_store``); ``run.py`` has no job-state write and ``apps/backend``
+  ships no code that could make one. So no build ever wrote a terminal row: the
+  reaper waited out ``ttlSecondsAfterFinished`` (300s), found the Job GC'd, and
+  marked every SUCCESSFUL build failed → ``human_review``. Reconciling from the
+  Job object — which the reaper already fetched and discarded — needs no Job-side
+  code, no ``DATABASE_URL`` in a container running agent-authored code, and no new
+  build image. ``reconcile_by_poll`` still reads the durable row, which is now
+  written by the control plane rather than awaited from the Job.
 * Idempotent terminal reporting is keyed on (job_id, terminal-state) in the store
-  (``mark_terminal`` is a harmless no-op on a second write).
-* The reaper (``reap_vanished_jobs``) marks a ``running`` k8s-job row failed with a
-  reason when its Job disappears / exceeds its deadline without a terminal write.
+  (``mark_terminal`` is a harmless no-op on a second write) — so observing the
+  same succeeded Job on several 15s ticks before its TTL expires is safe.
+* The reaper still marks a ``running`` k8s-job row failed when its Job vanishes
+  without ever being observed, or exceeds its deadline. Post-#857 that is a
+  genuine anomaly (evicted / GC'd between ticks), not the everyday path.
 
 This module keeps cluster I/O (apply/watch/delete) thin and isolated so it is
 unit-testable with a mocked k8s client — no real cluster is needed for tests.
@@ -886,7 +901,7 @@ def _populate_self_contained_worktree(
 class KubeJobBuildBackend:
     """Dispatch + reconcile + reap the run.py Job (RFC-0016 #671).
 
-    Cluster I/O is confined to the ``_apply`` / ``_job_exists`` / ``_delete``
+    Cluster I/O is confined to the ``_apply`` / ``_job_outcome`` / ``_delete``
     helpers, each taking an injectable ``batch`` client so tests pass a fake.
     The orchestration (build manifest → apply → record worker_ref →
     reconcile-by-poll → reap) is pure-ish and unit-tested.
@@ -1098,8 +1113,27 @@ class KubeJobBuildBackend:
                     # No usable ref — can't verify; leave for the deadline path.
                     continue
 
-                exists = await self._job_exists(batch, namespace, job_name)
-                if exists:
+                outcome = await self._job_outcome(batch, namespace, job_name)
+
+                # #857: reconcile from the Job's OWN status. The Job cannot write
+                # its job-state row (mark_terminal lives only in the control
+                # plane; run.py has no job-state write), so waiting for one meant
+                # every SUCCESSFUL build sat here until ttlSecondsAfterFinished
+                # GC'd the Job and the branch below marked it failed. The kubelet
+                # already told us the answer; take it.
+                if outcome == "succeeded":
+                    await self._done(job_id)
+                    continue
+                if outcome == "failed":
+                    await self._fail(
+                        job_id,
+                        f"k8s Job {namespace}/{job_name} reported failed "
+                        "(backoffLimit=0 — one attempt, no retry)",
+                    )
+                    reaped.append(job_id)
+                    continue
+
+                if outcome == "running":
                     # Optional deadline guard for a wedged-but-present Job.
                     if deadline_seconds is not None:
                         updated = row.get("updated_at")
@@ -1116,7 +1150,9 @@ class KubeJobBuildBackend:
                     continue
 
                 # Job is gone but the row is still running → it vanished without
-                # writing a terminal state. Don't strand it.
+                # writing a terminal state. Don't strand it. Post-#857 this is a
+                # GENUINE anomaly (evicted / GC'd before any tick observed it),
+                # not the everyday path it used to be.
                 await self._fail(
                     job_id,
                     f"k8s Job {namespace}/{job_name} disappeared without a "
@@ -1130,6 +1166,21 @@ class KubeJobBuildBackend:
                     await api.close()
         return reaped
 
+    async def _done(self, job_id: str) -> None:
+        """Mark a build done from the Job's own success (#857).
+
+        The counterpart to :meth:`_fail`. Idempotent via the store, so observing
+        the same succeeded Job on several 15s ticks before its TTL expires is a
+        harmless no-op after the first.
+        """
+        try:
+            await self._store.mark_terminal(job_id, "done")
+            _log.info(
+                "[build_backend] build %s done (k8s Job reported succeeded)", job_id
+            )
+        except Exception:  # noqa: BLE001 - reconcile must never crash the loop
+            _log.exception("[build_backend] could not mark %s done", job_id)
+
     async def _fail(self, job_id: str, reason: str) -> None:
         """Mark a stranded build failed (idempotent via the store)."""
         try:
@@ -1139,26 +1190,43 @@ class KubeJobBuildBackend:
             _log.exception("[build_backend] could not reap %s", job_id)
 
     @staticmethod
-    async def _job_exists(batch: Any, namespace: str, job_name: str) -> bool:
-        """True when the Job object still exists in the cluster.
+    async def _job_outcome(batch: Any, namespace: str, job_name: str) -> str:
+        """The Job's real state: ``succeeded`` | ``failed`` | ``running`` | ``gone``.
 
-        A 404 (ApiException status 404) means it's gone; any other error is
-        treated as "exists" (fail safe — don't reap a build we can't verify).
+        #857: this used to be ``_job_exists`` and returned a bool, discarding the
+        Job object it had just fetched — including ``.status.succeeded``. That was
+        the whole bug: ``job_dispatch``'s contract says "the Job writes its own
+        job-state row", but NOTHING in ``apps/backend`` can — ``mark_terminal``
+        exists only in the control plane, and ``run.py`` has no job-state write at
+        all. So no build ever wrote a terminal row; the reaper waited out
+        ``ttlSecondsAfterFinished`` (300s), found the Job GC'd, and marked every
+        SUCCESSFUL build failed -> human_review. The kubelet's verdict was in hand
+        on every 15s tick and thrown away.
+
+        ``.status.succeeded``/``.failed`` is authoritative here: ``backoffLimit:
+        0`` means exactly one attempt, so the counts are unambiguous.
+
+        A 404 means gone. Any other error is reported as ``running`` — fail safe,
+        never reap a build we could not verify (unchanged from ``_job_exists``).
         """
         try:
-            await batch.read_namespaced_job(job_name, namespace)
-            return True
+            job = await batch.read_namespaced_job(job_name, namespace)
         except Exception as exc:  # noqa: BLE001
-            status = getattr(exc, "status", None)
-            if status == 404:
-                return False
+            if getattr(exc, "status", None) == 404:
+                return "gone"
             _log.warning(
                 "[build_backend] could not verify Job %s/%s (%s) — assuming present",
                 namespace,
                 job_name,
                 exc,
             )
-            return True
+            return "running"
+        status = getattr(job, "status", None)
+        if (getattr(status, "succeeded", None) or 0) >= 1:
+            return "succeeded"
+        if (getattr(status, "failed", None) or 0) >= 1:
+            return "failed"
+        return "running"
 
 
 def _to_epoch(value: Any) -> float | None:
