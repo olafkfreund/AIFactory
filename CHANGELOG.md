@@ -1,6 +1,20 @@
 ## [Unreleased]
 
 
+## 3.6.31 - 2026-07-15
+
+Hotfix for a gate-lane regression that 3.6.30 shipped, plus CI cleanup.
+
+### Fixed
+
+- **The gate lane could not run at all: `runAsNonRoot` on a root nix image (#840).** 3.6.30 shipped #812's Job-pod hardening, which set `runAsNonRoot` on the premise that "task images declare a non-root USER". True of the build image (`aifactory:*-nix` is `USER nonroot`), false of the gate image: `AIFACTORY_SANDBOX_IMAGE` is `tfactory-runner-nix`, `USER 0:0`, because nix builds run as root and nix must write `/nix/var`. The kubelet refused the container outright (`container has runAsNonRoot and image will run as root`, `CreateContainerConfigError`), so every gate Job died before running a single command — with no gate log to point at. #812 also dropped ALL capabilities, which breaks nix a second way: the image ships `build-users-group = nixbld`, so any local build setuids to a build user (`setting uid: Operation not permitted`). Now matches TFactory#651, which met the same Factory#274 checklist on the same image and declined `runAsNonRoot` for exactly this reason. The hardening otherwise stands: seccomp `RuntimeDefault`, no privilege escalation, `privileged: false`, all capabilities dropped except the six proven necessary on a live gate Job (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`, `KILL`). The build path is untouched.
+- **CVE-2026-11940 cleared on `dev` too (#839).** #836 bumped the pinned `chainguard/python` base on `main` only, so every PR (which targets `dev`) kept failing the Trivy gate on `python-3.14.6-r2`.
+
+### Changed
+
+- **Removed the advisory whole-repo `python (mypy)` CI job (#837).** 974 errors across 185 files, never green in its life (0/30 runs), already `continue-on-error: true` — unread annotations plus a permanent red X that taught everyone a failing check is normal. Changed-file coverage is unaffected and stricter: `cq-ratchet.yml` runs mypy `--strict` per changed file and fails on an error-count increase.
+
+
 ## 3.6.30 - 2026-07-15
 
 The July 2026 cycle: the first external benchmark, the reliability fixes it exposed, and cost-aware model routing measured at a 55 percent reduction.
