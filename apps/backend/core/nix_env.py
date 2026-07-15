@@ -12,6 +12,7 @@ Keep the provisioner in sync with the hub + TFactory's vendored copy.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from core.nix_provisioner import Manifest, generate_flake
@@ -19,6 +20,36 @@ from core.nix_provisioner import Manifest, generate_flake
 logger = logging.getLogger(__name__)
 
 _FLAKE = "flake.nix"
+
+# Historical name (RFC-0017 #190) — it predates the gate path also honouring it.
+_ENV_NIX_IN_IMAGE = "AIFACTORY_PACKED_NIX_IN_IMAGE"
+
+
+def nix_in_image() -> bool:
+    """True when a Job should source ``/nix`` from its image, not the warm PVC.
+
+    The warm ``*-nix-store`` PVC is RWO ``local-path``, so its PV is nodeAffinity
+    -pinned to whichever node first consumed it. Mounting it (a) re-pins the Job
+    to that node — deadlocking outright when the repo PVC stranded on a *different*
+    node, since no node then satisfies both — and (b) serialises concurrent Jobs
+    on one mutex (TFactory#623).
+
+    The ``-nix`` images bake the very store the PVC is seeded from (kube_sandbox's
+    seed initContainer copies the image's ``/nix`` into it), so dropping the mount
+    is not a correctness trade: it costs only the closures realised *during* a
+    task, which are re-fetched per Job instead of persisting. Speed for
+    schedulability.
+
+    Read by both Job paths (build: ``build_backend``; gate/verify: ``gate_runner``)
+    so one gitops flip cannot land on one path and silently miss the other — which
+    is exactly how the gate path kept its pin after #258 flipped the build path.
+    """
+    return os.environ.get(_ENV_NIX_IN_IMAGE, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 def is_nix_environment(env: dict | None) -> bool:

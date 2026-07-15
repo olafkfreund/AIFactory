@@ -135,9 +135,7 @@ _ENV_PACK_WORKSPACE = "AIFACTORY_PACK_WORKSPACE"
 # build-image variant), the node-pinned RWO ``aifactory-nix-store`` warm-cache
 # PVC must NOT be co-mounted on the packed path — that mount both re-pins the
 # Job to the PVC's single node AND masks the image's baked store. This flag
-# (default OFF) drops the PVC only on the packed path; flip it in gitops in the
-# same change that points ``AIFACTORY_BUILD_IMAGE`` at the nix-baked image.
-_ENV_PACKED_NIX_IN_IMAGE = "AIFACTORY_PACKED_NIX_IN_IMAGE"
+# The nix-source flag itself now lives in core.nix_env (both Job paths read it).
 
 # Defaults mirror gate_runner.py + the kube_sandbox SA.
 _DEFAULT_REPO_PVC = "aifactory-data"
@@ -741,13 +739,15 @@ def _packed_nix_in_image() -> bool:
     the build image instead, making the Job node-agnostic. Only meaningful once
     ``AIFACTORY_BUILD_IMAGE`` points at the nix-baked ``-nix`` image; flip both
     together in gitops. Off → the warm-store co-mount is unchanged.
+
+    Delegates to ``core.nix_env.nix_in_image`` so the build and gate paths read
+    one predicate — two copies is how the gate path missed the #258 flip (#253).
     """
-    return os.environ.get(_ENV_PACKED_NIX_IN_IMAGE, "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
+    from core.nix_env import (
+        nix_in_image,  # noqa: PLC0415 - core is a startup sys.path add
     )
+
+    return nix_in_image()
 
 
 def _maybe_pack_workspace(
