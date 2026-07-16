@@ -64,3 +64,38 @@ def test_commits_uncommitted_files(repo: Path) -> None:
 def test_defensive_on_non_git_dir(tmp_path: Path) -> None:
     # Not a git repo → returns None, never raises.
     assert commit_uncommitted_changes(tmp_path / "nope", "ac1") is None
+
+
+# --- harness bookkeeping (.aifactory-status etc.) must NOT trigger a commit ---
+
+
+def test_bookkeeping_only_churn_makes_no_commit(repo: Path) -> None:
+    """The ccstatusline / security files churn every subtask; a safety-net commit
+    of them clutters the branch (and once tracked, self-perpetuates). Only
+    bookkeeping dirty -> no commit."""
+    before = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    (repo / ".aifactory-status").write_text("status churn")
+    (repo / ".aifactory-security.json").write_text("{}")
+
+    assert commit_uncommitted_changes(repo, "1.1") is None
+    after = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True
+    ).stdout.strip()
+    assert before == after, "no commit should have been made for bookkeeping-only churn"
+
+
+def test_real_code_is_committed_without_bookkeeping(repo: Path) -> None:
+    """Uncommitted code is still rescued, but the bookkeeping files are left out
+    of the commit so they never become tracked."""
+    (repo / "feature.py").write_text("def f():\n    return 1\n")
+    (repo / ".aifactory-status").write_text("status churn")
+
+    commit = commit_uncommitted_changes(repo, "2.1")
+    assert commit is not None
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=repo, capture_output=True, text=True
+    ).stdout.split()
+    assert "feature.py" in tracked
+    assert ".aifactory-status" not in tracked

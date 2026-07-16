@@ -960,6 +960,12 @@ Before context fills up:
 4. **Leave app working** - no broken state
 5. **No half-finished subtasks** - complete or revert
 
+**Do NOT write standalone summary / completion-report files** (e.g.
+`cat > summary.txt`, ASCII-box "FINAL REPORT" banners). The commit messages,
+`implementation_plan.json`, and `build-progress.txt` ARE the record — a separate
+report is wasted work (and time), not a deliverable. When the last subtask is
+done and committed, stop.
+
 **NOTE**: Do NOT push to remote. All work stays local until user reviews and approves.
 
 The next session will:
