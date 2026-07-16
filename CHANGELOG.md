@@ -1,9 +1,113 @@
 ## [Unreleased]
 
+
+## 3.6.37 - 2026-07-16
+
+### Added
+
+- **Honest-verification gate: the coder can no longer report a test/verification subtask complete for tests it never ran (#851).** The Dishonest Coder, live — on the first autonomous run the coder wrote `[x] Run all tests` and `Ready for merge` for a Go repo with no toolchain to run `go test`; the tests never ran and the correct patch was luck. A PostToolUse hook now records every real test-command Bash run (tamper-evident — the actual execution, not the model's self-report) to `.aifactory/test_evidence.jsonl`, and `update_subtask_status` refuses to mark a test/verification subtask `completed` unless a test command actually ran and did not clearly fail, with guidance to run the tests or honestly mark it `failed` (RFC-0006). ON by default; escape hatch `AIFACTORY_TEST_EVIDENCE_GATE=off`. This is coder-path code that runs inside the build Job, so it ships via the `-nix` build image (auto-rebuilt + re-pinned by #856).
+
+
+## 3.6.36 - 2026-07-16
+
+### Fixed
+
+- **A finished kubejob build now reports to CFactory and hands off to TFactory (#852).** After #857 a green k8s-Job build reaches `done`, but the reaper only WRITES the job-state row — it did none of what the in-pod path does on completion. So a successful packed build (the default path) leaked its pooled Claude credential, never drained the build queue, emitted no completion event (CFactory blind), and never fired the TFactory handoff (the independent verifier had never run on an autonomous build). The completion half is Factory#253's "output propagation": the Job writes its plan/usage/task_logs into an ephemeral `/work` emptyDir and pushes them to object storage (#853), while the control plane reads its own pre-dispatch copies. Fix: an `on_done` callback injected into `KubeJobBuildBackend`, fired once from `_done`, that releases the credential, drains the queue, and runs the SAME `run_terminal_completion` the in-pod path uses — fetching the pushed artifacts and emitting the event + handoff, so the two backends finish identically (RFC-0016 parity). The board still surfaces the build for human review via the durable `done` overlay; the PR endgame stays off unless enabled; the handoff only fires when the task opted in (`auto_handover_tfactory`).
+
+
+## 3.6.35 - 2026-07-15
+
+### Fixed
+
+- **Every kubejob build was reaped as "stranded" and escalated to `human_review`, however well it went (#857).** `job_dispatch`'s contract said "the Job writes its own job-state row; the control plane reconciles by polling Postgres" — **that contract was never implemented**. `run.py` has no job-state write, and `mark_terminal` does not exist anywhere in `apps/backend`; every writer lives in the control plane. So no build ever wrote a terminal row: the reaper waited out `ttlSecondsAfterFinished` (300s), found the Job GC'd, and failed it. Proven live on `aifactory-demo#320`/`#322` — correct patch, branch pushed, task escalated ~300s after the Job finished, exactly the TTL. The answer was already in hand: `_job_exists` fetched the Job object every 15s and returned a bool, discarding `.status.succeeded`, so the reaper saw the succeeded Job ~20 times and ignored it each time. Now `_job_outcome` returns `succeeded | failed | running | gone` and the caller acts on it (`succeeded` -> done, `failed` -> failed, `running` -> the existing deadline guard, `gone` -> the existing stranded reap, now a genuine anomaly). `.status` is authoritative because `backoffLimit: 0` means one attempt. Chosen over implementing the documented contract: needs no Job-side code, no `DATABASE_URL` in a container running agent-authored code, and no new build image — so it cannot ship dead behind the stale-image trap (#856). The module docstring, which asserted the unimplemented contract, is corrected too.
+
+
+## 3.6.34 - 2026-07-15
+
+### Fixed
+
+- **Every successful packed build escalated to `human_review`: the Job's `implementation_plan.json` never reached the control plane (#852, Factory#253 "output propagation").** The packed Job unpacks into `/work` — an emptyDir, deliberately, since that is what makes it node-agnostic (RFC-0017 #190) — and records each subtask `completed` in the plan there. The control plane counts completed subtasks from the data-PVC spec dir, which the packed path never populates, so it saw **0** and applied the #287 guard ("a clean exit with no successful subtask is emitted as FAILED"). Correct guard, stale input. Proven on the first autonomous handover (`aifactory-demo#320`): a correct patch, branch pushed, and still `human_review` / `errors` / `subtasks: 0` — the control-plane spec dir held only `requirements.json`, `spec.md`, `task_metadata.json` while the branch carried the finished plan. The branch escapes via `git push` (#751); the plan did not. Fixed by extending the existing return leg (`maybe_push_usage`/`maybe_fetch_usage` for `token_usage.json`, `maybe_push_task_logs`/`maybe_fetch_task_logs` for `task_logs.json`) with `maybe_push_plan`/`maybe_fetch_plan` at the same two call sites — `implementation_plan.json` was simply never added to it. Unlike its siblings the fetch **overwrites**: the control plane wrote the pre-dispatch original (all subtasks `pending`), so a bail-if-present guard would keep the stale copy and preserve the bug. This unblocks the AIFactory -> TFactory handoff, which never fired because no build ever reported success.
+
+
+## 3.6.33 - 2026-07-15
+
+### Fixed
+
+- **Every build Job died before starting: `runAsNonRoot` without a numeric `runAsUser` (#848).** #812 set `runAsNonRoot` and deliberately omitted `runAsUser` ("the task images declare their own non-root uid"), but the kubelet cannot verify a *name*. The build image declares `USER nonroot`, so the kubelet refused every task container: `container has runAsNonRoot and image has non-numeric user (nonroot), cannot verify user is non-root` -> `CreateContainerConfigError`. Observed on the first Claude Code -> Factory handover run: **342 retries over 76 minutes, zero code written**, while the task reported `in_progress` and the Job showed `Running` — the exact silent-no-op class the July benchmark measured as 22/50 empty patches. The initContainers already pinned numeric uids (busybox/node default to root), which is why *they* started and the task container did not. This is the second victim of the same #812 premise from the opposite direction: the gate image *is* root and needed `runAsNonRoot` dropped (#840/#841); the build image is non-root *by name* and needs a numeric uid. Now pins `runAsUser: 65532` — verified from the image (`id` reports `uid=65532(nonroot)`) and already the uid the control plane creates worktree files as, so it changes no behaviour and only lets the kubelet verify what was already true. `runAsNonRoot` is kept: unlike the gate image, this one genuinely is non-root.
+
+
+## 3.6.32 - 2026-07-15
+
+### Fixed
+
+- **The web-server ran blind after startup: alembic's `fileConfig` destroyed the app's logging (#844).** `MIGRATIONS_AUTO_APPLY=true` runs `alembic upgrade head` inside the long-running server, which imports `env.py`, which calls `fileConfig`. The existing `disable_existing_loggers=False` preserves logger *objects* but `fileConfig` still rewrites the **root** logger from `alembic.ini`'s `[logger_root]` (`level=WARN`, `handlers=console`). Since `server.*` loggers propagate to root, the app lost both `RotatingFileHandler`s and every INFO one line into boot — measured in the running pod: `INFO/[Stream,RotatingFile,RotatingFile]` -> `WARNING/[Stream]`, `logger.info visible? False`. That is why `server.log` stops dead at "running `alembic upgrade head`" and only ERROR noise reaches stdout afterwards: no request logs, no lifecycle lines, nothing to debug with. It also made the RFC-0011 intake poller appear never to start — neither its enabled *nor* its disabled log line could be emitted. Now `fileConfig` is only called when nothing else has configured logging (root has no handlers), so standalone `alembic upgrade` is unchanged while the in-process path inherits the app's handlers.
+
+
+## 3.6.31 - 2026-07-15
+
+Hotfix for a gate-lane regression that 3.6.30 shipped, plus CI cleanup.
+
+### Fixed
+
+- **The gate lane could not run at all: `runAsNonRoot` on a root nix image (#840).** 3.6.30 shipped #812's Job-pod hardening, which set `runAsNonRoot` on the premise that "task images declare a non-root USER". True of the build image (`aifactory:*-nix` is `USER nonroot`), false of the gate image: `AIFACTORY_SANDBOX_IMAGE` is `tfactory-runner-nix`, `USER 0:0`, because nix builds run as root and nix must write `/nix/var`. The kubelet refused the container outright (`container has runAsNonRoot and image will run as root`, `CreateContainerConfigError`), so every gate Job died before running a single command — with no gate log to point at. #812 also dropped ALL capabilities, which breaks nix a second way: the image ships `build-users-group = nixbld`, so any local build setuids to a build user (`setting uid: Operation not permitted`). Now matches TFactory#651, which met the same Factory#274 checklist on the same image and declined `runAsNonRoot` for exactly this reason. The hardening otherwise stands: seccomp `RuntimeDefault`, no privilege escalation, `privileged: false`, all capabilities dropped except the six proven necessary on a live gate Job (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`, `KILL`). The build path is untouched.
+- **CVE-2026-11940 cleared on `dev` too (#839).** #836 bumped the pinned `chainguard/python` base on `main` only, so every PR (which targets `dev`) kept failing the Trivy gate on `python-3.14.6-r2`.
+
+### Changed
+
+- **Removed the advisory whole-repo `python (mypy)` CI job (#837).** 974 errors across 185 files, never green in its life (0/30 runs), already `continue-on-error: true` — unread annotations plus a permanent red X that taught everyone a failing check is normal. Changed-file coverage is unaffected and stricter: `cq-ratchet.yml` runs mypy `--strict` per changed file and fails on an error-count increase.
+
+
+## 3.6.30 - 2026-07-15
+
+The July 2026 cycle: the first external benchmark, the reliability fixes it exposed, and cost-aware model routing measured at a 55 percent reduction.
+
+### Added
+
+- **Per-stage cost-aware model router, RFC-0014 v1 (#803, #811, #822).** Each stage now routes to an appropriately sized model tier (`small`/`mid`/`frontier`) instead of every stage paying frontier prices. The router consumes the contract's `routing.requested`/`overrides` tiers and applies the RFC-0011 difficulty tier as a **capability floor**, so a hard task can never be routed below the model it needs. Every worker in the completion event is stamped with the tier it ran at, so the routing decision is visible in the cockpit rather than taken on faith. Measured on three identical tasks: **6.48 USD -> 2.91 USD, a 55 percent reduction at essentially the same token volume** (13.285M vs 13.291M) — the saving is the model mix, not less work.
+- **Graphify code-graph cache in MinIO, keyed by repo+commit (#804, #809).** The Tree-sitter graph was rebuilt per task and lost with the Job. It is now cached on the existing artifact_store/MinIO seam (`graphify/{repo_slug}/{head_commit_sha}/graph.json`): an exact hit skips the build, a miss builds then uploads best-effort. Cache errors are always swallowed and never fail a build. Still default OFF behind `AIFACTORY_GRAPHIFY_ENABLED`.
+
+### Fixed
+
+- **Empty patches: the coding session could stall on connect and burn to the Job deadline (#816, #818, #823).** The external SWE-bench Verified baseline showed 22 of 50 runs produced **no patch at all** — nearly half of all failures were silent no-ops, not wrong answers. Root cause: entering the agent client spawns the CLI and its MCP stdio servers, two of which were fetched over the network at connect time; on a cold or network-restricted runner that fetch hung, no first model call ever happened, and with no timeout on the path the session burned silently to the Kubernetes deadline. Fixed in depth: (1) a connect/first-token watchdog (`run_session_guarded`, `AIFACTORY_FIRST_TOKEN_TIMEOUT`, default 120s) fails fast into the existing retry path instead of hanging for an hour; (2) the MCP servers are pre-baked into the runner image so the fetch does not happen at run time at all; (3) the rate-limit wait is bounded below the build deadline so no single wait can consume the whole build.
+- **Plans with subtasks missing a `status` field silently no-opped (#817, #820).** A one-line divergence between two loaders meant such plans selected nothing and the coder exited reporting there was nothing to do — writing zero code on real plans.
+- **A build with 0/N subtasks completed reported success (#779, #810).** The run now fails instead of exiting 0.
+- **Codex exited quietly on an empty response (#779, #827).** The discarded stderr tail is now surfaced, exposing the cause of the no-op rather than hiding it.
+- **Routing was completely inert: the RFC-0011 difficulty tier's static `metadata.model` outranked the router (#825, #826, #828).** Found because the first cost measurement showed routing on and off costing exactly the same. Routing is now consulted **before** the static tier model, and the capability floor is applied on the env policy path too.
+- **Gate Jobs mounted a node-stranded RWO Nix-store PVC and could not schedule (#253, #830).** `local-path` is `WaitForFirstConsumer`, so each PV lands on whichever node first consumed it; on the factory cluster `aifactory-data` and `aifactory-nix-store` stranded on **different** nodes, and a pod mounting both satisfies no node's affinity. #258 had fixed this for the build path only — the flip landed on one path and silently missed the other. The nix-source predicate now lives in one shared place (`core.nix_env.nix_in_image`) that both Job paths read. Also removes the RWO mutex that serialised concurrent Jobs (TFactory#623).
+- **`from-issue` intake did not write `spec.md`, so `run.py` could not find the spec (#806, #807).**
+- **`cq_ratchet` wrote base-version temp files under a mangled basename (#815).**
+- **Vendored `factory_common` restored and excluded from ruff (#802).**
+
 ### Security
 
+- **Pre-coder untrusted-content scan gate (#805, #813, Factory#273).** Spec/issue-derived text originates from untrusted sources (GitHub issue bodies, brownfield repos); prompts that point the agent at that content now carry an explicit "data, not instructions" boundary, and inline interpolations are wrapped by the fleet's delimiter wrapper.
+- **`chainguard/python` digest bumped to clear libexpat1 HIGH CVEs (#808).**
 - **Per-task Job pods hardened: pinned securityContext + NetworkPolicy coverage (#812, Factory#274 checklist).** Both per-task Job builders (`core/job_dispatch.py` build Jobs and `core/kube_sandbox.py` gate Jobs) now pin `runAsNonRoot` + `seccompProfile: RuntimeDefault` at pod level and `allowPrivilegeEscalation: false` + `capabilities: drop ALL` on every container (the non-root guarantee previously came only from the image; no seccomp profile was pinned). The `install-clis`/`seed-creds` initContainers pin explicit non-root uids so the kubelet accepts them under `runAsNonRoot`. Job pods now also carry the `factory.io/kind: task` label and the chart gained a second NetworkPolicy (`networkPolicy.tasks`, default on) selecting it — Job pods previously matched no policy at all — with default-deny ingress and egress limited to DNS, public 443 (nix binary caches, git remotes, LLM APIs) and the chart's own pods (control-plane API + bundled Postgres); in-cluster MinIO/external Postgres are opted in via `networkPolicy.tasks.egress.extraRules`. Also adds the missing `guides/security/gvisor.md` that `values.yaml` references (gVisor caveats: no bwrap `strict` mode, no Nix local builds). No `readOnlyRootFilesystem` — nix writes `/nix/var` and the task writes `$HOME` on the rootfs.
 
+
+## 3.6.29 - 2026-07-10
+
+### Changed
+
+- **Repo-wide `ruff format` sweep (#799).** Formatted the whole tree with the pinned ruff 0.14.10 (`standards/ruff.toml`). The `cq-ratchet` gate only enforced `ruff format --check apps/backend`, so `apps/web-server`, `tests`, and `scripts` had drifted unformatted despite the "formatter-clean repo-wide" intent; `ruff format --check .` is now clean. Formatting-only — no logic changes.
+
+
+## 3.6.28 - 2026-07-10
+
+### Fixed
+
+- **Release pipeline can pull the private `tfactory-runner-nix` base image.** `release.yml` logged into GHCR with `GITHUB_TOKEN`, which can't read the private, repo-unlinked `ghcr.io/olafkfreund/tfactory-runner-nix` package the image build `COPY`s from (`Dockerfile:255`) — so the first version-bumped release (`v3.6.27`) 403'd on the baked-Nix-store image step. Now uses `GHCR_PAT || GITHUB_TOKEN`, mirroring `deploy.yml`. This release also regenerates the full release artifacts (image, SBOM, cosign signature) that `v3.6.27` could not produce.
+
+
+## 3.6.27 - 2026-07-10
+
+### Removed
+
+- **Repo-wide over-engineering cleanup (ponytail-audit) — ~10.5k lines, 7 deps (#797).** Deleted verified-dead code: backend `runners/github/` review-intelligence modules (trust, learning, confidence, duplicates, multi_repo, cleanup, onboarding, memory_integration), the `bmad/` subagent framework + context_shard/agent_adapter/session_spawner, and 18 unraised exception classes; web-server dead `verify_token`/`bearer_scheme`; frontend dead components/shims (DevTools\*, DisplaySettings, TerminalDropdown, AddWorkspaceModal, release-store, shell-escape, `components/` barrel). Removed unused dependencies `gitpython`, `aiofiles`, `python-dotenv`, `zod`, `react-resizable-panels`, `uuid`, `@types/uuid`. Test-covered modules (qa/providers, gemini shims, output_validator, build_cached_system_blocks) and live CLI shims were kept; the required backend gate (ruff + pytest) is green.
+
+### Changed
+
+- **Behavior-preserving refactors to stdlib/native (#797).** Frontend `use-toast` hand-rolled reducer → zustand, `uuid` → `crypto.randomUUID()`, `hookProxyFactory` → native `Proxy`, inlined single-consumer wrappers; web-server lazy singletons → `@functools.cache`, extracted a `_json_store` helper, and deduped `_slugify` (→ `server/utils/slug.py`) and profiles-path resolution.
 
 ## 3.6.29 - 2026-07-10
 
