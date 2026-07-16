@@ -17,13 +17,110 @@ try:
     SDK_TOOLS_AVAILABLE = True
 except ImportError:
     SDK_TOOLS_AVAILABLE = False
-    tool = None
+    tool = None  # type: ignore[assignment]
+
+
+def _text(msg: str) -> dict[str, Any]:
+    return {"content": [{"type": "text", "text": msg}]}
+
+
+async def apply_subtask_status_update(
+    spec_dir: Path, subtask_id: str, status: str, notes: str = ""
+) -> dict[str, Any]:
+    """Update a subtask's status in implementation_plan.json, enforcing the #851
+    honest-verification gate. Plain (SDK-free) so it is directly testable; the
+    ``update_subtask_status`` tool is a thin wrapper resolving the spec dir.
+    """
+    valid_statuses = ["pending", "in_progress", "completed", "failed"]
+    if status not in valid_statuses:
+        return _text(
+            f"Error: Invalid status '{status}'. Must be one of: {valid_statuses}"
+        )
+
+    plan_file = spec_dir / "implementation_plan.json"
+    if not plan_file.exists():
+        return _text("Error: implementation_plan.json not found")
+
+    try:
+        with open(plan_file) as f:
+            plan = json.load(f)
+
+        # Find and update the subtask
+        subtask_found = False
+        target_subtask: dict[str, Any] | None = None
+        for phase in plan.get("phases", []):
+            for subtask in phase.get("subtasks", []):
+                if subtask.get("id") == subtask_id:
+                    subtask["status"] = status
+                    if notes:
+                        subtask["notes"] = notes
+                    subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    subtask_found = True
+                    target_subtask = subtask
+                    break
+            if subtask_found:
+                break
+
+        if not subtask_found:
+            return _text(
+                f"Error: Subtask '{subtask_id}' not found in implementation plan"
+            )
+
+        # #851 honest-verification gate: a test/verification subtask may not be
+        # reported "completed" unless a real test command actually ran this build
+        # (captured tamper-evidently by the PostToolUse hook). No run — or a run
+        # that clearly failed — is refused with actionable guidance, so the coder
+        # can no longer self-report a green checkbox for tests it never executed
+        # (RFC-0006). The plan is not written until AFTER this, so a refusal
+        # leaves implementation_plan.json untouched.
+        if status == "completed":
+            from agents.test_evidence import (  # noqa: PLC0415
+                gate_enabled,
+                is_verification_subtask,
+                read_test_evidence,
+            )
+
+            if gate_enabled() and is_verification_subtask(target_subtask or {}):
+                ev = read_test_evidence(spec_dir)
+                if not ev["ran"]:
+                    return _text(
+                        f"Refused: subtask '{subtask_id}' is a test/verification subtask, "
+                        "but no test command ran this build. Run the tests now (e.g. "
+                        "pytest / go test / npm test) — the build records the run "
+                        "automatically — then mark it completed. If this repo has NO "
+                        "runnable test environment, mark this subtask 'failed' with a note "
+                        "saying tests could not be executed. Do NOT report it completed "
+                        "unverified (RFC-0006: never claim verification that did not happen)."
+                    )
+                if ev["last_failed"]:
+                    return _text(
+                        f"Refused: the last recorded test run failed (command: "
+                        f"{ev['last_command']!r}). Fix the failures and re-run the tests "
+                        f"green before completing subtask '{subtask_id}', or mark it "
+                        "'failed' with the reason. Do NOT report it completed over failing "
+                        "tests."
+                    )
+
+        # Update plan metadata
+        plan["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+        with open(plan_file, "w") as f:
+            json.dump(plan, f, indent=2)
+
+        return _text(
+            f"Successfully updated subtask '{subtask_id}' to status '{status}'"
+        )
+
+    except json.JSONDecodeError as e:
+        return _text(f"Error: Invalid JSON in implementation_plan.json: {e}")
+    except Exception as e:  # noqa: BLE001
+        return _text(f"Error updating subtask status: {e}")
 
 
 def create_subtask_tools(
     spec_dir: Path | Callable[[], Path],
     project_dir: Path | Callable[[], Path],
-) -> list:
+) -> list[Any]:
     """
     Create subtask management tools.
 
@@ -45,9 +142,11 @@ def create_subtask_tools(
     # Normalise Path -> lambda once at factory build time; tool handlers
     # invoke get_spec_dir() per call so the standalone server picks up
     # AIFACTORY_SPEC_DIR changes between calls.
-    get_spec_dir: Callable[[], Path] = (
-        spec_dir if callable(spec_dir) else (lambda p=spec_dir: p)
-    )
+    if callable(spec_dir):
+        get_spec_dir: Callable[[], Path] = spec_dir
+    else:
+        fixed: Path = spec_dir
+        get_spec_dir = lambda: fixed  # noqa: E731 — tiny fixed-path accessor
 
     tools = []
 
@@ -60,91 +159,14 @@ def create_subtask_tools(
         {"subtask_id": str, "status": str, "notes": str},
     )
     async def update_subtask_status(args: dict[str, Any]) -> dict[str, Any]:
-        """Update subtask status in the implementation plan."""
-        subtask_id = args["subtask_id"]
-        status = args["status"]
-        notes = args.get("notes", "")
-
-        valid_statuses = ["pending", "in_progress", "completed", "failed"]
-        if status not in valid_statuses:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: Invalid status '{status}'. Must be one of: {valid_statuses}",
-                    }
-                ]
-            }
-
-        plan_file = get_spec_dir() / "implementation_plan.json"
-        if not plan_file.exists():
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Error: implementation_plan.json not found",
-                    }
-                ]
-            }
-
-        try:
-            with open(plan_file) as f:
-                plan = json.load(f)
-
-            # Find and update the subtask
-            subtask_found = False
-            for phase in plan.get("phases", []):
-                for subtask in phase.get("subtasks", []):
-                    if subtask.get("id") == subtask_id:
-                        subtask["status"] = status
-                        if notes:
-                            subtask["notes"] = notes
-                        subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
-                        subtask_found = True
-                        break
-                if subtask_found:
-                    break
-
-            if not subtask_found:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Error: Subtask '{subtask_id}' not found in implementation plan",
-                        }
-                    ]
-                }
-
-            # Update plan metadata
-            plan["last_updated"] = datetime.now(timezone.utc).isoformat()
-
-            with open(plan_file, "w") as f:
-                json.dump(plan, f, indent=2)
-
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Successfully updated subtask '{subtask_id}' to status '{status}'",
-                    }
-                ]
-            }
-
-        except json.JSONDecodeError as e:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: Invalid JSON in implementation_plan.json: {e}",
-                    }
-                ]
-            }
-        except Exception as e:
-            return {
-                "content": [
-                    {"type": "text", "text": f"Error updating subtask status: {e}"}
-                ]
-            }
+        """Update subtask status in the implementation plan (thin wrapper over
+        :func:`apply_subtask_status_update`, which holds the logic + #851 gate)."""
+        return await apply_subtask_status_update(
+            get_spec_dir(),
+            args["subtask_id"],
+            args["status"],
+            args.get("notes", ""),
+        )
 
     tools.append(update_subtask_status)
 

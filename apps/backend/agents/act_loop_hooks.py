@@ -36,6 +36,7 @@ from .mutation_ledger import (
     ledger_enabled,
     mutation_target,
 )
+from .test_evidence import gate_enabled, is_test_command, record_test_run
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,10 @@ def read_halt_reason(spec_dir: Path | str) -> str | None:
     """Read a guardrail halt reason recorded this run (for the Act loop to break
     early + stamp the completion event). None if no halt."""
     try:
-        return json.loads((Path(spec_dir) / _HALT_FILE).read_text()).get("halt_reason")
+        reason = json.loads((Path(spec_dir) / _HALT_FILE).read_text()).get(
+            "halt_reason"
+        )
+        return str(reason) if reason is not None else None
     except (OSError, ValueError):
         return None
 
@@ -114,7 +118,11 @@ def read_halt_reason(spec_dir: Path | str) -> str | None:
 # ── #474 anti-loop guardrail ─────────────────────────────────────────────────
 
 
-async def guardrail_pretool_hook(input_data, tool_use_id=None, context=None) -> dict:
+async def guardrail_pretool_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,  # noqa: ARG001 — SDK hook contract
+    context: Any = None,  # noqa: ARG001 — SDK hook contract
+) -> dict[str, Any]:
     if not guardrail_enabled():
         return {}
     try:
@@ -133,7 +141,11 @@ async def guardrail_pretool_hook(input_data, tool_use_id=None, context=None) -> 
     return {}
 
 
-async def guardrail_posttool_hook(input_data, tool_use_id=None, context=None) -> dict:
+async def guardrail_posttool_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,  # noqa: ARG001 — SDK hook contract
+    context: Any = None,  # noqa: ARG001 — SDK hook contract
+) -> dict[str, Any]:
     if not guardrail_enabled():
         return {}
     try:
@@ -156,7 +168,11 @@ async def guardrail_posttool_hook(input_data, tool_use_id=None, context=None) ->
 # ── #476 checkpoint + mutation ledger ────────────────────────────────────────
 
 
-async def mutation_pretool_hook(input_data, tool_use_id=None, context=None) -> dict:
+async def mutation_pretool_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,
+    context: Any = None,  # noqa: ARG001 — SDK hook contract
+) -> dict[str, Any]:
     if not ledger_enabled():
         return {}
     try:
@@ -171,7 +187,16 @@ async def mutation_pretool_hook(input_data, tool_use_id=None, context=None) -> d
     return {}
 
 
-async def mutation_posttool_hook(input_data, tool_use_id=None, context=None) -> dict:
+async def mutation_posttool_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,
+    context: Any = None,
+) -> dict[str, Any]:
+    # #851: record test-command runs on EVERY post-tool event, independent of the
+    # mutation ledger's own flag. Piggybacks this already-registered, always-on
+    # post-hook so the evidence gate needs no new HookMatcher (and no edit to the
+    # SDK-options builder in core/client.py).
+    await test_evidence_posttool_hook(input_data, tool_use_id, context)
     if not ledger_enabled():
         return {}
     try:
@@ -191,10 +216,46 @@ async def mutation_posttool_hook(input_data, tool_use_id=None, context=None) -> 
     return {}
 
 
+# ── #851 test-execution evidence ─────────────────────────────────────────────
+
+
+async def test_evidence_posttool_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,  # noqa: ARG001 — SDK hook contract; unused here
+    context: Any = None,  # noqa: ARG001 — SDK hook contract; unused here
+) -> dict[str, Any]:
+    """Record every real test-command Bash run for the honest-verification gate.
+
+    Tamper-evident: it captures the ACTUAL Bash execution, not the model's
+    self-report. ``update_subtask_status`` then refuses to complete a
+    test/verification subtask with no recorded run (#851). Never raises into the
+    agent; a recording failure just leaves the gate to fall back to "no run".
+    """
+    if not gate_enabled():
+        return {}
+    try:
+        if input_data.get("tool_name", "") != "Bash":
+            return {}
+        s = _sess(input_data)
+        if not s:
+            return {}
+        tool_input = input_data.get("tool_input") or {}
+        command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+        if command and is_test_command(command):
+            record_test_run(s.spec_dir, command, input_data.get("tool_response"))
+    except Exception:  # noqa: BLE001 — never break the agent on a recording error
+        logger.debug("test-evidence posttool hook failed", exc_info=True)
+    return {}
+
+
 # ── #475 PreCompact structured summary ───────────────────────────────────────
 
 
-async def precompact_summary_hook(input_data, tool_use_id=None, context=None) -> dict:
+async def precompact_summary_hook(
+    input_data: dict[str, Any],
+    tool_use_id: str | None = None,  # noqa: ARG001 — SDK hook contract
+    context: Any = None,  # noqa: ARG001 — SDK hook contract
+) -> dict[str, Any]:
     if not summary_enabled():
         return {}
     try:
