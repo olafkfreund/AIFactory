@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.37 - 2026-07-16
+
+### Added
+
+- **Honest-verification gate: the coder can no longer report a test/verification subtask complete for tests it never ran (#851).** The Dishonest Coder, live — on the first autonomous run the coder wrote `[x] Run all tests` and `Ready for merge` for a Go repo with no toolchain to run `go test`; the tests never ran and the correct patch was luck. A PostToolUse hook now records every real test-command Bash run (tamper-evident — the actual execution, not the model's self-report) to `.aifactory/test_evidence.jsonl`, and `update_subtask_status` refuses to mark a test/verification subtask `completed` unless a test command actually ran and did not clearly fail, with guidance to run the tests or honestly mark it `failed` (RFC-0006). ON by default; escape hatch `AIFACTORY_TEST_EVIDENCE_GATE=off`. This is coder-path code that runs inside the build Job, so it ships via the `-nix` build image (auto-rebuilt + re-pinned by #856).
+
+
 ## 3.6.36 - 2026-07-16
 
 ### Fixed
