@@ -176,3 +176,19 @@ def test_apply_label_does_not_create_when_present(monkeypatch):
     ip._apply_label(object(), 1, "factory:queued")
 
     assert events == ["apply"], "no label creation when the apply succeeds"
+
+
+# --- #843: hard tier is not auto-routed yet -> loud, actionable refusal ---
+
+
+def test_route_hard_refuses_loudly_and_actionably(monkeypatch):
+    """Until a PFactory ingest endpoint exists, a hard-tier issue must refuse
+    with a maintainer-actionable message (which becomes the issue comment), not
+    a silent mis-POST or an internal env-var error."""
+    monkeypatch.delenv("PFACTORY_INGEST_URL", raising=False)
+    with pytest.raises(ip.TerminalIntakeError) as exc:
+        ip._route_hard(object(), object(), object())
+    msg = str(exc.value).lower()
+    assert "manually" in msg and "hard" in msg, (
+        f"refusal must tell a maintainer what to do; got: {exc.value}"
+    )
