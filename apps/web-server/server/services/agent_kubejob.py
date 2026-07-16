@@ -30,6 +30,7 @@ class KubejobMixin:
         # Attributes/methods provided by the concrete host (AgentService);
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
+        backend_path: Path
         _store_enabled: bool
         _task_profiles: dict[str, Any]
         _drain_queue: Callable[..., Any]
@@ -67,8 +68,70 @@ class KubejobMixin:
         if getattr(self, "_kubejob_build_backend", None) is None:
             from .build_backend import KubeJobBuildBackend
 
-            self._kubejob_build_backend = KubeJobBuildBackend(self._store())
+            self._kubejob_build_backend = KubeJobBuildBackend(
+                self._store(), on_done=self._on_kubejob_build_done
+            )
         return self._kubejob_build_backend
+
+    async def _on_kubejob_build_done(self, job_id: str) -> None:
+        """A kubejob build reached ``done`` (#852): finish it like a real build.
+
+        The reaper's ``_done`` only writes the job-state row. Everything the
+        in-pod path does on completion is missing here, so without this a green
+        packed build (a) leaks its pooled Claude credential, (b) never drains the
+        FIFO queue (a queued build waits for an unrelated event), and (c) never
+        emits the completion event or fires the TFactory handoff — leaving
+        CFactory blind and the independent verifier un-run (Factory#253 "output
+        propagation"). ``job_id`` is ``<project_id>:<spec_id>`` (== task_id).
+        Best-effort throughout: a build already marked ``done`` must never be
+        undone by a bookkeeping failure here.
+        """
+        self._release_task_credential(job_id)
+        try:
+            await self._emit_kubejob_terminal_completion(job_id)
+        except Exception:  # noqa: BLE001
+            _log.exception(
+                "[AgentService] kubejob completion emit failed for %s (ignored)",
+                job_id,
+            )
+        await self._drain_queue()
+
+    async def _emit_kubejob_terminal_completion(self, job_id: str) -> None:
+        """Emit the RFC-0001 completion event + side-effects for a done kubejob.
+
+        Reuses the in-pod completion path (``run_terminal_completion``) so the
+        kubejob and subprocess backends finish identically (RFC-0016 parity):
+        it fetches the plan/usage/task_logs the Job pushed to object storage
+        (#852 — the control plane's own copies are the pre-dispatch originals),
+        emits the completion event, and — when the task opted in
+        (``auto_handover_tfactory``) — hands off to TFactory. ``is_completed`` is
+        True: a Job that exited 0 with a pushed branch IS a finished autonomous
+        build (RFC-0008). The board still surfaces it for human review via the
+        durable ``done`` overlay; the PR endgame stays off unless enabled.
+        """
+        from ..routes.projects import resolve_project_path
+        from .completion_orchestration import run_terminal_completion
+
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return
+        project_path = resolve_project_path(project_id)
+        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        try:
+            backend_path: Path | None = self.backend_path
+        except Exception:  # noqa: BLE001
+            backend_path = None
+        await run_terminal_completion(
+            spec_dir=spec_dir,
+            project_path=project_path,
+            spec_id=spec_id,
+            task_id=job_id,
+            backend_path=backend_path,
+            is_terminal=True,
+            is_completed=True,
+            terminal_status="completed",
+            logger=_log,
+        )
 
     async def _dispatch_build_job(
         self,

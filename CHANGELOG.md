@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.36 - 2026-07-16
+
+### Fixed
+
+- **A finished kubejob build now reports to CFactory and hands off to TFactory (#852).** After #857 a green k8s-Job build reaches `done`, but the reaper only WRITES the job-state row — it did none of what the in-pod path does on completion. So a successful packed build (the default path) leaked its pooled Claude credential, never drained the build queue, emitted no completion event (CFactory blind), and never fired the TFactory handoff (the independent verifier had never run on an autonomous build). The completion half is Factory#253's "output propagation": the Job writes its plan/usage/task_logs into an ephemeral `/work` emptyDir and pushes them to object storage (#853), while the control plane reads its own pre-dispatch copies. Fix: an `on_done` callback injected into `KubeJobBuildBackend`, fired once from `_done`, that releases the credential, drains the queue, and runs the SAME `run_terminal_completion` the in-pod path uses — fetching the pushed artifacts and emitting the event + handoff, so the two backends finish identically (RFC-0016 parity). The board still surfaces the build for human review via the durable `done` overlay; the PR endgame stays off unless enabled; the handoff only fires when the task opted in (`auto_handover_tfactory`).
+
+
 ## 3.6.35 - 2026-07-15
 
 ### Fixed
