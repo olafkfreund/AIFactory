@@ -199,10 +199,43 @@ class FileLock:
         self._release_lock()
         return False
 
+    async def _acquire_lock_async(self) -> None:
+        """Acquire by polling the non-blocking lock IN the event loop (#885).
+
+        The sync ``_acquire_lock`` spins on ``time.sleep`` — fine for a sync
+        caller, but run via ``run_in_executor`` it holds a worker thread for the
+        entire wait. Under contention (more coroutines than the executor has
+        threads — e.g. a low-CPU CI runner), the spinning acquires exhaust the
+        pool and the lock-holder's ``__aexit__`` release can never get a thread
+        to run, so nobody ever releases and every waiter times out — a deadlock.
+
+        Instead poll here: each attempt is one instant non-blocking ``flock``
+        (a fast syscall, fine to run inline), and the wait between attempts is an
+        ``await asyncio.sleep`` that yields the loop and holds NO thread, so the
+        holder always gets to release.
+        """
+        self._lock_file = self._get_lock_file()
+        self._lock_file.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(str(self._lock_file), os.O_CREAT | os.O_RDWR)
+
+        start_time = time.time()
+        while True:
+            try:
+                _try_lock(self._fd, self.exclusive)  # non-blocking; instant
+                return
+            except (BlockingIOError, OSError):
+                if time.time() - start_time >= self.timeout:
+                    os.close(self._fd)
+                    self._fd = None
+                    raise FileLockTimeout(
+                        f"Failed to acquire lock on {self.filepath} within "
+                        f"{self.timeout}s"
+                    ) from None
+                await asyncio.sleep(0.01)
+
     async def __aenter__(self):
         """Async context manager entry."""
-        # Run blocking lock acquisition in thread pool
-        await asyncio.get_running_loop().run_in_executor(None, self._acquire_lock)
+        await self._acquire_lock_async()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

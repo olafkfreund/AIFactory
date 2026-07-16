@@ -149,17 +149,20 @@ async def test_concurrent_updates_without_lock():
         )
 
 
-@pytest.mark.skip(
-    reason="Flaky/deadlocks under CI concurrency (#854/#819): the blocking "
-    "time.sleep inside the async lock freezes the single event loop, so the 10 "
-    "gathered coroutines cannot make progress and the acquire times out even at "
-    "30s. The test's design is the likely culprit, but a real file_lock "
-    "concurrency issue under load isn't ruled out — tracked in #885."
-)
 @pytest.mark.asyncio
 async def test_concurrent_updates_with_lock():
-    """Demonstrate data integrity WITH file locking."""
+    """Concurrent locked updates keep integrity AND don't deadlock (#885).
+
+    Uses more contending coroutines (40) than the default ThreadPoolExecutor's
+    hard cap (min(32, cpu+4) <= 32) on purpose: the old spin-in-executor acquire
+    held a worker thread for its whole wait, so with more waiters than threads
+    the pool starved and the lock-holder could never get a thread to release —
+    a deadlock that only showed on low-CPU CI. Exceeding the 32 cap makes it a
+    deterministic regression guard on any machine.
+    """
     print("\n=== Test 6: Concurrent Updates WITH Locking (SAFE) ===")
+
+    n = 40  # > the 32 executor cap, so a reverted #885 fix would deadlock here
 
     with tempfile.TemporaryDirectory() as tmpdir:
         test_file = Path(tmpdir) / "safe.json"
@@ -178,14 +181,14 @@ async def test_concurrent_updates_with_lock():
 
             await locked_json_update(test_file, increment, timeout=5.0)
 
-        # Run 10 concurrent increments
-        await asyncio.gather(*[safe_increment() for _ in range(10)])
+        # Run n concurrent increments
+        await asyncio.gather(*[safe_increment() for _ in range(n)])
 
         # Check final count
         final = await locked_json_read(test_file, timeout=5.0)
 
-        assert final["count"] == 10
-        print("✓ Expected count: 10")
+        assert final["count"] == n
+        print(f"✓ Expected count: {n}")
         print(f"✓ Actual count: {final['count']} (CORRECT with file locking)")
         print("✓ No data corruption - all updates applied successfully")
 
