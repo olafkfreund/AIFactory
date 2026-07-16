@@ -621,6 +621,36 @@ async def test_succeeded_job_is_marked_done_not_reaped(tmp_path: Path) -> None:
     )
 
 
+async def test_done_build_fires_on_done_hook_once(tmp_path: Path) -> None:
+    """#852: reaching ``done`` invokes the injected completion hook (once).
+
+    The reaper's ``_done`` only writes the row. The AgentService layer injects
+    ``on_done`` to release the pooled credential, drain the queue, and emit the
+    completion event + TFactory handoff — without it a green packed build leaks
+    its credential, stalls the queue, and never reports to CFactory/TFactory.
+    Fires exactly once: ``mark_terminal`` moves the row out of ``running`` so the
+    reaper never revisits it.
+    """
+    store = await _make_store(tmp_path / "hook.db")
+    await store.admit("p:hook", _spawn_args("hook"), cap=2)
+    await store.set_worker_ref(
+        "p:hook", {"kind": "k8s-job", "namespace": "factory", "job_name": "winner"}
+    )
+    fired: list[str] = []
+
+    async def _on_done(job_id: str) -> None:
+        fired.append(job_id)
+
+    backend = bb.KubeJobBuildBackend(store, on_done=_on_done)
+    fake = _FakeBatch(existing={"winner"}, statuses={"winner": (1, 0)})
+    await backend.reap_vanished_jobs(batch=fake)
+
+    assert fired == ["p:hook"], (
+        "a build reaching done must fire on_done exactly once so the credential "
+        f"is released, the queue drained, and completion emitted. Got: {fired}"
+    )
+
+
 async def test_failed_job_is_marked_failed_from_its_own_status(tmp_path: Path) -> None:
     """#857: a Job that reports failed is failed now, not after the TTL.
 
