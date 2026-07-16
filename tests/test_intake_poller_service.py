@@ -192,3 +192,21 @@ def test_route_hard_refuses_loudly_and_actionably(monkeypatch):
     assert "manually" in msg and "hard" in msg, (
         f"refusal must tell a maintainer what to do; got: {exc.value}"
     )
+
+
+# --- #847: the API token never falls back to a GitHub PAT (guaranteed 401) ---
+
+
+def test_api_token_ignores_github_pat(monkeypatch):
+    """_post_json calls our OWN API; a GH PAT can only 401 there, so GH_TOKEN
+    must not be used as a fallback (#847)."""
+    monkeypatch.delenv("AIFACTORY_TOKEN", raising=False)
+    monkeypatch.delenv("APP_API_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "ghp_should_be_ignored")
+    assert ip._api_token() is None, "GH_TOKEN must not authenticate the AIFactory API"
+
+    monkeypatch.setenv("APP_API_TOKEN", "app-tok")
+    assert ip._api_token() == "app-tok", "falls back to the API's own token"
+
+    monkeypatch.setenv("AIFACTORY_TOKEN", "aif-tok")
+    assert ip._api_token() == "aif-tok", "explicit AIFACTORY_TOKEN wins"
