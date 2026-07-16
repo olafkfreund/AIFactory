@@ -96,6 +96,17 @@ class TestTokenBucket:
         wait = bucket.time_until_available(10)
         assert 0.9 <= wait <= 1.1  # Should be ~1s for 10 tokens at 10/s
 
+    @pytest.mark.asyncio
+    async def test_zero_refill_rate_never_refills_without_crashing(self) -> None:
+        """#882: refill_rate=0.0 (a hard cap that never refills) must not divide
+        by zero — the tokens are simply never available again."""
+        bucket = TokenBucket(capacity=1, refill_rate=0.0)
+        assert bucket.try_acquire(1) is True  # the one token
+        assert bucket.try_acquire(1) is False  # empty, no refill
+        assert bucket.time_until_available(1) == float("inf")
+        # acquire must give up at the timeout, not raise ZeroDivisionError.
+        assert await bucket.acquire(1, timeout=0.05) is False
+
 
 class TestCostTracker:
     """Test AI cost tracking."""
@@ -214,10 +225,7 @@ class TestRateLimiter:
         """GitHub rate limiting works."""
         limiter = RateLimiter.get_instance(
             github_limit=2,
-            # Effectively no refill within the test window. A literal 0.0 hits a
-            # ZeroDivisionError in TokenBucket (see rate_limiter.py:139/158); a
-            # tiny positive rate exercises the same "bucket exhausted" behaviour.
-            github_refill_rate=0.001,
+            github_refill_rate=0.0,  # hard cap, never refills within the test (#882)
         )
         assert await limiter.acquire_github() is True
         assert await limiter.acquire_github() is True
@@ -308,11 +316,10 @@ class TestRateLimitedDecorator:
         with max_retries=0, does not retry.
 
         The original version drove this via an exhausted token bucket, but the
-        decorator's rate-limited branch calls acquire_github(timeout=30.0)
-        (hardcoded, rate_limiter.py:531), so exercising the empty-bucket path
-        would block the suite for ~30s (and github_refill_rate=0.0 additionally
-        trips a ZeroDivisionError). The 403/429 -> RateLimitExceeded conversion
-        is the same rate-limit handling and is fast + deterministic.
+        decorator acquires with a 30s timeout on the first attempt, so exercising
+        the empty-bucket path would block the suite for ~30s. The 403/429 ->
+        RateLimitExceeded conversion is the same rate-limit handling and is fast
+        + deterministic.
         """
         RateLimiter.get_instance(github_limit=100)
 
@@ -384,9 +391,7 @@ class TestCheckRateLimit:
         """Check fails when rate limited."""
         limiter = RateLimiter.get_instance(
             github_limit=0,  # No tokens
-            # Tiny positive rate instead of 0.0 to avoid the ZeroDivisionError
-            # in TokenBucket.time_until_available (rate_limiter.py:158).
-            github_refill_rate=0.001,
+            github_refill_rate=0.0,  # hard cap, never refills (#882)
         )
         with pytest.raises(RateLimitExceeded):
             await check_rate_limit(operation_type="github")
@@ -445,16 +450,11 @@ class TestIntegration:
             operation_name="PR review",
         )
 
-        # Check stats
+        # Check stats. Each decorated call consumes exactly one token and records
+        # one request (#883): two calls -> 2 requests, 2 tokens drawn from 10.
         stats = limiter.statistics()
-        # NOTE: on the success path the @rate_limited decorator only performs a
-        # pre-flight check_github_available() and never calls acquire_github(),
-        # so github_requests is NOT incremented for decorated happy-path calls.
-        # (This is a real gap in the decorator - it checks availability but
-        # never consumes a token - tracked as a source bug.) The workflow and
-        # cost tracking still function, which is what this test now asserts.
-        assert stats["github"]["total_requests"] == 0
-        assert stats["github"]["available_tokens"] == 10  # nothing consumed
+        assert stats["github"]["total_requests"] == 2
+        assert stats["github"]["available_tokens"] == 8
         assert stats["cost"]["total_cost"] > 0
 
     @pytest.mark.asyncio
