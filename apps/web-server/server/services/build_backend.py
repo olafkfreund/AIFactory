@@ -907,8 +907,14 @@ class KubeJobBuildBackend:
     reconcile-by-poll → reap) is pure-ish and unit-tested.
     """
 
-    def __init__(self, store: Any) -> None:
+    def __init__(self, store: Any, on_done: Any = None) -> None:
         self._store = store
+        # #852: fired once when a build reaches ``done`` (from ``_done``). The
+        # reaper only writes the job-state row; the AgentService layer injects
+        # this to release the build's pooled credential, drain the queue, and
+        # emit the completion event + TFactory handoff — none of which the row
+        # write does. Async ``(job_id) -> None``; None in tests / when unused.
+        self._on_done = on_done
 
     # -- cluster I/O (thin, injectable for tests) ---------------------------
 
@@ -1180,6 +1186,17 @@ class KubeJobBuildBackend:
             )
         except Exception:  # noqa: BLE001 - reconcile must never crash the loop
             _log.exception("[build_backend] could not mark %s done", job_id)
+            return
+        # #852: fires once (the row leaves ``running`` above, so the reaper never
+        # revisits it). Guarded — a completion-emit failure must not crash the
+        # reconcile loop or re-strand the (already ``done``) build.
+        if self._on_done is not None:
+            try:
+                await self._on_done(job_id)
+            except Exception:  # noqa: BLE001
+                _log.exception(
+                    "[build_backend] on_done hook raised for %s (ignored)", job_id
+                )
 
     async def _fail(self, job_id: str, reason: str) -> None:
         """Mark a stranded build failed (idempotent via the store)."""
