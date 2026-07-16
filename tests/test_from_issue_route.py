@@ -184,3 +184,40 @@ async def test_write_spec_creates_spec_md(project):
     content = spec_md.read_text()
     assert "Add Min/Max printer" in content
     assert "support Min and Max in pycode" in content
+
+
+async def test_intake_opts_into_tfactory_handoff_by_default(project, monkeypatch):
+    """An intake build opts into TFactory auto-handoff so the finished build is
+    independently verified (the handoff itself no-ops unless TFACTORY_BASE_URL is
+    set, so this is safe when TFactory is absent)."""
+    tmp_path, _ = project
+    monkeypatch.delenv("AIFACTORY_INTAKE_AUTO_HANDOFF", raising=False)
+    req = FromIssueRequest(
+        project_id="p",
+        payload={
+            "number": 30,
+            "title": "x",
+            "body": "y",
+            "labels": [{"name": "factory:low"}],
+        },
+    )
+    res = await create_from_issue(req)
+    meta = _task_metadata(tmp_path, res["spec_id"])
+    assert meta.get("auto_handover_tfactory") is True
+
+
+async def test_intake_handoff_can_be_disabled(project, monkeypatch):
+    tmp_path, _ = project
+    monkeypatch.setenv("AIFACTORY_INTAKE_AUTO_HANDOFF", "off")
+    req = FromIssueRequest(
+        project_id="p",
+        payload={
+            "number": 31,
+            "title": "x",
+            "body": "y",
+            "labels": [{"name": "factory:low"}],
+        },
+    )
+    res = await create_from_issue(req)
+    meta = _task_metadata(tmp_path, res["spec_id"])
+    assert not meta.get("auto_handover_tfactory")
