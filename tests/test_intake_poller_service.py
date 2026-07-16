@@ -129,3 +129,84 @@ async def test_hung_poll_is_abandoned_not_wedged(monkeypatch, caplog):
         "a hung poll must log the timeout warning"
     )
     assert calls["n"] >= 2, "the loop must keep ticking after abandoning a hung poll"
+
+
+# --- #861: intake creates its own missing factory:* label, then applies it ---
+
+
+def test_apply_label_creates_missing_label_then_retries(monkeypatch):
+    """A repo not yet seeded with factory:queued must not leave routed issues
+    stuck at factory:low — the label is created on demand and re-applied."""
+    events = []
+
+    class FakeProvider:
+        def __init__(self):
+            self.applies = 0
+
+        async def apply_labels(self, number, labels):
+            self.applies += 1
+            if self.applies == 1:  # gh: label doesn't exist yet
+                raise RuntimeError("'factory:queued' not found")
+            events.append(("apply", number, tuple(labels)))
+
+        async def create_label(self, label):
+            events.append(("create", label.name, label.color))
+
+    monkeypatch.setattr(ip, "_provider_for", lambda cfg: FakeProvider())
+    ip._apply_label(object(), 42, "factory:queued")
+
+    assert ("create", "factory:queued", "0e8a16") in events, (
+        "missing label must be created"
+    )
+    assert ("apply", 42, ("factory:queued",)) in events, "then applied on retry"
+
+
+def test_apply_label_does_not_create_when_present(monkeypatch):
+    """The common path (label already exists) applies once, never creates."""
+    events = []
+
+    class FakeProvider:
+        async def apply_labels(self, number, labels):
+            events.append("apply")
+
+        async def create_label(self, label):
+            events.append("create")
+
+    monkeypatch.setattr(ip, "_provider_for", lambda cfg: FakeProvider())
+    ip._apply_label(object(), 1, "factory:queued")
+
+    assert events == ["apply"], "no label creation when the apply succeeds"
+
+
+# --- #843: hard tier is not auto-routed yet -> loud, actionable refusal ---
+
+
+def test_route_hard_refuses_loudly_and_actionably(monkeypatch):
+    """Until a PFactory ingest endpoint exists, a hard-tier issue must refuse
+    with a maintainer-actionable message (which becomes the issue comment), not
+    a silent mis-POST or an internal env-var error."""
+    monkeypatch.delenv("PFACTORY_INGEST_URL", raising=False)
+    with pytest.raises(ip.TerminalIntakeError) as exc:
+        ip._route_hard(object(), object(), object())
+    msg = str(exc.value).lower()
+    assert "manually" in msg and "hard" in msg, (
+        f"refusal must tell a maintainer what to do; got: {exc.value}"
+    )
+
+
+# --- #847: the API token never falls back to a GitHub PAT (guaranteed 401) ---
+
+
+def test_api_token_ignores_github_pat(monkeypatch):
+    """_post_json calls our OWN API; a GH PAT can only 401 there, so GH_TOKEN
+    must not be used as a fallback (#847)."""
+    monkeypatch.delenv("AIFACTORY_TOKEN", raising=False)
+    monkeypatch.delenv("APP_API_TOKEN", raising=False)
+    monkeypatch.setenv("GH_TOKEN", "ghp_should_be_ignored")
+    assert ip._api_token() is None, "GH_TOKEN must not authenticate the AIFactory API"
+
+    monkeypatch.setenv("APP_API_TOKEN", "app-tok")
+    assert ip._api_token() == "app-tok", "falls back to the API's own token"
+
+    monkeypatch.setenv("AIFACTORY_TOKEN", "aif-tok")
+    assert ip._api_token() == "aif-tok", "explicit AIFACTORY_TOKEN wins"

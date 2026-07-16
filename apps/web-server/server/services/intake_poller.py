@@ -143,10 +143,32 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
     return _run_async(_go())
 
 
+# Colors for the factory:* labels the intake system owns and applies. Used only
+# when a label is missing and has to be created on demand (#861).
+_FACTORY_LABEL_COLORS = {"factory:queued": "0e8a16", "factory:failed": "b60205"}
+
+
 def _apply_label(cfg: RepoConfig, number: int, label: str) -> None:
     async def _go():
         provider = _provider_for(cfg)
-        await provider.apply_labels(number, [label])
+        try:
+            await provider.apply_labels(number, [label])
+        except Exception:  # noqa: BLE001
+            # #861: gh fails the whole apply if the label doesn't exist in the
+            # repo yet, so an intake target that was never seeded with
+            # ``factory:queued`` left every routed issue stuck at ``factory:low``
+            # (and #870 harder to spot). The intake system OWNS its own
+            # ``factory:*`` labels on repos it was explicitly pointed at, so
+            # create the missing one (idempotent --force) and retry once. If the
+            # create ALSO fails (e.g. no label permission) the caller's ``_safe``
+            # wrapper degrades it to a best-effort no-op — routing already
+            # succeeded and must not be undone by cosmetic bookkeeping.
+            from runners.github.providers.protocol import LabelData  # noqa: PLC0415
+
+            await provider.create_label(
+                LabelData(name=label, color=_FACTORY_LABEL_COLORS.get(label, "ededed"))
+            )
+            await provider.apply_labels(number, [label])
 
     _run_async(_go())
 
@@ -159,12 +181,23 @@ def _comment(cfg: RepoConfig, number: int, body: str) -> None:
     _run_async(_go())
 
 
+def _api_token() -> str | None:
+    """Bearer for the AIFactory API that ``_post_json`` calls.
+
+    #847: this used to fall back to ``GH_TOKEN`` — but ``_post_json`` calls our
+    OWN API (``/api/tasks/from-issue``), and a GitHub PAT is never a valid
+    credential for it, so that branch could only ever produce a 401 (exactly the
+    one #844 hit). Fall back to the API's own token instead.
+    """
+    return os.environ.get("AIFACTORY_TOKEN") or os.environ.get("APP_API_TOKEN")
+
+
 def _post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
     """POST JSON; raise TerminalIntakeError on 4xx, generic on transport/5xx."""
     import urllib.error
     import urllib.request
 
-    token = os.environ.get("AIFACTORY_TOKEN") or os.environ.get("GH_TOKEN")
+    token = _api_token()
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -201,9 +234,21 @@ def _route_low_medium(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
 
 
 def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
+    # RFC-0011 hard tier (full PFactory planning for complex issues) is NOT
+    # auto-routed by default (#843): no PFactory endpoint yet accepts this issue
+    # shape, so a hard-tier issue is deliberately deferred to a maintainer rather
+    # than silently mis-POSTed to a 422. Wiring it end-to-end — a PFactory ingest
+    # endpoint that turns {repo, issue_number, ...} into a plan session while
+    # preserving the RFC-0001 correlation key — is tracked separately; until
+    # PFACTORY_INGEST_URL points at such an endpoint this refuses LOUDLY with an
+    # actionable message (which becomes the issue comment via the terminal path).
     url = (os.environ.get("PFACTORY_INGEST_URL") or "").rstrip("/")
     if not url:
-        raise TerminalIntakeError("PFACTORY_INGEST_URL unset; cannot route hard")
+        raise TerminalIntakeError(
+            "this issue is tagged for the hard (full-planning) tier, which is not "
+            "auto-routed yet — a maintainer should run PFactory planning for it "
+            "manually. Low/medium-tier issues are built automatically."
+        )
     _post_json(
         url,
         {
