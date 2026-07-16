@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.43 - 2026-07-16
+
+### Added
+
+- **Intake builds now auto-hand off to TFactory for independent verification.** The AIFactory -> TFactory handoff (`maybe_auto_handoff_tfactory`, #852) has been wired into the completion path since #852, but gated on `auto_handover_tfactory` in task_metadata — which only the `/execution` API set. The intake (from-issue) path never set it, so the independent verifier — the fleet's core differentiator — had never run on an autonomous intake build. `from_issue` now sets `auto_handover_tfactory=true` on the created task (default on; opt out per deployment with `AIFACTORY_INTAKE_AUTO_HANDOFF` in {0,false,no,off}). Safe when TFactory is absent: the handoff is a no-op unless `TFACTORY_BASE_URL` is configured. On the live cluster `TFACTORY_BASE_URL` + `APP_API_TOKEN` are already set, so a completed intake build now triggers TFactory verification.
+
+
 ## 3.6.42 - 2026-07-16
 
 ### Fixed
