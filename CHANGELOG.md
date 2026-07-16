@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.42 - 2026-07-16
+
+### Fixed
+
+- **Coder commit hygiene: no more `chore(agent): safety-net` commits from bookkeeping churn.** The safety-net (`commit_uncommitted_changes`) did `git add -A`, which staged `.aifactory-status` (ccstatusline) and `.aifactory-security.json`; those churn every subtask and, once tracked, every later safety-net re-committed them — leaving a safety-net commit as the branch tip. It now excludes that bookkeeping and makes no commit when only bookkeeping changed, so a build's branch tip is the coder's real `aifactory: N.N - ...` commit. Also nudged the coder prompt (STEP 13) to stop writing standalone `FINAL REPORT` summary files — the commits + plan + build-progress are the record.
+
+
 ## 3.6.41 - 2026-07-16
 
 ### Fixed
