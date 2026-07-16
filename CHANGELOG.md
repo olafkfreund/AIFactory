@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.38 - 2026-07-16
+
+### Fixed
+
+- **Intake poller could look dead and (theoretically) wedge (#868).** `poller_loop` only logged `intake poll:` when it routed or failed something, so a healthy poller whose issues were all already-queued logged nothing and was indistinguishable from a hung one — which is exactly how it looked while verifying #851. Added an idle heartbeat (INFO, ~every 5 min) so liveness is visible, and a per-poll `asyncio.wait_for` timeout so a hung provider/network call (`_fetch_issues` has no hard timeout of its own) is abandoned for that tick and the loop keeps ticking instead of wedging. Separately filed #870: an issue claimed then never routed (pod killed mid-route) is stranded with no retry.
+
+
 ## 3.6.37 - 2026-07-16
 
 ### Added
