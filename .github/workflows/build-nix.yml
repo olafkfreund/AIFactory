@@ -6,15 +6,22 @@ name: Publish -nix build image
 # run.py build Jobs, so they source nix from the image instead of co-mounting
 # the node-pinned ``aifactory-nix-store`` warm-store PVC (which re-pins the Job).
 #
-# Deliberately NOT part of deploy.yml: the build image is a hand-pinned,
-# validated substrate (build_backend._resolve_build_image precedence puts
-# AIFACTORY_BUILD_IMAGE above the Deployment's own image, and gitops pins it by
-# SHA on purpose — see manifests.yaml). Baking the multi-GB store onto every
-# main deploy would tax CD for an image most pushes don't change. Instead this
-# runs on demand (workflow_dispatch) and when the Dockerfile changes on main.
+# Kept separate from deploy.yml (which ships the lean ``runtime`` image on every
+# main push): baking the multi-GB nix store onto every deploy would tax CD for an
+# image most pushes don't change. But the ``-nix`` image bakes the WHOLE repo
+# (Dockerfile ``runtime`` stage: ``COPY . …``), so it carries the code the build
+# Job executes — ``apps/backend/**`` (run.py, cli, core). #856: firing only on
+# ``Dockerfile`` meant a pure-Python fix to the Job path never produced a new
+# image, so build Jobs ran 18-day-old code while the fix looked shipped. So this
+# now ALSO fires on ``apps/backend/**`` (the Job's own code, self-contained there
+# — control-plane-only ``apps/web-server/**`` changes deliberately do NOT rebuild
+# this heavy image, as the Job never runs them). The gha cache
+# (scope=aifactory-nix) keeps the incremental rebuild to the code layers.
 #
-# The published ``:sha-<short>-nix`` tag is what you point AIFACTORY_BUILD_IMAGE
-# at in factory-gitops (paired with AIFACTORY_PACKED_NIX_IN_IMAGE=true).
+# After publishing, this AUTO-PINS ``AIFACTORY_BUILD_IMAGE`` in factory-gitops to
+# the new ``:sha-<short>-nix`` tag (#856 half 2) — the pin was manual and drifted
+# 18 days. deploy.yml pushes to the same gitops repo on the same main commit, so
+# the pin push retries on conflict. Pair stays ``AIFACTORY_PACKED_NIX_IN_IMAGE=true``.
 
 on:
   workflow_dispatch: {}
@@ -22,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'Dockerfile'
+      - 'apps/backend/**'
       - '.github/workflows/build-nix.yml'
 
 concurrency:
@@ -34,6 +42,8 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/aifactory
+  GITOPS_REPO: olafkfreund/factory-gitops
+  GITOPS_PATH: apps/aifactory/manifests
 
 jobs:
   build-nix:
@@ -74,12 +84,63 @@ jobs:
           cache-from: type=gha,scope=aifactory-nix
           cache-to: type=gha,mode=max,scope=aifactory-nix
 
+      # #856 half 2 — auto-pin AIFACTORY_BUILD_IMAGE so the freshly built image is
+      # actually what build Jobs run. Without this the pin was manual and drifted
+      # 18 days: images were published but never consumed.
+      - name: Checkout factory-gitops
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_PAT }}
+          path: gitops
+
+      - name: Pin AIFACTORY_BUILD_IMAGE to the new -nix tag
+        working-directory: gitops/${{ env.GITOPS_PATH }}
+        env:
+          TAG: ${{ steps.tags.outputs.sha }}-nix
+        run: |
+          # Replace only the tag portion of the pinned build-image env value; the
+          # value format is a fixed inline-map line in manifests.yaml.
+          sed -i -E \
+            's|(AIFACTORY_BUILD_IMAGE, value: "ghcr\.io/olafkfreund/aifactory:)sha-[0-9a-f]+-nix(")|\1'"${TAG}"'\2|' \
+            manifests.yaml
+          echo "Pinned AIFACTORY_BUILD_IMAGE -> :${TAG}"
+          grep -n 'AIFACTORY_BUILD_IMAGE' manifests.yaml
+
+      - name: Commit + push the pin (retry on conflict with deploy.yml)
+        working-directory: gitops
+        env:
+          TAG: ${{ steps.tags.outputs.sha }}-nix
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "AIFACTORY_BUILD_IMAGE already at ${TAG}; nothing to commit."
+            exit 0
+          fi
+          git add ${{ env.GITOPS_PATH }}/manifests.yaml
+          git commit -m "cd(aifactory): pin AIFACTORY_BUILD_IMAGE ${TAG} [skip ci]
+
+          From olafkfreund/AIFactory@${{ github.sha }} (build-nix, #856)"
+          # deploy.yml pushes to this repo on the same main commit — rebase+retry
+          # so whichever lands second doesn't fail on non-fast-forward.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "pushed on attempt ${attempt}"; exit 0
+            fi
+            echo "push rejected (attempt ${attempt}); rebasing…"
+            git pull --rebase --autostash origin main || true
+            sleep $(( (RANDOM % 5) + attempt ))
+          done
+          echo "::error::could not push the build-image pin after 5 attempts"
+          exit 1
+
       - name: Summary
         run: |
           {
-            echo "### Published \`${{ steps.tags.outputs.sha }}-nix\`"
+            echo "### Published + pinned \`${{ steps.tags.outputs.sha }}-nix\`"
             echo "Image: \`${{ env.IMAGE }}:${{ steps.tags.outputs.sha }}-nix\`"
             echo ""
-            echo "Point \`AIFACTORY_BUILD_IMAGE\` at this tag in factory-gitops and set"
-            echo "\`AIFACTORY_PACKED_NIX_IN_IMAGE=true\` to depin packed build Jobs."
+            echo "\`AIFACTORY_BUILD_IMAGE\` auto-pinned in factory-gitops → ArgoCD will"
+            echo "roll it to build Jobs (paired with \`AIFACTORY_PACKED_NIX_IN_IMAGE=true\`)."
           } >> "$GITHUB_STEP_SUMMARY"
