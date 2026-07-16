@@ -1,0 +1,32 @@
+# Example .envrc for local development (direnv). Copy to `.envrc` — which is
+# gitignored — and adjust. This template exists so the real `.envrc` never needs
+# to hold secrets in the repo working tree (#831).
+#
+# Two rules this layout enforces:
+#
+#   1. NO ANTHROPIC_API_KEY here. This repo runs Claude via subscription OAuth
+#      (~/.claude/.credentials.json), never a metered API key. Setting one makes
+#      every agent/SDK/CLI run silently bill the API — the exact failure the rule
+#      exists to prevent. The `.envrc` actively `unset`s it.
+#
+#   2. Third-party API keys live in a file OUTSIDE the repo, so a stray
+#      `git add -f` or a tooling change can't promote live secrets into this
+#      public repo. `.envrc` sources that file; the keys never touch the tree.
+
+use nix
+
+# Keep real keys here (0600), outside the repo. Override the path with
+# AIFACTORY_SECRETS_ENV if you use e.g. an agenix-decrypted location.
+#   $ mkdir -p ~/.config/aifactory && touch ~/.config/aifactory/secrets.env
+#   $ chmod 600 ~/.config/aifactory/secrets.env
+# then put your `export OPENAI_API_KEY=...` etc. lines in it (NOT ANTHROPIC).
+_aif_secrets="${AIFACTORY_SECRETS_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/aifactory/secrets.env}"
+if [ -f "$_aif_secrets" ]; then
+  # shellcheck disable=SC1090
+  source "$_aif_secrets"
+fi
+unset _aif_secrets
+
+# Belt-and-braces: drop any ANTHROPIC_API_KEY inherited from a parent shell so
+# the SDK/CLI falls back to OAuth without needing `env -u ANTHROPIC_API_KEY`.
+unset ANTHROPIC_API_KEY
