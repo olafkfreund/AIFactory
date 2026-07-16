@@ -181,12 +181,23 @@ def _comment(cfg: RepoConfig, number: int, body: str) -> None:
     _run_async(_go())
 
 
+def _api_token() -> str | None:
+    """Bearer for the AIFactory API that ``_post_json`` calls.
+
+    #847: this used to fall back to ``GH_TOKEN`` — but ``_post_json`` calls our
+    OWN API (``/api/tasks/from-issue``), and a GitHub PAT is never a valid
+    credential for it, so that branch could only ever produce a 401 (exactly the
+    one #844 hit). Fall back to the API's own token instead.
+    """
+    return os.environ.get("AIFACTORY_TOKEN") or os.environ.get("APP_API_TOKEN")
+
+
 def _post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
     """POST JSON; raise TerminalIntakeError on 4xx, generic on transport/5xx."""
     import urllib.error
     import urllib.request
 
-    token = os.environ.get("AIFACTORY_TOKEN") or os.environ.get("GH_TOKEN")
+    token = _api_token()
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
