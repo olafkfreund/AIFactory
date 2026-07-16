@@ -94,6 +94,9 @@ class PollerDeps:
     route_hard: Callable[[RepoConfig, IntakeIssue, Tier], None]
     mark_processed: Callable[..., bool]
     unmark_processed: Callable[[str, int], None] = field(default=lambda repo, n: None)
+    # #870: confirm a claim once the issue is actually routed, so a crash between
+    # claiming and routing leaves an UNCONFIRMED claim the next tick can reclaim.
+    confirm_processed: Callable[[str, int], None] = field(default=lambda *_: None)
 
 
 def _has_tier_label(labels: Sequence[str]) -> bool:
@@ -162,7 +165,11 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
         _safe(deps.unmark_processed, cfg.repo, issue.number)
         return "transient"
 
-    # Success: apply factory:queued (guard-2 marker for all future ticks).
+    # Success: confirm the claim FIRST (#870) — the route completed, so this
+    # issue must never be reclaimed/re-routed even if the label write below (or
+    # the pod) fails a moment later. Then apply factory:queued (guard-2 marker
+    # for all future ticks).
+    _safe(deps.confirm_processed, cfg.repo, issue.number)
     _safe(deps.apply_label, cfg, issue.number, QUEUED_LABEL)
     logger.info(
         "intake routed %s#%s as %s -> %s", cfg.repo, issue.number, tier.value, routed_to
@@ -170,7 +177,7 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
     return "routed"
 
 
-def poll_once(repos: Sequence[RepoConfig], deps: PollerDeps) -> dict:
+def poll_once(repos: Sequence[RepoConfig], deps: PollerDeps) -> dict[str, int]:
     """Run one polling pass over all repos. Returns outcome counts. Never raises."""
     counts: dict[str, int] = {
         "routed": 0,
@@ -199,7 +206,7 @@ def poll_once(repos: Sequence[RepoConfig], deps: PollerDeps) -> dict:
     return counts
 
 
-def _safe(fn: Callable, *args) -> None:
+def _safe(fn: Callable[..., object], *args: object) -> None:
     """Call a best-effort side effect, swallowing errors (labels/comments)."""
     try:
         fn(*args)
