@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.44 - 2026-07-17
+
+### Fixed
+
+- **Intake -> TFactory handoff now conveys the built branch, so verification examines the actual build (#893).** `build_ingest_payload` derived `source_branch`/`git_url` solely from the local build worktree; for a packed KubeJob build (RFC-0017) the worktree on the control plane is not a git-valid checkout, so `_git_info_and_push` returned nothing, `source_branch` was omitted, and TFactory verified against BASE — seeing no diff/no built symbol and failing with `planner_replan_budget_exhausted`. Now, when the worktree can't provide them, `source_branch` falls back to the fixed build-branch convention `aifactory/<spec_id>` (already pushed to origin by the build) and `git_url` resolves from the project's shared base-repo origin. `source_branch` — the load-bearing field — is now always set.
+
+
 ## 3.6.43 - 2026-07-16
 
 ### Added
