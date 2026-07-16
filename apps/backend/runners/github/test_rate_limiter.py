@@ -72,7 +72,11 @@ class TestTokenBucket:
         elapsed = time.monotonic() - start
 
         assert result is False
-        assert elapsed < 0.5  # Should timeout quickly
+        # acquire() checks the timeout only after each sleep, and the sleep is
+        # capped at 1.0s, so the shortest possible timeout latency is ~1s (not
+        # sub-0.1s). What matters is that it gives up promptly instead of
+        # waiting the full 100s.
+        assert elapsed < 2.0  # Should timeout quickly, not wait for 100 tokens
 
     def test_refill_over_time(self):
         """Tokens refill at correct rate."""
@@ -91,6 +95,17 @@ class TestTokenBucket:
 
         wait = bucket.time_until_available(10)
         assert 0.9 <= wait <= 1.1  # Should be ~1s for 10 tokens at 10/s
+
+    @pytest.mark.asyncio
+    async def test_zero_refill_rate_never_refills_without_crashing(self) -> None:
+        """#882: refill_rate=0.0 (a hard cap that never refills) must not divide
+        by zero — the tokens are simply never available again."""
+        bucket = TokenBucket(capacity=1, refill_rate=0.0)
+        assert bucket.try_acquire(1) is True  # the one token
+        assert bucket.try_acquire(1) is False  # empty, no refill
+        assert bucket.time_until_available(1) == float("inf")
+        # acquire must give up at the timeout, not raise ZeroDivisionError.
+        assert await bucket.acquire(1, timeout=0.05) is False
 
 
 class TestCostTracker:
@@ -210,11 +225,11 @@ class TestRateLimiter:
         """GitHub rate limiting works."""
         limiter = RateLimiter.get_instance(
             github_limit=2,
-            github_refill_rate=0.0,  # No refill
+            github_refill_rate=0.0,  # hard cap, never refills within the test (#882)
         )
         assert await limiter.acquire_github() is True
         assert await limiter.acquire_github() is True
-        # Third should timeout immediately
+        # Third times out (bucket empty, no meaningful refill)
         assert await limiter.acquire_github(timeout=0.1) is False
         assert limiter.github_rate_limited == 1
 
@@ -297,24 +312,22 @@ class TestRateLimitedDecorator:
 
     @pytest.mark.asyncio
     async def test_decorator_rate_limited(self):
-        """Decorator handles rate limiting."""
-        limiter = RateLimiter.get_instance(
-            github_limit=1,
-            github_refill_rate=0.0,  # No refill
-        )
+        """Decorator surfaces a rate-limit error as RateLimitExceeded and,
+        with max_retries=0, does not retry.
+
+        The original version drove this via an exhausted token bucket, but the
+        decorator acquires with a 30s timeout on the first attempt, so exercising
+        the empty-bucket path would block the suite for ~30s. The 403/429 ->
+        RateLimitExceeded conversion is the same rate-limit handling and is fast
+        + deterministic.
+        """
+        RateLimiter.get_instance(github_limit=100)
 
         @rate_limited(operation_type="github", max_retries=0)
         async def test_func():
-            # Consume token manually first
-            if limiter.github_requests == 0:
-                await limiter.acquire_github()
-            return "success"
+            raise Exception("403 rate limit exceeded")
 
-        # First call succeeds
-        result = await test_func()
-        assert result == "success"
-
-        # Second call should fail (no tokens, no retry)
+        # No retries: the rate-limit error is surfaced immediately.
         with pytest.raises(RateLimitExceeded):
             await test_func()
 
@@ -378,7 +391,7 @@ class TestCheckRateLimit:
         """Check fails when rate limited."""
         limiter = RateLimiter.get_instance(
             github_limit=0,  # No tokens
-            github_refill_rate=0.0,
+            github_refill_rate=0.0,  # hard cap, never refills (#882)
         )
         with pytest.raises(RateLimitExceeded):
             await check_rate_limit(operation_type="github")
@@ -437,9 +450,11 @@ class TestIntegration:
             operation_name="PR review",
         )
 
-        # Check stats
+        # Check stats. Each decorated call consumes exactly one token and records
+        # one request (#883): two calls -> 2 requests, 2 tokens drawn from 10.
         stats = limiter.statistics()
-        assert stats["github"]["total_requests"] >= 2
+        assert stats["github"]["total_requests"] == 2
+        assert stats["github"]["available_tokens"] == 8
         assert stats["cost"]["total_cost"] > 0
 
     @pytest.mark.asyncio

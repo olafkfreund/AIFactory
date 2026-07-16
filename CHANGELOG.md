@@ -1,6 +1,18 @@
 ## [Unreleased]
 
 
+## 3.6.41 - 2026-07-16
+
+### Fixed
+
+- **FileLock async deadlock under contention (#885).** `FileLock.__aenter__` ran the spinning sync `_acquire_lock` via `run_in_executor`, holding a worker thread for its whole `time.sleep` wait. With more waiters than the thread pool has threads (~6 on a 2-CPU host), the spinning acquires starved the pool and the lock-holder's release could never get a thread — a real deadlock in a utility the GitHub runner uses. The async path now polls the non-blocking flock in the event loop with `await asyncio.sleep`, holding no thread during the wait.
+- **GitHub rate limiter (#882, #883).** `TokenBucket` no longer raises `ZeroDivisionError` on `refill_rate=0.0` (a valid "hard cap, never refills" config); and the `@rate_limited` decorator now consumes a token on every GitHub call instead of only when the bucket was already empty — so the 5000/hr cap is actually enforced and requests are recorded.
+
+### Changed
+
+- **CI now collects the 303 co-located tests under `apps/backend` (#854)**, which `testpaths = tests` had never run. Triaged the fallout (a stale mock, an obsolete test, a never-propagated rename, and the two rate-limiter + one file-lock bugs above). Added `.envrc.example` and removed live secrets / `ANTHROPIC_API_KEY` from the tracked `.envrc` (#831).
+
+
 ## 3.6.40 - 2026-07-16
 
 ### Fixed
