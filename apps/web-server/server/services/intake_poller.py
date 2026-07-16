@@ -223,9 +223,21 @@ def _route_low_medium(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
 
 
 def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
+    # RFC-0011 hard tier (full PFactory planning for complex issues) is NOT
+    # auto-routed by default (#843): no PFactory endpoint yet accepts this issue
+    # shape, so a hard-tier issue is deliberately deferred to a maintainer rather
+    # than silently mis-POSTed to a 422. Wiring it end-to-end — a PFactory ingest
+    # endpoint that turns {repo, issue_number, ...} into a plan session while
+    # preserving the RFC-0001 correlation key — is tracked separately; until
+    # PFACTORY_INGEST_URL points at such an endpoint this refuses LOUDLY with an
+    # actionable message (which becomes the issue comment via the terminal path).
     url = (os.environ.get("PFACTORY_INGEST_URL") or "").rstrip("/")
     if not url:
-        raise TerminalIntakeError("PFACTORY_INGEST_URL unset; cannot route hard")
+        raise TerminalIntakeError(
+            "this issue is tagged for the hard (full-planning) tier, which is not "
+            "auto-routed yet — a maintainer should run PFactory planning for it "
+            "manually. Low/medium-tier issues are built automatically."
+        )
     _post_json(
         url,
         {
