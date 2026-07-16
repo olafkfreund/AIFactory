@@ -110,6 +110,18 @@ jobs:
           AWS_SECRET_ACCESS_KEY: "minio12345"
         run: apps/backend/.venv/bin/pytest tests/ -m "not slow" -q
 
+      # #854: the co-located tests under apps/backend (next to the code they
+      # exercise) were never collected — the root `pytest tests/` above only
+      # runs tests/. This gates them too. `asyncio_mode=auto` because these
+      # files have no root pytest.ini (tests/pytest.ini is scoped to tests/);
+      # the two manual graphiti integration scripts are excluded via a local
+      # conftest collect_ignore.
+      - name: Pytest co-located (apps/backend)
+        env:
+          GRAPHITI_ENABLED: "false"
+          APP_DISABLE_AUTH: "true"
+        run: apps/backend/.venv/bin/pytest apps/backend -q -o asyncio_mode=auto
+
   postgres-acceptance:
     name: postgres (P1 acceptance, PG ${{ matrix.pg }})
     runs-on: ubuntu-latest

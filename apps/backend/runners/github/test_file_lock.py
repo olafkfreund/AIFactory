@@ -11,6 +11,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
 from file_lock import (
     FileLock,
     FileLockTimeout,
@@ -22,6 +23,7 @@ from file_lock import (
 )
 
 
+@pytest.mark.asyncio
 async def test_basic_file_lock():
     """Test basic file locking mechanism."""
     print("\n=== Test 1: Basic File Lock ===")
@@ -40,6 +42,7 @@ async def test_basic_file_lock():
         print("✓ Lock released automatically")
 
 
+@pytest.mark.asyncio
 async def test_locked_write():
     """Test atomic locked write operations."""
     print("\n=== Test 2: Locked Write ===")
@@ -61,6 +64,7 @@ async def test_locked_write():
             print(f"✓ Data verified: {loaded}")
 
 
+@pytest.mark.asyncio
 async def test_locked_json_helpers():
     """Test JSON helper functions."""
     print("\n=== Test 3: JSON Helpers ===")
@@ -79,6 +83,7 @@ async def test_locked_json_helpers():
         print(f"✓ JSON read: {loaded}")
 
 
+@pytest.mark.asyncio
 async def test_locked_json_update():
     """Test atomic read-modify-write updates."""
     print("\n=== Test 4: Atomic Updates ===")
@@ -105,6 +110,7 @@ async def test_locked_json_update():
         print(f"✓ Counter incremented 5 times: {final}")
 
 
+@pytest.mark.asyncio
 async def test_concurrent_updates_without_lock():
     """Demonstrate data corruption WITHOUT file locking."""
     print("\n=== Test 5: Concurrent Updates WITHOUT Locking (UNSAFE) ===")
@@ -143,6 +149,7 @@ async def test_concurrent_updates_without_lock():
         )
 
 
+@pytest.mark.asyncio
 async def test_concurrent_updates_with_lock():
     """Demonstrate data integrity WITH file locking."""
     print("\n=== Test 6: Concurrent Updates WITH Locking (SAFE) ===")
@@ -176,6 +183,7 @@ async def test_concurrent_updates_with_lock():
         print("✓ No data corruption - all updates applied successfully")
 
 
+@pytest.mark.asyncio
 async def test_lock_timeout():
     """Test lock timeout behavior."""
     print("\n=== Test 7: Lock Timeout ===")
@@ -201,6 +209,7 @@ async def test_lock_timeout():
             print("✓ First lock released")
 
 
+@pytest.mark.asyncio
 async def test_index_update_pattern():
     """Test the index update pattern used in models.py."""
     print("\n=== Test 8: Index Update Pattern (Production Pattern) ===")
@@ -267,6 +276,7 @@ async def test_index_update_pattern():
         print("✓ No duplicate entries created")
 
 
+@pytest.mark.asyncio
 async def test_atomic_write_failure():
     """Test that failed writes don't corrupt existing files."""
     print("\n=== Test 9: Atomic Write Failure Handling ===")
