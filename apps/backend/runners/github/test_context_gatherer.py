@@ -174,18 +174,11 @@ def test_find_config_files(tmp_path):
     assert "src/package.json" in config_files
 
 
-def test_get_file_extension():
-    """Test file extension mapping for syntax highlighting."""
-    gatherer = PRContextGatherer(Path("/tmp"), 1)
-
-    assert gatherer._get_file_extension("app.ts") == "typescript"
-    assert gatherer._get_file_extension("utils.tsx") == "typescript"
-    assert gatherer._get_file_extension("script.js") == "javascript"
-    assert gatherer._get_file_extension("script.jsx") == "javascript"
-    assert gatherer._get_file_extension("main.py") == "python"
-    assert gatherer._get_file_extension("config.json") == "json"
-    assert gatherer._get_file_extension("readme.md") == "markdown"
-    assert gatherer._get_file_extension("config.yml") == "yaml"
+# NOTE: test_get_file_extension was removed. It asserted a
+# PRContextGatherer._get_file_extension(filename) -> language method that maps
+# extensions to syntax-highlight language names. That method has never existed
+# in context_gatherer.py (confirmed via git history - no rename target), so the
+# test covered functionality that is not implemented.
 
 
 def test_find_imports_typescript(tmp_path):
