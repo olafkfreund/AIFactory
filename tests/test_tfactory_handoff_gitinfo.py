@@ -27,13 +27,41 @@ def test_git_info_graceful_when_no_worktree(tmp_path):
     ) == (None, None)
 
 
-def test_payload_omits_git_fields_without_worktree(tmp_path):
+def test_payload_still_sets_branch_without_git(tmp_path):
+    # No worktree AND no project git: git_url is omitted (nothing to resolve) but
+    # source_branch still comes from the fixed build convention (#893) so TFactory
+    # fetches the built branch instead of verifying BASE.
     sd = tmp_path / "workspaces" / "proj" / ".aifactory" / "specs" / "1"
     sd.mkdir(parents=True)
     (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
     payload = build_ingest_payload(sd, "1")
     assert payload["project_id"] == "proj"
-    assert "git_url" not in payload and "source_branch" not in payload  # graceful
+    assert payload["source_branch"] == "aifactory/1"
+    assert "git_url" not in payload  # no repo to resolve → graceful
+
+
+def test_payload_resolves_repo_from_project_when_worktree_absent(tmp_path):
+    # RFC-0017 packed build: no valid build worktree on the control plane, but the
+    # project's shared base repo (<project>/.git) still knows origin. #893: the
+    # payload must carry BOTH git_url (from the project repo) and source_branch
+    # (from the build convention) so TFactory fetches the actual built code.
+    import subprocess
+
+    proj = tmp_path / "workspaces" / "proj"
+    proj.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=proj, check=True)
+    subprocess.run(
+        ["git", "remote", "add", "origin", "https://github.com/o/r.git"],
+        cwd=proj,
+        check=True,
+    )
+    sd = proj / ".aifactory" / "specs" / "014-x"
+    sd.mkdir(parents=True)
+    (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    # No worktree dir exists → _git_info_and_push returns (None, None).
+    payload = build_ingest_payload(sd, "014-x")
+    assert payload["git_url"] == "https://github.com/o/r.git"
+    assert payload["source_branch"] == "aifactory/014-x"
 
 
 def test_payload_includes_git_fields_for_a_real_worktree(tmp_path, monkeypatch):
