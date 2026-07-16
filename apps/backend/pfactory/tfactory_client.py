@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -253,6 +254,13 @@ def _build_branch(spec_id: str) -> str:
     return f"aifactory/{spec_id}"
 
 
+def _git_stdout(cwd: Path, args: list[str]) -> str:
+    """Run ``git <args>`` in ``cwd`` and return trimmed stdout (empty on failure)."""
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+    ).stdout.strip()
+
+
 def _project_git_url(spec_dir: Path) -> str | None:
     """The origin URL of the project's shared base repo (``<project>/.git``).
 
@@ -262,18 +270,10 @@ def _project_git_url(spec_dir: Path) -> str | None:
     ``.git/config`` still holds origin). Best-effort: returns ``None`` when
     unresolvable — never raises.
     """
-    import subprocess
-
-    project_dir = _project_dir(spec_dir)
     try:
-        url = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            cwd=str(project_dir),
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout.strip()
-        return url or None
+        return (
+            _git_stdout(_project_dir(spec_dir), ["remote", "get-url", "origin"]) or None
+        )
     except Exception:  # noqa: BLE001 — handoff prep must never break task completion
         return None
 
@@ -285,20 +285,13 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
     missing or git fails — the handoff then degrades gracefully.
     """
-    import subprocess
-
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None, None
 
-    def _git(args: list[str]) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=str(wt), capture_output=True, text=True, timeout=60
-        ).stdout.strip()
-
     try:
-        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"])
-        url = _git(["remote", "get-url", "origin"])
+        branch = _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"])
+        url = _git_stdout(wt, ["remote", "get-url", "origin"])
         if not branch or not url:
             return None, None
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
