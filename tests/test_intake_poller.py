@@ -76,16 +76,23 @@ class FakeWorld:
             raise RuntimeError("temporary")
         self.routes.append((issue.number, "hard"))
 
-    def deps(self):
+    def deps(self, reclaim_after_s: float = 600.0):
         return PollerDeps(
             fetch_issues=self.fetch,
             apply_label=self.apply_label,
             comment=self.comment,
             route_low_medium=self.route_low_medium,
             route_hard=self.route_hard,
-            mark_processed=partial(processed_store.mark_processed, path=self.db_path),
+            mark_processed=partial(
+                processed_store.mark_processed,
+                path=self.db_path,
+                reclaim_after_s=reclaim_after_s,
+            ),
             unmark_processed=partial(
                 processed_store.unmark_processed, path=self.db_path
+            ),
+            confirm_processed=partial(
+                processed_store.confirm_processed, path=self.db_path
             ),
         )
 
@@ -224,3 +231,35 @@ def test_fetch_error_one_repo_does_not_kill_pass(world):
     c = poll_once([bad, CFG], deps)
     assert c["fetch-errors"] == 1
     assert c["routed"] == 1  # the good repo still processed
+
+
+# ── #870: a crashed route (claimed, never confirmed) is reclaimed ───────────
+
+
+def test_confirmed_after_successful_route(world):
+    """A normal route confirms the claim, so it is never reclaimed later."""
+    world.add(20, ["factory:low"])
+    poll_once([CFG], world.deps(reclaim_after_s=0))  # even a 0s window...
+    poll_once([CFG], world.deps(reclaim_after_s=0))  # ...must not re-route
+    assert world.routes.count((20, "low-med")) == 1
+
+
+def test_stranded_claim_is_reclaimed_and_rerouted(world):
+    """The #870 bug: a pod died between claiming an issue and routing it, so the
+    claim sits unconfirmed with no build. Once stale it must be reclaimed and the
+    issue routed, not stranded forever."""
+    world.add(21, ["factory:low"])
+    # Simulate the crash: claim the issue directly (unconfirmed) and DON'T route.
+    assert processed_store.mark_processed("o/r", 21, path=world.db_path) is True
+    assert world.routes == []  # nothing was routed — the pod died here
+    # The issue still lacks factory:queued, so it is fetched again. With the
+    # claim now stale (reclaim_after_s=0), the next poll reclaims + routes it.
+    poll_once([CFG], world.deps(reclaim_after_s=0))
+    assert (21, "low-med") in world.routes, (
+        "a stranded claim must be reclaimed + routed"
+    )
+    assert QUEUED_LABEL in world.issues[21].labels
+
+    # And now that it is confirmed, it is not routed a second time.
+    poll_once([CFG], world.deps(reclaim_after_s=0))
+    assert world.routes.count((21, "low-med")) == 1

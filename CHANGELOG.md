@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.40 - 2026-07-16
+
+### Fixed
+
+- **A crash mid-route no longer strands an intake issue forever (#870).** The poller claimed an issue then routed it; if the pod died between the two, the durable claim persisted with no build and the issue was never retried — stuck invisibly (how it presented as "the poller stopped", #868). Seen live on `aifactory-demo#325`. Fixed with a crash-safe, multi-replica-safe two-phase claim: a claim is inserted UNCONFIRMED, `confirm_processed` marks it done the instant the route succeeds, and a claim still unconfirmed after 600s is reclaimed via a single atomic conditional UPDATE. The `confirmed` column defaults to 1 so existing claims are never mass-reclaimed on upgrade. A rare residual (route created a task but crashed before confirm -> reclaim duplicates) is tracked as #878 (from-issue idempotency).
+
+
 ## 3.6.39 - 2026-07-16
 
 ### Fixed

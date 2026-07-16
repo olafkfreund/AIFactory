@@ -274,6 +274,7 @@ def build_deps() -> PollerDeps:
         route_hard=_route_hard,
         mark_processed=processed_store.mark_processed,
         unmark_processed=processed_store.unmark_processed,
+        confirm_processed=processed_store.confirm_processed,
     )
 
 
