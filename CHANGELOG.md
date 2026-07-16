@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.39 - 2026-07-16
+
+### Fixed
+
+- **Intake + CI cleanup sweep.** (#838) Removed the never-functional `aifactory-review` workflow that went red on every PR — it POSTed to a route that never existed and, being on AIFactory's own repo, could never reach the project-scoped review engine. (#861) The intake poller now creates its own missing `factory:*` labels on demand instead of leaving routed issues stuck at `factory:low` (gh fails the whole label apply if the label is absent). (#843) The RFC-0011 hard tier — which has no PFactory endpoint to route to — now refuses with a maintainer-actionable message instead of an internal `PFACTORY_INGEST_URL unset` error; the real correlation-preserving ingest endpoint is tracked as #874. (#847) The intake API token no longer falls back to `GH_TOKEN` (a GitHub PAT can only 401 against our own API) — it uses `APP_API_TOKEN`; the issue-number correlation and poll-count visibility halves were already resolved by earlier work and #868.
+
+
 ## 3.6.38 - 2026-07-16
 
 ### Fixed
