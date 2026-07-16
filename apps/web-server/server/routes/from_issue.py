@@ -24,6 +24,7 @@ deps (the agent SDK) are imported lazily so the module stays unit-testable.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -147,7 +148,38 @@ def _write_spec(
     # Reuse the trusted-plan execution-profile writer: maps the snake_case
     # execution block into task_metadata.json (model/skipPlanning/reviewTier/...).
     apply_execution_profile(spec_dir, {"execution": execution})
+
+    # Opt intake builds into the TFactory auto-handoff so a finished autonomous
+    # build is INDEPENDENTLY verified — the fleet's whole point. The handoff
+    # (maybe_auto_handoff_tfactory) reads auto_handover_tfactory from
+    # task_metadata and is itself a no-op unless TFACTORY_BASE_URL is configured,
+    # so this is safe when TFactory is absent. Default on; opt out per deployment
+    # with AIFACTORY_INTAKE_AUTO_HANDOFF in {0,false,no,off}.
+    if _intake_auto_handoff_enabled():
+        _set_task_metadata_flag(spec_dir, "auto_handover_tfactory", True)
     return spec_dir
+
+
+def _intake_auto_handoff_enabled() -> bool:
+    """Whether intake builds auto-hand off to TFactory (default on)."""
+    return (
+        os.environ.get("AIFACTORY_INTAKE_AUTO_HANDOFF") or ""
+    ).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
+    """Merge a single flag into task_metadata.json (best-effort)."""
+    tm_file = spec_dir / "task_metadata.json"
+    try:
+        tm = json.loads(tm_file.read_text()) if tm_file.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        tm = {}
+    if isinstance(tm, dict):
+        tm[key] = value
+        try:
+            tm_file.write_text(json.dumps(tm, indent=2))
+        except OSError:
+            pass
 
 
 @router.post("/from-issue")
