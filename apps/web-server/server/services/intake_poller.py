@@ -232,7 +232,9 @@ def build_deps() -> PollerDeps:
     )
 
 
-async def poller_loop(*, interval=None, stop=None, deps=None, repos=None) -> None:
+async def poller_loop(
+    *, interval=None, stop=None, deps=None, repos=None, poll_timeout=None
+) -> None:
     """Background loop: one poll pass every ``interval`` seconds until stopped.
 
     Mirrors outbox.relay_loop: blocking provider/HTTP work runs in a worker
@@ -245,14 +247,40 @@ async def poller_loop(*, interval=None, stop=None, deps=None, repos=None) -> Non
     deps = deps or build_deps()
     repos = repos if repos is not None else load_repo_configs()
     poll_interval = interval if interval is not None else interval_s()
+    # #868: a single poll must not be able to wedge the loop forever. poll_once
+    # runs blocking provider/HTTP work (``_fetch_issues`` has no hard timeout of
+    # its own), so bound each tick — a hung fetch is abandoned (its worker thread
+    # is left to finish/die on its own) and the loop keeps ticking rather than
+    # going permanently silent. Generous, so a merely-slow poll never trips it.
+    # Injectable for tests.
+    poll_timeout = (
+        poll_timeout if poll_timeout is not None else max(poll_interval * 4, 120.0)
+    )
+    # #868: emit an idle heartbeat every ~5 min so "started but never polls" is
+    # visible — otherwise a healthy poller that only ever sees already-queued
+    # issues logs nothing (routed/failed both 0) and is indistinguishable from a
+    # dead one, which is exactly how this looked.
+    heartbeat_every = max(1, round(300 / poll_interval))
     logger.info(
         "intake poller started (interval=%.0fs, repos=%d)", poll_interval, len(repos)
     )
+    tick = 0
     while not stop.is_set():
+        tick += 1
         try:
-            counts = await asyncio.to_thread(poll_once, repos, deps)
+            counts = await asyncio.wait_for(
+                asyncio.to_thread(poll_once, repos, deps), timeout=poll_timeout
+            )
             if counts.get("routed") or counts.get("failed"):
                 logger.info("intake poll: %s", counts)
+            elif tick % heartbeat_every == 0:
+                logger.info("intake poll heartbeat (idle): %s", counts)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "intake poll exceeded %.0fs and was abandoned this tick — a "
+                "provider/network call likely hung; continuing to the next tick",
+                poll_timeout,
+            )
         except Exception:  # noqa: BLE001 — never let the poller die
             logger.exception("intake poll tick failed (best-effort)")
         try:
