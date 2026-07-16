@@ -59,24 +59,45 @@ def commit_uncommitted_changes(
     nothing to commit or the commit could not be made (never raises).
     """
     try:
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        if not status.stdout.strip():
-            return None  # clean tree — agent already committed everything
-
+        # Stage everything EXCEPT AIFactory's own bookkeeping. .aifactory-status
+        # (the ccstatusline file) and .aifactory-security.json churn on every
+        # subtask; once one of them slips into a commit they become tracked and
+        # every later safety-net re-commits the churn, cluttering the branch with
+        # "safety-net" commits (and leaving one as the branch tip). The net is
+        # meant to rescue real uncommitted CODE the agent forgot, so exclude the
+        # bookkeeping via pathspec. (.aifactory/ is already gitignored; excluded
+        # here too for the case where it isn't.)
         subprocess.run(
-            ["git", "add", "-A"],
+            [
+                "git",
+                "add",
+                "-A",
+                "--",
+                ".",
+                ":(exclude).aifactory/",
+                ":(exclude)aifactory/specs/",
+                ":(exclude).aifactory-status",
+                ":(exclude).aifactory-security.json",
+            ],
             cwd=project_dir,
             capture_output=True,
             text=True,
             check=True,
         )
-        msg = "chore(agent): safety-net commit of uncommitted session changes"
+        # If nothing (real) got staged, the only changes were bookkeeping churn —
+        # don't manufacture a commit. `git diff --cached --quiet` exits 0 when the
+        # index matches HEAD (nothing staged), 1 when there is staged work.
+        staged = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,  # returncode is the signal (0 = nothing staged)
+        )
+        if staged.returncode == 0:
+            return None  # only bookkeeping changed — nothing to rescue
+
+        msg = "chore(agent): safety-net commit of uncommitted changes"
         if subtask_id:
             msg += f" [{subtask_id}]"
         subprocess.run(
