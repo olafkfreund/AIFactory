@@ -120,6 +120,10 @@ jobs:
         env:
           GRAPHITI_ENABLED: "false"
           APP_DISABLE_AUTH: "true"
+          # test_gh_client shells out to the real `gh` CLI, which refuses to run
+          # in Actions without a token; provide the job token so its timeout /
+          # invalid-command paths reach the real error instead of an auth error.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: apps/backend/.venv/bin/pytest apps/backend -q -o asyncio_mode=auto
 
   postgres-acceptance:
