@@ -129,3 +129,50 @@ async def test_hung_poll_is_abandoned_not_wedged(monkeypatch, caplog):
         "a hung poll must log the timeout warning"
     )
     assert calls["n"] >= 2, "the loop must keep ticking after abandoning a hung poll"
+
+
+# --- #861: intake creates its own missing factory:* label, then applies it ---
+
+
+def test_apply_label_creates_missing_label_then_retries(monkeypatch):
+    """A repo not yet seeded with factory:queued must not leave routed issues
+    stuck at factory:low — the label is created on demand and re-applied."""
+    events = []
+
+    class FakeProvider:
+        def __init__(self):
+            self.applies = 0
+
+        async def apply_labels(self, number, labels):
+            self.applies += 1
+            if self.applies == 1:  # gh: label doesn't exist yet
+                raise RuntimeError("'factory:queued' not found")
+            events.append(("apply", number, tuple(labels)))
+
+        async def create_label(self, label):
+            events.append(("create", label.name, label.color))
+
+    monkeypatch.setattr(ip, "_provider_for", lambda cfg: FakeProvider())
+    ip._apply_label(object(), 42, "factory:queued")
+
+    assert ("create", "factory:queued", "0e8a16") in events, (
+        "missing label must be created"
+    )
+    assert ("apply", 42, ("factory:queued",)) in events, "then applied on retry"
+
+
+def test_apply_label_does_not_create_when_present(monkeypatch):
+    """The common path (label already exists) applies once, never creates."""
+    events = []
+
+    class FakeProvider:
+        async def apply_labels(self, number, labels):
+            events.append("apply")
+
+        async def create_label(self, label):
+            events.append("create")
+
+    monkeypatch.setattr(ip, "_provider_for", lambda cfg: FakeProvider())
+    ip._apply_label(object(), 1, "factory:queued")
+
+    assert events == ["apply"], "no label creation when the apply succeeds"

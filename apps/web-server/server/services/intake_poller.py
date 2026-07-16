@@ -143,10 +143,32 @@ def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
     return _run_async(_go())
 
 
+# Colors for the factory:* labels the intake system owns and applies. Used only
+# when a label is missing and has to be created on demand (#861).
+_FACTORY_LABEL_COLORS = {"factory:queued": "0e8a16", "factory:failed": "b60205"}
+
+
 def _apply_label(cfg: RepoConfig, number: int, label: str) -> None:
     async def _go():
         provider = _provider_for(cfg)
-        await provider.apply_labels(number, [label])
+        try:
+            await provider.apply_labels(number, [label])
+        except Exception:  # noqa: BLE001
+            # #861: gh fails the whole apply if the label doesn't exist in the
+            # repo yet, so an intake target that was never seeded with
+            # ``factory:queued`` left every routed issue stuck at ``factory:low``
+            # (and #870 harder to spot). The intake system OWNS its own
+            # ``factory:*`` labels on repos it was explicitly pointed at, so
+            # create the missing one (idempotent --force) and retry once. If the
+            # create ALSO fails (e.g. no label permission) the caller's ``_safe``
+            # wrapper degrades it to a best-effort no-op — routing already
+            # succeeded and must not be undone by cosmetic bookkeeping.
+            from runners.github.providers.protocol import LabelData  # noqa: PLC0415
+
+            await provider.create_label(
+                LabelData(name=label, color=_FACTORY_LABEL_COLORS.get(label, "ededed"))
+            )
+            await provider.apply_labels(number, [label])
 
     _run_async(_go())
 
