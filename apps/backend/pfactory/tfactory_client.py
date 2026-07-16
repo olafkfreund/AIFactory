@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -232,12 +233,49 @@ def _aifactory_project_name(spec_dir: Path) -> str:
         return ""
 
 
+def _project_dir(spec_dir: Path) -> Path:
+    """The project root for a spec: spec_dir == <project>/.aifactory/specs/<spec_id>."""
+    p = Path(spec_dir).resolve()
+    return p.parents[2] if len(p.parents) >= 3 else p.parent
+
+
 def _build_worktree(spec_dir: Path, spec_id: str) -> Path:
     """The build worktree for a spec: <project>/.aifactory/worktrees/tasks/<spec_id>."""
-    p = Path(spec_dir).resolve()
-    # spec_dir == <project>/.aifactory/specs/<spec_id>
-    project_dir = p.parents[2] if len(p.parents) >= 3 else p.parent
-    return project_dir / ".aifactory" / "worktrees" / "tasks" / spec_id
+    return _project_dir(spec_dir) / ".aifactory" / "worktrees" / "tasks" / spec_id
+
+
+def _build_branch(spec_id: str) -> str:
+    """The branch a build creates/pushes for a spec.
+
+    Fixed convention, matching ``core.worktree.WorktreeManager.get_branch_name``:
+    ``aifactory/<spec_id>``. Reliable even when the local worktree is gone — the
+    build already pushed this branch to origin.
+    """
+    return f"aifactory/{spec_id}"
+
+
+def _git_stdout(cwd: Path, args: list[str]) -> str:
+    """Run ``git <args>`` in ``cwd`` and return trimmed stdout (empty on failure)."""
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+    ).stdout.strip()
+
+
+def _project_git_url(spec_dir: Path) -> str | None:
+    """The origin URL of the project's shared base repo (``<project>/.git``).
+
+    Resolves the repo even when the build worktree is absent or not a valid git
+    checkout (RFC-0017 packed build: outputs repacked via MinIO, so the
+    control-plane worktree's gitdir pointer is broken but the base repo's
+    ``.git/config`` still holds origin). Best-effort: returns ``None`` when
+    unresolvable — never raises.
+    """
+    try:
+        return (
+            _git_stdout(_project_dir(spec_dir), ["remote", "get-url", "origin"]) or None
+        )
+    except Exception:  # noqa: BLE001 — handoff prep must never break task completion
+        return None
 
 
 def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
@@ -247,20 +285,13 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
     missing or git fails — the handoff then degrades gracefully.
     """
-    import subprocess
-
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None, None
 
-    def _git(args: list[str]) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=str(wt), capture_output=True, text=True, timeout=60
-        ).stdout.strip()
-
     try:
-        branch = _git(["rev-parse", "--abbrev-ref", "HEAD"])
-        url = _git(["remote", "get-url", "origin"])
+        branch = _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"])
+        url = _git_stdout(wt, ["remote", "get-url", "origin"])
         if not branch or not url:
             return None, None
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -347,6 +378,16 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # ACTUAL built code (separate PVC). Pushes the branch (best-effort) and lets
     # TFactory self-register the project from git_url when it isn't pre-registered.
     git_url, source_branch = _git_info_and_push(spec_dir, spec_id)
+    # Fall back to the known branch convention + project repo when the local build
+    # worktree is absent or not a valid git checkout (RFC-0017 packed build repacks
+    # outputs via MinIO, leaving no git-valid worktree on the control plane). The
+    # branch was already pushed to origin during the build, so TFactory can still
+    # fetch it; without source_branch it verifies BASE and cannot find the built
+    # code (#893).
+    if not source_branch:
+        source_branch = _build_branch(spec_id)
+    if not git_url:
+        git_url = _project_git_url(spec_dir)
     if git_url:
         payload["git_url"] = git_url
     if source_branch:
