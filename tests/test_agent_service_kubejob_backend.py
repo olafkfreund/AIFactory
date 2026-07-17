@@ -285,3 +285,78 @@ async def test_start_build_unit_forwards_parallel_opts_to_kubejob_dispatch(
 
     assert captured["parallel"] is True
     assert captured["workers"] == 4
+
+
+async def test_start_build_unit_forwards_mode_and_base_branch_to_kubejob_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #916 remainder: same defect class as #914/#915 — _start_build_unit accepted
+    # mode/base_branch and forwarded them ONLY on the subprocess branch, so a
+    # quick-mode task ran the full pipeline in the Job and a base-branch override
+    # was silently ignored.
+    service = await _make_service(tmp_path / "qm.db")
+    monkeypatch.setattr(service, "_kubejob_backend_enabled", lambda: True)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_dispatch(**kw: Any) -> None:
+        captured.update(kw)
+
+    monkeypatch.setattr(service, "_dispatch_build_job", fake_dispatch)
+
+    await service._start_build_unit(
+        task_id="p:s1",
+        project_path=tmp_path,
+        spec_id="s1",
+        correlation_key="9",
+        base_branch="release/2.0",
+        mode="quick",
+    )
+
+    assert captured["mode"] == "quick"
+    assert captured["base_branch"] == "release/2.0"
+
+
+async def test_dispatch_build_job_writes_skill_context_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #916 remainder: selectedSkills were never materialized for kubejob builds.
+    # The in-pod path writes skill_context.md into the authored spec dir before
+    # spawning; the kubejob path must do the same BEFORE dispatch (the backend's
+    # worktree population copies the spec dir into the Job's /work, so ordering
+    # is what makes the file travel).
+    service = await _make_service(tmp_path / "sk.db")
+
+    order: list[str] = []
+
+    monkeypatch.setattr(
+        service,
+        "_resolve_claude_token_pooled",
+        lambda _tid: (None, None, None),
+    )
+    monkeypatch.setattr(
+        service,
+        "_write_skill_context",
+        lambda spec_dir: order.append(f"skills:{spec_dir}"),
+    )
+
+    class _FakeBackend:
+        async def dispatch(self, **_kw: Any) -> str:
+            order.append("dispatch")
+            return "factory-aifactory-job"
+
+    monkeypatch.setattr(service, "_build_backend", lambda: _FakeBackend())
+    monkeypatch.setattr(service, "_start_kubejob_log_stream", lambda **_kw: _noop())
+    monkeypatch.setattr(service, "_safe_emit_task_status", _noop_status)
+
+    await service._dispatch_build_job(
+        task_id="p:s1",
+        project_path=tmp_path,
+        spec_id="s1",
+        correlation_key="9",
+    )
+
+    expected_spec_dir = tmp_path / ".aifactory" / "specs" / "s1"
+    assert order == [f"skills:{expected_spec_dir}", "dispatch"]

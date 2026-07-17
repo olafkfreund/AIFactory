@@ -47,6 +47,24 @@ def _append_parallel_flags(
     return True
 
 
+def _append_quick_mode_flag(cmd: list[str], mode: str | None) -> bool:
+    """Append run.py's ``--skip-qa`` for a quick-mode build (#916) in place.
+
+    Quick mode's coder prompt validates inline, so the separate QA loop is
+    skipped. One rule for BOTH build paths — the in-pod subprocess
+    (``agent_service._spawn_task_execution``) and the k8s Job manifest
+    (``build_backend.build_run_py_job_manifest``) — because a second copy of a
+    per-flag rule is exactly how ``--parallel`` (#914) and ``--force`` (#916)
+    already went missing from the Job argv.
+
+    Returns True when the flag was added (so the caller can log it).
+    """
+    if mode != "quick":
+        return False
+    cmd.append("--skip-qa")
+    return True
+
+
 def sync_require_review_metadata(spec_dir: Path) -> bool:
     """Sync ``requireReviewBeforeCoding`` frontend->backend and return it.
 
