@@ -192,12 +192,46 @@ def _api_token() -> str | None:
     return os.environ.get("AIFACTORY_TOKEN") or os.environ.get("APP_API_TOKEN")
 
 
-def _post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
+def _pfactory_token() -> str | None:
+    """Bearer for PFactory's API (hard-tier ingest, #874).
+
+    A *sibling's* API, so ``AIFACTORY_TOKEN`` (our own) is not a valid credential
+    for it — same reasoning as #847. Mirrors the established sibling convention
+    (``tfactory_client.tfactory_config``): a dedicated token, else the shared
+    ``APP_API_TOKEN`` every factory pod carries.
+    """
+    return os.environ.get("PFACTORY_TOKEN") or os.environ.get("APP_API_TOKEN")
+
+
+def _http_detail(exc: object, limit: int = 300) -> str:
+    """The readable reason out of an HTTPError body, as ``": <detail>"`` or "".
+
+    FastAPI reports it as ``{"detail": ...}``; anything else falls back to the
+    raw body. Best-effort — a body that cannot be read must never mask the
+    status code it is decorating.
+    """
+    try:
+        raw = exc.read().decode("utf-8", "replace").strip()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — the status code is the load-bearing part
+        return ""
+    if not raw:
+        return ""
+    try:
+        detail = json.loads(raw).get("detail", raw)
+    except (ValueError, AttributeError):
+        detail = raw
+    text = str(detail).strip().replace("\n", " ")
+    return f": {text[:limit]}" if text else ""
+
+
+def _post_json(
+    url: str, payload: dict, timeout: float = 10.0, token: str | None = None
+) -> None:
     """POST JSON; raise TerminalIntakeError on 4xx, generic on transport/5xx."""
     import urllib.error
     import urllib.request
 
-    token = _api_token()
+    token = token or _api_token()
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -210,7 +244,13 @@ def _post_json(url: str, payload: dict, timeout: float = 10.0) -> None:
     except urllib.error.HTTPError as exc:
         # 4xx is a bad request (won't fix on retry) -> terminal; 5xx -> transient.
         if 400 <= exc.code < 500:
-            raise TerminalIntakeError(f"{url} -> HTTP {exc.code}") from exc
+            # Carry the server's reason, not just the status. A terminal error
+            # becomes the issue comment, and "HTTP 400" alone tells the human who
+            # filed the issue nothing they can act on — the detail (e.g. "no
+            # acceptance criteria found") is the whole point of refusing loudly.
+            raise TerminalIntakeError(
+                f"{url} -> HTTP {exc.code}{_http_detail(exc)}"
+            ) from exc
         raise RuntimeError(f"{url} -> HTTP {exc.code}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"{url} unreachable: {exc}") from exc
@@ -234,20 +274,26 @@ def _route_low_medium(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
 
 
 def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
-    # RFC-0011 hard tier (full PFactory planning for complex issues) is NOT
-    # auto-routed by default (#843): no PFactory endpoint yet accepts this issue
-    # shape, so a hard-tier issue is deliberately deferred to a maintainer rather
-    # than silently mis-POSTed to a 422. Wiring it end-to-end — a PFactory ingest
-    # endpoint that turns {repo, issue_number, ...} into a plan session while
-    # preserving the RFC-0001 correlation key — is tracked separately; until
-    # PFACTORY_INGEST_URL points at such an endpoint this refuses LOUDLY with an
-    # actionable message (which becomes the issue comment via the terminal path).
+    """Route a hard-tier issue into full PFactory planning (RFC-0011, #874).
+
+    PFactory's ``POST /api/plan/sessions/from-issue`` accepts this exact payload
+    and turns it into a plan session keyed on ``issue_number`` (the RFC-0001
+    correlation key), so the resulting plan -> code -> verify chain threads back
+    to the issue a human filed.
+
+    ``PFACTORY_INGEST_URL`` remains the gate (#843). Unset, this still refuses
+    LOUDLY with a maintainer-actionable message (which becomes the issue comment
+    via the terminal path) rather than silently dropping the issue — an
+    unconfigured deployment must degrade honestly, not quietly.
+    """
     url = (os.environ.get("PFACTORY_INGEST_URL") or "").rstrip("/")
     if not url:
         raise TerminalIntakeError(
-            "this issue is tagged for the hard (full-planning) tier, which is not "
-            "auto-routed yet — a maintainer should run PFactory planning for it "
-            "manually. Low/medium-tier issues are built automatically."
+            "this issue is tagged for the hard (full-planning) tier, but "
+            "PFACTORY_INGEST_URL is not configured for this deployment, so it "
+            "cannot be routed to PFactory automatically — a maintainer should "
+            "run PFactory planning for it manually. Low/medium-tier issues are "
+            "built automatically."
         )
     _post_json(
         url,
@@ -261,6 +307,7 @@ def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
             "autonomy_tier": tier.value,
             "change_mode": cfg.change_mode,
         },
+        token=_pfactory_token(),
     )
 
 
