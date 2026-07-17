@@ -64,6 +64,8 @@ from .task_phase import (  # noqa: E402,F401
     phase_to_review_reason,
     phase_to_status,
     scale_progress,
+    should_pass_force,
+    sync_require_review_metadata,
 )
 
 
@@ -866,64 +868,15 @@ class AgentService(
         if auto_continue:
             cmd.append("--auto-continue")
 
-            # Check if human review before coding is required
-            # If so, don't pass --force to allow the approval gate
             spec_dir = project_path / ".aifactory" / "specs" / spec_id
-            requirements_file = spec_dir / "requirements.json"
-            task_metadata_file = spec_dir / "task_metadata.json"
-            require_review = False
-
-            # Sync metadata from requirements.json to task_metadata.json (Bug fix)
-            # Frontend writes to requirements.json, backend reads task_metadata.json
-            # Ensure they stay in sync to prevent requireReviewBeforeCoding mismatches
-            if requirements_file.exists():
-                try:
-                    import json
-
-                    requirements = json.loads(requirements_file.read_text())
-                    frontend_metadata = requirements.get("metadata", {})
-
-                    # Read existing task_metadata or create new
-                    if task_metadata_file.exists():
-                        task_metadata = json.loads(task_metadata_file.read_text())
-                    else:
-                        task_metadata = {}
-
-                    # Sync requireReviewBeforeCoding from frontend to backend
-                    if "requireReviewBeforeCoding" in frontend_metadata:
-                        task_metadata["requireReviewBeforeCoding"] = frontend_metadata[
-                            "requireReviewBeforeCoding"
-                        ]
-
-                    # Save updated task_metadata.json
-                    task_metadata_file.write_text(json.dumps(task_metadata, indent=2))
-
-                    require_review = task_metadata.get(
-                        "requireReviewBeforeCoding", False
-                    )
-                except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(
-                        f"[AgentService] Could not sync metadata for {task_id}: {e}"
-                    )
-            elif task_metadata_file.exists():
-                try:
-                    import json
-
-                    task_metadata = json.loads(task_metadata_file.read_text())
-                    require_review = task_metadata.get(
-                        "requireReviewBeforeCoding", False
-                    )
-                    # Note: Quick Mode no longer forces review - respect requireReviewBeforeCoding setting
-                except (json.JSONDecodeError, OSError):
-                    pass
 
             # Write skill context file based on selectedSkills in task_metadata
             self._write_skill_context(spec_dir)
 
-            # Add --force flag if:
-            # 1. Review is not required OR
-            # 2. Plan was manually approved (force=True from approve_plan endpoint)
-            if not require_review or force:
+            # --force iff review is not required, or the plan was manually
+            # approved (force=True from the approve_plan endpoint). Shared with
+            # the kubejob manifest builder so the two paths cannot drift (#916).
+            if should_pass_force(spec_dir, force):
                 cmd.append("--force")  # Bypass approval check for headless execution
                 if force:
                     logger.info(

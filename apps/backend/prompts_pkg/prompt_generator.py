@@ -245,16 +245,21 @@ def generate_planner_prompt(spec_dir: Path, project_dir: Path | None = None) -> 
     Returns:
         Planner prompt string
     """
-    # Load the full planner prompt from file
-    prompts_dir = Path(__file__).parent / "prompts"
-    planner_file = prompts_dir / "planner.md"
+    # Load the full planner prompt from file. Mirror the canonical resolution
+    # used by prompts.py (PROMPTS_DIR = apps/backend/prompts). #920: this used
+    # to point at prompts_pkg/prompts (which does not exist), so the real 400+
+    # line schema never loaded and every Job build planned from a one-sentence
+    # fallback. Hard-fail like get_planner_prompt() rather than degrade silently
+    # into a schema-less plan.
+    from .prompts import PROMPTS_DIR  # noqa: PLC0415 - no cycle
 
-    if planner_file.exists():
-        prompt = planner_file.read_text()
-    else:
-        prompt = (
-            "Read spec.md and create implementation_plan.json with phases and subtasks."
+    planner_file = PROMPTS_DIR / "planner.md"
+    if not planner_file.exists():
+        raise FileNotFoundError(
+            f"Planner prompt not found at {planner_file}\n"
+            "Make sure apps/backend/prompts/planner.md exists."
         )
+    prompt = planner_file.read_text()
 
     # Use project_dir for relative paths, or infer from spec_dir
     if project_dir is None:

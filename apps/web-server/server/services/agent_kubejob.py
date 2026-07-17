@@ -143,6 +143,7 @@ class KubejobMixin:
         stop_after_planning: bool = False,
         parallel: bool | None = None,
         workers: int | None = None,
+        force: bool = False,
     ) -> None:
         """Dispatch a k8s Job that runs run.py for this build (RFC-0016 #671).
 
@@ -169,6 +170,11 @@ class KubejobMixin:
         made the LIVE DEFAULT: intake labels, the portal setting and
         PFactory-planned contracts all resolved ``parallel`` correctly and then
         built serial anyway.
+
+        #916: ``force`` is forwarded for the same reason, and it stopped at the
+        same frame. The manifest hardcoded ``--force`` regardless, so the flag
+        described the caller's intent on the subprocess path and nothing at all
+        on this one.
         """
         # Pooled credential checkout (#670) — distinct token per concurrent Job.
         token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
@@ -200,6 +206,7 @@ class KubejobMixin:
                 stop_after_planning=stop_after_planning,
                 parallel=parallel,
                 workers=workers,
+                force=force,
             )
         except Exception:
             # Dispatch failed → the Job will never run, so return the credential
@@ -257,6 +264,7 @@ class KubejobMixin:
                 stop_after_planning=stop_after_planning,
                 parallel=parallel,
                 workers=workers,
+                force=force,
             )
             return None
         return await self._spawn_task_execution(

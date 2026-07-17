@@ -81,7 +81,6 @@ def mock_projects_json(temp_dir: Path, mock_project_dir: Path) -> Path:
 class TestProfileManagementWorkflow:
     """Test complete profile management lifecycle."""
 
-
     def test_api_profile_management_workflow(
         self, temp_dir: Path, mock_settings_dir: Path
     ):

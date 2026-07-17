@@ -211,7 +211,6 @@ def mock_roadmap(mock_settings_dir: Path, temp_dir: Path) -> Path:
 class TestPhase2CriticalPrioritySettings:
     """Test critical settings and configuration endpoints."""
 
-
     def test_set_active_profile_exists(self, mock_claude_profiles):
         """Test 2.2: set_active_profile validates profile exists."""
         # Load profiles and verify active profile can be set
@@ -275,7 +274,6 @@ class TestPhase3ProfileManagement:
         # Test email validation (max 255 chars)
         # Test token validation (min 20 chars, format)
         assert mock_claude_profiles.exists()
-
 
     def test_retry_with_profile_prevents_same_profile(self, mock_claude_profiles):
         """Test 3.4: retry_with_profile prevents switching to active profile."""
