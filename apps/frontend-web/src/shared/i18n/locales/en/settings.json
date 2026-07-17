@@ -176,7 +176,11 @@
     "bmadSessionSegmentation": "BMad Session Segmentation",
     "bmadSessionSegmentationDescription": "Enable per-story sessions with minimal context for 50-90% token reduction (experimental)",
     "soloMode": "Solo Mode",
-    "soloModeDescription": "Run tasks with a single focused agent — disables parallel sub-agent spawning"
+    "soloModeDescription": "Run tasks with a single focused agent — disables parallel sub-agent spawning",
+    "parallelExecution": "Parallel Execution",
+    "parallelExecutionDescription": "Runs multiple coding agents concurrently in isolated git worktrees on independent subtasks. Default for new builds. Off by default while it is being proven on live builds.",
+    "parallelWorkers": "Parallel Workers",
+    "parallelWorkersDescription": "Maximum coding agents running at the same time (1-8)"
   },
   "theme": {
     "title": "Appearance",

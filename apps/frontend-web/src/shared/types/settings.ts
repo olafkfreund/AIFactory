@@ -284,6 +284,11 @@ export interface AppSettings {
   bmadSessionSegmentation?: boolean;
   // Solo mode — single-agent focused execution, no parallel sub-agents
   soloMode?: boolean;
+  // Parallel build execution (#376) — default for new builds; runs independent
+  // subtasks concurrently, each agent in its own git worktree. Default OFF.
+  parallelExecution?: boolean;
+  // Max concurrent subtasks per wave when parallelExecution is on (1-8)
+  parallelWorkers?: number;
   // Email Notification OAuth Credentials (app-level)
   emailMicrosoftClientId?: string;
   emailMicrosoftClientSecret?: string;
