@@ -38,7 +38,7 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from intake import build_execution_block  # noqa: E402 — needs sys.path above
-from pfactory.tiers import classify_tier, tier_for  # noqa: E402
+from pfactory.tiers import classify_parallel, classify_tier, tier_for  # noqa: E402
 from trusted_plan import apply_execution_profile  # noqa: E402
 
 router = APIRouter()
@@ -226,8 +226,20 @@ async def create_from_issue(request: FromIssueRequest):
 
     tier = tier_for(_Carrier(), change_mode=request.change_mode)
 
-    # 3. Build the tier execution block.
-    execution = build_execution_block(tier, change_mode=request.change_mode)
+    # 2b. Parallelism is a separate axis: factory:parallel / factory:serial
+    # (opt-out wins), factory:workers=N tunes the cap. Unlabelled => the
+    # AIFACTORY_INTAKE_PARALLEL deployment default (off).
+    parallel, workers = classify_parallel(issue["labels"])
+
+    # 3. Build the tier execution block. parallel/workers land in
+    # task_metadata.json via apply_execution_profile, where the agent service
+    # reads them back when it starts the build.
+    execution = build_execution_block(
+        tier,
+        change_mode=request.change_mode,
+        parallel=parallel,
+        workers=workers,
+    )
 
     # 4. Create the spec + apply the profile + start the build.
     project_path = projects_path

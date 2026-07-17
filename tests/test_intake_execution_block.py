@@ -59,3 +59,73 @@ def test_low_tier_default_resolver_probes_ollama(monkeypatch):
 def test_rejects_non_tier():
     with pytest.raises(TypeError):
         build_execution_block("low")  # type: ignore[arg-type]
+
+
+# ── parallel / workers (label > deployment default) ────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_parallel_env(monkeypatch):
+    """Never inherit the ambient deployment default into these assertions."""
+    monkeypatch.delenv("AIFACTORY_INTAKE_PARALLEL", raising=False)
+    monkeypatch.delenv("AIFACTORY_INTAKE_WORKERS", raising=False)
+
+
+def test_parallel_defaults_off_when_unlabelled_and_unset() -> None:
+    block = build_execution_block(Tier.MEDIUM)
+    assert block["parallel"] is False
+    assert "workers" not in block
+
+
+def test_parallel_label_enables_regardless_of_tier() -> None:
+    for tier in (Tier.LOW, Tier.MEDIUM, Tier.HARD):
+        block = build_execution_block(
+            tier, parallel=True, low_model_resolver=lambda: "ollama:qwen3"
+        )
+        assert block["parallel"] is True
+
+
+def test_workers_emitted_only_when_parallel_is_on() -> None:
+    on = build_execution_block(Tier.MEDIUM, parallel=True, workers=4)
+    assert on["parallel"] is True and on["workers"] == 4
+
+    off = build_execution_block(Tier.MEDIUM, parallel=False, workers=4)
+    assert off["parallel"] is False
+    assert "workers" not in off  # a cap is meaningless to a serial build
+
+
+def test_env_default_enables_when_unlabelled(monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "true")
+    monkeypatch.setenv("AIFACTORY_INTAKE_WORKERS", "5")
+    block = build_execution_block(Tier.MEDIUM)
+    assert block["parallel"] is True
+    assert block["workers"] == 5
+
+
+def test_explicit_label_beats_env_default_both_ways(monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "1")
+    assert build_execution_block(Tier.MEDIUM, parallel=False)["parallel"] is False
+
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "off")
+    assert build_execution_block(Tier.MEDIUM, parallel=True)["parallel"] is True
+
+
+def test_workers_label_beats_env_default(monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_INTAKE_WORKERS", "5")
+    block = build_execution_block(Tier.MEDIUM, parallel=True, workers=2)
+    assert block["workers"] == 2
+
+
+def test_falsy_and_malformed_env_values_leave_parallel_off(monkeypatch) -> None:
+    for val in ("0", "false", "no", "off", "", "  ", "banana"):
+        monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", val)
+        assert build_execution_block(Tier.MEDIUM)["parallel"] is False
+
+
+def test_malformed_env_workers_falls_back_to_coder_default(monkeypatch) -> None:
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "on")
+    for val in ("0", "-3", "abc", "2.5"):
+        monkeypatch.setenv("AIFACTORY_INTAKE_WORKERS", val)
+        block = build_execution_block(Tier.MEDIUM)
+        assert block["parallel"] is True
+        assert "workers" not in block  # DEFAULT_PARALLEL_WORKERS decides

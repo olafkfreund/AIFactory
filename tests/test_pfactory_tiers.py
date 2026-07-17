@@ -8,7 +8,7 @@ the ``tier`` field wired into ``taxonomy.Classification``.
 from __future__ import annotations
 
 from pfactory.taxonomy import classify_labels
-from pfactory.tiers import Tier, classify_tier, tier_for
+from pfactory.tiers import Tier, classify_parallel, classify_tier, tier_for
 
 # ── classify_tier: basic mapping ───────────────────────────────────────────
 
@@ -100,3 +100,67 @@ def test_classification_carries_tier():
 def test_classification_tier_none_when_unlabelled():
     c = classify_labels(["pfactory"])
     assert c.tier is None
+
+
+# ── classify_parallel: opt-in / opt-out ────────────────────────────────────
+
+
+def test_parallel_label_opts_in() -> None:
+    assert classify_parallel(["factory:parallel"]) == (True, None)
+
+
+def test_serial_label_opts_out() -> None:
+    assert classify_parallel(["factory:serial"]) == (False, None)
+
+
+def test_no_parallel_label_returns_none_for_caller_default() -> None:
+    assert classify_parallel(["factory:hard", "bug"]) == (None, None)
+    assert classify_parallel([]) == (None, None)
+
+
+def test_serial_wins_over_parallel_regardless_of_order() -> None:
+    # Explicit opt-out must beat opt-in so a deployment default is overridable.
+    assert classify_parallel(["factory:parallel", "factory:serial"]) == (False, None)
+    assert classify_parallel(["factory:serial", "factory:parallel"]) == (False, None)
+
+
+def test_scoped_gitlab_label_forms_are_accepted() -> None:
+    assert classify_parallel(["factory::parallel"]) == (True, None)
+    assert classify_parallel(["factory::serial"]) == (False, None)
+    assert classify_parallel(["FACTORY::Parallel"]) == (True, None)
+
+
+def test_parallel_is_orthogonal_to_the_tier() -> None:
+    # A tier label alone never implies parallelism, and vice versa.
+    assert classify_parallel(["factory:low"]) == (None, None)
+    assert classify_tier(["factory:parallel"]) is None
+
+
+# ── classify_parallel: workers=N ───────────────────────────────────────────
+
+
+def test_workers_label_parsed() -> None:
+    assert classify_parallel(["factory:parallel", "factory:workers=4"]) == (True, 4)
+    assert classify_parallel(["factory::workers=2"]) == (None, 2)
+
+
+def test_workers_alone_does_not_enable_parallel() -> None:
+    # workers=N only TUNES the cap; enabling stays an explicit opt-in.
+    assert classify_parallel(["factory:workers=4"]) == (None, 4)
+
+
+def test_malformed_workers_labels_are_ignored() -> None:
+    for bad in (
+        "factory:workers=0",
+        "factory:workers=-2",
+        "factory:workers=x",
+        "factory:workers=1.5",
+        "factory:workers=",
+    ):
+        assert classify_parallel(["factory:parallel", bad]) == (True, None)
+
+
+def test_dict_shaped_and_malformed_labels_never_raise() -> None:
+    assert classify_parallel([{"name": "factory:parallel"}]) == (True, None)
+    assert classify_parallel(None) == (None, None)
+    assert classify_parallel([None, 42, {"nope": 1}, "  "]) == (None, None)
