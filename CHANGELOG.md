@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.50 - 2026-07-17
+
+- fix(prompts): load the real planner schema prompt (`apps/backend/prompts/planner.md`) instead of a non-existent `prompts_pkg/prompts/planner.md`; on a missing prompt the generator now hard-fails instead of silently substituting a one-sentence fallback. Every dispatched Job build had been planning schema-less, which is why plans lacked `parallel_safe`/file footprints and `--parallel` never produced waves. (#920, PR #921)
+- fix(kubejob): derive `--force` from caller intent instead of passing it unconditionally, and only emit the plan-approval bypass warning on a real bypass. (#916, PR #919)
+- style: ruff-format 4 files that landed unformatted on dev via a `--no-verify` merge, healing the repo-wide format gate. (PR #921)
+
+
 ## 3.6.49 - 2026-07-17
 
 **3.6.48 shipped empty — this release is what 3.6.48's notes described.** The 3.6.48 release branch was cut from a stale local `dev` (the checkout failed silently behind a suppressed stderr, so the branch was taken from the previous release branch instead). It carried only a version bump and a CHANGELOG describing four fixes that were not in the build. The entry below is left in place, corrected, rather than rewritten: a changelog that quietly edits away a bad release is exactly the kind of lying artifact the fixes in this very release exist to stop.
