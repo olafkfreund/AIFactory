@@ -657,3 +657,22 @@ def test_true_conflict_human_stops_no_force():
     r = _SeqRunner(update_ok=False)  # update-branch fails → true conflict
     assert pe.merge_pr("o", "r", 20, runner=r) is False
     assert r.saw("update-branch")  # tried, but did not force-merge
+
+
+def test_gather_pr_context_base_branch_head_uses_build_branch(tmp_path):
+    """#948: on the kubejob path the control-plane worktree HEAD is the base
+    branch (main) because the build ran in the Job. Trusting it makes create_pr
+    open a main->main PR (rejected). A base-branch HEAD must resolve to the
+    canonical build branch aifactory/<spec_id> the Job pushed."""
+    spec_id = "040-feature-x"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    wt.mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/demo"})
+    )
+    r = FakeRunner({"rev-parse": CmdResult(0, "main", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx is not None
+    assert ctx["branch"] == "aifactory/040-feature-x"  # NOT "main"

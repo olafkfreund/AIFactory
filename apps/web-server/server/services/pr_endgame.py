@@ -672,8 +672,16 @@ def gather_pr_context(
         return None
     head = runner(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(worktree))
     branch = head.out.strip() if head.ok else ""
-    if not branch or branch == "HEAD":
-        return None
+    # On the kubejob path the build runs inside the k8s Job and pushes
+    # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
+    # branch (main). Trusting its HEAD makes create_pr open a main->main PR,
+    # which gh rejects ("head branch is the same as base"), so the auto-PR never
+    # opens (#948, the PR-endgame twin of #938). A base branch is never a valid
+    # PR head — use the canonical build branch the Job pushed. create_pr's push
+    # of that (absent locally) fails harmlessly; gh pr create --head finds it on
+    # origin.
+    if not branch or branch in {"HEAD", "main", "master"}:
+        branch = f"aifactory/{spec_id}"
 
     repo = ""
     # The PR base is the task's integration branch (task_metadata.base_branch,
