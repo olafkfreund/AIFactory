@@ -35,6 +35,33 @@ import pytest
 os.environ.setdefault("APP_DISABLE_AUTH", "true")
 
 # =============================================================================
+# AMBIENT GIT ENV SCRUB - Keep the suite's own git plumbing repo-agnostic (#819)
+# =============================================================================
+# Git exports these into hook environments: a `pre-commit` hook runs with
+# GIT_INDEX_FILE=.git/index — a RELATIVE path. When the husky pre-commit gate
+# runs pytest, the whole suite inherits it, and every git subprocess a test
+# spawns re-resolves that relative path against its OWN cwd. Tests that shell
+# out to git inside a linked worktree (where `.git` is a FILE, not a directory)
+# then either die with "fatal: .git/index: index file open failed: Not a
+# directory" or — because they pass capture_output without check=True — fail
+# SILENTLY, staging nothing and leaving baffling empty-diff assertions.
+#
+# That made the suite pass when run straight from a shell and fail under the
+# pre-commit hook, i.e. look like a load-dependent flake (#819) when it was
+# fully deterministic. Drop them so tests always target the repo at `cwd`.
+#
+# This protects the test harness only; the product code is independently immune
+# (core.worktree._git_env scrubs the same vars for its own git subprocesses).
+for _git_var in (
+    "GIT_INDEX_FILE",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+):
+    os.environ.pop(_git_var, None)
+
+# =============================================================================
 # PRE-MOCK EXTERNAL SDK MODULES - Must happen BEFORE adding aifactory to path
 # =============================================================================
 # These SDK modules may not be installed, so we mock them before any imports

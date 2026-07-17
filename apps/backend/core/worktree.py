@@ -56,6 +56,32 @@ logger = logging.getLogger(__name__)
 _GIT_LOCK_TIMEOUT_SECONDS = float(os.getenv("AIFACTORY_GIT_LOCK_TIMEOUT", "120"))
 _GIT_LOCK_FILENAME = "aifactory-worktree.lock"
 
+# Ambient git env vars that pin git to ONE specific repo/index/work tree.
+#
+# This manager drives git across SEVERAL repos and worktrees (base repo +
+# every linked worktree), so any inherited value here silently aims git at the
+# wrong index. Git exports these into hook environments — notably
+# `GIT_INDEX_FILE=.git/index` (relative!) during a pre-commit hook — so any
+# AIFactory code that runs under a git hook inherits them. A relative
+# GIT_INDEX_FILE re-resolves against each git child's own cwd; inside a linked
+# worktree `.git` is a FILE, not a directory, so `git worktree add` dies with
+# "fatal: .git/index: index file open failed: Not a directory" (#819).
+_AMBIENT_GIT_VARS = frozenset(
+    {
+        "GIT_INDEX_FILE",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+    }
+)
+
+
+def _git_env() -> dict[str, str]:
+    """The current environment, minus the git vars that would pin git elsewhere."""
+    return {k: v for k, v in os.environ.items() if k not in _AMBIENT_GIT_VARS}
+
+
 # Build/test artifacts that must never be committed — committing them makes
 # concurrent parallel coders collide on merge-back (binary .coverage conflicts,
 # duplicate .pyc). An untracked .gitignore is honored by `git add`, so writing
@@ -274,6 +300,7 @@ class WorktreeManager:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=_git_env(),
             )
             if result.stdout.strip() == "true":
                 subprocess.run(
@@ -283,6 +310,7 @@ class WorktreeManager:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    env=_git_env(),
                 )
                 logger.warning(
                     "Reset core.bare=true -> false on primary checkout %s "
@@ -315,6 +343,7 @@ class WorktreeManager:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=_git_env(),
             )
             if result.returncode == 0:
                 return env_branch
@@ -335,6 +364,7 @@ class WorktreeManager:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=_git_env(),
             )
             if result.returncode == 0:
                 return branch
@@ -362,6 +392,7 @@ class WorktreeManager:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
         )
         if result.returncode != 0:
             raise WorktreeError(f"Failed to get current branch: {result.stderr}")
@@ -375,6 +406,10 @@ class WorktreeManager:
         ``-c core.bare=false`` makes every worktree operation immune to a stray
         bare flag on the repo config, even if something re-set it between
         construction and this call (see _ensure_not_bare).
+
+        ``env=_git_env()`` drops inherited GIT_DIR/GIT_INDEX_FILE/... so the
+        command targets the repo at ``cwd`` and not whatever repo the ambient
+        environment points at (see _AMBIENT_GIT_VARS).
         """
         return subprocess.run(
             ["git", "-c", "core.bare=false"] + args,
@@ -383,6 +418,7 @@ class WorktreeManager:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
         )
 
     def _unstage_gitignored_files(self) -> None:
@@ -414,6 +450,7 @@ class WorktreeManager:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_git_env(),
         )
 
         if result.stdout.strip():

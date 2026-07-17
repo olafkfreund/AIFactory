@@ -22,7 +22,12 @@ import pytest
 # Pull every symbol off the SAME module object (conftest pre-mocks the heavy
 # SDK deps so importing core.worktree directly is safe). Importing WorktreeError
 # from a different module instance would make pytest.raises miss the raised one.
-from core.worktree import WorktreeError, WorktreeManager, _BaseRepoGitLock
+from core.worktree import (
+    WorktreeError,
+    WorktreeManager,
+    _BaseRepoGitLock,
+    _git_env,
+)
 
 
 def _is_valid_worktree(manager: WorktreeManager, spec_name: str) -> bool:
@@ -44,10 +49,13 @@ class TestConcurrentWorktreeAdd:
         WITHOUT the lock, the concurrent `git worktree add` calls hit
         index.lock contention ("Unable to create '.../index.lock': File
         exists") and some worktrees fail to materialize / the registry is left
-        inconsistent. WITH the lock they queue and all succeed. (A worktree-add
-        can still hit a transient under-load filesystem hiccup unrelated to the
-        lock — e.g. "index file open failed" — so we bounded-retry those; the
-        invariant being proved is no concurrency-induced corruption.)
+        inconsistent. WITH the lock they queue and all succeed.
+
+        A worktree-add is expected to succeed FIRST TIME here: it is serialized
+        by the lock and touches only this test's own temp repo. There is no
+        retry — an "index file open failed" here was never an under-load
+        hiccup but a deterministic ambient-env bug (#819), and retrying only
+        hid it. See TestAmbientGitEnv below.
         """
         spec_names = [f"spec-{i:02d}" for i in range(4)]
         errors: list[Exception] = []
@@ -61,20 +69,7 @@ class TestConcurrentWorktreeAdd:
             try:
                 mgr = WorktreeManager(temp_git_repo, base_branch="main")
                 barrier.wait()  # maximize the race on `git worktree add`
-                last_exc: Exception | None = None
-                for _ in range(3):
-                    try:
-                        mgr.create_worktree(spec_name)
-                        return
-                    except WorktreeError as exc:
-                        msg = str(exc).lower()
-                        if any(m in msg for m in contention_markers):
-                            # A genuine cross-build index race — never retry-mask.
-                            raise
-                        last_exc = exc  # transient under-load hiccup: retry
-                        time.sleep(0.1)
-                if last_exc is not None:
-                    raise last_exc
+                mgr.create_worktree(spec_name)
             except Exception as exc:  # noqa: BLE001
                 errors.append(exc)
 
@@ -181,6 +176,63 @@ class TestConcurrentWorktreeAdd:
         mgr = WorktreeManager(temp_git_repo, base_branch="main")
         assert mgr._git_lock_path.name == "aifactory-worktree.lock"
         assert mgr._git_lock_path.parent == (temp_git_repo / ".git").resolve()
+
+
+class TestAmbientGitEnv:
+    """Ambient GIT_* env vars must not aim our git commands at another repo (#819).
+
+    Git exports these into hook environments: during a `pre-commit` hook it sets
+    GIT_INDEX_FILE=.git/index — a RELATIVE path. Anything the hook runs (the test
+    suite, or AIFactory itself) inherits it, and every git child re-resolves that
+    relative path against its OWN cwd. `git worktree add` checks out with cwd set
+    to the new worktree, where `.git` is a FILE, so `.git/index` hits ENOTDIR:
+    "fatal: .git/index: index file open failed: Not a directory".
+
+    This is deterministic, not a race: it presents as a "flake" only because the
+    suite passes when run straight from a shell and fails when run via the hook.
+    """
+
+    def test_create_worktree_ignores_ambient_git_index_file(
+        self, temp_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A relative GIT_INDEX_FILE (as git sets for hooks) must not break add."""
+        monkeypatch.setenv("GIT_INDEX_FILE", ".git/index")
+
+        mgr = WorktreeManager(temp_git_repo, base_branch="main")
+        mgr.create_worktree("spec-env")
+
+        assert _is_valid_worktree(mgr, "spec-env")
+
+    def test_create_worktree_ignores_ambient_git_dir(
+        self, temp_git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A GIT_DIR pointing at an unrelated repo must not hijack our commands."""
+        other = tmp_path / "other-repo"
+        other.mkdir()
+        subprocess.run(["git", "init"], cwd=other, capture_output=True, check=True)
+        monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(other))
+
+        mgr = WorktreeManager(temp_git_repo, base_branch="main")
+        mgr.create_worktree("spec-gitdir")
+
+        # The worktree must exist in OUR repo, not the GIT_DIR-designated one.
+        assert _is_valid_worktree(mgr, "spec-gitdir")
+        assert not (other / ".aifactory").exists()
+
+    def test_git_env_strips_pinning_vars_but_keeps_the_rest(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_git_env drops only the repo-pinning vars, preserving PATH etc."""
+        monkeypatch.setenv("GIT_INDEX_FILE", ".git/index")
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "Test User")
+
+        env = _git_env()
+
+        assert "GIT_INDEX_FILE" not in env
+        # Author/committer identity and general env must survive.
+        assert env["GIT_AUTHOR_NAME"] == "Test User"
+        assert "PATH" in env
 
 
 class TestCrossProcessLock:
