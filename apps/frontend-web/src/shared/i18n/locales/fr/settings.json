@@ -176,7 +176,11 @@
     "bmadSessionSegmentation": "Segmentation de session BMad",
     "bmadSessionSegmentationDescription": "Activer les sessions par histoire avec contexte minimal pour une réduction de 50-90% des tokens (expérimental)",
     "soloMode": "Mode Solo",
-    "soloModeDescription": "Exécuter les tâches avec un seul agent concentré — désactive la création parallèle de sous-agents"
+    "soloModeDescription": "Exécuter les tâches avec un seul agent concentré — désactive la création parallèle de sous-agents",
+    "parallelExecution": "Exécution parallèle",
+    "parallelExecutionDescription": "Exécute plusieurs agents de codage simultanément dans des worktrees git isolés sur des sous-tâches indépendantes. Valeur par défaut pour les nouvelles constructions. Désactivée par défaut pendant sa validation sur des constructions réelles.",
+    "parallelWorkers": "Agents parallèles",
+    "parallelWorkersDescription": "Nombre maximal d'agents de codage exécutés simultanément (1-8)"
   },
   "theme": {
     "title": "Apparence",

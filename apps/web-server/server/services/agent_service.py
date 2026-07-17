@@ -656,6 +656,18 @@ class AgentService(
         if any(q.task_id == task_id for q in self._task_queue):
             raise ValueError(f"Task {task_id} is already queued")
 
+        # #376 shipped the parallel harness but left it dark for every caller
+        # except the auto-continue monitor, which read task_metadata itself.
+        # Resolve the spec's persisted setting HERE — the one place every entry
+        # point funnels through (intake from-issue, /start, plan-approval,
+        # auto-fix, delegation, and both queue-drain paths, which inherit the
+        # values resolved before parking). An explicit argument still wins, so
+        # callers that pass parallel=False keep their serial build.
+        if parallel is None:
+            parallel, meta_workers = self._read_parallel_opts(project_path, spec_id)
+            if workers is None:
+                workers = meta_workers
+
         # RFC-0016 #668: durable, multi-replica-safe path. The store decides
         # admit-vs-queue under SELECT ... FOR UPDATE so two replicas can't
         # exceed the cap or double-start the same job_id. The in-memory path

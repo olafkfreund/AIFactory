@@ -57,9 +57,37 @@ Scoped MCP keys (`acw_`) gate remote tools with `mcp:read` / `mcp:write`. See
 
 | Flag | Default | What it does |
 |------|---------|--------------|
-| `AIFACTORY_PARALLEL` / `--parallel` / `workers` | off / 3 | Run independent subtasks as isolated sub-worktrees, merged sequentially. See [Task lifecycle](./task-lifecycle). |
+| `run.py --parallel` / `--workers N` | off / 3 | Run a wave's independent subtasks as isolated sub-worktrees, merged sequentially. The scheduler only puts subtasks touching disjoint files in the same wave. See [Task lifecycle](./task-lifecycle). |
+| `AIFACTORY_INTAKE_PARALLEL` | off | Fleet default for **issue-intake** builds (`/api/tasks/from-issue`): when truthy (`1`/`true`/`yes`/`on`), an unlabelled issue builds in parallel. Per-issue labels always win — see [Parallel execution for intake builds](#parallel-execution-for-intake-builds). |
+| `AIFACTORY_INTAKE_WORKERS` | (unset) | Worker cap for intake builds that run parallel. Unset leaves the coder's own default (3). Ignored by serial builds. |
 | `AIFACTORY_SOLO_MODE` | off | Single self-directed agent for small jobs (token-saving). |
 | `BMAD_SESSION_SEGMENTATION` | off | Per-story session segmentation for large tasks. |
+
+### Parallel execution for intake builds
+
+Parallelism is opted into **per issue**, on a separate axis from the RFC-0011
+difficulty tier (`factory:low` / `factory:medium` / `factory:hard`) — any tier
+can run parallel or serial.
+
+| Label | Effect |
+|-------|--------|
+| `factory:parallel` | Run this build's independent subtasks concurrently. |
+| `factory:serial` | Force serial. Always wins over `factory:parallel` and over `AIFACTORY_INTAKE_PARALLEL`. |
+| `factory:workers=N` | Cap the workers at N. Tunes only — it does **not** enable parallelism on its own; pair it with `factory:parallel`. |
+
+Scoped label spellings (`factory::parallel`) are accepted, matching the tier
+labels. Resolution order is: `factory:serial` > `factory:parallel` >
+`AIFACTORY_INTAKE_PARALLEL` > off.
+
+The resolved setting is written to the spec's `task_metadata.json`
+(`parallel` / `workers`), which the agent service reads back when it starts any
+build — so the same setting also applies on the auto-continue, plan-approval and
+queue-drain paths.
+
+**Default off, deliberately.** The wave path has not yet run on a live intake
+build, and it interacts with the packed-Job worktree layout. Opt in per issue
+with a label first; flip `AIFACTORY_INTAKE_PARALLEL` for the fleet only once it
+has proven out.
 
 ## Job-native build & multi-node scheduling
 

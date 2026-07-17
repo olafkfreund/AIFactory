@@ -1,6 +1,24 @@
 ## [Unreleased]
 
 
+## 3.6.47 - 2026-07-17
+
+### Added
+
+- **User-controllable parallel (multi-agent) execution for intake builds (#901, #902, #905).** AIFactory has been able to run a build's independent subtasks concurrently since #376 — each coding agent in its own child git worktree, disjoint file sets enforced by the wave scheduler, sequential merges, parent-owned plan state. PFactory-planned tasks have always used it (the planner derives `parallel`/`workers` from the epic's dependency shape and attaches them to every contract). Label-driven **intake** builds never did: nothing set the flag, so they always ran serial. Three control surfaces now exist, resolved most-specific-first — **label > portal setting > env > off**:
+  - **Issue labels** (#902): `factory:parallel`, `factory:serial` (always wins), `factory:workers=N`; the GitLab scoped form `factory::parallel` is accepted, mirroring the RFC-0011 tier labels.
+  - **Portal settings** (#901): `parallelExecution` + `parallelWorkers` (1-8), in Settings beside Solo Mode.
+  - **Env** (#902): `AIFACTORY_INTAKE_PARALLEL`, `AIFACTORY_INTAKE_WORKERS` for a fleet-wide operator default.
+  The setting deliberately outranks env (inverting solo mode's order): a portal toggle that an env var could override would be dead UI. `parallelExecution` is tri-state (`bool | None`) so "never expressed an opinion" is distinct from "chose off" — otherwise saving any unrelated setting (theme, uiScale) would have silently and permanently killed an operator's `AIFACTORY_INTAKE_PARALLEL=true`.
+  Resolution happens once in `AgentService.start_task_execution` — the single point every entry path funnels through (intake, /start, plan-approval, auto-fix, delegation, both queue drains) — so an explicit argument still wins and no caller was special-cased.
+  **Off by default**: the wave path has never run on a live intake build and interacts with the packed-KubeJob worktree layout behind #893. Opt in per issue with `factory:parallel` and watch a run before making it a fleet default.
+  Worker bounds are intentionally three ceilings owned by three layers, not one number: portal 1-8 (outer envelope) > PFactory 4 (contract cap) > coder 3 (fallback). The narrowest in play wins, so a portal preference can never raise a contract's cap.
+
+### Changed
+
+- **TechDocs dependencies page refreshed (#904).** The techdocs job regenerates it and pushes straight to `dev`, but `dev` is protected and requires the `backend (ruff + pytest)` check, so the bot's push is rejected and the job fails whenever the page drifts. Committed via PR instead. The underlying design flaw (a bot that cannot push to a protected branch) is tracked separately.
+
+
 ## 3.6.46 - 2026-07-17
 
 ### Fixed
