@@ -1,6 +1,12 @@
 ## [Unreleased]
 
 
+## 3.6.57 - 2026-07-17
+
+- fix(tasks): defensively coerce/skip malformed planner subtask fields (float id, off-type fields) so a single poisoned spec can no longer 500 GET /api/tasks or orphan every new intake issue. Completes the #942 fix. (#941, PR #946)
+- feat(skills): seed the coding-skill library (40 provider-neutral skills across languages/backend/frontend/data/infra/quality); the existing matcher now has content to select and inject as skill_context.md. (#945)
+
+
 ## 3.6.56 - 2026-07-17
 
 - fix(tasks): tolerate out-of-enum subtask status in load_spec_metadata instead of 500ing GET /api/tasks; an LLM-emitted "ready" status crashed the whole task list. May relieve the intake-orphaning symptom if dispatch loads specs through the same path. (#942, PR #943)
