@@ -15,6 +15,7 @@ counts clamp rather than making settings unloadable.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -52,11 +53,17 @@ def settings_dir(monkeypatch, tmp_path):
     return tmp_path
 
 
-def test_parallel_execution_defaults_off():
-    """Parallel execution is opt-in: OFF, with 3 workers, until proven live."""
+def test_parallel_execution_defaults_unset():
+    """Parallel execution is opt-in and starts UNSET, with 3 workers.
+
+    Tri-state since #905: None means "no opinion", which resolves to OFF once
+    the env rung is exhausted, but is deliberately distinct from an explicit
+    False -- only an opinion is mirrored to the global config. The UI renders
+    None as off (`parallelExecution ?? false`), so this is invisible to users.
+    """
     settings = AppSettings()
 
-    assert settings.parallelExecution is False
+    assert settings.parallelExecution is None
     assert settings.parallelWorkers == DEFAULT_PARALLEL_WORKERS
 
 
@@ -138,3 +145,101 @@ def test_default_matches_coder_constant():
     from agents.coder import DEFAULT_PARALLEL_WORKERS as CODER_DEFAULT
 
     assert DEFAULT_PARALLEL_WORKERS == CODER_DEFAULT
+
+
+# ── #905: the setting is wired to intake, end to end ───────────────────────
+
+
+@pytest.fixture
+def _no_intake_env(monkeypatch):
+    """The env rung sits below the setting; unset it so it cannot mask a bug."""
+    monkeypatch.delenv("AIFACTORY_INTAKE_PARALLEL", raising=False)
+    monkeypatch.delenv("AIFACTORY_INTAKE_WORKERS", raising=False)
+
+
+def _intake_task_metadata() -> dict:
+    """Run the real intake chain: config.json -> execution block -> task metadata.
+
+    Mirrors from_issue.py for an unlabelled issue (classify_parallel returns
+    (None, None)), through the same mapping that writes task_metadata.json.
+    """
+    backend = Path(__file__).parent.parent / "apps" / "backend"
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from intake import build_execution_block
+    from pfactory.tiers import Tier
+    from trusted_plan import execution_profile_to_metadata
+
+    return execution_profile_to_metadata(build_execution_block(Tier.MEDIUM))
+
+
+def test_portal_toggle_reaches_intake_task_metadata(settings_dir, _no_intake_env):
+    """The acceptance criterion for #905: flipping the toggle changes the build.
+
+    Before the fix this asserted nothing useful — intake read only
+    AIFACTORY_INTAKE_PARALLEL, so the portal setting was dead UI.
+    """
+    save_app_settings(AppSettings(parallelExecution=True, parallelWorkers=5))
+
+    meta = _intake_task_metadata()
+
+    assert meta["parallel"] is True
+    assert meta["workers"] == 5
+
+
+def test_portal_toggle_off_keeps_intake_serial(settings_dir, _no_intake_env):
+    """The other half of the toggle: saving OFF must produce a serial build."""
+    save_app_settings(AppSettings(parallelExecution=False, parallelWorkers=5))
+
+    meta = _intake_task_metadata()
+
+    assert meta["parallel"] is False
+    assert "workers" not in meta  # a cap is meaningless to a serial build
+
+
+def test_unset_toggle_does_not_shadow_the_operator_env_default(
+    settings_dir, monkeypatch
+):
+    """Saving unrelated settings must not silently kill the fleet env default.
+
+    The setting rung outranks env, so if a never-touched parallelExecution
+    mirrored as `enabled: false` it would pin every intake build serial the
+    moment a user saved a theme change -- and no env var could undo it. None
+    means "no opinion": the parallel block is not written at all.
+    """
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "1")
+
+    save_app_settings(AppSettings(uiScale=1.2))  # a save that is not about parallelism
+
+    assert "parallel" not in json.loads(
+        (settings_dir / ".aifactory" / "config.json").read_text()
+    )
+    assert _intake_task_metadata()["parallel"] is True  # env default survives
+
+
+def test_clearing_the_toggle_removes_a_stale_opinion(settings_dir, monkeypatch):
+    """Going back to unset must not leave the old opinion overriding env."""
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "1")
+    save_app_settings(AppSettings(parallelExecution=False))
+    assert _intake_task_metadata()["parallel"] is False  # opinion beats env
+
+    save_app_settings(AppSettings(parallelExecution=None))
+
+    assert _intake_task_metadata()["parallel"] is True  # env rung restored
+
+
+def test_explicit_serial_label_still_overrides_the_toggle(settings_dir, _no_intake_env):
+    """Per-issue intent stays the most specific rung once the setting is live."""
+    save_app_settings(AppSettings(parallelExecution=True, parallelWorkers=5))
+
+    backend = Path(__file__).parent.parent / "apps" / "backend"
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from intake import build_execution_block
+    from pfactory.tiers import Tier, classify_parallel
+
+    # A real factory:serial label, resolved the way from_issue.py resolves it.
+    parallel, workers = classify_parallel(["factory:serial"])
+    block = build_execution_block(Tier.MEDIUM, parallel=parallel, workers=workers)
+
+    assert block["parallel"] is False
