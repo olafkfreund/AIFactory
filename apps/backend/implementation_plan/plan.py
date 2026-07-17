@@ -8,14 +8,18 @@ tracking, status management, and follow-up capabilities.
 """
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from .enums import PhaseType, SubtaskStatus, WorkflowType
 from .phase import Phase
 from .subtask import Subtask
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_dep_phase_number(dep: object) -> int | None:
@@ -65,11 +69,11 @@ class ImplementationPlan:
     planStatus: str | None = None
     reviewReason: str | None = None
     recoveryNote: str | None = None
-    qa_signoff: dict | None = None
+    qa_signoff: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        result = {
+        result: dict[str, Any] = {
             "feature": self.feature,
             "workflow_type": self.workflow_type.value,
             "services_involved": self.services_involved,
@@ -95,7 +99,7 @@ class ImplementationPlan:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ImplementationPlan":
+    def from_dict(cls, data: dict[str, Any]) -> "ImplementationPlan":
         """Create ImplementationPlan from dictionary."""
         # Parse workflow_type with fallback for unknown types
         workflow_type_str = data.get("workflow_type", "feature")
@@ -131,7 +135,7 @@ class ImplementationPlan:
             qa_signoff=data.get("qa_signoff"),
         )
 
-    def save(self, path: Path):
+    def save(self, path: Path) -> None:
         """Save plan to JSON file."""
         self.updated_at = datetime.now().isoformat()
         if not self.created_at:
@@ -144,7 +148,7 @@ class ImplementationPlan:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
-    def update_status_from_subtasks(self):
+    def update_status_from_subtasks(self) -> None:
         """Update overall status and planStatus based on subtask completion state.
 
         This syncs the task status with the UI's expected values:
@@ -239,14 +243,41 @@ class ImplementationPlan:
         return available
 
     def get_next_subtask(self) -> tuple[Phase, Subtask] | None:
-        """Get the next subtask to work on, respecting dependencies."""
+        """Get the next subtask to work on, respecting dependencies.
+
+        Stall-breaker (#896): if no phase's dependencies are satisfied but
+        pending work remains, the planner emitted unsatisfiable phase deps
+        (e.g. the entry phase depends on a later/phantom phase, or a cycle) —
+        so ``get_available_phases`` is empty forever and the build would
+        hard-fail "0/N no runnable subtask" without a single subtask running.
+        Rather than brick the build on a planner slip, fall back to the
+        earliest incomplete phase that still has pending subtasks, ignoring its
+        deps (logged). Same "a bad planner output never bricks a build" stance
+        as the wave scheduler. This never fires when the plan is genuinely done
+        (no pending subtasks -> returns None -> the completion signal).
+        """
         for phase in self.get_available_phases():
             pending = phase.get_pending_subtasks()
             if pending:
                 return phase, pending[0]
+
+        stalled = [
+            p for p in self.phases if not p.is_complete() and p.get_pending_subtasks()
+        ]
+        if stalled:
+            phase = min(stalled, key=lambda p: p.phase)
+            logger.warning(
+                "plan dependency stall: no phase's deps are satisfiable but "
+                "%d phase(s) have pending work — running phase %s '%s' out of "
+                "dep order (planner emitted unsatisfiable/circular phase deps)",
+                len(stalled),
+                phase.phase,
+                phase.name,
+            )
+            return phase, phase.get_pending_subtasks()[0]
         return None
 
-    def get_progress(self) -> dict:
+    def get_progress(self) -> dict[str, Any]:
         """Get overall progress statistics."""
         total_subtasks = sum(len(p.subtasks) for p in self.phases)
         done_subtasks = sum(
