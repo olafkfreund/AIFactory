@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.56 - 2026-07-17
+
+- fix(tasks): tolerate out-of-enum subtask status in load_spec_metadata instead of 500ing GET /api/tasks; an LLM-emitted "ready" status crashed the whole task list. May relieve the intake-orphaning symptom if dispatch loads specs through the same path. (#942, PR #943)
+
+
 ## 3.6.55 - 2026-07-17
 
 - fix(handoff): never send a base branch as the verify source_branch. On the kubejob path the build runs inside the k8s Job and leaves the control-plane worktree on the base branch (main), so the auto-handoff read `main` and sent TFactory to verify a branch without the built code — every label-driven intake build failed at test (`planner_replan_budget_exhausted` / `triaged_empty`) despite correct code on `aifactory/<spec_id>`. A detected base branch (main/master) now falls back to the canonical build branch the Job always pushes. Dogfood-blocking; found stress-testing the intake path (Factory#295). (#938, PR #939)
