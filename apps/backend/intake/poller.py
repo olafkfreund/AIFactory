@@ -70,6 +70,9 @@ class RepoConfig:
     repo: str
     project_id: str
     change_mode: str | None = None  # optional per-repo override
+    # Integration branch the build's worktree AND its eventual PR should target
+    # (e.g. "dev" for repos that do not integrate via their default branch).
+    base_branch: str | None = None
 
 
 @dataclass

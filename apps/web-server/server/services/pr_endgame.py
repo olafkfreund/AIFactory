@@ -631,14 +631,27 @@ async def watch_and_finish(
 def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
     title = spec_id
     body = "Automated PR from AIFactory (clean build)."
+    issue_number = None
     try:
         req = json.loads((spec_dir / "requirements.json").read_text())
         title = str(req.get("title") or spec_id)[:120]
         desc = req.get("description")
         if desc:
             body = f"{desc}\n\n---\n🤖 AIFactory auto-PR on a clean, QA-passed build."
+        # Origin-issue correlation: from_issue stamps the number on both
+        # provenance.issue_number and githubIssue.number.
+        prov = req.get("provenance")
+        gh = req.get("githubIssue")
+        if isinstance(prov, dict) and isinstance(prov.get("issue_number"), int):
+            issue_number = prov["issue_number"]
+        elif isinstance(gh, dict) and isinstance(gh.get("number"), int):
+            issue_number = gh["number"]
     except (OSError, ValueError):
         pass
+    if issue_number is not None:
+        # Closing keyword so the origin issue links to (and, on a default-branch
+        # merge, closes with) the PR — the whole point of label-driven intake.
+        body = f"{body}\n\nFixes #{issue_number}"
     return title, body
 
 
@@ -663,7 +676,18 @@ def gather_pr_context(
         return None
 
     repo = ""
-    base = "main"
+    # The PR base is the task's integration branch (task_metadata.base_branch,
+    # stamped by from_issue / trusted-plan ingest), defaulting to main. Read it
+    # UNCONDITIONALLY — it used to live inside the repo fallback below, so any
+    # spec whose requirements.json named the repo silently PR'd against main
+    # even when the repo integrates via dev.
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    base = meta.get("base_branch") or meta.get("baseBranch") or "main"
     try:
         req = json.loads((spec_dir / "requirements.json").read_text())
         gh = req.get("githubIssue") if isinstance(req, dict) else None
@@ -673,12 +697,7 @@ def gather_pr_context(
     except (OSError, ValueError):
         pass
     if not repo:
-        try:
-            meta = json.loads((spec_dir / "task_metadata.json").read_text())
-            repo = meta.get("github_repo") or meta.get("githubRepo") or ""
-            base = meta.get("base_branch") or meta.get("baseBranch") or base
-        except (OSError, ValueError):
-            pass
+        repo = meta.get("github_repo") or meta.get("githubRepo") or ""
     if not repo:
         # Last resort: derive owner/name from the worktree's origin remote.
         url = runner(["git", "remote", "get-url", "origin"], str(worktree))

@@ -217,6 +217,42 @@ async def test_write_spec_creates_spec_md(project):
     assert "support Min and Max in pycode" in content
 
 
+async def test_base_branch_persisted_to_task_metadata(project):
+    """base_branch reaches BOTH the build start (worktree base, #916) and
+    task_metadata.json — the PR endgame reads the latter for the PR base, so a
+    dev-integrating fleet repo gets its auto-PR opened against dev, not main."""
+    tmp_path, started = project
+    req = FromIssueRequest(
+        project_id="p",
+        base_branch="dev",
+        payload={
+            "number": 13,
+            "title": "Fleet fix",
+            "body": "do it",
+            "labels": [{"name": "factory:low"}],
+        },
+    )
+    res = await create_from_issue(req)
+    assert started["base_branch"] == "dev"
+    assert _task_metadata(tmp_path, res["spec_id"])["base_branch"] == "dev"
+
+
+async def test_no_base_branch_leaves_task_metadata_unstamped(project):
+    tmp_path, started = project
+    req = FromIssueRequest(
+        project_id="p",
+        payload={
+            "number": 14,
+            "title": "Default-branch repo",
+            "body": "do it",
+            "labels": [{"name": "factory:low"}],
+        },
+    )
+    res = await create_from_issue(req)
+    assert started["base_branch"] is None
+    assert "base_branch" not in _task_metadata(tmp_path, res["spec_id"])
+
+
 async def test_intake_opts_into_tfactory_handoff_by_default(project, monkeypatch):
     """An intake build opts into TFactory auto-handoff so the finished build is
     independently verified (the handoff itself no-ops unless TFACTORY_BASE_URL is

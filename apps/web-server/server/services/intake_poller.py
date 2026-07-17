@@ -8,7 +8,7 @@ the web-server lifespan.
 Env-gated and **off by default**:
   AIFACTORY_INTAKE_POLLER   "true" to enable (default off).
   AIFACTORY_INTAKE_REPOS    JSON list of
-      {"provider","repo","project_id"[,"change_mode"]}.
+      {"provider","repo","project_id"[,"change_mode"][,"base_branch"]}.
   AIFACTORY_INTAKE_INTERVAL_S   poll interval seconds (default 30).
   AIFACTORY_URL                 base URL for the /api/tasks/from-issue route.
   PFACTORY_INGEST_URL           PFactory ingest endpoint for hard-tier routing.
@@ -89,6 +89,7 @@ def load_repo_configs() -> list[RepoConfig]:
                 repo=str(repo),
                 project_id=str(project_id),
                 change_mode=it.get("change_mode"),
+                base_branch=it.get("base_branch"),
             )
         )
     return out
@@ -269,6 +270,10 @@ def _route_low_medium(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
             "issue_number": issue.number,
             "labels": issue.labels,
             "change_mode": cfg.change_mode,
+            # Integration branch for repos that do not merge via their default
+            # branch (the fleet repos integrate via dev): the worktree is cut
+            # from it AND the eventual auto-PR targets it.
+            "base_branch": cfg.base_branch,
         },
     )
 
