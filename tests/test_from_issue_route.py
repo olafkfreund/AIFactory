@@ -150,6 +150,37 @@ async def test_provider_fetch_path(project, monkeypatch):
     assert res["issue_number"] == 42
 
 
+async def test_redelivered_issue_is_deduplicated(project):
+    """#878: re-delivering the same issue must not mint a duplicate spec/build."""
+    tmp_path, started = project
+    req = FromIssueRequest(
+        project_id="p",
+        payload={"number": 42, "title": "Once only", "labels": ["factory:low"]},
+    )
+    first = await create_from_issue(req)
+    started.clear()
+
+    second = await create_from_issue(req)
+    assert second["success"] is True
+    assert second["deduplicated"] is True
+    assert second["spec_id"] == first["spec_id"]
+    assert second["task_id"] == first["task_id"]
+    # no second build started, no second spec dir minted
+    assert started == {}
+    specs = [d for d in (tmp_path / ".aifactory" / "specs").iterdir() if d.is_dir()]
+    assert len(specs) == 1
+
+    # a different issue still creates a fresh spec
+    other = await create_from_issue(
+        FromIssueRequest(
+            project_id="p",
+            payload={"number": 43, "title": "Different", "labels": ["factory:low"]},
+        )
+    )
+    assert other.get("deduplicated") is None
+    assert other["spec_id"] != first["spec_id"]
+
+
 async def test_missing_issue_is_422(project):
     _, _ = project
     req = FromIssueRequest(project_id="p")
