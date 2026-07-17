@@ -8,6 +8,7 @@ lazily inside the loop, so importing the service module is cheap.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import sys
 import time
@@ -19,6 +20,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
+from pfactory.tiers import Tier  # noqa: E402
 from server.services import intake_poller as ip  # noqa: E402
 
 
@@ -178,20 +180,153 @@ def test_apply_label_does_not_create_when_present(monkeypatch):
     assert events == ["apply"], "no label creation when the apply succeeds"
 
 
-# --- #843: hard tier is not auto-routed yet -> loud, actionable refusal ---
+# --- #874: hard tier routes to PFactory when configured; refuses loudly if not ---
+
+
+def _hard_args():
+    """(cfg, issue, tier) for a factory:hard issue, as poll_once would pass them."""
+    cfg = ip.RepoConfig(
+        provider="github",
+        repo="olafkfreund/AIFactory",
+        project_id="aifactory",
+        change_mode="existing",
+    )
+    issue = ip.IntakeIssue(
+        number=874,
+        labels=["factory:hard"],
+        title="Refund flow",
+        body="## Acceptance Criteria\n- A finance user can issue a refund\n",
+    )
+    return cfg, issue, Tier.HARD
 
 
 def test_route_hard_refuses_loudly_and_actionably(monkeypatch):
-    """Until a PFactory ingest endpoint exists, a hard-tier issue must refuse
-    with a maintainer-actionable message (which becomes the issue comment), not
-    a silent mis-POST or an internal env-var error."""
+    """With no PFACTORY_INGEST_URL a hard-tier issue must refuse with a
+    maintainer-actionable message (which becomes the issue comment), not a silent
+    drop — an unconfigured deployment degrades honestly (#843)."""
     monkeypatch.delenv("PFACTORY_INGEST_URL", raising=False)
+    monkeypatch.setattr(
+        ip, "_post_json", lambda *a, **k: pytest.fail("must not POST when unconfigured")
+    )
+
     with pytest.raises(ip.TerminalIntakeError) as exc:
-        ip._route_hard(object(), object(), object())
+        ip._route_hard(*_hard_args())
+
     msg = str(exc.value).lower()
     assert "manually" in msg and "hard" in msg, (
         f"refusal must tell a maintainer what to do; got: {exc.value}"
     )
+
+
+def test_route_hard_posts_the_pfactory_ingest_contract(monkeypatch):
+    """The payload IS the contract PFactory's /from-issue endpoint accepts —
+    notably issue_number, the RFC-0001 correlation key it plans against."""
+    monkeypatch.setenv(
+        "PFACTORY_INGEST_URL", "https://pfactory.example/api/plan/sessions/from-issue/"
+    )
+    monkeypatch.setenv("PFACTORY_TOKEN", "pf-tok")
+    seen = {}
+
+    def fake_post(url, payload, timeout=10.0, token=None):
+        seen.update(url=url, payload=payload, token=token)
+
+    monkeypatch.setattr(ip, "_post_json", fake_post)
+    ip._route_hard(*_hard_args())
+
+    # Trailing slash stripped, so the configured URL is used verbatim.
+    assert seen["url"] == "https://pfactory.example/api/plan/sessions/from-issue"
+    assert seen["payload"] == {
+        "repo": "olafkfreund/AIFactory",
+        "provider": "github",
+        "issue_number": 874,
+        "title": "Refund flow",
+        "body": "## Acceptance Criteria\n- A finance user can issue a refund\n",
+        "labels": ["factory:hard"],
+        "autonomy_tier": "hard",
+        "change_mode": "existing",
+    }
+    # A sibling's API: authenticated, and never with AIFactory's own token.
+    assert seen["token"] == "pf-tok"
+
+
+def test_route_hard_authenticates_to_a_sibling_not_with_our_own_token(monkeypatch):
+    """PFactory is a sibling service, so AIFACTORY_TOKEN cannot authenticate to
+    it (#847's reasoning); prefer PFACTORY_TOKEN, else the shared APP_API_TOKEN."""
+    monkeypatch.delenv("PFACTORY_TOKEN", raising=False)
+    monkeypatch.delenv("APP_API_TOKEN", raising=False)
+    monkeypatch.setenv("AIFACTORY_TOKEN", "aif-tok-must-not-be-used")
+    assert ip._pfactory_token() is None
+
+    monkeypatch.setenv("APP_API_TOKEN", "app-tok")
+    assert ip._pfactory_token() == "app-tok", "falls back to the shared token"
+
+    monkeypatch.setenv("PFACTORY_TOKEN", "pf-tok")
+    assert ip._pfactory_token() == "pf-tok", "explicit PFACTORY_TOKEN wins"
+
+
+def test_route_hard_4xx_surfaces_pfactorys_reason(monkeypatch):
+    """A rejected issue must comment back WHY (e.g. no acceptance criteria), not
+    a bare "HTTP 400" the human who filed it cannot act on."""
+    import urllib.error
+
+    monkeypatch.setenv("PFACTORY_INGEST_URL", "https://pfactory.example/ingest")
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            "https://pfactory.example/ingest",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(b'{"detail":"no acceptance criteria found"}'),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+
+    with pytest.raises(ip.TerminalIntakeError) as exc:
+        ip._route_hard(*_hard_args())
+
+    assert "no acceptance criteria found" in str(exc.value)
+    assert "400" in str(exc.value)
+
+
+def test_post_json_5xx_stays_transient(monkeypatch):
+    """A 5xx is the server's problem and may fix itself — must NOT go terminal
+    (which would comment + give up on the issue)."""
+    import urllib.error
+
+    def boom(req, timeout=None):
+        raise urllib.error.HTTPError(
+            "https://x.example/i", 503, "Service Unavailable", {}, io.BytesIO(b"nope")
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+
+    with pytest.raises(RuntimeError) as exc:
+        ip._post_json("https://x.example/i", {"a": 1})
+    assert not isinstance(exc.value, ip.TerminalIntakeError)
+
+
+def test_http_detail_never_masks_the_status():
+    """An unreadable/empty body must degrade to "" rather than raise — the
+    status code is the load-bearing part."""
+
+    class _Unreadable:
+        def read(self):
+            raise OSError("connection reset")
+
+    assert ip._http_detail(_Unreadable()) == ""
+
+    class _Empty:
+        def read(self):
+            return b"   "
+
+    assert ip._http_detail(_Empty()) == ""
+
+    class _Plain:
+        def read(self):
+            return b"upstream exploded"
+
+    assert ip._http_detail(_Plain()) == ": upstream exploded"
 
 
 # --- #847: the API token never falls back to a GitHub PAT (guaranteed 401) ---
