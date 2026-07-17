@@ -2,6 +2,23 @@
 
 This directory contains test suites and verification tools for the AIFactory web server backend.
 
+## How these run
+
+These tests are gated by CI: the `backend (ruff + pytest)` job runs
+
+```bash
+apps/backend/.venv/bin/pytest apps/web-server/tests -q -o asyncio_mode=auto
+```
+
+Before #903 this directory was never collected by CI, so nothing here gated a
+pull request. Several suites had rotted unnoticed as a result; see #903 for what
+was removed and why. Keep new tests here runnable under that exact command.
+
+`conftest.py` puts `apps/web-server` on `sys.path`, so import the app as
+`from server.routes import execution` and patch targets as
+`server.routes.execution.<name>`. The directory is `web-server` with a hyphen,
+so there is no importable `apps.web-server` package path.
+
 ## Test Files
 
 ### 1. test_file_based_endpoints.py
@@ -201,71 +218,6 @@ When adding new file-based endpoint tests:
 
 ---
 
-## CLI Integration Endpoints Coverage
-
-### 4. test_cli_integration_endpoints.py
-**Comprehensive pytest test suite for all 10 CLI integration endpoint implementations.**
-
-- **Purpose**: Unit testing for CLI command execution with mocked commands
-- **Coverage**: 10 endpoints across 4 phases (Phase 7, 9, 10, 14)
-- **Testing Approach**:
-  - Mock CLI commands (glab, gh, git, claude)
-  - Test success and error paths
-  - Validate command building logic
-  - Test input validation and error handling
-
-**Usage**:
-```bash
-cd apps/web-server/tests
-pytest test_cli_integration_endpoints.py -v
-```
-
-**Test Categories**:
-- Phase 7: GitLab CLI Operations (5 tests)
-- Phase 9: Context Management (1 test)
-- Phase 10: Git Operations (2 tests)
-- Phase 14: Git Maintenance & Reviews (2 tests)
-
-### 5. verify_cli_integration_endpoints.py
-**Automated verification script that validates all CLI integration endpoint implementations.**
-
-- **Purpose**: Static code analysis to verify CLI endpoints are implemented
-- **Method**: Regex-based detection of CLI command execution
-- **Output**: Detailed report with verification status for each endpoint
-
-**Usage**:
-```bash
-cd apps/web-server/tests
-python3 verify_cli_integration_endpoints.py
-```
-
-**Verification Checks**:
-- ✅ Function exists in route file
-- ✅ Not a stub implementation
-- ✅ Has CLI command execution (run_glab_command, run_git_command, etc.)
-- ✅ Has error handling
-- ✅ Has input validation
-- ✅ Success rate calculation
-
-### 6. CLI_INTEGRATION_ENDPOINTS_TEST_REPORT.md
-**Comprehensive test report documenting verification of all 10 CLI integration endpoints.**
-
-- **Purpose**: Documentation of CLI test results and verification methods
-- **Content**:
-  - Executive summary with 100% success rate
-  - Detailed verification for each of 10 endpoints
-  - CLI tool breakdown (glab, gh, git, claude)
-  - Security features and command injection prevention
-  - Test coverage matrix
-
-**Key Highlights**:
-- All 10 endpoints verified through multiple methods
-- CLI command execution confirmed
-- Security features verified (no command injection)
-- Safe handling of destructive operations
-
----
-
 ## Future Work
 
 ### Additional Test Coverage Needed
@@ -291,8 +243,6 @@ python3 verify_cli_integration_endpoints.py
 For more information:
 - **Implementation Plan**: `.aifactory/specs/012-search-this-project-files-for-/implementation_plan.json`
 - **Build Progress**: `.aifactory/specs/012-search-this-project-files-for-/build-progress.txt`
-- **File-Based Test Report**: `FILE_BASED_ENDPOINTS_TEST_REPORT.md`
-- **CLI Integration Test Report**: `CLI_INTEGRATION_ENDPOINTS_TEST_REPORT.md`
 
 ## Contact
 

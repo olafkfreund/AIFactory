@@ -211,11 +211,6 @@ def mock_roadmap(mock_settings_dir: Path, temp_dir: Path) -> Path:
 class TestPhase2CriticalPrioritySettings:
     """Test critical settings and configuration endpoints."""
 
-    def test_update_api_key_validation(self, mock_settings_dir):
-        """Test 2.1: update_api_key validates API key format."""
-        # Test file would use mocked settings path
-        # Validation: API key type, format, length
-        assert True  # Placeholder - would test actual endpoint
 
     def test_set_active_profile_exists(self, mock_claude_profiles):
         """Test 2.2: set_active_profile validates profile exists."""
@@ -281,12 +276,6 @@ class TestPhase3ProfileManagement:
         # Test token validation (min 20 chars, format)
         assert mock_claude_profiles.exists()
 
-    def test_update_auto_switch_settings_threshold(self, mock_settings_dir):
-        """Test 3.3: update_auto_switch_settings validates threshold 0-100."""
-        auto_switch_file = mock_settings_dir.parent / "auto-switch.json"
-        # Would test threshold validation (0-100 range)
-        # Test partial updates
-        assert True
 
     def test_retry_with_profile_prevents_same_profile(self, mock_claude_profiles):
         """Test 3.4: retry_with_profile prevents switching to active profile."""
@@ -356,16 +345,6 @@ class TestPhase5IdeationFileOperations:
 # =============================================================================
 
 
-class TestPhase9ContextManagement:
-    """Test context management endpoints."""
-
-    def test_update_project_env_token_validation(self, mock_projects, temp_dir):
-        """Test 9.2: update_project_env validates tokens."""
-        # Test githubToken, gitlabToken, claudeToken validation
-        # Min 10 characters, whitespace stripping
-        assert True
-
-
 # =============================================================================
 # Phase 11: Low Priority - Bulk Operations Tests
 # =============================================================================
@@ -394,55 +373,9 @@ class TestPhase11BulkOperations:
 # =============================================================================
 
 
-class TestPhase12MediaAndSessionManagement:
-    """Test media and session management endpoints."""
-
-    def test_save_changelog_image_base64_decode(self, mock_projects, temp_dir):
-        """Test 12.1: save_changelog_image decodes base64 and sanitizes filename."""
-        # Test base64 decoding, filename sanitization, directory traversal prevention
-        assert True
-
-    def test_clear_insights_session_changelog_creates_new(self, mock_projects):
-        """Test 12.2: clear_insights_session (changelog) creates new session."""
-        # Test deleting current session and creating new one
-        assert True
-
-    def test_clear_insights_session_files_creates_new(self, mock_projects):
-        """Test 12.3: clear_insights_session (files) creates new session."""
-        # Test deleting current session and creating new one
-        assert True
-
-    def test_save_terminal_buffer_secure_permissions(self, mock_projects, temp_dir):
-        """Test 12.4: save_terminal_buffer sets secure file permissions."""
-        # Test saving terminal output with 0o600 permissions
-        assert True
-
-
 # =============================================================================
 # Phase 13: Low Priority - Project & Environment Tests
 # =============================================================================
-
-
-class TestPhase13ProjectAndEnvironment:
-    """Test project discovery and environment endpoints."""
-
-    def test_scan_for_projects_finds_indicators(self, temp_dir):
-        """Test 13.1: scan_for_projects finds project indicators."""
-        # Create test project with .git, package.json, .aifactory
-        test_project = temp_dir / "scan-test"
-        test_project.mkdir()
-        (test_project / ".git").mkdir()
-        (test_project / "package.json").write_text("{}")
-
-        # Would test scanning finds the project
-        assert True
-
-    def test_update_source_env_validates_tokens(self, mock_settings_dir):
-        """Test 13.2: update_source_env validates token fields."""
-        # Test token validation (min 10 chars)
-        # Test URL format validation
-        # Test boolean to string conversion
-        assert True
 
 
 # =============================================================================
@@ -450,93 +383,14 @@ class TestPhase13ProjectAndEnvironment:
 # =============================================================================
 
 
-class TestSecurityFeatures:
-    """Test security features across all file-based endpoints."""
-
-    def test_file_permissions_are_secure(self, mock_claude_profiles, mock_api_profiles):
-        """Verify all sensitive files have 0o600 permissions."""
-        # Would test that created files have secure permissions
-        # claude-profiles.json, api-profiles.json, .env files, etc.
-        assert True
-
-    def test_input_sanitization(self):
-        """Test that all endpoints sanitize inputs."""
-        # Whitespace stripping, empty checks, length validation
-        assert True
-
-    def test_atomic_operations(self):
-        """Test that file operations are atomic (read-modify-write)."""
-        # Test that concurrent requests don't corrupt data
-        assert True
-
-
 # =============================================================================
 # Integration Tests
 # =============================================================================
 
 
-class TestEndToEndWorkflows:
-    """Test complete workflows using multiple endpoints."""
-
-    def test_profile_management_workflow(self, mock_claude_profiles):
-        """Test complete profile management workflow."""
-        # 1. Create new profile (3.2)
-        # 2. Rename profile (3.1)
-        # 3. Set profile token (2.3)
-        # 4. Set as active (2.2)
-        # 5. Retry with different profile (3.4)
-        assert True
-
-    def test_ideation_workflow(self, mock_ideation):
-        """Test complete ideation workflow."""
-        # 1. Update idea status (2.7)
-        # 2. Dismiss idea (5.1)
-        # 3. Archive idea (5.2)
-        # 4. Delete idea (5.3)
-        # 5. Delete multiple ideas (11.2)
-        # 6. Dismiss all ideas (11.1)
-        assert True
-
-    def test_project_configuration_workflow(self, mock_projects, temp_dir):
-        """Test complete project configuration workflow."""
-        # 1. Update project settings (2.5)
-        # 2. Update project env (9.2)
-        # 3. Update feature status (2.6)
-        assert True
-
-
 # =============================================================================
 # Summary
 # =============================================================================
-
-
-def test_summary():
-    """
-    Summary of file-based endpoint test coverage:
-
-    Phase 2 (Critical): 7 endpoints tested
-    Phase 3 (Profile Management): 4 endpoints tested
-    Phase 4 (API Profile Management): 2 endpoints tested
-    Phase 5 (Ideation File Operations): 3 endpoints tested
-    Phase 9 (Context Management): 1 endpoint tested
-    Phase 11 (Bulk Operations): 2 endpoints tested
-    Phase 12 (Media & Session): 4 endpoints tested
-    Phase 13 (Project & Environment): 2 endpoints tested
-
-    Total: 25 file-based endpoint tests
-
-    Additional coverage:
-    - Security features (file permissions, input sanitization, atomic operations)
-    - End-to-end workflows
-    - Integration tests
-
-    All tests use:
-    - Temporary directories for isolation
-    - Mock file fixtures for consistent test data
-    - Comprehensive validation checks
-    - Security verification (permissions, sanitization)
-    """
-    assert True  # Summary test always passes
 
 
 if __name__ == "__main__":

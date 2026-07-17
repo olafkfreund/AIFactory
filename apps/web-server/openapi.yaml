@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.4.2
+  version: 3.6.49
 paths:
   /api/auth/register:
     post:
@@ -130,6 +130,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserResponse'
+  /api/auth/oidc/enabled:
+    get:
+      tags:
+      - Auth (OIDC)
+      summary: Whether OIDC SSO is available on this deployment
+      description: 'Cheap probe (#149) so the login page can decide whether to auto-initiate a
+
+        silent SSO handoff. Avoids bouncing users to a 404 on installs without OIDC.'
+      operationId: oidc_enabled_api_auth_oidc_enabled_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Oidc Enabled Api Auth Oidc Enabled Get
   /api/auth/oidc/login:
     get:
       tags:
@@ -3784,6 +3802,57 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/handoff-tfactory:
+    post:
+      tags:
+      - Task Execution
+      summary: Handoff To Tfactory
+      description: 'Push the finished build branch + hand the spec off to TFactory for
+
+        SOURCE-AWARE verification (PARR seam).
+
+
+        Reuses the same machinery as the auto-handoff on completion
+
+        (``build_ingest_payload`` pushes the build branch to origin and assembles the
+
+        ``git_url`` / ``source_branch`` / ``contract`` payload; ``send_handoff`` POSTs
+
+        it to TFactory''s ``/api/specs/ingest``), but is callable ON DEMAND — e.g. for
+
+        a build parked at ``human_review`` (auto-merge off), which never fires the
+
+        COMPLETED-only auto-handoff. Without this, the only way to verify such a build
+
+        was a text-only spec-ingest with no SUT to run tests against (hollow verify).
+
+
+        Returns the send result plus the TFactory spec/project id + the pushed branch
+
+        so the caller can poll TFactory for the verdict.'
+      operationId: handoff_to_tfactory_api_tasks__task_id__handoff_tfactory_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Handoff To Tfactory Api Tasks  Task Id  Handoff Tfactory Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/stop:
     post:
       tags:
@@ -3898,6 +3967,59 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/from-plan:
+    post:
+      tags:
+      - Task Execution
+      summary: Create From Trusted Plan
+      description: 'Trusted Plan Handoff (#390): verify a signed plan and build directly.
+
+
+        Verifies the plan''s signature + completeness checklist. If trusted-complete,
+
+        installs ``implementation_plan.json``, marks the spec approved, and starts
+
+        the build — bypassing the full spec pipeline (discovery → … → plan). A
+
+        tampered, unsigned, or incomplete plan is rejected with 422.'
+      operationId: create_from_trusted_plan_api_tasks_from_plan_post
+      parameters:
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Project Id
+      - name: title
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Title
+      - name: description
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Description
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FromPlanRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/apply-correction:
     post:
       tags:
@@ -3925,6 +4047,82 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ApplyCorrectionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/dispatch-to-copilot:
+    post:
+      tags:
+      - Task Execution
+      summary: Dispatch Task To Copilot
+      description: 'Delegate a task to the GitHub Copilot cloud agent (#458).
+
+
+        Assigns the linked GitHub issue to ``copilot-swe-agent[bot]`` and
+
+        launches a background watcher that polls for the resulting PR (up to
+
+        59 minutes — GitHub''s hard session limit).
+
+
+        Requires ``AIFACTORY_COPILOT_DISPATCH_ENABLED=true``.  If disabled or
+
+        the gh CLI call fails and ``fallback_to_local=true``, the task''s status
+
+        is left unchanged so the caller can start the normal pipeline instead.
+
+
+        On success the task status is set to ``copilot_running`` and the
+
+        ``copilot_dispatch`` block is written into ``task_metadata.json``.'
+      operationId: dispatch_task_to_copilot_api_tasks__task_id__dispatch_to_copilot_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopilotDispatchRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/from-issue:
+    post:
+      tags:
+      - Intake
+      summary: Create From Issue
+      description: Ingest a labelled issue and start a tier-driven governed build.
+      operationId: create_from_issue_api_tasks_from_issue_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FromIssueRequest'
+        required: true
       responses:
         '200':
           description: Successful Response
@@ -3971,6 +4169,8 @@ paths:
             - ai_review
             - human_review
             - done
+            - copilot_running
+            - copilot_pr_opened
             type: string
           - type: 'null'
           description: Filter by status
@@ -4125,427 +4325,6 @@ paths:
       responses:
         '204':
           description: Successful Response
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/token-usage:
-    get:
-      tags:
-      - Tasks
-      summary: Get Task Token Usage
-      description: 'Per-category token / cost breakdown for a task''s session(s) (#262).
-
-
-        Returns the structured breakdown produced by the backend token-attribution
-
-        module: each source category (system/CLAUDE.md instructions, user messages,
-
-        team/coordination context, tool outputs, thinking+output) with its token
-
-        count, %-of-context-window and apportioned $ cost, plus session totals.
-
-
-        Reads the agent-written ``token_usage.json`` from the main spec dir (the
-
-        agent loop syncs it back from the worktree). Returns an empty (all-zero)
-
-        breakdown when no session has run yet — never 404 on a valid task, so the
-
-        UI can render a stable empty state.'
-      operationId: get_task_token_usage_api_tasks__task_id__token_usage_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/resource-usage:
-    get:
-      tags:
-      - Tasks
-      summary: Get Task Resource Usage
-      description: "Point-in-time CPU/RAM of the running agent subprocess for a task (#277).\n\nThe frontend\
-        \ polls this to drive a live per-agent resource panel. Returns\nraw JSON (the api-client wraps\
-        \ it):\n\n    {\n      \"running\": bool,        # is an agent process active for this task\n\
-        \      \"pid\": int | null,\n      \"cpuPercent\": number,   # process CPU% (parent + children),\
-        \ 0.0 when idle\n      \"memoryMb\": number,     # aggregate RSS in MB\n      \"memoryPercent\"\
-        : number,# % of system RAM\n      \"sampledAt\": str        # ISO-8601 UTC\n    }\n\nBehaviour:\n\
-        \  - Unknown task → 404 (via ``_resolve_task``).\n  - Valid task with no live process → the not-running\
-        \ shape (never 404).\n  - Sampling is failure-safe: a dead/missing PID or psutil error degrades\n\
-        \    to the not-running shape rather than raising."
-      operationId: get_task_resource_usage_api_tasks__task_id__resource_usage_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/clarifications:
-    post:
-      tags:
-      - Tasks
-      summary: Generate Clarifications
-      description: Generate clarification questions for a task using an LLM.
-      operationId: generate_clarifications_api_tasks__task_id__clarifications_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClarificationResponse'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/clarifications/answers:
-    post:
-      tags:
-      - Tasks
-      summary: Submit Clarification Answers
-      description: Submit answers to clarification questions and append them to the task.
-      operationId: submit_clarification_answers_api_tasks__task_id__clarifications_answers_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ClarificationAnswersRequest'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Task'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/approve-plan:
-    post:
-      tags:
-      - Tasks
-      summary: Approve Plan
-      description: 'Approve a task''s plan to allow coding to proceed.
-
-
-        When a task is in plan_review status (waiting for human approval),
-
-        this endpoint marks the plan as approved and optionally restarts the task.'
-      operationId: approve_plan_api_tasks__task_id__approve_plan_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApprovePlanRequest'
-              default:
-                auto_restart: true
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/reject-plan:
-    post:
-      tags:
-      - Tasks
-      summary: Reject Plan
-      description: 'Reject a task''s plan and send the planner back to iterate.
-
-
-        Used by the human-review checkpoint when the implementation plan needs
-
-        rework. The optional ``feedback`` field is appended to the spec''s
-
-        review-state feedback log so the planner''s next pass picks it up.'
-      operationId: reject_plan_api_tasks__task_id__reject_plan_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RejectPlanRequest'
-              default: {}
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/qa-report:
-    get:
-      tags:
-      - Tasks
-      summary: Get Qa Report
-      description: 'Return the QA report markdown for a task.
-
-
-        Tasks that have completed the QA phase have a ``qa_report.md`` written
-
-        to their spec dir. This endpoint surfaces that content + a few derived
-
-        fields so an MCP client can show it inline without separately reading
-
-        the filesystem.'
-      operationId: get_qa_report_api_tasks__task_id__qa_report_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/agent-console/sse:
-    get:
-      tags:
-      - Tasks
-      summary: Stream Agent Console
-      description: 'Server-Sent Events stream of the running agent''s console output.
-
-
-        V1.1 strategy: read ``build-progress.txt`` from the spec dir and emit
-
-        deltas as they appear. This is the same file the portal''s progress
-
-        sidebar polls — it covers the 80% case (the user wants to *watch* an
-
-        agent without needing the rmux pane).
-
-
-        The richer rmux-driven SSE re-broadcast (which would let an MCP client
-
-        drive a live terminal) is a follow-up — it depends on the rmux bridge
-
-        being enabled, which isn''t a given on all deployments. The poll-based
-
-        fallback here works regardless.
-
-
-        Client behaviour: subscribe to the stream, receive ``data:`` events,
-
-        detect ``event: done`` when the agent finishes.'
-      operationId: stream_agent_console_api_tasks__task_id__agent_console_sse_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/plan-html:
-    get:
-      tags:
-      - Tasks
-      summary: Get Plan Html
-      description: 'Generate and return HTML view of the implementation plan.
-
-
-        Creates a temporary HTML file with nicely formatted plan for review.'
-      operationId: get_plan_html_api_tasks__task_id__plan_html_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/logs:
-    get:
-      tags:
-      - Tasks
-      summary: Get Task Logs
-      description: 'Get logs for a task.
-
-
-        Returns phase-based logs from task_logs.json if available,
-
-        checking both main spec dir and worktree.'
-      operationId: get_task_logs_api_tasks__task_id__logs_get
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/logs/watch:
-    post:
-      tags:
-      - Tasks
-      summary: Watch Task Logs
-      description: 'Start watching task logs (stub endpoint for frontend compatibility).
-
-
-        Note: Log streaming is handled via WebSocket, this endpoint is a no-op
-
-        that prevents 404 errors in the frontend.'
-      operationId: watch_task_logs_api_tasks__task_id__logs_watch_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/logs/unwatch:
-    post:
-      tags:
-      - Tasks
-      summary: Unwatch Task Logs
-      description: 'Stop watching task logs (stub endpoint for frontend compatibility).
-
-
-        Note: Log streaming is handled via WebSocket, this endpoint is a no-op
-
-        that prevents 404 errors in the frontend.'
-      operationId: unwatch_task_logs_api_tasks__task_id__logs_unwatch_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
         '422':
           description: Validation Error
           content:
@@ -4746,39 +4525,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/{task_id}/worktree/create-pr:
-    post:
-      tags:
-      - Tasks
-      summary: Create Pr From Task
-      description: 'Push the worktree branch and create a GitHub Pull Request.
-
-        Does NOT delete the worktree or branch after PR creation.'
-      operationId: create_pr_from_task_api_tasks__task_id__worktree_create_pr_post
-      parameters:
-      - name: task_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Task Id
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePRFromTaskOptions'
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/worktree/merge:
     post:
       tags:
@@ -4896,6 +4642,350 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/logs:
+    get:
+      tags:
+      - Tasks
+      summary: Get Task Logs
+      description: 'Get logs for a task.
+
+
+        Returns phase-based logs from task_logs.json if available,
+
+        checking both main spec dir and worktree.'
+      operationId: get_task_logs_api_tasks__task_id__logs_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/logs/watch:
+    post:
+      tags:
+      - Tasks
+      summary: Watch Task Logs
+      description: 'Start watching task logs (stub endpoint for frontend compatibility).
+
+
+        Note: Log streaming is handled via WebSocket, this endpoint is a no-op
+
+        that prevents 404 errors in the frontend.'
+      operationId: watch_task_logs_api_tasks__task_id__logs_watch_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/logs/unwatch:
+    post:
+      tags:
+      - Tasks
+      summary: Unwatch Task Logs
+      description: 'Stop watching task logs (stub endpoint for frontend compatibility).
+
+
+        Note: Log streaming is handled via WebSocket, this endpoint is a no-op
+
+        that prevents 404 errors in the frontend.'
+      operationId: unwatch_task_logs_api_tasks__task_id__logs_unwatch_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/qa-report:
+    get:
+      tags:
+      - Tasks
+      summary: Get Qa Report
+      description: 'Return the QA report markdown for a task.
+
+
+        Tasks that have completed the QA phase have a ``qa_report.md`` written
+
+        to their spec dir. This endpoint surfaces that content + a few derived
+
+        fields so an MCP client can show it inline without separately reading
+
+        the filesystem.'
+      operationId: get_qa_report_api_tasks__task_id__qa_report_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/agent-console/sse:
+    get:
+      tags:
+      - Tasks
+      summary: Stream Agent Console
+      description: 'Server-Sent Events stream of the running agent''s console output.
+
+
+        V1.1 strategy: read ``build-progress.txt`` from the spec dir and emit
+
+        deltas as they appear. This is the same file the portal''s progress
+
+        sidebar polls — it covers the 80% case (the user wants to *watch* an
+
+        agent without needing the rmux pane).
+
+
+        The richer rmux-driven SSE re-broadcast (which would let an MCP client
+
+        drive a live terminal) is a follow-up — it depends on the rmux bridge
+
+        being enabled, which isn''t a given on all deployments. The poll-based
+
+        fallback here works regardless.
+
+
+        Client behaviour: subscribe to the stream, receive ``data:`` events,
+
+        detect ``event: done`` when the agent finishes.'
+      operationId: stream_agent_console_api_tasks__task_id__agent_console_sse_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/plan-html:
+    get:
+      tags:
+      - Tasks
+      summary: Get Plan Html
+      description: 'Generate and return HTML view of the implementation plan.
+
+
+        Creates a temporary HTML file with nicely formatted plan for review.'
+      operationId: get_plan_html_api_tasks__task_id__plan_html_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/token-usage:
+    get:
+      tags:
+      - Tasks
+      summary: Get Task Token Usage
+      description: 'Per-category token / cost breakdown for a task''s session(s) (#262).
+
+
+        Returns the structured breakdown produced by the backend token-attribution
+
+        module: each source category (system/CLAUDE.md instructions, user messages,
+
+        team/coordination context, tool outputs, thinking+output) with its token
+
+        count, %-of-context-window and apportioned $ cost, plus session totals.
+
+
+        Reads the agent-written ``token_usage.json`` from the main spec dir (the
+
+        agent loop syncs it back from the worktree). Returns an empty (all-zero)
+
+        breakdown when no session has run yet — never 404 on a valid task, so the
+
+        UI can render a stable empty state.'
+      operationId: get_task_token_usage_api_tasks__task_id__token_usage_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/resource-usage:
+    get:
+      tags:
+      - Tasks
+      summary: Get Task Resource Usage
+      description: "Point-in-time CPU/RAM of the running agent subprocess for a task (#277).\n\nThe frontend\
+        \ polls this to drive a live per-agent resource panel. Returns\nraw JSON (the api-client wraps\
+        \ it):\n\n    {\n      \"running\": bool,        # is an agent process active for this task\n\
+        \      \"pid\": int | null,\n      \"cpuPercent\": number,   # process CPU% (parent + children),\
+        \ 0.0 when idle\n      \"memoryMb\": number,     # aggregate RSS in MB\n      \"memoryPercent\"\
+        : number,# % of system RAM\n      \"sampledAt\": str        # ISO-8601 UTC\n    }\n\nBehaviour:\n\
+        \  - Unknown task → 404 (via ``_resolve_task``).\n  - Valid task with no live process → the not-running\
+        \ shape (never 404).\n  - Sampling is failure-safe: a dead/missing PID or psutil error degrades\n\
+        \    to the not-running shape rather than raising."
+      operationId: get_task_resource_usage_api_tasks__task_id__resource_usage_get
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/clarifications:
+    post:
+      tags:
+      - Tasks
+      summary: Generate Clarifications
+      description: Generate clarification questions for a task using an LLM.
+      operationId: generate_clarifications_api_tasks__task_id__clarifications_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClarificationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/clarifications/answers:
+    post:
+      tags:
+      - Tasks
+      summary: Submit Clarification Answers
+      description: Submit answers to clarification questions and append them to the task.
+      operationId: submit_clarification_answers_api_tasks__task_id__clarifications_answers_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClarificationAnswersRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/worktree/open-in-ide:
     post:
       tags:
@@ -4965,6 +5055,116 @@ paths:
           content:
             application/json:
               schema: {}
+  /api/tasks/{task_id}/approve-plan:
+    post:
+      tags:
+      - Tasks
+      summary: Approve Plan
+      description: 'Approve a task''s plan to allow coding to proceed.
+
+
+        When a task is in plan_review status (waiting for human approval),
+
+        this endpoint marks the plan as approved and optionally restarts the task.'
+      operationId: approve_plan_api_tasks__task_id__approve_plan_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovePlanRequest'
+              default:
+                auto_restart: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/reject-plan:
+    post:
+      tags:
+      - Tasks
+      summary: Reject Plan
+      description: 'Reject a task''s plan and send the planner back to iterate.
+
+
+        Used by the human-review checkpoint when the implementation plan needs
+
+        rework. The optional ``feedback`` field is appended to the spec''s
+
+        review-state feedback log so the planner''s next pass picks it up.'
+      operationId: reject_plan_api_tasks__task_id__reject_plan_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectPlanRequest'
+              default: {}
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/tasks/{task_id}/worktree/create-pr:
+    post:
+      tags:
+      - Tasks
+      summary: Create Pr From Task
+      description: 'Push the worktree branch and create a GitHub Pull Request.
+
+        Does NOT delete the worktree or branch after PR creation.'
+      operationId: create_pr_from_task_api_tasks__task_id__worktree_create_pr_post
+      parameters:
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePRFromTaskOptions'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/tasks/{task_id}/inbox:
     post:
       tags:
@@ -5685,8 +5885,8 @@ paths:
       description: "Update auto-switch settings with validation and secure storage.\n\nUpdates the auto-switch\
         \ configuration which controls automatic profile switching\nbased on usage thresholds. Settings\
         \ are stored in auto-switch.json with secure\nfile permissions.\n\nArgs:\n    settings_update:\
-        \ Auto-switch settings update with optional enabled and threshold fields\n    \nReturns:\n   \
-        \ Success response with updated settings or error details"
+        \ Auto-switch settings update with optional enabled and threshold fields\n\nReturns:\n    Success\
+        \ response with updated settings or error details"
       operationId: update_auto_switch_settings_api_settings_auto_switch_patch
       requestBody:
         content:
@@ -7971,6 +8171,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/github/features:
+    get:
+      tags:
+      - GitHub
+      summary: Get Github Features
+      description: "Return server-side GitHub feature flags visible to the frontend.\n\nCurrently exposes:\n\
+        - ``copilot_dispatch_enabled``: whether AIFACTORY_COPILOT_DISPATCH_ENABLED is set,\n  used to\
+        \ gate the Copilot dispatch toggle in the task creation UI."
+      operationId: get_github_features_api_github_features_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/github/models:
+    get:
+      tags:
+      - GitHub
+      summary: List Github Models
+      description: 'Return the GitHub Models catalog.
+
+
+        Calls the public catalog endpoint (no auth required for the listing).
+
+        The caller needs ``GITHUB_TOKEN`` with ``models:read`` only when making
+
+        inference requests, not for fetching the catalog.
+
+
+        Returns the raw catalog JSON from models.github.ai.  The frontend uses
+
+        this to populate the ''GitHub Models'' group in the provider dropdown.'
+      operationId: list_github_models_api_github_models_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
   /api/github/fork-info:
     get:
       tags:
@@ -8018,6 +8258,64 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Get Capabilities Api Capabilities Get
+  /api/search:
+    get:
+      tags:
+      - Search
+      summary: Federated Search
+      operationId: federated_search_api_search_get
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+          description: Search query
+          default: ''
+          title: Q
+        description: Search query
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 50
+          minimum: 1
+          default: 20
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Federated Search Api Search Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/needs-you/count:
+    get:
+      tags:
+      - Search
+      summary: Needs You Count
+      description: 'Proxy the cockpit''s fleet human-blocked count (#148/#149) for the shared
+
+        top-bar badge. Degrades to zero when the cockpit is unreachable/unconfigured.'
+      operationId: needs_you_count_api_needs_you_count_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Needs You Count Api Needs You Count Get
   /api/projects/{project_id}/mcp-status:
     get:
       tags:
@@ -8055,6 +8353,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /mcp:
+    post:
+      tags:
+      - Copilot MCP
+      summary: Mcp Endpoint
+      description: 'JSON-RPC 2.0 MCP endpoint for the GitHub Copilot cloud agent.
+
+
+        Handles: initialize, tools/list, tools/call.'
+      operationId: mcp_endpoint_mcp_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
   /api/mcp-stdio/projects:
     get:
       tags:
@@ -9551,6 +9865,16 @@ paths:
           content:
             application/json:
               schema: {}
+  /:
+    get:
+      summary: Root
+      operationId: root__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
 components:
   schemas:
     APIKeyRequest:
@@ -9895,6 +10219,20 @@ components:
           title: Solomode
           description: Enable solo mode (single self-directed agent)
           default: false
+        parallel_execution:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel Execution
+          description: Default parallel (multi-agent) build execution for new builds; None = unset (defer
+            to AIFACTORY_INTAKE_PARALLEL, else off)
+        parallel_workers:
+          type: integer
+          maximum: 8.0
+          minimum: 1.0
+          title: Parallel Workers
+          description: Default max concurrent subtasks per wave when parallelExecution is on (1-8)
+          default: 3
         emailMicrosoftClientId:
           anyOf:
           - type: string
@@ -9988,11 +10326,50 @@ components:
           title: Confirm
           description: Required true to write + run the QA Fixer
           default: false
+        triage:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Triage
+          description: Structured triage report (TFactory#283). When present it is schema-validated before
+            the QA Fixer runs; malformed reports are rejected.
+        manifest_hash:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Manifest Hash
+          description: TFactory assertion-manifest hash, recorded for audit
+        correlation_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Correlation Key
+          description: RFC-0001 correlation key for keyed observability
+        tfactory_task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tfactory Task Id
+          description: TFactory workspace id
+        tfactory_callback_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tfactory Callback Url
+          description: URL AIFactory calls back when the fix completes
       type: object
       required:
       - fix_request_md
       title: ApplyCorrectionRequest
-      description: 'A correction hand-back from an external test tool (e.g. TFactory, #317).'
+      description: 'A correction hand-back from an external test tool (e.g. TFactory, #317).
+
+
+        Fields below ``confirm`` are the additive #467 typed-handback contract. They
+
+        are all optional, so the legacy markdown-only POST keeps working untouched
+
+        until TFactory cuts over to sending the structured ``triage`` block.'
     ApprovePlanRequest:
       properties:
         auto_restart:
@@ -10476,6 +10853,27 @@ components:
       type: object
       title: ConflictResolveOptions
       description: Options for conflict resolution.
+    CopilotDispatchRequest:
+      properties:
+        repo_full_name:
+          type: string
+          title: Repo Full Name
+          description: GitHub repository in 'owner/repo' format
+        issue_number:
+          type: integer
+          title: Issue Number
+          description: GitHub issue number to assign to Copilot
+        fallback_to_local:
+          type: boolean
+          title: Fallback To Local
+          description: If True, fall back to the local AIFactory pipeline on dispatch failure
+          default: true
+      type: object
+      required:
+      - repo_full_name
+      - issue_number
+      title: CopilotDispatchRequest
+      description: Request to delegate a task to the GitHub Copilot cloud agent.
     CreateAndRunRequest:
       properties:
         auto_continue:
@@ -10507,6 +10905,11 @@ components:
           - type: 'null'
           title: Model
           description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
         baseBranch:
           anyOf:
           - type: string
@@ -11136,6 +11539,138 @@ components:
       - content
       title: FileWrite
       description: File write request.
+    FromIssueRequest:
+      properties:
+        project_id:
+          type: string
+          title: Project Id
+          description: Target AIFactory project id
+        provider:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider
+          description: Git provider hint (github|gitlab|azure_devops)
+        repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Repo
+          description: owner/repo (informational)
+        issue_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Issue Number
+          description: Issue/work-item number to fetch via the provider
+        payload:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Payload
+          description: Pre-fetched issue dict (title/body/labels); skips fetch
+        labels:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Labels
+          description: Label names override (e.g. from a webhook)
+        change_mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Change Mode
+          description: change-mode; 'migration' forces the hard tier
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        base_branch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Branch
+          description: Base branch for the worktree
+      type: object
+      required:
+      - project_id
+      title: FromIssueRequest
+      description: Request to ingest a labelled issue as a tier-driven build.
+    FromPlanRequest:
+      properties:
+        auto_continue:
+          type: boolean
+          title: Auto Continue
+          description: Auto-continue to next phase
+          default: true
+        complexity:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Complexity
+          description: Complexity override for spec creation
+        parallel:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel
+          description: Enable parallel execution
+        workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Workers
+          description: Number of parallel workers
+        model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Model
+          description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
+        baseBranch:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Basebranch
+          description: Base branch for worktree creation
+        mode:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Mode
+          description: 'Execution mode: ''quick'' for simplified prompts, ''full'' for comprehensive'
+          default: full
+        plan:
+          additionalProperties: true
+          type: object
+          title: Plan
+          description: Signed implementation_plan.json (incl. 'approval')
+        provenance:
+          anyOf:
+          - $ref: '#/components/schemas/TaskProvenance'
+          - type: 'null'
+          description: Upstream provenance to persist alongside the approval
+      type: object
+      required:
+      - plan
+      title: FromPlanRequest
+      description: 'Trusted Plan Handoff (#390): build directly from a signed, vetted plan.
+
+
+        The plan must embed an ``approval`` envelope (see ``trusted_plan.sign_plan``)
+
+        that verifies against an authority key in the environment. On success the
+
+        spec pipeline is skipped and the build starts immediately.'
     FrontendLogEntry:
       properties:
         timestamp:
@@ -12101,6 +12636,21 @@ components:
           - type: boolean
           - type: 'null'
           title: Delegate By Default
+        auto_pr:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Pr
+        auto_merge:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Auto Merge
+        pr_reviewer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pr Reviewer
       type: object
       title: ProjectSettingsUpdate
       description: 'Model for updating project settings.
@@ -12537,6 +13087,16 @@ components:
           - type: boolean
           - type: 'null'
           title: Solomode
+        parallel_execution:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Parallel Execution
+        parallel_workers:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Parallel Workers
         emailMicrosoftClientId:
           anyOf:
           - type: string
@@ -12789,6 +13349,11 @@ components:
           - type: 'null'
           title: Model
           description: Model override for execution
+        auto_handover_tfactory:
+          type: boolean
+          title: Auto Handover Tfactory
+          description: Hand the finished build to TFactory for testing on completion (#496)
+          default: false
         baseBranch:
           anyOf:
           - type: string
@@ -12825,6 +13390,7 @@ components:
           - in_progress
           - completed
           - failed
+          - blocked
           title: Status
           default: pending
         files:
@@ -12836,6 +13402,26 @@ components:
           anyOf:
           - $ref: '#/components/schemas/SubtaskVerification'
           - type: 'null'
+        depends_on:
+          items:
+            type: string
+          type: array
+          title: Depends On
+        service:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Service
+        started_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Completed At
       type: object
       required:
       - id
@@ -12914,6 +13500,8 @@ components:
           - ai_review
           - human_review
           - done
+          - copilot_running
+          - copilot_pr_opened
           title: Status
           description: Current task status
           default: backlog
@@ -12959,6 +13547,20 @@ components:
           - type: 'null'
           title: Review Reason
           description: Reason for human review (e.g., 'plan_review')
+        github_issue:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Github Issue
+          description: Upstream GitHub issue number (RFC-0001 correlation key) from PFactory provenance;
+            lets the cockpit thread plan→code→test.
+        repo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Repo
+          description: 'Target repo (owner/name) this task runs against, for cross-portal tracking + visibility
+            (W5, Factory #218).'
       type: object
       required:
       - title
@@ -13287,6 +13889,35 @@ components:
           - type: 'null'
           title: Source
           description: Origin system, e.g. 'pfactory'
+        trusted_plan:
+          type: boolean
+          title: Trusted Plan
+          description: Whether this task carries a verified trusted plan
+          default: false
+        approved_by:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approved By
+          description: Signing authority, e.g. 'cfactory' or 'pfactory'
+        approval_timestamp:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Approval Timestamp
+          description: ISO-8601 time the plan was approved/signed
+        plan_contract_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Plan Contract Version
+          description: Trusted-plan contract version the signer used
+        signature:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Signature
+          description: HMAC signature over the canonical plan JSON
       type: object
       title: TaskProvenance
       description: 'Upstream provenance for a handed-off task (e.g. from PFactory, #332).
@@ -13305,6 +13936,8 @@ components:
           - ai_review
           - human_review
           - done
+          - copilot_running
+          - copilot_pr_opened
           title: Status
         force:
           type: boolean
@@ -13336,6 +13969,8 @@ components:
             - ai_review
             - human_review
             - done
+            - copilot_running
+            - copilot_pr_opened
           - type: 'null'
           title: Status
         metadata:
