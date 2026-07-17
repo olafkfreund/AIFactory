@@ -89,6 +89,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .task_phase import _append_parallel_flags
+
 _log = logging.getLogger(__name__)
 
 # Backend selection (RFC-0016 #671). Default OFF — today's in-pod subprocess.
@@ -552,6 +554,8 @@ def build_run_py_job_manifest(
     extra_env: dict[str, str] | None = None,
     workspace_uri: str | None = None,
     stop_after_planning: bool = False,
+    parallel: bool | None = None,
+    workers: int | None = None,
 ) -> dict[str, Any]:
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
@@ -628,15 +632,31 @@ def build_run_py_job_manifest(
     # env; the entrypoint just needs an interpreter, which the aifactory build
     # image (resolved above) provides.
     run_py = _resolve_run_py_path()
+    argv = [
+        "python",
+        run_py,
+        "--spec",
+        spec_id,
+        "--project-dir",
+        "/work",
+        "--auto-continue",
+        "--force",
+    ]
     # --stop-after-planning mirrors the in-pod path (cli/main.py): the kubejob
     # backend previously dropped this flag, so a planning-only request silently
     # ran the full build (coder + QA + PR). Thread it into the Job's run.py argv.
-    run_py_cmd = (
-        f"python {run_py} --spec {spec_id} --project-dir /work --auto-continue --force"
-    )
     if stop_after_planning:
-        run_py_cmd += " --stop-after-planning"
-    commands = [run_py_cmd]
+        argv.append("--stop-after-planning")
+    # #914: same defect class for the #376 parallel harness. The resolved
+    # execution reached here (task_metadata said ``"parallel": true``) but the
+    # Job's argv never carried ``--parallel``, so EVERY kubejob build ran serial
+    # — and #671 made kubejob the live default, leaving the wave harness inert on
+    # the cluster for intake labels, the portal setting AND PFactory-planned
+    # contracts alike. Reuse the in-pod helper rather than re-deriving the flags:
+    # a second copy of the "--parallel [--workers N]" rule is exactly how this
+    # feature's three worker constants already drifted apart.
+    _append_parallel_flags(argv, parallel, workers)
+    commands = [" ".join(argv)]
 
     spec = JobSpec(
         service="aifactory",
@@ -944,6 +964,8 @@ class KubeJobBuildBackend:
         oauth_token: str | None = None,
         batch: Any = None,
         stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
 
@@ -994,6 +1016,8 @@ class KubeJobBuildBackend:
             extra_env=extra_env,
             workspace_uri=workspace_uri,
             stop_after_planning=stop_after_planning,
+            parallel=parallel,
+            workers=workers,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]
