@@ -298,7 +298,7 @@ async def create_from_issue(
     # 4. Create the spec + apply the profile + start the build.
     project_path = projects_path
     spec_id = get_next_spec_id(project_path, issue["title"] or "intake-task")
-    _write_spec(
+    spec_dir = _write_spec(
         project_path,
         spec_id,
         issue,
@@ -306,6 +306,11 @@ async def create_from_issue(
         tier.value,
         tenant=resolve_tenant(raw_request),
     )
+    # Persist the integration branch so the PR endgame targets it too —
+    # gather_pr_context reads task_metadata.base_branch; without this a fleet
+    # repo that integrates via dev would get its auto-PR opened against main.
+    if request.base_branch:
+        _set_task_metadata_flag(spec_dir, "base_branch", request.base_branch)
 
     task_id = f"{request.project_id}:{spec_id}"
     await _start_build(

@@ -73,6 +73,40 @@ def test_load_repo_configs_skips_incomplete(monkeypatch):
     assert cfgs[0].repo == "x"
 
 
+def test_load_repo_configs_base_branch(monkeypatch):
+    """base_branch is parsed per repo entry and defaults to None (repos whose
+    integration branch is not the default branch, e.g. the fleet's dev)."""
+    monkeypatch.setenv(
+        "AIFACTORY_INTAKE_REPOS",
+        '[{"repo":"o/r","project_id":"p","base_branch":"dev"},'
+        '{"repo":"o/s","project_id":"q"}]',
+    )
+    cfgs = ip.load_repo_configs()
+    assert cfgs[0].base_branch == "dev"
+    assert cfgs[1].base_branch is None
+
+
+def test_route_low_medium_payload_carries_base_branch(monkeypatch):
+    """The from-issue payload threads the repo's integration branch so the
+    worktree AND the eventual auto-PR target it instead of main."""
+    monkeypatch.setenv("AIFACTORY_URL", "https://aifactory.example")
+    seen = {}
+
+    def fake_post(url, payload, timeout=10.0, token=None):
+        seen.update(url=url, payload=payload)
+
+    monkeypatch.setattr(ip, "_post_json", fake_post)
+    cfg = ip.RepoConfig(
+        provider="github", repo="o/r", project_id="p", base_branch="dev"
+    )
+    issue = ip.IntakeIssue(number=7, labels=["factory:low"])
+    ip._route_low_medium(cfg, issue, Tier.LOW)
+
+    assert seen["url"] == "https://aifactory.example/api/tasks/from-issue"
+    assert seen["payload"]["base_branch"] == "dev"
+    assert seen["payload"]["issue_number"] == 7
+
+
 def test_load_repo_configs_bad_json(monkeypatch):
     monkeypatch.setenv("AIFACTORY_INTAKE_REPOS", "not json")
     assert ip.load_repo_configs() == []

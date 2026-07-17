@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.54 - 2026-07-17
+
+- feat(intake): the auto-PR endgame now respects the repo's integration branch and links its origin issue. `AIFACTORY_INTAKE_REPOS` entries accept `base_branch` (threaded intake -> from-issue -> task_metadata -> `gather_pr_context`, which previously defaulted to main whenever requirements named the repo); the auto-PR body carries `Fixes #N` from the stamped provenance issue number. Unblocks fleet dogfooding: PRs against dev-integrating repos land on dev, not main. (PR #936)
+
+
 ## 3.6.53 - 2026-07-17
 
 - feat(tenancy): tenant-scope tasks/projects and stamp tenant on handoff events. Tenant resolved from `X-Tenant-Id` (default `"default"`) behind `AIFACTORY_MULTI_TENANT`; stamped into task metadata at intake and `/execution`; flag-gated tenant filtering on task/project lists; optional additive tenant on the TFactory ingest payload plus a local `tfactory_handoff.json` marker. Flag off is unchanged behavior. Part of the fleet multi-tenancy program (factory-gitops#13/#14). (#925, PR #934)

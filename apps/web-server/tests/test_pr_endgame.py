@@ -346,6 +346,66 @@ def test_gather_pr_context_resolves_repo(tmp_path):
     assert ctx["repo"] == "olafkfreund/demo"
 
 
+def test_gather_pr_context_base_from_task_metadata(tmp_path):
+    """task_metadata.base_branch sets the PR base EVEN when requirements.json
+    names the repo — it used to be read only on the repo-fallback path, so a
+    dev-integrating repo silently got its PR opened against main."""
+    spec_id = "spec-1"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    wt.mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/AIFactory"})
+    )
+    (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
+    r = FakeRunner({"rev-parse": CmdResult(0, "aifactory/spec-1", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx is not None
+    assert ctx["repo"] == "olafkfreund/AIFactory"
+    assert ctx["base"] == "dev"
+
+
+def test_gather_pr_context_base_defaults_to_main(tmp_path):
+    spec_id = "spec-1"
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id).mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(json.dumps({"github_repo": "o/r"}))
+    r = FakeRunner({"rev-parse": CmdResult(0, "b", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx["base"] == "main"
+
+
+# ── PR title/body: origin-issue closing keyword ─────────────────────────────
+
+
+def test_pr_body_carries_fixes_for_origin_issue(tmp_path):
+    """An intake build's PR body ends in Fixes #N so the origin issue links to
+    (and on a default-branch merge closes with) the PR."""
+    (tmp_path / "requirements.json").write_text(
+        json.dumps(
+            {
+                "title": "Fleet fix",
+                "description": "do it",
+                "provenance": {"issue_number": 321},
+                "githubIssue": {"number": 321},
+            }
+        )
+    )
+    title, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert title == "Fleet fix"
+    assert "Fixes #321" in body
+
+
+def test_pr_body_no_issue_no_fixes(tmp_path):
+    (tmp_path / "requirements.json").write_text(
+        json.dumps({"title": "t", "description": "d"})
+    )
+    _, body = pe._pr_title_body(tmp_path, "spec-1")
+    assert "Fixes #" not in body
+
+
 # ── #71 Phase A: configurable reviewer + AIFactory-verdict gate ──────────────
 
 
