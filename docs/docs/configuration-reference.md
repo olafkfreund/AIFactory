@@ -20,9 +20,53 @@ Flags are read in two places:
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `AIFACTORY_AUTO_DEPLOY` | off | After a clean build, deploy to AWS App Runner with deterministic Terraform, verify the live endpoint, then tear down. See [Deploy-then-verify](./concepts/deploy-then-verify). |
-| `AIFACTORY_AUTO_PR` | off | Auto-open a pull request on a clean build. |
+| `AIFACTORY_AUTO_PR` | off | Auto-open a pull request on a clean build. For issue-intake builds the PR targets the repo's `base_branch` from [`AIFACTORY_INTAKE_REPOS`](#issue-intake) (default `main`) and the PR body carries `Fixes #N` for the origin issue. |
 | `AIFACTORY_AUTO_MERGE` | off | Auto-merge after the reviewer approves. Requires `AIFACTORY_AUTO_PR`. |
 | `AIFACTORY_PR_REVIEWER` | `aifactory` | Which review gates the merge: `aifactory` (built-in engine, no Copilot credits), `copilot` (GitHub Copilot review), or `any` (any approved GitHub review). See [`guides/pr-endgame.md`](https://github.com/olafkfreund/AIFactory/blob/dev/guides/pr-endgame.md). |
+
+## Issue intake
+
+The RFC-0011 intake poller watches configured repos for `factory:*`-labelled
+issues and turns them into builds via `/api/tasks/from-issue`. Intake is
+idempotent by issue number: redelivery of the same issue returns the existing
+task (`deduplicated: true`) instead of creating a duplicate build.
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `AIFACTORY_INTAKE_POLLER` | off | Enable the background intake poller. |
+| `AIFACTORY_INTAKE_REPOS` | (none) | JSON list of repos to watch — see below. |
+| `AIFACTORY_INTAKE_INTERVAL_S` | 30 | Poll interval in seconds. |
+| `AIFACTORY_INTAKE_AUTO_HANDOFF` | on | Hand finished intake builds to TFactory for independent verification (no-op unless `TFACTORY_BASE_URL` is set). |
+
+Each `AIFACTORY_INTAKE_REPOS` entry:
+
+```json
+{
+  "provider": "github",
+  "repo": "owner/name",
+  "project_id": "my-project",
+  "change_mode": "existing",
+  "base_branch": "dev"
+}
+```
+
+`change_mode` and `base_branch` are optional. `base_branch` names the repo's
+integration branch: it is threaded through from-issue into the task metadata
+and the auto-PR endgame, so PRs land on the branch the repo integrates on
+(default `main`).
+
+### The `factory:*` label taxonomy
+
+Only issues carrying at least one `factory:*` label are picked up. Scoped
+spellings (`factory::hard`) are accepted throughout.
+
+| Label | Effect |
+|-------|--------|
+| `factory:low` / `factory:medium` | Difficulty tier — build directly in AIFactory. |
+| `factory:hard` | Route the issue to PFactory for full planning first. |
+| `factory:parallel` | Run the build's independent subtasks as a concurrent wave. |
+| `factory:serial` | Force serial; wins over every other parallel control. |
+| `factory:workers=N` | Cap wave workers at N (tunes only; pair with `factory:parallel`). |
 
 ## Auth
 
@@ -76,18 +120,22 @@ can run parallel or serial.
 | `factory:workers=N` | Cap the workers at N. Tunes only — it does **not** enable parallelism on its own; pair it with `factory:parallel`. |
 
 Scoped label spellings (`factory::parallel`) are accepted, matching the tier
-labels. Resolution order is: `factory:serial` > `factory:parallel` >
-`AIFACTORY_INTAKE_PARALLEL` > off.
+labels. A per-project default can also be set from the portal
+(**Settings → General**, "Parallel build execution" toggle + worker count,
+workers 1–8). Resolution order, most specific first:
 
-The resolved setting is written to the spec's `task_metadata.json`
-(`parallel` / `workers`), which the agent service reads back when it starts any
-build — so the same setting also applies on the auto-continue, plan-approval and
-queue-drain paths.
+`factory:serial` > `factory:parallel` > portal setting > `AIFACTORY_INTAKE_PARALLEL` > off.
 
-**Default off, deliberately.** The wave path has not yet run on a live intake
-build, and it interacts with the packed-Job worktree layout. Opt in per issue
-with a label first; flip `AIFACTORY_INTAKE_PARALLEL` for the fleet only once it
-has proven out.
+The portal toggle outranks the env default on purpose — it is the user's own
+choice and must visibly win over a fleet-wide default. The resolved setting is
+written to the spec's `task_metadata.json` (`parallel` / `workers`), which the
+agent service reads back when it starts any build — so the same setting also
+applies on the auto-continue, plan-approval and queue-drain paths.
+
+The wave path has run on live intake builds: three concurrent workers with all
+merge-backs kept, 21.4 minutes against a ~35-minute serial baseline for the
+same task (3.6.50–3.6.52). Still opt-in per issue or per project; flip
+`AIFACTORY_INTAKE_PARALLEL` to make it the fleet default.
 
 ## Job-native build & multi-node scheduling
 
@@ -99,6 +147,16 @@ How the coder loop (`run.py`) is executed, and what it takes for a build to sche
 | `AIFACTORY_PACK_WORKSPACE` | off | On the `kubejob` path, pack the populated `/work` to object storage and have the Job unpack it into a writable `emptyDir`, instead of co-mounting the workspace RWO `local-path` PVC. Removes the workspace node-pin — the first half of multi-node scheduling. |
 | `AIFACTORY_PACKED_NIX_IN_IMAGE` | off | On the packed path, drop the warm Nix-store RWO `local-path` PVC from the build Job and resolve `/nix` from the build image instead. Removes the last node-pin; a packed build Job then carries no node affinity. Pair with `AIFACTORY_BUILD_IMAGE` pointed at a `-nix` tag. |
 | `AIFACTORY_BUILD_IMAGE` | (unset) | Overrides the image used for the `kubejob` build Job only (precedence: `AIFACTORY_BUILD_IMAGE` > `AIFACTORY_IMAGE` > built-in default). Point it at a published `:sha-<short>-nix` tag — the runtime image plus a baked `/nix/store` — so the build sources Nix from the layer rather than the PVC. |
+
+## Tenancy
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `AIFACTORY_MULTI_TENANT` | off | Application-level tenant scoping. The tenant is resolved from the `X-Tenant-Id` request header (default `"default"`), stamped into task metadata at intake and `/execution`, filtered on task/project list endpoints, and carried on the TFactory handoff payload. Flag off is unchanged behaviour. |
+
+This is per-request scoping inside one deployment. For infrastructure-level
+separation (namespaces, S3 prefixes, Vault paths per organization) see
+[Tenant Isolation Mode](./concepts/tenant-isolation).
 
 ## Trusted-plan ingest
 
