@@ -9,7 +9,12 @@ unchanged. This module imports nothing from agent_service -> no circular import.
 
 from __future__ import annotations
 
+import json
+import logging
 from enum import Enum
+from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 class TaskPhase(str, Enum):
@@ -40,6 +45,75 @@ def _append_parallel_flags(
     if workers and workers > 0:
         cmd.extend(["--workers", str(workers)])
     return True
+
+
+def sync_require_review_metadata(spec_dir: Path) -> bool:
+    """Sync ``requireReviewBeforeCoding`` frontend->backend and return it.
+
+    The frontend writes the flag into ``requirements.json``; the backend (the
+    coder's gate) reads ``task_metadata.json``. Keep them in sync, then report
+    the effective value. Lifted from ``agent_service._spawn_task_execution`` so
+    the kubejob dispatch path reads the flag the SAME way instead of ignoring
+    it (#916).
+
+    One deliberate narrowing vs the original: task_metadata.json is written only
+    when there is a value to sync, where the original rewrote it on every build
+    with a requirements.json (creating an empty ``{}`` for specs that had none).
+    Same answer either way — every reader treats a missing file and an empty one
+    identically — and this path now also runs while building a Job manifest, so
+    it should not litter the spec dir as a side effect of being asked a question.
+    """
+    requirements_file = spec_dir / "requirements.json"
+    task_metadata_file = spec_dir / "task_metadata.json"
+
+    if requirements_file.exists():
+        try:
+            requirements = json.loads(requirements_file.read_text())
+            frontend_metadata = requirements.get("metadata", {})
+            task_metadata = (
+                json.loads(task_metadata_file.read_text())
+                if task_metadata_file.exists()
+                else {}
+            )
+            if "requireReviewBeforeCoding" in frontend_metadata:
+                task_metadata["requireReviewBeforeCoding"] = frontend_metadata[
+                    "requireReviewBeforeCoding"
+                ]
+                task_metadata_file.write_text(json.dumps(task_metadata, indent=2))
+            return bool(task_metadata.get("requireReviewBeforeCoding", False))
+        except (json.JSONDecodeError, OSError) as e:
+            _log.warning(
+                "[AgentService] Could not sync metadata for %s: %s", spec_dir, e
+            )
+            return False
+
+    if task_metadata_file.exists():
+        try:
+            task_metadata = json.loads(task_metadata_file.read_text())
+            # Quick Mode does NOT force review here — respect the explicit
+            # requireReviewBeforeCoding setting only. (The coder's own gate is
+            # broader; see review.state.requires_review_before_coding.)
+            return bool(task_metadata.get("requireReviewBeforeCoding", False))
+        except (json.JSONDecodeError, OSError):
+            return False
+
+    return False
+
+
+def should_pass_force(spec_dir: Path, force: bool) -> bool:
+    """Whether run.py's argv gets ``--force`` for this build (#916).
+
+    The single decision point for BOTH build paths — the in-pod subprocess
+    (``agent_service._spawn_task_execution``) and the k8s Job manifest
+    (``build_backend.build_run_py_job_manifest``). The kubejob path used to
+    hardcode ``--force`` into every manifest, which made the flag a statement
+    about nothing rather than about the caller's intent.
+
+    ``--force`` is passed when review is not required (the headless default, and
+    what makes unattended builds work) or when the caller explicitly forced it
+    (the plan was manually approved via the approve_plan endpoint).
+    """
+    return force or not sync_require_review_metadata(spec_dir)
 
 
 def phase_to_status(phase: TaskPhase) -> str:

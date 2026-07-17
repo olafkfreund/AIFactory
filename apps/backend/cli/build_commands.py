@@ -18,7 +18,7 @@ if str(_PARENT_DIR) not in sys.path:
 # Import only what we need at module level
 # Heavy imports are lazy-loaded in functions to avoid import errors
 from progress import count_subtasks, print_paused_banner
-from review import ReviewState
+from review import ReviewState, requires_review_before_coding
 from ui import (
     BuildState,
     Icons,
@@ -200,15 +200,32 @@ def handle_build_command(
     review_state = ReviewState.load(spec_dir)
     if not review_state.is_approval_valid(spec_dir):
         if force_bypass_approval:
-            # User explicitly bypassed approval check
-            print()
-            print(
-                warning(
-                    f"{icon(Icons.WARNING)} WARNING: Bypassing approval check with --force"
+            # #916: only cry "bypassing approval" when there is genuinely an
+            # approval requirement to bypass. A spec with no
+            # requireReviewBeforeCoding has nothing to approve, so --force on it
+            # skips a gate that would never have fired — announcing that as a
+            # WARNING on every such build is noise that trains readers to ignore
+            # the one case that matters. Same question the coder gates on
+            # (requires_review_before_coding), so the two cannot drift.
+            if requires_review_before_coding(spec_dir):
+                # A real requirement, deliberately bypassed here. Be precise
+                # about scope: --force only skips THIS pre-flight check; the
+                # coder re-checks approval before writing code and will still
+                # pause (agents/coder.py), so this is not a free pass.
+                print()
+                print(
+                    warning(
+                        f"{icon(Icons.WARNING)} WARNING: Bypassing approval check with --force"
+                    )
                 )
-            )
-            print(muted("This spec has not been approved for building."))
-            print()
+                print(
+                    muted(
+                        "This spec requires review before coding and has not been "
+                        "approved. --force skips this pre-flight check only — the "
+                        "coder still gates on approval before writing code."
+                    )
+                )
+                print()
         else:
             print()
             content = [

@@ -14,6 +14,7 @@ properties the RFC calls out:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -1558,3 +1559,105 @@ def test_manifest_unspecified_parallel_omits_parallel(
     # Unchanged argv otherwise: the flag threading must not disturb the base
     # invocation shape (#671).
     assert "--spec 042-go --project-dir /work --auto-continue --force" in cmd
+
+
+def _force_cmd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    task_metadata: dict[str, Any] | None = None,
+    requirements: dict[str, Any] | None = None,
+    **kwargs: object,
+) -> str:
+    """The dispatched Job's run.py command line for a spec on disk.
+
+    Materializes the spec dir the manifest builder reads
+    (``<project>/.aifactory/specs/<id>``) so the --force decision is exercised
+    against real task_metadata/requirements, as it is in production.
+    """
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    project_path = tmp_path / "workspaces" / "proj-1"
+    spec_dir = project_path / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    if task_metadata is not None:
+        (spec_dir / "task_metadata.json").write_text(json.dumps(task_metadata))
+    if requirements is not None:
+        (spec_dir / "requirements.json").write_text(json.dumps(requirements))
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=project_path,
+        spec_id="042-go",
+        correlation_key=482,
+        **kwargs,  # type: ignore[arg-type]
+    )
+    cmd: str = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    return cmd
+
+
+def test_manifest_omits_force_when_review_required(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #916 THE SEAM: --force was hardcoded into EVERY manifest, so this
+    # assertion could not hold. The coder's own gate (which takes no ``force``
+    # parameter) was the only thing keeping that harmless — wire ``force`` into
+    # coder.run() and the kubejob path silently becomes a real approval bypass.
+    # This test is what makes that regression loud instead of silent.
+    cmd = _force_cmd(
+        monkeypatch, tmp_path, task_metadata={"requireReviewBeforeCoding": True}
+    )
+    assert "--force" not in cmd
+    # The rest of the invocation is untouched.
+    assert "--spec 042-go --project-dir /work --auto-continue" in cmd
+
+
+def test_manifest_includes_force_when_review_not_required(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The common case must be unchanged: no review requirement -> --force, which
+    # is what makes headless builds run unattended.
+    cmd = _force_cmd(
+        monkeypatch, tmp_path, task_metadata={"requireReviewBeforeCoding": False}
+    )
+    assert "--force" in cmd
+
+
+def test_manifest_includes_force_when_caller_forces_despite_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # force=True is the approve_plan endpoint's "the human already approved this
+    # plan" signal. It must reach the Job's argv — that is the caller intent the
+    # hardcode was impersonating.
+    cmd = _force_cmd(
+        monkeypatch,
+        tmp_path,
+        task_metadata={"requireReviewBeforeCoding": True},
+        force=True,
+    )
+    assert "--force" in cmd
+
+
+def test_manifest_force_reads_requireReview_from_requirements(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The frontend writes the flag to requirements.json; the coder reads
+    # task_metadata.json. The in-pod path syncs the two before deciding, so the
+    # Job path must too — otherwise a review-gated task set in the UI still
+    # gets --force here.
+    cmd = _force_cmd(
+        monkeypatch,
+        tmp_path,
+        task_metadata={},
+        requirements={"metadata": {"requireReviewBeforeCoding": True}},
+    )
+    assert "--force" not in cmd
+
+
+def test_manifest_force_defaults_on_for_a_spec_with_no_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # No metadata at all -> nothing requires review -> --force, matching the
+    # in-pod default. Guards against the decision failing closed and silently
+    # blocking every unattended build at run.py's pre-flight gate.
+    cmd = _force_cmd(monkeypatch, tmp_path)
+    assert "--force" in cmd

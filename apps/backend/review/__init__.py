@@ -55,6 +55,7 @@ from .state import (
     _compute_file_hash,
     _compute_spec_hash,
     get_review_status_summary,
+    requires_review_before_coding,
 )
 
 # Aliases for underscore-prefixed names used in tests
@@ -65,6 +66,7 @@ __all__ = [
     # State
     "ReviewState",
     "get_review_status_summary",
+    "requires_review_before_coding",
     "REVIEW_STATE_FILE",
     "_compute_file_hash",
     "_compute_spec_hash",
