@@ -89,7 +89,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .task_phase import _append_parallel_flags
+from .task_phase import _append_parallel_flags, should_pass_force
 
 _log = logging.getLogger(__name__)
 
@@ -556,6 +556,7 @@ def build_run_py_job_manifest(
     stop_after_planning: bool = False,
     parallel: bool | None = None,
     workers: int | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
@@ -565,7 +566,13 @@ def build_run_py_job_manifest(
     entrypoint:
 
         python <backend>/run.py --spec <spec_id> --project-dir /work \
-            --auto-continue --force
+            --auto-continue [--force]
+
+    ``--force`` is conditional (#916): it is passed when the spec has no review
+    requirement (the headless default) or when ``force`` is set because the plan
+    was manually approved — the same rule the in-pod path applies. It is NOT
+    "pure": ``should_pass_force`` reads the spec's task_metadata/requirements
+    from ``project_path``, and syncs them, exactly as the in-pod path does.
 
     run.py is referenced by its ABSOLUTE path inside the image
     (``_resolve_run_py_path`` → ``APP_BACKEND_PATH``), NOT a bare ``run.py``
@@ -625,7 +632,7 @@ def build_run_py_job_manifest(
     # The build entrypoint: run.py (absolute path in the image) against the
     # co-mounted worktree at /work. Mirrors agent_service._spawn_task_execution's
     # headless invocation argv shape (run.py abs path, --spec, --project-dir,
-    # --auto-continue, --force). run.py lives in the image's backend dir, NOT the
+    # --auto-continue, conditional --force). run.py lives in the image's backend dir, NOT the
     # worktree, so it MUST be referenced absolutely — a bare ``run.py`` resolved
     # against /work died with ``can't open file '/work/run.py'`` (#671). NOT
     # nix-develop-wrapped (nix_develop=False) — run.py drives its own per-task
@@ -640,8 +647,18 @@ def build_run_py_job_manifest(
         "--project-dir",
         "/work",
         "--auto-continue",
-        "--force",
     ]
+    # #916: --force used to be hardcoded here, on EVERY manifest. That made the
+    # flag a statement about nothing rather than about the caller's intent: a
+    # review-gated task passed run.py's pre-flight gate (noisily) and only
+    # stopped later, at the coder's own gate. That coder gate is the ONLY thing
+    # that kept the hardcode harmless — it takes no ``force`` parameter, so the
+    # flag cannot reach it — which left a landmine: wire ``force`` into
+    # ``coder.run()`` and this path silently becomes a real approval bypass.
+    # Derive the flag from the same helper the in-pod path uses instead, so
+    # ``requireReviewBeforeCoding`` is honoured in the argv itself.
+    if should_pass_force(_spec_source_dir(project_path, spec_id), force):
+        argv.append("--force")
     # --stop-after-planning mirrors the in-pod path (cli/main.py): the kubejob
     # backend previously dropped this flag, so a planning-only request silently
     # ran the full build (coder + QA + PR). Thread it into the Job's run.py argv.
@@ -966,6 +983,7 @@ class KubeJobBuildBackend:
         stop_after_planning: bool = False,
         parallel: bool | None = None,
         workers: int | None = None,
+        force: bool = False,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
 
@@ -1018,6 +1036,7 @@ class KubeJobBuildBackend:
             stop_after_planning=stop_after_planning,
             parallel=parallel,
             workers=workers,
+            force=force,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]

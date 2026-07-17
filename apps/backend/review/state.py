@@ -225,3 +225,26 @@ def get_review_status_summary(spec_dir: Path) -> dict:
         "feedback_count": len(state.feedback),
         "spec_changed": state.spec_hash != current_hash if state.spec_hash else False,
     }
+
+
+def requires_review_before_coding(spec_dir: Path) -> bool:
+    """Whether this spec gates on human review before the coder writes code.
+
+    The SINGLE definition of that question (#916). Both the run.py pre-flight
+    gate (``cli/build_commands``) and the coder's own gate (``agents/coder``)
+    consult it, so the pre-flight can only cry "bypassing approval" when there
+    is genuinely a requirement to bypass.
+
+    True if task_metadata.json has ``requireReviewBeforeCoding: true``, or
+    ``mode: "quick"`` (Quick Mode always gates at the coder).
+    """
+    task_metadata_file = spec_dir / "task_metadata.json"
+    if not task_metadata_file.exists():
+        return False
+    try:
+        metadata = json.loads(task_metadata_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return False
+    return bool(metadata.get("requireReviewBeforeCoding", False)) or (
+        metadata.get("mode") == "quick"
+    )

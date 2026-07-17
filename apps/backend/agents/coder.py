@@ -1181,37 +1181,16 @@ def _injection_scan_blocks(
 
 
 def _should_require_human_review(spec_dir: Path) -> bool:
+    """Whether human review is required before coding (this agent's gate).
+
+    Thin alias for ``review.state.requires_review_before_coding`` (#916) — the
+    run.py pre-flight gate must answer this question the SAME way the coder
+    does, so there is exactly one definition of it.
     """
-    Check if human review is required before coding.
+    from review.state import requires_review_before_coding
 
-    Returns True if:
-    - task_metadata.json has requireReviewBeforeCoding=true
-    - OR task_metadata.json has mode="quick" (Quick Mode always requires review)
-
-    Args:
-        spec_dir: Path to the spec directory
-
-    Returns:
-        True if human review is required, False otherwise
-    """
-    task_metadata_file = spec_dir / "task_metadata.json"
-    if not task_metadata_file.exists():
-        return False
-
-    try:
-        metadata = json.loads(task_metadata_file.read_text())
-
-        # Explicit requireReviewBeforeCoding flag
-        if metadata.get("requireReviewBeforeCoding", False):
-            return True
-
-        # Quick Mode always requires human review
-        if metadata.get("mode") == "quick":
-            return True
-
-        return False
-    except (json.JSONDecodeError, OSError):
-        return False
+    # bool(): the lazy import is untyped to mypy here, so the call is Any.
+    return bool(requires_review_before_coding(spec_dir))
 
 
 async def _run_trailing_gates_if_build_complete(
