@@ -67,9 +67,9 @@ def _mock_load_projects(project_dir: Path):
     projects_dict = {"test-proj": {"path": str(project_dir), "name": "Test Project"}}
     with patch(
         "server.routes.github._resolve_project_path",
-        side_effect=lambda pid: Path(projects_dict[pid]["path"])
-        if pid in projects_dict
-        else None,
+        side_effect=lambda pid: (
+            Path(projects_dict[pid]["path"]) if pid in projects_dict else None
+        ),
     ):
         yield
 

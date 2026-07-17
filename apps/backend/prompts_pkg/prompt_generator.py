@@ -328,7 +328,9 @@ def load_subtask_context(
                 lines = full_path.read_text().split("\n")
                 if len(lines) > max_file_lines:
                     content = "\n".join(lines[:max_file_lines])
-                    content += f"\n\n... (truncated, {len(lines) - max_file_lines} more lines)"
+                    content += (
+                        f"\n\n... (truncated, {len(lines) - max_file_lines} more lines)"
+                    )
                 else:
                     content = "\n".join(lines)
                 context["patterns"][pattern_path] = content
@@ -343,7 +345,9 @@ def load_subtask_context(
                 lines = full_path.read_text().split("\n")
                 if len(lines) > max_file_lines:
                     content = "\n".join(lines[:max_file_lines])
-                    content += f"\n\n... (truncated, {len(lines) - max_file_lines} more lines)"
+                    content += (
+                        f"\n\n... (truncated, {len(lines) - max_file_lines} more lines)"
+                    )
                 else:
                     content = "\n".join(lines)
                 context["files_to_modify"][file_path] = content
