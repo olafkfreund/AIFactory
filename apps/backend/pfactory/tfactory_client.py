@@ -19,6 +19,7 @@ tests need no network.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -486,8 +487,6 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
     # Record a local marker so the UI / operator can see the handoff outcome.
-    try:
+    with contextlib.suppress(OSError):
         (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
-    except OSError:
-        pass
     return result
