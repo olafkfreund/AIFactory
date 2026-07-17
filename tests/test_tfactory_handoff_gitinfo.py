@@ -102,3 +102,66 @@ def test_payload_includes_git_fields_for_a_real_worktree(tmp_path, monkeypatch):
     payload = build_ingest_payload(sd, "1")
     assert payload["git_url"] == "https://github.com/o/r.git"
     assert payload["source_branch"] == "aifactory/1"
+
+
+def _init_repo_on_branch(path: Path, branch: str) -> None:
+    """A git repo at ``path`` on ``branch`` with an origin remote (push is a no-op)."""
+    import subprocess
+
+    def g(*a):
+        subprocess.run(["git", *a], cwd=str(path), capture_output=True, text=True)
+
+    path.mkdir(parents=True, exist_ok=True)
+    g("init", "-q")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    g("config", "commit.gpgsign", "false")
+    g("checkout", "-q", "-b", branch)
+    (path / "f").write_text("x")
+    g("add", "-A")
+    g("commit", "-qm", "x")
+    g("remote", "add", "origin", "https://github.com/owner/repo")
+
+
+def test_kubejob_worktree_on_base_still_stamps_build_branch(tmp_path):
+    # #938: on the kubejob path the build runs INSIDE the k8s Job and the
+    # control-plane build worktree is left on the base branch (main). The handoff
+    # must NOT send source_branch=main (TFactory would verify base, where the built
+    # code does not exist) — it must fall back to the canonical build branch.
+    sd = tmp_path / "workspaces" / "proj" / ".aifactory" / "specs" / "042-x"
+    sd.mkdir(parents=True)
+    (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    wt = (
+        tmp_path
+        / "workspaces"
+        / "proj"
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "042-x"
+    )
+    _init_repo_on_branch(wt, "main")
+
+    payload = build_ingest_payload(sd, "042-x")
+    assert payload["source_branch"] == "aifactory/042-x"  # NOT "main"
+
+
+def test_worktree_on_real_build_branch_is_trusted(tmp_path):
+    # The legacy path where the worktree genuinely IS on aifactory/<spec_id> keeps
+    # working: a non-base branch is used verbatim.
+    sd = tmp_path / "workspaces" / "proj" / ".aifactory" / "specs" / "043-y"
+    sd.mkdir(parents=True)
+    (sd / "spec.md").write_text("## Acceptance Criteria\n- works\n")
+    wt = (
+        tmp_path
+        / "workspaces"
+        / "proj"
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "043-y"
+    )
+    _init_repo_on_branch(wt, "aifactory/043-y")
+
+    payload = build_ingest_payload(sd, "043-y")
+    assert payload["source_branch"] == "aifactory/043-y"

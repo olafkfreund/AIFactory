@@ -245,6 +245,14 @@ def _build_worktree(spec_dir: Path, spec_id: str) -> Path:
     return _project_dir(spec_dir) / ".aifactory" / "worktrees" / "tasks" / spec_id
 
 
+# Branches that are never a valid build OUTPUT — a build always lands on
+# ``aifactory/<spec_id>``. If the control-plane worktree reports one of these as
+# HEAD (the kubejob path builds inside the k8s Job and leaves the control-plane
+# worktree on the base branch), it must NOT become the verify source_branch, or
+# TFactory checks out base and cannot find the built code (#938).
+_BASE_BRANCHES = frozenset({"main", "master", "HEAD", ""})
+
+
 def _build_branch(spec_id: str) -> str:
     """The branch a build creates/pushes for a spec.
 
@@ -384,8 +392,11 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # outputs via MinIO, leaving no git-valid worktree on the control plane). The
     # branch was already pushed to origin during the build, so TFactory can still
     # fetch it; without source_branch it verifies BASE and cannot find the built
-    # code (#893).
-    if not source_branch:
+    # code (#893). A detected BASE branch (main/master) is likewise unusable — the
+    # kubejob path builds inside the Job and leaves this worktree on base, so
+    # trusting its HEAD sends TFactory to verify base and every intake build fails
+    # at test with the built module "not found" (#938).
+    if not source_branch or source_branch in _BASE_BRANCHES:
         source_branch = _build_branch(spec_id)
     if not git_url:
         git_url = _project_git_url(spec_dir)
