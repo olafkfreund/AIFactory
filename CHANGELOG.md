@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.58 - 2026-07-18
+
+- fix(pr-endgame): resolve a base-branch worktree HEAD to the canonical build branch so the auto-PR opens against aifactory/<spec_id> instead of a rejected main->main PR (the #938 twin in the PR endgame). Completes hands-free intake: build -> auto-PR -> verify. (#948, PR #949)
+
+
 ## 3.6.57 - 2026-07-17
 
 - fix(tasks): defensively coerce/skip malformed planner subtask fields (float id, off-type fields) so a single poisoned spec can no longer 500 GET /api/tasks or orphan every new intake issue. Completes the #942 fix. (#941, PR #946)
