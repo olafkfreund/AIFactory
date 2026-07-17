@@ -12,11 +12,15 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException
+from pydantic import ValidationError
+
+logger = logging.getLogger(__name__)
 
 from ..services import task_control
 from .projects import load_projects
@@ -636,23 +640,40 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                         depends_on = []
                     depends_on = [d for d in depends_on if isinstance(d, str)]
 
+                    # Coerce planner-persisted scalars to the types Subtask
+                    # requires. An LLM planner sometimes writes a numeric id
+                    # (1.1 as a float) or a non-string title; the strict model
+                    # would 500 the whole task list on one such spec (#941/#942).
+                    raw_id = st.get("id")
+                    subtask_id = str(raw_id) if raw_id is not None else str(i)
+                    raw_title = st.get("title") or st.get(
+                        "description", f"Subtask {i + 1}"
+                    )
+                    title = str(raw_title)[:80]
+                    raw_desc = st.get("description") or st.get("notes")
+                    description = str(raw_desc) if raw_desc is not None else None
+
                     metadata["subtasks"].append(
                         Subtask(
-                            id=st.get("id", str(i)),
-                            title=st.get("title")
-                            or st.get("description", f"Subtask {i + 1}")[:80],
-                            description=st.get("description") or st.get("notes"),
+                            id=subtask_id,
+                            title=title,
+                            description=description,
                             status=_coerce_subtask_status(st.get("status")),
                             files=files,
                             verification=verification,
                             depends_on=depends_on,
-                            service=st.get("service"),
+                            service=st.get("service")
+                            if isinstance(st.get("service"), str)
+                            else None,
                             started_at=st.get("started_at"),
                             completed_at=st.get("completed_at"),
                         )
                     )
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError, ValidationError, TypeError) as exc:
+            # A malformed plan must never 500 the task list or block dispatch
+            # (which loads specs through this same helper) — degrade to whatever
+            # subtasks parsed cleanly. (#941)
+            logger.warning("load_spec_metadata: skipping malformed plan: %s", exc)
 
     # Check for worktree
     worktree_marker = spec_dir / ".worktree_path"
