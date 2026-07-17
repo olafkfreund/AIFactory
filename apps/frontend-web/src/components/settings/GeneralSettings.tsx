@@ -5,6 +5,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '../ui/colla
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
+import { Input } from '../ui/input';
 import { SettingsSection } from './SettingsSection';
 import { AgentProfileSettings } from './AgentProfileSettings';
 import {
@@ -21,6 +22,13 @@ import type {
   FeatureModelConfig,
   ThinkingLevel
 } from '../../shared/types';
+
+// Parallel build execution worker bounds — kept in sync with the backend
+// AppSettings.parallelWorkers Field(ge/le) in
+// apps/web-server/server/routes/settings.py, which clamps to the same range.
+const DEFAULT_PARALLEL_WORKERS = 3;
+const MIN_PARALLEL_WORKERS = 1;
+const MAX_PARALLEL_WORKERS = 8;
 
 interface GeneralSettingsProps {
   settings: AppSettings;
@@ -104,6 +112,53 @@ export function GeneralSettings({ settings, onSettingsChange }: GeneralSettingsP
                 onCheckedChange={(checked) => { onSettingsChange({ ...settings, soloMode: checked }); }}
               />
             </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between max-w-md">
+              <div className="space-y-1">
+                <Label htmlFor="parallelExecution" className="text-sm font-medium text-foreground">
+                  {t('general.parallelExecution')}
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  {t('general.parallelExecutionDescription')}
+                </p>
+              </div>
+              <Switch
+                id="parallelExecution"
+                checked={settings.parallelExecution ?? false}
+                onCheckedChange={(checked) => { onSettingsChange({ ...settings, parallelExecution: checked }); }}
+              />
+            </div>
+            {(settings.parallelExecution ?? false) && (
+              <div className="flex items-center justify-between max-w-md">
+                <div className="space-y-1">
+                  <Label htmlFor="parallelWorkers" className="text-sm font-medium text-foreground">
+                    {t('general.parallelWorkers')}
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t('general.parallelWorkersDescription')}
+                  </p>
+                </div>
+                <Input
+                  id="parallelWorkers"
+                  type="number"
+                  min={MIN_PARALLEL_WORKERS}
+                  max={MAX_PARALLEL_WORKERS}
+                  className="w-20"
+                  value={settings.parallelWorkers ?? DEFAULT_PARALLEL_WORKERS}
+                  onChange={(e) => {
+                    const parsed = parseInt(e.target.value, 10);
+                    // Empty/junk input falls back to the default rather than NaN;
+                    // the backend clamps to the same range on save.
+                    const workers = Number.isNaN(parsed)
+                      ? DEFAULT_PARALLEL_WORKERS
+                      : Math.max(MIN_PARALLEL_WORKERS, Math.min(MAX_PARALLEL_WORKERS, parsed));
+                    onSettingsChange({ ...settings, parallelWorkers: workers });
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">

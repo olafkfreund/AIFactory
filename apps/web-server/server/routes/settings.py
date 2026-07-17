@@ -32,6 +32,16 @@ MemoryEmbeddingProviderType = Literal[
     "openai", "voyage", "azure_openai", "ollama", "google", "openrouter"
 ]
 
+# Parallel build execution bounds (#376). DEFAULT_PARALLEL_WORKERS mirrors
+# agents.coder.DEFAULT_PARALLEL_WORKERS, which is not imported here because the
+# agents package is only safely importable lazily inside a function in this
+# process (see routes/mcp.py, routes/tasks_usage.py) and settings.py is imported
+# at startup. tests/test_settings_parallel_execution.py asserts the two stay in
+# sync, so drift fails CI rather than silently diverging.
+DEFAULT_PARALLEL_WORKERS = 3
+MIN_PARALLEL_WORKERS = 1
+MAX_PARALLEL_WORKERS = 8
+
 from ..config import get_settings
 
 router = APIRouter()
@@ -222,6 +232,46 @@ class AppSettings(BaseModel):
         False, description="Enable solo mode (single self-directed agent)"
     )
 
+    # Parallel build execution (#376): run independent subtasks of a
+    # parallel_safe phase concurrently, each agent in its own git worktree
+    # (apps/backend/agents/parallel_runner.py). Default OFF while it is proven
+    # on live builds. The /execution API already accepts per-task parallel/
+    # workers overrides and persists them into task_metadata.json; these fields
+    # supply the app-level DEFAULT for new builds. Phases the planner did not
+    # mark parallel_safe stay serial regardless, so enabling this is safe.
+    parallelExecution: bool = Field(
+        False,
+        alias="parallel_execution",
+        description="Default parallel (multi-agent) build execution for new builds",
+    )
+    parallelWorkers: int = Field(
+        DEFAULT_PARALLEL_WORKERS,
+        ge=MIN_PARALLEL_WORKERS,
+        le=MAX_PARALLEL_WORKERS,
+        alias="parallel_workers",
+        description=(
+            f"Default max concurrent subtasks per wave when parallelExecution is on "
+            f"({MIN_PARALLEL_WORKERS}-{MAX_PARALLEL_WORKERS})"
+        ),
+    )
+
+    @field_validator("parallelWorkers", mode="before")
+    @classmethod
+    def validate_parallel_workers(cls, v):
+        """Clamp parallelWorkers to the valid range for backward compatibility.
+
+        Mirrors the uiScale validator: settings files written by older builds (or
+        by hand) must never make the whole settings payload unloadable, so an
+        out-of-range or junk value clamps/falls back rather than raising. The
+        coder itself also floors this via ``max(1, workers or 3)``.
+        """
+        if v is None:
+            return DEFAULT_PARALLEL_WORKERS
+        try:
+            return max(MIN_PARALLEL_WORKERS, min(MAX_PARALLEL_WORKERS, int(v)))
+        except (TypeError, ValueError):
+            return DEFAULT_PARALLEL_WORKERS
+
     # Email Notification OAuth Credentials (app-level, not per-user)
     emailMicrosoftClientId: str | None = Field(
         None, description="Microsoft OAuth Client ID for email notifications"
@@ -360,6 +410,8 @@ class SettingsUpdate(BaseModel):
     betaUpdates: bool | None = None
     bmadSessionSegmentation: bool | None = None
     soloMode: bool | None = None
+    parallelExecution: bool | None = Field(None, alias="parallel_execution")
+    parallelWorkers: int | None = Field(None, alias="parallel_workers")
     emailMicrosoftClientId: str | None = None
     emailMicrosoftClientSecret: str | None = None
     llmProvider: str | None = None
