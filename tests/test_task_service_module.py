@@ -79,3 +79,36 @@ def test_load_spec_metadata_tolerates_out_of_enum_subtask_status(tmp_path):
     )
     meta = load_spec_metadata(spec)  # must not raise
     assert meta["subtasks"][0].status == "pending"
+
+
+def test_load_spec_metadata_tolerates_float_id_and_malformed_subtask(tmp_path):
+    # #941: an LLM planner sometimes persists a numeric subtask id (1.1 as a
+    # float) or other off-type field. Subtask's strict types would 500 the whole
+    # task list (and block dispatch, which loads specs through this helper). The
+    # loader must coerce scalars and degrade gracefully, never raise.
+    import json
+
+    from server.routes.task_service import load_spec_metadata
+
+    spec = tmp_path / "042-x"
+    spec.mkdir()
+    (spec / "requirements.json").write_text(
+        json.dumps({"title": "t", "description": "d"})
+    )
+    (spec / "implementation_plan.json").write_text(
+        json.dumps(
+            {
+                "phases": [
+                    {
+                        "subtasks": [
+                            {"id": 1.1, "description": "float id", "status": "ready"},
+                            {"id": "s2", "title": "ok", "status": "pending"},
+                        ]
+                    }
+                ]
+            }
+        )
+    )
+    meta = load_spec_metadata(spec)  # must not raise
+    assert [s.id for s in meta["subtasks"]] == ["1.1", "s2"]
+    assert meta["subtasks"][0].status == "pending"  # 'ready' coerced
