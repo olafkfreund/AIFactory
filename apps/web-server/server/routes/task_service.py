@@ -364,6 +364,43 @@ def _clean_task_description(desc: str) -> str:
     return desc
 
 
+_VALID_SUBTASK_STATUS = {"pending", "in_progress", "completed", "failed", "blocked"}
+# Out-of-enum status values a planner (LLM or upstream stage) may persist, mapped
+# to the nearest valid one. Anything unrecognized falls back to "pending" so a
+# single malformed spec can never 500 the whole task list (#942).
+_SUBTASK_STATUS_SYNONYMS = {
+    "ready": "pending",
+    "todo": "pending",
+    "not_started": "pending",
+    "queued": "pending",
+    "running": "in_progress",
+    "active": "in_progress",
+    "in-progress": "in_progress",
+    "wip": "in_progress",
+    "done": "completed",
+    "complete": "completed",
+    "success": "completed",
+    "passed": "completed",
+    "error": "failed",
+    "errored": "failed",
+}
+
+
+def _coerce_subtask_status(raw: object) -> str:
+    """Normalize a persisted subtask status to a valid Subtask literal.
+
+    ``Subtask.status`` is a strict ``Literal`` of five values; feeding it any
+    other string raises a ValidationError. Plans on disk sometimes carry
+    out-of-enum values (an LLM planner emits ``"ready"``), and one such spec
+    would otherwise crash ``GET /api/tasks`` for every task. Map known synonyms,
+    default the rest to ``"pending"``.
+    """
+    s = str(raw or "pending").strip().lower()
+    if s in _VALID_SUBTASK_STATUS:
+        return s
+    return _SUBTASK_STATUS_SYNONYMS.get(s, "pending")
+
+
 def load_spec_metadata(spec_dir: Path) -> dict:
     """Load metadata for a spec from its files."""
     metadata = {
@@ -605,7 +642,7 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             title=st.get("title")
                             or st.get("description", f"Subtask {i + 1}")[:80],
                             description=st.get("description") or st.get("notes"),
-                            status=st.get("status", "pending"),
+                            status=_coerce_subtask_status(st.get("status")),
                             files=files,
                             verification=verification,
                             depends_on=depends_on,
