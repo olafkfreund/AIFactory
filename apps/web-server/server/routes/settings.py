@@ -225,7 +225,7 @@ class AppSettings(BaseModel):
     # solo.enabled (see apps/backend/solo_mode.py). This field surfaces the
     # preference in the natural settings location.
     # Wired (#281): saving settings mirrors this into the global
-    # ~/.aifactory/config.json solo.enabled key (_mirror_solo_mode_to_global_config),
+    # ~/.aifactory/config.json solo.enabled key (_mirror_to_global_config),
     # and task creation stamps it into the new spec's task_metadata.json soloMode
     # (projects.py create_project_task). The AIFACTORY_SOLO_MODE env var still wins.
     soloMode: bool | None = Field(
@@ -239,10 +239,35 @@ class AppSettings(BaseModel):
     # workers overrides and persists them into task_metadata.json; these fields
     # supply the app-level DEFAULT for new builds. Phases the planner did not
     # mark parallel_safe stay serial regardless, so enabling this is safe.
-    parallelExecution: bool = Field(
-        False,
+    # Wired (#905): saving mirrors these into ~/.aifactory/config.json
+    # parallel.enabled / parallel.workers (_mirror_to_global_config), which
+    # apps/backend/intake/execution_block.py reads as the intake default. An
+    # explicit factory:parallel / factory:serial label on the issue still wins.
+    #
+    # Worker bounds differ by layer on purpose (#905) — widest to narrowest:
+    #   portal   1-8  (this field) — the user's default, the outer envelope
+    #   PFactory 4    — a signed contract's cap; contract wins when present
+    #   coder    3    (agents.coder.DEFAULT_PARALLEL_WORKERS) — the fallback
+    # Each is a ceiling applied by whoever owns that decision, so the effective
+    # cap is the narrowest one in play. Left divergent deliberately: collapsing
+    # them to one number would let a portal preference raise a contract's cap.
+    #
+    # TRI-STATE (#905), not a plain bool: None means "the user has never
+    # expressed an opinion", which is NOT the same as an explicit off. The
+    # setting outranks AIFACTORY_INTAKE_PARALLEL, so a False that merely came
+    # from a field default would let any unrelated settings save (theme, uiScale)
+    # silently and permanently kill an operator's fleet-wide env default. Only an
+    # opinion is mirrored to the global config; None leaves the env rung intact.
+    # Still OFF by default: None resolves to off once env is exhausted.
+    # The UI is unaffected — it already renders `parallelExecution ?? false` and
+    # writes an explicit true/false the moment the toggle is touched.
+    parallelExecution: bool | None = Field(
+        None,
         alias="parallel_execution",
-        description="Default parallel (multi-agent) build execution for new builds",
+        description=(
+            "Default parallel (multi-agent) build execution for new builds; "
+            "None = unset (defer to AIFACTORY_INTAKE_PARALLEL, else off)"
+        ),
     )
     parallelWorkers: int = Field(
         DEFAULT_PARALLEL_WORKERS,
@@ -478,18 +503,31 @@ def save_app_settings(settings: AppSettings) -> None:
     settings_file = get_settings_file()
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     settings_file.write_text(settings.model_dump_json(indent=2))
-    _mirror_solo_mode_to_global_config(bool(settings.soloMode))
+    _mirror_to_global_config(settings)
 
 
-def _mirror_solo_mode_to_global_config(enabled: bool) -> None:
-    """Mirror the soloMode preference into ~/.aifactory/config.json (#281).
+def _mirror_to_global_config(settings: AppSettings) -> None:
+    """Mirror UI preferences into ~/.aifactory/config.json (#281, #905).
 
-    apps/backend/solo_mode.py falls back to the global config's ``solo.enabled``
-    key when neither AIFACTORY_SOLO_MODE nor a per-spec task_metadata.json flag is
-    present. Mirroring the saved UI preference here makes solo mode apply as a
-    global default for code paths that don't go through web task creation (e.g.
-    CLI builds). The env var still overrides this in the resolver. Other keys in
-    the config file are preserved; failures are best-effort and never block save.
+    apps/backend/ code cannot import the web server, so the global config file is
+    the established one-way channel for UI preferences that non-web-server code
+    paths (CLI builds, intake) must honour:
+
+    - ``solo.enabled`` <- soloMode, read by apps/backend/solo_mode.py when
+      neither AIFACTORY_SOLO_MODE nor a per-spec task_metadata.json flag is set.
+    - ``parallel.enabled`` / ``parallel.workers`` <- parallelExecution /
+      parallelWorkers, read by apps/backend/intake/execution_block.py when the
+      issue carries no explicit factory:parallel / factory:serial label (#905).
+
+    The parallel block is written ONLY when the user has an opinion
+    (parallelExecution is not None) and removed when they clear it. That rung
+    outranks AIFACTORY_INTAKE_PARALLEL, so mirroring a mere field default would
+    let an unrelated settings save silently kill an operator's fleet default.
+    soloMode needs no such care: its resolver puts env ABOVE the global config,
+    so a mirrored default can never shadow the env var there.
+
+    Both mirrors are one read-modify-write so a save never half-applies. Other
+    keys are preserved; failures are best-effort and never block the save.
     """
     config_file = Path.home() / ".aifactory" / "config.json"
     try:
@@ -502,12 +540,21 @@ def _mirror_solo_mode_to_global_config(enabled: bool) -> None:
         solo = config.get("solo")
         if not isinstance(solo, dict):
             solo = {}
-        solo["enabled"] = enabled
+        solo["enabled"] = bool(settings.soloMode)
         config["solo"] = solo
+        if settings.parallelExecution is None:
+            config.pop("parallel", None)
+        else:
+            parallel = config.get("parallel")
+            if not isinstance(parallel, dict):
+                parallel = {}
+            parallel["enabled"] = bool(settings.parallelExecution)
+            parallel["workers"] = int(settings.parallelWorkers)
+            config["parallel"] = parallel
         config_file.parent.mkdir(parents=True, exist_ok=True)
         config_file.write_text(json.dumps(config, indent=2))
     except OSError as exc:
-        logger.warning("Failed to mirror soloMode to global config: %s", exc)
+        logger.warning("Failed to mirror settings to global config: %s", exc)
 
 
 # --------------------------------------------------------------------------

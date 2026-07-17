@@ -20,8 +20,11 @@ Tier policy (RFC-0011 routing table)::
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 from pfactory.tiers import Tier, resolve_low_tier_model
 
@@ -42,6 +45,39 @@ def _env_parallel_default() -> bool:
     return (
         os.environ.get("AIFACTORY_INTAKE_PARALLEL") or ""
     ).strip().lower() in _TRUTHY
+
+
+def _global_parallel_setting() -> tuple[bool | None, int | None]:
+    """Read the portal's parallel preference from ~/.aifactory/config.json (#905).
+
+    The web server mirrors AppSettings.parallelExecution / parallelWorkers into
+    ``parallel.enabled`` / ``parallel.workers`` on save (settings.py
+    ``_mirror_to_global_config``). Reading that file is how apps/backend honours a
+    UI preference without importing apps/web-server — the same one-way channel
+    ``solo_mode.py`` already uses for soloMode.
+
+    Returns ``(None, None)`` when the file is missing, unreadable, or has no
+    usable ``parallel`` block, i.e. "no opinion" -> fall through to env. Never
+    raises: a corrupt config must not break intake.
+    """
+    config_file = Path.home() / ".aifactory" / "config.json"
+    try:
+        config = json.loads(config_file.read_text())
+    except (json.JSONDecodeError, OSError, ValueError):
+        return (None, None)
+    block = config.get("parallel") if isinstance(config, dict) else None
+    if not isinstance(block, dict):
+        return (None, None)
+    enabled = block.get("enabled")
+    workers = block.get("workers")
+    # bool is a subclass of int — reject it explicitly so `"workers": true`
+    # cannot masquerade as a cap of 1.
+    return (
+        enabled if isinstance(enabled, bool) else None,
+        workers
+        if isinstance(workers, int) and not isinstance(workers, bool) and workers > 0
+        else None,
+    )
 
 
 def _env_workers_default() -> int | None:
@@ -90,7 +126,7 @@ def build_execution_block(
     low_model_resolver: Callable[[], str] | None = None,
     parallel: bool | None = None,
     workers: int | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Return the ``execution`` dict for ``tier``.
 
     Args:
@@ -102,11 +138,27 @@ def build_execution_block(
             to :func:`pfactory.tiers.resolve_low_tier_model`) — lets tests pin
             the model without touching the network.
         parallel: explicit per-issue request (from
-            :func:`pfactory.tiers.classify_parallel`). ``None`` falls back to
-            the ``AIFACTORY_INTAKE_PARALLEL`` deployment default (off).
-        workers: explicit worker cap; ``None`` falls back to
-            ``AIFACTORY_INTAKE_WORKERS``. Only emitted when parallel is on —
-            a cap means nothing to a serial build.
+            :func:`pfactory.tiers.classify_parallel`). ``None`` means "no label"
+            and falls through the precedence chain below.
+        workers: explicit worker cap from the ``factory:workers=N`` label;
+            ``None`` falls through the same chain. Only emitted when parallel is
+            on — a cap means nothing to a serial build.
+
+    The portal setting is read lazily from ~/.aifactory/config.json via
+    :func:`_global_parallel_setting` rather than injected: unlike the low-tier
+    Ollama probe there is no network to avoid, and tests pin it by pointing
+    ``Path.home`` at a tmp dir — the same way solo_mode's tests do.
+
+    Parallelism precedence, most specific first (#905)::
+
+        1. explicit label   factory:parallel / factory:serial (serial wins)
+        2. portal setting   parallelExecution / parallelWorkers
+        3. env              AIFACTORY_INTAKE_PARALLEL / AIFACTORY_INTAKE_WORKERS
+        4. off
+
+    Note this inverts solo mode's order, where env beats the stored setting:
+    here the portal toggle is the user's own default and must visibly win over a
+    fleet-wide env default, or it is dead UI again (the #905 bug).
 
     The returned dict is JSON-serialisable and uses the snake_case keys that
     ``trusted_plan.execution_profile_to_metadata`` maps into task_metadata.json.
@@ -120,7 +172,7 @@ def build_execution_block(
     else:
         model = _STATIC_MODEL[tier]
 
-    block: dict = {
+    block: dict[str, Any] = {
         "model": model,
         "skip_planning": _SKIP_PLANNING[tier],
         "review_tier": _REVIEW_TIER[tier],
@@ -128,12 +180,27 @@ def build_execution_block(
         "autonomy_tier": tier.value,
     }
 
-    # Explicit label beats the deployment default. Always emit the flag (even
-    # False) so a serial build is recorded as a decision, not an omission.
-    is_parallel = _env_parallel_default() if parallel is None else bool(parallel)
+    # label -> portal setting -> env -> off. Resolved once (one small file read
+    # per intake build) so the label and workers arms agree on the same setting.
+    setting_parallel, setting_workers = _global_parallel_setting()
+    if parallel is not None:
+        is_parallel = bool(parallel)
+    elif setting_parallel is not None:
+        is_parallel = setting_parallel
+    else:
+        is_parallel = _env_parallel_default()
+
+    # Always emit the flag (even False) so a serial build is recorded as a
+    # decision, not an omission.
     block["parallel"] = is_parallel
     if is_parallel:
-        cap = workers if workers is not None else _env_workers_default()
+        # Same precedence for the cap. A workers=N label (or setting) is honoured
+        # even when the parallel decision came from a lower rung.
+        cap = workers
+        if cap is None:
+            cap = setting_workers
+        if cap is None:
+            cap = _env_workers_default()
         if cap is not None:
             block["workers"] = cap
 
