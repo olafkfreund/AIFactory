@@ -25,6 +25,13 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 MemoryBackendType = Literal["graphiti", "file"]
 
 from ..config import get_settings
+from ..tenancy import (
+    DEFAULT_TENANT,
+    multi_tenant_enabled,
+    resolve_tenant,
+    spec_tenant,
+    stamp_spec_tenant,
+)
 from . import changelog, context, files, git, github
 from .project_authz import require_project_access
 
@@ -399,6 +406,15 @@ async def list_projects(
     items = projects.items()
     if allowed is not None:
         items = [(pid, p) for pid, p in items if p.get("org_id") in allowed]
+    # Multi-tenancy (#925): scope to the caller's tenant when the flag is on;
+    # a project with no stamp belongs to the default tenant.
+    if multi_tenant_enabled():
+        tenant = resolve_tenant(request)
+        items = [
+            (pid, p)
+            for pid, p in items
+            if (p.get("tenant_id") or DEFAULT_TENANT) == tenant
+        ]
     return [project_to_response(pid, pdata) for pid, pdata in items]
 
 
@@ -638,6 +654,10 @@ async def add_project(
         "created_at": now,
         "updated_at": now,
     }
+    # Multi-tenancy (#925): record the creating tenant (flag-on only, so the
+    # single-tenant record shape is unchanged).
+    if multi_tenant_enabled():
+        project_data["tenant_id"] = resolve_tenant(request)
     # Clone-mode (#82 PR-A) — persist the source URL + branch so the
     # Auto-Fix pull-on-poll hook (PR-B) can fast-forward the workspace
     # before each poll cycle. Local-mode projects don't carry these.
@@ -1120,6 +1140,7 @@ async def list_project_worktrees(
 @router.get("/{project_id}/tasks")
 async def list_project_tasks(
     project_id: str,
+    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
     _access: dict = Depends(require_project_access("viewer")),
 ):
     """List all tasks for a specific project.
@@ -1139,6 +1160,11 @@ async def list_project_tasks(
 
     project_path = Path(projects[project_id]["path"])
     spec_dirs = tasks_module.get_spec_dirs(project_path)
+
+    # Multi-tenancy (#925): scope to the caller's tenant when the flag is on.
+    if multi_tenant_enabled():
+        tenant = resolve_tenant(raw_request)
+        spec_dirs = [d for d in spec_dirs if spec_tenant(d) == tenant]
 
     tasks = [tasks_module.spec_to_task(project_id, spec_dir) for spec_dir in spec_dirs]
 
@@ -1175,6 +1201,7 @@ class TaskCreateRequest(BaseModel):
 async def create_project_task(
     project_id: str,
     task_data: TaskCreateRequest,
+    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
     _access: dict = Depends(require_project_access("member")),
 ):
     """Create a new task in a project.
@@ -1289,6 +1316,9 @@ Created via Magestic AI Web UI
         (spec_dir / "task_metadata.json").write_text(
             json.dumps(task_metadata, indent=2)
         )
+
+    # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
+    stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
 
     task = tasks_module.spec_to_task(project_id, spec_dir)
     return tasks_module.task_to_dict(task)

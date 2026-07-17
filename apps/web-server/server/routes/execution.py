@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..services import task_control
 from ..services.agent_service import get_agent_service
+from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
 from .project_authz import require_project_access, require_task_access
 from .projects import load_projects
@@ -1008,6 +1009,7 @@ async def create_and_run_task(
     title: str,
     description: str,
     request: CreateAndRunRequest,
+    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
     _access: dict = Depends(require_project_access("member")),
 ):
     """Create a new task and immediately start execution.
@@ -1093,6 +1095,9 @@ async def create_and_run_task(
             json.dumps(task_metadata, indent=2)
         )
 
+    # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
+    stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
+
     task_id = f"{project_id}:{spec_id}"
 
     try:
@@ -1123,6 +1128,7 @@ async def create_from_trusted_plan(
     title: str,
     description: str,
     request: FromPlanRequest,
+    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
     _access: dict = Depends(require_project_access("member")),
 ):
     """Trusted Plan Handoff (#390): verify a signed plan and build directly.
@@ -1203,6 +1209,11 @@ async def create_from_trusted_plan(
             req_file.write_text(json.dumps(reqs, indent=2))
         except (OSError, json.JSONDecodeError, ValueError):
             pass
+
+    # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
+    # After ingest_trusted_plan, which merges the execution profile into
+    # task_metadata.json — the stamp merges rather than clobbers.
+    stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
 
     # Honor the contract's execution profile when the HTTP request doesn't
     # override it: a v2 contract carries parallel/workers in its `execution`
