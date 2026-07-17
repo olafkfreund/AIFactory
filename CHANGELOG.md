@@ -1,6 +1,15 @@
 ## [Unreleased]
 
 
+## 3.6.51 - 2026-07-17
+
+- fix(kubejob): thread quick-mode (`--skip-qa` + `QUICK_MODE=true`) and selectedSkills (skill_context.md written into the spec dir before dispatch) into dispatched build Jobs; also thread an explicit `base_branch` override to the Job argv — the previous behavior silently dropped it and only looked correct when the auto-detected base happened to match. Completes #916. (PR #929)
+- fix(credentials): auto-switch failover check falls back to the legacy data-dir `auto-switch.json` location. (#911, PR #923)
+- fix(intake): from-issue intake is idempotent by issue number — redelivery of the same GitHub issue returns the existing task (`deduplicated: true`) instead of creating a duplicate spec and build, keyed on the already-stamped provenance issue number. (#878, PR #928)
+- test(e2e): rewrite the e2e workflow coverage removed by the #903 suite triage against the current API. (#912, PR #927)
+- ci: auto-close issues whose fix reached main via PR-body keywords (Factory#293 pilot replication), including the pipefail fix for pushes without closing keywords. (PR #924)
+
+
 ## 3.6.50 - 2026-07-17
 
 - fix(prompts): load the real planner schema prompt (`apps/backend/prompts/planner.md`) instead of a non-existent `prompts_pkg/prompts/planner.md`; on a missing prompt the generator now hard-fails instead of silently substituting a one-sentence fallback. Every dispatched Job build had been planning schema-less, which is why plans lacked `parallel_safe`/file footprints and `--parallel` never produced waves. (#920, PR #921)
