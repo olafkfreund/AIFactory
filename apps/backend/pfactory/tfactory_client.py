@@ -19,6 +19,7 @@ tests need no network.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -392,6 +393,15 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
         payload["git_url"] = git_url
     if source_branch:
         payload["source_branch"] = source_branch
+    # Multi-tenancy (#925): carry the build's tenant so TFactory can scope its
+    # side too. OPTIONAL additive metadata — absent when the spec was never
+    # stamped (single-tenant deployments), never required by the ingest.
+    try:
+        tm = json.loads((spec_dir / "task_metadata.json").read_text())
+        if tm.get("tenant_id"):
+            payload["tenant_id"] = str(tm["tenant_id"])
+    except (OSError, ValueError):
+        pass
     return payload
 
 
@@ -477,8 +487,6 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — must never break task completion
         return {"sent": False, "reason": "error", "error": str(exc)[:300]}
     # Record a local marker so the UI / operator can see the handoff outcome.
-    try:
+    with contextlib.suppress(OSError):
         (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
-    except OSError:
-        pass
     return result

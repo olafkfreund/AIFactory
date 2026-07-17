@@ -245,6 +245,22 @@ def _rollup(records: list[dict], key: str) -> dict:
     return out
 
 
+def _read_tenant_id(spec_dir: Path) -> str | None:
+    """The tenant stamped on the spec's ``task_metadata.json``, or ``None``.
+
+    Local (not ``server.tenancy``) because this module is also exec'd standalone
+    by ``agents/parallel_integration.py`` (spec_from_file_location), where a
+    relative import would fail. Mirrors ``_read_budget_usd``: stdlib-only,
+    best-effort, never raises. Multi-tenancy #925.
+    """
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return None
+    tenant = meta.get("tenant_id") if isinstance(meta, dict) else None
+    return str(tenant) if tenant else None
+
+
 def _read_budget_usd(spec_dir: Path) -> float | None:
     """The optional soft cost budget (USD) for this task, if set (#45 P2).
 
@@ -389,6 +405,7 @@ def build_completion_event(
     tracestate: str | None = None,
     halt_reason: str | None = None,
     injection_scan: dict | None = None,
+    tenant_id: str | None = None,
 ) -> dict:
     """The RFC-0001 completion-event envelope (six core fields + chain block).
 
@@ -454,6 +471,10 @@ def build_completion_event(
             "total_tokens": int(usage.get("total_tokens", 0) or 0),
             "cost_usd": float(usage.get("cost_usd", 0.0) or 0.0),
         }
+    # Multi-tenancy (#925): OPTIONAL additive tenant scope — present only when
+    # the spec carries a tenant stamp; old/single-tenant envelopes are unchanged.
+    if tenant_id:
+        event["tenant_id"] = tenant_id
     # Anti-loop guardrail (#474): when the Act loop halted on no-progress, carry
     # the typed reason so CFactory can show *why* a WorkItem stalled.
     if halt_reason:
@@ -861,6 +882,7 @@ def emit_terminal_completion(
         usage=usage,
         halt_reason=_read_halt_reason(spec_dir),
         injection_scan=_read_injection_scan(spec_dir),
+        tenant_id=_read_tenant_id(spec_dir),
     )
     # Serial single-'main'-worker live sub-event (#45 P1). Parallel workers each
     # emit their live sub-event as they finish (agents/parallel_integration.py);
@@ -919,6 +941,7 @@ def emit_usage_snapshot(
             project_id=project_id,
             usage=usage,
             injection_scan=_read_injection_scan(spec_dir),
+            tenant_id=_read_tenant_id(spec_dir),
         )
         notify_completion(event, spec_dir=spec_dir)
         return event

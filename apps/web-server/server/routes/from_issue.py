@@ -29,8 +29,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
+
+from ..tenancy import resolve_tenant, stamp_spec_tenant
 
 # Add the backend dir to sys.path so backend seams resolve (mirrors execution.py).
 _BACKEND_DIR = Path(__file__).resolve().parents[3] / "backend"
@@ -107,6 +109,7 @@ def _write_spec(
     issue: dict,
     execution: dict,
     tier_value: str,
+    tenant: str = "default",
 ) -> Path:
     """Create the spec dir, write requirements.json + apply the execution profile."""
     specs_dir = project_path / ".aifactory" / "specs"
@@ -157,6 +160,8 @@ def _write_spec(
     # with AIFACTORY_INTAKE_AUTO_HANDOFF in {0,false,no,off}.
     if _intake_auto_handoff_enabled():
         _set_task_metadata_flag(spec_dir, "auto_handover_tfactory", True)
+    # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
+    stamp_spec_tenant(spec_dir, tenant)
     return spec_dir
 
 
@@ -210,7 +215,10 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
 
 
 @router.post("/from-issue")
-async def create_from_issue(request: FromIssueRequest):
+async def create_from_issue(
+    request: FromIssueRequest,
+    raw_request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+):
     """Ingest a labelled issue and start a tier-driven governed build."""
     from .tasks import get_next_spec_id
 
@@ -290,7 +298,14 @@ async def create_from_issue(request: FromIssueRequest):
     # 4. Create the spec + apply the profile + start the build.
     project_path = projects_path
     spec_id = get_next_spec_id(project_path, issue["title"] or "intake-task")
-    _write_spec(project_path, spec_id, issue, execution, tier.value)
+    _write_spec(
+        project_path,
+        spec_id,
+        issue,
+        execution,
+        tier.value,
+        tenant=resolve_tenant(raw_request),
+    )
 
     task_id = f"{request.project_id}:{spec_id}"
     await _start_build(
