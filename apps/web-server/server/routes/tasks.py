@@ -20,6 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database.engine import get_db
 from ..paths import get_data_dir
 from ..services import task_control
+from ..tenancy import (
+    multi_tenant_enabled,
+    resolve_tenant,
+    spec_tenant,
+    stamp_spec_tenant,
+)
 
 # PR-creation route (POST /{task_id}/worktree/create-pr) and its request model
 # were extracted into ``routes/pr.py`` (issue #556) and are mounted via
@@ -146,10 +152,15 @@ async def list_tasks(
     # Collect tasks from all projects
     all_tasks = []
     priority_ranks: dict[str, int] = {}
+    # Multi-tenancy (#925): scope to the caller's tenant when the flag is on;
+    # a spec with no stamp belongs to the default tenant.
+    tenant = resolve_tenant(request) if multi_tenant_enabled() else None
     for pid in project_ids:
         project_path = Path(projects[pid]["path"])
         repo = project_repo(projects[pid])  # W5 (#218): target repo on every task
         spec_dirs = get_spec_dirs(project_path)
+        if tenant is not None:
+            spec_dirs = [d for d in spec_dirs if spec_tenant(d) == tenant]
         for spec_dir in spec_dirs:
             task = spec_to_task(pid, spec_dir)
             task.repo = repo
@@ -212,7 +223,10 @@ async def get_task(
 
 
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)
-async def create_task(task: TaskCreate):
+async def create_task(
+    task: TaskCreate,
+    request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
+):
     """Create a new task (spec) in a project."""
     projects = load_projects()
 
@@ -285,6 +299,9 @@ Created via Magestic AI Web UI
                 )
 
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
+
+    # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
+    stamp_spec_tenant(spec_dir, resolve_tenant(request))
 
     return spec_to_task(task.project_id, spec_dir)
 
