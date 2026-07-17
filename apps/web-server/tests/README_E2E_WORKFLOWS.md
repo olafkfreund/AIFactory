@@ -16,10 +16,20 @@ This guide helps you understand, run, and extend the end-to-end workflow tests f
 > `test_gitlab_issue_to_mr_workflow`, `test_project_onboarding_workflow`,
 > `test_git_workflow_management`.
 >
+> **Rewrite status (#912).** The profile-lifecycle and project-onboarding
+> workflows were rewritten against the current async API as
+> `test_complete_claude_profile_lifecycle` and
+> `test_project_onboarding_workflow` in `test_e2e_workflows.py`. The other
+> three were intentionally dropped because the features no longer exist:
+> roadmap/ideation has no routes anymore, the glab-CLI GitLab routes were
+> replaced by the provider abstraction in `server/routes/github.py`, and the
+> git squash/worktree/release endpoints are unmounted dead code (tracked
+> separately).
+>
 > Still present and now gated by CI: `test_api_profile_management_workflow`,
 > `test_initial_setup_workflow`, `test_rate_limit_recovery_workflow`,
 > `test_concurrent_file_access_workflow`. Sections below describing the removed
-> tests are kept for intent/context when that coverage is rewritten.
+> tests are kept for historical intent/context.
 
 ---
 
