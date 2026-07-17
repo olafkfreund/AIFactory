@@ -1,14 +1,39 @@
 name: TechDocs
 
 # Keep Backstage TechDocs self-documenting: regenerate the OpenAPI spec + the
-# dependencies page, validate that the TechDocs site builds, and commit any
-# refreshed artifacts back so the published docs never drift from the code.
+# dependencies page, validate that the TechDocs site builds, and fail if the
+# committed artifacts have drifted from the code that generates them.
 #
 # Backstage itself builds + serves TechDocs on view (builder: local) from
 # mkdocs.yml on the default branch — this workflow only keeps the generated
-# inputs fresh and catches a broken docs build before it reaches Backstage.
+# inputs honest and catches a broken docs build before it reaches Backstage.
+#
+# Why this checks instead of committing (#906): it used to regenerate and
+# `git push origin dev`. `dev` is a protected branch (required check:
+# "backend (ruff + pytest)"), so the bot's push was rejected with GH006 every
+# time the docs actually drifted — the one case it existed for. Opening a PR
+# instead does not help: a PR opened with GITHUB_TOKEN does not trigger
+# workflows, so the required check would never report and the PR could never
+# merge. There is no bot PAT for this repo. So the generated artifacts are
+# committed by the author of the change that drifts them, and this workflow's
+# job is to say so — on the pull request, before it merges.
 
+# NOTE: the two `paths:` lists are duplicated on purpose — GitHub Actions does
+# not support YAML anchors/aliases in workflow files. Keep them in sync.
 on:
+  pull_request:
+    paths:
+      - "apps/backend/requirements.txt"
+      - "apps/web-server/requirements.txt"
+      - "apps/frontend-web/package.json"
+      - "apps/web-server/server/**"
+      - "apps/web-server/openapi.yaml"
+      - ".github/workflows/techdocs.yml"
+      - "docs/**"
+      - "mkdocs.yml"
+      - "catalog-info.yaml"
+      - "scripts/generate-techdocs-deps.py"
+      - "scripts/generate-openapi-spec.py"
   push:
     branches: [dev]
     paths:
@@ -16,6 +41,8 @@ on:
       - "apps/web-server/requirements.txt"
       - "apps/frontend-web/package.json"
       - "apps/web-server/server/**"
+      - "apps/web-server/openapi.yaml"
+      - ".github/workflows/techdocs.yml"
       - "docs/**"
       - "mkdocs.yml"
       - "catalog-info.yaml"
@@ -24,7 +51,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: techdocs-${{ github.ref }}
@@ -35,8 +62,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: dev
 
       - uses: actions/setup-python@v5
         with:
@@ -46,13 +71,19 @@ jobs:
       - name: Regenerate dependencies page
         run: python3 scripts/generate-techdocs-deps.py
 
-      # 2. OpenAPI spec — best-effort (needs the web-server stack). If the install
-      #    or import fails, keep the committed spec rather than failing the run.
+      # 2. OpenAPI spec. This needs BOTH requirement sets, not just the
+      #    web-server's (#906): server/routes/execution.py imports apps/backend's
+      #    `qa` package, which imports claude_agent_sdk — declared only in
+      #    apps/backend/requirements.txt. Installing web-server reqs alone made
+      #    `from server.main import app` raise ModuleNotFoundError on every run
+      #    since 3.4.2, and `continue-on-error: true` hid it: the job stayed
+      #    green while the published spec rotted 20+ releases behind. No
+      #    continue-on-error here — a spec we cannot generate is a real failure.
       - name: Regenerate OpenAPI spec
-        continue-on-error: true
         run: |
           python3 -m venv /tmp/ws
           /tmp/ws/bin/pip install --quiet -r apps/web-server/requirements.txt
+          /tmp/ws/bin/pip install --quiet -r apps/backend/requirements.txt
           APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py
 
       # 3. Validate the TechDocs build (the same thing Backstage runs on view).
@@ -62,15 +93,26 @@ jobs:
           python3 -m mkdocs build -f mkdocs.yml -d /tmp/techdocs-site
           test -f /tmp/techdocs-site/index.html
 
-      # 4. Commit refreshed artifacts so the published docs stay current.
-      - name: Commit refreshed docs
+      # 4. Fail loudly if the committed artifacts drifted from what steps 1-2
+      #    just generated. The fix is a one-liner a human runs and commits.
+      - name: Check generated docs are committed
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git diff --quiet -- docs/dependencies.md apps/web-server/openapi.yaml; then
-            echo "TechDocs inputs already up to date."
-          else
-            git add docs/dependencies.md apps/web-server/openapi.yaml
-            git commit -m "docs(techdocs): refresh OpenAPI spec + dependencies [skip ci]"
-            git push origin dev
+            echo "TechDocs inputs are up to date."
+            exit 0
           fi
+          echo "::error::Generated TechDocs artifacts are stale. Regenerate and commit them."
+          echo
+          echo "The following generated files differ from what the current code produces:"
+          git diff --stat -- docs/dependencies.md apps/web-server/openapi.yaml
+          echo
+          echo "To fix, run from the repo root and commit the result:"
+          echo
+          echo "  python3 scripts/generate-techdocs-deps.py"
+          echo "  python3 -m venv /tmp/ws"
+          echo "  /tmp/ws/bin/pip install -r apps/web-server/requirements.txt"
+          echo "  /tmp/ws/bin/pip install -r apps/backend/requirements.txt"
+          echo "  APP_DISABLE_AUTH=true /tmp/ws/bin/python scripts/generate-openapi-spec.py"
+          echo
+          git diff -- docs/dependencies.md apps/web-server/openapi.yaml
+          exit 1
