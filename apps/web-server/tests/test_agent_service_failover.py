@@ -112,6 +112,25 @@ def test_should_retry_reads_primary_auto_switch_file(
     assert service._should_retry_with_failover() is True  # noqa: SLF001
 
 
+def test_should_retry_uses_legacy_auto_switch_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy data-dir auto-switch.json is honored when primary is missing."""
+    import server.paths as paths
+
+    service = AgentService()
+    service.settings.PROJECTS_DATA_DIR = str(tmp_path / "primary")
+
+    legacy_dir = tmp_path / "legacy"
+    legacy_dir.mkdir()
+    monkeypatch.setattr(paths, "AI_FACTORY_DIR", legacy_dir)
+    (legacy_dir / "auto-switch.json").write_text(
+        json.dumps({"enabled": True, "autoSwitchOnRateLimit": True})
+    )
+
+    assert service._should_retry_with_failover() is True  # noqa: SLF001
+
+
 def test_rate_limit_updates_active_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
