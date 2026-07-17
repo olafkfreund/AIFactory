@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.46 - 2026-07-17
+
+### Fixed
+
+- **Worktree git commands no longer inherit ambient `GIT_*` env (#819).** Git exports `GIT_INDEX_FILE=.git/index` — a *relative* path — into every hook environment, so anything running under a pre-commit hook inherits it. Each git child re-resolves that relative path against its own cwd; inside a linked worktree `.git` is a FILE, not a directory, so `git worktree add` died with `fatal: .git/index: index file open failed: Not a directory`. `WorktreeManager` drives git across several repos and worktrees, so an inherited `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY` silently aims git at the wrong index; `_git_env()` now scrubs them for every git subprocess. The retry that treated `index file open failed` as a transient hiccup is removed — it never was one, it was hiding this. The test suite is scrubbed process-wide too: five other tests shelled out to git under the poisoned env and, passing `capture_output` without `check=True`, failed SILENTLY (staging nothing, surfacing as baffling empty-diff assertions). Diagnosed as deterministic, not a load-dependent race: 5 failed -> 4388 passed under a hook env.
+
+
 ## 3.6.45 - 2026-07-17
 
 ### Fixed
