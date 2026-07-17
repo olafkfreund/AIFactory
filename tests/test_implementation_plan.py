@@ -669,3 +669,43 @@ def test_handoff_subtasks_do_not_block_coding_completion():
     )
     assert plan.get_next_subtask() is None  # nothing left for the coder
     assert plan.get_progress()["is_complete"] is True
+
+
+def test_story_subtasks_support_is_handoff_like_subtask():
+    """#930: story-mode plans put Story objects in Phase.subtasks; the wave
+    merge-back path calls Phase.is_complete()/get_pending_subtasks(), which
+    touch .is_handoff on every member. Story promises Subtask compatibility,
+    so it must carry the same property — its absence crashed mark_complete and
+    merge-back for every wave subtask in the first live parallel run."""
+    from implementation_plan.enums import PhaseType, SubtaskStatus
+    from implementation_plan.phase import Phase
+    from implementation_plan.story import Story
+
+    phase = Phase(
+        phase=1,
+        name="Implementation",
+        type=PhaseType.IMPLEMENTATION,
+        parallel_safe=True,
+        subtasks=[
+            Story(
+                id="US-1",
+                title="slugify",
+                user_story="as a dev I want slugs",
+                status=SubtaskStatus.COMPLETED,
+            ),
+            Story(id="US-2", title="bytesize", user_story="as a dev I want sizes"),
+            Story(
+                id="US-3",
+                title="test handoff",
+                user_story="as a dev I want tests",
+                service="testing",
+            ),
+        ],
+    )
+    assert phase.subtasks[0].is_handoff is False
+    assert phase.subtasks[2].is_handoff is True  # same rule as Subtask
+    assert not phase.is_complete()  # US-2 pending, and this must not raise
+    assert [s.id for s in phase.get_pending_subtasks()] == ["US-2"]
+
+    phase.subtasks[1].status = SubtaskStatus.COMPLETED
+    assert phase.is_complete()  # handoff story doesn't block completion
