@@ -1,6 +1,23 @@
 ## [Unreleased]
 
 
+## 3.6.48 - 2026-07-17
+
+### Fixed
+
+- **Parallel execution now actually reaches run.py in dispatched build Jobs (#914).** 3.6.47 shipped the full control surface (labels, portal setting, env) and it resolved correctly all the way into `task_metadata.json` — but `KubejobMixin._start_build_unit` forwarded `parallel`/`workers` **only on its subprocess branch**, so the kubejob path dispatched without them and the Job's argv never carried `--parallel`. Since RFC-0016 made the kubejob backend the live default (#671), the #376 wave harness was inert on the cluster for **every** path — intake labels, the portal setting, and PFactory-planned contracts alike (PFactory derives `parallel`/`workers` from the epic's dependency shape and attaches them to every contract; they were dropped at this seam). Proven live by aifactory-demo#335: `task_metadata` said `"parallel": true` while the Job ran `run.py --spec ... --auto-continue --force` and built strictly serial (17 subtasks, 36.5 min). `build_run_py_job_manifest` now reuses `services/task_phase.py::_append_parallel_flags` — the same helper the subprocess path uses — rather than duplicating flag logic that would drift.
+  Every layer was unit-tested and green; nothing tested the **seam** between task_metadata and the Job's argv. That seam now has tests.
+
+### Added
+
+- **`factory:hard` issues auto-route into PFactory planning (#874).** `POST /api/plan/sessions/from-issue` accepts the intake poller's payload and opens a plan session, preserving the RFC-0001 correlation key: `PlanSession.origin_issue_number` is kept distinct from `emitted_issue_number` (the epic PFactory creates), and `correlation_key_for` gives the origin precedence, repo-qualified. Still gated on `PFACTORY_INGEST_URL`; unset, the intake poller keeps refusing loudly with a maintainer-actionable message rather than mis-POSTing. Requires the PFactory side (PFactory#306), which cannot reach production until PFactory#303 (dev is ~19k lines behind main) is reconciled.
+
+### Changed
+
+- **TechDocs OpenAPI regeneration works and fails loudly (#906).** The step had failed on every run since **3.4.2** — `execution.py` imports apps/backend's `qa` package (and so `claude_agent_sdk`), declared only in `apps/backend/requirements.txt`, while the job's venv installed only the web-server's; the import could never resolve. `continue-on-error: true` hid it, so the job stayed green while the committed spec rotted ~20 releases behind. Both requirement sets are now installed, `continue-on-error` is gone, and the doomed bot-push to protected `dev` is replaced by a loud failure naming the drift and the fix. The spec is regenerated (v3.6.45, 290 paths).
+- **`apps/web-server/tests/` is collected by CI (#903).** 301 tests had never gated a PR. 30 of 37 failures were `sys.path` accidents (fixed with one conftest). ~3,200 lines were deleted rather than repaired because they provably asserted nothing — including 35/35 `assert True` placeholders in `test_cli_integration_endpoints.py` and a `test_performance.py` that imported zero server code. Result: 231 tests, green and stable; measured coverage loss zero. Intent behind the removed tests is tracked in #911/#912.
+
+
 ## 3.6.47 - 2026-07-17
 
 ### Added
