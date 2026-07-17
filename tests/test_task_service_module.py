@@ -42,3 +42,40 @@ def test_routes_tasks_reexports_same_helpers():
         assert getattr(tasks, name) is getattr(task_service, name), (
             f"routes.tasks.{name} is not the same object as task_service.{name}"
         )
+
+
+def test_load_spec_metadata_tolerates_out_of_enum_subtask_status(tmp_path):
+    # #942: a plan whose subtask carries an out-of-enum status ("ready", which an
+    # LLM planner emits) must NOT crash load_spec_metadata / GET /api/tasks. The
+    # status is coerced to a valid literal; one bad spec can't 500 the list.
+    from server.routes.task_service import _coerce_subtask_status, load_spec_metadata
+
+    assert _coerce_subtask_status("ready") == "pending"
+    assert _coerce_subtask_status("running") == "in_progress"
+    assert _coerce_subtask_status("done") == "completed"
+    assert _coerce_subtask_status(None) == "pending"
+    assert _coerce_subtask_status("nonsense") == "pending"
+    assert _coerce_subtask_status("COMPLETED") == "completed"
+
+    import json
+
+    spec = tmp_path / "042-x"
+    spec.mkdir()
+    (spec / "requirements.json").write_text(
+        json.dumps({"title": "t", "description": "d"})
+    )
+    (spec / "implementation_plan.json").write_text(
+        json.dumps(
+            {
+                "phases": [
+                    {
+                        "subtasks": [
+                            {"id": "s1", "description": "do a thing", "status": "ready"}
+                        ]
+                    }
+                ]
+            }
+        )
+    )
+    meta = load_spec_metadata(spec)  # must not raise
+    assert meta["subtasks"][0].status == "pending"
