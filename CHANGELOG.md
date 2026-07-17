@@ -1,7 +1,14 @@
 ## [Unreleased]
 
 
-## 3.6.48 - 2026-07-17
+## 3.6.49 - 2026-07-17
+
+**3.6.48 shipped empty — this release is what 3.6.48's notes described.** The 3.6.48 release branch was cut from a stale local `dev` (the checkout failed silently behind a suppressed stderr, so the branch was taken from the previous release branch instead). It carried only a version bump and a CHANGELOG describing four fixes that were not in the build. The entry below is left in place, corrected, rather than rewritten: a changelog that quietly edits away a bad release is exactly the kind of lying artifact the fixes in this very release exist to stop.
+
+Everything listed under 3.6.48 ships **here**, verified present in the built tree before tagging: #915 (#914 kubejob `--parallel` seam), #913 (#874 `factory:hard` -> PFactory planning), #910 (#903 web-server tests collected), #908 (#906 OpenAPI regeneration).
+
+
+## 3.6.48 - 2026-07-17 [EMPTY RELEASE — contents did not ship; see 3.6.49]
 
 ### Fixed
 
