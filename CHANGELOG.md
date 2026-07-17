@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.52 - 2026-07-17
+
+- fix(plan): give `Story` the `is_handoff` property it promised. Story-mode plans put `Story` objects into `Phase.subtasks`; `Phase.is_complete()`/`get_pending_subtasks()` touch `.is_handoff` on every member and crashed with `'Story' object has no attribute 'is_handoff'`, which killed mark_complete and merge-back for every worker in the first live parallel wave — 2 of 3 workers' finished outputs were discarded and redone serially, cutting the ~3x wave speedup to ~1.6x. (#930, PR #932)
+
+
 ## 3.6.51 - 2026-07-17
 
 - fix(kubejob): thread quick-mode (`--skip-qa` + `QUICK_MODE=true`) and selectedSkills (skill_context.md written into the spec dir before dispatch) into dispatched build Jobs; also thread an explicit `base_branch` override to the Job argv — the previous behavior silently dropped it and only looked correct when the auto-detected base happened to match. Completes #916. (PR #929)
