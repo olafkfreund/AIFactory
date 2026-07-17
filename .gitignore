@@ -46,9 +46,10 @@ credentials/
 .settings/
 
 # ===========================
-# Skills database (copied from network mount, ~57 MB)
+# Skills: the curated coding-skill library under skills/ is COMMITTED source
+# (see skills/README.md). Only ignore a local runtime cache if one is written.
 # ===========================
-/skills/
+/skills/skills-cache.json
 
 # ===========================
 # Logs
