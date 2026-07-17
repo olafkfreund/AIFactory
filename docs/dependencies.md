@@ -2,7 +2,7 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime dependencies.
+AIFactory pins **17** backend, **36** web-server, and **46** frontend runtime dependencies.
 
 ## Backend (Python) — `apps/backend/requirements.txt`
 
@@ -30,7 +30,6 @@ AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime de
 
 | Package | Version |
 |---------|---------|
-| `aiofiles` | `>=23.0.0` |
 | `aiosqlite` | `>=0.20.0` |
 | `alembic` | `>=1.13.0` |
 | `asyncpg` | `>=0.30.0` |
@@ -41,8 +40,7 @@ AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime de
 | `bcrypt` | `>=4.0.0` |
 | `boto3` | `>=1.35.0` |
 | `email-validator` | `>=2.0.0` |
-| `fastapi` | `>=0.109.0` |
-| `gitpython` | `>=3.1.0` |
+| `fastapi` | `==0.136.3` |
 | `google-cloud-kms` | `>=3.0.0` |
 | `google-crc32c` | `>=1.5.0` |
 | `httpx` | `>=0.27.0` |
@@ -62,10 +60,10 @@ AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime de
 | `ptyprocess` | `>=0.7.0` |
 | `pydantic` | `>=2.0.0` |
 | `pydantic-settings` | `>=2.0.0` |
-| `python-dotenv` | `>=1.0.0` |
 | `python-multipart` | `>=0.0.6` |
 | `python3-saml` | `>=1.16` |
 | `redis` | `>=5.0` |
+| `starlette` | `==1.3.1` |
 | `structlog` | `>=24.4.0` |
 | `websockets` | `>=12.0` |
 
@@ -114,21 +112,19 @@ AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime de
 | `react-dom` | `^19.2.3` |
 | `react-i18next` | `^16.5.0` |
 | `react-markdown` | `^10.1.0` |
-| `react-resizable-panels` | `^4.2.0` |
 | `react-router-dom` | `^7.1.0` |
 | `rehype-highlight` | `^7.0.2` |
 | `rehype-raw` | `^7.0.0` |
 | `rehype-sanitize` | `^6.0.0` |
 | `remark-gfm` | `^4.0.1` |
 | `tailwind-merge` | `^3.4.0` |
-| `uuid` | `^13.0.0` |
-| `zod` | `^4.2.1` |
 | `zustand` | `^5.0.9` |
 
 ### Dev
 
 | Package | Version |
 |---------|---------|
+| `@eslint/js` | `^9.39.4` |
 | `@playwright/test` | `^1.55.0` |
 | `@tailwindcss/postcss` | `^4.1.17` |
 | `@testing-library/jest-dom` | `^6.9.1` |
@@ -137,14 +133,20 @@ AIFactory pins **17** backend, **38** web-server, and **49** frontend runtime de
 | `@types/node` | `^25.0.0` |
 | `@types/react` | `^19.2.7` |
 | `@types/react-dom` | `^19.2.3` |
-| `@types/uuid` | `^10.0.0` |
 | `@vitejs/plugin-react` | `^5.1.2` |
 | `autoprefixer` | `^10.4.22` |
+| `eslint` | `^9.39.4` |
+| `eslint-plugin-jsx-a11y` | `^6.10.2` |
+| `eslint-plugin-react-hooks` | `^5.2.0` |
+| `eslint-plugin-react-refresh` | `^0.4.26` |
+| `globals` | `^15.15.0` |
 | `jsdom` | `^27.4.0` |
 | `postcss` | `^8.5.6` |
+| `prettier` | `^3.8.4` |
 | `tailwindcss` | `^4.1.17` |
 | `tsx` | `^4.20.0` |
 | `typescript` | `^5.9.3` |
-| `vite` | `^7.2.7` |
+| `typescript-eslint` | `^8.61.1` |
+| `vite` | `^7.3.6` |
 | `vitest` | `^4.0.16` |
 
