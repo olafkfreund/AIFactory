@@ -89,7 +89,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from .task_phase import _append_parallel_flags, should_pass_force
+from .task_phase import (
+    _append_parallel_flags,
+    _append_quick_mode_flag,
+    should_pass_force,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -557,6 +561,8 @@ def build_run_py_job_manifest(
     parallel: bool | None = None,
     workers: int | None = None,
     force: bool = False,
+    base_branch: str | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Build the k8s Job manifest that runs ``run.py`` for one build (#671).
 
@@ -664,6 +670,17 @@ def build_run_py_job_manifest(
     # ran the full build (coder + QA + PR). Thread it into the Job's run.py argv.
     if stop_after_planning:
         argv.append("--stop-after-planning")
+    # #916: --base-branch mirrors the in-pod path. The caller's override (the
+    # /start payload's baseBranch) used to stop at _start_build_unit, so run.py
+    # in the Job always auto-detected the base and built from the default branch.
+    if base_branch:
+        argv.extend(["--base-branch", base_branch])
+    # #916: quick mode mirrors the in-pod path — --skip-qa in argv (the QA loop
+    # is skipped; the quick coder prompt validates inline) + QUICK_MODE=true in
+    # the container env (prompts_pkg reads the env to pick the quick prompts).
+    # Both used to be dropped, so a quick task ran the full pipeline in the Job.
+    if _append_quick_mode_flag(argv, mode):
+        extra_env = {**(extra_env or {}), "QUICK_MODE": "true"}
     # #914: same defect class for the #376 parallel harness. The resolved
     # execution reached here (task_metadata said ``"parallel": true``) but the
     # Job's argv never carried ``--parallel``, so EVERY kubejob build ran serial
@@ -984,6 +1001,8 @@ class KubeJobBuildBackend:
         parallel: bool | None = None,
         workers: int | None = None,
         force: bool = False,
+        base_branch: str | None = None,
+        mode: str | None = None,
     ) -> str:
         """Create the run.py Job and record its worker_ref. Returns the Job name.
 
@@ -1037,6 +1056,8 @@ class KubeJobBuildBackend:
             parallel=parallel,
             workers=workers,
             force=force,
+            base_branch=base_branch,
+            mode=mode,
         )
         namespace = manifest["metadata"]["namespace"]
         job_name = manifest["metadata"]["name"]

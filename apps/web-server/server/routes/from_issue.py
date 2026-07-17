@@ -160,6 +160,33 @@ def _write_spec(
     return spec_dir
 
 
+def _find_existing_spec(project_path: Path, issue_number: int) -> str | None:
+    """Return the spec id already recorded for this issue number, if any (#878).
+
+    Keys on ``requirements.provenance.issue_number``, which ``_write_spec``
+    stamps on first write — so a redelivered issue adopts the existing spec
+    instead of minting a duplicate build.
+    """
+    specs_dir = project_path / ".aifactory" / "specs"
+    if not specs_dir.is_dir():
+        return None
+    for spec_dir in sorted(specs_dir.iterdir()):
+        req_file = spec_dir / "requirements.json"
+        if not req_file.is_file():
+            continue
+        try:
+            requirements = json.loads(req_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        provenance = requirements.get("provenance")
+        if (
+            isinstance(provenance, dict)
+            and provenance.get("issue_number") == issue_number
+        ):
+            return spec_dir.name
+    return None
+
+
 def _intake_auto_handoff_enabled() -> bool:
     """Whether intake builds auto-hand off to TFactory (default on)."""
     return (
@@ -213,6 +240,25 @@ async def create_from_issue(request: FromIssueRequest):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide either payload or issue_number",
         )
+
+    # Idempotency by issue number (#878): a redelivered issue (e.g. reclaim
+    # after a crash between task creation and claim confirmation) must not
+    # mint a duplicate spec/build — no-op onto the existing one.
+    issue_number = issue.get("number")
+    if isinstance(issue_number, int):
+        existing_spec_id = _find_existing_spec(projects_path, issue_number)
+        if existing_spec_id is not None:
+            return {
+                "success": True,
+                "task_id": f"{request.project_id}:{existing_spec_id}",
+                "spec_id": existing_spec_id,
+                "deduplicated": True,
+                "issue_number": issue_number,
+                "message": (
+                    f"Issue #{issue_number} already ingested as spec "
+                    f"{existing_spec_id}; not creating a duplicate."
+                ),
+            }
 
     # Label override (e.g. from a webhook) takes precedence over the issue's own.
     if request.labels is not None:

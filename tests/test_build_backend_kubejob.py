@@ -1661,3 +1661,77 @@ def test_manifest_force_defaults_on_for_a_spec_with_no_metadata(
     # blocking every unattended build at run.py's pre-flight gate.
     cmd = _force_cmd(monkeypatch, tmp_path)
     assert "--force" in cmd
+
+
+def _manifest(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> dict[str, Any]:
+    """A full dispatched-Job manifest for the given execution opts."""
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m: dict[str, Any] = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        **kwargs,  # type: ignore[arg-type]
+    )
+    return m
+
+
+def _container_env(m: dict[str, Any]) -> dict[str, str]:
+    env_list = m["spec"]["template"]["spec"]["containers"][0].get("env", [])
+    return {e["name"]: e.get("value", "") for e in env_list}
+
+
+def test_manifest_quick_mode_adds_skip_qa_and_quick_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #916 remainder THE SEAM: mode="quick" resolved correctly all the way down
+    # to _start_build_unit and then vanished — the Job ran the full QA pipeline
+    # with the full prompts. Quick mode is BOTH halves of the in-pod behaviour:
+    # --skip-qa in argv AND QUICK_MODE=true in env (prompts_pkg reads the env).
+    m = _manifest(monkeypatch, mode="quick")
+    cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    assert "--skip-qa" in cmd
+    assert _container_env(m).get("QUICK_MODE") == "true"
+
+
+def test_manifest_full_or_unset_mode_omits_quick_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contrast guard: a full (or unspecified) build keeps the QA loop and never
+    # carries the quick-mode env.
+    for mode in ("full", None):
+        m = _manifest(monkeypatch, mode=mode)
+        cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+        assert "--skip-qa" not in cmd
+        assert "QUICK_MODE" not in _container_env(m)
+
+
+def test_manifest_quick_mode_keeps_caller_extra_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The QUICK_MODE merge must extend, not replace, the dispatch-provided env
+    # (the pooled OAuth token travels in extra_env — dropping it kills the build).
+    m = _manifest(monkeypatch, mode="quick", extra_env={"CLAUDE_CODE_OAUTH_TOKEN": "t"})
+    env = _container_env(m)
+    assert env.get("QUICK_MODE") == "true"
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == "t"
+
+
+def test_manifest_base_branch_reaches_run_py_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #916 remainder: the /start payload's baseBranch used to stop at
+    # _start_build_unit, so run.py in the Job always auto-detected the base and
+    # built from the default branch.
+    cmd = _parallel_cmd(monkeypatch, base_branch="release/2.0")
+    assert "--base-branch release/2.0" in cmd
+
+
+def test_manifest_default_omits_base_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No override -> run.py keeps its own base-branch detection, as in-pod.
+    cmd = _parallel_cmd(monkeypatch)
+    assert "--base-branch" not in cmd

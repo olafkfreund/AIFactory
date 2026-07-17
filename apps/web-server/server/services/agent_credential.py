@@ -277,14 +277,23 @@ class CredentialMixin:
 
         logger = logging.getLogger(__name__)
 
-        # Primary path: ~/.aifactory/auto-switch.json
-        settings_file = Path(self.settings.PROJECTS_DATA_DIR) / "auto-switch.json"
+        from ..paths import get_data_file
 
+        # Primary path: PROJECTS_DATA_DIR/auto-switch.json, with legacy
+        # data-dir fallback for symmetry with claude-profiles.json (#911)
+        settings_file = Path(self.settings.PROJECTS_DATA_DIR) / "auto-switch.json"
         if not settings_file.exists():
-            logger.debug(
-                f"[AgentService] Auto-switch settings not found at {settings_file}, failover disabled"
-            )
-            return False
+            legacy_settings_file = get_data_file("auto-switch.json")
+            if legacy_settings_file.exists():
+                logger.debug(
+                    f"[AgentService] Using legacy auto-switch settings at {legacy_settings_file}"
+                )
+                settings_file = legacy_settings_file
+            else:
+                logger.debug(
+                    f"[AgentService] Auto-switch settings not found at {settings_file}, failover disabled"
+                )
+                return False
 
         try:
             data = json.loads(settings_file.read_text())

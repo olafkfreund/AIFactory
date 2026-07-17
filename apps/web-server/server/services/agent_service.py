@@ -60,6 +60,7 @@ from .task_phase import (  # noqa: E402,F401
     PHASE_RANGES,
     TaskPhase,
     _append_parallel_flags,
+    _append_quick_mode_flag,
     is_failed_build,
     phase_to_review_reason,
     phase_to_status,
@@ -890,9 +891,9 @@ class AgentService(
         if base_branch:
             cmd.extend(["--base-branch", base_branch])
 
-        # Skip QA for quick mode (simple tasks) - coder_quick.md validates inline
-        if mode == "quick":
-            cmd.append("--skip-qa")
+        # Skip QA for quick mode (simple tasks) - coder_quick.md validates inline.
+        # Shared with the kubejob manifest builder so the two paths cannot drift (#916).
+        if _append_quick_mode_flag(cmd, mode):
             logger.info(f"[AgentService] Skipping QA for quick mode task {task_id}")
 
         # Stop after planning for Copilot delegation flow (#94)
