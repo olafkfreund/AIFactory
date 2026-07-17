@@ -4,21 +4,17 @@ Task management routes.
 Handles CRUD operations for tasks (specs) within projects.
 """
 
-import ast
 import json
 import re
 import shutil
-import subprocess
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.engine import get_db
-from ..paths import get_data_dir
 from ..services import task_control
 from ..tenancy import (
     multi_tenant_enabled,
@@ -43,7 +39,7 @@ from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
-from .projects import get_projects_file, load_projects
+from .projects import load_projects
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,
@@ -82,7 +78,6 @@ from .task_models import (  # noqa: F401
     TaskStatus,
     TaskUpdate,
 )
-
 
 # --------------------------------------------------------------------------
 # Helper Functions
@@ -627,7 +622,6 @@ async def delete_task(
         )
 
     # Remove directory (recursively)
-    import shutil
 
     shutil.rmtree(spec_dir)
 
@@ -645,12 +639,9 @@ from .plan_approval import (  # noqa: E402,F401
 )
 from .plan_approval import router as plan_approval_router
 
-
 # ============================================
 # Worktree Merge Routes
 # ============================================
-
-
 # ============================================
 # Worktree merge / conflict-resolution Routes (#649, epic #154)
 # ============================================
