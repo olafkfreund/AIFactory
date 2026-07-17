@@ -162,7 +162,7 @@ class Portal:
                 ):
                     out.append(t["id"])
         # Prefer real specs over the transient ":pending-..." placeholder.
-        out.sort(key=lambda x: (":pending-" in x))
+        out.sort(key=lambda x: ":pending-" in x)
         return out
 
     def detail(self, task_id: str) -> dict | None:
