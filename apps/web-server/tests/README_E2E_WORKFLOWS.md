@@ -2,6 +2,25 @@
 
 This guide helps you understand, run, and extend the end-to-end workflow tests for AIFactory.
 
+> **Status note (#903).** This directory was never collected by CI, so the tests
+> below never ran. Five of the workflows this guide describes were removed in
+> #903 because they had rotted past repair: they patched targets that cannot
+> resolve (`apps.web-server.*` is not an importable path — the directory has a
+> hyphen), mocked functions that no longer exist anywhere in `server/`
+> (`run_glab_command`, `create_simple_client`), patched a constant production had
+> deleted (`CLAUDE_PROFILES_FILE`), and called now-`async` endpoints
+> synchronously. Restoring that coverage means writing new tests against the
+> current API, not repairing these — tracked separately.
+>
+> Removed: `test_complete_profile_lifecycle`, `test_ideation_lifecycle_workflow`,
+> `test_gitlab_issue_to_mr_workflow`, `test_project_onboarding_workflow`,
+> `test_git_workflow_management`.
+>
+> Still present and now gated by CI: `test_api_profile_management_workflow`,
+> `test_initial_setup_workflow`, `test_rate_limit_recovery_workflow`,
+> `test_concurrent_file_access_workflow`. Sections below describing the removed
+> tests are kept for intent/context when that coverage is rewritten.
+
 ---
 
 ## What Are Workflow Tests?

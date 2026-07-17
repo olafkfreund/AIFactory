@@ -19,7 +19,9 @@ def test_create_and_run_uses_non_pending_spec_id(tmp_path):
     project_path = tmp_path / "repo"
     (project_path / ".aifactory" / "specs").mkdir(parents=True)
 
-    req = execution.StartTaskRequest()
+    # create_and_run_task takes CreateAndRunRequest, not the StartTaskRequest
+    # base — it reads request.provenance (#332), which the base model lacks.
+    req = execution.CreateAndRunRequest()
     with (
         patch.object(
             execution,

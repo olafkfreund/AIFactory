@@ -126,6 +126,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: apps/backend/.venv/bin/pytest apps/backend -q -o asyncio_mode=auto
 
+      # #903: the other half of the #854 gap. apps/web-server/tests was never
+      # collected either — `pytest tests/` and `pytest apps/backend` above miss
+      # it — so it had never gated a PR, including the RFC-0016 admission-control
+      # and concurrency-queue tests. Same flags as the apps/backend step: no root
+      # pytest.ini (tests/pytest.ini is scoped to tests/), so asyncio_mode is set
+      # here. Imports resolve via apps/web-server/tests/conftest.py.
+      - name: Pytest co-located (apps/web-server)
+        env:
+          GRAPHITI_ENABLED: "false"
+          APP_DISABLE_AUTH: "true"
+        run: apps/backend/.venv/bin/pytest apps/web-server/tests -q -o asyncio_mode=auto
+
   postgres-acceptance:
     name: postgres (P1 acceptance, PG ${{ matrix.pg }})
     runs-on: ubuntu-latest
