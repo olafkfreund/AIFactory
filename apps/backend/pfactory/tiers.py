@@ -15,6 +15,10 @@ rewrites (RFC-0010).
 The classifier is tolerant of *scoped* label spellings — both ``factory:low``
 and ``factory::low`` (GitLab scoped-label syntax) are recognised — so the same
 canonical tier survives a round-trip through any tracker.
+
+``classify_parallel`` reads a SEPARATE, orthogonal axis off the same labels:
+whether the build may run its independent subtasks concurrently
+(``factory:parallel`` / ``factory:serial`` / ``factory:workers=N``).
 """
 
 from __future__ import annotations
@@ -26,8 +30,12 @@ import urllib.request
 from enum import Enum
 
 __all__ = [
+    "PARALLEL_LABEL",
+    "SERIAL_LABEL",
     "TIER_LABEL_PREFIX",
+    "WORKERS_LABEL_PREFIX",
     "Tier",
+    "classify_parallel",
     "classify_tier",
     "resolve_low_tier_model",
     "tier_for",
@@ -43,6 +51,11 @@ _DEFAULT_OLLAMA_URL = "http://localhost:11434"
 _PROBE_TIMEOUT_S = 1.5
 
 TIER_LABEL_PREFIX = "factory:"
+
+# Parallel-execution opt-in / opt-out labels (a separate axis from the tier).
+PARALLEL_LABEL = "factory:parallel"
+SERIAL_LABEL = "factory:serial"
+WORKERS_LABEL_PREFIX = "factory:workers="
 
 # Migration / rewrite change-mode that forces the hard tier.
 _MIGRATION = "migration"
@@ -111,6 +124,43 @@ def classify_tier(labels: object) -> Tier | None:
         if best is None or _RANK[tier] > _RANK[best]:
             best = tier
     return best
+
+
+def classify_parallel(labels: object) -> tuple[bool | None, int | None]:
+    """Return ``(parallel, workers)`` requested by ``labels``.
+
+    A SEPARATE axis from the difficulty tier: parallelism is opted into per
+    issue, independent of low/medium/hard.
+
+    * ``factory:parallel`` -> ``True``  (run a wave's independent subtasks
+      concurrently, each in its own git worktree — see agents/parallel_runner)
+    * ``factory:serial``   -> ``False`` (explicit opt-OUT; always wins, so a
+      deployment default can be overridden per issue)
+    * neither              -> ``None``  (the caller applies its default)
+    * ``factory:workers=N`` -> ``N`` (positive ints only; TUNES the worker cap,
+      it does NOT by itself enable parallelism — pair it with
+      ``factory:parallel``)
+
+    Scoped spellings (``factory::parallel``) are accepted, matching
+    :func:`classify_tier`. Malformed input never raises.
+    """
+    names = [n.lower().replace("::", ":") for n in _normalize(labels)]
+
+    workers: int | None = None
+    for name in names:
+        if not name.startswith(WORKERS_LABEL_PREFIX):
+            continue
+        raw = name[len(WORKERS_LABEL_PREFIX) :].strip()
+        # isdigit() rejects "-2"/"1.5"/"" without a try-except; >0 rejects "0".
+        if raw.isdigit() and int(raw) > 0:
+            workers = int(raw)  # last valid label wins
+
+    # Opt-out beats opt-in regardless of label order: serial is the safe answer.
+    if SERIAL_LABEL in names:
+        return False, workers
+    if PARALLEL_LABEL in names:
+        return True, workers
+    return None, workers
 
 
 def tier_for(classification: object, change_mode: str | None = None) -> Tier:

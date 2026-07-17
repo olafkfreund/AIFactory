@@ -221,3 +221,68 @@ async def test_intake_handoff_can_be_disabled(project, monkeypatch):
     res = await create_from_issue(req)
     meta = _task_metadata(tmp_path, res["spec_id"])
     assert not meta.get("auto_handover_tfactory")
+
+
+# ── parallel control: label -> task_metadata round-trip ────────────────────
+
+
+async def _ingest(labels: list[str]) -> tuple:
+    """Ingest an issue carrying ``labels``; return (result, spec_id)."""
+    res = await create_from_issue(
+        FromIssueRequest(
+            project_id="p",
+            payload={
+                "number": 77,
+                "title": "Parallel me",
+                "body": "several independent files",
+                "labels": [{"name": n} for n in labels],
+            },
+        )
+    )
+    return res, res["spec_id"]
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_parallel_env(monkeypatch):
+    monkeypatch.delenv("AIFACTORY_INTAKE_PARALLEL", raising=False)
+    monkeypatch.delenv("AIFACTORY_INTAKE_WORKERS", raising=False)
+
+
+async def test_parallel_label_reaches_task_metadata(project):
+    tmp_path, _ = project
+    res, spec_id = await _ingest(["factory:medium", "factory:parallel"])
+    assert res["execution"]["parallel"] is True
+    # The payoff: the agent service reads THIS file back when it starts the
+    # build, so the harness actually runs concurrently.
+    assert _task_metadata(tmp_path, spec_id)["parallel"] is True
+
+
+async def test_workers_label_reaches_task_metadata(project):
+    tmp_path, _ = project
+    _, spec_id = await _ingest(["factory:parallel", "factory:workers=4"])
+    meta = _task_metadata(tmp_path, spec_id)
+    assert meta["parallel"] is True
+    assert meta["workers"] == 4
+
+
+async def test_unlabelled_intake_stays_serial(project):
+    tmp_path, _ = project
+    res, spec_id = await _ingest(["factory:medium"])
+    assert res["execution"]["parallel"] is False
+    meta = _task_metadata(tmp_path, spec_id)
+    assert meta["parallel"] is False
+    assert "workers" not in meta
+
+
+async def test_serial_label_overrides_deployment_default(project, monkeypatch):
+    tmp_path, _ = project
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "true")
+    _, spec_id = await _ingest(["factory:serial"])
+    assert _task_metadata(tmp_path, spec_id)["parallel"] is False
+
+
+async def test_deployment_default_applies_when_unlabelled(project, monkeypatch):
+    tmp_path, _ = project
+    monkeypatch.setenv("AIFACTORY_INTAKE_PARALLEL", "1")
+    _, spec_id = await _ingest(["factory:medium"])
+    assert _task_metadata(tmp_path, spec_id)["parallel"] is True
