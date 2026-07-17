@@ -1499,3 +1499,62 @@ def test_manifest_default_omits_stop_after_planning_flag(
     )
     cmd = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
     assert "--stop-after-planning" not in cmd
+
+
+def _parallel_cmd(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> str:
+    """The dispatched Job's run.py command line for the given execution opts."""
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", _DATA_ROOT)
+    monkeypatch.setenv("AIFACTORY_IMAGE", "ghcr.io/dataseeek/aifactory:1.2.3")
+    m = bb.build_run_py_job_manifest(
+        task_id="proj-1:042-go",
+        project_path=Path(_DATA_ROOT) / "workspaces" / "proj-1",
+        spec_id="042-go",
+        correlation_key=482,
+        **kwargs,  # type: ignore[arg-type]
+    )
+    cmd: str = m["spec"]["template"]["spec"]["containers"][0]["command"][2]
+    return cmd
+
+
+def test_manifest_parallel_reaches_run_py_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #914 THE SEAM: this is the assertion whose absence was the whole bug.
+    # task_metadata said "parallel": true and every layer above resolved it
+    # correctly, but the Job's argv never carried --parallel, so the #376 wave
+    # harness never ran on the cluster (kubejob is the live default since #671).
+    cmd = _parallel_cmd(monkeypatch, parallel=True, workers=4)
+    assert "--parallel" in cmd
+    assert "--workers 4" in cmd
+
+
+def test_manifest_parallel_without_workers_omits_worker_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # workers unset -> --parallel alone; run.py applies its own default.
+    cmd = _parallel_cmd(monkeypatch, parallel=True)
+    assert "--parallel" in cmd
+    assert "--workers" not in cmd
+
+
+def test_manifest_explicit_serial_omits_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An explicit parallel=False must still produce a serial build, and a
+    # workers value alone must never imply --parallel.
+    cmd = _parallel_cmd(monkeypatch, parallel=False, workers=4)
+    assert "--parallel" not in cmd
+    assert "--workers" not in cmd
+
+
+def test_manifest_unspecified_parallel_omits_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Contrast guard: parallel=None means "not specified" -- never coerced to
+    # True. The feature stays OFF by default (#376 wave path is opt-in).
+    cmd = _parallel_cmd(monkeypatch)
+    assert "--parallel" not in cmd
+    # Unchanged argv otherwise: the flag threading must not disturb the base
+    # invocation shape (#671).
+    assert "--spec 042-go --project-dir /work --auto-continue --force" in cmd

@@ -141,6 +141,8 @@ class KubejobMixin:
         spec_id: str,
         correlation_key: str | None,
         stop_after_planning: bool = False,
+        parallel: bool | None = None,
+        workers: int | None = None,
     ) -> None:
         """Dispatch a k8s Job that runs run.py for this build (RFC-0016 #671).
 
@@ -159,6 +161,14 @@ class KubejobMixin:
         it run.py started but died ``No OAuth token found``. The pooled credential
         is released when the Job reaches a terminal state (reconcile / reap /
         stop), mirroring the subprocess path's _release_task_credential.
+
+        #914: ``parallel``/``workers`` are forwarded to the backend so they reach
+        the Job's run.py argv as ``--parallel [--workers N]``. They used to stop
+        one frame up — ``_start_build_unit`` accepted them and never passed them
+        on — so the #376 wave harness was inert on the kubejob path, which #671
+        made the LIVE DEFAULT: intake labels, the portal setting and
+        PFactory-planned contracts all resolved ``parallel`` correctly and then
+        built serial anyway.
         """
         # Pooled credential checkout (#670) — distinct token per concurrent Job.
         token, profile_id, profile_name = self._resolve_claude_token_pooled(task_id)
@@ -188,6 +198,8 @@ class KubejobMixin:
                 correlation_key=correlation_key,
                 oauth_token=token,
                 stop_after_planning=stop_after_planning,
+                parallel=parallel,
+                workers=workers,
             )
         except Exception:
             # Dispatch failed → the Job will never run, so return the credential
@@ -243,6 +255,8 @@ class KubejobMixin:
                 spec_id=spec_id,
                 correlation_key=correlation_key,
                 stop_after_planning=stop_after_planning,
+                parallel=parallel,
+                workers=workers,
             )
             return None
         return await self._spawn_task_execution(

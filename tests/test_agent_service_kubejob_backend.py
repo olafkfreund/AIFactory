@@ -255,3 +255,33 @@ async def test_drain_promotes_queued_build_via_kubejob_dispatch(
 
     assert dispatched == ["p:b"]  # promoted build dispatched a Job
     assert spawned == []  # NOT the in-pod subprocess (the bug)
+
+
+async def test_start_build_unit_forwards_parallel_opts_to_kubejob_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #914: _start_build_unit accepted parallel/workers and forwarded them ONLY
+    # on the subprocess branch -- the kubejob branch silently dropped them, so
+    # the #376 wave harness never reached run.py on the live default backend.
+    service = await _make_service(tmp_path / "par.db")
+    monkeypatch.setattr(service, "_kubejob_backend_enabled", lambda: True)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_dispatch(**kw: Any) -> None:
+        captured.update(kw)
+
+    monkeypatch.setattr(service, "_dispatch_build_job", fake_dispatch)
+
+    await service._start_build_unit(
+        task_id="p:s1",
+        project_path=tmp_path,
+        spec_id="s1",
+        correlation_key="9",
+        parallel=True,
+        workers=4,
+    )
+
+    assert captured["parallel"] is True
+    assert captured["workers"] == 4
