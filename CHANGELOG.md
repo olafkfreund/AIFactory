@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.55 - 2026-07-17
+
+- fix(handoff): never send a base branch as the verify source_branch. On the kubejob path the build runs inside the k8s Job and leaves the control-plane worktree on the base branch (main), so the auto-handoff read `main` and sent TFactory to verify a branch without the built code — every label-driven intake build failed at test (`planner_replan_budget_exhausted` / `triaged_empty`) despite correct code on `aifactory/<spec_id>`. A detected base branch (main/master) now falls back to the canonical build branch the Job always pushes. Dogfood-blocking; found stress-testing the intake path (Factory#295). (#938, PR #939)
+
+
 ## 3.6.54 - 2026-07-17
 
 - feat(intake): the auto-PR endgame now respects the repo's integration branch and links its origin issue. `AIFACTORY_INTAKE_REPOS` entries accept `base_branch` (threaded intake -> from-issue -> task_metadata -> `gather_pr_context`, which previously defaulted to main whenever requirements named the repo); the auto-PR body carries `Fixes #N` from the stamped provenance issue number. Unblocks fleet dogfooding: PRs against dev-integrating repos land on dev, not main. (PR #936)
