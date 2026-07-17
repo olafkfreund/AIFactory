@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.53 - 2026-07-17
+
+- feat(tenancy): tenant-scope tasks/projects and stamp tenant on handoff events. Tenant resolved from `X-Tenant-Id` (default `"default"`) behind `AIFACTORY_MULTI_TENANT`; stamped into task metadata at intake and `/execution`; flag-gated tenant filtering on task/project lists; optional additive tenant on the TFactory ingest payload plus a local `tfactory_handoff.json` marker. Flag off is unchanged behavior. Part of the fleet multi-tenancy program (factory-gitops#13/#14). (#925, PR #934)
+
+
 ## 3.6.52 - 2026-07-17
 
 - fix(plan): give `Story` the `is_handoff` property it promised. Story-mode plans put `Story` objects into `Phase.subtasks`; `Phase.is_complete()`/`get_pending_subtasks()` touch `.is_handoff` on every member and crashed with `'Story' object has no attribute 'is_handoff'`, which killed mark_complete and merge-back for every worker in the first live parallel wave — 2 of 3 workers' finished outputs were discarded and redone serially, cutting the ~3x wave speedup to ~1.6x. (#930, PR #932)
