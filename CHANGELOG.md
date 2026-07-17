@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.45 - 2026-07-17
+
+### Fixed
+
+- **Build no longer hard-fails "0/N no runnable subtask" on an unsatisfiable planner plan (#896).** An LLM planner slip that gives the entry phase an unsatisfiable dependency (forward dep, phantom phase, or cycle) left `get_available_phases()` empty forever, so `get_next_subtask()` returned `None` and the coder failed the whole build without running a single subtask. `get_next_subtask` now falls back, when no phase's deps are satisfiable but pending work remains, to the earliest incomplete phase with pending subtasks (deps ignored, logged) — the same "a bad planner output never bricks a build" stance as the wave scheduler. Never fires on a genuinely complete plan. (Also cleaned plan.py's pre-existing mypy-strict debt to 0; behaviour-neutral.)
+
+
 ## 3.6.44 - 2026-07-17
 
 ### Fixed
