@@ -1,6 +1,107 @@
 ## [Unreleased]
 
 
+## 3.6.58 - 2026-07-18
+
+- fix(pr-endgame): resolve a base-branch worktree HEAD to the canonical build branch so the auto-PR opens against aifactory/<spec_id> instead of a rejected main->main PR (the #938 twin in the PR endgame). Completes hands-free intake: build -> auto-PR -> verify. (#948, PR #949)
+
+
+## 3.6.57 - 2026-07-17
+
+- fix(tasks): defensively coerce/skip malformed planner subtask fields (float id, off-type fields) so a single poisoned spec can no longer 500 GET /api/tasks or orphan every new intake issue. Completes the #942 fix. (#941, PR #946)
+- feat(skills): seed the coding-skill library (40 provider-neutral skills across languages/backend/frontend/data/infra/quality); the existing matcher now has content to select and inject as skill_context.md. (#945)
+
+
+## 3.6.56 - 2026-07-17
+
+- fix(tasks): tolerate out-of-enum subtask status in load_spec_metadata instead of 500ing GET /api/tasks; an LLM-emitted "ready" status crashed the whole task list. May relieve the intake-orphaning symptom if dispatch loads specs through the same path. (#942, PR #943)
+
+
+## 3.6.55 - 2026-07-17
+
+- fix(handoff): never send a base branch as the verify source_branch. On the kubejob path the build runs inside the k8s Job and leaves the control-plane worktree on the base branch (main), so the auto-handoff read `main` and sent TFactory to verify a branch without the built code — every label-driven intake build failed at test (`planner_replan_budget_exhausted` / `triaged_empty`) despite correct code on `aifactory/<spec_id>`. A detected base branch (main/master) now falls back to the canonical build branch the Job always pushes. Dogfood-blocking; found stress-testing the intake path (Factory#295). (#938, PR #939)
+
+
+## 3.6.54 - 2026-07-17
+
+- feat(intake): the auto-PR endgame now respects the repo's integration branch and links its origin issue. `AIFACTORY_INTAKE_REPOS` entries accept `base_branch` (threaded intake -> from-issue -> task_metadata -> `gather_pr_context`, which previously defaulted to main whenever requirements named the repo); the auto-PR body carries `Fixes #N` from the stamped provenance issue number. Unblocks fleet dogfooding: PRs against dev-integrating repos land on dev, not main. (PR #936)
+
+
+## 3.6.53 - 2026-07-17
+
+- feat(tenancy): tenant-scope tasks/projects and stamp tenant on handoff events. Tenant resolved from `X-Tenant-Id` (default `"default"`) behind `AIFACTORY_MULTI_TENANT`; stamped into task metadata at intake and `/execution`; flag-gated tenant filtering on task/project lists; optional additive tenant on the TFactory ingest payload plus a local `tfactory_handoff.json` marker. Flag off is unchanged behavior. Part of the fleet multi-tenancy program (factory-gitops#13/#14). (#925, PR #934)
+
+
+## 3.6.52 - 2026-07-17
+
+- fix(plan): give `Story` the `is_handoff` property it promised. Story-mode plans put `Story` objects into `Phase.subtasks`; `Phase.is_complete()`/`get_pending_subtasks()` touch `.is_handoff` on every member and crashed with `'Story' object has no attribute 'is_handoff'`, which killed mark_complete and merge-back for every worker in the first live parallel wave — 2 of 3 workers' finished outputs were discarded and redone serially, cutting the ~3x wave speedup to ~1.6x. (#930, PR #932)
+
+
+## 3.6.51 - 2026-07-17
+
+- fix(kubejob): thread quick-mode (`--skip-qa` + `QUICK_MODE=true`) and selectedSkills (skill_context.md written into the spec dir before dispatch) into dispatched build Jobs; also thread an explicit `base_branch` override to the Job argv — the previous behavior silently dropped it and only looked correct when the auto-detected base happened to match. Completes #916. (PR #929)
+- fix(credentials): auto-switch failover check falls back to the legacy data-dir `auto-switch.json` location. (#911, PR #923)
+- fix(intake): from-issue intake is idempotent by issue number — redelivery of the same GitHub issue returns the existing task (`deduplicated: true`) instead of creating a duplicate spec and build, keyed on the already-stamped provenance issue number. (#878, PR #928)
+- test(e2e): rewrite the e2e workflow coverage removed by the #903 suite triage against the current API. (#912, PR #927)
+- ci: auto-close issues whose fix reached main via PR-body keywords (Factory#293 pilot replication), including the pipefail fix for pushes without closing keywords. (PR #924)
+
+
+## 3.6.50 - 2026-07-17
+
+- fix(prompts): load the real planner schema prompt (`apps/backend/prompts/planner.md`) instead of a non-existent `prompts_pkg/prompts/planner.md`; on a missing prompt the generator now hard-fails instead of silently substituting a one-sentence fallback. Every dispatched Job build had been planning schema-less, which is why plans lacked `parallel_safe`/file footprints and `--parallel` never produced waves. (#920, PR #921)
+- fix(kubejob): derive `--force` from caller intent instead of passing it unconditionally, and only emit the plan-approval bypass warning on a real bypass. (#916, PR #919)
+- style: ruff-format 4 files that landed unformatted on dev via a `--no-verify` merge, healing the repo-wide format gate. (PR #921)
+
+
+## 3.6.49 - 2026-07-17
+
+**3.6.48 shipped empty — this release is what 3.6.48's notes described.** The 3.6.48 release branch was cut from a stale local `dev` (the checkout failed silently behind a suppressed stderr, so the branch was taken from the previous release branch instead). It carried only a version bump and a CHANGELOG describing four fixes that were not in the build. The entry below is left in place, corrected, rather than rewritten: a changelog that quietly edits away a bad release is exactly the kind of lying artifact the fixes in this very release exist to stop.
+
+Everything listed under 3.6.48 ships **here**, verified present in the built tree before tagging: #915 (#914 kubejob `--parallel` seam), #913 (#874 `factory:hard` -> PFactory planning), #910 (#903 web-server tests collected), #908 (#906 OpenAPI regeneration).
+
+
+## 3.6.48 - 2026-07-17 [EMPTY RELEASE — contents did not ship; see 3.6.49]
+
+### Fixed
+
+- **Parallel execution now actually reaches run.py in dispatched build Jobs (#914).** 3.6.47 shipped the full control surface (labels, portal setting, env) and it resolved correctly all the way into `task_metadata.json` — but `KubejobMixin._start_build_unit` forwarded `parallel`/`workers` **only on its subprocess branch**, so the kubejob path dispatched without them and the Job's argv never carried `--parallel`. Since RFC-0016 made the kubejob backend the live default (#671), the #376 wave harness was inert on the cluster for **every** path — intake labels, the portal setting, and PFactory-planned contracts alike (PFactory derives `parallel`/`workers` from the epic's dependency shape and attaches them to every contract; they were dropped at this seam). Proven live by aifactory-demo#335: `task_metadata` said `"parallel": true` while the Job ran `run.py --spec ... --auto-continue --force` and built strictly serial (17 subtasks, 36.5 min). `build_run_py_job_manifest` now reuses `services/task_phase.py::_append_parallel_flags` — the same helper the subprocess path uses — rather than duplicating flag logic that would drift.
+  Every layer was unit-tested and green; nothing tested the **seam** between task_metadata and the Job's argv. That seam now has tests.
+
+### Added
+
+- **`factory:hard` issues auto-route into PFactory planning (#874).** `POST /api/plan/sessions/from-issue` accepts the intake poller's payload and opens a plan session, preserving the RFC-0001 correlation key: `PlanSession.origin_issue_number` is kept distinct from `emitted_issue_number` (the epic PFactory creates), and `correlation_key_for` gives the origin precedence, repo-qualified. Still gated on `PFACTORY_INGEST_URL`; unset, the intake poller keeps refusing loudly with a maintainer-actionable message rather than mis-POSTing. Requires the PFactory side (PFactory#306), which cannot reach production until PFactory#303 (dev is ~19k lines behind main) is reconciled.
+
+### Changed
+
+- **TechDocs OpenAPI regeneration works and fails loudly (#906).** The step had failed on every run since **3.4.2** — `execution.py` imports apps/backend's `qa` package (and so `claude_agent_sdk`), declared only in `apps/backend/requirements.txt`, while the job's venv installed only the web-server's; the import could never resolve. `continue-on-error: true` hid it, so the job stayed green while the committed spec rotted ~20 releases behind. Both requirement sets are now installed, `continue-on-error` is gone, and the doomed bot-push to protected `dev` is replaced by a loud failure naming the drift and the fix. The spec is regenerated (v3.6.45, 290 paths).
+- **`apps/web-server/tests/` is collected by CI (#903).** 301 tests had never gated a PR. 30 of 37 failures were `sys.path` accidents (fixed with one conftest). ~3,200 lines were deleted rather than repaired because they provably asserted nothing — including 35/35 `assert True` placeholders in `test_cli_integration_endpoints.py` and a `test_performance.py` that imported zero server code. Result: 231 tests, green and stable; measured coverage loss zero. Intent behind the removed tests is tracked in #911/#912.
+
+
+## 3.6.47 - 2026-07-17
+
+### Added
+
+- **User-controllable parallel (multi-agent) execution for intake builds (#901, #902, #905).** AIFactory has been able to run a build's independent subtasks concurrently since #376 — each coding agent in its own child git worktree, disjoint file sets enforced by the wave scheduler, sequential merges, parent-owned plan state. PFactory-planned tasks have always used it (the planner derives `parallel`/`workers` from the epic's dependency shape and attaches them to every contract). Label-driven **intake** builds never did: nothing set the flag, so they always ran serial. Three control surfaces now exist, resolved most-specific-first — **label > portal setting > env > off**:
+  - **Issue labels** (#902): `factory:parallel`, `factory:serial` (always wins), `factory:workers=N`; the GitLab scoped form `factory::parallel` is accepted, mirroring the RFC-0011 tier labels.
+  - **Portal settings** (#901): `parallelExecution` + `parallelWorkers` (1-8), in Settings beside Solo Mode.
+  - **Env** (#902): `AIFACTORY_INTAKE_PARALLEL`, `AIFACTORY_INTAKE_WORKERS` for a fleet-wide operator default.
+  The setting deliberately outranks env (inverting solo mode's order): a portal toggle that an env var could override would be dead UI. `parallelExecution` is tri-state (`bool | None`) so "never expressed an opinion" is distinct from "chose off" — otherwise saving any unrelated setting (theme, uiScale) would have silently and permanently killed an operator's `AIFACTORY_INTAKE_PARALLEL=true`.
+  Resolution happens once in `AgentService.start_task_execution` — the single point every entry path funnels through (intake, /start, plan-approval, auto-fix, delegation, both queue drains) — so an explicit argument still wins and no caller was special-cased.
+  **Off by default**: the wave path has never run on a live intake build and interacts with the packed-KubeJob worktree layout behind #893. Opt in per issue with `factory:parallel` and watch a run before making it a fleet default.
+  Worker bounds are intentionally three ceilings owned by three layers, not one number: portal 1-8 (outer envelope) > PFactory 4 (contract cap) > coder 3 (fallback). The narrowest in play wins, so a portal preference can never raise a contract's cap.
+
+### Changed
+
+- **TechDocs dependencies page refreshed (#904).** The techdocs job regenerates it and pushes straight to `dev`, but `dev` is protected and requires the `backend (ruff + pytest)` check, so the bot's push is rejected and the job fails whenever the page drifts. Committed via PR instead. The underlying design flaw (a bot that cannot push to a protected branch) is tracked separately.
+
+
+## 3.6.46 - 2026-07-17
+
+### Fixed
+
+- **Worktree git commands no longer inherit ambient `GIT_*` env (#819).** Git exports `GIT_INDEX_FILE=.git/index` — a *relative* path — into every hook environment, so anything running under a pre-commit hook inherits it. Each git child re-resolves that relative path against its own cwd; inside a linked worktree `.git` is a FILE, not a directory, so `git worktree add` died with `fatal: .git/index: index file open failed: Not a directory`. `WorktreeManager` drives git across several repos and worktrees, so an inherited `GIT_INDEX_FILE`/`GIT_DIR`/`GIT_WORK_TREE`/`GIT_COMMON_DIR`/`GIT_OBJECT_DIRECTORY` silently aims git at the wrong index; `_git_env()` now scrubs them for every git subprocess. The retry that treated `index file open failed` as a transient hiccup is removed — it never was one, it was hiding this. The test suite is scrubbed process-wide too: five other tests shelled out to git under the poisoned env and, passing `capture_output` without `check=True`, failed SILENTLY (staging nothing, surfacing as baffling empty-diff assertions). Diagnosed as deterministic, not a load-dependent race: 5 failed -> 4388 passed under a hook env.
+
+
 ## 3.6.45 - 2026-07-17
 
 ### Fixed
