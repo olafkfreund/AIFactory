@@ -180,6 +180,19 @@ RUN npm install -g \
     @upstash/context7-mcp \
     @playwright/mcp
 
+# CVE-2026-39244 (GHSA-xcpc-8h2w-3j85): adm-zip < 0.6.0 DoS via crafted ZIP.
+# Pulled in transitively by @github/copilot's foundry-local-sdk (a Microsoft
+# Foundry Local model runtime the fleet never invokes). The P0 Trivy gate is
+# fail-closed, so overwrite every vendored adm-zip with the patched release —
+# copilot itself doesn't call adm-zip; only the unused Foundry SDK path does.
+RUN set -eux; \
+    tmp="$(mktemp -d)"; \
+    ( cd "$tmp" && npm install adm-zip@0.6.0 >/dev/null 2>&1 ); \
+    find /home/nonroot/.npm-global -type d -name adm-zip -print | while read -r d; do \
+      rm -rf "$d"; cp -a "$tmp/node_modules/adm-zip" "$d"; \
+    done; \
+    rm -rf "$tmp"
+
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
 RUN python3 -m venv /home/projects/MagesticAI/.venv
