@@ -263,6 +263,12 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "S3_ACCESS_KEY",
     "S3_SECRET_KEY",
     "S3_REGION",
+    # #804: the coder block in core/client.py reads AIFACTORY_GRAPHIFY_ENABLED at
+    # build time to opt into the graphify code-graph MCP tool. In a kubejob build
+    # the coder runs in a fresh Job pod, so the Deployment's flag only reaches it
+    # if forwarded here. Forwarded ONLY when present (== "true" on the Deployment);
+    # the graphify tooling (graphifyy[mcp]) is baked into the build-Job image.
+    "AIFACTORY_GRAPHIFY_ENABLED",
 )
 
 
