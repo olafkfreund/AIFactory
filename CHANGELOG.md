@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.60 - 2026-07-18
+
+- fix(coder): propagate `AIFACTORY_GRAPHIFY_ENABLED` to the kubejob build Job. With `AIFACTORY_BUILD_BACKEND=kubejob` the coder runs in a fresh Job whose env is an explicit allowlist (`_PASSTHROUGH_BUILD_ENV`), so the flag never reached `client.py` and graphify was silently off for every kubejob build. Added the flag to the passthrough; tooling (`graphifyy[mcp]`) was already in the build image. Unblocks the #804 graph-cache enablement run. (#804, PR #957)
+
+
 ## 3.6.59 - 2026-07-18
 
 - fix(intake): self-heal orphaned `factory:queued` issues that were routed but never built. A dropped dispatch or pod-roll left an issue labeled queued with a confirmed processed-store claim, hiding it from every recovery path — orphaned forever. The poller now re-dispatches a queued issue with no build after a grace (`AIFACTORY_INTAKE_REQUEUE_AFTER_S`, default 600s), counted in a new `requeued` heartbeat bucket; conservative (never touches an issue that has a build, is within grace, or is hard-tier). (#951, PR #952)
