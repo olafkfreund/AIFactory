@@ -1,6 +1,12 @@
 ## [Unreleased]
 
 
+## 3.6.61 - 2026-07-18
+
+- fix(build): return the kubejob build branch to the control plane so auto-PR can push (#959, PR #962). On the packed kubejob path the Job pushes `aifactory/<spec>` to origin (#751), but the control-plane `pr_endgame.create_pr` ran against a worktree that never had the branch, so `git push` failed `src refspec ... does not match any` and no PR opened. `create_pr` now `git fetch origin <branch>:<branch>` before pushing; fail-safe no-op on the co-mount path. Closes the last output-propagation slice — kubejob builds now open PRs unattended.
+- fix(build): refresh the workspace base branch before each task so builds use current source (#960, PR #961). The registered workspace clone was cloned-once and never re-fetched, so per-task worktrees drifted behind the real default branch (built stale source). Each build now fetches + resets its disposable per-task clone to the remote base head (config-honouring main/dev), fail-open on network errors.
+
+
 ## 3.6.60 - 2026-07-18
 
 - fix(coder): propagate `AIFACTORY_GRAPHIFY_ENABLED` to the kubejob build Job. With `AIFACTORY_BUILD_BACKEND=kubejob` the coder runs in a fresh Job whose env is an explicit allowlist (`_PASSTHROUGH_BUILD_ENV`), so the flag never reached `client.py` and graphify was silently off for every kubejob build. Added the flag to the passthrough; tooling (`graphifyy[mcp]`) was already in the build image. Unblocks the #804 graph-cache enablement run. (#804, PR #957)
