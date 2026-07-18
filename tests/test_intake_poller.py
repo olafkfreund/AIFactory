@@ -39,6 +39,7 @@ class FakeWorld:
         self.db_path = db_path
         self.fail_terminal: set[int] = set()
         self.fail_transient: set[int] = set()
+        self.builds: set[int] = set()  # issue numbers with a real build (#941)
 
     def add(self, number, labels):
         self.issues[number] = IntakeIssue(number=number, labels=list(labels))
@@ -76,8 +77,27 @@ class FakeWorld:
             raise RuntimeError("temporary")
         self.routes.append((issue.number, "hard"))
 
-    def deps(self, reclaim_after_s: float = 600.0):
-        return PollerDeps(
+    # --- #941 self-heal collaborators ---
+    def fetch_all(self, cfg):
+        # The real wrapper keeps factory:queued issues so the self-heal sees them.
+        return [
+            IntakeIssue(iss.number, list(iss.labels))
+            for iss in self.issues.values()
+            if any(label.lower().startswith("factory:") for label in iss.labels)
+        ]
+
+    def build_exists(self, cfg, number):
+        return number in self.builds
+
+    def requeue(self, cfg, number):
+        labels = self.issues[number].labels
+        self.issues[number].labels = [
+            label for label in labels if label.lower() != QUEUED_LABEL
+        ]
+        processed_store.unmark_processed(cfg.repo, number, path=self.db_path)
+
+    def deps(self, reclaim_after_s: float = 600.0, self_heal: bool = False, **kw):
+        d = PollerDeps(
             fetch_issues=self.fetch,
             apply_label=self.apply_label,
             comment=self.comment,
@@ -95,6 +115,13 @@ class FakeWorld:
                 processed_store.confirm_processed, path=self.db_path
             ),
         )
+        if self_heal:
+            d.fetch_issues = self.fetch_all
+            d.build_exists = self.build_exists
+            d.claimed_at = partial(processed_store.claimed_at, path=self.db_path)
+            d.requeue = self.requeue
+            d.requeue_after_s = kw.get("requeue_after_s", 0.0)
+        return d
 
 
 CFG = RepoConfig(provider="github", repo="o/r", project_id="p")
@@ -263,3 +290,66 @@ def test_stranded_claim_is_reclaimed_and_rerouted(world):
     # And now that it is confirmed, it is not routed a second time.
     poll_once([CFG], world.deps(reclaim_after_s=0))
     assert world.routes.count((21, "low-med")) == 1
+
+
+# ── #941: self-heal a routed-but-never-built (orphaned factory:queued) issue ──
+
+
+def test_self_heal_requeues_queued_issue_with_no_build(world):
+    """The #941 bug: an issue is routed (confirmed claim + factory:queued) but no
+    build ever materializes, so the sticky label orphans it forever. Once stale,
+    the self-heal must clear the guard and let the next tick re-route it."""
+    world.add(30, ["factory:low"])
+    # First pass routes it: confirmed claim + factory:queued, but pretend the
+    # build never landed (world.builds stays empty).
+    c1 = poll_once([CFG], world.deps(self_heal=True))
+    assert c1["routed"] == 1
+    assert QUEUED_LABEL in world.issues[30].labels
+    assert world.build_exists(CFG, 30) is False
+
+    # Next pass: queued + no build + past grace (requeue_after_s=0) -> requeued.
+    c2 = poll_once([CFG], world.deps(self_heal=True))
+    assert c2["requeued"] == 1
+    assert QUEUED_LABEL not in world.issues[30].labels  # guard cleared
+
+    # And the pass after that re-routes it from scratch (claim released too).
+    c3 = poll_once([CFG], world.deps(self_heal=True))
+    assert c3["routed"] == 1
+    assert world.routes.count((30, "low-med")) == 2  # re-dispatched
+
+
+def test_self_heal_never_touches_a_queued_issue_that_built(world):
+    """The safety half: an issue that HAS a build must never be re-dispatched,
+    however long its factory:queued label has been sitting there."""
+    world.add(31, ["factory:low"])
+    poll_once([CFG], world.deps(self_heal=True))
+    assert QUEUED_LABEL in world.issues[31].labels
+    world.builds.add(31)  # the build landed this time
+
+    c = poll_once([CFG], world.deps(self_heal=True))  # grace=0, but build exists
+    assert c["requeued"] == 0
+    assert c["skipped-queued"] == 1
+    assert QUEUED_LABEL in world.issues[31].labels  # guard untouched
+    assert world.routes.count((31, "low-med")) == 1  # never re-dispatched
+
+
+def test_self_heal_within_grace_does_not_requeue(world):
+    """A build-less queued issue younger than the grace is left alone — a build
+    merely slow to write its spec must not be re-opened out from under itself."""
+    world.add(32, ["factory:low"])
+    poll_once([CFG], world.deps(self_heal=True))
+    # A long grace: the claim was stamped moments ago, so it is well within it.
+    c = poll_once([CFG], world.deps(self_heal=True, requeue_after_s=3600.0))
+    assert c["requeued"] == 0
+    assert QUEUED_LABEL in world.issues[32].labels
+
+
+def test_self_heal_leaves_hard_tier_alone(world):
+    """A hard-tier issue's build lives in PFactory planning, invisible here, so
+    the absence of an AIFactory spec is NOT an orphan — never re-dispatch it."""
+    world.add(33, ["factory:hard"])
+    poll_once([CFG], world.deps(self_heal=True))  # routes to pfactory, queued
+    assert QUEUED_LABEL in world.issues[33].labels
+    c = poll_once([CFG], world.deps(self_heal=True))  # grace=0, no "build"
+    assert c["requeued"] == 0
+    assert QUEUED_LABEL in world.issues[33].labels
