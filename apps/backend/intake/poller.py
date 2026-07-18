@@ -100,6 +100,17 @@ class PollerDeps:
     # #870: confirm a claim once the issue is actually routed, so a crash between
     # claiming and routing leaves an UNCONFIRMED claim the next tick can reclaim.
     confirm_processed: Callable[[str, int], None] = field(default=lambda *_: None)
+    # #941 self-heal: an issue can end up factory:queued (routed) yet never
+    # actually build (a dropped dispatch, a pod roll). These re-open it. All
+    # optional — unset, the queued branch stays a plain skip (back-compat).
+    #   build_exists(cfg, issue_number) -> bool   True == a real build exists.
+    #   claimed_at(repo, issue_number)  -> float|None   epoch it was queued.
+    #   requeue(cfg, issue_number)      -> None   clear the guard so it re-routes.
+    build_exists: Callable[[RepoConfig, int], bool] | None = None
+    claimed_at: Callable[[str, int], float | None] | None = None
+    requeue: Callable[[RepoConfig, int], None] | None = None
+    # Grace before a build-less queued issue is treated as orphaned + re-opened.
+    requeue_after_s: float = 600.0
 
 
 def _has_tier_label(labels: Sequence[str]) -> bool:
@@ -115,9 +126,11 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
     """
     labels_lower = {label.lower() for label in issue.labels}
 
-    # Guard 2 (label): even with a wiped DB, an already-queued issue is skipped.
+    # Guard 2 (label): even with a wiped DB, an already-queued issue is skipped
+    # from routing — but first give it to the self-heal, which re-opens it only
+    # if it was queued yet never built (#941).
     if QUEUED_LABEL in labels_lower:
-        return "skipped-queued"
+        return _maybe_self_heal(cfg, issue, deps)
 
     if not _has_tier_label(issue.labels):
         return "skipped-no-tier"
@@ -180,10 +193,69 @@ def process_issue(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
     return "routed"
 
 
+def _maybe_self_heal(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> str:
+    """Re-open a ``factory:queued`` issue that never produced a build (#941).
+
+    Routing applies ``factory:queued``, which then hides the issue from every
+    future poll (guard 2). If the build was never actually created (a dropped
+    dispatch, a pod roll between route and build), that guard strands the issue
+    forever. So for a queued issue with NO build past a grace, clear the guard +
+    release the claim (``requeue``) so the next tick re-routes it — idempotency
+    downstream (#878) means the re-route adopts any spec that did land, never a
+    duplicate. Conservative by construction: an issue that HAS a build, is within
+    grace, is hard-tier (its build lives in PFactory, invisible here), or whose
+    state cannot be read is left untouched — never a double-dispatch.
+    """
+    if deps.build_exists is None or deps.requeue is None:
+        return "skipped-queued"  # self-heal not wired
+
+    # Only low/medium creates an AIFactory spec we can see; a hard issue is still
+    # in PFactory planning, so absence of a spec here is not an orphan.
+    labelled = classify_tier(issue.labels)
+    if labelled is None:
+        return "skipped-queued"
+
+    class _Carrier:
+        tier = labelled
+
+    if tier_for(_Carrier(), change_mode=cfg.change_mode) is Tier.HARD:
+        return "skipped-queued"
+
+    try:
+        if deps.build_exists(cfg, issue.number):
+            return "skipped-queued"  # has a build — leave it alone
+    except Exception:  # noqa: BLE001 — unreadable state must never re-dispatch
+        logger.exception(
+            "intake self-heal build-check failed on %s#%s", cfg.repo, issue.number
+        )
+        return "skipped-queued"
+
+    claimed = deps.claimed_at(cfg.repo, issue.number) if deps.claimed_at else None
+    if claimed is None:
+        return "skipped-queued"  # no timestamp -> cannot age it safely
+
+    import time
+
+    age = time.time() - claimed
+    if age < deps.requeue_after_s:
+        return "skipped-queued"  # still within grace
+
+    logger.warning(
+        "intake self-heal: %s#%s is factory:queued with no build %.0fs after "
+        "routing; clearing the guard to re-dispatch",
+        cfg.repo,
+        issue.number,
+        age,
+    )
+    _safe(deps.requeue, cfg, issue.number)
+    return "requeued"
+
+
 def poll_once(repos: Sequence[RepoConfig], deps: PollerDeps) -> dict[str, int]:
     """Run one polling pass over all repos. Returns outcome counts. Never raises."""
     counts: dict[str, int] = {
         "routed": 0,
+        "requeued": 0,
         "skipped-queued": 0,
         "skipped-no-tier": 0,
         "failed": 0,

@@ -65,6 +65,20 @@ def interval_s() -> float:
         return 30.0
 
 
+def requeue_after_s() -> float:
+    """Grace before a build-less factory:queued issue is re-dispatched (#941).
+
+    Floored at 60s so a build that is merely slow to write its spec is never
+    re-opened out from under itself.
+    """
+    try:
+        return max(
+            60.0, float(os.environ.get("AIFACTORY_INTAKE_REQUEUE_AFTER_S", "600"))
+        )
+    except (TypeError, ValueError):
+        return 600.0
+
+
 def load_repo_configs() -> list[RepoConfig]:
     """Parse AIFACTORY_INTAKE_REPOS (JSON). Returns [] on any error."""
     raw = (os.environ.get("AIFACTORY_INTAKE_REPOS") or "").strip()
@@ -114,20 +128,24 @@ def _run_async(coro):
 
 
 def _fetch_issues(cfg: RepoConfig) -> list[IntakeIssue]:
-    """Fetch open factory:* issues excluding factory:queued via the provider."""
+    """Fetch open factory:* issues via the provider.
+
+    Includes ``factory:queued`` issues (the guard-2 marker) so the self-heal can
+    see an orphaned dispatch (#941); the pure poller still skips a queued issue
+    for *routing* unless it is build-less past the grace. ponytail: this stats
+    the control plane once per queued issue per tick — cheap at fleet volume; add
+    a fetch-side "queued but recent" filter only if a repo ever has thousands.
+    """
     from runners.github.providers.protocol import IssueFilters
 
     async def _go() -> list[IntakeIssue]:
         provider = _provider_for(cfg)
-        # The provider OR-matches labels; we post-filter to factory:* and drop
-        # anything already factory:queued (the fetch-side guard).
+        # The provider OR-matches labels; we post-filter to factory:* (queued
+        # issues are kept so the self-heal can re-open a build-less one).
         raw = await provider.fetch_issues(IssueFilters(state="open"))
         out: list[IntakeIssue] = []
         for iss in raw:
             labels = list(getattr(iss, "labels", []) or [])
-            lower = {label.lower() for label in labels}
-            if "factory:queued" in lower:
-                continue
             if not any(label.lower().startswith("factory:") for label in labels):
                 continue
             out.append(
@@ -316,6 +334,38 @@ def _route_hard(cfg: RepoConfig, issue: IntakeIssue, tier: Tier) -> None:
     )
 
 
+def _build_exists(cfg: RepoConfig, issue_number: int) -> bool:
+    """Whether a build already exists for this issue on the control plane (#941).
+
+    The reliable, conservative signal is the spec dir ``/api/tasks/from-issue``
+    writes synchronously (stamped with ``provenance.issue_number``) before it
+    dispatches — so its ABSENCE means no build was created. Reuses the exact
+    idempotency lookup from-issue itself uses (#878). An unresolvable project is
+    treated as "exists" so a lookup failure never triggers a re-dispatch.
+    """
+    from ..routes.from_issue import _find_existing_spec, _resolve_project_path
+
+    project_path = _resolve_project_path(cfg.project_id)
+    if project_path is None:
+        return True
+    return _find_existing_spec(project_path, issue_number) is not None
+
+
+def _requeue(cfg: RepoConfig, issue_number: int) -> None:
+    """Re-open an orphaned queued issue: drop the guard + release the claim.
+
+    Removing ``factory:queued`` re-exposes the issue to the next poll, and
+    deleting the (confirmed) processed row lets that poll claim + route it fresh.
+    """
+
+    async def _go():
+        provider = _provider_for(cfg)
+        await provider.remove_labels(issue_number, ["factory:queued"])
+
+    _run_async(_go())
+    processed_store.unmark_processed(cfg.repo, issue_number)
+
+
 def build_deps() -> PollerDeps:
     """Assemble PollerDeps wired to the real provider + HTTP collaborators."""
     return PollerDeps(
@@ -327,6 +377,10 @@ def build_deps() -> PollerDeps:
         mark_processed=processed_store.mark_processed,
         unmark_processed=processed_store.unmark_processed,
         confirm_processed=processed_store.confirm_processed,
+        build_exists=_build_exists,
+        claimed_at=processed_store.claimed_at,
+        requeue=_requeue,
+        requeue_after_s=requeue_after_s(),
     )
 
 
@@ -369,7 +423,7 @@ async def poller_loop(
             counts = await asyncio.wait_for(
                 asyncio.to_thread(poll_once, repos, deps), timeout=poll_timeout
             )
-            if counts.get("routed") or counts.get("failed"):
+            if counts.get("routed") or counts.get("failed") or counts.get("requeued"):
                 logger.info("intake poll: %s", counts)
             elif tick % heartbeat_every == 0:
                 logger.info("intake poll heartbeat (idle): %s", counts)

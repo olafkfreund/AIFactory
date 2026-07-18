@@ -24,6 +24,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "claimed_at",
     "confirm_processed",
     "db_path",
     "is_processed",
@@ -208,6 +209,35 @@ def is_processed(repo: str, issue_number: int, *, path: Path | None = None) -> b
             return row is not None
     except sqlite3.Error:
         return False
+
+
+def claimed_at(
+    repo: str, issue_number: int, *, path: Path | None = None
+) -> float | None:
+    """Epoch seconds when ``(repo, issue_number)`` was last claimed, or None.
+
+    The intake self-heal (#941) ages a ``factory:queued`` issue by this: routing
+    stamps ``processed_at``, so an issue claimed long ago but still without a
+    build is treated as an orphaned dispatch and re-opened. None when there is no
+    row (or the timestamp is unreadable) — the caller then skips, never guessing.
+    """
+    try:
+        with _connect(path) as conn:
+            row = conn.execute(
+                "SELECT processed_at FROM intake_processed "
+                "WHERE repo=? AND issue_number=?",
+                (repo, int(issue_number)),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None or not row[0]:
+        return None
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(row[0]).timestamp()
+    except ValueError:
+        return None
 
 
 def processed_count(*, path: Path | None = None) -> int:
