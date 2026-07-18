@@ -872,8 +872,17 @@ def _maybe_pack_workspace(
 
 
 def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    # GIT_TERMINAL_PROMPT=0: never block a dispatch on an interactive credential
+    # prompt — an unreachable/unauthorised remote (e.g. the #960 refresh fetch)
+    # must fail fast instead of hanging the server.
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     return subprocess.run(
-        ["git", *args], check=check, capture_output=True, text=True, timeout=300
+        ["git", *args],
+        check=check,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
     )
 
 
@@ -881,6 +890,44 @@ def _git_out(args: list[str]) -> str:
     """git stdout, or '' on failure (never raises — best-effort reads)."""
     r = _git(args, check=False)
     return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def _refresh_to_remote_base(wt_path: Path, base_branch: str) -> None:
+    """Fast-forward the fresh build clone to the remote base head (#960).
+
+    The workspace clone this build was cut from is cloned-once then reused, so
+    its local ``base_branch`` ref can be several commits behind the real default
+    branch — builds would run against STALE source. Fetch ``origin`` (the GitHub
+    remote just set on ``wt_path``) and hard-reset the freshly-cloned, disposable
+    build clone onto the fetched base tip, so the task worktree run.py cuts is
+    based on current code. ``base_branch`` is the config-honouring value from
+    ``WorktreeManager`` (e.g. aifactory-demo=main, TFactory=dev).
+
+    Best-effort by design: a fetch failure (offline dev, auth) is logged and
+    swallowed so a transient network error degrades to a stale-but-working build
+    rather than crashing dispatch — but a successful fetch always wins. Operates
+    only on the disposable ``wt_path`` (never the shared workspace clone), so it
+    cannot race a concurrent build.
+    """
+    fetch = _git(["-C", str(wt_path), "fetch", "origin", base_branch], check=False)
+    if fetch.returncode != 0:
+        _log.warning(
+            "[build_backend] could not fetch origin/%s to refresh build clone %s "
+            "(#960); building against the stale local base: %s",
+            base_branch,
+            wt_path,
+            fetch.stderr.strip() or "no stderr",
+        )
+        return
+    # FETCH_HEAD is written by the fetch above to the fetched base tip — the most
+    # reliable reset target (independent of remote-tracking refspec quirks).
+    _git(["-C", str(wt_path), "reset", "--hard", "FETCH_HEAD"])
+    _log.info(
+        "[build_backend] refreshed build clone %s to remote %s tip before dispatch "
+        "(#960)",
+        wt_path,
+        base_branch,
+    )
 
 
 def _populate_self_contained_worktree(
@@ -941,6 +988,11 @@ def _populate_self_contained_worktree(
     # self-contained repo (real .git + GitHub origin + the spec) on the base branch.
     if origin:
         _git(["-C", str(wt_path), "remote", "set-url", "origin", origin])
+        # #960: the registered workspace clone is cloned-once then reused, so its
+        # local base branch can lag the real default branch — builds would run
+        # against stale source. Refresh THIS build's fresh clone to the remote
+        # base head so run.py cuts the task worktree from current code.
+        _refresh_to_remote_base(wt_path, base_branch)
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
