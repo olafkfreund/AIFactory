@@ -387,6 +387,21 @@ def test_build_job_env_omits_s3_env_when_unset(
     assert "S3_SECRET_KEY" not in env
 
 
+def test_build_job_env_propagates_graphify_flag_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #804: core/client.py's coder block reads AIFACTORY_GRAPHIFY_ENABLED at build
+    # time. In a kubejob build the coder runs in a fresh Job pod, so the flag only
+    # reaches it via the passthrough. Forwarded when present, omitted when unset.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env_unset = bb.build_job_env("oauth-tok-123")
+    assert "AIFACTORY_GRAPHIFY_ENABLED" not in env_unset
+    monkeypatch.setenv("AIFACTORY_GRAPHIFY_ENABLED", "true")
+    env_set = bb.build_job_env("oauth-tok-123")
+    assert env_set["AIFACTORY_GRAPHIFY_ENABLED"] == "true"
+
+
 def test_build_job_env_never_includes_anthropic_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
