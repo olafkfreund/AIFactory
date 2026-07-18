@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.59 - 2026-07-18
+
+- fix(intake): self-heal orphaned `factory:queued` issues that were routed but never built. A dropped dispatch or pod-roll left an issue labeled queued with a confirmed processed-store claim, hiding it from every recovery path — orphaned forever. The poller now re-dispatches a queued issue with no build after a grace (`AIFACTORY_INTAKE_REQUEUE_AFTER_S`, default 600s), counted in a new `requeued` heartbeat bucket; conservative (never touches an issue that has a build, is within grace, or is hard-tier). (#951, PR #952)
+
+
 ## 3.6.58 - 2026-07-18
 
 - fix(pr-endgame): resolve a base-branch worktree HEAD to the canonical build branch so the auto-PR opens against aifactory/<spec_id> instead of a rejected main->main PR (the #938 twin in the PR endgame). Completes hands-free intake: build -> auto-PR -> verify. (#948, PR #949)
