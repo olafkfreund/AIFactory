@@ -23,6 +23,7 @@ All side-effecting collaborators are passed in via :class:`PollerDeps`.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -221,31 +222,24 @@ def _maybe_self_heal(cfg: RepoConfig, issue: IntakeIssue, deps: PollerDeps) -> s
     if tier_for(_Carrier(), change_mode=cfg.change_mode) is Tier.HARD:
         return "skipped-queued"
 
-    try:
-        if deps.build_exists(cfg, issue.number):
-            return "skipped-queued"  # has a build — leave it alone
-    except Exception:  # noqa: BLE001 — unreadable state must never re-dispatch
-        logger.exception(
-            "intake self-heal build-check failed on %s#%s", cfg.repo, issue.number
-        )
+    # Has a build already => never touch it (no duplicate dispatch). A build-check
+    # that itself raises is left to poll_once's per-issue guard (transient, retried
+    # next tick) — an unreadable state must never be read as "no build".
+    if deps.build_exists(cfg, issue.number):
         return "skipped-queued"
 
+    # Age the queued issue by its claim: no timestamp, or still within grace, and
+    # it is not (yet) a stranded dispatch we may safely re-open.
     claimed = deps.claimed_at(cfg.repo, issue.number) if deps.claimed_at else None
-    if claimed is None:
-        return "skipped-queued"  # no timestamp -> cannot age it safely
-
-    import time
-
-    age = time.time() - claimed
-    if age < deps.requeue_after_s:
-        return "skipped-queued"  # still within grace
+    if claimed is None or (time.time() - claimed) < deps.requeue_after_s:
+        return "skipped-queued"
 
     logger.warning(
         "intake self-heal: %s#%s is factory:queued with no build %.0fs after "
         "routing; clearing the guard to re-dispatch",
         cfg.repo,
         issue.number,
-        age,
+        time.time() - claimed,
     )
     _safe(deps.requeue, cfg, issue.number)
     return "requeued"

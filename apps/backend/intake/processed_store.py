@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -232,8 +233,6 @@ def claimed_at(
         return None
     if row is None or not row[0]:
         return None
-    from datetime import datetime
-
     try:
         return datetime.fromisoformat(row[0]).timestamp()
     except ValueError:
