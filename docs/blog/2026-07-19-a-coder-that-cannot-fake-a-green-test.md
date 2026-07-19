@@ -94,5 +94,8 @@ run, is not available. Every task in its own disposable Job, refreshed to curren
 main, opening its own PR, with evidence bound to execution: that is a coder you
 can leave alone, because when it is wrong it is the first to tell you.
 
-A live walkthrough of the full run across all four portals is available on
-request.
+## Watch it run
+
+One continuous walkthrough of all four live portals with this run's own data:
+
+<video controls preload="metadata" src="/video/factory-walkthrough.mp4" style={{width:'100%',maxWidth:'960px',borderRadius:'8px'}} />
