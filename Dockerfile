@@ -191,7 +191,13 @@ RUN npm install -g \
 RUN set -eux; \
     find /home/nonroot/.npm-global -type d -name foundry-local-sdk -prune -exec rm -rf {} +; \
     ! find /home/nonroot/.npm-global -type d -name foundry-local-sdk | grep .; \
-    /home/nonroot/.npm-global/bin/copilot --version
+    test -x /home/nonroot/.npm-global/bin/copilot; \
+    rm -rf /home/nonroot/.cache/copilot
+# NB: do NOT execute `copilot` here — the CLI self-downloads its platform runtime
+# bundle (which re-vendors foundry-local-sdk + adm-zip) into ~/.cache/copilot on
+# first run, which would bake the vuln back into the image. `test -x` verifies the
+# install without triggering that fetch; the runtime re-fetch is ephemeral pod
+# cache, not part of the scanned image.
 
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
