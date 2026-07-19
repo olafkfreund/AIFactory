@@ -320,6 +320,20 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         return None, None
 
 
+def _issue_from_requirements(req: dict[str, Any]) -> int | None:
+    """The origin GitHub issue number from requirements.json, or None. #964
+
+    Reads `githubIssue.number` first, then `provenance.issue_number`.
+    """
+    gh = req.get("githubIssue")
+    if isinstance(gh, dict) and isinstance(gh.get("number"), int):
+        return int(gh["number"])
+    prov = req.get("provenance")
+    if isinstance(prov, dict) and isinstance(prov.get("issue_number"), int):
+        return int(prov["issue_number"])
+    return None
+
+
 def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -381,6 +395,16 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
         merged = {**verify_pm, **(execution.get("phase_models") or {})}
         execution["phase_models"] = merged
         contract["execution"] = execution
+    # Thread the origin GitHub issue so TFactory can correlate the verify task
+    # with its build + plan (it reads contract.provenance.github_issue). The
+    # label-driven fast path carries no PFactory plan, so backfill from
+    # requirements.json (githubIssue.number / provenance.issue_number). #964
+    _issue_no = _issue_from_requirements(req)
+    if _issue_no is not None:
+        contract = dict(contract or {})
+        _prov = dict(contract.get("provenance") or {})
+        _prov.setdefault("github_issue", _issue_no)
+        contract["provenance"] = _prov
     if contract:
         payload["contract"] = contract
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
