@@ -262,8 +262,8 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest /nix/store /nix/store
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest --chown=65532:65532 /nix/var /nix/var
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 /nix/store /nix/store
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 --chown=65532:65532 /nix/var /nix/var
 
 USER nonroot
 
