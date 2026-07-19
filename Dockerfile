@@ -180,17 +180,18 @@ RUN npm install -g \
     @upstash/context7-mcp \
     @playwright/mcp
 
-# CVE-2026-39244: @github/copilot bundles foundry-local-sdk which pins the
-# vulnerable adm-zip 0.5.17 (ZIP-parse DoS). That code path is never exercised
-# by the copilot-as-coder flow, but the Trivy P0 gate rightly flags it. Force
-# every nested copy to the patched 0.6.0 (Trivy's FixedVersion) in place.
+# Supply-chain: @github/copilot vendors `foundry-local-sdk` (Microsoft Foundry
+# *local-model* runtime) deep inside its platform bundle, and that subtree drags
+# in a string of HIGH npm CVEs — adm-zip 0.5.17 (CVE-2026-39244, ZIP DoS),
+# serialize-javascript 6.0.2 (GHSA-5c6j-r48x-rmvq, RCE), and more surface as each
+# is patched. AIFactory only uses copilot as a GitHub-hosted agentic coder; the
+# local-foundry path is never exercised, so the whole subtree is unused dead
+# weight. Remove it outright to clear the entire vuln class at once, then smoke
+# the CLI so the build fails if copilot actually needed it.
 RUN set -eux; \
-    for admzip in $(find /home/nonroot/.npm-global -type d -name adm-zip); do \
-        npm install --prefix "$(dirname "$(dirname "$admzip")")" --no-save --no-audit --no-fund adm-zip@0.6.0; \
-    done; \
-    ! find /home/nonroot/.npm-global -type d -name adm-zip \
-        -exec node -p 'require(process.argv[1]+"/package.json").version' {} \; \
-      | grep -v '^0\.6\.'
+    find /home/nonroot/.npm-global -type d -name foundry-local-sdk -prune -exec rm -rf {} +; \
+    ! find /home/nonroot/.npm-global -type d -name foundry-local-sdk | grep .; \
+    /home/nonroot/.npm-global/bin/copilot --version
 
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
