@@ -1,6 +1,12 @@
 ## [Unreleased]
 
 
+## 3.6.64 - 2026-07-19
+
+### Fixed
+
+- **Plan->AIFactory handoff no longer 404s "Project not found" (#321).** PFactory addresses the target project by the repo it planned against (`project_id=owner/repo`), but `POST /api/tasks/from-plan` matched that against the project registry keyed by internal UUID, so the planned-task handoff 404'd and never landed. Added `resolve_project_id()` (UUID | project name | `owner/repo` slug, matched against each project's `name`/`path`) and `from-plan` now resolves the incoming id before the registry lookup. Proven by driving a real plan through PFactory `emit-contract{dry_run:false}` — previously masked by the #324/#321 500 fix, now the handoff reaches the registered project. Exact-UUID stays the fast path.
+
 ## 3.6.45 - 2026-07-17
 
 ### Fixed
