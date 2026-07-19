@@ -489,6 +489,48 @@ async def send_handoff(
     }
 
 
+async def send_pr_attach(
+    spec_dir: Path,
+    spec_id: str,
+    pr_number: int,
+    repo_slug: str | None,
+    *,
+    poster: Poster | None = None,
+) -> dict[str, Any]:
+    """Tell TFactory the PR this build opened, so the verify verdict posts back.
+
+    The verifying handoff is sent BEFORE the PR exists, so TFactory's source.json
+    carries no PR number and its triager pr_comment step skips. Calling this the
+    moment the PR opens back-fills it (POST /api/specs/{project}/{spec}/pr).
+    Never raises — best-effort, never blocks the PR endgame (#964).
+    """
+    config = tfactory_config()
+    base_url = config.get("base_url")
+    if not base_url:
+        return {"sent": False, "reason": "not_configured"}
+
+    project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+        Path(spec_dir)
+    )
+    url = f"{base_url}/api/specs/{project_id}/{spec_id}/pr"
+    headers = {"Content-Type": "application/json"}
+    if config.get("token"):
+        headers["Authorization"] = f"Bearer {config['token']}"
+    payload: dict[str, Any] = {"pr_number": int(pr_number), "repo_slug": repo_slug}
+
+    poster = poster or _httpx_poster
+    try:
+        result = await poster(url, payload, headers)
+    except Exception as exc:  # noqa: BLE001 — transport must never crash the endgame
+        return {"sent": False, "reason": "error", "error": str(exc)[:300]}
+    ok = bool(result.get("ok"))
+    return {
+        "sent": ok,
+        "reason": None if ok else "http_error",
+        "status": result.get("status"),
+    }
+
+
 def wants_auto_handoff(spec_dir: Path) -> bool:
     """True if the task opted into auto-handover to TFactory on completion.
 

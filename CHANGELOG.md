@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.63 - 2026-07-19
+
+- feat(pr-endgame): attach the opened PR to the TFactory verify task so the verdict posts back (#964). The verifying handoff is sent before the PR exists, so TFactory had no PR number to comment on. `_on_pr_opened` now calls `send_pr_attach` (best-effort) which POSTs `{pr_number, repo_slug}` to TFactory's new `POST /api/specs/{project}/{spec}/pr`; TFactory back-fills source.json (and posts immediately if verify already finished). Closes the structural slice of #964 (branch + issue slices shipped in 3.6.62 + TFactory#716). Companion: TFactory#717.
+
+
 ## 3.6.62 - 2026-07-19
 
 - fix(handoff): thread the origin GitHub issue into the TFactory handoff contract provenance so the verify task correlates with its build + plan (#964). The label-driven `factory:low` fast path carries no PFactory plan, so `contract.provenance.github_issue` was empty and TFactory wrote `aifactory.github_issue: null`. `build_ingest_payload` now backfills it from `requirements.json` (`githubIssue.number` / `provenance.issue_number`), `setdefault` so a signed contract's issue always wins. Companion TFactory PR #716 reads the nested key and resolves `source_branch` so the VAL verdict's accepted tests commit back to the PR branch. Found via the live daily-driver demo (aifactory-demo#382 -> PR #383).
