@@ -1,6 +1,11 @@
 ## [Unreleased]
 
 
+## 3.6.62 - 2026-07-19
+
+- fix(handoff): thread the origin GitHub issue into the TFactory handoff contract provenance so the verify task correlates with its build + plan (#964). The label-driven `factory:low` fast path carries no PFactory plan, so `contract.provenance.github_issue` was empty and TFactory wrote `aifactory.github_issue: null`. `build_ingest_payload` now backfills it from `requirements.json` (`githubIssue.number` / `provenance.issue_number`), `setdefault` so a signed contract's issue always wins. Companion TFactory PR #716 reads the nested key and resolves `source_branch` so the VAL verdict's accepted tests commit back to the PR branch. Found via the live daily-driver demo (aifactory-demo#382 -> PR #383).
+
+
 ## 3.6.61 - 2026-07-18
 
 - fix(build): return the kubejob build branch to the control plane so auto-PR can push (#959, PR #962). On the packed kubejob path the Job pushes `aifactory/<spec>` to origin (#751), but the control-plane `pr_endgame.create_pr` ran against a worktree that never had the branch, so `git push` failed `src refspec ... does not match any` and no PR opened. `create_pr` now `git fetch origin <branch>:<branch>` before pushing; fail-safe no-op on the co-mount path. Closes the last output-propagation slice — kubejob builds now open PRs unattended.
