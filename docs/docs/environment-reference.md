@@ -72,7 +72,7 @@ Set via `APP_`-prefixed env (pydantic `Settings`). All read in
 | `APP_REDIS_URL` | `""` | no | Redis for cross-replica WebSocket fan-out. Empty = in-process only (single replica). |
 | `APP_REDIS_CHANNEL` | `aifactory:events` | no | Redis pub/sub channel (override for shared Redis). |
 | `APP_WORKSPACE_S3_URI_BASE` | `""` | no | fsspec URI base (`s3://`, `gs://`, `azure://`) enabling workspace snapshot/restore. Empty = local PVC only. |
-| `APP_CFACTORY_SEARCH_URL` | `http://cfactory.factory.svc.cluster.local:3111` | no | Cockpit base for federated `⌘K` search proxy (#149). |
+| `APP_CFACTORY_SEARCH_URL` | `http://cfactory.factory.svc.cluster.local:3111` | no | Cockpit base for federated command-palette (Cmd-K) search proxy (#149). |
 | `APP_CFACTORY_READ_KEY` | `""` | no | Read-scoped cockpit key for federated search. Empty = feature off. |
 | `APP_SKILLS_PATH` | (built-in) | no | Override path to the agent skills directory. Read in `services/skills_service.py`. |
 | `APP_FILE_BROWSE_ROOTS` | `""` | no | Extra `os.pathsep`-separated roots the file browser may serve. Read in `routes/files.py`. |
