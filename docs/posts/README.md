@@ -1,0 +1,3 @@
+# Social post templates
+
+Copy-ready drafts for announcing the AIFactory showcase post ("A coder that cannot fake a green test") on external channels. Each file is a self-contained template: a Reddit post tuned per subreddit (r/programming, r/MachineLearning, r/devops) and a LinkedIn post. They lead with the technical angle — a job-native build in a disposable Kubernetes Job and a tamper-evident test-evidence gate — not with promotion, and every claim maps to a fact in the blog post. Keep the tone understated and credibility-first, and remove any channel you are not posting to before publishing.
