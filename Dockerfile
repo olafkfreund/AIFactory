@@ -16,7 +16,7 @@
 # Builds are amd64-only; arm64 support removed (not needed).
 # The Rollup optional-dep workaround below is kept for safety.
 
-FROM cgr.dev/chainguard/node:latest-dev@sha256:ce3f18966af7a0ba76f96aa32d6240b437d00eeb775d92c1e7e75f457fe5a8b7 AS frontend-build
+FROM cgr.dev/chainguard/node:latest-dev@sha256:038f7797d68cdd6c853e1840c78de9a3da9f984af0bbcb7d3d832b85d07c4a47 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -48,7 +48,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:0416c4863f2d0fb0e2e58d125e03b73cf4876cb02efc7927fd4a248a04f78c24 AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:31d318170df60ddec4b04ed595cbe79c33eeb2cf94f9676db6f9eaf46542e6be AS runtime
 
 USER root
 
