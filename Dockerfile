@@ -180,6 +180,25 @@ RUN npm install -g \
     @upstash/context7-mcp \
     @playwright/mcp
 
+# Supply-chain: @github/copilot vendors `foundry-local-sdk` (Microsoft Foundry
+# *local-model* runtime) deep inside its platform bundle, and that subtree drags
+# in a string of HIGH npm CVEs — adm-zip 0.5.17 (CVE-2026-39244, ZIP DoS),
+# serialize-javascript 6.0.2 (GHSA-5c6j-r48x-rmvq, RCE), and more surface as each
+# is patched. AIFactory only uses copilot as a GitHub-hosted agentic coder; the
+# local-foundry path is never exercised, so the whole subtree is unused dead
+# weight. Remove it outright to clear the entire vuln class at once, then smoke
+# the CLI so the build fails if copilot actually needed it.
+RUN set -eux; \
+    find /home/nonroot/.npm-global -type d -name foundry-local-sdk -prune -exec rm -rf {} +; \
+    ! find /home/nonroot/.npm-global -type d -name foundry-local-sdk | grep .; \
+    test -x /home/nonroot/.npm-global/bin/copilot; \
+    rm -rf /home/nonroot/.cache/copilot
+# NB: do NOT execute `copilot` here — the CLI self-downloads its platform runtime
+# bundle (which re-vendors foundry-local-sdk + adm-zip) into ~/.cache/copilot on
+# first run, which would bake the vuln back into the image. `test -x` verifies the
+# install without triggering that fetch; the runtime re-fetch is ephemeral pod
+# cache, not part of the scanned image.
+
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
 RUN python3 -m venv /home/projects/MagesticAI/.venv
