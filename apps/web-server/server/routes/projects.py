@@ -267,6 +267,29 @@ def resolve_project_path(project_id: str) -> Path:
     return Path(projects[project_id]["path"])
 
 
+def resolve_project_id(project_id: str) -> str | None:
+    """Map a UUID, a project ``name``, or an ``owner/repo`` slug to the canonical
+    project id — or ``None`` if nothing matches.
+
+    External callers (notably PFactory's plan->AIFactory handoff, #321) address a
+    project by the repo they planned against, not AIFactory's internal UUID. The
+    project registry is keyed by UUID with ``name`` (repo) and ``path``
+    (``…/owner-repo``), so match a non-UUID id against those. Exact-UUID first so
+    the common path is unchanged.
+    """
+    projects = load_projects()
+    if project_id in projects:
+        return project_id
+    repo = project_id.rsplit("/", 1)[-1]  # owner/repo -> repo
+    path_suffix = project_id.replace("/", "-")  # owner/repo -> owner-repo
+    for pid, meta in projects.items():
+        name = meta.get("name", "")
+        path = str(meta.get("path", ""))
+        if name in (project_id, repo) or path.endswith(("/" + path_suffix, "-" + path_suffix)):
+            return pid
+    return None
+
+
 def save_projects(projects: dict[str, dict]) -> None:
     """Save projects to disk.
 
