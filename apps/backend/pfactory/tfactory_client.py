@@ -253,6 +253,28 @@ def _build_worktree(spec_dir: Path, spec_id: str) -> Path:
 _BASE_BRANCHES = frozenset({"main", "master", "HEAD", ""})
 
 
+def _task_base_branch(spec_dir: Path) -> str:
+    """This task's integration branch, per ``task_metadata.base_branch``.
+
+    Needed because ``_BASE_BRANCHES`` above can only name the conventional
+    ones. A repo that integrates via ``dev`` (every Factory repo does, and
+    AIFACTORY_INTAKE_REPOS configures TFactory that way) left the hard-coded
+    set unmatched, so the control-plane worktree's HEAD -- sitting on ``dev``
+    after a kubejob build -- was sent to TFactory as the verify source_branch.
+    TFactory then checked out ``dev``, which does not contain the built code,
+    generated tests against the unbuilt feature, watched all of them fail, and
+    correctly refused to commit permanently-red tests. The run looked like a
+    verification failure; it was a hollow verify (#980, TFactory #729).
+    """
+    try:
+        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(meta, dict):
+        return ""
+    return str(meta.get("base_branch") or meta.get("baseBranch") or "")
+
+
 def _build_branch(spec_id: str) -> str:
     """The branch a build creates/pushes for a spec.
 
@@ -420,7 +442,14 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # kubejob path builds inside the Job and leaves this worktree on base, so
     # trusting its HEAD sends TFactory to verify base and every intake build fails
     # at test with the built module "not found" (#938).
-    if not source_branch or source_branch in _BASE_BRANCHES:
+    # Any base branch is unusable as a verify source, not just main/master --
+    # see _task_base_branch for what that cost on a dev-based repo. Inlined
+    # rather than bound to a local: this function is at its statement ceiling.
+    if (
+        not source_branch
+        or source_branch in _BASE_BRANCHES
+        or source_branch == _task_base_branch(spec_dir)
+    ):
         source_branch = _build_branch(spec_id)
     if not git_url:
         git_url = _project_git_url(spec_dir)
