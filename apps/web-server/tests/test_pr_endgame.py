@@ -394,6 +394,70 @@ def test_gather_pr_context_resolves_repo(tmp_path):
     assert ctx["repo"] == "olafkfreund/demo"
 
 
+def test_gather_pr_context_worktree_on_dev_base_resolves_build_branch(tmp_path):
+    """A worktree sitting on a `dev` base must resolve to the build branch (#980).
+
+    The guard used to be the literal {"HEAD", "main", "master"}, so on a repo
+    whose base is `dev` it never fired: `dev` was taken for the build branch,
+    and create_pr's `git fetch origin dev:dev` was then refused by git --
+    "refusing to fetch into branch 'refs/heads/dev' checked out at ..." --
+    because that branch is checked out in the very worktree being fetched into.
+    The branch was pushed but no PR ever opened. Observed live on TFactory #728.
+    """
+    spec_id = "002-mcp-health"
+    wt = tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id
+    wt.mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/TFactory"})
+    )
+    (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
+    # The control-plane worktree stayed on the base branch, as it does on the
+    # kubejob path.
+    r = FakeRunner({"rev-parse": CmdResult(0, "dev", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx is not None
+    assert ctx["base"] == "dev"
+    assert ctx["branch"] == f"aifactory/{spec_id}", (
+        "a worktree on the base branch must resolve to the build branch, "
+        "never to the base itself"
+    )
+    assert ctx["branch"] != ctx["base"], "head and base must never be equal"
+
+
+def test_gather_pr_context_custom_base_still_resolves(tmp_path):
+    """Not special-casing `dev`: any configured base behaves the same."""
+    spec_id = "spec-9"
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id).mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/demo"})
+    )
+    (spec_dir / "task_metadata.json").write_text(
+        json.dumps({"base_branch": "integration"})
+    )
+    r = FakeRunner({"rev-parse": CmdResult(0, "integration", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx is not None and ctx["branch"] == f"aifactory/{spec_id}"
+
+
+def test_gather_pr_context_real_build_branch_is_not_overridden(tmp_path):
+    """The guard must not hijack a legitimate head that merely differs from base."""
+    spec_id = "spec-8"
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id).mkdir(parents=True)
+    spec_dir = tmp_path / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/demo"})
+    )
+    (spec_dir / "task_metadata.json").write_text(json.dumps({"base_branch": "dev"}))
+    r = FakeRunner({"rev-parse": CmdResult(0, "feature/hand-made", "")})
+    ctx = pe.gather_pr_context(tmp_path, spec_dir, spec_id, runner=r)
+    assert ctx is not None and ctx["branch"] == "feature/hand-made"
+
+
 def test_gather_pr_context_base_from_task_metadata(tmp_path):
     """task_metadata.base_branch sets the PR base EVEN when requirements.json
     names the repo — it used to be read only on the repo-fallback path, so a

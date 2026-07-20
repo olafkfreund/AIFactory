@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.66 - 2026-07-20
+
+### Fixed
+
+- **The factory can open PRs against its own repositories again (#980).** Two separate guards compared the worktree's HEAD against a hardcoded `{"main", "master"}` to decide "is this the base branch?". On a repo integrating via `dev` neither fired. In `pr_endgame` that made `git fetch origin dev:dev` fail ("refusing to fetch into branch checked out at ...") so the branch was pushed but no PR opened. In the TFactory handoff it sent `dev` as `source_branch`, so verification checked out a tree **without the built code**, generated tests against the unimplemented feature, and correctly rejected all of them as permanently red -- a hollow verify reported as an ordinary negative result (TFactory #729). Both now compare against the task's actual `base_branch`. Only ever reproducible outside the demo repos, which all use `main`.
+
+
 ## 3.6.65 - 2026-07-20
 
 ### Security
