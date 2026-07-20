@@ -693,23 +693,13 @@ def gather_pr_context(
         return None
     head = runner(["git", "rev-parse", "--abbrev-ref", "HEAD"], str(worktree))
     branch = head.out.strip() if head.ok else ""
-    # On the kubejob path the build runs inside the k8s Job and pushes
-    # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
-    # branch (main). Trusting its HEAD makes create_pr open a main->main PR,
-    # which gh rejects ("head branch is the same as base"), so the auto-PR never
-    # opens (#948, the PR-endgame twin of #938). A base branch is never a valid
-    # PR head — use the canonical build branch the Job pushed. create_pr's push
-    # of that (absent locally) fails harmlessly; gh pr create --head finds it on
-    # origin.
-    if not branch or branch in {"HEAD", "main", "master"}:
-        branch = f"aifactory/{spec_id}"
 
-    repo = ""
     # The PR base is the task's integration branch (task_metadata.base_branch,
     # stamped by from_issue / trusted-plan ingest), defaulting to main. Read it
     # UNCONDITIONALLY — it used to live inside the repo fallback below, so any
     # spec whose requirements.json named the repo silently PR'd against main
-    # even when the repo integrates via dev.
+    # even when the repo integrates via dev. It is also read BEFORE the branch
+    # resolution below, which needs to know what this task's base actually is.
     try:
         meta = json.loads((spec_dir / "task_metadata.json").read_text())
     except (OSError, ValueError):
@@ -717,6 +707,25 @@ def gather_pr_context(
     if not isinstance(meta, dict):
         meta = {}
     base = meta.get("base_branch") or meta.get("baseBranch") or "main"
+
+    # On the kubejob path the build runs inside the k8s Job and pushes
+    # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
+    # branch. Trusting its HEAD makes create_pr open a base->base PR, which gh
+    # rejects ("head branch is the same as base"), so the auto-PR never opens
+    # (#948, the PR-endgame twin of #938). A base branch is never a valid PR
+    # head — use the canonical build branch the Job pushed.
+    #
+    # #980: this set used to be the literal {"HEAD", "main", "master"}, so on a
+    # repo whose base is `dev` the guard never fired: `dev` was taken for the
+    # build branch, and create_pr's `git fetch origin dev:dev` was then refused
+    # by git ("refusing to fetch into branch 'refs/heads/dev' checked out at
+    # ...") because that branch is checked out in this very worktree. The PR
+    # never opened. Compare against THIS task's base, keeping main/master as a
+    # backstop since a worktree sitting on either is never a valid head.
+    if not branch or branch in {"HEAD", "main", "master", base}:
+        branch = f"aifactory/{spec_id}"
+
+    repo = ""
     try:
         req = json.loads((spec_dir / "requirements.json").read_text())
         gh = req.get("githubIssue") if isinstance(req, dict) else None
