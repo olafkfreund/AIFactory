@@ -144,6 +144,27 @@ def create_pr(
     # authenticated via GITHUB_TOKEN — the PR would never open.
     runner(["gh", "auth", "setup-git"], None)
 
+    # #959: on the kubejob/packed path the build ran in a k8s Job on an ephemeral
+    # /work emptyDir and pushed its branch to origin from there
+    # (core.workspace_fetch.maybe_push_workspace_branch, #751). THIS control-plane
+    # worktree stayed on the base branch and has NO local ref for that branch, so
+    # the push below fails "src refspec <branch> does not match any" and gh pr
+    # create is left without a present head → no PR opens. Fetch the branch from
+    # origin into a local ref first so both the push and gh pr create operate on a
+    # branch that exists locally. Fail-safe: on the co-mount path (branch already
+    # local) or when origin has no such ref, the fetch is a harmless no-op and we
+    # fall through to the existing behaviour. `branch:branch` (non-force) creates
+    # the local ref on the packed path where none exists; a divergent local ref
+    # just declines the fast-forward, which is fine.
+    fetch = runner(["git", "fetch", "origin", f"{branch}:{branch}"], str(worktree))
+    if not fetch.ok:
+        logger.info(
+            "[pr-endgame] fetch of %s from origin skipped (%s) — branch may be "
+            "local already or not yet on origin",
+            branch,
+            (fetch.err or fetch.out)[:200],
+        )
+
     push = runner(["git", "push", "-u", "origin", branch], str(worktree))
     if not push.ok and "up-to-date" not in (push.err + push.out).lower():
         logger.warning("[pr-endgame] git push failed: %s", push.err[:300])

@@ -320,6 +320,20 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         return None, None
 
 
+def _issue_from_requirements(req: dict[str, Any]) -> int | None:
+    """The origin GitHub issue number from requirements.json, or None. #964
+
+    Reads `githubIssue.number` first, then `provenance.issue_number`.
+    """
+    gh = req.get("githubIssue")
+    if isinstance(gh, dict) and isinstance(gh.get("number"), int):
+        return int(gh["number"])
+    prov = req.get("provenance")
+    if isinstance(prov, dict) and isinstance(prov.get("issue_number"), int):
+        return int(prov["issue_number"])
+    return None
+
+
 def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     """Build the payload for TFactory's self-contained spec intake
     (``POST /api/specs/ingest``): ``{project_id, spec_id, spec_text}``.
@@ -381,6 +395,16 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
         merged = {**verify_pm, **(execution.get("phase_models") or {})}
         execution["phase_models"] = merged
         contract["execution"] = execution
+    # Thread the origin GitHub issue so TFactory can correlate the verify task
+    # with its build + plan (it reads contract.provenance.github_issue). The
+    # label-driven fast path carries no PFactory plan, so backfill from
+    # requirements.json (githubIssue.number / provenance.issue_number). #964
+    _issue_no = _issue_from_requirements(req)
+    if _issue_no is not None:
+        contract = dict(contract or {})
+        _prov = dict(contract.get("provenance") or {})
+        _prov.setdefault("github_issue", _issue_no)
+        contract["provenance"] = _prov
     if contract:
         payload["contract"] = contract
     # PARR seam: hand TFactory the repo + the build branch so it can fetch the
@@ -462,6 +486,48 @@ async def send_handoff(
         "reason": None if ok else "http_error",
         "status": result.get("status"),
         "url": url,
+    }
+
+
+async def send_pr_attach(
+    spec_dir: Path,
+    spec_id: str,
+    pr_number: int,
+    repo_slug: str | None,
+    *,
+    poster: Poster | None = None,
+) -> dict[str, Any]:
+    """Tell TFactory the PR this build opened, so the verify verdict posts back.
+
+    The verifying handoff is sent BEFORE the PR exists, so TFactory's source.json
+    carries no PR number and its triager pr_comment step skips. Calling this the
+    moment the PR opens back-fills it (POST /api/specs/{project}/{spec}/pr).
+    Never raises — best-effort, never blocks the PR endgame (#964).
+    """
+    config = tfactory_config()
+    base_url = config.get("base_url")
+    if not base_url:
+        return {"sent": False, "reason": "not_configured"}
+
+    project_id = os.environ.get("TFACTORY_PROJECT_ID") or _aifactory_project_name(
+        Path(spec_dir)
+    )
+    url = f"{base_url}/api/specs/{project_id}/{spec_id}/pr"
+    headers = {"Content-Type": "application/json"}
+    if config.get("token"):
+        headers["Authorization"] = f"Bearer {config['token']}"
+    payload: dict[str, Any] = {"pr_number": int(pr_number), "repo_slug": repo_slug}
+
+    poster = poster or _httpx_poster
+    try:
+        result = await poster(url, payload, headers)
+    except Exception as exc:  # noqa: BLE001 — transport must never crash the endgame
+        return {"sent": False, "reason": "error", "error": str(exc)[:300]}
+    ok = bool(result.get("ok"))
+    return {
+        "sent": ok,
+        "reason": None if ok else "http_error",
+        "status": result.get("status"),
     }
 
 

@@ -160,6 +160,22 @@ async def run_terminal_completion(
                                         _proj_id, prn, project_path
                                     )
                                 )
+                                # Back-fill the PR onto the TFactory verify task so
+                                # its triager posts the verdict to this PR — the
+                                # handoff was sent before the PR existed (#964).
+                                try:
+                                    from pfactory.tfactory_client import send_pr_attach
+
+                                    asyncio.create_task(
+                                        send_pr_attach(
+                                            spec_dir, spec_id, prn, ctx.get("repo")
+                                        )
+                                    )
+                                except Exception:  # noqa: BLE001 — best-effort
+                                    logger.debug(
+                                        "tfactory PR-attach failed (best-effort)",
+                                        exc_info=True,
+                                    )
 
                             def _review_fn() -> ReviewState:
                                 prn = _pr_box.get("pr")

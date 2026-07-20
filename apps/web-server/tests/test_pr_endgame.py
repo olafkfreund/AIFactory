@@ -83,6 +83,54 @@ def test_create_pr_parses_number():
     assert r.saw("auth setup-git")
 
 
+def test_create_pr_fetches_branch_from_origin_before_push():
+    # #959: on the kubejob/packed path the build branch was pushed to origin from
+    # the Job; the control-plane worktree has no local ref, so create_pr must fetch
+    # it from origin before the push/gh-pr-create or the refspec doesn't resolve.
+    r = FakeRunner(
+        {
+            "fetch origin": CmdResult(0, "", ""),
+            "git push": CmdResult(0, "", ""),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/9", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=Path("/tmp"),
+        branch="aifactory/045-x",
+        base="main",
+        title="t",
+        body="b",
+        runner=r,
+    )
+    assert pr == 9
+    # The fetch must target origin with the branch:branch refspec, before the push.
+    assert r.saw("fetch origin aifactory/045-x:aifactory/045-x")
+    fetch_i = next(
+        i
+        for i, c in enumerate(r.calls)
+        if "fetch" in " ".join(c) and "origin" in " ".join(c)
+    )
+    push_i = next(i for i, c in enumerate(r.calls) if "push" in " ".join(c))
+    assert fetch_i < push_i
+
+
+def test_create_pr_survives_fetch_failure():
+    # Fail-safe: a fetch miss (co-mount path / branch not on origin) must not abort
+    # the endgame — create_pr still attempts the push + gh pr create.
+    r = FakeRunner(
+        {
+            "fetch origin": CmdResult(1, "", "couldn't find remote ref"),
+            "git push": CmdResult(0, "", ""),
+            "pr create": CmdResult(0, "https://github.com/o/r/pull/10", ""),
+        }
+    )
+    pr = pe.create_pr(
+        worktree=Path("/tmp"), branch="b", base="main", title="t", body="b", runner=r
+    )
+    assert pr == 10
+    assert r.saw("pr create")
+
+
 COPILOT = "copilot-pull-request-reviewer[bot]"
 
 
