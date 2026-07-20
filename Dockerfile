@@ -180,18 +180,24 @@ RUN npm install -g \
     @upstash/context7-mcp \
     @playwright/mcp
 
-# CVE-2026-39244 (GHSA-xcpc-8h2w-3j85): adm-zip < 0.6.0 DoS via crafted ZIP.
-# Pulled in transitively by @github/copilot's foundry-local-sdk (a Microsoft
-# Foundry Local model runtime the fleet never invokes). The P0 Trivy gate is
-# fail-closed, so overwrite every vendored adm-zip with the patched release —
-# copilot itself doesn't call adm-zip; only the unused Foundry SDK path does.
+# Supply-chain: @github/copilot vendors `foundry-local-sdk` (Microsoft Foundry
+# *local-model* runtime) deep inside its platform bundle, and that subtree drags
+# in a string of HIGH npm CVEs — adm-zip 0.5.17 (CVE-2026-39244, ZIP DoS),
+# serialize-javascript 6.0.2 (GHSA-5c6j-r48x-rmvq, RCE), and more surface as each
+# is patched. AIFactory only uses copilot as a GitHub-hosted agentic coder; the
+# local-foundry path is never exercised, so the whole subtree is unused dead
+# weight. Remove it outright to clear the entire vuln class at once, then smoke
+# the CLI so the build fails if copilot actually needed it.
 RUN set -eux; \
-    tmp="$(mktemp -d)"; \
-    ( cd "$tmp" && npm install adm-zip@0.6.0 >/dev/null 2>&1 ); \
-    find /home/nonroot/.npm-global -type d -name adm-zip -print | while read -r d; do \
-      rm -rf "$d"; cp -a "$tmp/node_modules/adm-zip" "$d"; \
-    done; \
-    rm -rf "$tmp"
+    find /home/nonroot/.npm-global -type d -name foundry-local-sdk -prune -exec rm -rf {} +; \
+    ! find /home/nonroot/.npm-global -type d -name foundry-local-sdk | grep .; \
+    test -x /home/nonroot/.npm-global/bin/copilot; \
+    rm -rf /home/nonroot/.cache/copilot
+# NB: do NOT execute `copilot` here — the CLI self-downloads its platform runtime
+# bundle (which re-vendors foundry-local-sdk + adm-zip) into ~/.cache/copilot on
+# first run, which would bake the vuln back into the image. `test -x` verifies the
+# install without triggering that fetch; the runtime re-fetch is ephemeral pod
+# cache, not part of the scanned image.
 
 # Single Python venv shared by web-server and backend scripts (matches
 # agent_service.py's sys.executable expectations)
@@ -275,8 +281,8 @@ USER root
 # not already in the substrate) can't write new paths. Warm builds — the packed
 # multi-node case we're unblocking — work; cold-write support is a follow-up
 # (writable overlay at Job runtime) tracked on the slice-3 issue.
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest /nix/store /nix/store
-COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest --chown=65532:65532 /nix/var /nix/var
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 /nix/store /nix/store
+COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:369e1aa003519d5edc8363c2f9aa69247798ebdc312ebd2c1e46aff61d4613c9 --chown=65532:65532 /nix/var /nix/var
 
 USER nonroot
 

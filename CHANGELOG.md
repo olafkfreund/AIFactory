@@ -1,6 +1,14 @@
 ## [Unreleased]
 
 
+## 3.6.64 - 2026-07-19
+
+### Fixed
+
+- **Plan->AIFactory handoff no longer 404s "Project not found" (#321).** PFactory addresses the target project by the repo it planned against (`project_id=owner/repo`), but `POST /api/tasks/from-plan` matched that against the project registry keyed by internal UUID, so the planned-task handoff 404'd and never landed. Added `resolve_project_id()` (UUID | project name | `owner/repo` slug, matched against each project's `name`/`path`) and `from-plan` now resolves the incoming id before the registry lookup. Proven by driving a real plan through PFactory `emit-contract{dry_run:false}` — previously masked by the #324/#321 500 fix, now the handoff reaches the registered project. Exact-UUID stays the fast path.
+- **Cleared the copilot HIGH-CVE class at the source (#971).** `@github/copilot` vendors `foundry-local-sdk` (a Microsoft Foundry local-model runtime the fleet never invokes) deep inside its platform bundle, and that subtree keeps surfacing HIGH npm CVEs one after another — adm-zip 0.5.17 (CVE-2026-39244), then serialize-javascript 6.0.2 (GHSA-5c6j-r48x-rmvq) once the first was patched. The image now removes the whole unused subtree instead of patching packages individually, replacing the per-package pin from 3.6.59. The CLI is verified with `test -x` rather than executed, because running it makes copilot re-download the same bundle into `~/.cache/copilot` and bake the vulnerability back in.
+
+
 ## 3.6.63 - 2026-07-19
 
 - feat(pr-endgame): attach the opened PR to the TFactory verify task so the verdict posts back (#964). The verifying handoff is sent before the PR exists, so TFactory had no PR number to comment on. `_on_pr_opened` now calls `send_pr_attach` (best-effort) which POSTs `{pr_number, repo_slug}` to TFactory's new `POST /api/specs/{project}/{spec}/pr`; TFactory back-fills source.json (and posts immediately if verify already finished). Closes the structural slice of #964 (branch + issue slices shipped in 3.6.62 + TFactory#716). Companion: TFactory#717.

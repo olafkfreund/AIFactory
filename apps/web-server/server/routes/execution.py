@@ -17,7 +17,7 @@ from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
 from .project_authz import require_project_access, require_task_access
-from .projects import load_projects
+from .projects import load_projects, resolve_project_id
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
 # Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.
@@ -1139,10 +1139,15 @@ async def create_from_trusted_plan(
     tampered, unsigned, or incomplete plan is rejected with 422.
     """
     projects = load_projects()
-    if project_id not in projects:
+    # #321: PFactory's plan handoff addresses the project by the repo it planned
+    # against (owner/repo), not AIFactory's internal UUID. Resolve slug/name -> id
+    # so the handoff reaches the registered project instead of 404ing.
+    resolved = resolve_project_id(project_id)
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
         )
+    project_id = resolved
 
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()
