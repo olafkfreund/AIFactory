@@ -398,6 +398,23 @@ def create_app() -> FastAPI:
     # calls. Idempotent.
     install_httpx_propagation()
 
+    # Security response headers. The Content-Security-Policy is the load-bearing
+    # one: it pins script execution to our own origin, so a compromised CDN (or
+    # any injected third-party <script>) cannot run inside an authenticated
+    # portal session. Monaco used to be fetched from cdn.jsdelivr.net at runtime
+    # and is now self-hosted under /monaco/vs precisely so this policy can hold.
+    # Empty CONTENT_SECURITY_POLICY disables the header for operators whose
+    # reverse proxy sets its own.
+    @app.middleware("http")
+    async def _security_headers(request, call_next):
+        response = await call_next(request)
+        csp = settings.CONTENT_SECURITY_POLICY
+        if csp:
+            response.headers.setdefault("Content-Security-Policy", csp)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        return response
+
     # Auth routes (prefix defined in router: /api/auth)
     app.include_router(auth_routes.router)
 

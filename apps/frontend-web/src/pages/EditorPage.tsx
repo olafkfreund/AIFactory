@@ -3,13 +3,20 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import Editor from '@monaco-editor/react';
+import Editor, { loader } from '@monaco-editor/react';
 import { ChevronRight, ChevronDown, File, Folder, Save, X, Eye, Code, Columns, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { FileNode } from '../shared/types';
+
+// Serve Monaco from our own origin, never a public CDN. @monaco-editor/loader
+// defaults to a jsDelivr URL, which makes an authenticated portal execute
+// third-party script that neither the image scan nor the lockfile governs.
+// `npm run copy:monaco` vendors the same build into the served static root at
+// build time; the version is pinned exactly in package.json.
+loader.config({ paths: { vs: '/monaco/vs' } });
 
 interface FileTab {
   path: string;
