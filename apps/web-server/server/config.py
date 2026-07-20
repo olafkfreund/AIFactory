@@ -178,6 +178,26 @@ class Settings(BaseSettings):
             return [s.strip() for s in stripped.split(",") if s.strip()]
         return v
 
+    # Content-Security-Policy served with every HTML/document response.
+    # `self`-only script sources are the point: the portal must never execute
+    # third-party JavaScript (Monaco is self-hosted under /monaco/vs for exactly
+    # this reason). `unsafe-eval` is required by Monaco's AMD loader and its
+    # language workers; `unsafe-inline` styles by the bundled CSS-in-JS.
+    # Override wholesale via APP_CONTENT_SECURITY_POLICY, or set it empty to
+    # disable the header (e.g. when a reverse proxy sets its own).
+    CONTENT_SECURITY_POLICY: str = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' ws: wss:; "
+        "worker-src 'self' blob:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+
     # Terminal
     DEFAULT_SHELL: str = "/bin/bash"
     MAX_TERMINALS: int = 20

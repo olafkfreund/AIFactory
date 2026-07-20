@@ -89,6 +89,52 @@ def test_trivy_no_high_critical(built_image: str) -> None:
 
 @pytest.mark.docker
 @pytest.mark.slow
+@pytest.mark.skipif(
+    not IN_CI, reason="Trivy scan enforced only in CI (needs trivy CLI on PATH)"
+)
+def test_frontend_lockfile_no_high_critical() -> None:
+    """P0.8b — the shipped frontend's dependencies carry no fixable HIGH/CRITICAL.
+
+    Blind spot this closes: the frontend is built in a separate stage and only
+    the *built assets* are copied into the runtime image, so ``node_modules``
+    (and every package manifest in it) never reaches a layer Trivy can see. The
+    image scan above therefore returns green while vulnerable JavaScript is
+    bundled into what browsers execute. Scanning the lockfile directly covers
+    the dependencies that actually reach users.
+
+    Same ``--ignore-unfixed`` policy as the image scan: gate on what upstream
+    has patched, never wedge CI on something nobody can act on.
+    """
+    result = subprocess.run(
+        [
+            "trivy",
+            "fs",
+            "--scanners",
+            "vuln",
+            "--severity",
+            "HIGH,CRITICAL",
+            "--ignore-unfixed",
+            "--format",
+            "json",
+            str(REPO_ROOT / "package-lock.json"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, f"trivy failed: {result.stderr}"
+    report = json.loads(result.stdout)
+    findings = []
+    for target in report.get("Results", []) or []:
+        findings.extend(target.get("Vulnerabilities", []) or [])
+    assert not findings, (
+        f"Trivy found {len(findings)} HIGH/CRITICAL vulns in the frontend lockfile: "
+        f"{[(v.get('PkgName'), v.get('VulnerabilityID')) for v in findings[:5]]}"
+    )
+
+
+@pytest.mark.docker
+@pytest.mark.slow
 def test_sbom_generates_valid_spdx(built_image: str) -> None:
     """P0.9 — Syft generates a valid SPDX-JSON SBOM for the image.
 

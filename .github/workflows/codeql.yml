@@ -1,0 +1,46 @@
+name: CodeQL
+
+# Static security analysis for the languages this repo actually ships.
+#
+# Added because four of the five fleet repos reported zero code-scanning
+# alerts purely because nothing was looking. The Trivy P0 gate covers
+# dependency CVEs; this covers defects in our own code (injection, path
+# traversal, stack-trace exposure) that no dependency scanner sees.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  schedule:
+    # Weekly, so a newly published query still finds old code.
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          language: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

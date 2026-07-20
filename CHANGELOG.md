@@ -1,7 +1,13 @@
 ## [Unreleased]
 
 
-## 3.6.64 - 2026-07-19
+## 3.6.65 - 2026-07-20
+
+### Security
+
+- **The portal no longer executes third-party JavaScript (#975).** `@monaco-editor/loader` defaults to a jsDelivr URL and nothing overrode it, so opening the editor page fetched and ran CDN-hosted script inside an authenticated session that can dispatch builds — with no Content-Security-Policy anywhere to constrain it. Neither scanner covered this: the frontend builds in a separate stage and only its built assets reach the runtime image, so `node_modules` never lands in a layer Trivy inspects, while Dependabot's dompurify findings were unfixable because the version came from the hard-coded CDN URL. Monaco is now an exactly-pinned dependency vendored into the served static root, a CSP pins script execution to our own origin (`APP_CONTENT_SECURITY_POLICY` overrides it; empty disables), and the P0 gate scans the frontend lockfile directly.
+- **Docs site dependencies: critical and high cleared (#976).** 28 advisories down to 19 moderate — `websocket-driver` (critical) and `serialize-javascript` (high, via an `overrides` pin) among them. Build-time only; nothing ships. Also pins `@docusaurus/theme-mermaid` exactly, matching its siblings — it was the lone caret range and drifted to a version its core rejects.
+- **CodeQL analysis enabled (#977)** for Python and TypeScript, on push, PR and a weekly schedule.
 
 ### Fixed
 
