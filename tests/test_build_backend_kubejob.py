@@ -387,6 +387,21 @@ def test_build_job_env_omits_s3_env_when_unset(
     assert "S3_SECRET_KEY" not in env
 
 
+def test_build_job_env_propagates_graphify_flag_when_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #804: core/client.py's coder block reads AIFACTORY_GRAPHIFY_ENABLED at build
+    # time. In a kubejob build the coder runs in a fresh Job pod, so the flag only
+    # reaches it via the passthrough. Forwarded when present, omitted when unset.
+    for var in bb._PASSTHROUGH_BUILD_ENV:
+        monkeypatch.delenv(var, raising=False)
+    env_unset = bb.build_job_env("oauth-tok-123")
+    assert "AIFACTORY_GRAPHIFY_ENABLED" not in env_unset
+    monkeypatch.setenv("AIFACTORY_GRAPHIFY_ENABLED", "true")
+    env_set = bb.build_job_env("oauth-tok-123")
+    assert env_set["AIFACTORY_GRAPHIFY_ENABLED"] == "true"
+
+
 def test_build_job_env_never_includes_anthropic_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1175,6 +1190,81 @@ def test_populate_skips_when_outside_data_pvc(monkeypatch, tmp_path):
     monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
     proj = _git_init_project(tmp_path)
     assert bb.populate_build_worktree(proj, "042-go") is None
+
+
+def test_populate_refreshes_stale_base_to_remote_head(monkeypatch, tmp_path):
+    # #960: the registered workspace clone is cloned-once then reused, so its local
+    # base branch lags the real default branch. The build clone must be advanced to
+    # the REMOTE base head before run.py cuts the task worktree — otherwise builds
+    # run against stale source. Real-git integration test with a reachable origin.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+
+    def g(cwd: Path, *a: str) -> str:
+        return _sp.run(
+            ["git", "-C", str(cwd), *a], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    # A bare repo acts as the real "GitHub" origin (reachable, unlike acme/proj).
+    remote = tmp_path / "remote.git"
+    _sp.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+
+    # The registered workspace clone: commit A, pushed, then PINNED here (stale).
+    proj = tmp_path / "workspaces" / "proj-1"
+    proj.mkdir(parents=True)
+    g(proj, "init", "-b", "main")
+    g(proj, "config", "user.email", "t@example.com")
+    g(proj, "config", "user.name", "Test")
+    g(proj, "remote", "add", "origin", str(remote))
+    (proj / "README.md").write_text("A\n")
+    g(proj, "add", "-A")
+    g(proj, "commit", "-m", "A")
+    g(proj, "push", "-u", "origin", "main")
+    stale = g(proj, "rev-parse", "HEAD")
+
+    # The remote default branch advances to commit B — the workspace clone does NOT
+    # (it is never re-fetched), reproducing the stale-clone bug.
+    up = tmp_path / "upstream"
+    g(tmp_path, "clone", str(remote), str(up))
+    g(up, "config", "user.email", "t@example.com")
+    g(up, "config", "user.name", "Test")
+    (up / "README.md").write_text("B\n")
+    g(up, "add", "-A")
+    g(up, "commit", "-m", "B")
+    g(up, "push", "origin", "main")
+    fresh = g(up, "rev-parse", "HEAD")
+    assert stale != fresh
+    assert g(proj, "rev-parse", "HEAD") == stale  # workspace clone still stale
+
+    spec_dir = proj / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
+
+    wt = bb.populate_build_worktree(proj, "042-go")
+    assert wt is not None
+    wtp = Path(wt)
+
+    # The build clone was fast-forwarded to the REMOTE head, not the stale pin.
+    assert g(wtp, "rev-parse", "HEAD") == fresh
+    assert (wtp / "README.md").read_text() == "B\n"
+    # Still on the base branch (#716) so run.py's own `git worktree add -b` works.
+    assert g(wtp, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
+def test_populate_degrades_gracefully_when_remote_unreachable(monkeypatch, tmp_path):
+    # #960: a fetch failure (offline/auth) must NOT crash dispatch — the build
+    # degrades to the stale-but-working local base. _git_init_project sets origin to
+    # an unreachable https URL, so the refresh fetch fails and is swallowed.
+    monkeypatch.setenv("AIFACTORY_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("AIFACTORY_SANDBOX_REPO_PVC", "aifactory-data")
+    proj = _git_init_project(tmp_path)
+    spec_dir = proj / ".aifactory" / "specs" / "042-go"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# spec\n")
+
+    wt = bb.populate_build_worktree(proj, "042-go")
+    assert wt is not None
+    assert (Path(wt) / ".git").is_dir()  # dispatch still produced a usable clone
 
 
 # --------------------------------------------------------------------------- #

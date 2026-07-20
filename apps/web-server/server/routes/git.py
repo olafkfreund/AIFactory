@@ -2,7 +2,6 @@
 Git, Ollama, MCP, and utility routes.
 """
 
-import json
 import shlex
 import shutil
 import subprocess
@@ -1043,45 +1042,11 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     Raises:
         HTTPException: If project not found or git operations fail
     """
-    from fastapi import HTTPException
-
     # Load projects to get project path
-    try:
-        from ..config import get_settings
+    # ponytail: local import avoids projects<->git import cycle
+    from .projects import resolve_project_path
 
-        settings = get_settings()
-        projects_file = settings.projects_file
-
-        if not projects_file.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        with open(projects_file) as f:
-            projects_data = json.loads(f.read())
-
-        # Find project by ID
-        project = None
-        for proj in projects_data.get("projects", []):
-            if proj.get("id") == projectId:
-                project = proj
-                break
-
-        if not project:
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        project_path = project.get("path")
-        if not project_path:
-            raise HTTPException(
-                status_code=404, detail=f"Project path not found for {projectId}"
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "error": f"Failed to load project: {str(e)}"}
+    project_path = str(resolve_project_path(projectId))
 
     # Validate commit count
     count = request.count
@@ -1223,45 +1188,11 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     """
     import re
 
-    from fastapi import HTTPException
-
     # Load projects to get project path
-    try:
-        from ..config import get_settings
+    # ponytail: local import avoids projects<->git import cycle
+    from .projects import resolve_project_path
 
-        settings = get_settings()
-        projects_file = settings.projects_file
-
-        if not projects_file.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        with open(projects_file) as f:
-            projects_data = json.loads(f.read())
-
-        # Find project by ID
-        project = None
-        for proj in projects_data.get("projects", []):
-            if proj.get("id") == projectId:
-                project = proj
-                break
-
-        if not project:
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        project_path = project.get("path")
-        if not project_path:
-            raise HTTPException(
-                status_code=404, detail=f"Project path not found for {projectId}"
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "error": f"Failed to load project: {str(e)}"}
+    project_path = str(resolve_project_path(projectId))
 
     # Validate worktree name (alphanumeric, dashes, underscores only)
     name = request.name.strip()
@@ -1429,8 +1360,6 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
     Raises:
         HTTPException: If project not found or CLI command fails
     """
-    from fastapi import HTTPException
-
     # Validate platform
     platform = request.platform.lower()
     if platform != "github":
@@ -1450,42 +1379,10 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
         return {"success": False, "error": "Release notes cannot be empty"}
 
     # Load projects to get project path
-    try:
-        from ..config import get_settings
+    # ponytail: local import avoids projects<->git import cycle
+    from .projects import resolve_project_path
 
-        settings = get_settings()
-        projects_file = settings.projects_file
-
-        if not projects_file.exists():
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        with open(projects_file) as f:
-            projects_data = json.loads(f.read())
-
-        # Find project by ID
-        project = None
-        for proj in projects_data.get("projects", []):
-            if proj.get("id") == projectId:
-                project = proj
-                break
-
-        if not project:
-            raise HTTPException(
-                status_code=404, detail=f"Project {projectId} not found"
-            )
-
-        project_path = project.get("path")
-        if not project_path:
-            raise HTTPException(
-                status_code=404, detail=f"Project path not found for {projectId}"
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "error": f"Failed to load project: {str(e)}"}
+    project_path = str(resolve_project_path(projectId))
 
     # Ensure version starts with 'v' if not already present (conventional)
     if not version.startswith("v"):

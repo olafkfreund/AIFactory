@@ -14,6 +14,7 @@ const sidebars: SidebarsConfig = {
     'why-aifactory',
     'getting-started',
     'configuration-reference',
+    'environment-reference',
     'demo',
     {
       type: 'category',
