@@ -2,7 +2,7 @@
 
 > Auto-generated from the project manifests by `scripts/generate-techdocs-deps.py` (run in CI). Do not edit by hand.
 
-AIFactory pins **17** backend, **36** web-server, and **46** frontend runtime dependencies.
+AIFactory pins **17** backend, **36** web-server, and **47** frontend runtime dependencies.
 
 ## Backend (Python) — `apps/backend/requirements.txt`
 
@@ -107,6 +107,7 @@ AIFactory pins **17** backend, **36** web-server, and **46** frontend runtime de
 | `highlight.js` | `^11.11.1` |
 | `i18next` | `^25.7.3` |
 | `lucide-react` | `^0.562.0` |
+| `monaco-editor` | `0.55.1` |
 | `motion` | `^12.23.26` |
 | `react` | `^19.2.3` |
 | `react-dom` | `^19.2.3` |
