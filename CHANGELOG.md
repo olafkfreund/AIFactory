@@ -1,6 +1,20 @@
 ## [Unreleased]
 
 
+## 3.6.67 - 2026-07-21
+
+### Fixed
+
+- **A build that produced no commits is no longer handed to verify (#984).** A build that wrote nothing reported success, opened no PR, and still handed off to TFactory, which then checked the branch out, found no implementation, generated tests against the missing feature and reported a rigorous-looking negative for code that was never written — the same hollow verify as TFactory #729, reached from the build side. Observed live on TFactory #741: `aifactory/005-mcp-health-check-block-metadat` was the same commit as its base (zero commits, zero changed files), the build still finished in four minutes reporting success, and the only signal was `pr_endgame -> pr_not_created`, which reads as a PR hiccup rather than a build that produced nothing. `maybe_auto_handoff_tfactory` now refuses when the build added zero commits on top of the base resolved by `_task_base_branch` (#980). `_build_commit_count` returns `None` when the question cannot be answered locally (no worktree — the RFC-0017 packed path returns outputs via MinIO and leaves the control-plane worktree's gitdir pointer broken), and only an explicit `0` blocks: refusing a build that merely could not be measured would be a worse bug than the one being fixed. The build still reporting `succeeded` for a no-op remains open in #984.
+
+
+## 3.6.66 - 2026-07-20
+
+### Fixed
+
+- **The factory can open PRs against its own repositories again (#980).** Two separate guards compared the worktree's HEAD against a hardcoded `{"main", "master"}` to decide "is this the base branch?". On a repo integrating via `dev` neither fired. In `pr_endgame` that made `git fetch origin dev:dev` fail ("refusing to fetch into branch checked out at ...") so the branch was pushed but no PR opened. In the TFactory handoff it sent `dev` as `source_branch`, so verification checked out a tree **without the built code**, generated tests against the unimplemented feature, and correctly rejected all of them as permanently red -- a hollow verify reported as an ordinary negative result (TFactory #729). Both now compare against the task's actual `base_branch`. Only ever reproducible outside the demo repos, which all use `main`.
+
+
 ## 3.6.65 - 2026-07-20
 
 ### Security
