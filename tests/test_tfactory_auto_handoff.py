@@ -114,7 +114,9 @@ def test_never_raises_on_bad_input(tmp_path, monkeypatch):
 # ── #984: a build that wrote nothing must not be handed to verify ───────
 
 
-def _repo_with_build(tmp: Path, spec_id: str, *, empty: bool) -> Path:
+def _repo_with_build(
+    tmp: Path, spec_id: str, *, empty: bool = False, on_base: bool = False
+) -> Path:
     """A project whose build worktree is a real git checkout on `dev`.
 
     Mirrors the live layout: spec_dir == <project>/.aifactory/specs/<spec_id>,
@@ -145,6 +147,10 @@ def _repo_with_build(tmp: Path, spec_id: str, *, empty: bool) -> Path:
     _git("add", "-A")
     _git("commit", "-qm", "base")
     _git("update-ref", "refs/remotes/origin/dev", "dev")
+    if on_base:
+        # kubejob shape: the build ran inside the k8s Job, so the control-plane
+        # worktree never left the base branch.
+        return spec_dir
     _git("checkout", "-q", "-b", f"aifactory/{spec_id}")
     if not empty:
         (wt / "built.py").write_text("def built() -> None: ...\n")
@@ -193,4 +199,23 @@ def test_unmeasurable_build_fails_open(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "send_handoff", fake_send)
     assert (
         asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "007-x"))["sent"] is True
+    )
+
+
+def test_kubejob_worktree_on_base_is_unmeasurable_not_empty(tmp_path, monkeypatch):
+    """The false positive that blocked a real build.
+
+    The kubejob path builds inside the k8s Job and leaves the control-plane
+    worktree on `dev`, so counting commits there returns 0 for every build.
+    That must read as "cannot tell" — never as "the build wrote nothing".
+    """
+    spec_dir = _repo_with_build(tmp_path, "006-x", on_base=True)
+    assert tc._build_commit_count(spec_dir, "006-x") is None
+
+    async def fake_send(_payload, **_kwargs):
+        return {"sent": True, "reason": None, "status": 200}
+
+    monkeypatch.setattr(tc, "send_handoff", fake_send)
+    assert (
+        asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))["sent"] is True
     )
