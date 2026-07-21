@@ -347,12 +347,26 @@ def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
 
     ``None`` and ``0`` mean different things and callers must not conflate them:
     ``0`` is the measured fact that the build wrote nothing, while ``None`` says
-    the question could not be answered here (no worktree — e.g. the RFC-0017
-    packed path, where outputs come back via MinIO and the control-plane
-    worktree's gitdir pointer is broken).
+    the question could not be answered here.
+
+    Unknowable covers two cases, and the second one is the whole reason this
+    function has a HEAD check. There is no worktree at all — the RFC-0017 packed
+    path returns outputs via MinIO and leaves the control-plane worktree's gitdir
+    pointer broken. OR the worktree exists but is not the build: the kubejob path
+    builds inside the k8s Job and leaves the control-plane worktree sitting on
+    the BASE branch, exactly as the ``_BASE_BRANCHES`` comment above says.
+
+    Counting commits against a worktree still on ``dev`` yields 0 for EVERY
+    kubejob build, empty or not. That shipped, and it blocked a real build — 7
+    commits, 5 files, 1247 added lines — from ever reaching verify. It looked
+    correct only because the run it was written for happened to be genuinely
+    empty as well. So the count is trusted only when HEAD is the branch the build
+    is supposed to have produced.
     """
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
+        return None
+    if _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"]) != _build_branch(spec_id):
         return None
     base = _task_base_branch(spec_dir) or "main"
     for ref in (f"origin/{base}", base):
