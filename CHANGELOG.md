@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.68 - 2026-07-21
+
+### Fixed
+
+- **The empty-build guard no longer blocks every kubejob build (#984).** 3.6.67's guard refused a real build — 7 commits, 5 files, 1247 added lines (TFactory run 5, issue #749, PR #750) — reporting `empty_build`, so verify never ran on perfectly good code. `_build_commit_count` measured the control-plane worktree, but the kubejob path builds inside the k8s Job and leaves that worktree on the BASE branch, exactly as the `_BASE_BRANCHES` comment a few lines above states. Confirmed in the pod: `HEAD=dev`, `count vs origin/dev: 0`. So `git rev-list --count origin/dev..HEAD` returned 0 for every kubejob build, empty or not; it looked correct only because the run it was written for happened to be genuinely empty too, so the right answer came out of a wrong measurement. The count is now trusted only when the worktree HEAD is the branch the build was supposed to produce; anything else is unknowable and fails open. **Scope reduction, stated plainly: empty-build detection therefore no longer fires on the kubejob path (the common one)** — at handoff time the control plane cannot see that build's commits, and detecting it properly needs a remote branch-vs-base comparison with credentials the handoff does not hold and must not take via argv. #984 remains open for that. A missed empty build wastes a verify cycle and leaves a diagnosable negative; a blocked real build silently drops verification from the pipeline, which is strictly worse.
+
+
 ## 3.6.67 - 2026-07-21
 
 ### Fixed
