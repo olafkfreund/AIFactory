@@ -342,6 +342,26 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         return None, None
 
 
+def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+    """Commits the build added on top of its base branch, or ``None`` if unknowable.
+
+    ``None`` and ``0`` mean different things and callers must not conflate them:
+    ``0`` is the measured fact that the build wrote nothing, while ``None`` says
+    the question could not be answered here (no worktree — e.g. the RFC-0017
+    packed path, where outputs come back via MinIO and the control-plane
+    worktree's gitdir pointer is broken).
+    """
+    wt = _build_worktree(spec_dir, spec_id)
+    if not wt.is_dir():
+        return None
+    base = _task_base_branch(spec_dir) or "main"
+    for ref in (f"origin/{base}", base):
+        out = _git_stdout(wt, ["rev-list", "--count", f"{ref}..HEAD"])
+        if out.isdigit():
+            return int(out)
+    return None
+
+
 def _issue_from_requirements(req: dict[str, Any]) -> int | None:
     """The origin GitHub issue number from requirements.json, or None. #964
 
@@ -587,6 +607,17 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     spec_dir = Path(spec_dir)
     if not wants_auto_handoff(spec_dir):
         return {"sent": False, "reason": "not_requested"}
+    # A build that wrote nothing has nothing to verify, and handing it off is
+    # actively harmful: TFactory checks the branch out, finds no implementation,
+    # generates tests against the missing feature, and reports a rigorous-looking
+    # negative for code that was never written (#984 — same hollow-verify shape
+    # as TFactory #729, reached from the build side). Observed live: the branch
+    # for spec 005 was the same commit as its base, the build still reported
+    # success in four minutes, and verify was handed a tree with no build in it.
+    # Only an explicit 0 blocks — `None` means unknowable, and refusing a build
+    # we merely could not measure would be worse than the bug.
+    if _build_commit_count(spec_dir, spec_id) == 0:
+        return {"sent": False, "reason": "empty_build"}
     try:
         payload = build_ingest_payload(spec_dir, spec_id)
         result = await send_handoff(payload)

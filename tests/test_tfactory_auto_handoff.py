@@ -7,6 +7,7 @@ requirements + meta and calls send_handoff. Best-effort; never raises.
 
 import asyncio
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -108,3 +109,88 @@ def test_never_raises_on_bad_input(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "send_handoff", boom)
     result = asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "001-x"))
     assert result["sent"] is False and result["reason"] == "error"
+
+
+# ── #984: a build that wrote nothing must not be handed to verify ───────
+
+
+def _repo_with_build(tmp: Path, spec_id: str, *, empty: bool) -> Path:
+    """A project whose build worktree is a real git checkout on `dev`.
+
+    Mirrors the live layout: spec_dir == <project>/.aifactory/specs/<spec_id>,
+    build worktree == <project>/.aifactory/worktrees/tasks/<spec_id>.
+    """
+    project = tmp / "project"
+    spec_dir = project / ".aifactory" / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "task_metadata.json").write_text(
+        json.dumps({"auto_handover_tfactory": True, "base_branch": "dev"})
+    )
+    (spec_dir / "requirements.json").write_text(json.dumps({"title": "t"}))
+
+    wt = project / ".aifactory" / "worktrees" / "tasks" / spec_id
+    wt.mkdir(parents=True)
+
+    def _git(*args: str) -> None:
+        subprocess.run(  # noqa: S603
+            ["git", "-C", str(wt), *args],  # noqa: S607
+            check=True,
+            capture_output=True,
+        )
+
+    _git("init", "-b", "dev", "--quiet")
+    _git("config", "user.email", "t@t")
+    _git("config", "user.name", "t")
+    (wt / "base.py").write_text("x = 1\n")
+    _git("add", "-A")
+    _git("commit", "-qm", "base")
+    _git("update-ref", "refs/remotes/origin/dev", "dev")
+    _git("checkout", "-q", "-b", f"aifactory/{spec_id}")
+    if not empty:
+        (wt / "built.py").write_text("def built() -> None: ...\n")
+        _git("add", "-A")
+        _git("commit", "-qm", "the build")
+    return spec_dir
+
+
+def test_empty_build_is_not_handed_off(tmp_path, monkeypatch):
+    """Zero commits vs base → refuse. Verify would otherwise test unbuilt code."""
+    spec_dir = _repo_with_build(tmp_path, "005-x", empty=True)
+
+    async def fail_send(_payload, **_kwargs):  # pragma: no cover - must not run
+        raise AssertionError("handoff sent for a build that produced nothing")
+
+    monkeypatch.setattr(tc, "send_handoff", fail_send)
+    assert tc._build_commit_count(spec_dir, "005-x") == 0
+    result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "005-x"))
+    assert result == {"sent": False, "reason": "empty_build"}
+
+
+def test_real_build_is_still_handed_off(tmp_path, monkeypatch):
+    """The guard must not block a build that did write code."""
+    spec_dir = _repo_with_build(tmp_path, "006-x", empty=False)
+    sent = {}
+
+    async def fake_send(payload, **_kwargs):
+        sent["payload"] = payload
+        return {"sent": True, "reason": None, "status": 200}
+
+    monkeypatch.setattr(tc, "send_handoff", fake_send)
+    assert tc._build_commit_count(spec_dir, "006-x") == 1
+    result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))
+    assert result["sent"] is True
+    assert sent["payload"]["spec_id"] == "006-x"
+
+
+def test_unmeasurable_build_fails_open(tmp_path, monkeypatch):
+    """No worktree (RFC-0017 packed path) → None, not 0 → handoff proceeds."""
+    _spec(tmp_path, True)
+    assert tc._build_commit_count(tmp_path, "007-x") is None
+
+    async def fake_send(_payload, **_kwargs):
+        return {"sent": True, "reason": None, "status": 200}
+
+    monkeypatch.setattr(tc, "send_handoff", fake_send)
+    assert (
+        asyncio.run(tc.maybe_auto_handoff_tfactory(tmp_path, "007-x"))["sent"] is True
+    )
