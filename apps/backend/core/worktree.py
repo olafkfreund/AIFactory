@@ -963,28 +963,53 @@ class WorktreeManager:
         if not worktree_path.exists():
             return False
 
-        self._run_git(["add", ".", ":!.aifactory"], cwd=worktree_path)
+        add = self._run_git(["add", ".", ":!.aifactory"], cwd=worktree_path)
         result = self._run_git(["commit", "-m", message], cwd=worktree_path)
 
         if result.returncode == 0:
             return True
-        elif "nothing to commit" in result.stdout + result.stderr:
-            return True
-        else:
-            print(f"Commit failed: {result.stderr}")
-            logger.error(
-                f"Commit failed in worktree for spec '{spec_name}'",
-                extra={
-                    "worktree_path": str(worktree_path),
-                    "error": result.stderr,
-                    # NB: key must NOT be "message" — that's a reserved LogRecord
-                    # attribute and logging raises "Attempt to overwrite 'message'
-                    # in LogRecord", which previously propagated out of a parallel
-                    # subtask and aborted the whole wave to serial (#376 regression).
-                    "commit_message": message,
-                },
+        # An empty commit is a no-op, not a failure. git writes these to STDOUT
+        # (not stderr) with a non-zero rc, and phrases it several ways — match all
+        # of them across BOTH streams (#994: the old check only looked for
+        # "nothing to commit" and only printed stderr, so a "no changes added to
+        # commit" on stdout surfaced as a useless empty "Commit failed:").
+        combined = (result.stdout or "") + (result.stderr or "")
+        if any(
+            m in combined
+            for m in (
+                "nothing to commit",
+                "no changes added to commit",
+                "working tree clean",
             )
-            return False
+        ):
+            return True
+
+        # Real failure: surface EVERYTHING (rc + stdout + stderr, plus the git-add
+        # result), because git commit errors frequently land on stdout and an empty
+        # stderr previously left the build churning with no diagnosable cause (#994).
+        detail = (
+            f"rc={result.returncode} "
+            f"stderr={(result.stderr or '').strip()!r} "
+            f"stdout={(result.stdout or '').strip()!r}"
+        )
+        if add.returncode != 0:
+            detail += (
+                f" | git-add rc={add.returncode} stderr={(add.stderr or '').strip()!r}"
+            )
+        print(f"Commit failed: {detail}")
+        logger.error(
+            f"Commit failed in worktree for spec '{spec_name}'",
+            extra={
+                "worktree_path": str(worktree_path),
+                "error": detail,
+                # NB: key must NOT be "message" — that's a reserved LogRecord
+                # attribute and logging raises "Attempt to overwrite 'message'
+                # in LogRecord", which previously propagated out of a parallel
+                # subtask and aborted the whole wave to serial (#376 regression).
+                "commit_message": message,
+            },
+        )
+        return False
 
     # ==================== Listing & Discovery ====================
 
