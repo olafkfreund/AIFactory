@@ -72,6 +72,42 @@ def test_nothing_to_commit_returns_true(tmp_path, monkeypatch):
     assert mgr.commit_in_worktree("spec", "msg") is True
 
 
+def test_no_changes_added_to_commit_on_stdout_returns_true(tmp_path, monkeypatch):
+    """#994: git writes 'no changes added to commit' to STDOUT with rc=1 — an empty
+    commit is a no-op, not a failure. The old check only matched 'nothing to
+    commit', so this surfaced as a spurious failure that churned the build."""
+    mgr = _mgr(tmp_path)
+    monkeypatch.setattr(mgr, "get_worktree_path", lambda spec: tmp_path)
+    monkeypatch.setattr(
+        mgr,
+        "_run_git",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["git"], 1, "no changes added to commit (use 'git add')", ""
+        ),
+    )
+    assert mgr.commit_in_worktree("spec", "msg") is True
+
+
+def test_real_failure_surfaces_stdout_not_empty(tmp_path, monkeypatch, capsys):
+    """#994: a real failure whose message is on STDOUT (empty stderr) must be
+    diagnosable — the old code printed 'Commit failed:' with nothing, leaving the
+    cause invisible. The detail must include rc and the stdout content."""
+    mgr = _mgr(tmp_path)
+    monkeypatch.setattr(mgr, "get_worktree_path", lambda spec: tmp_path)
+    monkeypatch.setattr(
+        mgr,
+        "_run_git",
+        lambda *a, **k: subprocess.CompletedProcess(
+            ["git"], 128, "error: pathspec 'x' did not match", ""
+        ),
+    )
+    assert mgr.commit_in_worktree("spec", "msg") is False
+    out = capsys.readouterr().out
+    assert "Commit failed:" in out
+    assert "pathspec 'x' did not match" in out  # the real cause, not an empty string
+    assert "rc=128" in out
+
+
 def test_extra_has_no_reserved_logrecord_keys():
     # Guard: the failure-branch extra must not reuse reserved LogRecord attrs.
     import logging
