@@ -79,6 +79,12 @@ class RecoveryManager:
             self._init_build_commits()
 
     def _init_attempt_history(self) -> None:
+        # Re-create memory_dir here too, not just in __init__: a per-subtask
+        # worktree spec_dir can be torn down mid-build (the log shows worktrees
+        # created then "Removed"), so by the time _load_attempt_history's except
+        # branch calls this, the dir may be gone — and its re-open would then raise
+        # an uncaught FileNotFoundError and crash the whole build (#991).
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
         initial_data = {
             "subtasks": {},
             "stuck_subtasks": [],
@@ -91,6 +97,9 @@ class RecoveryManager:
             json.dump(initial_data, f, indent=2)
 
     def _init_build_commits(self) -> None:
+        self.memory_dir.mkdir(
+            parents=True, exist_ok=True
+        )  # see _init_attempt_history (#991)
         initial_data = {
             "commits": [],
             "last_good_commit": None,
