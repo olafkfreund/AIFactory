@@ -30,9 +30,14 @@ isolation on privileged hosts.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+import subprocess
 from collections.abc import Sequence
+from functools import lru_cache
+
+_log = logging.getLogger(__name__)
 
 # System directories the sandbox exposes read-only (``-try`` so a layout that
 # lacks one — e.g. no separate /lib64 — doesn't fail the spawn).
@@ -47,6 +52,40 @@ def _mode() -> str:
 
 def _bwrap_path() -> str | None:
     return shutil.which("bwrap")
+
+
+@lru_cache(maxsize=1)
+def _bwrap_works(bwrap: str) -> bool:
+    """True when ``bwrap`` can actually spawn here — not just that it's installed.
+
+    Unprivileged bwrap needs a **user namespace** to set up its other namespaces.
+    A node whose kernel disallows unprivileged userns
+    (``kernel.unprivileged_userns_clone=0`` / ``user.max_user_namespaces=0``) makes
+    bwrap fail at exec with *"No permissions to create a new namespace"* — which
+    would break EVERY wrapped command (git commit, etc.), not just isolate it.
+    Probe once with a trivial invocation and cache it (the kernel capability can't
+    change under a running process), so we degrade to an unwrapped passthrough
+    instead of failing every command. Same end state as bwrap being absent.
+    """
+    try:
+        r = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            [bwrap, "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"],
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if r.returncode != 0:
+        _log.warning(
+            "bwrap is installed but cannot create a namespace here "
+            "(rc=%s: %s) — the agent sandbox is DISABLED and commands run "
+            "unwrapped. Enable unprivileged user namespaces on the build node "
+            "(sysctl kernel.unprivileged_userns_clone=1) to restore isolation.",
+            r.returncode,
+            (r.stderr or b"").decode(errors="replace").strip()[:200],
+        )
+        return False
+    return True
 
 
 def _pidns_enabled() -> bool:
@@ -65,8 +104,11 @@ def _pidns_enabled() -> bool:
 
 
 def is_enabled() -> bool:
-    """True when a sandbox mode is requested AND ``bwrap`` is available."""
-    return _mode() in _VALID_MODES and _bwrap_path() is not None
+    """True when a sandbox mode is requested AND ``bwrap`` is available AND works."""
+    if _mode() not in _VALID_MODES:
+        return False
+    bwrap = _bwrap_path()
+    return bwrap is not None and _bwrap_works(bwrap)
 
 
 def build_sandboxed_command(
@@ -83,7 +125,7 @@ def build_sandboxed_command(
     """
     selected = (mode or _mode()).strip().lower()
     bwrap = _bwrap_path()
-    if selected not in _VALID_MODES or not bwrap:
+    if selected not in _VALID_MODES or not bwrap or not _bwrap_works(bwrap):
         return list(cmd)
 
     root = os.path.abspath(str(worktree_root))
