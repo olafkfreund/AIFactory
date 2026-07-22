@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.69 - 2026-07-22
+
+### Fixed
+
+- **Handoff builds no longer die when bwrap can't run, and the recovery path is crash-proof (#991).** A real PFactory→AIFactory build committed nothing, pushed no branch, and exited 1 → human_review. Two causes: (1) `sandbox.is_enabled()` only checked bwrap was INSTALLED, not that it can RUN — on a node that denies unprivileged user namespaces bwrap fails at exec (`No permissions to create a new namespace`), so every wrapped git commit failed. `_bwrap_works()` now probes bwrap once and degrades to an unwrapped passthrough when it can't spawn (same as bwrap absent), warning to enable `kernel.unprivileged_userns_clone=1`; the bash allowlist still applies. (2) With no commits, `recovery._load_attempt_history` re-opened the file after `_init_attempt_history`, but a per-subtask worktree spec_dir is torn down mid-build so `memory/` had vanished — an uncaught `FileNotFoundError` crashed the build. `_init_*` now re-create `memory_dir` before writing.
+
+
 ## 3.6.68 - 2026-07-21
 
 ### Fixed
