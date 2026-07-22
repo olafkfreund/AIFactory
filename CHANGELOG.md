@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.70 - 2026-07-22
+
+### Fixed
+
+- **Builds no longer churn on spurious commit failures (#994).** After #991 stopped builds crashing, `commit_in_worktree` surfaced a pre-existing bug: it only treated `nothing to commit` as an empty-commit no-op, but git also says `no changes added to commit` and writes it to STDOUT (not stderr) with a non-zero rc — so a re-run whose worktree already carried the code was misread as a hard failure and the build churned in `coding` without opening a PR. It now matches every empty-commit phrasing across both streams. It also surfaces the real failure detail (rc + stdout + stderr + the git-add result) instead of printing an empty `Commit failed:` when the git error lands on stdout.
+
+
 ## 3.6.69 - 2026-07-22
 
 ### Fixed
