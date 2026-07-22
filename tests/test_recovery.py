@@ -99,6 +99,26 @@ def test_initialization():
         cleanup_test_environment(temp_dir)
 
 
+def test_load_survives_memory_dir_removed_after_init():
+    """#991: a per-subtask worktree spec_dir can be torn down mid-build, so the
+    memory dir may be gone by the time _load_attempt_history runs. Loading must
+    re-create it, not crash the build with an uncaught FileNotFoundError."""
+    temp_dir, spec_dir, project_dir = setup_test_environment()
+    try:
+        manager = RecoveryManager(spec_dir, project_dir)
+        shutil.rmtree(manager.memory_dir)  # worktree cleaned up under us
+        assert not manager.memory_dir.exists()
+
+        # Must not raise; re-creates the memory dir + file.
+        count = manager.get_attempt_count("C1")
+        assert count == 0
+        assert manager.attempt_history_file.exists()
+        print("  ✓ Survives memory dir removal")
+        print()
+    finally:
+        cleanup_test_environment(temp_dir)
+
+
 def test_record_attempt():
     """Test recording chunk attempts."""
     print("TEST: Recording Attempts")

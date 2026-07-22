@@ -27,12 +27,22 @@ ROOT = "/work/proj"
 
 @pytest.fixture
 def bwrap_present(monkeypatch):
+    # Installed AND functional (probe returns True) — the happy path.
     monkeypatch.setattr(sandbox, "_bwrap_path", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(sandbox, "_bwrap_works", lambda _b: True)
 
 
 @pytest.fixture
 def bwrap_absent(monkeypatch):
     monkeypatch.setattr(sandbox, "_bwrap_path", lambda: None)
+
+
+@pytest.fixture
+def bwrap_broken(monkeypatch):
+    # Installed but can't create a namespace (node without unprivileged userns) —
+    # #991: this must degrade to passthrough, not fail every wrapped command.
+    monkeypatch.setattr(sandbox, "_bwrap_path", lambda: "/usr/bin/bwrap")
+    monkeypatch.setattr(sandbox, "_bwrap_works", lambda _b: False)
 
 
 class TestPassthrough:
@@ -50,6 +60,14 @@ class TestPassthrough:
         monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "fs")
         assert sandbox.build_sandboxed_command(CMD, ROOT) == CMD
         assert sandbox.is_enabled() is False
+
+    def test_bwrap_present_but_broken_is_passthrough(self, monkeypatch, bwrap_broken):
+        """#991: bwrap installed but can't create a namespace (no unprivileged
+        userns) must degrade to an unwrapped passthrough — NOT wrap the command
+        with a bwrap that exits non-zero and fails every git commit."""
+        monkeypatch.setenv("AIFACTORY_AGENT_SANDBOX", "fs")
+        assert sandbox.is_enabled() is False
+        assert sandbox.build_sandboxed_command(CMD, ROOT) == CMD  # unwrapped
 
 
 class TestWrapped:
