@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.71 - 2026-07-22
+
+### Fixed
+
+- **Plan-driven builds now auto-hand off to TFactory for testing (RFC-0008).** A PFactory→AIFactory handoff (`POST /api/tasks/from-plan`) built the code and opened a PR but stopped at `ai_review`, never reaching TEST: completion orchestration only hands off when `task_metadata.auto_handover_tfactory` is set, and only the from-ISSUE intake path set it. The from-PLAN handler now sets it too (merging into the execution profile, not clobbering it), gated on the same `AIFACTORY_INTAKE_AUTO_HANDOFF` opt-out and a no-op unless `TFACTORY_BASE_URL` is configured. Verified live: a finished clamp build was accepted by TFactory (`/api/specs/ingest` → 200).
+
+
 ## 3.6.70 - 2026-07-22
 
 ### Fixed
