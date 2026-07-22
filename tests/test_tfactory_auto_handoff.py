@@ -219,3 +219,38 @@ def test_kubejob_worktree_on_base_is_unmeasurable_not_empty(tmp_path, monkeypatc
     assert (
         asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))["sent"] is True
     )
+
+
+def test_from_plan_flag_merges_without_clobbering_profile(tmp_path):
+    """RFC-0008 wiring: the from-plan route sets `auto_handover_tfactory` AFTER
+    ingest_trusted_plan has written the execution profile into task_metadata. The
+    flag-set must MERGE (preserve model/parallel/...), and the result must satisfy
+    wants_auto_handoff so a plan-driven build auto-hands off to TFactory."""
+    sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
+    from server.routes.from_issue import _set_task_metadata_flag
+
+    # As ingest_trusted_plan leaves it: an execution profile already present.
+    (tmp_path / "task_metadata.json").write_text(
+        json.dumps({"model": "claude-sonnet-4-5", "parallel": True, "workers": 3})
+    )
+
+    _set_task_metadata_flag(tmp_path, "auto_handover_tfactory", True)
+
+    meta = json.loads((tmp_path / "task_metadata.json").read_text())
+    assert meta["auto_handover_tfactory"] is True  # flag set
+    assert meta["model"] == "claude-sonnet-4-5"  # profile preserved (not clobbered)
+    assert meta["parallel"] is True and meta["workers"] == 3
+    # requirements.json needed for wants_auto_handoff's spec, add a minimal one.
+    (tmp_path / "requirements.json").write_text(json.dumps({"title": "t"}))
+    assert tc.wants_auto_handoff(tmp_path) is True
+
+
+def test_intake_auto_handoff_default_on_opt_out(monkeypatch):
+    """The plan path uses the SAME env opt-out as intake (default on)."""
+    sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
+    from server.routes.from_issue import _intake_auto_handoff_enabled
+
+    monkeypatch.delenv("AIFACTORY_INTAKE_AUTO_HANDOFF", raising=False)
+    assert _intake_auto_handoff_enabled() is True
+    monkeypatch.setenv("AIFACTORY_INTAKE_AUTO_HANDOFF", "off")
+    assert _intake_auto_handoff_enabled() is False

@@ -16,6 +16,7 @@ from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
+from .from_issue import _intake_auto_handoff_enabled, _set_task_metadata_flag
 from .project_authz import require_project_access, require_task_access
 from .projects import load_projects, resolve_project_id
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
@@ -1219,6 +1220,16 @@ async def create_from_trusted_plan(
     # After ingest_trusted_plan, which merges the execution profile into
     # task_metadata.json — the stamp merges rather than clobbers.
     stamp_spec_tenant(spec_dir, resolve_tenant(raw_request))
+
+    # RFC-0008: opt PLAN-driven builds into the TFactory auto-handoff too, exactly
+    # like the from-issue intake path (from_issue.py) already does — a
+    # PFactory→AIFactory handoff planned a TEST/handover:tfactory issue, so its
+    # finished build must be INDEPENDENTLY verified. Without this the plan path
+    # stopped at CODE: the build opened a PR and sat in ai_review, never handing
+    # to TFactory. Same env opt-out (AIFACTORY_INTAKE_AUTO_HANDOFF) and same no-op
+    # semantics when TFACTORY_BASE_URL is unset.
+    if _intake_auto_handoff_enabled():
+        _set_task_metadata_flag(spec_dir, "auto_handover_tfactory", True)
 
     # Honor the contract's execution profile when the HTTP request doesn't
     # override it: a v2 contract carries parallel/workers in its `execution`
