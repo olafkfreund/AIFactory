@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "build_handoff_payload",
@@ -309,9 +312,40 @@ def _project_git_url(spec_dir: Path) -> str | None:
         return None
 
 
+def _authed_push_url(url: str) -> str:
+    """``url`` with a token injected for authenticated push, when one is available.
+
+    Unchanged https URL when there is no token or it is not a github.com https
+    remote (ssh remotes carry their own auth).
+    """
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and url.startswith("https://github.com/"):
+        return url.replace("https://", f"https://x-access-token:{token}@", 1)
+    return url
+
+
+def _remote_tip(wt: Path, push_url: str, branch: str) -> str:
+    """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
+    line = _git_stdout(wt, ["ls-remote", push_url, branch])
+    return line.split()[0] if line else ""
+
+
 def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
     """Return ``(git_url, source_branch)`` for the build worktree, pushing the branch
     to origin so TFactory (separate PVC) can fetch the built code.
+
+    The push is AUTHORITATIVE for the build-owned ``aifactory/<spec>`` branch. A
+    plain ``git push`` is rejected as non-fast-forward when origin's branch has
+    diverged from the build -- e.g. only the branch base was ever pushed, so the
+    remote tip is not an ancestor of the built HEAD -- and swallowing that
+    rejection (as this did) handed TFactory a tree WITHOUT the build: pre-flight
+    then rejects the missing symbols and the run reads as an ordinary failure
+    (#1007, the "verify the wrong tree" class, cf. TFactory #729). So force the
+    build HEAD onto origin (``--force-with-lease`` first; fall back to ``--force``
+    since local HEAD is the truth for a per-spec build branch and cannot clobber
+    anyone else's work), then VERIFY origin now carries the built commit. If it
+    still does not, return the branch as unusable (``(url, None)``) and log,
+    rather than claim a stale tree is verifiable.
 
     Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
     missing or git fails — the handoff then degrades gracefully.
@@ -323,20 +357,32 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
     try:
         branch = _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"])
         url = _git_stdout(wt, ["remote", "get-url", "origin"])
-        if not branch or not url:
+        head = _git_stdout(wt, ["rev-parse", "HEAD"])
+        if not branch or not url or not head:
             return None, None
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        push_url = url
-        if token and url.startswith("https://github.com/"):
-            push_url = url.replace("https://", f"https://x-access-token:{token}@", 1)
-        # Push the build branch so TFactory can clone/fetch it. Best-effort.
-        subprocess.run(
-            ["git", "push", push_url, f"HEAD:{branch}"],
-            cwd=str(wt),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        push_url = _authed_push_url(url)
+        # force-with-lease refuses if the remote advanced under us; on a stale
+        # local tracking ref it self-rejects, so fall back to a plain force.
+        for extra in (["--force-with-lease"], ["--force"]):
+            res = subprocess.run(
+                ["git", "push", *extra, push_url, f"HEAD:{branch}"],
+                cwd=str(wt),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode == 0:
+                break
+        # Verify origin actually carries the built commit now — a swallowed push
+        # failure sending TFactory to a stale tree was the whole #1007 bug.
+        if _remote_tip(wt, push_url, branch) != head:
+            _log.warning(
+                "[handoff] build HEAD %s did not land on origin/%s after push; "
+                "refusing the branch so TFactory does not verify a stale tree (#1007)",
+                head[:12],
+                branch,
+            )
+            return url, None
         return url, branch
     except Exception:  # noqa: BLE001 - handoff prep must never break the build
         return None, None
