@@ -324,66 +324,93 @@ def _authed_push_url(url: str) -> str:
     return url
 
 
-def _remote_tip(wt: Path, push_url: str, branch: str) -> str:
+def _remote_tip(repo: Path, push_url: str, branch: str) -> str:
     """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
-    line = _git_stdout(wt, ["ls-remote", push_url, branch])
+    line = _git_stdout(repo, ["ls-remote", push_url, branch])
     return line.split()[0] if line else ""
 
 
+def _build_branch_commit(repo: Path, build_branch: str) -> str:
+    """The commit ``build_branch`` points at in ``repo``, or "" if it is absent.
+
+    ``--verify --quiet`` so a missing ref returns "" instead of noise on stderr.
+    """
+    return _git_stdout(
+        repo, ["rev-parse", "--verify", "--quiet", f"refs/heads/{build_branch}"]
+    )
+
+
+def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | None:
+    """Find the repo that HOLDS the built commit and that commit's sha, or None.
+
+    The built code lives on the ``aifactory/<spec>`` branch, but WHERE that ref
+    resolves depends on the build path. On the RFC-0017 packed path the build runs
+    inside the k8s Job and the control-plane build clone is left on the BASE branch
+    (``main``); the built branch ref is unpacked into the PROJECT repo, not the
+    build clone. So pushing the build clone's HEAD pushes base, not the build
+    (#1007). Resolve the build branch in the project repo first, then the build
+    clone (the non-packed path, where the clone genuinely sits on the build
+    branch). Return the repo + sha of whichever holds it.
+    """
+    build_branch = _build_branch(spec_id)
+    for cand in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id)):
+        if cand.is_dir():
+            sha = _build_branch_commit(cand, build_branch)
+            if sha:
+                return cand, sha
+    return None
+
+
 def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
-    """Return ``(git_url, source_branch)`` for the build worktree, pushing the branch
+    """Return ``(git_url, source_branch)`` for the build, pushing the BUILD BRANCH
     to origin so TFactory (separate PVC) can fetch the built code.
 
-    The push is AUTHORITATIVE for the build-owned ``aifactory/<spec>`` branch. A
-    plain ``git push`` is rejected as non-fast-forward when origin's branch has
-    diverged from the build -- e.g. only the branch base was ever pushed, so the
-    remote tip is not an ancestor of the built HEAD -- and swallowing that
-    rejection (as this did) handed TFactory a tree WITHOUT the build: pre-flight
-    then rejects the missing symbols and the run reads as an ordinary failure
-    (#1007, the "verify the wrong tree" class, cf. TFactory #729). So force the
-    build HEAD onto origin (``--force-with-lease`` first; fall back to ``--force``
-    since local HEAD is the truth for a per-spec build branch and cannot clobber
-    anyone else's work), then VERIFY origin now carries the built commit. If it
-    still does not, return the branch as unusable (``(url, None)``) and log,
-    rather than claim a stale tree is verifiable.
+    Pushes ``aifactory/<spec>`` resolved from whichever local repo holds it (the
+    project repo on the RFC-0017 packed path, the build clone otherwise) --
+    explicitly the built commit onto ``refs/heads/aifactory/<spec>``, never the
+    build clone's HEAD, which on the packed path is the BASE branch. Pushing base
+    left the build off origin and handed TFactory a tree WITHOUT the build:
+    pre-flight then rejects the missing symbols and the run reads as an ordinary
+    failure (#1007, the "verify the wrong tree" class, cf. TFactory #729).
 
-    Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
-    missing or git fails — the handoff then degrades gracefully.
+    The push is ``--force``: the per-spec ``aifactory/<spec>`` branch is
+    build-owned, the local commit is its truth, and it cannot clobber anyone
+    else's work -- this also repairs a diverged remote tip (only-base-pushed). We
+    then VERIFY origin carries the built commit; if it still does not, return the
+    branch as unusable (``(url, None)``) and log, rather than claim a stale tree
+    is verifiable.
+
+    Best-effort and never raises: returns ``(None, None)`` when nothing local holds
+    the build branch (the caller then falls back to the branch convention).
     """
-    wt = _build_worktree(spec_dir, spec_id)
-    if not wt.is_dir():
+    located = _locate_build_commit(spec_dir, spec_id)
+    if located is None:
         return None, None
-
+    repo, sha = located
+    build_branch = _build_branch(spec_id)
     try:
-        branch = _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"])
-        url = _git_stdout(wt, ["remote", "get-url", "origin"])
-        head = _git_stdout(wt, ["rev-parse", "HEAD"])
-        if not branch or not url or not head:
+        url = _git_stdout(repo, ["remote", "get-url", "origin"])
+        if not url:
             return None, None
         push_url = _authed_push_url(url)
-        # force-with-lease refuses if the remote advanced under us; on a stale
-        # local tracking ref it self-rejects, so fall back to a plain force.
-        for extra in (["--force-with-lease"], ["--force"]):
-            res = subprocess.run(
-                ["git", "push", *extra, push_url, f"HEAD:{branch}"],
-                cwd=str(wt),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if res.returncode == 0:
-                break
+        subprocess.run(
+            ["git", "push", "--force", push_url, f"{sha}:refs/heads/{build_branch}"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
         # Verify origin actually carries the built commit now — a swallowed push
         # failure sending TFactory to a stale tree was the whole #1007 bug.
-        if _remote_tip(wt, push_url, branch) != head:
+        if _remote_tip(repo, push_url, build_branch) != sha:
             _log.warning(
-                "[handoff] build HEAD %s did not land on origin/%s after push; "
+                "[handoff] build commit %s did not land on origin/%s after push; "
                 "refusing the branch so TFactory does not verify a stale tree (#1007)",
-                head[:12],
-                branch,
+                sha[:12],
+                build_branch,
             )
             return url, None
-        return url, branch
+        return url, build_branch
     except Exception:  # noqa: BLE001 - handoff prep must never break the build
         return None, None
 
