@@ -472,10 +472,17 @@ class KubejobMixin:
             "[AgentService] kubejob reconcile loop started (interval=%.0fs)",
             interval_seconds,
         )
+        tick = 0
         while not stop.is_set():
             try:
                 await self.reconcile_kubejob_builds()
                 await self.reap_kubejob_builds()
+                # Task-level reaper on a slower cadence (#1001): the spec-dir scan
+                # is heavier than the job-state poll and the deadline is generous,
+                # so every ~4th tick (~60s at the default interval) is plenty.
+                tick += 1
+                if tick % 4 == 0:
+                    await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
             try:
@@ -508,6 +515,96 @@ class KubejobMixin:
                 self._release_task_credential(job_id)
             await self._drain_queue()
         return reaped
+
+    # Frontend statuses that claim a live build. A task at one of these with no
+    # live build behind it is stranded and lists as "running" forever (#1001).
+    _REAPABLE_RUNNING_STATUSES = frozenset({"in_progress"})
+
+    async def reap_abandoned_tasks(self, *, deadline_seconds: int = 600) -> list[str]:
+        """Reap a task stuck ``in_progress`` with no live build behind it (#1001).
+
+        A build's Job can die WITHOUT a terminal event (killed pod, node drain,
+        control-plane roll, or a manually-cleared job-state row); the task then
+        lists as ``in_progress`` forever and the cockpit shows it as running. This
+        is the task-level complement to ``reap_kubejob_builds`` (which only touches
+        tasks that still have a durable job-state row).
+
+        Mark it ``failed`` — AIFactory's canonical failure path (moves it out of the
+        running bucket + emits the status event) — when ALL hold: frontend status is
+        ``in_progress``; it is NOT running in THIS pod's subprocess table; it has no
+        ``running`` durable job-state row; and its spec dir has been untouched past
+        ``deadline_seconds``. The staleness grace makes false-reaping impossible for
+        a just-dispatched build (status set before its job-state row lands) and for a
+        genuinely-live build (which keeps writing files, so its mtime stays fresh).
+        Best-effort; never raises. Returns the reaped task ids."""
+        from datetime import UTC, datetime
+
+        from ..routes.projects import load_projects
+        from ..routes.task_service import get_spec_dirs, spec_to_task
+
+        reaped: list[str] = []
+        now = datetime.now(UTC)
+        try:
+            projects = load_projects()
+        except Exception:  # noqa: BLE001 - reaper must never crash the loop
+            return reaped
+        for pid, pdata in projects.items():
+            project_path = Path(pdata.get("path", ""))
+            try:
+                spec_dirs = get_spec_dirs(project_path)
+            except Exception:  # noqa: BLE001
+                continue
+            for spec_dir in spec_dirs:
+                try:
+                    task = spec_to_task(pid, spec_dir)
+                except Exception:  # noqa: BLE001
+                    continue
+                if task.status not in self._REAPABLE_RUNNING_STATUSES:
+                    continue
+                if self.is_running(task.id):
+                    continue  # a live subprocess build in THIS pod
+                if await self._has_live_kubejob(task.id):
+                    continue  # a live k8s build (durable running row)
+                if not self._task_stale(task.updated_at, now, deadline_seconds):
+                    continue
+                try:
+                    await self._update_plan_status(
+                        project_path, spec_dir.name, "failed", task.id
+                    )
+                    reaped.append(task.id)
+                    _log.info(
+                        "[AgentService] reaped abandoned in_progress task %s "
+                        "(no live build, stale > %ds) (#1001)",
+                        task.id,
+                        deadline_seconds,
+                    )
+                except Exception:  # noqa: BLE001
+                    _log.exception("[AgentService] reap of abandoned task %s failed", task.id)
+        return reaped
+
+    async def _has_live_kubejob(self, task_id: str) -> bool:
+        """True when a ``running`` durable job-state row backs this task."""
+        if not getattr(self, "_store_enabled", False):
+            return False
+        try:
+            state = await self._store().get_state(task_id)
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(state and state.get("lifecycle_state") == "running")
+
+    @staticmethod
+    def _task_stale(updated_at: str, now: Any, deadline_seconds: int) -> bool:
+        """True when ``updated_at`` (spec-dir mtime, ISO) is older than the
+        deadline. An unparseable timestamp reads NOT stale — never reap on doubt."""
+        from datetime import UTC, datetime
+
+        try:
+            dt = datetime.fromisoformat(updated_at)
+        except (ValueError, TypeError):
+            return False
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return (now - dt).total_seconds() > deadline_seconds
 
     async def _stop_kubejob_build(self, task_id: str) -> bool:
         """Stop a build running as a k8s Job (RFC-0016 #671).
