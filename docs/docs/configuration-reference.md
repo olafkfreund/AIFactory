@@ -51,7 +51,10 @@ Scoped MCP keys (`acw_`) gate remote tools with `mcp:read` / `mcp:write`. See
 | Flag | Default | What it does |
 |------|---------|--------------|
 | `AIFACTORY_BASH_SANDBOX` | on | Gate the bubblewrap syscall sandbox. Set off on k3d/Kind nodes where bwrap can't mount `/proc`. |
+| `AIFACTORY_AGENT_SANDBOX` | `fs` (Helm default) | OS-level sandbox around agent bash (#363): binds the worktree read-write, everything else read-only, host PID namespace with a read-only `/proc`. Pure passthrough where bwrap is absent. |
+| `AIFACTORY_AGENT_SANDBOX_PIDNS` | off | Opt into a private PID namespace (`--unshare-pid` + fresh `/proc`); needs privileges bwrap can't get on k3d, so it stays off by default. |
 | `AIFACTORY_EXTRA_ALLOWED_COMMANDS` | (none) | Operator override to extend the dynamic command allowlist. |
+| `AIFACTORY_INJECTION_SCAN` | on | Prompt-injection content-scan gate: `on` / `warn` / `off`. Fail-closed — an unrecognised value stays `on`. |
 
 ## Execution mode
 
@@ -88,6 +91,23 @@ queue-drain paths.
 build, and it interacts with the packed-Job worktree layout. Opt in per issue
 with a label first; flip `AIFACTORY_INTAKE_PARALLEL` for the fleet only once it
 has proven out.
+
+## Model routing & runtimes
+
+Per-stage cost-aware routing (RFC-0014) sends each stage to an appropriately
+sized model tier (`small` / `mid` / `frontier`) instead of every stage paying
+frontier prices, with the RFC-0011 difficulty tier applied as a capability
+floor so a hard task can never route below the model it needs. Every worker in
+the completion event is stamped with the tier it ran at, so the routing
+decision shows up in the cockpit. Measured on three identical tasks the model
+mix cut cost 6.48 → 2.91 USD (55 percent) at the same token volume.
+
+| Flag | Default | What it does |
+|------|---------|--------------|
+| `AIFACTORY_ROUTING_POLICY` | (built-in) | Named per-phase model routing policy. |
+| `AIFACTORY_RUNTIMES` | (only `claude`) | Operator allowlist of non-default runtimes — comma-separated (`codex`, `antigravity`, `ollama`, `ollama-cloud`) or `all`. `claude` is always on; the fan-out runtimes `claude-subagents` / `dynamic-workflow` multiply spend and must be named explicitly. A runtime also needs the contract's `execution.runtime` opt-in. |
+| `AIFACTORY_PROVIDER_FAILOVER` | (built-in chain) | Comma-separated provider failover order tried when the primary provider errors. |
+| `AIFACTORY_GRAPHIFY_ENABLED` | off | Opt into the Graphify Tree-sitter code-graph MCP tool for the coder. The graph is cached in MinIO keyed by repo + commit (`graphify/{repo_slug}/{sha}/graph.json`), so an exact hit skips the rebuild; cache errors never fail a build. |
 
 ## Job-native build & multi-node scheduling
 
