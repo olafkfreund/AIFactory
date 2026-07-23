@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.73 - 2026-07-23
+
+### Fixed
+
+- **Provider coder CLIs baked into the image (#791).** The `install-clis` init container npm-installed claude-code/codex/gemini into an emptyDir at pod boot; on a slow/hung npm registry it ran 8+ min and stalled the whole rollout, stranding in-flight specs. The image now bakes the pinned CLIs into `.npm-global` (already on PATH) at build time so the control-plane boot never touches npm. Mirrors the TFactory/PFactory fix; the gitops init-container removal follows once this image is live.
+
+
 ## 3.6.72 - 2026-07-23
 
 ### Fixed
