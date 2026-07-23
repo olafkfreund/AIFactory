@@ -146,6 +146,57 @@ def test_kubejob_worktree_on_base_still_stamps_build_branch(tmp_path):
     assert payload["source_branch"] == "aifactory/042-x"  # NOT "main"
 
 
+def test_diverged_remote_is_force_repaired_not_left_stale(tmp_path):
+    # #1007: origin's build branch has DIVERGED from the built HEAD (only the base
+    # was ever pushed, so the remote tip is not an ancestor of the build commit).
+    # A plain `git push` is rejected non-fast-forward; swallowing that rejection
+    # (as the old code did) left origin at the base and handed TFactory a tree
+    # WITHOUT the build. The handoff must force the built HEAD onto origin so the
+    # verifier clones the ACTUAL build.
+    import subprocess
+
+    def g(cwd, *a):
+        return subprocess.run(
+            ["git", *a], cwd=str(cwd), capture_output=True, text=True
+        )
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    g(origin, "init", "-q", "--bare")
+
+    proj = tmp_path / "workspaces" / "proj"
+    wt = proj / ".aifactory" / "worktrees" / "tasks" / "084-x"
+    wt.mkdir(parents=True)
+    g(wt, "init", "-q", "-b", "aifactory/084-x")
+    g(wt, "config", "user.email", "t@t")
+    g(wt, "config", "user.name", "t")
+    g(wt, "config", "commit.gpgsign", "false")
+    g(wt, "remote", "add", "origin", str(origin))
+    # Base commit, pushed to origin so origin/aifactory/084-x = base.
+    (wt / "f").write_text("base")
+    g(wt, "add", "-A")
+    g(wt, "commit", "-qm", "base")
+    g(wt, "push", "-q", "origin", "aifactory/084-x")
+    base_sha = g(wt, "rev-parse", "HEAD").stdout.strip()
+    # DIVERGE: amend so local HEAD is a different, non-descendant commit — the
+    # build — which a plain push cannot fast-forward onto the remote base.
+    (wt / "f").write_text("def factorial(n): ...")
+    g(wt, "add", "-A")
+    g(wt, "commit", "-q", "--amend", "-m", "build: factorial")
+    build_sha = g(wt, "rev-parse", "HEAD").stdout.strip()
+    assert build_sha != base_sha
+
+    sd = proj / ".aifactory" / "specs" / "084-x"
+    sd.mkdir(parents=True)
+    url, branch = _git_info_and_push(sd, "084-x")
+
+    assert branch == "aifactory/084-x"
+    # origin now carries the BUILT commit, not the stale base (#1007).
+    remote_tip = g(wt, "ls-remote", str(origin), "aifactory/084-x").stdout.split()[0]
+    assert remote_tip == build_sha, "handoff left origin at the stale base tree"
+    assert remote_tip != base_sha
+
+
 def test_worktree_on_real_build_branch_is_trusted(tmp_path):
     # The legacy path where the worktree genuinely IS on aifactory/<spec_id> keeps
     # working: a non-base branch is used verbatim.
