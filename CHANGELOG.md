@@ -1,6 +1,13 @@
 ## [Unreleased]
 
 
+## 3.6.72 - 2026-07-23
+
+### Fixed
+
+- **Abandoned `in_progress` tasks are reaped so the cockpit stops showing them as running (#1001).** A build's Job can die without a terminal event (killed pod, node drain, control-plane roll, or a cleared job-state row); `reap_kubejob_builds` only touches tasks that still have a durable job-state row, so a task whose row is gone lists as `in_progress` forever. New `reap_abandoned_tasks` (task-level complement, run on a ~60s cadence in the kubejob reconcile loop) marks a task `failed` when its status is `in_progress`, it is not running in this pod's subprocess table, it has no `running` durable job-state row, and its spec dir has been untouched past a generous deadline (600s). The staleness grace prevents false-reaping a just-dispatched or genuinely-live build. Producer-side mirror of TFactory's #95 liveness sweep; downstream CFactory (#186/#187) then reflects reality.
+
+
 ## 3.6.71 - 2026-07-22
 
 ### Fixed
