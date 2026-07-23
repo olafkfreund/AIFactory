@@ -1,6 +1,48 @@
 ## [Unreleased]
 
 
+## 3.6.71 - 2026-07-22
+
+### Fixed
+
+- **Plan-driven builds now auto-hand off to TFactory for testing (RFC-0008).** A PFactory→AIFactory handoff (`POST /api/tasks/from-plan`) built the code and opened a PR but stopped at `ai_review`, never reaching TEST: completion orchestration only hands off when `task_metadata.auto_handover_tfactory` is set, and only the from-ISSUE intake path set it. The from-PLAN handler now sets it too (merging into the execution profile, not clobbering it), gated on the same `AIFACTORY_INTAKE_AUTO_HANDOFF` opt-out and a no-op unless `TFACTORY_BASE_URL` is configured. Verified live: a finished clamp build was accepted by TFactory (`/api/specs/ingest` → 200).
+
+
+## 3.6.70 - 2026-07-22
+
+### Fixed
+
+- **Builds no longer churn on spurious commit failures (#994).** After #991 stopped builds crashing, `commit_in_worktree` surfaced a pre-existing bug: it only treated `nothing to commit` as an empty-commit no-op, but git also says `no changes added to commit` and writes it to STDOUT (not stderr) with a non-zero rc — so a re-run whose worktree already carried the code was misread as a hard failure and the build churned in `coding` without opening a PR. It now matches every empty-commit phrasing across both streams. It also surfaces the real failure detail (rc + stdout + stderr + the git-add result) instead of printing an empty `Commit failed:` when the git error lands on stdout.
+
+
+## 3.6.69 - 2026-07-22
+
+### Fixed
+
+- **Handoff builds no longer die when bwrap can't run, and the recovery path is crash-proof (#991).** A real PFactory→AIFactory build committed nothing, pushed no branch, and exited 1 → human_review. Two causes: (1) `sandbox.is_enabled()` only checked bwrap was INSTALLED, not that it can RUN — on a node that denies unprivileged user namespaces bwrap fails at exec (`No permissions to create a new namespace`), so every wrapped git commit failed. `_bwrap_works()` now probes bwrap once and degrades to an unwrapped passthrough when it can't spawn (same as bwrap absent), warning to enable `kernel.unprivileged_userns_clone=1`; the bash allowlist still applies. (2) With no commits, `recovery._load_attempt_history` re-opened the file after `_init_attempt_history`, but a per-subtask worktree spec_dir is torn down mid-build so `memory/` had vanished — an uncaught `FileNotFoundError` crashed the build. `_init_*` now re-create `memory_dir` before writing.
+
+
+## 3.6.68 - 2026-07-21
+
+### Fixed
+
+- **The empty-build guard no longer blocks every kubejob build (#984).** 3.6.67's guard refused a real build — 7 commits, 5 files, 1247 added lines (TFactory run 5, issue #749, PR #750) — reporting `empty_build`, so verify never ran on perfectly good code. `_build_commit_count` measured the control-plane worktree, but the kubejob path builds inside the k8s Job and leaves that worktree on the BASE branch, exactly as the `_BASE_BRANCHES` comment a few lines above states. Confirmed in the pod: `HEAD=dev`, `count vs origin/dev: 0`. So `git rev-list --count origin/dev..HEAD` returned 0 for every kubejob build, empty or not; it looked correct only because the run it was written for happened to be genuinely empty too, so the right answer came out of a wrong measurement. The count is now trusted only when the worktree HEAD is the branch the build was supposed to produce; anything else is unknowable and fails open. **Scope reduction, stated plainly: empty-build detection therefore no longer fires on the kubejob path (the common one)** — at handoff time the control plane cannot see that build's commits, and detecting it properly needs a remote branch-vs-base comparison with credentials the handoff does not hold and must not take via argv. #984 remains open for that. A missed empty build wastes a verify cycle and leaves a diagnosable negative; a blocked real build silently drops verification from the pipeline, which is strictly worse.
+
+
+## 3.6.67 - 2026-07-21
+
+### Fixed
+
+- **A build that produced no commits is no longer handed to verify (#984).** A build that wrote nothing reported success, opened no PR, and still handed off to TFactory, which then checked the branch out, found no implementation, generated tests against the missing feature and reported a rigorous-looking negative for code that was never written — the same hollow verify as TFactory #729, reached from the build side. Observed live on TFactory #741: `aifactory/005-mcp-health-check-block-metadat` was the same commit as its base (zero commits, zero changed files), the build still finished in four minutes reporting success, and the only signal was `pr_endgame -> pr_not_created`, which reads as a PR hiccup rather than a build that produced nothing. `maybe_auto_handoff_tfactory` now refuses when the build added zero commits on top of the base resolved by `_task_base_branch` (#980). `_build_commit_count` returns `None` when the question cannot be answered locally (no worktree — the RFC-0017 packed path returns outputs via MinIO and leaves the control-plane worktree's gitdir pointer broken), and only an explicit `0` blocks: refusing a build that merely could not be measured would be a worse bug than the one being fixed. The build still reporting `succeeded` for a no-op remains open in #984.
+
+
+## 3.6.66 - 2026-07-20
+
+### Fixed
+
+- **The factory can open PRs against its own repositories again (#980).** Two separate guards compared the worktree's HEAD against a hardcoded `{"main", "master"}` to decide "is this the base branch?". On a repo integrating via `dev` neither fired. In `pr_endgame` that made `git fetch origin dev:dev` fail ("refusing to fetch into branch checked out at ...") so the branch was pushed but no PR opened. In the TFactory handoff it sent `dev` as `source_branch`, so verification checked out a tree **without the built code**, generated tests against the unimplemented feature, and correctly rejected all of them as permanently red -- a hollow verify reported as an ordinary negative result (TFactory #729). Both now compare against the task's actual `base_branch`. Only ever reproducible outside the demo repos, which all use `main`.
+
+
 ## 3.6.65 - 2026-07-20
 
 ### Security
