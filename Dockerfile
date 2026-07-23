@@ -164,6 +164,18 @@ USER nonroot
 RUN mkdir -p /home/nonroot/.npm-global \
  && npm config set prefix /home/nonroot/.npm-global
 
+# Bake the provider coder CLIs into the image so the control-plane boot never
+# npm-installs them (mirrors TFactory #791: the install-clis init container hung
+# 8+ min on a slow registry and stalled the rollout). .npm-global/bin is already
+# on PATH (copilot is already baked below the same way). Versions pinned here
+# (Renovate tracks the Dockerfile).
+RUN npm install -g \
+        @anthropic-ai/claude-code@2.1.215 \
+        @openai/codex@0.144.6 \
+        @google/gemini-cli@0.51.0 \
+ && npm cache clean --force \
+ && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
+
 # GitHub Copilot CLI — pre-installed so the CopilotAgenticProvider finds `copilot`
 # on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
 # The provider requires the CLI present; runtime selection is still gated by
