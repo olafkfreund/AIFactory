@@ -334,7 +334,9 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 key = await _authenticate_acw(f"Bearer {token}")
                 request.state.user = _acw_principal(
                     key,
-                    scoped_service_tokens_enabled=settings.SCOPED_SERVICE_TOKENS_ENABLED,
+                    scoped_service_tokens_enabled=getattr(
+                        settings, "SCOPED_SERVICE_TOKENS_ENABLED", False
+                    ),
                 )
                 return await call_next(request)
             except Exception:
