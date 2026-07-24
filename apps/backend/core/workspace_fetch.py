@@ -189,7 +189,7 @@ def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _usage_key(spec_id), src.read_bytes(), "application/json"
+            _usage_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _USAGE_FILE
@@ -271,7 +271,7 @@ def maybe_push_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _task_logs_key(spec_id), src.read_bytes(), "application/json"
+            _task_logs_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _TASK_LOGS_FILE
@@ -359,7 +359,7 @@ def maybe_push_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _plan_key(spec_id), src.read_bytes(), "application/json"
+            _plan_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _PLAN_FILE

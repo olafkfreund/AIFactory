@@ -215,6 +215,10 @@ class ArtifactStore:
         Postgres / the contract."""
         key = ref.key()
         extra = {"ContentType": content_type} if content_type else {}
+        # Tag every object with its role so MinIO lifecycle rules (which filter by
+        # the `role=<role>` object tag) actually match — untagged uploads leave
+        # evidence retention inert (Factory#329, factory-gitops#67).
+        extra["Tagging"] = f"role={ref.role}"
         self._client().put_object(  # type: ignore[attr-defined]
             Bucket=self.config.bucket, Key=key, Body=_as_bytes(data), **extra
         )
@@ -239,10 +243,22 @@ class ArtifactStore:
             keys.extend(obj["Key"] for obj in page.get("Contents", []))
         return keys
 
-    def put_bytes(self, key: str, data: bytes, content_type: str | None = None) -> str:
+    def put_bytes(
+        self,
+        key: str,
+        data: bytes,
+        content_type: str | None = None,
+        role: str | None = None,
+    ) -> str:
         """Upload raw bytes to an explicit key (no ``ArtifactRef``). Used by the
-        workspace packer, which already has the ref-derived key. Returns the URI."""
+        workspace packer, which already has the ref-derived key. Returns the URI.
+
+        Pass ``role`` for objects the MinIO lifecycle rules govern so they carry
+        the matching ``role=<role>`` tag; keys with no governed role (e.g. the
+        graphify cache) leave it unset (Factory#329)."""
         extra = {"ContentType": content_type} if content_type else {}
+        if role:
+            extra["Tagging"] = f"role={role}"
         self._client().put_object(  # type: ignore[attr-defined]
             Bucket=self.config.bucket, Key=key, Body=data, **extra
         )
@@ -360,7 +376,9 @@ def pack_workspace(
     Replaces co-mounting an RWO worktree PVC: the dispatcher packs (or the prior
     stage packs) the worktree, the Job fetches it by URI."""
     blob = _tar_workspace(Path(src_dir))
-    return store.put_bytes(_workspace_key(ref), blob, content_type="application/gzip")
+    return store.put_bytes(
+        _workspace_key(ref), blob, content_type="application/gzip", role="workspace"
+    )
 
 
 def unpack_workspace(
@@ -467,9 +485,13 @@ class _FakeS3:
 
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.tags: dict[tuple[str, str], str | None] = {}
 
-    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **_: object) -> None:  # noqa: N803 — boto3 kwarg names
+    def put_object(  # noqa: N803 — boto3 kwarg names
+        self, *, Bucket: str, Key: str, Body: bytes, Tagging: str | None = None, **_: object
+    ) -> None:
         self.objects[(Bucket, Key)] = Body
+        self.tags[(Bucket, Key)] = Tagging
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, io.BytesIO]:  # noqa: N803 — boto3 kwarg names
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
