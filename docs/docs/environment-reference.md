@@ -558,7 +558,18 @@ Baked into the static bundle at build time. Read in `apps/frontend-web/src/*`.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). Legacy single-key entry; matches envelopes with no `kid`. See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>` | (none) | no | Keyed rotation entry: registers one verification key under `authority/kid` (kid case-insensitive). Multiple kids can be active at once for zero-downtime rotation. See [Trusted-plan Key Rotation](./compliance/trusted-plan-key-rotation). |
+| `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` | (none) | no | Comma-separated `authority/kid` (or bare `kid`) to revoke; a retired kid is rejected at verify time even if its key material is still configured. |
+
+## Approved-model registry
+
+Read in `apps/backend/model_registry.py`. See [Approved-model Registry](./compliance/model-registry).
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_MODEL_REGISTRY_ENFORCE` | `warn` | no | Registry assertion mode: `warn` (log unregistered/mis-staged model, never block), `deny` (raise and fail the stage), `off` (skip). Default is advisory — routing behaviour is unchanged. |
+| `AIFACTORY_MODEL_REGISTRY` | (built-in) | no | Override the approved-model allowlist: inline JSON or a path to a JSON file. Invalid/unreadable value fails safe to the built-in `DEFAULT_REGISTRY`. |
 
 ## Debug helpers
 

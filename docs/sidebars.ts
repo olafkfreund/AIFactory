@@ -69,7 +69,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Compliance',
       collapsed: true,
-      items: ['compliance/soc2', 'compliance/gdpr'],
+      items: ['compliance/soc2', 'compliance/gdpr', 'compliance/trusted-plan-key-rotation', 'compliance/model-registry', 'compliance/output-dlp'],
     },
     'contributing',
     'roadmap',
