@@ -487,11 +487,15 @@ class _FakeS3:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.tags: dict[tuple[str, str], str | None] = {}
 
-    def put_object(  # noqa: N803 — boto3 kwarg names
-        self, *, Bucket: str, Key: str, Body: bytes, Tagging: str | None = None, **_: object
-    ) -> None:
-        self.objects[(Bucket, Key)] = Body
-        self.tags[(Bucket, Key)] = Tagging
+    def put_object(self, **kwargs: object) -> None:
+        # boto3-style CapWord kwargs (Bucket/Key/Body/Tagging/ContentType); take
+        # them via **kwargs so the fake needs no per-arg N803 suppression.
+        bucket, key = str(kwargs["Bucket"]), str(kwargs["Key"])
+        body = kwargs["Body"]
+        assert isinstance(body, bytes)
+        self.objects[(bucket, key)] = body
+        tagging = kwargs.get("Tagging")
+        self.tags[(bucket, key)] = tagging if isinstance(tagging, str) else None
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, io.BytesIO]:  # noqa: N803 — boto3 kwarg names
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
