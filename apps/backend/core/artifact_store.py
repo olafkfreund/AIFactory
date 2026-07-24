@@ -491,9 +491,7 @@ class _FakeS3:
         # boto3-style CapWord kwargs (Bucket/Key/Body/Tagging/ContentType); take
         # them via **kwargs so the fake needs no per-arg N803 suppression.
         bucket, key = str(kwargs["Bucket"]), str(kwargs["Key"])
-        body = kwargs["Body"]
-        assert isinstance(body, bytes)
-        self.objects[(bucket, key)] = body
+        self.objects[(bucket, key)] = cast(bytes, kwargs["Body"])
         tagging = kwargs.get("Tagging")
         self.tags[(bucket, key)] = tagging if isinstance(tagging, str) else None
 
