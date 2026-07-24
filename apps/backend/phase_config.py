@@ -374,6 +374,26 @@ def get_phase_model(
     phase: Phase,
     cli_model: str | None = None,
 ) -> str:
+    """Resolve a stage's model, then assert it against the approved-model registry.
+
+    Thin wrapper over :func:`_resolve_phase_model` (which owns the full RFC-0014
+    precedence). The registry assertion is advisory by default (warn), a no-op
+    when ``AIFACTORY_MODEL_REGISTRY_ENFORCE=off``, and only blocks in ``deny``
+    mode — so with the default flag this returns exactly what resolution picked.
+    """
+    model = _resolve_phase_model(spec_dir, phase, cli_model)
+    # Lazy import avoids a module-load cycle (model_registry imports this module).
+    from model_registry import enforce_model_registry  # noqa: PLC0415
+
+    enforce_model_registry(model, phase)
+    return model
+
+
+def _resolve_phase_model(
+    spec_dir: Path,
+    phase: Phase,
+    cli_model: str | None = None,
+) -> str:
     """
     Get the resolved model ID for a specific execution phase.
 

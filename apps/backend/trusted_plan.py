@@ -23,8 +23,27 @@ Keys are loaded from the environment: ``AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>``
 (e.g. ``AIFACTORY_TRUSTED_PLAN_KEY_CFACTORY``). The authority name in the
 approval envelope (case-insensitive) selects the key.
 
-See issue #390. Reuses the plan structure from #376 (depends_on, files,
-parallel_safe) and the provenance model from #332.
+Key rotation (#323, #310)
+-------------------------
+A signed envelope MAY carry an optional key id (``kid``). Multiple verification
+keys can be active for one authority at once, so a new key is introduced and an
+old one retired without downtime:
+
+* Keyed env var ``AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>`` registers one
+  key under ``authority/kid`` (kid is case-insensitive). The signer stamps the
+  matching ``kid`` into the envelope and binds it into the signature.
+* The legacy ``AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>`` (no kid) keeps working
+  unchanged as one keyring entry; envelopes without a ``kid`` verify against it
+  exactly as before.
+* ``AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS`` (comma-separated ``authority/kid`` or
+  bare ``kid``) revokes a leaked/expired key: verification rejects any envelope
+  signed with a retired kid even while the key material is still present.
+
+Rotation is therefore: add the new keyed env var, flip signers to the new kid,
+then retire the old kid — the verifier accepts both keys throughout the overlap.
+
+See issues #390, #323, #310. Reuses the plan structure from #376 (depends_on,
+files, parallel_safe) and the provenance model from #332.
 """
 
 from __future__ import annotations
@@ -45,6 +64,15 @@ CONTRACT_VERSION = "2"
 SUPPORTED_CONTRACT_VERSIONS = frozenset({"1", "2"})
 
 _ENV_KEY_PREFIX = "AIFACTORY_TRUSTED_PLAN_KEY_"
+
+# Separates the authority from the key id in a keyed env var
+# (``AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>``). A double underscore is
+# unambiguous: service authority names (cfactory, pfactory) never contain it.
+_KID_SEP = "__"
+
+# Comma-separated retired key ids (``authority/kid`` or bare ``kid``). A retired
+# kid is rejected at verify time even if its key material is still configured.
+_RETIRED_KIDS_ENV = "AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS"
 
 # Reserved key under which the approval envelope is embedded in the plan. It is
 # excluded from the canonical payload so the signature covers the plan content,
@@ -78,19 +106,44 @@ class TrustedPlanVerification:
 
 
 def load_keyring_from_env(env: dict[str, str] | None = None) -> dict[str, str]:
-    """Build {authority(lowercased): key} from ``AIFACTORY_TRUSTED_PLAN_KEY_*``.
+    """Build the verification keyring from ``AIFACTORY_TRUSTED_PLAN_KEY_*``.
 
-    Example: ``AIFACTORY_TRUSTED_PLAN_KEY_CFACTORY=secret`` →
-    ``{"cfactory": "secret"}``. Empty values are ignored.
+    Two entry shapes, both lowercased:
+
+    * ``AIFACTORY_TRUSTED_PLAN_KEY_CFACTORY=secret`` → ``{"cfactory": "secret"}``
+      (legacy authority-only entry; matches envelopes without a ``kid``).
+    * ``AIFACTORY_TRUSTED_PLAN_KEY_CFACTORY__2026Q3=secret`` →
+      ``{"cfactory/2026q3": "secret"}`` (keyed entry; matches an envelope whose
+      ``kid`` is ``2026Q3``).
+
+    Empty values are ignored.
     """
     source = os.environ if env is None else env
     keyring: dict[str, str] = {}
     for name, value in source.items():
-        if name.startswith(_ENV_KEY_PREFIX) and value:
-            authority = name[len(_ENV_KEY_PREFIX) :].strip().lower()
-            if authority:
-                keyring[authority] = value
+        if not (name.startswith(_ENV_KEY_PREFIX) and value):
+            continue
+        suffix = name[len(_ENV_KEY_PREFIX) :].strip().lower()
+        if not suffix:
+            continue
+        if _KID_SEP in suffix:
+            authority, kid = (part.strip() for part in suffix.split(_KID_SEP, 1))
+            if authority and kid:
+                keyring[f"{authority}/{kid}"] = value
+        else:
+            keyring[suffix] = value
     return keyring
+
+
+def load_retired_kids_from_env(env: dict[str, str] | None = None) -> set[str]:
+    """Parse ``AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS`` into a lowercased token set.
+
+    Tokens are either ``authority/kid`` (scoped) or a bare ``kid`` (revoked for
+    every authority). Matching is done against both forms at verify time.
+    """
+    source = os.environ if env is None else env
+    raw = source.get(_RETIRED_KIDS_ENV, "")
+    return {tok.strip().lower() for tok in raw.split(",") if tok.strip()}
 
 
 # =============================================================================
@@ -113,53 +166,107 @@ def _signing_bytes(
     approved_by: str,
     approval_timestamp: str,
     contract_version: str,
+    kid: str | None = None,
 ) -> bytes:
-    """Canonical payload covering both plan content and approval metadata."""
-    payload = "|".join(
-        (
-            _canonical(_plan_core(plan)),
-            approved_by,
-            approval_timestamp,
-            contract_version,
-        )
-    )
-    return payload.encode("utf-8")
+    """Canonical payload covering both plan content and approval metadata.
+
+    The key id, when present, is bound into the payload so a signature cannot be
+    replayed under a different kid. A ``None``/empty kid appends nothing, keeping
+    the bytes byte-identical to a legacy (no-kid) signature.
+    """
+    parts = [
+        _canonical(_plan_core(plan)),
+        approved_by,
+        approval_timestamp,
+        contract_version,
+    ]
+    if kid:
+        parts.append(kid)
+    return "|".join(parts).encode("utf-8")
 
 
-def sign_plan(
+def sign_plan(  # noqa: PLR0913 - a signature needs all of its inputs; kid is optional
     plan: dict,
     *,
     key: str,
     approved_by: str,
     approval_timestamp: str,
     contract_version: str = CONTRACT_VERSION,
+    kid: str | None = None,
 ) -> dict:
     """Produce an approval envelope for ``plan`` (does not mutate ``plan``).
 
     The caller embeds the returned dict under ``plan["approval"]``. This is the
-    PFactory/CFactory side of the handshake; AIFactory only verifies.
+    PFactory/CFactory side of the handshake; AIFactory only verifies. Pass
+    ``kid`` to sign with a specific rotating key id; the id is stamped into the
+    envelope and bound into the signature. Omit it for the legacy single-key
+    handshake (envelope carries no ``kid`` and verifies against the
+    authority-only keyring entry).
     """
     signature = hmac.new(
         key.encode("utf-8"),
-        _signing_bytes(plan, approved_by, approval_timestamp, contract_version),
+        _signing_bytes(plan, approved_by, approval_timestamp, contract_version, kid),
         hashlib.sha256,
     ).hexdigest()
-    return {
+    envelope = {
         "approved_by": approved_by,
         "approval_timestamp": approval_timestamp,
         "plan_contract_version": contract_version,
         "signature": signature,
     }
+    if kid:
+        envelope["kid"] = kid
+    return envelope
+
+
+def _select_verification_key(
+    keyring: dict[str, str],
+    retired_kids: set[str],
+    authority: str,
+    kid: str | None,
+) -> tuple[str | None, str]:
+    """Pick the key for ``(authority, kid)``; ``(None, reason)`` if unusable.
+
+    A ``kid`` selects the keyed entry ``authority/kid`` (case-insensitive) and is
+    rejected first if retired. No ``kid`` uses the legacy authority-only entry.
+    """
+    if kid:
+        kid_l = str(kid).strip().lower()
+        if kid_l in retired_kids or f"{authority}/{kid_l}" in retired_kids:
+            return None, f"key id {kid!r} for authority {authority!r} is retired"
+        keyed = keyring.get(f"{authority}/{kid_l}")
+        if not keyed:
+            return None, (
+                f"no verification key for authority {authority!r} key-id {kid!r} "
+                f"(set {_ENV_KEY_PREFIX}{authority.upper()}{_KID_SEP}{kid_l.upper()})"
+            )
+        return keyed, ""
+
+    legacy = keyring.get(authority)
+    if not legacy:
+        return None, (
+            f"no verification key for authority {authority!r} "
+            f"(set {_ENV_KEY_PREFIX}{authority.upper()})"
+        )
+    return legacy, ""
 
 
 def verify_plan_signature(
-    plan: dict, *, keyring: dict[str, str] | None = None
+    plan: dict,
+    *,
+    keyring: dict[str, str] | None = None,
+    retired_kids: set[str] | None = None,
 ) -> tuple[bool, str]:
     """Verify the embedded approval envelope against the authority's key.
 
-    Returns ``(ok, reason)``. ``reason`` is empty on success.
+    Accepts any active (non-retired) key: an envelope with a ``kid`` verifies
+    against the matching keyed entry, one without a ``kid`` against the legacy
+    authority entry. Returns ``(ok, reason)``; ``reason`` is empty on success.
     """
     keyring = load_keyring_from_env() if keyring is None else keyring
+    retired_kids = (
+        load_retired_kids_from_env() if retired_kids is None else retired_kids
+    )
 
     envelope = plan.get(APPROVAL_KEY)
     if not isinstance(envelope, dict):
@@ -178,13 +285,10 @@ def verify_plan_signature(
         )
 
     authority = str(envelope["approved_by"]).strip().lower()
-    key = keyring.get(authority)
-    if not key:
-        return (
-            False,
-            f"no verification key for authority {authority!r} "
-            f"(set {_ENV_KEY_PREFIX}{authority.upper()})",
-        )
+    kid = envelope.get("kid")
+    key, reason = _select_verification_key(keyring, retired_kids, authority, kid)
+    if key is None:
+        return False, reason
 
     expected = hmac.new(
         key.encode("utf-8"),
@@ -193,6 +297,7 @@ def verify_plan_signature(
             str(envelope["approved_by"]),
             str(envelope["approval_timestamp"]),
             contract,
+            str(kid) if kid else None,
         ),
         hashlib.sha256,
     ).hexdigest()
