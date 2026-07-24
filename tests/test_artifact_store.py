@@ -80,6 +80,18 @@ def test_workspace_pack_unpack_round_trip(tmp_path: Path) -> None:
     assert (dest / "pkg" / "mod.py").read_text() == "X = 1\n"
 
 
+@pytest.mark.parametrize("role", ["evidence", "log"])
+def test_uploads_are_tagged_with_role(role: str) -> None:
+    # MinIO lifecycle rules filter by the `role=<role>` object tag; an untagged
+    # upload matches nothing and evidence retention stays inert (Factory#329).
+    store = a_s._fake_store()
+    ref = a_s.ArtifactRef(
+        service="aifactory", job_id="j", role=role, correlation_key=1
+    )
+    store.put_artifact(ref, b"payload")
+    assert store._s3.tags[(ref.bucket, ref.key())] == f"role={role}"
+
+
 @pytest.mark.parametrize("evil_name", ["../escape.txt", "/etc/passwd"])
 def test_unpack_rejects_path_traversal(tmp_path: Path, evil_name: str) -> None:
     # An archive whose member escapes the destination must be refused before
