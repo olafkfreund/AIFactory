@@ -157,6 +157,33 @@ def _try_decode_jwt(token: str) -> dict | None:
         return None
 
 
+def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
+    """Build the ``request.state.user`` principal for a validated ``acw_`` key.
+
+    Scoped service tokens (Factory#312, step 1 — additive, off by default). When
+    ``scoped_service_tokens_enabled`` is true, the key's EXPLICIT scopes are
+    surfaced on the principal (``scopes`` + ``scoped_service`` markers) so a later
+    phase can gate M2M access per-scope instead of the wildcard's blanket
+    ``is_service`` bypass. The flag only ADDS keys to the dict; ``is_service`` is
+    unchanged, so with the flag off (default) the result is byte-identical to the
+    pre-change behaviour and nothing that reads the principal today is affected.
+
+    See docs/compliance/scoped-service-tokens.md.
+    """
+    principal = {
+        "id": key.user_id,
+        "email": None,
+        "role": "user",
+        "org_id": key.org_id,
+        "api_key_id": key.key_id,
+        "is_service": key.user_id is None,
+    }
+    if scoped_service_tokens_enabled:
+        principal["scopes"] = sorted(key.scopes)
+        principal["scoped_service"] = key.user_id is None
+    return principal
+
+
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     """Middleware to validate bearer token on API routes.
 
@@ -305,14 +332,12 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 from .mcp_remote.auth import authenticate as _authenticate_acw
 
                 key = await _authenticate_acw(f"Bearer {token}")
-                request.state.user = {
-                    "id": key.user_id,
-                    "email": None,
-                    "role": "user",
-                    "org_id": key.org_id,
-                    "api_key_id": key.key_id,
-                    "is_service": key.user_id is None,
-                }
+                request.state.user = _acw_principal(
+                    key,
+                    scoped_service_tokens_enabled=getattr(
+                        settings, "SCOPED_SERVICE_TOKENS_ENABLED", False
+                    ),
+                )
                 return await call_next(request)
             except Exception:
                 # Unknown/disabled/expired acw_ key → fall through to 401.
