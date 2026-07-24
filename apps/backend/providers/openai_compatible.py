@@ -80,16 +80,29 @@ logger = logging.getLogger(__name__)
 
 
 def _env_scrub_outbound_default() -> bool:
-    """Resolve the env-level default for ``scrub_outbound`` (v1.2 #210).
+    """Resolve the deployment default for ``scrub_outbound`` (#320).
 
-    Operators opt into pre-send PII scrubbing via
-    ``LITELLM_AUDIT_SCRUB_OUTBOUND=true``. Default is False so the
-    behaviour stays backward-compatible with v1.1 (audit-row redaction
-    only). Read at provider construction so a single deployment-wide
-    toggle applies to every provider instance without per-call lookup.
+    Outbound PII scrubbing now defaults ON. The built-in redactor set
+    is deliberately high-precision — hyphenated SSN, email, US phone,
+    and Luhn-validated credit cards — and does NOT touch bare code
+    identifiers, so it is safe to run on prompts that legitimately
+    carry source code (this is a code factory; over-broad redaction
+    would corrupt prompts and wreck output quality). Operator-supplied
+    ``extraRedactionPatterns`` are NOT applied outbound (they may be
+    broad); only the built-in safe set is scrubbed before egress — see
+    ``_build_outbound_redactor``.
+
+    ``LITELLM_AUDIT_SCRUB_OUTBOUND`` is the kill-switch: set it to
+    ``false`` / ``0`` / ``no`` / ``off`` to disable outbound scrubbing
+    and restore the pre-#320 behaviour (audit-row redaction only). Any
+    other value — including unset — leaves scrubbing ON. Read once at
+    provider construction so a single deployment-wide toggle applies to
+    every provider instance without a per-call lookup.
     """
     raw = os.environ.get("LITELLM_AUDIT_SCRUB_OUTBOUND", "").strip().lower()
-    return raw in ("true", "1", "yes", "on")
+    # ponytail: kill-switch semantics — only an explicit falsey value
+    # disables; unset means default-on.
+    return raw not in ("false", "0", "no", "off")
 
 
 class ModelNotAllowedError(RuntimeError):
@@ -286,22 +299,33 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
         outbound_prompt = prompt_text
         prompt_outbound_scrubbed = False
         if self._scrub_outbound:
+            # #320 fail-CLOSED: outbound scrub is enabled, so a missing
+            # or crashing redactor must NOT silently fall through to
+            # sending the raw prompt — that silent fail-open is exactly
+            # the PII-leak gap this guard closes. Log ERROR and abort
+            # the call. Operators who want prompts sent unredacted set
+            # the kill-switch LITELLM_AUDIT_SCRUB_OUTBOUND=false.
             try:
-                scrubbed = self._build_outbound_redactor().redact_outbound(prompt_text)
-                if scrubbed != prompt_text:
-                    outbound_prompt = scrubbed
-                    prompt_outbound_scrubbed = True
-                else:
-                    outbound_prompt = scrubbed
-            except Exception:
-                # Failure-safe: a redactor crash MUST NOT block the
-                # call. Fall back to sending the raw prompt + leave
-                # the flag False; the audit hook will log the row.
-                logger.warning(
-                    "OpenAICompatibleProvider: scrub_outbound redaction "
-                    "raised; sending raw prompt",
+                redactor = self._build_outbound_redactor()
+                scrubbed = redactor.redact_outbound(prompt_text)
+            except Exception as exc:
+                logger.error(
+                    "OpenAICompatibleProvider: outbound PII scrub is ENABLED "
+                    "but the redactor is unavailable (%s); refusing to send "
+                    "the prompt unredacted. Set "
+                    "LITELLM_AUDIT_SCRUB_OUTBOUND=false to disable outbound "
+                    "scrubbing.",
+                    exc,
                     exc_info=True,
                 )
+                raise RuntimeError(
+                    "Outbound PII scrub is enabled but the redactor is "
+                    "unavailable; refusing to send an unredacted prompt to "
+                    "the LLM provider (set LITELLM_AUDIT_SCRUB_OUTBOUND=false "
+                    "to disable outbound scrubbing)."
+                ) from exc
+            outbound_prompt = scrubbed
+            prompt_outbound_scrubbed = scrubbed != prompt_text
 
         payload = self._build_payload(outbound_prompt)
         url = f"{self._base_url}{_PATH_CHAT}"
