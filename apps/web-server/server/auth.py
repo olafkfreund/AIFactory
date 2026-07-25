@@ -136,6 +136,35 @@ def _is_legacy_api_token(token: str) -> bool:
     return hmac.compare_digest(token, configured)
 
 
+async def _audit_auth_failure(request: Request, reason: str) -> None:
+    """Record a chained audit event for a rejected credential (Factory#313).
+
+    Emitted only when a token was PRESENTED and rejected (invalid / expired /
+    unknown ``acw_`` key) — not for the unauthenticated "no token" probes, which
+    are high-volume, low-signal noise. The middleware has no request-scoped DB
+    session, so this uses the background writer (now hash-chained). No token
+    material is stored, only a coarse reason + path.
+
+    Fail-safe: any failure here is swallowed so audit logging can never turn a
+    401 into a 500.
+
+    ponytail: unbounded 1 write per rejected token; a credential-stuffing flood
+    amplifies to one chained DB write each. Add IP-based rate-limiting/coalescing
+    here if that write volume ever bites.
+    """
+    try:
+        from .services.audit_service import ACTION_AUTH_FAILURE, log_audit_event_bg
+
+        await log_audit_event_bg(
+            action=ACTION_AUTH_FAILURE,
+            resource_type="auth",
+            details={"reason": reason, "path": request.url.path},
+            ip=request.client.host if request.client else None,
+        )
+    except Exception:  # pragma: no cover - defensive; bg already swallows
+        logger.warning("Failed to record auth-failure audit event", exc_info=True)
+
+
 def _try_decode_jwt(token: str) -> dict | None:
     """Attempt to decode a JWT access token.
 
@@ -343,7 +372,9 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 # Unknown/disabled/expired acw_ key → fall through to 401.
                 pass
 
-        # Neither JWT, legacy token, nor a valid acw_ key matched
+        # Neither JWT, legacy token, nor a valid acw_ key matched. A credential
+        # was presented and rejected — record it (Factory#313). Fail-safe.
+        await _audit_auth_failure(request, reason="invalid_token")
         return JSONResponse(
             {"error": "Invalid token"},
             status_code=status.HTTP_401_UNAUTHORIZED,
