@@ -20,10 +20,30 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from security.output_dlp import scan_outbound
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _screen_commit_message(message: str, spec_name: str) -> str:
+    """Run output-side DLP over an agent-authored commit message (#323).
+
+    Warn mode (default) logs a masked audit line and returns the message
+    unchanged; block mode withholds it so no secret leaves in the commit.
+    ``scan_outbound`` never raises, so this cannot break message generation.
+    """
+    result = scan_outbound(message, f"commit-message:{spec_name}")
+    if result.blocked:
+        logger.error(
+            "Commit message blocked by output DLP (%s): %s",
+            spec_name,
+            result.summary(),
+        )
+        return "chore: commit message withheld by output DLP"
+    return message
 
 
 def _safe_spec_dir(project_dir: Path, spec_name: str) -> Path | None:
@@ -321,7 +341,7 @@ def generate_commit_message_sync(
             result = asyncio.run(_call_claude(prompt))
 
         if result:
-            return result
+            return _screen_commit_message(result, spec_name)
     except Exception as e:
         logger.error(f"Failed to generate commit message: {e}")
 
@@ -336,7 +356,7 @@ def generate_commit_message_sync(
         issue_num = github_issue or spec_context.get("github_issue")
         fallback += f"\n\nFixes #{issue_num}"
 
-    return fallback
+    return _screen_commit_message(fallback, spec_name)
 
 
 async def generate_commit_message(
@@ -380,7 +400,7 @@ async def generate_commit_message(
     try:
         result = await _call_claude(prompt)
         if result:
-            return result
+            return _screen_commit_message(result, spec_name)
     except Exception as e:
         logger.error(f"Failed to generate commit message: {e}")
 
@@ -395,4 +415,4 @@ async def generate_commit_message(
         issue_num = github_issue or spec_context.get("github_issue")
         fallback += f"\n\nFixes #{issue_num}"
 
-    return fallback
+    return _screen_commit_message(fallback, spec_name)

@@ -39,6 +39,7 @@ except ImportError:
     tool = None  # type: ignore[assignment]
 
 from security.identifiers import validate_task_id
+from security.output_dlp import scan_outbound
 
 from ..http_client import MCPHTTPError, request
 
@@ -55,6 +56,33 @@ def _format_error(exc: Exception) -> dict[str, Any]:
         "content": [{"type": "text", "text": f"Error: {exc}"}],
         "isError": True,
     }
+
+
+def _screen_pr_text(title: str, body: str, task_id: str) -> dict[str, Any] | None:
+    """Output-side DLP for an agent-authored PR title+body (#323).
+
+    Returns an error response to abort PR creation when DLP is in ``block`` mode
+    and a secret/PII pattern hits; otherwise (warn/off, or no hit) returns
+    ``None`` and the caller proceeds. The hit is always logged (masked) by
+    ``scan_outbound``, which never raises — DLP cannot break PR creation.
+    """
+    for text, label in ((title, "pr-title"), (body, "pr-body")):
+        result = scan_outbound(text, f"{label}:{task_id}")
+        if result.blocked:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Error: PR creation blocked by output DLP — the "
+                            f"{label} contains a potential secret/PII: "
+                            f"{result.summary()}. Remove it and retry."
+                        ),
+                    }
+                ],
+                "isError": True,
+            }
+    return None
 
 
 def _format_json(data: Any) -> dict[str, Any]:
@@ -523,6 +551,13 @@ def create_task_control_tools() -> list:
             payload["title"] = args["title"]
         if args.get("body"):
             payload["body"] = args["body"]
+        # Output-side DLP (#323): scan agent-authored PR title+body before it
+        # leaves the boundary. Default warn+log; AIFACTORY_OUTPUT_DLP=block refuses.
+        dlp = _screen_pr_text(
+            payload.get("title", ""), payload.get("body", ""), task_id
+        )
+        if dlp is not None:
+            return dlp
         try:
             raw = await request(
                 "POST", f"/api/tasks/{task_id}/worktree/create-pr", json=payload
