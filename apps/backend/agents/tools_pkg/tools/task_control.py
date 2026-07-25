@@ -102,7 +102,7 @@ _HEAVY_FIELDS_TO_TRUNCATE = (
 _HEAVY_FIELD_CAP = 2000
 
 
-def _lean_task(task: dict) -> dict:
+def _lean_task(task: dict[str, Any]) -> dict[str, Any]:
     """Strip / truncate heavy fields from a task detail payload."""
     lean = dict(task)
     for field in _HEAVY_FIELDS_TO_TRUNCATE:
@@ -115,7 +115,7 @@ def _lean_task(task: dict) -> dict:
     return lean
 
 
-def create_task_control_tools() -> list:
+def create_task_control_tools() -> list[Any]:
     """Create the 8 task-control tools.
 
     Returns a list of tool functions decorated with @tool — callers pass
