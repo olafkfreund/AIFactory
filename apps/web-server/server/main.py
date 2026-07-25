@@ -52,6 +52,7 @@ from .routes import (
     skills,
     tasks,
     terminal,
+    well_known,
 )
 from .routes import cli_accounts as cli_accounts_routes
 from .routes import llm_endpoints as llm_endpoints_routes
@@ -506,6 +507,14 @@ def create_app() -> FastAPI:
     # consults this on load to know whether to render the Live Agent
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
+
+    # Agent-skills manifest (RFC-0019 §3.4) — always mounted, and readable
+    # WITHOUT auth: an agent enumerates what this service can do before it
+    # holds a token.  TokenAuthMiddleware only guards /api/*, so the
+    # /.well-known/ path is exempt by construction.  Registered ahead of the
+    # SPA catch-all "/" static mount so it resolves to JSON, not index.html.
+    app.include_router(well_known.router)
+
     app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
     # Copilot-facing MCP server at /mcp (JSON-RPC 2.0, POST-only).
