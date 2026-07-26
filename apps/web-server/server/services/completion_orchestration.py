@@ -351,6 +351,10 @@ async def run_terminal_completion(
                             branch=ctx["branch"],
                             base=ctx["base"],
                             repo=ctx["repo"],
+                            # RFC-0020 3.5: the tenant's declared host. The
+                            # endgame refuses off GitHub rather than running
+                            # `gh` against a repo that is not there.
+                            provider=ctx.get("provider", "github"),
                             auto_merge=is_auto_merge_enabled(project_path),
                             reviewer=_reviewer,
                             review_fn=_review_fn,

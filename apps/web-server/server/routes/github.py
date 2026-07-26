@@ -962,12 +962,32 @@ def _use_provider_api(projectId: str) -> bool:
     )
 
 
-def _get_project_provider(projectId: str):
-    """Get the appropriate GitProvider instance for the project based on settings."""
+def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
+    """Get the appropriate GitProvider instance for the project.
+
+    ``repo_ref`` is the task contract's provider-qualified repo reference
+    (RFC-0020 3.5, Factory#366): ``owner/repo``, ``gitlab:group/project``,
+    ``azure_devops:org/project/repo``. When it names a host, THAT host wins over
+    the project's ``gitProvider`` setting, and its project path wins over
+    ``gitRepo``.
+
+    Why the contract outranks the setting, rather than the other way round: the
+    setting defaults to ``github`` for any project nobody has configured by hand,
+    which is most of them on the intake path. A default silently overriding an
+    explicit declaration is exactly how a GitLab tenant's run came to open a
+    GitHub PR. An ABSENT reference changes nothing — the project's settings are
+    the answer, as they were before this phase.
+
+    The credential and the host still come from the project's settings either
+    way. A declaration says WHERE the work lives; it does not carry a token, and
+    it must not be able to.
+    """
     # Ensure backend is in Python path
     backend_path = FilePath(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
+
+    from repo_ref import parse_repo_ref
 
     from .projects import load_projects
 
@@ -980,6 +1000,11 @@ def _get_project_provider(projectId: str):
     provider_type = settings.get("gitProvider", "github").lower()
     project_path = project.get("path", "")
 
+    declared = parse_repo_ref(repo_ref)
+    declared_repo = ""
+    if declared is not None:
+        provider_type, declared_repo = declared
+
     # Import factory and protocol
     from runners.github.providers.factory import get_provider
     from runners.github.providers.protocol import ProviderType
@@ -990,6 +1015,11 @@ def _get_project_provider(projectId: str):
     org = settings.get("gitOrg")
     proj_name = settings.get("gitProject")
     repo_name = settings.get("gitRepo")
+
+    # A declared repo outranks the configured one for the same reason the
+    # declared provider does: the contract knows which repository this task is
+    # for, and gitRepo is a project-wide default that may name another.
+    repo_name = declared_repo or repo_name
 
     # If repo name is not configured, try to auto-detect from the folder or settings
     if not repo_name:

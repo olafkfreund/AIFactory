@@ -11582,7 +11582,10 @@ components:
           - type: string
           - type: 'null'
           title: Repo
-          description: owner/repo (informational)
+          description: 'The task contract''s repo reference, optionally provider-qualified (RFC-0020 3.5):
+            ''owner/repo'' | ''gitlab:group/project'' | ''azure_devops:org/project/repo''. Decides which
+            git HOST this build belongs to, outranking the project''s gitProvider setting, and is recorded
+            on the spec so the PR endgame honours it too.'
         issue_number:
           anyOf:
           - type: integer
