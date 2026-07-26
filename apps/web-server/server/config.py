@@ -8,7 +8,7 @@ import logging
 import secrets
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .paths import get_data_dir, get_data_file
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     SSL_KEYFILE: str = ""  # Path to SSL private key
 
     # Authentication
-    API_TOKEN: str = ""  # Will generate default if not set
+    API_TOKEN: str = Field(default="", repr=False)  # Will generate default if not set
     DISABLE_AUTH: bool = False  # Set to True to disable auth (dev only)
 
     # Scoped service tokens (Factory#312, step 1 — additive, off by default).
@@ -125,7 +125,7 @@ class Settings(BaseSettings):
     SCOPED_SERVICE_TOKENS_ENABLED: bool = False
 
     # JWT Configuration
-    JWT_SECRET: str = ""  # Auto-generated if not set
+    JWT_SECRET: str = Field(default="", repr=False)  # Auto-generated if not set
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     JWT_ALGORITHM: str = "HS256"
