@@ -48,7 +48,7 @@ RUN mkdir -p apps/web-server/static \
 # Stage 2: Runtime (Chainguard Python, dev variant for now — minimal split
 # happens in P0.5 once we know what the runtime *actually* needs)
 # ---------------------------------------------------------------------------
-FROM cgr.dev/chainguard/python:latest-dev@sha256:0416c4863f2d0fb0e2e58d125e03b73cf4876cb02efc7927fd4a248a04f78c24 AS runtime
+FROM cgr.dev/chainguard/python:latest-dev@sha256:7a568bcee42666f73f041645a41c913ce1d442f4c24cf6019bc543a90820e531 AS runtime
 
 USER root
 
@@ -169,10 +169,24 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # 8+ min on a slow registry and stalled the rollout). .npm-global/bin is already
 # on PATH (copilot is already baked below the same way). Versions pinned here
 # (Renovate tracks the Dockerfile).
+#
+# `install.cjs` is NOT redundant with the npm postinstall (Factory#383). The
+# postinstall downloads the 275 MB platform-native binary correctly, but leaves
+# `bin/claude.exe` as the 11-line stub that ships in the package — a script whose
+# whole body prints "native binary not installed" and exits 1. So `claude` on
+# PATH was broken in every control-plane pod while the binary underneath it ran
+# fine, and the stub's own error blames --ignore-scripts / --omit=optional,
+# neither of which is used here. Re-running install.cjs completes the swap.
+#
+# `claude --version` is the point of the fix, not decoration: this shipped broken
+# because nothing asserted the CLI works. Full path, since PATH is set for the
+# runtime user rather than for RUN.
 RUN npm install -g \
         @anthropic-ai/claude-code@2.1.215 \
         @openai/codex@0.144.6 \
         @google/gemini-cli@0.51.0 \
+ && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
+ && /home/nonroot/.npm-global/bin/claude --version \
  && npm cache clean --force \
  && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
 
