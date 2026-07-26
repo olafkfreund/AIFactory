@@ -162,6 +162,12 @@ def test_a_gitlab_tenant_cannot_reach_the_github_auto_pr_path(provider):
             repo="platform/pipelines",
             provider=provider,
             auto_merge=True,
+            # Not needed to pass — the guard returns long before any review. It
+            # is here so that REMOVING the guard fails in seconds instead of
+            # hanging: without it the mutated path opens the PR and enters the
+            # verdict watch, which never resolves, so a regression would burn a
+            # CI job to its timeout rather than going red on the assertion below.
+            review_fn=lambda: pe.ReviewState("approved"),
             runner=runner,
             background=False,
         )
