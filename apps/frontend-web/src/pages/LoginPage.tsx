@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuthStore } from '../stores/auth-store';
 import { getAuthToken } from '../lib/auth';
 
