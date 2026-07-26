@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: AIFactory Web API
   description: Web API for AIFactory — self-hosted AI task management + agent orchestration
-  version: 3.6.72
+  version: 3.6.73
 paths:
   /api/auth/register:
     post:
@@ -8258,6 +8258,22 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Get Capabilities Api Capabilities Get
+  /.well-known/agent-skills/index.json:
+    get:
+      tags:
+      - well-known
+      summary: Agent Skills Index
+      description: Serve the RFC-0019 §3.4 service manifest. Public by design — no auth.
+      operationId: agent_skills_index__well_known_agent_skills_index_json_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+                title: Response Agent Skills Index  Well Known Agent Skills Index Json Get
   /api/search:
     get:
       tags:
@@ -9882,7 +9898,9 @@ components:
         api_key:
           type: string
           minLength: 5
+          format: password
           title: Api Key
+          writeOnly: true
       type: object
       required:
       - api_key
@@ -11035,9 +11053,11 @@ components:
         token:
           type: string
           minLength: 1
+          format: password
           title: Token
           description: The Personal Access Token. Never logged, encrypted at rest, cannot be retrieved
             after creation.
+          writeOnly: true
         kind:
           type: string
           title: Kind
@@ -11307,6 +11327,8 @@ components:
           anyOf:
           - type: string
             maxLength: 512
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Api Key
         default_model:
@@ -11381,6 +11403,8 @@ components:
         api_key:
           anyOf:
           - type: string
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Api Key
         headers:
@@ -11441,6 +11465,8 @@ components:
           anyOf:
           - type: string
             maxLength: 512
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Api Key
         default_model:
@@ -12029,7 +12055,9 @@ components:
           title: Email
         password:
           type: string
+          format: password
           title: Password
+          writeOnly: true
       type: object
       required:
       - email
@@ -12040,6 +12068,8 @@ components:
         refresh_token:
           anyOf:
           - type: string
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Refresh Token
       type: object
@@ -12243,6 +12273,8 @@ components:
         apiKey:
           anyOf:
           - type: string
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Apikey
           description: Optional API key for authentication
@@ -12694,7 +12726,9 @@ components:
       properties:
         refresh_token:
           type: string
+          format: password
           title: Refresh Token
+          writeOnly: true
       type: object
       required:
       - refresh_token
@@ -12723,7 +12757,9 @@ components:
           type: string
           maxLength: 128
           minLength: 8
+          format: password
           title: Password
+          writeOnly: true
       type: object
       required:
       - email
@@ -12920,7 +12956,9 @@ components:
       properties:
         token:
           type: string
+          format: password
           title: Token
+          writeOnly: true
         email:
           anyOf:
           - type: string
@@ -14107,11 +14145,15 @@ components:
         openaiApiKey:
           anyOf:
           - type: string
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Openaiapikey
         voyageApiKey:
           anyOf:
           - type: string
+            format: password
+            writeOnly: true
           - type: 'null'
           title: Voyageapikey
         ollamaBaseUrl:
@@ -14297,7 +14339,9 @@ components:
           title: Provider
         apiKey:
           type: string
+          format: password
           title: Apikey
+          writeOnly: true
       type: object
       required:
       - provider
@@ -14402,7 +14446,9 @@ components:
           title: Baseurl
         apiKey:
           type: string
+          format: password
           title: Apikey
+          writeOnly: true
       type: object
       required:
       - baseUrl
