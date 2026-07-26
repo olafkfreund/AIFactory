@@ -132,8 +132,13 @@ async def test_labels_override_payload_labels(project):
 async def test_provider_fetch_path(project, monkeypatch):
     _, _ = project
 
-    async def _fake_fetch(project_id, issue_number):
+    seen = {}
+
+    async def _fake_fetch(project_id, issue_number, *, repo_ref=None):
+        # repo_ref (RFC-0020 3.5, Factory#366): the issue is FETCHED from the
+        # host the build will be pushed to, so the two cannot disagree.
         assert issue_number == 42
+        seen["repo_ref"] = repo_ref
         return {
             "number": 42,
             "title": "From provider",
@@ -144,10 +149,14 @@ async def test_provider_fetch_path(project, monkeypatch):
         }
 
     monkeypatch.setattr(from_issue, "_fetch_issue_via_provider", _fake_fetch)
-    req = FromIssueRequest(project_id="p", provider="gitlab", issue_number=42)
+    req = FromIssueRequest(
+        project_id="p", provider="gitlab", repo="platform/pipelines", issue_number=42
+    )
     res = await create_from_issue(req)
     assert res["tier"] == "medium"
     assert res["issue_number"] == 42
+    # The declared host reaches the fetch, qualified. It used to be dropped.
+    assert seen["repo_ref"] == "gitlab:platform/pipelines"
 
 
 async def test_redelivered_issue_is_deduplicated(project):
