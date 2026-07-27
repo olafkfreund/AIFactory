@@ -91,7 +91,22 @@ class WorktreeSyncMixin:
         # the agent's worktree (control-plane #259, QA review-cycle #260) and a
         # worktree copy must never reset or replay them.
 
-        # Directories to sync (will copy entire directory tree)
+        # Directories to sync (merged into the destination, see below).
+        #
+        # TWO mechanisms write `memory/` back, deliberately, and they do
+        # different jobs (#1033):
+        #
+        #   * THIS one is a VISIBILITY MIRROR. It ticks every few seconds while
+        #     an in-pod build runs, so `routes/context.py` can show session
+        #     insights before the build finishes. It only covers builds this
+        #     process monitors.
+        #   * `agents/utils.sync_memory_to_source` is the DURABLE WRITE. It runs
+        #     inside the build itself, so it also covers Job-dispatched builds
+        #     that no monitor is watching, and it is what makes memory survive
+        #     worktree teardown (#1030).
+        #
+        # Both MERGE, so running both is harmless and order does not matter. If
+        # a third is ever added, make it merge too — see the note on the loop.
         dirs_to_sync = [
             "memory",  # Session insights and memory data
         ]
@@ -199,16 +214,28 @@ class WorktreeSyncMixin:
                 f"[AgentService] Failed to scan worktree spec dir for extra files: {e}"
             )
 
-        # Sync directories
+        # Sync directories — MERGE, never replace (#1033).
+        #
+        # This used to `rmtree(dst_dir)` and copy fresh. For `memory/` that is a
+        # data-loss bug: the destination is a MEMORY STORE that accumulates
+        # across tasks, and wiping it discards anything written since this
+        # worktree was seeded. Under RFC-0016 concurrency two tasks can build the
+        # same spec, and the slower one's replace would silently delete the
+        # faster one's session insights — the exact failure #1030 was about.
+        #
+        # Replace was safe only under the assumption that the worktree copy is
+        # always a superset of the destination, which holds at seed time and
+        # stops holding the moment anything else writes.
+        #
+        # Merging costs nothing here: every file this syncs is either identical
+        # or newer in the worktree, so copy2's overwrite still wins for the
+        # files this build owns.
         for dirname in dirs_to_sync:
             src_dir = worktree_spec / dirname
             dst_dir = main_spec / dirname
             if src_dir.exists() and src_dir.is_dir():
                 try:
-                    # Remove existing and copy fresh
-                    if dst_dir.exists():
-                        shutil.rmtree(dst_dir)
-                    shutil.copytree(src_dir, dst_dir)
+                    shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
                     synced_count += 1
                 except Exception as e:
                     logger.warning(
