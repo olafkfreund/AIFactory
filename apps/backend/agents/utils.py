@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from memory.paths import project_memory_dir
+from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         return False
 
 
-def sync_memory_to_project(spec_dir: Path, project_dir: Path | None) -> bool:
+def sync_memory_to_project(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     """Mirror a spec's ``memory/`` into the PROJECT's durable store (RFC-0021 P0).
 
     Spec-scoped memory survives worktree teardown (#1030) and then has almost
@@ -258,15 +258,30 @@ def sync_memory_to_project(spec_dir: Path, project_dir: Path | None) -> bool:
     reason :func:`sync_memory_to_source` does not: a build that produced working
     code must not fail because its memory could not be filed.
     """
-    if not project_dir:
+    if not source_spec_dir:
         return False
 
     memory_dir = spec_dir / "memory"
     if not memory_dir.is_dir():
         return False
 
+    # Anchored on source_spec_dir, NOT project_dir. Inside a build Job,
+    # `project_dir` is the EPHEMERAL clone under the pod's emptyDir, so pooling
+    # there writes to a filesystem that dies with the pod — the original #1030
+    # bug one level out, and a live Job build is the only thing that revealed it
+    # (the first release wrote 0 files while its neighbour wrote 6).
+    #
+    # source_spec_dir is `<project>/.aifactory/specs/<id>` on the co-mounted
+    # durable volume — proven durable by that same run — so its grandparent is
+    # the project's `.aifactory/` and the store belongs beside `specs/`.
+    project_root_aifactory = source_spec_dir.parent.parent
+
     try:
-        shutil.copytree(memory_dir, project_memory_dir(project_dir), dirs_exist_ok=True)
+        shutil.copytree(
+            memory_dir,
+            project_memory_dir_from_aifactory(project_root_aifactory),
+            dirs_exist_ok=True,
+        )
         return True
     except (OSError, shutil.Error) as e:
         logger.warning(f"Failed to sync memory to the project store: {e}")
