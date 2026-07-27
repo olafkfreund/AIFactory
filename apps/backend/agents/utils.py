@@ -185,6 +185,59 @@ def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         return False
 
 
+def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
+    """Sync the spec's ``memory/`` tree from the worktree back to the source.
+
+    **The bug this closes (#1030): agent memory never survived a task.** Session
+    insights are written to ``<worktree>/.aifactory/specs/<spec>/memory/``, and
+    :func:`sync_plan_to_source` copies ``implementation_plan.json`` and nothing
+    else — so ``memory/`` died with the worktree. Every one of the 8 insight
+    files on the live cluster sat inside a worktree; none had ever reached a
+    source spec directory.
+
+    That made the whole subsystem inert across tasks. Sessions accumulate memory
+    *within* one task (they share a worktree), then it is thrown away, so the
+    second pass over a codebase costs exactly what the first did — the opposite
+    of what memory exists for, and of RFC-0010's premise.
+
+    **Why syncing here is sufficient.** ``copy_spec_to_worktree`` seeds each new
+    worktree with ``shutil.copytree(source_spec_dir, target_spec_dir)`` — the
+    WHOLE spec directory. So once memory reaches the source, the next task's
+    worktree is seeded with it and the loop closes. No read-path change is
+    needed, and adding one would be the wrong fix.
+
+    Mirrors rather than replaces: files are copied worktree → source, and
+    nothing in the source is deleted. A stale source file whose worktree
+    counterpart vanished is left alone, because losing memory is the failure
+    mode being fixed and this function should never be able to cause it.
+
+    Returns True if anything was copied.
+    """
+    if not source_spec_dir:
+        return False
+
+    if spec_dir.resolve() == source_spec_dir.resolve():
+        return False  # not in worktree mode; already writing to the durable path
+
+    memory_dir = spec_dir / "memory"
+    if not memory_dir.is_dir():
+        return False
+
+    target = source_spec_dir / "memory"
+    try:
+        # dirs_exist_ok so a re-sync merges into an existing store rather than
+        # failing; copy2 preserves mtimes, which the expiry policy in RFC-0021
+        # will want to trust.
+        shutil.copytree(memory_dir, target, dirs_exist_ok=True)
+        logger.debug(f"Synced memory to source: {target}")
+        return True
+    except Exception as e:
+        # Never fatal: a build that produced working code must not fail because
+        # its memory could not be filed.
+        logger.warning(f"Failed to sync memory to source: {e}")
+        return False
+
+
 def record_subtask_completion(
     subtask_id: str, plan_path: Path, source_spec_dir: Path | None
 ) -> bool:
