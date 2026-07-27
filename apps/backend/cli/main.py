@@ -502,6 +502,7 @@ def main() -> None:
     # for planning-only runs (no build branch yet).
     if not args.stop_after_planning:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_push_memory,
             maybe_push_plan,
             maybe_push_task_logs,
             maybe_push_usage,
@@ -515,6 +516,12 @@ def main() -> None:
         # packed path never touches, sees 0, and escalates every green build to
         # human_review (#287 guard on stale input).
         maybe_push_plan(spec_dir, spec_dir.name)
+        # #1038: the SAME gap, for the spec's memory/ tree. Session insights are
+        # written into the Job's ephemeral /work and, without this, die with the
+        # pod — which is why the fleet's memory never accumulated and why three
+        # earlier fixes (#1031/#1036/#1037) all failed: each assumed /work was
+        # durable. It is an emptyDir on the packed path (core/job_dispatch.py).
+        maybe_push_memory(spec_dir, spec_dir.name)
         # Same packed-path propagation gap: token_usage.json is written here in the
         # Job's ephemeral /work but the control-plane completion emitter reads the
         # data-PVC spec dir. Push it so CFactory gets the token usage (#190).
