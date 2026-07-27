@@ -211,8 +211,15 @@ def test_memory_is_pushed_from_the_worktree_when_the_sync_never_ran(
     spec = tmp_path / "work" / ".aifactory" / "specs" / "088"
     spec.mkdir(parents=True)  # no memory/ here — the sync never ran
     wt_spec = (
-        tmp_path / "work" / ".aifactory" / "worktrees" / "tasks" / "088"
-        / ".aifactory" / "specs" / "088"
+        tmp_path
+        / "work"
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "088"
+        / ".aifactory"
+        / "specs"
+        / "088"
     )
     _insight(wt_spec, "session_001.json", '"stranded in the worktree"')
 
@@ -231,8 +238,15 @@ def test_the_spec_dir_copy_wins_over_the_worktree(tmp_path, monkeypatch):
     spec = tmp_path / "work" / ".aifactory" / "specs" / "088"
     _insight(spec, "authoritative.json", '"synced"')
     wt_spec = (
-        tmp_path / "work" / ".aifactory" / "worktrees" / "tasks" / "088"
-        / ".aifactory" / "specs" / "088"
+        tmp_path
+        / "work"
+        / ".aifactory"
+        / "worktrees"
+        / "tasks"
+        / "088"
+        / ".aifactory"
+        / "specs"
+        / "088"
     )
     _insight(wt_spec, "stale.json", '"worktree"')
 

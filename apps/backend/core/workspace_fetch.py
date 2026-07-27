@@ -440,7 +440,6 @@ def _memory_key(spec_id: str) -> str:
     )
 
 
-
 def _memory_source(spec_dir: Path) -> Path | None:
     """The spec's non-empty ``memory/``, or None.
 
@@ -468,6 +467,7 @@ def _memory_source(spec_dir: Path) -> Path | None:
             _log.info("[workspace_fetch] memory found in the worktree copy: %s", cand)
             return cand
     return None
+
 
 def maybe_push_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Push the Job's ``memory/`` tree to object storage (#1038).
