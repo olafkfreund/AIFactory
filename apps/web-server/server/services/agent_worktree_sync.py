@@ -30,6 +30,33 @@ _log = logging.getLogger(__name__)
 _USAGE_EMIT_WINDOW_S = 15.0
 
 
+
+def _safe_spec_component(spec_id: str) -> str:
+    """``spec_id`` as a single path component, or raise (#1033 / CodeQL py/path-injection).
+
+    ``spec_id`` reaches this module from the API and is interpolated into two
+    filesystem paths. Unchecked, a value like ``../../etc`` walks out of the
+    project and this service then copies files into — or reads them from —
+    somewhere it was never meant to touch.
+
+    A spec id is a directory NAME, never a path, so the barrier is exact rather
+    than a heuristic: reject anything containing a separator or a parent
+    reference, and anything absolute. That is a property of the value, so it
+    cannot be defeated by encoding tricks the way a blocklist can.
+
+    Raises ValueError rather than sanitising silently: a spec id that needed
+    rewriting is a caller bug or an attack, and quietly building a different
+    path than the caller asked for is how those go unnoticed.
+    """
+    if not spec_id or spec_id in {".", ".."}:
+        raise ValueError(f"invalid spec id: {spec_id!r}")
+    if "/" in spec_id or "\\" in spec_id or "\x00" in spec_id:
+        raise ValueError(f"spec id must be a single path component: {spec_id!r}")
+    if Path(spec_id).name != spec_id or Path(spec_id).is_absolute():
+        raise ValueError(f"spec id must be a single path component: {spec_id!r}")
+    return spec_id
+
+
 class WorktreeSyncMixin:
     """Worktree-to-main spec-dir file sync for AgentService."""
 
@@ -59,6 +86,9 @@ class WorktreeSyncMixin:
         logger = logging.getLogger(__name__)
 
         # Paths
+        # Barrier BEFORE the value reaches any path expression.
+        spec_id = _safe_spec_component(spec_id)
+
         worktree_spec = (
             project_path
             / ".aifactory"

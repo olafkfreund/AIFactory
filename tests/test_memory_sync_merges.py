@@ -139,3 +139,43 @@ def test_both_mechanisms_merge(mechanism, tmp_path):
         shutil.copytree(wt / "memory", source / "memory", dirs_exist_ok=True)
 
     assert _names(source) == {"existing.json", "incoming.json"}
+
+
+# ── path-injection barrier (CodeQL py/path-injection) ────────────────────────
+
+
+def test_a_spec_id_cannot_escape_the_project():
+    """MUTATION GUARD: spec_id reaches this module from the API and is
+    interpolated into two filesystem paths. Unchecked, `../../etc` walks out of
+    the project and the sync copies into somewhere it was never meant to touch.
+    """
+    from server.services.agent_worktree_sync import _safe_spec_component
+
+    for bad in ("../../etc", "..", ".", "a/b", "/abs", "", "a\\b", "a\x00b"):
+        with pytest.raises(ValueError):
+            _safe_spec_component(bad)
+
+
+def test_a_normal_spec_id_is_unchanged():
+    from server.services.agent_worktree_sync import _safe_spec_component
+
+    assert _safe_spec_component("001-fix-bug") == "001-fix-bug"
+
+
+def test_the_barrier_is_actually_applied_before_any_path_is_built():
+    """MUTATION GUARD: a barrier that exists but is not called is decoration.
+
+    Deleting the call site is a one-line refactor that leaves every direct test
+    of `_safe_spec_component` green while the path-injection returns — I found
+    exactly that by mutating this file, which is why the assertion is on the
+    CALL and its position rather than on the helper.
+    """
+    src = (
+        _ROOT / "apps" / "web-server" / "server" / "services" / "agent_worktree_sync.py"
+    ).read_text()
+    body = src.split("async def _sync_worktree_files", 1)[1]
+
+    call = body.find("_safe_spec_component(spec_id)")
+    first_path = body.find("worktree_spec = (")
+    assert call != -1, "spec_id is no longer sanitised (CodeQL py/path-injection)"
+    assert 0 <= call < first_path, "the barrier must run BEFORE spec_id reaches a path"
