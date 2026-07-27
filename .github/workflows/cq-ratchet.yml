@@ -74,7 +74,7 @@ jobs:
             --base "origin/${{ github.base_ref }}" \
             --ruff apps/backend/.venv/bin/ruff \
             --config standards/ruff.toml \
-            --paths 'apps/backend/**/*.py'
+            --paths 'apps/backend/**/*.py' 'apps/web-server/**/*.py'
 
       - name: Mypy --strict (shared baseline, per-file no-regression ratchet)
         run: |
@@ -93,7 +93,7 @@ jobs:
             --base "origin/${{ github.base_ref }}" \
             --mypy apps/backend/.venv/bin/mypy \
             --config standards/mypy.ini \
-            --paths 'apps/backend/**/*.py'
+            --paths 'apps/backend/**/*.py' 'apps/web-server/**/*.py'
 
   format-check:
     name: ruff format --check (repo-wide)
