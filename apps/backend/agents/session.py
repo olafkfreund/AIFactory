@@ -49,6 +49,7 @@ from .utils import (
     get_commit_count,
     get_latest_commit,
     load_implementation_plan,
+    sync_memory_to_project,
     sync_memory_to_source,
     sync_plan_to_source,
 )
@@ -248,6 +249,9 @@ async def post_session_processing(
         # nothing to copy or no source (non-worktree mode already writes durably).
         if sync_memory_to_source(spec_dir, source_spec_dir):
             print_status("Session memory filed to the project", "success")
+        # RFC-0021 Phase 0: also pool it at PROJECT level, which is the only
+        # scope at which a lesson from this spec can reach the next one.
+        sync_memory_to_project(spec_dir, project_dir)
 
         # Append to build-progress.txt for frontend visibility
         _append_build_progress(spec_dir, subtask_id, subtask, session_num, commit_after)
@@ -311,6 +315,7 @@ async def post_session_processing(
         # that failed or stalled is where the dead ends live, and a dead end the
         # next task can see is the difference between learning and repeating.
         sync_memory_to_source(spec_dir, source_spec_dir)
+        sync_memory_to_project(spec_dir, project_dir)
 
         return False
 
@@ -362,6 +367,7 @@ async def post_session_processing(
         # that failed or stalled is where the dead ends live, and a dead end the
         # next task can see is the difference between learning and repeating.
         sync_memory_to_source(spec_dir, source_spec_dir)
+        sync_memory_to_project(spec_dir, project_dir)
 
         return False
 
