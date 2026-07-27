@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,39 @@ _log = logging.getLogger(__name__)
 # window so the cockpit shows accruing cost WHILE a build runs without flooding
 # the completion webhook. Env-overridable for ops/tests.
 _USAGE_EMIT_WINDOW_S = 15.0
+
+
+
+# A spec id is a directory NAME, so the barrier is a POSITIVE allowlist rather
+# than a list of forbidden characters. That matters twice over: an allowlist
+# cannot be walked around by an encoding trick a blocklist did not anticipate,
+# and CodeQL recognises a `fullmatch` against a restrictive pattern as a
+# sanitizer while it does not recognise ad-hoc `if "/" in value` checks — which
+# is why the first version of this barrier hardened the code without clearing
+# the alert. Same shape as PFactory's safe_spec_component (PFactory#335).
+_SPEC_COMPONENT_RE = re.compile(r"[A-Za-z0-9._-]{1,255}")
+
+# Rejected even though the character class permits them: "." and ".." are the
+# traversal primitives themselves.
+_RESERVED_COMPONENTS = frozenset({".", ".."})
+
+
+def _safe_spec_component(value: object, field: str = "spec_id") -> str:
+    """Return *value* if it is safe to join onto a trusted directory root.
+
+    ``spec_id`` reaches this module from the API and is interpolated into two
+    filesystem paths. ``Path`` joins collapse traversal SILENTLY —
+    ``Path("/srv/specs") / "../../etc"`` is ``/etc`` — so the component must be
+    validated BEFORE it is joined, never after.
+
+    Raises rather than sanitising: a spec id that needed rewriting is a caller
+    bug or an attack, and quietly building a different path than the caller
+    asked for is how both go unnoticed.
+    """
+    text = str(value)
+    if text in _RESERVED_COMPONENTS or not _SPEC_COMPONENT_RE.fullmatch(text):
+        raise ValueError(f"invalid {field}: {text[:80]!r}")
+    return text
 
 
 class WorktreeSyncMixin:
@@ -59,6 +93,9 @@ class WorktreeSyncMixin:
         logger = logging.getLogger(__name__)
 
         # Paths
+        # Barrier BEFORE the value reaches any path expression.
+        spec_id = _safe_spec_component(spec_id)
+
         worktree_spec = (
             project_path
             / ".aifactory"
@@ -91,7 +128,22 @@ class WorktreeSyncMixin:
         # the agent's worktree (control-plane #259, QA review-cycle #260) and a
         # worktree copy must never reset or replay them.
 
-        # Directories to sync (will copy entire directory tree)
+        # Directories to sync (merged into the destination, see below).
+        #
+        # TWO mechanisms write `memory/` back, deliberately, and they do
+        # different jobs (#1033):
+        #
+        #   * THIS one is a VISIBILITY MIRROR. It ticks every few seconds while
+        #     an in-pod build runs, so `routes/context.py` can show session
+        #     insights before the build finishes. It only covers builds this
+        #     process monitors.
+        #   * `agents/utils.sync_memory_to_source` is the DURABLE WRITE. It runs
+        #     inside the build itself, so it also covers Job-dispatched builds
+        #     that no monitor is watching, and it is what makes memory survive
+        #     worktree teardown (#1030).
+        #
+        # Both MERGE, so running both is harmless and order does not matter. If
+        # a third is ever added, make it merge too — see the note on the loop.
         dirs_to_sync = [
             "memory",  # Session insights and memory data
         ]
@@ -199,16 +251,28 @@ class WorktreeSyncMixin:
                 f"[AgentService] Failed to scan worktree spec dir for extra files: {e}"
             )
 
-        # Sync directories
+        # Sync directories — MERGE, never replace (#1033).
+        #
+        # This used to `rmtree(dst_dir)` and copy fresh. For `memory/` that is a
+        # data-loss bug: the destination is a MEMORY STORE that accumulates
+        # across tasks, and wiping it discards anything written since this
+        # worktree was seeded. Under RFC-0016 concurrency two tasks can build the
+        # same spec, and the slower one's replace would silently delete the
+        # faster one's session insights — the exact failure #1030 was about.
+        #
+        # Replace was safe only under the assumption that the worktree copy is
+        # always a superset of the destination, which holds at seed time and
+        # stops holding the moment anything else writes.
+        #
+        # Merging costs nothing here: every file this syncs is either identical
+        # or newer in the worktree, so copy2's overwrite still wins for the
+        # files this build owns.
         for dirname in dirs_to_sync:
             src_dir = worktree_spec / dirname
             dst_dir = main_spec / dirname
             if src_dir.exists() and src_dir.is_dir():
                 try:
-                    # Remove existing and copy fresh
-                    if dst_dir.exists():
-                        shutil.rmtree(dst_dir)
-                    shutil.copytree(src_dir, dst_dir)
+                    shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
                     synced_count += 1
                 except Exception as e:
                     logger.warning(
