@@ -16,7 +16,6 @@ fifth, and was simply never added.
 from __future__ import annotations
 
 import io
-import os
 import sys
 import tarfile
 from pathlib import Path
@@ -178,3 +177,18 @@ def test_both_ends_are_wired(path, needle):
     failure mode of #1031/#1036/#1037."""
     src = (_BACKEND.parent.parent / path).read_text()
     assert needle in src, f"{path} no longer calls it — memory stops propagating"
+
+
+def test_pooling_refuses_a_destination_outside_the_project():
+    """MUTATION GUARD: spec_dir arrives from a request, so containment is checked.
+
+    A spec_dir that walked out of the project would have the pooler copying a
+    memory tree to an arbitrary location. Asserted on the source: exercising it
+    needs the full completion path, and the regression is a one-line deletion.
+    """
+    src = (
+        _BACKEND.parent / "web-server" / "server" / "services" / "completion.py"
+    ).read_text()
+    body = src.split("def _pool_memory_at_project_level", 1)[1]
+    guard = body.split("shutil.copytree", 1)[0]
+    assert "is_relative_to" in guard, "the containment check was removed"

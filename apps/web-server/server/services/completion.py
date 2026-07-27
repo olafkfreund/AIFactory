@@ -107,14 +107,24 @@ def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
     single spec may clear it. Best-effort — a build that produced working code
     must not fail because its memory could not be pooled.
     """
-    src = Path(spec_dir) / "memory"
+    src = Path(spec_dir).resolve() / "memory"
     if not src.is_dir():
         return False
     try:
-        dest = Path(spec_dir).parent.parent / "memory"
+        # The project's .aifactory/ is the spec dir's grandparent. Both sides are
+        # resolved and the containment is CHECKED rather than assumed: spec_dir
+        # originates from a request, and a "../.." that walked out of the project
+        # would have this function copying a memory tree somewhere arbitrary.
+        project_aifactory = src.parent.parent.parent
+        dest = (project_aifactory / "memory").resolve()
+        if not dest.is_relative_to(project_aifactory.resolve()):
+            logger.warning("[completion] refusing to pool memory outside the project")
+            return False
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, dest, dirs_exist_ok=True)
-        logger.info("[completion] pooled memory at project level: %s", dest)
+        # The path is deliberately NOT interpolated: it derives from request data
+        # and a log line is not the place to echo it back (py/log-injection).
+        logger.info("[completion] pooled memory at project level")
         return True
     except (OSError, shutil.Error) as exc:
         logger.warning("[completion] could not pool memory: %s", exc)
