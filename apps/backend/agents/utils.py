@@ -231,7 +231,12 @@ def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         shutil.copytree(memory_dir, target, dirs_exist_ok=True)
         logger.debug(f"Synced memory to source: {target}")
         return True
-    except Exception as e:
+    # Narrow rather than blind: these are what copytree can actually raise
+    # (shutil.Error aggregates per-file failures, OSError covers the rest). A
+    # bare `except Exception` would also swallow a programming error here and
+    # report it as "memory could not be filed", which is the kind of quiet
+    # mislabelling that hid this bug in the first place.
+    except (OSError, shutil.Error) as e:
         # Never fatal: a build that produced working code must not fail because
         # its memory could not be filed.
         logger.warning(f"Failed to sync memory to source: {e}")
