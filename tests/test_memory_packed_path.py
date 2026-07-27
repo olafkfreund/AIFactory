@@ -192,3 +192,54 @@ def test_pooling_refuses_a_destination_outside_the_project():
     body = src.split("def _pool_memory_at_project_level", 1)[1]
     guard = body.split("shutil.copytree", 1)[0]
     assert "is_relative_to" in guard, "the containment check was removed"
+
+
+# ── the worktree fallback (a degraded build must not strand its memory) ──────
+
+
+def test_memory_is_pushed_from_the_worktree_when_the_sync_never_ran(
+    tmp_path, monkeypatch
+):
+    """MUTATION GUARD: a build that exits early never runs sync_memory_to_source.
+
+    Seen live: a branch push was rejected non-fast-forward and the worktree was
+    reset to main. Memory then sits only in the worktree copy, which is about to
+    be deleted with the pod. Pushing what is there beats pushing nothing.
+    """
+    monkeypatch.setenv(wf.WORKSPACE_URI_ENV, "s3://bucket/ws.tar.gz")
+
+    spec = tmp_path / "work" / ".aifactory" / "specs" / "088"
+    spec.mkdir(parents=True)  # no memory/ here — the sync never ran
+    wt_spec = (
+        tmp_path / "work" / ".aifactory" / "worktrees" / "tasks" / "088"
+        / ".aifactory" / "specs" / "088"
+    )
+    _insight(wt_spec, "session_001.json", '"stranded in the worktree"')
+
+    assert wf.maybe_push_memory(spec, "088")
+
+    control = tmp_path / "project" / ".aifactory" / "specs" / "088"
+    control.mkdir(parents=True)
+    assert wf.maybe_fetch_memory(control, "088")
+    carried = control / "memory" / "session_insights" / "session_001.json"
+    assert "stranded in the worktree" in carried.read_text()
+
+
+def test_the_spec_dir_copy_wins_over_the_worktree(tmp_path, monkeypatch):
+    """The synced copy is the authoritative one; the fallback is only a fallback."""
+    monkeypatch.setenv(wf.WORKSPACE_URI_ENV, "s3://bucket/ws.tar.gz")
+    spec = tmp_path / "work" / ".aifactory" / "specs" / "088"
+    _insight(spec, "authoritative.json", '"synced"')
+    wt_spec = (
+        tmp_path / "work" / ".aifactory" / "worktrees" / "tasks" / "088"
+        / ".aifactory" / "specs" / "088"
+    )
+    _insight(wt_spec, "stale.json", '"worktree"')
+
+    wf.maybe_push_memory(spec, "088")
+    control = tmp_path / "project" / "specs" / "088"
+    control.mkdir(parents=True)
+    wf.maybe_fetch_memory(control, "088")
+
+    names = {p.name for p in (control / "memory" / "session_insights").iterdir()}
+    assert names == {"authoritative.json"}

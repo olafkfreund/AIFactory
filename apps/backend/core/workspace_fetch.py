@@ -440,6 +440,35 @@ def _memory_key(spec_id: str) -> str:
     )
 
 
+
+def _memory_source(spec_dir: Path) -> Path | None:
+    """The spec's non-empty ``memory/``, or None.
+
+    Prefers the spec dir itself, which is where
+    :func:`agents.utils.sync_memory_to_source` files it at the end of each
+    session. Falls back to the WORKTREE copy the build actually wrote into.
+
+    The fallback is not belt-and-braces: a build that exits early or degrades
+    (this happened live — a branch push rejected non-fast-forward and the
+    worktree reset to main) may never run that sync, and the insights would then
+    be stranded in a directory about to be deleted with the pod. Pushing what is
+    there beats pushing nothing.
+    """
+    direct = spec_dir / _MEMORY_DIR
+    if direct.is_dir() and any(direct.rglob("*")):
+        return direct
+    # <project>/.aifactory/specs/<id> -> <project>/.aifactory/worktrees/tasks/*/
+    aifactory = spec_dir.parent.parent
+    worktrees = aifactory / "worktrees" / "tasks"
+    if not worktrees.is_dir():
+        return None
+    for wt in sorted(worktrees.iterdir()):
+        cand = wt / ".aifactory" / "specs" / spec_dir.name / _MEMORY_DIR
+        if cand.is_dir() and any(cand.rglob("*")):
+            _log.info("[workspace_fetch] memory found in the worktree copy: %s", cand)
+            return cand
+    return None
+
 def maybe_push_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """Push the Job's ``memory/`` tree to object storage (#1038).
 
@@ -453,9 +482,18 @@ def maybe_push_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     """
     if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
         return False
-    src = Path(spec_dir) / _MEMORY_DIR
-    if not src.is_dir() or not any(src.rglob("*")):
-        _log.debug("[workspace_fetch] no %s to push", _MEMORY_DIR)
+    src = _memory_source(Path(spec_dir))
+    if src is None:
+        # INFO, not debug (#1038 follow-up). This early return is the single
+        # most likely outcome when memory fails to propagate, and at debug level
+        # it said nothing at all — so a failed run was indistinguishable from a
+        # run that never tried. Two builds were spent unable to tell those apart.
+        # The path is included because "which directory did you look in" was
+        # exactly the question that could not be answered from the logs.
+        _log.info(
+            "[workspace_fetch] nothing to push: no non-empty memory/ under %s",
+            spec_dir,
+        )
         return False
     try:
         import io  # noqa: PLC0415
