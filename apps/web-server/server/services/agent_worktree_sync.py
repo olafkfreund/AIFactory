@@ -279,6 +279,30 @@ class WorktreeSyncMixin:
                         f"[AgentService] Failed to sync directory {dirname}: {e}"
                     )
 
+        # RFC-0021 Phase 0, corrected: pool this spec's memory at PROJECT level
+        # HERE, in the control plane.
+        #
+        # The in-build sync (agents/utils.sync_memory_to_project) cannot do it
+        # for a Job-dispatched build: inside the Job every path — including
+        # source_spec_dir — is under /work, the pod's emptyDir, so anything it
+        # writes dies with the pod. A live build proved it: the project pool
+        # stayed at 0 files across two runs while this mirror carried 6 and 4
+        # files to the PVC. THIS function is the only component that knows the
+        # real durable project path.
+        #
+        # Merged, never replaced: the pool is the union of every spec's
+        # insights, and one spec may not clear it.
+        try:
+            project_memory = project_path / ".aifactory" / "memory"
+            spec_memory = main_spec / "memory"
+            if spec_memory.is_dir():
+                project_memory.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(spec_memory, project_memory, dirs_exist_ok=True)
+        except (OSError, shutil.Error) as e:
+            # Never fatal: a build that produced working code must not fail
+            # because its memory could not be pooled.
+            logger.warning(f"[AgentService] Failed to pool memory at project level: {e}")
+
         if synced_count > 0:
             logger.debug(
                 f"[AgentService] Synced {synced_count} files from worktree to main spec dir"

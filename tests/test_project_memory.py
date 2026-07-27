@@ -210,3 +210,32 @@ def test_the_pool_lands_beside_specs_not_under_the_build_tree(tmp_path):
     assert not (tmp_path / "work" / "clone" / ".aifactory" / "memory").exists(), (
         "the pool was written under the ephemeral build tree and would be lost"
     )
+
+
+# ── the control-plane pool: where it must actually happen ────────────────────
+
+
+def test_the_control_plane_mirror_pools_at_project_level():
+    """MUTATION GUARD: the in-build sync cannot pool for a Job-dispatched build.
+
+    Inside a Job every path — including source_spec_dir — is under /work, the
+    pod's emptyDir (the build log says so: "Filesystem restricted to:
+    /work/.aifactory/worktrees/..."). So anything the build process writes dies
+    with the pod. Two live builds proved it: the project pool stayed at 0 files
+    while this mirror carried 6 and 4 files to the PVC.
+
+    Asserted on the source because exercising it needs a running build. The
+    property is narrow and the regression is a one-line deletion.
+    """
+    src = (
+        _BACKEND.parent / "web-server" / "server" / "services" / "agent_worktree_sync.py"
+    ).read_text()
+    body = src.split("async def _sync_worktree_files", 1)[1]
+
+    assert 'project_path / ".aifactory" / "memory"' in body, (
+        "the control plane no longer pools memory at project level — a "
+        "Job-dispatched build's memory stops compounding"
+    )
+    pool = body.split('project_path / ".aifactory" / "memory"', 1)[1]
+    assert "dirs_exist_ok=True" in pool, "the pool must merge, never replace"
+    assert "shutil.rmtree" not in pool.split("except", 1)[0]
