@@ -401,3 +401,113 @@ def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched plan: %s", exc)
         return False
+
+
+# ── memory (#1038) ───────────────────────────────────────────────────────────
+#
+# The FIFTH artefact with the same packed-path propagation gap as the branch,
+# the usage file, the task logs and the plan — and the last one that was still
+# missing. It cost three wrong fixes (#1031, #1036, #1037) before anyone traced
+# the mechanism, because every one of them assumed `/work` was durable.
+#
+# It is not, and the manifest builder says so outright
+# (``core/job_dispatch.py``): a Job gets the data-PVC co-mounted at ``/work``
+# ONLY when ``data_pvc`` and ``worktree_subpath`` are both set. On the packed
+# path (``WORKSPACE_URI`` present) it gets an ``emptyDir`` instead, and the
+# workspace is unpacked into it at start. So the Job's filesystem is
+# write-once-and-discard: CODE escapes via ``git push``, and anything else
+# written to disk escapes only if it is explicitly pushed HERE.
+#
+# Memory is a DIRECTORY, unlike the four single-file artefacts above, so it
+# travels as a tar.gz rather than raw bytes.
+
+_MEMORY_DIR = "memory"
+_MEMORY_ARCHIVE = "memory.tar.gz"
+
+
+def _memory_key(spec_id: str) -> str:
+    """Deterministic object key for a task's memory tree (#1038).
+
+    Same derivation as :func:`_plan_key`: both sides compute it from ``spec_id``
+    alone, so no URI threading is needed.
+    """
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_MEMORY_ARCHIVE
+        ).key()
+    )
+
+
+def maybe_push_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's ``memory/`` tree to object storage (#1038).
+
+    Without this, every session insight a packed build produces dies with the
+    pod, so the fleet's memory never accumulates and the second pass over a
+    codebase costs exactly what the first did.
+
+    No-op off the packed path (``WORKSPACE_URI`` unset) where the spec dir is on
+    the data PVC already. Best-effort: never raises — a push failure must not
+    turn a green build red.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = Path(spec_dir) / _MEMORY_DIR
+    if not src.is_dir() or not any(src.rglob("*")):
+        _log.debug("[workspace_fetch] no %s to push", _MEMORY_DIR)
+        return False
+    try:
+        import io  # noqa: PLC0415
+        import tarfile  # noqa: PLC0415
+
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            tar.add(str(src), arcname=_MEMORY_DIR)
+        ArtifactStore().put_bytes(
+            _memory_key(spec_id), buf.getvalue(), "application/gzip", role="build"
+        )
+        _log.info(
+            "[workspace_fetch] pushed %s to object store (packed path)", _MEMORY_DIR
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - best-effort telemetry of state
+        _log.warning("[workspace_fetch] could not push memory: %s", exc)
+        return False
+
+
+def maybe_fetch_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Restore the Job's pushed ``memory/`` tree into the control-plane spec dir.
+
+    MERGES into whatever is already there — never clears it. The destination
+    accumulates across sessions and, once pooled, across specs; a fetch that
+    replaced it would discard exactly what this whole chain exists to keep.
+
+    No-op off the packed path or when nothing was pushed. Best-effort.
+    """
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_memory_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - nothing pushed / store unreachable
+        _log.debug("[workspace_fetch] no pushed memory to fetch: %s", exc)
+        return False
+    try:
+        import io  # noqa: PLC0415
+        import tarfile  # noqa: PLC0415
+
+        dest = Path(spec_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            # filter="data" refuses absolute paths and ".." members, so a crafted
+            # archive cannot write outside the spec dir.
+            tar.extractall(path=str(dest), filter="data")
+        _log.info(
+            "[workspace_fetch] fetched %s from object store (packed path)", _MEMORY_DIR
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - best-effort
+        _log.warning("[workspace_fetch] could not write fetched memory: %s", exc)
+        return False

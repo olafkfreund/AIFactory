@@ -18,7 +18,18 @@ Design (apis/concurrency-conventions.md §3 + the proven ``kube_sandbox`` shape)
   reusing the in-pod ``core.workspace.setup_workspace`` path) at the data-PVC
   subPath the Job co-mounts at ``/work``. The control plane and the Job pod share
   the same single-node data PVC (RWO, co-mounted by subPath), so the worktree we
-  write is exactly what the Job reads. Without it the Job saw an empty stub and
+  write is exactly what the Job reads.
+
+  **This describes the CO-MOUNT path only, and it is not what the fleet runs
+  today (#1038).** ``core/job_dispatch.py`` co-mounts the PVC at ``/work`` only
+  when ``data_pvc`` AND ``worktree_subpath`` are both set; on the packed path
+  (``WORKSPACE_URI`` set, which is what runs now) ``/work`` is an **emptyDir**
+  and everything written to it dies with the pod. Reading this paragraph as
+  unconditional produced three wrong fixes for #1030 in a row. Check the actual
+  Job before assuming:
+  ``kubectl get job <j> -o jsonpath='{...volumes[?(@.name=="work")]}'`` —
+  ``emptyDir={}`` means nothing written to disk survives. See
+  ``docs/docs/architecture/build-output-propagation.md``. Without it the Job saw an empty stub and
   run.py exited ``Spec '<id>' not found`` (#671). The RFC-0017 #207 pack/unpack is
   the multi-node path (PVC not shared); on this shared-PVC cluster, populating
   before dispatch is correct and simplest.
