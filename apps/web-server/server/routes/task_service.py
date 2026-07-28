@@ -20,7 +20,10 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.specpath import safe_spec_component
+
 logger = logging.getLogger(__name__)
+
 
 from ..services import task_control
 from .projects import load_projects
@@ -50,6 +53,18 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    # This is the canonical seam for the projectId:specId parse, so validating
+    # here covers every caller that uses it rather than each one separately.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
+        ) from None
+
     projects = load_projects()
 
     if project_id not in projects:

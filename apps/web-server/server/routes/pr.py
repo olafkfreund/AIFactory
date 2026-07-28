@@ -25,6 +25,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.specpath import safe_spec_component
+
 from .project_authz import require_task_access
 from .projects import get_projects_file
 
@@ -58,6 +60,15 @@ async def create_pr_from_task(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056). Path
+        # joins collapse traversal silently, so validating after is too late.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {
+                "success": False,
+                "error": "Task ID must include project ID (format: project_id:spec_id)",
+            }
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():

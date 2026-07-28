@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.specpath import safe_spec_component
+
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # --------------------------------------------------------------------------
@@ -23,6 +25,7 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # BUG-1.2-003: Memory backend must be one of these values
 MemoryBackendType = Literal["graphiti", "file"]
+
 
 from ..config import get_settings
 from ..tenancy import (
@@ -1445,6 +1448,14 @@ async def archive_tasks(
         else:
             spec_id = task_id
 
+        # Barrier BEFORE the join (#1056). BOTH branches carry request data -
+        # the bare-id branch is not safer, it just skips the split.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            errors.append("Task not found")
+            continue
+
         spec_dir = specs_dir / spec_id
         if not spec_dir.exists():
             errors.append(f"Task {spec_id} not found")
@@ -1511,6 +1522,14 @@ async def unarchive_tasks(
             _, spec_id = task_id.split(":", 1)
         else:
             spec_id = task_id
+
+        # Barrier BEFORE the join (#1056). BOTH branches carry request data -
+        # the bare-id branch is not safer, it just skips the split.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            errors.append("Task not found")
+            continue
 
         spec_dir = specs_dir / spec_id
         if not spec_dir.exists():

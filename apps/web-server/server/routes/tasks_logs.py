@@ -18,6 +18,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from server.specpath import safe_spec_component
+
 from .project_authz import require_task_access
 from .projects import load_projects
 
@@ -47,6 +49,16 @@ async def get_task_logs(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     logger.info(f"[GetTaskLogs] project_id={project_id}, spec_id={spec_id}")
 
     projects = load_projects()
