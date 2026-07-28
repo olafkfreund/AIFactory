@@ -257,3 +257,23 @@ def test_the_spec_dir_copy_wins_over_the_worktree(tmp_path, monkeypatch):
 
     names = {p.name for p in (control / "memory" / "session_insights").iterdir()}
     assert names == {"authoritative.json"}
+
+
+# ── the telemetry must be readable, or it is not telemetry ───────────────────
+
+
+def test_the_entrypoint_raises_the_workspace_fetch_logger():
+    """MUTATION GUARD: nothing configures logging in run.py's entrypoint, so the
+    root logger sits at Python's default WARNING and every `_log.info` in
+    workspace_fetch is silently dropped.
+
+    That cost two builds during #1038: the only workspace_fetch line ever visible
+    was "branch push failed", purely because it happens to be a warning. The
+    push/fetch telemetry for the branch, plan, usage, task logs and memory was
+    all invisible.
+    """
+    src = (_BACKEND / "cli" / "main.py").read_text()
+    assert 'getLogger("core.workspace_fetch").setLevel(logging.INFO)' in src, (
+        "the push-back telemetry is invisible again — a diagnostic that cannot "
+        "be read is not a diagnostic"
+    )
