@@ -6,6 +6,7 @@ Command-line interface for the Magestic AI autonomous coding framework.
 """
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -392,6 +393,22 @@ def main() -> None:
     # storage BEFORE the spec is resolved and the build runs below. No-op (returns
     # False) on the single-node co-mount path, so today's behaviour is unchanged.
     from core.workspace_fetch import maybe_unpack_workspace  # noqa: PLC0415
+
+    # Make the packed-path push/fetch telemetry VISIBLE in the Job log.
+    #
+    # Nothing configures logging in this entrypoint, so the root logger sits at
+    # Python's default WARNING and every `_log.info` in workspace_fetch is
+    # dropped. The build's own progress uses print(), which is why the log looks
+    # complete while saying nothing about whether an artefact was pushed.
+    #
+    # That cost two builds during #1038: the only workspace_fetch line ever seen
+    # was "branch push failed", purely because it is a warning. A diagnostic that
+    # cannot be read is not a diagnostic, so this raises exactly one logger
+    # rather than turning on INFO globally (which would drown the log in library
+    # chatter).
+    logging.getLogger("core.workspace_fetch").setLevel(logging.INFO)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     maybe_unpack_workspace(project_dir)
 
