@@ -13,6 +13,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
@@ -108,3 +110,29 @@ def test_summary_states_what_it_did() -> None:
     assert wet["action"] == "marked failed"
     # A caller must be able to act on the report without re-deriving anything.
     assert wet["tasks"][0]["reason"]
+
+
+def test_the_route_module_imports() -> None:
+    """Import the ROUTE, not just the pure helper it wraps.
+
+    The first version of this change imported `resolve_project_path` from
+    task_service.py when it lives in projects.py. Every test in the repository
+    failed, because a bad import in any registered route breaks app startup --
+    and none of them named the route, so the cause was three screens of
+    identical ImportErrors away from the file that caused it.
+
+    Testing only the pure module could not catch that: the pure module has no
+    such imports. This asserts the wiring, which is the part that broke.
+    """
+    try:
+        from server.routes import stale  # noqa: PLC0415
+    except ModuleNotFoundError as exc:  # pragma: no cover - env without app deps
+        # A MISSING THIRD-PARTY package is an environment gap, not a defect.
+        # A wrong NAME raises plain ImportError and is deliberately NOT caught,
+        # because that is the bug this test exists for.
+        pytest.skip(f"app dependency unavailable here: {exc.name}")
+
+    assert stale.router is not None
+    assert any(
+        getattr(r, "path", "") == "/api/tasks/stale" for r in stale.router.routes
+    )

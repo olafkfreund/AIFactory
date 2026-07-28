@@ -26,12 +26,12 @@ from fastapi import APIRouter, Depends, Query
 
 from ..services.stale_tasks import DEFAULT_STALE_AFTER, find_stale, summarise
 from .project_authz import require_task_access
-from .task_service import (
-    get_spec_dirs,
-    load_projects,
-    resolve_project_path,
-    spec_to_task,
-)
+
+# load_projects/resolve_project_path live in projects.py; only the spec helpers
+# are in task_service.py. Importing either from the wrong module breaks app
+# startup, which fails every test in the suite rather than just this route's.
+from .projects import load_projects, resolve_project_path
+from .task_service import get_spec_dirs, spec_to_task
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
