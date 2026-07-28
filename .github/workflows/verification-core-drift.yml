@@ -25,6 +25,11 @@ on:
     paths:
       - "apps/backend/core/factory_sandbox.py"
       - "apps/backend/core/nix_provisioner.py"
+      # Newly gated by Factory#400. Without these the gate is REGISTERED for
+      # these modules but never TRIGGERED by them: a PR editing a vendored
+      # copy would skip the blocking check entirely.
+      - "apps/backend/core/artifact_store.py"
+      - "apps/backend/core/cost_router_core.py"
       - ".github/workflows/verification-core-drift.yml"
   push:
     branches: [dev, main]
