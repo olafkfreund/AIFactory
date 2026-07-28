@@ -10,7 +10,7 @@ Age alone cannot tell those apart; ownership can.
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,7 @@ from server.services.stale_tasks import (  # noqa: E402
     summarise,
 )
 
-_NOW = datetime(2026, 7, 29, 12, 0, 0)
+_NOW = datetime(2026, 7, 29, 12, 0, 0, tzinfo=UTC)
 
 
 def _task(status: str, hours_ago: float, task_id: str = "p:001-x") -> dict:

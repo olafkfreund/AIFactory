@@ -114,11 +114,14 @@ def find_stale(
             # than assume the worst about a task we cannot actually date.
             continue
 
-        reference = now if updated.tzinfo is None else now
-        if updated.tzinfo is None and reference.tzinfo is not None:
-            reference = reference.replace(tzinfo=None)
+        # Normalise to naive UTC before subtracting. Task timestamps come from
+        # file mtime and are naive; a caller may pass an aware `now`. Mixing
+        # them raises, and the previous form of this had identical branches -
+        # it read like it handled the case and did not.
+        reference = now.replace(tzinfo=None) if now.tzinfo else now
+        updated_naive = updated.replace(tzinfo=None) if updated.tzinfo else updated
 
-        idle = reference - updated
+        idle = reference - updated_naive
         if idle < stale_after:
             continue
 

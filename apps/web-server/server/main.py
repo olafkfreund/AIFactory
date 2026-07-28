@@ -30,7 +30,6 @@ from .config import (
 from .database.engine import init_db
 from .logging_config import setup_logging
 from .routes import (
-    stale,
     api_keys,
     audit,
     auth_routes,
@@ -51,6 +50,7 @@ from .routes import (
     projects,
     search,
     skills,
+    stale,
     tasks,
     terminal,
     well_known,

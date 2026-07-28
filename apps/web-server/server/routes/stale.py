@@ -24,17 +24,31 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
-from ..services.stale_tasks import DEFAULT_STALE_AFTER, find_stale, summarise
-from .project_authz import require_task_access
+from server.routes.project_authz import require_task_access
 
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
 # are in task_service.py. Importing either from the wrong module breaks app
 # startup, which fails every test in the suite rather than just this route's.
-from .projects import load_projects, resolve_project_path
-from .task_service import get_spec_dirs, spec_to_task
+from server.routes.projects import load_projects, resolve_project_path
+from server.routes.task_service import get_spec_dirs, spec_to_task
+from server.services.stale_tasks import (
+    DEFAULT_STALE_AFTER,
+    find_stale,
+    summarise,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    """Naive local now, matching how task timestamps are produced.
+
+    A task's `updated_at` is the spec directory's mtime, which is naive local
+    time. Comparing it against an aware datetime raises, so the clock and the
+    data must agree -- this is the one place that decides which.
+    """
+    return datetime.now()  # noqa: DTZ005 - deliberate: mtimes are naive local
 
 
 def _all_tasks() -> list[dict[str, Any]]:
@@ -69,12 +83,10 @@ async def report_stale(
         DEFAULT_STALE_AFTER.total_seconds() / 3600,
         description="idle hours before a machine-owned task counts as orphaned",
     ),
-    _access: dict = Depends(require_task_access("member")),
+    _access: dict = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """What the reaper would act on. Changes nothing."""
-    stale = find_stale(
-        _all_tasks(), now=datetime.now(), stale_after=timedelta(hours=hours)
-    )
+    stale = find_stale(_all_tasks(), now=_now(), stale_after=timedelta(hours=hours))
     return summarise(stale, dry_run=True)
 
 
@@ -85,7 +97,7 @@ async def reap_stale(
         True,
         description="default true: the destructive form must be asked for",
     ),
-    _access: dict = Depends(require_task_access("member")),
+    _access: dict = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """Mark orphaned tasks failed, with the reason recorded on each.
 
@@ -94,7 +106,7 @@ async def reap_stale(
     claiming it succeeded.
     """
     tasks = _all_tasks()
-    stale = find_stale(tasks, now=datetime.now(), stale_after=timedelta(hours=hours))
+    stale = find_stale(tasks, now=_now(), stale_after=timedelta(hours=hours))
     report = summarise(stale, dry_run=dry_run)
 
     if dry_run or not stale:
