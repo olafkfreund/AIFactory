@@ -33,10 +33,12 @@ Exit code 1 if any changed file's violation count increased; else 0.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
 import sys
+import tomllib
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -58,7 +60,66 @@ def changed_python_files(base: str, paths: list[str]) -> list[str]:
             *paths,
         ]
     )
-    return [f for f in out.split() if f.endswith(".py") and Path(f).is_file()]
+    excludes = _ruff_excludes()
+    return [
+        f
+        for f in out.split()
+        if f.endswith(".py") and Path(f).is_file() and not _is_excluded(f, excludes)
+    ]
+
+def _ruff_excludes() -> list[str]:
+    """Exclude globs from the repo ruff config (root ``ruff.toml`` + ``extend``).
+
+    The ratchet writes each changed file to a temp path before checking, so
+    ruff's own path-based ``extend-exclude`` never matches. VENDORED MIRRORS —
+    the factory-github layer and factory_common, whose fidelity is enforced by
+    their own drift gates, not by the local linter — are excluded there; honour
+    that here so the ratchet does not gate files ruff is configured to skip.
+
+    Without this, a re-vendor is unmergeable: the canonical carries whatever
+    violation count it carries, the ratchet reads that as a regression, and the
+    only way to satisfy it is to edit a byte-exact mirror — which is exactly
+    what the drift gate exists to prevent (#1028).
+
+    Ported from PFactory's ratchet_lint.py so the two behave the same.
+    """
+    patterns: list[str] = []
+    seen: set[str] = set()
+    stack = [Path("ruff.toml")]
+    while stack:
+        cfg = stack.pop()
+        if not cfg.is_file() or str(cfg) in seen:
+            continue
+        seen.add(str(cfg))
+        try:
+            data = tomllib.loads(cfg.read_text())
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        for key in ("exclude", "extend-exclude"):
+            val = data.get(key)
+            if isinstance(val, list):
+                patterns.extend(str(x) for x in val)
+        extend = data.get("extend")
+        if isinstance(extend, str):
+            stack.append(cfg.parent / extend)
+    return patterns
+
+
+def _is_excluded(path: str, patterns: list[str]) -> bool:
+    """True if ruff is configured to skip *path*.
+
+    Handles a DIRECTORY entry ("apps/backend/runners/github/") as well as an
+    exact file, so excluding a vendored tree does not mean listing every file in
+    it — a list that silently rots the moment the canonical gains a file.
+    """
+    for pat in patterns:
+        clean = pat.rstrip("/")
+        if path == clean or path.startswith(clean + "/"):
+            return True
+        if fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path, f"*/{pat}"):
+            return True
+    return False
+
 
 
 # --------------------------------------------------------------------------- #
