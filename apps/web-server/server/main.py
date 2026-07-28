@@ -30,6 +30,7 @@ from .config import (
 from .database.engine import init_db
 from .logging_config import setup_logging
 from .routes import (
+    stale,
     api_keys,
     audit,
     auth_routes,
@@ -514,6 +515,9 @@ def create_app() -> FastAPI:
     # /.well-known/ path is exempt by construction.  Registered ahead of the
     # SPA catch-all "/" static mount so it resolves to JSON, not index.html.
     app.include_router(well_known.router)
+    # Orphaned-task reaper: a task whose worker died stays in a
+    # machine-owned state forever and shows as active in the cockpit.
+    app.include_router(stale.router)
 
     app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
