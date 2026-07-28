@@ -39,7 +39,7 @@ permissions:
 env:
   # Pinned Factory hub commit carrying the canonical verification-core modules.
   # Bump deliberately when re-vendoring (see header).
-  HUB_PIN_SHA: "4065c697f1045d8fa20ce90e8fed35c59fde8ad5"
+  HUB_PIN_SHA: "3e930a96dd44baab8fd7434b071592bd27553a83"
 
 jobs:
   drift:
