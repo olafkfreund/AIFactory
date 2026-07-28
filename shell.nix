@@ -1,7 +1,21 @@
 { pkgs ? import <nixpkgs> {} }:
 
+let
+  # CodeQL is used to validate .github/codeql/custom-queries locally before
+  # shipping a barrier change (#1044) -- a sanitizer pack that is not measured
+  # fails silently in both directions: too narrow suppresses nothing, too broad
+  # hides real findings, and the alert count moves either way.
+  #
+  # It is UNFREE, so it is opt-in rather than a hard dependency: referencing it
+  # unconditionally would make this shell fail to evaluate for anyone who has
+  # not allowed unfree packages. `lib.optional` is lazy in its value, so
+  # pkgs.codeql is never forced when the flag is off.
+  #
+  # To get it:  NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure
+  codeqlIfAllowed = pkgs.lib.optional (pkgs.config.allowUnfree or false) pkgs.codeql;
+in
 pkgs.mkShell {
-  buildInputs = with pkgs; [
+  buildInputs = codeqlIfAllowed ++ (with pkgs; [
     python312
     nodejs_24
     just
@@ -11,7 +25,7 @@ pkgs.mkShell {
     zlib
     libffi
     openssl
-  ];
+  ]);
 
   shellHook = ''
     # Create the virtualenv if it doesn't exist
