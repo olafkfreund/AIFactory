@@ -153,6 +153,27 @@ def _ruff_count(ruff: str, config: str, file_on_disk: str) -> int:
 _MYPY_ERROR_RE = re.compile(r"^(?P<path>.+?):\d+: error:")
 
 
+def _is_test_file(path: str) -> bool:
+    """Does *path* name a test file, by the same shape ruff per-file-ignores use?
+
+    Kept deliberately in step with the ruff config (`**/test_*.py`,
+    `**/*_test.py`, `**/tests/**`) so one tool cannot treat a file as a test
+    while the other holds it to the production bar. Ported from the hub
+    canonical (Factory#403).
+    """
+    norm = path.replace("\\", "/")
+    name = norm.rsplit("/", 1)[-1]
+    return (
+        "/tests/" in f"/{norm}"
+        or "/test/" in f"/{norm}"
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+    )
+
+
+_MYPY_TEST_RELAX = ["--allow-untyped-defs", "--allow-incomplete-defs"]
+
+
 def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
     """Count mypy --strict errors attributed to ``file_on_disk``.
 
@@ -173,6 +194,7 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
             "--no-error-summary",
             "--no-color-output",
             "--hide-error-context",
+            *(_MYPY_TEST_RELAX if _is_test_file(file_on_disk) else []),
             file_on_disk,
         ],
         capture_output=True,
@@ -291,6 +313,7 @@ def main() -> int:
                     "--ignore-missing-imports",
                     "--follow-imports=silent",
                     "--no-error-summary",
+                    *(_MYPY_TEST_RELAX if _is_test_file(path) else []),
                     path,
                 ],
                 check=False,
