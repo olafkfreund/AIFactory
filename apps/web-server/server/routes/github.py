@@ -1055,9 +1055,12 @@ def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
         kwargs = {}
         if project_path:
             kwargs["_project_dir"] = project_path
-        # Pass token if present
+        # Pass token if present. The key is `token` (not `_token`): the factory
+        # reads it to SELECT the REST provider, which is the only GitHub provider
+        # that honours a per-tenant credential. `_token` would be forwarded to
+        # the gh-CLI GitHubProvider, which has no such field — TypeError (#1043).
         if token:
-            kwargs["_token"] = token
+            kwargs["token"] = token
         return get_provider(ProviderType.GITHUB, repo=repo_name, **kwargs)
 
 
