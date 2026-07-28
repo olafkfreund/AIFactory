@@ -89,7 +89,11 @@ def test_uploads_are_tagged_with_role(role: str) -> None:
         service="aifactory", job_id="j", role=role, correlation_key=1
     )
     store.put_artifact(ref, b"payload")
-    assert store._s3.tags[(ref.bucket, ref.key())] == f"role={role}"
+    # The canonical fake records every put's kwargs (`calls`) rather than a
+    # bucket/key -> tag dict; it carries strictly more, and it is what the hub
+    # self-test asserts on. Factory#400 re-vendored this module, so the test
+    # follows the canonical rather than the canonical growing a second API.
+    assert store._s3.calls[-1]["Tagging"] == f"role={role}"
 
 
 @pytest.mark.parametrize("evil_name", ["../escape.txt", "/etc/passwd"])
