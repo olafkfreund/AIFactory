@@ -247,10 +247,13 @@ def _provider_for(project_id: str):
             kwargs["_project"] = proj_name
         return get_provider(ProviderType.AZURE_DEVOPS, repo=repo_name, **kwargs)
 
-    # Default: GitHub
+    # Default: GitHub. The key is `token` (not `_token`): the factory reads it to
+    # SELECT the REST provider, the only GitHub provider that honours a per-tenant
+    # credential. `_token` would reach the gh-CLI GitHubProvider, which has no such
+    # field — TypeError (#1043).
     kwargs = {}
     if token:
-        kwargs["_token"] = token
+        kwargs["token"] = token
     if project_path:
         kwargs["_project_dir"] = project_path
     return get_provider(ProviderType.GITHUB, repo=repo_name, **kwargs)
