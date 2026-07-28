@@ -37,6 +37,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.specpath import safe_spec_component
+
 from ..paths import get_data_dir
 from .project_authz import require_task_access
 from .projects import get_projects_file
@@ -431,6 +433,11 @@ async def resolve_worktree_conflicts(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056).
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():
@@ -1319,6 +1326,11 @@ async def abort_worktree_merge(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056).
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():
@@ -1458,6 +1470,11 @@ async def merge_worktree(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056).
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():
@@ -1620,6 +1637,15 @@ async def get_worktree_status(
         spec_id = task_id
         project_id = None
 
+    # Barrier AFTER the if/else, so it covers BOTH branches (#1056) - the
+    # bare-id branch carries request data just the same. This endpoint reports
+    # existence, so a component that could never name a real spec reports
+    # "does not exist" rather than erroring.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return {"success": True, "data": {"exists": False}}
+
     # Find project path
     projects_data_dir = get_data_dir()
     projects_file = projects_data_dir / "projects.json"
@@ -1773,6 +1799,11 @@ async def get_worktree_diff(
     # Parse task_id to get project_id and spec_id
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056).
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {"success": False, "error": "Invalid task ID format"}
     else:
         spec_id = task_id
         project_id = None
@@ -1997,6 +2028,11 @@ async def discard_worktree(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056).
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {"success": False, "error": "Invalid task ID format"}
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():

@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from server.specpath import safe_spec_component as _safe_spec_component
 
 from ..websockets.events import emit_subtask_update
 from . import task_control
@@ -32,36 +33,6 @@ _USAGE_EMIT_WINDOW_S = 15.0
 
 
 
-# A spec id is a directory NAME, so the barrier is a POSITIVE allowlist rather
-# than a list of forbidden characters. That matters twice over: an allowlist
-# cannot be walked around by an encoding trick a blocklist did not anticipate,
-# and CodeQL recognises a `fullmatch` against a restrictive pattern as a
-# sanitizer while it does not recognise ad-hoc `if "/" in value` checks — which
-# is why the first version of this barrier hardened the code without clearing
-# the alert. Same shape as PFactory's safe_spec_component (PFactory#335).
-_SPEC_COMPONENT_RE = re.compile(r"[A-Za-z0-9._-]{1,255}")
-
-# Rejected even though the character class permits them: "." and ".." are the
-# traversal primitives themselves.
-_RESERVED_COMPONENTS = frozenset({".", ".."})
-
-
-def _safe_spec_component(value: object, field: str = "spec_id") -> str:
-    """Return *value* if it is safe to join onto a trusted directory root.
-
-    ``spec_id`` reaches this module from the API and is interpolated into two
-    filesystem paths. ``Path`` joins collapse traversal SILENTLY —
-    ``Path("/srv/specs") / "../../etc"`` is ``/etc`` — so the component must be
-    validated BEFORE it is joined, never after.
-
-    Raises rather than sanitising: a spec id that needed rewriting is a caller
-    bug or an attack, and quietly building a different path than the caller
-    asked for is how both go unnoticed.
-    """
-    text = str(value)
-    if text in _RESERVED_COMPONENTS or not _SPEC_COMPONENT_RE.fullmatch(text):
-        raise ValueError(f"invalid {field}: {text[:80]!r}")
-    return text
 
 
 class WorktreeSyncMixin:
