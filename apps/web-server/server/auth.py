@@ -43,6 +43,7 @@ request first.
 
 import hmac
 import logging
+from functools import lru_cache
 
 from fastapi import HTTPException, Request, WebSocket, status
 from jose import JWTError, jwt
@@ -58,7 +59,6 @@ logger = logging.getLogger(__name__)
 # compatibility, but each emits a single loud warning per process so the
 # signal isn't drowned out by per-request log spam.
 _LEGACY_TOKEN_DEPRECATION_LOGGED = False
-_WS_QUERY_TOKEN_DEPRECATION_LOGGED = False
 
 
 def _warn_legacy_api_token_once() -> None:
@@ -75,7 +75,7 @@ def _warn_legacy_api_token_once() -> None:
         return
     _LEGACY_TOKEN_DEPRECATION_LOGGED = True
     logger.warning(
-        "⚠️  DEPRECATED: request authenticated via the legacy wildcard "
+        "DEPRECATED: request authenticated via the legacy wildcard "
         "API_TOKEN, which grants host-wide service access shared across "
         "Factory siblings. Migrate machine-to-machine traffic to scoped "
         "acw_ keys (Settings → API Keys). This token is retained only for "
@@ -83,19 +83,22 @@ def _warn_legacy_api_token_once() -> None:
     )
 
 
+@lru_cache(maxsize=1)
 def _warn_ws_query_token_once() -> None:
     """Emit a one-time deprecation warning for WS ``?token=`` query auth (#555).
 
     Passing a bearer token in the URL leaks it into proxy/access logs and
     browser history — especially dangerous for the PTY/shell terminal socket.
     Clients should send ``Authorization: Bearer <token>`` instead.
+
+    ``lru_cache`` rather than a module-level flag: it says "run once" without a
+    `global` (which the stricter PFactory/TFactory ruff configs flag as
+    PLW0603), and it gives tests a clean reset via ``cache_clear()``. Keeping
+    the mechanism identical across the three services is the point - this helper
+    exists in all of them and they should not drift on cosmetics.
     """
-    global _WS_QUERY_TOKEN_DEPRECATION_LOGGED
-    if _WS_QUERY_TOKEN_DEPRECATION_LOGGED:
-        return
-    _WS_QUERY_TOKEN_DEPRECATION_LOGGED = True
     logger.warning(
-        "⚠️  DEPRECATED: WebSocket token supplied via the ?token= query "
+        "DEPRECATED: WebSocket token supplied via the ?token= query "
         "param, which leaks into proxy/access logs and browser history. "
         "Send it via the 'Authorization: Bearer <token>' header instead "
         "(#555)."
