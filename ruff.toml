@@ -31,6 +31,12 @@ extend-exclude = [
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.
     "apps/backend/factory_common/",
+    # Same reason, same deal: the vendored factory-github provider layer is a
+    # byte-exact mirror of the hub canonical (formatted at the fleet
+    # line-length 100) and is kept identical by factory-github-drift.yml.
+    # Reformatting it under this config's default 88 would break that gate on
+    # the next re-vendor, which is exactly what the gate exists to prevent.
+    "apps/backend/runners/github/",
 ]
 
 [lint]
