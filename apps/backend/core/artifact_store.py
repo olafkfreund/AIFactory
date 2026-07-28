@@ -98,17 +98,11 @@ class ArtifactRef:
 
     @property
     def _corr(self) -> str:
-        return (
-            "_"
-            if self.correlation_key is None
-            else _clean_segment(self.correlation_key)
-        )
+        return "_" if self.correlation_key is None else _clean_segment(self.correlation_key)
 
     def prefix(self) -> str:
         """The job's key prefix (no role): ``<service>/<corr>/<job_id>``."""
-        return "/".join(
-            (_clean_segment(self.service), self._corr, _clean_segment(self.job_id))
-        )
+        return "/".join((_clean_segment(self.service), self._corr, _clean_segment(self.job_id)))
 
     def role_prefix(self) -> str:
         """The role prefix: ``<service>/<corr>/<job_id>/<role>``."""
@@ -121,9 +115,7 @@ class ArtifactRef:
         if self.path:
             # A sub-path may contain slashes (e.g. dist/bin/app); normalise each
             # component but keep the hierarchy.
-            extra = [
-                _clean_segment(p) for p in str(self.path).split("/") if p.strip("/")
-            ]
+            extra = [_clean_segment(p) for p in str(self.path).split("/") if p.strip("/")]
             if extra:
                 key = key + "/" + "/".join(extra)
         return key
@@ -161,9 +153,7 @@ def _as_bytes(data: bytes | str | os.PathLike[str]) -> bytes:
     (handy for small reports/logs)."""
     if isinstance(data, bytes):
         return data
-    if isinstance(data, os.PathLike) or (
-        isinstance(data, str) and Path(data).is_file()
-    ):
+    if isinstance(data, os.PathLike) or (isinstance(data, str) and Path(data).is_file()):
         return Path(data).read_bytes()
     if isinstance(data, str):
         return data.encode("utf-8")
@@ -192,9 +182,7 @@ class ArtifactStore:
                     "(key-layout helpers work without it)"
                 ) from exc
             if not self.config.endpoint:
-                raise RuntimeError(
-                    "S3_ENDPOINT is not set; cannot open the object store"
-                )
+                raise RuntimeError("S3_ENDPOINT is not set; cannot open the object store")
             self._s3 = boto3.client(
                 "s3",
                 endpoint_url=self.config.endpoint,
@@ -314,12 +302,8 @@ def _tar_workspace(src_dir: Path) -> bytes:
     buf = io.BytesIO()
     # mtime=0 + sorted walk → byte-stable archive for identical trees.
     with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
-        for child in sorted(
-            src_dir.rglob("*"), key=lambda p: p.relative_to(src_dir).as_posix()
-        ):
-            tar.add(
-                child, arcname=child.relative_to(src_dir).as_posix(), recursive=False
-            )
+        for child in sorted(src_dir.rglob("*"), key=lambda p: p.relative_to(src_dir).as_posix()):
+            tar.add(child, arcname=child.relative_to(src_dir).as_posix(), recursive=False)
     return buf.getvalue()
 
 
@@ -367,24 +351,24 @@ def _safe_extract(blob: bytes, dest_dir: Path) -> None:
             tar.extractall(dest_dir)  # noqa: S202 — members vetted above
 
 
-def pack_workspace(
-    store: ArtifactStore, ref: ArtifactRef, src_dir: str | os.PathLike[str]
-) -> str:
+def pack_workspace(store: ArtifactStore, ref: ArtifactRef, src_dir: str | os.PathLike[str]) -> str:
     """RFC-0017 §2.3 — tar.gz ``src_dir`` and store it under the job's ``workspace``
     role key; return the ``s3://`` URI a Phase-2 Job records / later unpacks.
 
     Replaces co-mounting an RWO worktree PVC: the dispatcher packs (or the prior
     stage packs) the worktree, the Job fetches it by URI."""
     blob = _tar_workspace(Path(src_dir))
+    # `workspace` is a governed role, so the archive must carry the tag too.
+    # #399 added tagging to put_artifact/put_bytes but missed this caller, which
+    # is the only one that reaches put_bytes from inside the library — packed
+    # workspaces would have uploaded untagged and outlived their lifecycle rule.
     return store.put_bytes(
         _workspace_key(ref), blob, content_type="application/gzip", role="workspace"
     )
 
 
 def unpack_workspace(
-    store: ArtifactStore,
-    uri_or_ref: str | ArtifactRef,
-    dest_dir: str | os.PathLike[str],
+    store: ArtifactStore, uri_or_ref: str | ArtifactRef, dest_dir: str | os.PathLike[str]
 ) -> Path:
     """RFC-0017 §2.3 — fetch a packed workspace (by ``s3://`` URI — e.g. the Job's
     ``WORKSPACE_URI`` env — or by ``ArtifactRef``) and SAFELY extract it into
@@ -408,12 +392,8 @@ def _selftest() -> None:
     from job_dispatch import _require  # noqa: PLC0415 — self-test-only import
 
     # Canonical key layout (apis/concurrency-conventions.md §2 worked example).
-    ref = ArtifactRef(
-        "aifactory", "9d2c", "build", correlation_key=482, path="app.tar.zst"
-    )
-    _require(
-        ref.key() == "aifactory/482/9d2c/build/app.tar.zst", f"key layout: {ref.key()}"
-    )
+    ref = ArtifactRef("aifactory", "9d2c", "build", correlation_key=482, path="app.tar.zst")
+    _require(ref.key() == "aifactory/482/9d2c/build/app.tar.zst", f"key layout: {ref.key()}")
     _require(
         ref.uri() == "s3://factory-artifacts/aifactory/482/9d2c/build/app.tar.zst",
         f"uri: {ref.uri()}",
@@ -425,17 +405,11 @@ def _selftest() -> None:
     _require(no_path.prefix() == "tfactory/7/j1", "prefix without role")
 
     # Unknown correlation_key -> placeholder, key still well-formed.
-    _require(
-        ArtifactRef("pfactory", "s1", "log").key() == "pfactory/_/s1/log", "null corr"
-    )
+    _require(ArtifactRef("pfactory", "s1", "log").key() == "pfactory/_/s1/log", "null corr")
 
     # Nested sub-path preserves hierarchy, trims stray slashes.
-    nested = ArtifactRef(
-        "aifactory", "j", "build", correlation_key=1, path="/dist//bin/app/"
-    )
-    _require(
-        nested.key() == "aifactory/1/j/build/dist/bin/app", f"nested: {nested.key()}"
-    )
+    nested = ArtifactRef("aifactory", "j", "build", correlation_key=1, path="/dist//bin/app/")
+    _require(nested.key() == "aifactory/1/j/build/dist/bin/app", f"nested: {nested.key()}")
 
     # Integer correlation_key normalises to its string form.
     int_uri = ArtifactRef("tfactory", "v", "test-report", 99).uri()
@@ -466,6 +440,24 @@ def _selftest() -> None:
     _require(_as_bytes("hello") == b"hello", "str->bytes")
     _require(_as_bytes(b"\x00\x01") == b"\x00\x01", "bytes passthrough")
 
+    # Uploads carry role as an object tag so MinIO lifecycle rules match. Without
+    # this the rules filter on `role=<role>` and never hit, so evidence retention
+    # silently never fires (Factory#329, promoted to the canonical in #399).
+    tagged = _fake_store()
+    calls = cast("list[dict[str, object]]", tagged._s3.calls)  # type: ignore[attr-defined]
+    tagged.put_artifact(ArtifactRef("tfactory", "j1", "evidence", 7), b"proof")
+    tagged.put_artifact(ArtifactRef("tfactory", "j1", "log", 7), "line")
+    _require(calls[0].get("Tagging") == "role=evidence", f"evidence tag: {calls[0]}")
+    _require(calls[1].get("Tagging") == "role=log", f"log tag: {calls[1]}")
+
+    # put_bytes tags only when a governed role is given: an ungoverned key (the
+    # graphify cache) must NOT be tagged, or it matches a lifecycle rule that was
+    # never meant for it.
+    tagged.put_bytes("aifactory/_/j/build/pack.tgz", b"x", role="build")
+    tagged.put_bytes("graphify-cache/blob", b"x")
+    _require(calls[2].get("Tagging") == "role=build", f"put_bytes role: {calls[2]}")
+    _require("Tagging" not in calls[3], f"ungoverned key must be untagged: {calls[3]}")
+
     # Transport stays lazy: constructing the store must not need boto3 or an endpoint.
     store = ArtifactStore(StoreConfig.from_env({}))
     _require(store.config.bucket == DEFAULT_BUCKET, "store builds without S3")
@@ -475,7 +467,7 @@ def _selftest() -> None:
     sys.stdout.write(
         "artifact_store self-test: PASS — key layout, uri, null/int corr, nested path, "
         "validation, env config, bytes coercion, lazy transport, workspace round-trip, "
-        "path-traversal guard\n"
+        "path-traversal guard, role tagging\n"
     )
 
 
@@ -485,15 +477,14 @@ class _FakeS3:
 
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
-        self.tags: dict[tuple[str, str], str | None] = {}
+        # Every put's kwargs, so the self-test can assert on the object TAGS and
+        # not just the bytes. The old signature swallowed them into `**_`, which
+        # is why nothing here could have caught untagged uploads (Factory#399).
+        self.calls: list[dict[str, object]] = []
 
-    def put_object(self, **kwargs: object) -> None:
-        # boto3-style CapWord kwargs (Bucket/Key/Body/Tagging/ContentType); take
-        # them via **kwargs so the fake needs no per-arg N803 suppression.
-        bucket, key = str(kwargs["Bucket"]), str(kwargs["Key"])
-        self.objects[(bucket, key)] = cast(bytes, kwargs["Body"])
-        tagging = kwargs.get("Tagging")
-        self.tags[(bucket, key)] = tagging if isinstance(tagging, str) else None
+    def put_object(self, *, Bucket: str, Key: str, Body: bytes, **extra: object) -> None:  # noqa: N803 — boto3 kwarg names
+        self.objects[(Bucket, Key)] = Body
+        self.calls.append({"Bucket": Bucket, "Key": Key, **extra})
 
     def get_object(self, *, Bucket: str, Key: str) -> dict[str, io.BytesIO]:  # noqa: N803 — boto3 kwarg names
         return {"Body": io.BytesIO(self.objects[(Bucket, Key)])}
@@ -551,6 +542,12 @@ def _selftest_roundtrip(req: _Require, ref: ArtifactRef, tmp: Path) -> None:
     uri = pack_workspace(store, ref, src)
     req(uri == f"s3://{DEFAULT_BUCKET}/{_workspace_key(ref)}", f"pack uri: {uri}")
 
+    # The packed workspace is itself a governed-role object: without the tag it
+    # matches no lifecycle rule and outlives its retention window (Factory#399
+    # tagged the upload primitives but missed this caller — Factory#400).
+    packed = cast("list[dict[str, object]]", store._s3.calls)[-1]  # type: ignore[attr-defined]
+    req(packed.get("Tagging") == "role=workspace", f"packed workspace tag: {packed}")
+
     # Determinism: packing the same tree twice yields byte-identical archives.
     req(_tar_workspace(src) == _tar_workspace(src), "pack is deterministic")
 
@@ -559,16 +556,10 @@ def _selftest_roundtrip(req: _Require, ref: ArtifactRef, tmp: Path) -> None:
     unpack_workspace(store, uri, dest)
     src_tree = {p.relative_to(src).as_posix(): p for p in src.rglob("*")}
     dst_tree = {p.relative_to(dest).as_posix(): p for p in dest.rglob("*")}
-    req(
-        set(src_tree) == set(dst_tree),
-        f"tree mismatch: {set(src_tree) ^ set(dst_tree)}",
-    )
+    req(set(src_tree) == set(dst_tree), f"tree mismatch: {set(src_tree) ^ set(dst_tree)}")
     for rel, sp in src_tree.items():
         if sp.is_file():
-            req(
-                sp.read_bytes() == dst_tree[rel].read_bytes(),
-                f"content mismatch: {rel}",
-            )
+            req(sp.read_bytes() == dst_tree[rel].read_bytes(), f"content mismatch: {rel}")
 
     # Round-trip by ArtifactRef (no URI in hand) lands the same tree.
     dest2 = tmp / "dest2"
@@ -599,10 +590,7 @@ def _selftest_safety(req: _Require, tmp: Path) -> None:
 
     # Bad URIs are rejected by the parser; a well-formed one parses cleanly.
     for bad_uri in ("http://x/y", "s3://only-bucket", "s3:///no-bucket"):
-        rejects(
-            functools.partial(parse_uri, bad_uri),
-            f"expected ValueError for {bad_uri!r}",
-        )
+        rejects(functools.partial(parse_uri, bad_uri), f"expected ValueError for {bad_uri!r}")
     req(parse_uri("s3://b/a/c") == ("b", "a/c"), "uri parse ok")
 
 
