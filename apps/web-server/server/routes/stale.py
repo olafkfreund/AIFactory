@@ -83,7 +83,7 @@ async def report_stale(
         DEFAULT_STALE_AFTER.total_seconds() / 3600,
         description="idle hours before a machine-owned task counts as orphaned",
     ),
-    _access: dict = Depends(require_task_access("member")),  # noqa: B008
+    _access: dict[str, Any] = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """What the reaper would act on. Changes nothing."""
     stale = find_stale(_all_tasks(), now=_now(), stale_after=timedelta(hours=hours))
@@ -97,7 +97,7 @@ async def reap_stale(
         True,
         description="default true: the destructive form must be asked for",
     ),
-    _access: dict = Depends(require_task_access("member")),  # noqa: B008
+    _access: dict[str, Any] = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """Mark orphaned tasks failed, with the reason recorded on each.
 
