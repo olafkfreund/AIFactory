@@ -38,7 +38,11 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           language: ${{ matrix.language }}
-          queries: security-and-quality
+          # security-and-quality moves INTO the config file rather than being
+          # dropped: a config-file replaces this input, so listing the suite
+          # there keeps the same breadth while adding the sanitizer-aware
+          # path-injection query (#1044).
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Analyze
         uses: github/codeql-action/analyze@v3
