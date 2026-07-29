@@ -8274,11 +8274,11 @@ paths:
                 additionalProperties: true
                 type: object
                 title: Response Agent Skills Index  Well Known Agent Skills Index Json Get
-  /api/tasks/stale:
+  /api/maintenance/stale-tasks:
     get:
       summary: Report Stale
       description: What the reaper would act on. Changes nothing.
-      operationId: report_stale_api_tasks_stale_get
+      operationId: report_stale_api_maintenance_stale_tasks_get
       parameters:
       - name: hours
         in: query
@@ -8303,14 +8303,14 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-                title: Response Report Stale Api Tasks Stale Get
+                title: Response Report Stale Api Maintenance Stale Tasks Get
         '422':
           description: Validation Error
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/tasks/stale/reap:
+  /api/maintenance/stale-tasks/reap:
     post:
       summary: Reap Stale
       description: 'Mark orphaned tasks failed, with the reason recorded on each.
@@ -8321,7 +8321,7 @@ paths:
         worth keeping; marking is enough to drop it out of the active board without
 
         claiming it succeeded.'
-      operationId: reap_stale_api_tasks_stale_reap_post
+      operationId: reap_stale_api_maintenance_stale_tasks_reap_post
       parameters:
       - name: hours
         in: query
@@ -8353,7 +8353,7 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
-                title: Response Reap Stale Api Tasks Stale Reap Post
+                title: Response Reap Stale Api Maintenance Stale Tasks Reap Post
         '422':
           description: Validation Error
           content:

@@ -134,5 +134,45 @@ def test_the_route_module_imports() -> None:
 
     assert stale.router is not None
     assert any(
-        getattr(r, "path", "") == "/api/tasks/stale" for r in stale.router.routes
+        getattr(r, "path", "") == "/api/maintenance/stale-tasks"
+        for r in stale.router.routes
+    )
+
+
+def test_the_route_is_not_shadowed_by_another_router() -> None:
+    """Assert which route the APP resolves, not what the handler returns.
+
+    The first version of this lived at /api/tasks/stale. tasks.py mounts
+    `@router.get("/{task_id}")` under an /api/tasks prefix and is registered
+    first, so FastAPI matched "stale" as a task id and the deployed endpoint
+    answered `400 Invalid task ID format`. It was live and broken.
+
+    Two earlier attempts at this test were useless: checking the ROUTER
+    contains the path (the router was fine, the app's ordering was not), and
+    checking the RESPONSE (both paths return 500 here for want of a workspace,
+    so the assertion held either way). Resolution is the thing that broke, so
+    resolution is what this asserts.
+    """
+    try:
+        from server.main import create_app  # noqa: PLC0415
+    except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover
+        pytest.skip(f"app dependency unavailable here: {exc}")
+
+    app = create_app()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/maintenance/stale-tasks",
+        "headers": [],
+        "root_path": "",
+    }
+    matched = [
+        r
+        for r in app.router.routes
+        if r.matches(scope)[0].value >= 2  # Match.FULL
+    ]
+    assert matched, "no route resolves /api/maintenance/stale-tasks"
+    # The FIRST match is what the app dispatches to.
+    assert matched[0].endpoint.__name__ == "report_stale", (
+        f"shadowed by {matched[0].path} -> {matched[0].endpoint.__name__}"
     )
