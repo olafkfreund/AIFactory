@@ -124,15 +124,52 @@ def test_the_route_module_imports() -> None:
     Testing only the pure module could not catch that: the pure module has no
     such imports. This asserts the wiring, which is the part that broke.
     """
-    try:
-        from server.routes import stale  # noqa: PLC0415
-    except ModuleNotFoundError as exc:  # pragma: no cover - env without app deps
-        # A MISSING THIRD-PARTY package is an environment gap, not a defect.
-        # A wrong NAME raises plain ImportError and is deliberately NOT caught,
-        # because that is the bug this test exists for.
-        pytest.skip(f"app dependency unavailable here: {exc.name}")
+    # importorskip skips on a MISSING PACKAGE (an environment gap) but lets a
+    # wrong NAME surface as ImportError, which is the bug this test exists for.
+    stale = pytest.importorskip("server.routes.stale")
 
     assert stale.router is not None
     assert any(
-        getattr(r, "path", "") == "/api/tasks/stale" for r in stale.router.routes
+        getattr(r, "path", "") == "/api/maintenance/stale-tasks"
+        for r in stale.router.routes
+    )
+
+
+def test_the_route_is_not_shadowed_by_another_router() -> None:
+    """Assert which route the APP resolves, not what the handler returns.
+
+    The first version of this lived at /api/tasks/stale. tasks.py mounts
+    `@router.get("/{task_id}")` under an /api/tasks prefix and is registered
+    first, so FastAPI matched "stale" as a task id and the deployed endpoint
+    answered `400 Invalid task ID format`. It was live and broken.
+
+    Two earlier attempts at this test were useless: checking the ROUTER
+    contains the path (the router was fine, the app's ordering was not), and
+    checking the RESPONSE (both paths return 500 here for want of a workspace,
+    so the assertion held either way). Resolution is the thing that broke, so
+    resolution is what this asserts.
+    """
+    # importorskip rather than try/except+skip: it returns the module, so there
+    # is no code path where the name is unbound. CodeQL flagged the earlier
+    # form as py/uninitialized-local-variable because it does not model
+    # pytest.skip as terminating - and it was right that the path existed.
+    main = pytest.importorskip("server.main")
+
+    app = main.create_app()
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/maintenance/stale-tasks",
+        "headers": [],
+        "root_path": "",
+    }
+    matched = [
+        r
+        for r in app.router.routes
+        if r.matches(scope)[0].value >= 2  # Match.FULL
+    ]
+    assert matched, "no route resolves /api/maintenance/stale-tasks"
+    # The FIRST match is what the app dispatches to.
+    assert matched[0].endpoint.__name__ == "report_stale", (
+        f"shadowed by {matched[0].path} -> {matched[0].endpoint.__name__}"
     )

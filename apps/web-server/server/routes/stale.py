@@ -7,8 +7,15 @@ states are excluded.
 
 Two endpoints on purpose:
 
-``GET  /api/tasks/stale``   report only, changes nothing
-``POST /api/tasks/stale/reap`` mark them failed
+``GET  /api/maintenance/stale-tasks``      report only, changes nothing
+``POST /api/maintenance/stale-tasks/reap`` mark them failed
+
+Under /api/maintenance rather than /api/tasks deliberately. `tasks.py` mounts
+`@router.get("/{task_id}")` under an /api/tasks prefix, so /api/tasks/stale was
+swallowed as a task id named "stale" and answered
+`400 Invalid task ID format`. Registering this router first would also work,
+but silently: any later reordering would re-break it with no test failing. A
+path that cannot collide does not depend on anyone remembering.
 
 Reporting is separate from reaping so a schedule can watch for a while before
 anything is allowed to write, and so a human can always ask "what would this
@@ -77,7 +84,7 @@ def _all_tasks() -> list[dict[str, Any]]:
     return tasks
 
 
-@router.get("/api/tasks/stale")
+@router.get("/api/maintenance/stale-tasks")
 async def report_stale(
     hours: float = Query(
         DEFAULT_STALE_AFTER.total_seconds() / 3600,
@@ -90,7 +97,7 @@ async def report_stale(
     return summarise(stale, dry_run=True)
 
 
-@router.post("/api/tasks/stale/reap")
+@router.post("/api/maintenance/stale-tasks/reap")
 async def reap_stale(
     hours: float = Query(DEFAULT_STALE_AFTER.total_seconds() / 3600),
     dry_run: bool = Query(
