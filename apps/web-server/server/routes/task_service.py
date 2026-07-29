@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.services.task_branch import recorded_branch
 from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
@@ -702,14 +703,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # the deployed backend. This is also the AUTHORITATIVE value: the line
     # above reconstructs the name from a convention, which is a second copy of
     # a rule core.worktree.get_branch_name owns.
-    # Rebuilt through safe_spec_component so the path CodeQL traces carries the
-    # barrier -- spec_dir reaches here from a directory scan, but the scan root
-    # is caller-derived and the analyser is right not to take that on trust.
-    branch_marker = spec_dir.parent / safe_spec_component(spec_dir.name) / ".task_branch"
-    if branch_marker.is_file():
-        recorded = branch_marker.read_text().strip()
-        if recorded:
-            metadata["branch_name"] = recorded
+    # Read through the single helper that owns this marker, rather than
+    # building a second path to the same file -- two constructions of one path
+    # is how they diverge, and only one of them would carry the barrier.
+    recorded = recorded_branch(spec_dir)
+    if recorded:
+        metadata["branch_name"] = recorded
 
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"

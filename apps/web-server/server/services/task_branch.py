@@ -62,6 +62,14 @@ def _matches(refs: list[str], spec_id: str) -> list[str]:
     return [r for r in refs if r.rsplit("/", 1)[-1] == spec_id]
 
 
+_MARKER = ".task_branch"
+
+
+def record_branch(spec_dir: Path, branch: str) -> None:
+    """Record the branch a build will push. Raises OSError; callers decide."""
+    (spec_dir / _MARKER).write_text(branch + "\n")
+
+
 def recorded_branch(spec_dir: Path) -> str | None:
     """The branch the build recorded at dispatch, if it left one.
 
@@ -69,7 +77,7 @@ def recorded_branch(spec_dir: Path) -> str | None:
     control plane knows the branch -- /work is deliberately left on the base
     branch, so nothing downstream can read it off a directory.
     """
-    marker = spec_dir / ".task_branch"
+    marker = spec_dir / _MARKER
     if not marker.is_file():
         return None
     try:

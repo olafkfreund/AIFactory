@@ -100,7 +100,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from server.specpath import safe_spec_component
+from server.services.task_branch import record_branch
 
 from .task_phase import (
     _append_parallel_flags,
@@ -1016,8 +1016,7 @@ def _populate_self_contained_worktree(
     # task branch off a directory. Without this the approve path had to
     # rediscover it from git refs, and task.branchName was None in the API.
     try:
-        marker = source_spec_dir.parent / safe_spec_component(spec_id) / ".task_branch"
-        marker.write_text(branch + "\n")
+        record_branch(source_spec_dir, branch)
     except OSError as exc:  # pragma: no cover - a full/RO volume
         # Non-fatal: resolve_task_branch still discovers the branch from git.
         # Logged rather than swallowed so a silently-missing record is visible.
