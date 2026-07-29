@@ -68,22 +68,44 @@ def test_a_missing_plan_file_is_not_an_error(tmp_path: Path) -> None:
     assert json.loads((spec / "task_control.json").read_text())["status"] == "done"
 
 
-def test_merge_records_done_only_on_the_success_path() -> None:
-    """The conflict and failure returns must not be reachable from the write.
+def test_only_one_place_writes_the_approval_status() -> None:
+    """The status write must have exactly one caller in the merge module.
 
-    Structural, because the alternative is standing up a git repo: assert the
-    write_status call sits after the CalledProcessError-free success return and
-    that no failure return follows it inside the same try.
+    Two writers is how one of them ends up not writing (#1071): the PR-merge
+    path and the local-merge path both finish an approval, and if each shapes
+    its own response they drift. `_approved` is that one place.
     """
     src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
-    assert "write_status(" in src, "merge no longer records a status"
-    call = src.index("write_status(\n            project_path")
-    success = src.index('"merged": True', call)
-    assert success > call, "status write must precede the success return"
-    between = src[call:success]
-    assert '"success": False' not in between, (
-        "a failure return sits inside the write path"
-    )
+    assert src.count("write_status(") == 1, "the approval status has more than one writer"
+    assert "def _approved(" in src, "the shared approval helper is gone"
+
+
+def test_a_refused_pull_request_merge_is_not_recorded_as_approved() -> None:
+    """GitHub declining the merge must not become "done".
+
+    The refusal branch (`if pr_detail:` after a False merge result) means a PR
+    exists and GitHub would not merge it -- conflicts, required checks, branch
+    protection. Recording that as approved would claim success for something
+    that did not happen, which is the defect class this whole change exists to
+    remove.
+
+    Asserted on the branch itself rather than by scanning backwards for a
+    failure return: a mutation that REPLACES the failure return with an
+    approval leaves nothing behind for a backwards scan to find, and the first
+    version of this test passed such a mutation.
+    """
+    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    branch = src[src.index("    if pr_detail:") :]
+    body = branch[: branch.index("\n    # No PR")]
+    assert '"success": False' in body, "the refused-PR branch must report failure"
+    assert "_approved(" not in body, "a refused PR merge is being recorded as approved"
+
+
+def test_the_pr_path_records_the_approval_on_success() -> None:
+    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    branch = src[src.index("    if pr_merged:") :]
+    body = branch[: branch.index("    if pr_detail:")]
+    assert "_approved(" in body, "a merged PR is not being recorded as approved"
 
 
 def test_merge_reports_a_failed_status_write_instead_of_claiming_done() -> None:
