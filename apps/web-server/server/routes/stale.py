@@ -42,6 +42,7 @@ from server.routes.task_service import get_spec_dirs, spec_to_task
 from server.services import task_control
 from server.services.stale_tasks import (
     DEFAULT_STALE_AFTER,
+    REAPED_STATUS,
     find_stale,
     summarise,
 )
@@ -78,7 +79,6 @@ def _now() -> datetime:
 #   - CFactory's is_failed() tokenises the status and matches "cancelled", so
 #     the card lands in the cockpit's Failed tab and leaves Active.
 # It also does not claim success, which "done" would.
-_REAPED_STATUS = "cancelled"
 
 
 def _mark_cancelled(spec_dir: Path, reason: str) -> None:
@@ -92,13 +92,13 @@ def _mark_cancelled(spec_dir: Path, reason: str) -> None:
     plan_file = spec_dir / "implementation_plan.json"
     if plan_file.is_file():
         plan = json.loads(plan_file.read_text())
-        plan["status"] = _REAPED_STATUS
+        plan["status"] = REAPED_STATUS
         plan["reviewReason"] = reason
         plan_file.write_text(json.dumps(plan, indent=2))
 
     task_control.write_control(
         spec_dir,
-        status=_REAPED_STATUS,
+        status=REAPED_STATUS,
         review_reason=reason,
         updated_by="stale-task-reaper",
     )

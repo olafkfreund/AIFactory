@@ -22,6 +22,7 @@ if str(_WEB_SERVER) not in sys.path:
 
 from server.services.stale_tasks import (  # noqa: E402
     DEFAULT_STALE_AFTER,
+    REAPED_STATUS,
     TERMINAL_STATES,
     find_stale,
     is_reapable,
@@ -109,7 +110,9 @@ def test_summary_states_what_it_did() -> None:
     dry = summarise(stale, dry_run=True)
     assert dry["action"] == "reported" and dry["stale_count"] == 1
     wet = summarise(stale, dry_run=False)
-    assert wet["action"] == "marked failed"
+    # The report must name the status actually written, or a caller reading
+    # it learns the wrong thing about the board.
+    assert wet["action"] == f"marked {REAPED_STATUS}"
     # A caller must be able to act on the report without re-deriving anything.
     assert wet["tasks"][0]["reason"]
 
@@ -239,6 +242,5 @@ def test_reaped_status_is_terminal_so_it_is_not_reaped_twice() -> None:
     If the status written were still machine-owned, every sweep would re-reap
     the same tasks forever and the report would never settle.
     """
-    stale_mod = pytest.importorskip("server.routes.stale")
-    assert stale_mod._REAPED_STATUS in TERMINAL_STATES
-    assert not is_reapable(stale_mod._REAPED_STATUS)
+    assert REAPED_STATUS in TERMINAL_STATES
+    assert not is_reapable(REAPED_STATUS)
