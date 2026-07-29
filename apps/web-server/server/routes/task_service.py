@@ -20,7 +20,6 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from server.services.task_branch import recorded_branch
 from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
@@ -703,12 +702,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # the deployed backend. This is also the AUTHORITATIVE value: the line
     # above reconstructs the name from a convention, which is a second copy of
     # a rule core.worktree.get_branch_name owns.
-    # Read through the single helper that owns this marker, rather than
-    # building a second path to the same file -- two constructions of one path
-    # is how they diverge, and only one of them would carry the barrier.
-    recorded = recorded_branch(spec_dir)
-    if recorded:
-        metadata["branch_name"] = recorded
+    # NOTE (#1073): the recorded task branch is deliberately NOT read here.
+    # task_branch.recorded_branch takes (project_path, spec_id) so it can build
+    # the path from a trusted root -- load_spec_metadata only receives a
+    # ready-made spec_dir, and sanitising a path after the fact does not cut
+    # the taint. Surfacing branchName for kubejob-built tasks needs a signature
+    # change to this function; the approve path resolves the branch without it.
 
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"

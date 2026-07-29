@@ -1537,7 +1537,6 @@ async def merge_worktree(
         project_path=project_path,
         spec_id=spec_id,
         base_branch=base_branch,
-        spec_dir=spec_dir,
     )
     if not worktree_branch:
         return {"success": False, "error": f"Could not determine task branch: {branch_error}"}

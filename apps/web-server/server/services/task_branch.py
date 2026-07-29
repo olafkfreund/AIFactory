@@ -28,6 +28,8 @@ import logging
 import subprocess
 from pathlib import Path
 
+from server.specpath import safe_spec_component
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,19 +67,37 @@ def _matches(refs: list[str], spec_id: str) -> list[str]:
 _MARKER = ".task_branch"
 
 
-def record_branch(spec_dir: Path, branch: str) -> None:
+def _marker_path(project_path: Path, spec_id: str) -> Path:
+    """The marker path, built from the trusted project root.
+
+    Takes (project_path, spec_id) rather than a ready-made spec_dir on purpose:
+    a caller-supplied PATH cannot be sanitised -- safe_spec_component barriers a
+    single COMPONENT, so a tainted parent survives it. Building from the root
+    with the barriered component is the shape the rest of this codebase uses
+    (#565) and the only one that actually cuts the flow.
+    """
+    return (
+        project_path
+        / ".aifactory"
+        / "specs"
+        / safe_spec_component(spec_id)
+        / _MARKER
+    )
+
+
+def record_branch(project_path: Path, spec_id: str, branch: str) -> None:
     """Record the branch a build will push. Raises OSError; callers decide."""
-    (spec_dir / _MARKER).write_text(branch + "\n")
+    _marker_path(project_path, spec_id).write_text(branch + "\n")
 
 
-def recorded_branch(spec_dir: Path) -> str | None:
+def recorded_branch(project_path: Path, spec_id: str) -> str | None:
     """The branch the build recorded at dispatch, if it left one.
 
     Written by the kubejob workspace preparation, which is the only place the
     control plane knows the branch -- /work is deliberately left on the base
     branch, so nothing downstream can read it off a directory.
     """
-    marker = spec_dir / _MARKER
+    marker = _marker_path(project_path, spec_id)
     if not marker.is_file():
         return None
     try:
@@ -106,7 +126,6 @@ def resolve_task_branch(
     project_path: Path,
     spec_id: str,
     base_branch: str,
-    spec_dir: Path | None = None,
 ) -> tuple[str | None, str | None]:
     """Return ``(branch, None)`` or ``(None, reason)``.
 
@@ -120,10 +139,9 @@ def resolve_task_branch(
     #    after a previous merge, or a spec dir reused) must fall through to
     #    discovery rather than being handed to git as a merge source. Returning a
     #    branch because a file says so is how you merge the wrong thing.
-    if spec_dir is not None:
-        recorded = recorded_branch(spec_dir)
-        if recorded and recorded != base_branch and _exists(recorded, project_path):
-            return recorded, None
+    recorded = recorded_branch(project_path, spec_id)
+    if recorded and recorded != base_branch and _exists(recorded, project_path):
+        return recorded, None
 
     # 1. The worktree's HEAD -- but only if it is a real branch that is not the
     #    base. `main` here means "this worktree was never switched", which is
