@@ -359,10 +359,17 @@ async def get_worktree_merge_preview(
         from ..services.conflict_service import get_conflict_service
 
         conflict_service = get_conflict_service(project_path)
+        # work_ref is the ref resolve_work_ref already found above. Passing it
+        # is what makes the SEMANTIC half of this preview agree with the git
+        # half: without it the detector diffed the control-plane worktree, which
+        # sits on the base branch, and reported zero conflicts for every task
+        # while the file list beside it was correct (#1089).
         semantic_result = await conflict_service.detect_conflicts(
             task_id=task_id,
             worktree_path=worktree_path,
             base_branch=base_branch,
+            work_ref=work_ref,
+            repo_path=project_path,
         )
 
         if semantic_result.get("success"):
@@ -1609,7 +1616,10 @@ async def merge_worktree(
         base_branch=base_branch,
     )
     if not worktree_branch:
-        return {"success": False, "error": f"Could not determine task branch: {branch_error}"}
+        return {
+            "success": False,
+            "error": f"Could not determine task branch: {branch_error}",
+        }
 
     # Clean up internal auto-generated files that can block merge
     # These are untracked files created by agents in worktrees that would
@@ -1768,7 +1778,9 @@ async def get_worktree_status(
     else:
         for project in projects_data:
             path = Path(project.get("path", ""))
-            if (project_id and project.get("id") == project_id) or (path / ".aifactory" / "specs" / spec_id).exists():
+            if (project_id and project.get("id") == project_id) or (
+                path / ".aifactory" / "specs" / spec_id
+            ).exists():
                 project_path = path
                 break
 
@@ -1933,7 +1945,9 @@ async def get_worktree_diff(
     else:
         for project in projects_data:
             path = Path(project.get("path", ""))
-            if (project_id and project.get("id") == project_id) or (path / ".aifactory" / "specs" / spec_id).exists():
+            if (project_id and project.get("id") == project_id) or (
+                path / ".aifactory" / "specs" / spec_id
+            ).exists():
                 project_path = path
                 break
 

@@ -218,3 +218,180 @@ def test_check_catches_the_prefix_bug(tmp_path: Path) -> None:
         )
     )
     assert _violations_in(tmp) == []
+
+
+# --------------------------------------------------------------------------- #
+# The second detector (#1089).
+#
+# The check above matches an EXPLICIT branch-name read (`rev-parse --abbrev-ref
+# HEAD`, `branch --show-current`). It missed an entire unfixed region, because
+# `git diff {base}...HEAD` with a worktree cwd is the same lie without ever
+# naming HEAD as a branch: under kubejob the worktree IS the base branch, so the
+# range is base...base and the answer is an empty change set. Found by hand
+# audit, not by this file, which is the argument for adding it.
+#
+# Scope is widened to apps/backend as well, because that is where the 11 sites
+# lived and the original SERVER_DIR-only scan could not see any of them.
+# --------------------------------------------------------------------------- #
+
+_BACKEND_DIR = SERVER_DIR.parents[1] / "backend"
+
+# Range subcommands: a two-endpoint read where one endpoint is HEAD.
+_RANGE_CMDS = {"diff", "log", "rev-list", "merge-base", "cherry"}
+
+# Sites where reading the worktree's own HEAD is the CORRECT thing, because the
+# code runs where the worktree genuinely holds the work. Every entry states why.
+_RANGE_ALLOWLIST: dict[str, str] = {
+    "core/worktree.py": (
+        "WorktreeManager runs agent-side: constructed by agents/parallel_integration "
+        "and core/workspace/{setup,finalization}. There the worktree HEAD IS the "
+        "task branch, so {base}..HEAD is the right read and a ref-based rewrite "
+        "would break the majority caller"
+    ),
+    "merge/timeline_git.py": (
+        "baseline capture, not a review surface: reached only from "
+        "core/workspace/setup.py and merge/tracker_cli.py, at worktree-creation "
+        "time when the worktree legitimately holds no work yet. The web server "
+        "has no reference to FileTimelineTracker at all"
+    ),
+}
+
+
+def _is_head_range_read(call: ast.Call) -> bool:
+    """Does this call ask git for a range ending at the worktree's own HEAD?"""
+    for arg in call.args:
+        if not isinstance(arg, (ast.List, ast.Tuple)):
+            continue
+        if not (_string_constants(arg) & _RANGE_CMDS):
+            continue
+        for node in ast.walk(arg):
+            # "{base}...HEAD" as a literal, or an f-string ending in HEAD.
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.endswith("HEAD")
+                and ".." in node.value
+            ):
+                return True
+            if isinstance(node, ast.JoinedStr) and node.values:
+                tail = node.values[-1]
+                if (
+                    isinstance(tail, ast.Constant)
+                    and isinstance(tail.value, str)
+                    and tail.value.endswith("HEAD")
+                ):
+                    return True
+        # `["git", "merge-base", target, "HEAD"]` -- HEAD as a bare endpoint.
+        if "HEAD" in _string_constants(arg):
+            return True
+    return False
+
+
+def _range_violations_in(path: Path) -> list[int]:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    lines: list[int] = []
+
+    def visit(node: ast.AST, func_stack: list[ast.AST]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            func_stack = [*func_stack, node]
+        if (
+            isinstance(node, ast.Call)
+            and _is_head_range_read(node)
+            and _reads_worktree(node)
+            and not any(_references_resolver(f) for f in func_stack)
+        ):
+            lines.append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child, func_stack)
+
+    visit(tree, [])
+    return lines
+
+
+# Directories that are not this repository's source. apps/backend carries a
+# .venv in CI, and ast.parse dies on third-party files -- msal ships one with a
+# BOM. Scanning them made this check fail on the environment rather than on the
+# code, which is its own kind of dishonest gate: it was red for a reason that has
+# nothing to do with the invariant.
+_NOT_OUR_CODE = frozenset(
+    {
+        ".venv",
+        "venv",
+        "site-packages",
+        "node_modules",
+        "__pycache__",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
+
+
+def test_no_worktree_range_read_as_the_task_work() -> None:
+    violations: list[str] = []
+    for root, label in ((SERVER_DIR, "server"), (_BACKEND_DIR, "backend")):
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*.py")):
+            if _NOT_OUR_CODE & set(path.parts):
+                continue
+            rel = path.relative_to(root).as_posix()
+            if rel in ALLOWLIST or rel in _RANGE_ALLOWLIST or "test" in path.name:
+                continue
+            violations.extend(
+                f"{label}/{rel}:{line}" for line in _range_violations_in(path)
+            )
+
+    assert not violations, (
+        "a git range ending at a worktree's HEAD is being read as the task's work:"
+        "\n  " + "\n  ".join(violations) + "\n\n"
+        "Under the kubejob backend the worktree sits on the BASE branch, so this "
+        "range is base...base and yields an empty change set -- the shape that "
+        "made merge preview report zero semantic conflicts for every task "
+        "(#1089).\n"
+        "Fix: read the ref the build pushed, as {base}...{ref} in the PROJECT "
+        "repo. The control plane gets that ref from "
+        "server/services/task_branch.resolve_work_ref.\n"
+        "If the code legitimately runs where the worktree DOES hold the work "
+        "(agent-side, or baseline capture at worktree creation), add it to "
+        "_RANGE_ALLOWLIST with that reason."
+    )
+
+
+def test_the_range_detector_catches_the_semantic_half_bug(tmp_path: Path) -> None:
+    """Self-test: the exact pre-#1089 shape must be flagged.
+
+    Reconstructed from modification_tracker.refresh_from_git. If this stops
+    failing, the detector has been weakened into decoration.
+    """
+    site = tmp_path / "reconstruction.py"
+    site.write_text(
+        "import subprocess\n"
+        "def refresh_from_git(worktree_path, target_branch):\n"
+        "    return subprocess.run(\n"
+        '        ["git", "diff", "--name-only", f"{target_branch}...HEAD"],\n'
+        "        cwd=worktree_path,\n"
+        "    )\n"
+    )
+    assert _range_violations_in(site) == [3]
+
+    # merge-base with HEAD as a bare endpoint (the timeline_git shape).
+    site.write_text(
+        "import subprocess\n"
+        "def get_branch_point(worktree_path, target_branch):\n"
+        "    return subprocess.run(\n"
+        '        ["git", "merge-base", target_branch, "HEAD"], cwd=worktree_path\n'
+        "    )\n"
+    )
+    assert _range_violations_in(site) == [3]
+
+    # A project-repo read of the same shape is NOT the bug and must not flag.
+    site.write_text(
+        "import subprocess\n"
+        "def base_diff(project_path, base):\n"
+        "    return subprocess.run(\n"
+        '        ["git", "diff", "--name-only", f"{base}...HEAD"], cwd=project_path\n'
+        "    )\n"
+    )
+    assert _range_violations_in(site) == []

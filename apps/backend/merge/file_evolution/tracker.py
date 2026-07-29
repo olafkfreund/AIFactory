@@ -327,6 +327,8 @@ class FileEvolutionTracker:
         task_id: str,
         worktree_path: Path,
         target_branch: str | None = None,
+        work_ref: str | None = None,
+        repo_path: Path | None = None,
     ) -> None:
         """
         Refresh task snapshots by analyzing git diff from worktree.
@@ -338,11 +340,16 @@ class FileEvolutionTracker:
             task_id: The task identifier
             worktree_path: Path to the task's worktree
             target_branch: Branch to compare against (default: auto-detect)
+            work_ref: Ref holding the task's work, read in *repo_path* rather
+                than from the worktree's HEAD (#1089). Omit in-Job.
+            repo_path: Repository to run git in when *work_ref* is given.
         """
         self.modification_tracker.refresh_from_git(
             task_id=task_id,
             worktree_path=worktree_path,
             evolutions=self._evolutions,
             target_branch=target_branch,
+            work_ref=work_ref,
+            repo_path=repo_path,
         )
         self._save_evolutions()
