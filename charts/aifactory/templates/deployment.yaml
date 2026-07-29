@@ -95,6 +95,28 @@ spec:
             # should use a different image than the control plane.
             - name: AIFACTORY_IMAGE
               value: {{ include "aifactory.image" . | quote }}
+            {{- if .Values.staleReaper.enabled }}
+            # #1064 stale-task reaper. Runs in THIS pod, not a CronJob: the
+            # spec tree lives on a ReadWriteOnce volume, so a separate pod
+            # scheduled onto another node reads an empty directory, reports
+            # zero orphans and exits green.
+            - name: AIFACTORY_STALE_REAPER
+              value: "true"
+            # Report-only unless explicitly told otherwise. Enabling the
+            # reaper and enabling writes are two separate decisions on
+            # purpose -- read a few weeks of reports first.
+            # NO `| default true` here. Helm's `default` treats false as
+            # empty, so `false | default true` renders "true" and silently
+            # discards the operator's setting -- they set dryRun: false, see
+            # nothing get written, and have no way to tell why. Unset renders
+            # "" which the app reads as report-only, so this still fails closed.
+            - name: REAPER_DRY_RUN
+              value: {{ .Values.staleReaper.dryRun | quote }}
+            - name: REAPER_STALE_HOURS
+              value: {{ .Values.staleReaper.staleHours | default 4 | quote }}
+            - name: REAPER_INTERVAL_SECONDS
+              value: {{ .Values.staleReaper.intervalSeconds | default 1800 | quote }}
+            {{- end }}
             # DATABASE_URL: produced by ExternalSecret OR by an
             # out-of-band Secret named values.postgres.externalSecretName.
             - name: DATABASE_URL

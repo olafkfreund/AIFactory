@@ -36,10 +36,22 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-# States where a MACHINE owes the next move. Silence here is a stall.
+# States asserting that something IS EXECUTING right now. Silence here means
+# the thing that was executing is gone.
+#
+# `backlog` and `queued` are deliberately NOT here, though an earlier version
+# of this had them. A queued task has no worker, so nothing died -- its age
+# measures how busy the cluster is, not whether anything broke. Reaping it
+# cancels work that was only waiting its turn. The live board had three
+# queued tasks the reaper wanted to cancel on that reasoning; all three were
+# simply never picked up, which is a capacity signal, not a fault.
 MACHINE_OWNED_STATES: frozenset[str] = frozenset(
-    {"in_progress", "backlog", "ai_review", "queued", "running"}
+    {"in_progress", "ai_review", "running"}
 )
+
+# No worker, nothing died. Never reaped, at any age -- same rule as the
+# human-owned states, for the same reason: age is not evidence of failure.
+QUEUED_STATES: frozenset[str] = frozenset({"backlog", "queued"})
 
 # States where a HUMAN owes the next move. Never stale, at any age.
 HUMAN_OWNED_STATES: frozenset[str] = frozenset({"human_review", "review"})

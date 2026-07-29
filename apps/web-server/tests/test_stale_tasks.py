@@ -9,6 +9,7 @@ Age alone cannot tell those apart; ownership can.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -60,6 +61,20 @@ def test_machine_owned_task_gone_quiet_is_stale() -> None:
     # The reason must name the evidence, not just assert a verdict.
     assert "27.0h" in stale[0].reason()
     assert "machine-owned" in stale[0].reason()
+
+
+def test_a_queued_task_is_never_stale_however_old() -> None:
+    """No worker, so nothing died.
+
+    A backlog task's age measures queue depth, not failure. Reaping one
+    cancels work that was waiting its turn -- the first version of this did
+    exactly that, and wanted to cancel three real queued tasks on the live
+    board because the cluster had been busy.
+    """
+    for status in ("backlog", "queued"):
+        for age in (5, 425, 24 * 90):
+            assert find_stale([_task(status, age)], now=_NOW) == [], status
+        assert not is_reapable(status)
 
 
 def test_recent_machine_task_is_left_alone() -> None:
@@ -244,3 +259,143 @@ def test_reaped_status_is_terminal_so_it_is_not_reaped_twice() -> None:
     """
     assert REAPED_STATUS in TERMINAL_STATES
     assert not is_reapable(REAPED_STATUS)
+
+
+def test_cron_defaults_to_report_only_and_fails_closed_on_a_typo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset, empty, or misspelt all mean dry-run.
+
+    REAPER_DRY_RUN=flase must not write. The cost is asymmetric: a typo that
+    reports is a wasted run, a typo that writes cancels live tasks.
+    """
+    cron = pytest.importorskip("server.services.stale_reaper")
+    monkeypatch.delenv("REAPER_DRY_RUN", raising=False)
+    assert cron.dry_run() is True
+    for value in ("", "true", "flase", "0", "no"):
+        monkeypatch.setenv("REAPER_DRY_RUN", value)
+        assert cron.dry_run() is True, f"{value!r} must not enable writing"
+    # Only the word itself turns it on -- case and surrounding space are
+    # normalised, because "FALSE" in a Helm value is the same intent.
+    for value in ("false", "False", "  FALSE  "):
+        monkeypatch.setenv("REAPER_DRY_RUN", value)
+        assert cron.dry_run() is False, f"{value!r} should enable writing"
+
+
+def test_cron_hours_survives_a_junk_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bad threshold must fall back, not crash the sweep.
+
+    Reading it as 0 would be far worse: every machine-owned task would be
+    'idle longer than 0h' and the whole board would be reaped.
+    """
+    cron = pytest.importorskip("server.services.stale_reaper")
+    monkeypatch.setenv("REAPER_STALE_HOURS", "soon")
+    assert cron.stale_hours() == DEFAULT_STALE_AFTER.total_seconds() / 3600
+    monkeypatch.setenv("REAPER_STALE_HOURS", "12")
+    assert cron.stale_hours() == 12
+
+
+def test_cron_exits_nonzero_when_a_reap_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CronJob that goes green while orphans pile up is the original bug."""
+    cron = pytest.importorskip("server.services.stale_reaper")
+    monkeypatch.setattr(
+        cron, "sweep", lambda **_: {"stale_count": 1, "failed_to_reap": ["x: EACCES"]}
+    )
+    assert cron.main() == 1
+    monkeypatch.setattr(cron, "sweep", lambda **_: {"stale_count": 0})
+    assert cron.main() == 0
+
+
+def test_loop_is_off_unless_switched_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    reaper = pytest.importorskip("server.services.stale_reaper")
+    monkeypatch.delenv("AIFACTORY_STALE_REAPER", raising=False)
+    assert reaper.reaper_enabled() is False
+    for value in ("true", "1", "yes", "TRUE"):
+        monkeypatch.setenv("AIFACTORY_STALE_REAPER", value)
+        assert reaper.reaper_enabled() is True, value
+
+
+def test_a_zero_threshold_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REAPER_STALE_HOURS=0 would reap the entire board.
+
+    Every machine-owned task is idle longer than zero hours, so a stray 0 --
+    or a negative from a bad template -- turns the reaper into a delete-all.
+    """
+    reaper = pytest.importorskip("server.services.stale_reaper")
+    default = DEFAULT_STALE_AFTER.total_seconds() / 3600
+    for junk in ("0", "-1", "soon", ""):
+        monkeypatch.setenv("REAPER_STALE_HOURS", junk)
+        assert reaper.stale_hours() == default, junk
+    monkeypatch.setenv("REAPER_STALE_HOURS", "12")
+    assert reaper.stale_hours() == 12
+
+
+def test_the_loop_actually_sweeps_and_actually_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wiring, not the helpers.
+
+    A loop that is registered but never ticks looks identical to one that
+    works: the log is quiet either way, because a quiet board also produces
+    no output. So count the ticks.
+
+    Driven with asyncio.run rather than a pytest.mark.asyncio marker. The
+    marker is the house idiom, but it degrades to an UNKNOWN MARK when the
+    plugin is missing, and an async test body that is never awaited is the
+    same false green this whole feature exists to catch. asyncio.run needs
+    no plugin.
+    """
+    reaper = pytest.importorskip("server.services.stale_reaper")
+    ticks = 0
+
+    def _count() -> dict:
+        nonlocal ticks
+        ticks += 1
+        return {"stale_count": 0}
+
+    monkeypatch.setattr(reaper, "sweep_once", _count)
+    monkeypatch.setenv("REAPER_INTERVAL_SECONDS", "0.01")
+
+    async def drive() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(reaper.reaper_loop(stop=stop))
+        await asyncio.sleep(0.05)
+        assert ticks >= 2, f"loop did not sweep repeatedly (ticks={ticks})"
+
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+        settled = ticks
+        await asyncio.sleep(0.05)
+        assert ticks == settled, "loop kept running after stop"
+
+    asyncio.run(drive())
+
+
+def test_a_failing_sweep_does_not_kill_the_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One bad tick must not silently end the schedule for the pod's lifetime."""
+    reaper = pytest.importorskip("server.services.stale_reaper")
+    calls = 0
+
+    def _explode() -> dict:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("disk gone")
+        return {"stale_count": 0}
+
+    monkeypatch.setattr(reaper, "sweep_once", _explode)
+    monkeypatch.setenv("REAPER_INTERVAL_SECONDS", "0.01")
+
+    async def drive() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(reaper.reaper_loop(stop=stop))
+        await asyncio.sleep(0.05)
+        stop.set()
+        await asyncio.wait_for(task, timeout=2)
+
+    asyncio.run(drive())
+    assert calls >= 2, "loop died on the first failing tick"
