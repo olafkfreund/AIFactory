@@ -106,6 +106,29 @@ def kubejob_shape(tmp_path: Path) -> dict[str, Path]:
     # The project repo learns about the branch, as the control plane would.
     _git(["fetch", "-q", "origin"], project)
 
+    # The fixture checks itself. Without this, any git-environment difference
+    # that leaves the branch unfetched or the range empty shows up as the
+    # PRODUCT failing to see the work -- which is the very thing under test, and
+    # sent me chasing the wrong layer twice. If the precondition is broken, say
+    # so here, in terms of git state.
+    probe = subprocess.run(  # noqa: S603
+        ["git", "diff", "--name-only", f"main...origin/{TASK_BRANCH}"],  # noqa: S607
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    changed = [line for line in probe.stdout.splitlines() if line.strip()]
+    assert probe.returncode == 0, (
+        f"fixture: the project repo cannot read main...origin/{TASK_BRANCH}: "
+        f"{probe.stderr.strip()!r}"
+    )
+    assert {"app.py", "feature.py"} <= set(changed), (
+        f"fixture: expected the pushed branch to differ from main in app.py and "
+        f"feature.py, got {changed!r}. The rest of this file measures which side "
+        f"of this range the product reads, so an empty range invalidates it."
+    )
+
     return {"project": project, "worktree": worktree, "origin": origin}
 
 
