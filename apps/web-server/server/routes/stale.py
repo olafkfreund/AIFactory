@@ -31,7 +31,6 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
 # are in task_service.py. Importing either from the wrong module breaks app
 # startup, which fails every test in the suite rather than just this route's.
