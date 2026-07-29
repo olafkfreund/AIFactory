@@ -91,3 +91,26 @@ def test_merge_reports_a_failed_status_write_instead_of_claiming_done() -> None:
     assert '"taskStatus": "done" if not status_error else "unchanged"' in src, (
         "the response must not say done when the status write failed"
     )
+
+
+def test_merge_addresses_the_spec_dir_by_sanitized_spec_id() -> None:
+    """Not by task_id, which CodeQL caught as a path injection.
+
+    Two things go wrong with task_id here. It still carries the "project_id:"
+    prefix, so the join addresses a directory that does not exist -- and
+    write_control would helpfully CREATE it, landing the status nowhere while
+    reporting success. And it is raw URL input, so a "../" would escape the
+    specs directory entirely.
+
+    spec_id is the value the handler has already put through
+    safe_spec_component.
+    """
+    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    call = src.index("status_error = write_status(")
+    args = src[call : src.index("updated_by=", call)]
+    assert '"specs" / spec_id' in args, (
+        "merge must address the spec dir by sanitized spec_id"
+    )
+    assert "/ task_id" not in args, (
+        "task_id is raw URL input and carries the project prefix"
+    )

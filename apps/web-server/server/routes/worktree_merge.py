@@ -1599,8 +1599,13 @@ async def merge_worktree(
         #
         # Success path only: a conflict or a failed merge returns above, and
         # must not be recorded as done.
+        # spec_id, NOT task_id: task_id still carries the "project_id:" prefix,
+        # so joining it would address a directory that does not exist -- and
+        # write_control would helpfully create it, landing the status nowhere.
+        # spec_id has also been through safe_spec_component above, which is what
+        # keeps a "../" out of the join.
         status_error = write_status(
-            project_path / ".aifactory" / "specs" / task_id,
+            project_path / ".aifactory" / "specs" / spec_id,
             status="done",
             reason=f"approved: merged {worktree_branch} into {base_branch}",
             updated_by="approve-merge",
@@ -1610,7 +1615,11 @@ async def merge_worktree(
             # undone, so this is not a failure of the request -- but a caller
             # that is told "merged" while the board still says human_review
             # deserves to know why.
-            logger.warning("merged %s but could not record status: %s", task_id, status_error)
+            logger.warning(
+                "merged %s but could not record status: %s",
+                spec_id.replace("\n", " "),
+                status_error.replace("\n", " "),
+            )
 
         return {
             "success": True,

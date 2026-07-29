@@ -56,7 +56,7 @@ def write_status(
     try:
         plan = json.loads(plan_file.read_text())
     except (OSError, ValueError) as exc:
-        logger.warning("could not read %s to record status: %s", plan_file, exc)
+        logger.warning("could not read the plan file to record status: %s", exc)
         return f"{plan_file.name} is unreadable ({exc}); task_control.json was updated"
 
     plan["status"] = status
@@ -64,7 +64,7 @@ def write_status(
     try:
         plan_file.write_text(json.dumps(plan, indent=2))
     except OSError as exc:
-        logger.warning("could not write %s: %s", plan_file, exc)
+        logger.warning("could not write the plan file: %s", exc)
         return f"{plan_file.name} could not be written ({exc}); task_control.json was updated"
 
     return None
