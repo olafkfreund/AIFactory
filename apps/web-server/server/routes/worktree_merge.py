@@ -30,7 +30,6 @@ handlers ``merge_worktree`` / ``get_worktree_diff`` historically lived in
 """
 
 import json
-import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -63,10 +62,14 @@ def _approved(
     joining it addresses a directory that does not exist -- and write_control
     would helpfully create it, landing the status nowhere.
     """
-    # Bound locally, as every other function in this module does -- there is no
-    # module-level logger here. Referencing a global one raised NameError on the
-    # status-error path: the code reporting a failure would itself have failed,
-    # which is the same defect #649 fixed in merge_worktree.
+    # Imported and bound locally, exactly as the six sibling functions do.
+    # Referencing a module-level logger raised NameError on the status-error
+    # path -- the code reporting a failure would itself have failed, the same
+    # defect #649 fixed in merge_worktree. Hoisting the import to module scope
+    # instead would turn all six of those local imports into repeated imports,
+    # so the convention is kept rather than half-changed.
+    import logging  # noqa: PLC0415 - module convention, see above
+
     logger = logging.getLogger(__name__)
 
     # Barriered HERE, not just at the call sites. Callers do sanitise, but a
@@ -139,7 +142,18 @@ def _merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
     merged = run_gh_command(["pr", "merge", str(number), "--squash"], cwd=cwd)
     if merged.get("success"):
         return True, f"merged pull request #{number}"
-    return False, f"could not merge pull request #{number}: {merged.get('error')}"
+    # The gh stderr is LOGGED, not returned: it can carry command lines, paths
+    # and token-bearing URLs, and this string is rendered in the cockpit. The
+    # caller still learns which PR failed and where to look.
+    import logging  # noqa: PLC0415 - module convention, see _approved
+
+    logging.getLogger(__name__).warning(
+        "gh pr merge failed for #%s: %s", number, merged.get("error")
+    )
+    return False, (
+        f"could not merge pull request #{number}; GitHub refused it "
+        f"(check its conflicts, required checks and branch protection)"
+    )
 
 
 class WorktreeMergeOptions(BaseModel):
