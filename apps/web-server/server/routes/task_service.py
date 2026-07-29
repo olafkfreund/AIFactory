@@ -16,11 +16,13 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from server.services.task_branch import recorded_branch
+from server.services.task_status import PLAN_UNREADABLE, read_plan
 from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
@@ -256,12 +258,12 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
     main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     plan_file = main_spec_dir / "implementation_plan.json"
 
-    plan = {}
+    plan: dict[str, Any] = {}
     if plan_file.exists():
-        try:
-            plan = json.loads(plan_file.read_text())
-        except json.JSONDecodeError:
-            pass
+        # #1069: read_plan logs the path and the parse offset. It used to be a
+        # bare ``pass``, which is how an unparseable plan reached the callers
+        # below as an empty dict.
+        plan, _error = read_plan(plan_file)
 
     return plan, plan_file
 
@@ -523,9 +525,15 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # Try to load implementation_plan.json for status/subtasks
     plan_file = spec_dir / "implementation_plan.json"
     explicit_status = None  # Track if user explicitly set status via kanban
+    plan_unreadable = False
     if plan_file.exists():
+        # #1069: parse OUTSIDE the tolerant handler below. That handler exists to
+        # degrade gracefully when part of a well-formed plan is odd (#941); a file
+        # that does not parse at all is a different thing — a fault — and must be
+        # remembered rather than silently becoming an empty plan.
+        plan, plan_error = read_plan(plan_file)
+        plan_unreadable = plan_error is not None
         try:
-            plan = json.loads(plan_file.read_text())
             # Only set phase from plan if not already set from task_logs
             if not metadata["phase"]:
                 metadata["phase"] = plan.get("phase")
@@ -779,6 +787,16 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         elif metadata["phase"]:
             metadata["status"] = "in_progress"
 
+    # #1069: the plan file exists but does not parse, and nothing else on disk
+    # said anything about this task. Report the FAULT rather than falling through
+    # to the ``backlog`` default: ``backlog`` means "queued, not started", a claim
+    # the code cannot support once it has failed to read the plan — and it also
+    # hides the task from the orphan reaper (#1064), which deliberately treats
+    # backlog as not-reapable because a queued task has no worker to lose.
+    if plan_unreadable and metadata["status"] == "backlog":
+        metadata["status"] = PLAN_UNREADABLE
+        metadata["reviewReason"] = PLAN_UNREADABLE
+
     # Control-plane override (Issue #259): the dedicated control store is the
     # authoritative source for board column / status and reviewReason. It is
     # written ONLY by the web-server and is never touched by worktree sync, so
@@ -946,6 +964,13 @@ def map_backend_status_to_frontend(backend_status: str) -> str:
         "qa_failed": "human_review",  # Failed QA needs human attention
         "completed": "human_review",  # Completed tasks need merge approval
         "cancelled": "backlog",  # Cancelled tasks shown in backlog (could be hidden later)
+        # #1069: the plan file could not be parsed. A human has to look at the
+        # spec dir, so human_review is the honest column — and it must be mapped
+        # explicitly, because this function defaults anything unknown to
+        # ``backlog`` (which is the bug) and the Kanban board silently DROPS a
+        # card whose status is not one of its five columns (which would be
+        # worse). The distinct fault survives in review_reason.
+        PLAN_UNREADABLE: "human_review",
         # Frontend statuses (pass through when already mapped or set via kanban)
         "ai_review": "ai_review",
         "human_review": "human_review",
