@@ -214,7 +214,7 @@ def test_spec_to_task_surfaces_the_recorded_branch(tmp_path: Path) -> None:
     backend never writes, so the API reported no branch for the tasks the
     deployed backend produces.
     """
-    ts = pytest.importorskip("server.routes.task_service")
+    mod = pytest.importorskip("server.routes.task_service")
     tb = pytest.importorskip("server.services.task_branch")
 
     project = tmp_path / "proj"
@@ -222,8 +222,6 @@ def test_spec_to_task_surfaces_the_recorded_branch(tmp_path: Path) -> None:
     spec.mkdir(parents=True)
     (spec / "requirements.json").write_text('{"title": "Thing"}')
     tb.record_branch(project, "200-thing", "aifactory/200-thing")
-
-    import server.routes.task_service as mod
 
     original = mod.resolve_project_path
     mod.resolve_project_path = lambda _pid: project
@@ -237,12 +235,10 @@ def test_spec_to_task_surfaces_the_recorded_branch(tmp_path: Path) -> None:
 
 def test_spec_to_task_survives_an_unresolvable_project(tmp_path: Path) -> None:
     """A bad project must not 500 a whole task list."""
-    ts = pytest.importorskip("server.routes.task_service")
+    mod = pytest.importorskip("server.routes.task_service")
     spec = tmp_path / "specs" / "201-thing"
     spec.mkdir(parents=True)
     (spec / "requirements.json").write_text('{"title": "Thing"}')
-
-    import server.routes.task_service as mod
 
     original = mod.resolve_project_path
 
