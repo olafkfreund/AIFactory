@@ -75,9 +75,10 @@ def test_only_one_place_writes_the_approval_status() -> None:
     path and the local-merge path both finish an approval, and if each shapes
     its own response they drift. `_approved` is that one place.
     """
-    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
+    route = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
     assert src.count("write_status(") == 1, "the approval status has more than one writer"
-    assert "def _approved(" in src, "the shared approval helper is gone"
+    assert "def approved(" in src, "the shared approval helper is gone"
 
 
 def test_a_refused_pull_request_merge_is_not_recorded_as_approved() -> None:
@@ -94,22 +95,25 @@ def test_a_refused_pull_request_merge_is_not_recorded_as_approved() -> None:
     approval leaves nothing behind for a backwards scan to find, and the first
     version of this test passed such a mutation.
     """
-    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
-    branch = src[src.index("    if pr_detail:") :]
+    src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
+    route = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    branch = route[route.index("    if pr_detail:") :]
     body = branch[: branch.index("\n    # No PR")]
     assert '"success": False' in body, "the refused-PR branch must report failure"
-    assert "_approved(" not in body, "a refused PR merge is being recorded as approved"
+    assert "approved(" not in body, "a refused PR merge is being recorded as approved"
 
 
 def test_the_pr_path_records_the_approval_on_success() -> None:
-    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
-    branch = src[src.index("    if pr_merged:") :]
+    src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
+    route = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    branch = route[route.index("    if pr_merged:") :]
     body = branch[: branch.index("    if pr_detail:")]
-    assert "_approved(" in body, "a merged PR is not being recorded as approved"
+    assert "approved(" in body, "a merged PR is not being recorded as approved"
 
 
 def test_merge_reports_a_failed_status_write_instead_of_claiming_done() -> None:
-    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
+    route = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
     assert '"taskStatus": "done" if not status_error else "unchanged"' in src, (
         "the response must not say done when the status write failed"
     )
@@ -127,7 +131,8 @@ def test_merge_addresses_the_spec_dir_by_sanitized_spec_id() -> None:
     spec_id is the value the handler has already put through
     safe_spec_component.
     """
-    src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
+    src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
+    route = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
     call = src.index("status_error = write_status(")
     args = src[call : src.index("updated_by=", call)]
     assert '"specs" / safe_spec_component(spec_id)' in args, (

@@ -33,13 +33,12 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.approval import approved, merge_pull_request
 from server.services.task_branch import resolve_task_branch
-from server.services.task_status import write_status
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -47,113 +46,6 @@ from .project_authz import require_task_access
 from .projects import get_projects_file
 
 router = APIRouter()
-
-
-def _approved(
-    project_path: Path, spec_id: str, message: str, **extra: object
-) -> dict[str, Any]:
-    """Record the approval and shape the success response.
-
-    Shared by the PR-merge and local-merge paths so they cannot disagree about
-    what "merged" writes -- which is exactly how one of them ends up not
-    writing it at all (#1071).
-
-    spec_id, NOT task_id: task_id still carries the "project_id:" prefix, so
-    joining it addresses a directory that does not exist -- and write_control
-    would helpfully create it, landing the status nowhere.
-    """
-    # Imported and bound locally, exactly as the six sibling functions do.
-    # Referencing a module-level logger raised NameError on the status-error
-    # path -- the code reporting a failure would itself have failed, the same
-    # defect #649 fixed in merge_worktree. Hoisting the import to module scope
-    # instead would turn all six of those local imports into repeated imports,
-    # so the convention is kept rather than half-changed.
-    import logging  # noqa: PLC0415 - module convention, see above
-
-    logger = logging.getLogger(__name__)
-
-    # Barriered HERE, not just at the call sites. Callers do sanitise, but a
-    # helper that trusts its parameter is one refactor away from a caller that
-    # does not -- and the analyser is right to say so. safe_spec_component is
-    # idempotent, so an already-safe value passes straight through.
-    status_error = write_status(
-        project_path / ".aifactory" / "specs" / safe_spec_component(spec_id),
-        status="done",
-        reason=f"approved: {message}",
-        updated_by="approve-merge",
-    )
-    if status_error:
-        # Reported, not swallowed. The merge really happened and cannot be
-        # undone, so this is not a failure of the request -- but a caller told
-        # "merged" while the board still says human_review deserves to know why.
-        logger.warning(
-            "merged %s but could not record status: %s",
-            spec_id.replace("\n", " "),
-            status_error.replace("\n", " "),
-        )
-    return {
-        "success": True,
-        "data": {
-            "success": True,  # Frontend checks this for merge result display
-            "merged": True,
-            "message": message,
-            "taskStatus": "done" if not status_error else "unchanged",
-            **({"statusError": status_error} if status_error else {}),
-            **extra,
-        },
-    }
-
-
-def _merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
-    """Merge the open PR for *branch*. Returns ``(merged, detail)``.
-
-    ``(True, detail)``  -- merged now, or ALREADY merged. Idempotent on
-                           purpose: Approve must not fail because someone
-                           merged it first, or because it is clicked twice.
-    ``(False, detail)`` -- a PR exists and could not be merged; detail says why.
-    ``(False, "")``     -- no PR for this branch; the caller may fall back.
-    """
-    from .github import run_gh_command  # noqa: PLC0415 - avoids an import cycle
-
-    cwd = str(project_path)
-    found = run_gh_command(
-        [
-            "pr", "list", "--head", branch, "--state", "all",
-            "--limit", "1", "--json", "number,state",
-        ],
-        cwd=cwd,
-    )
-    if not found.get("success"):
-        return False, ""
-    try:
-        prs = json.loads(found.get("output") or "[]")
-    except ValueError:
-        return False, ""
-    if not prs:
-        return False, ""
-
-    number = prs[0].get("number")
-    state = (prs[0].get("state") or "").upper()
-    if state == "MERGED":
-        return True, f"pull request #{number} was already merged"
-    if state == "CLOSED":
-        return False, f"pull request #{number} is closed; reopen it to merge"
-
-    merged = run_gh_command(["pr", "merge", str(number), "--squash"], cwd=cwd)
-    if merged.get("success"):
-        return True, f"merged pull request #{number}"
-    # The gh stderr is LOGGED, not returned: it can carry command lines, paths
-    # and token-bearing URLs, and this string is rendered in the cockpit. The
-    # caller still learns which PR failed and where to look.
-    import logging  # noqa: PLC0415 - module convention, see _approved
-
-    logging.getLogger(__name__).warning(
-        "gh pr merge failed for #%s: %s", number, merged.get("error")
-    )
-    return False, (
-        f"could not merge pull request #{number}; GitHub refused it "
-        f"(check its conflicts, required checks and branch protection)"
-    )
 
 
 class WorktreeMergeOptions(BaseModel):
@@ -1677,9 +1569,9 @@ async def merge_worktree(
     # The PR is the artefact the button's own label refers to, exists for both
     # build backends, and merging it is visible to everyone rather than to one
     # pod's filesystem.
-    pr_merged, pr_detail = _merge_pull_request(project_path, worktree_branch)
+    pr_merged, pr_detail = merge_pull_request(project_path, worktree_branch)
     if pr_merged:
-        return _approved(project_path, spec_id, pr_detail)
+        return approved(project_path, spec_id, pr_detail)
     if pr_detail:
         # A PR exists and GitHub REFUSED the merge (conflicts, required checks,
         # branch protection). Falling through to a local merge would report
@@ -1724,7 +1616,7 @@ async def merge_worktree(
         # #1071: the merge IS the approval -- see _approved. Success path only:
         # a conflict or a failed merge returns below and must never be recorded
         # as done.
-        return _approved(
+        return approved(
             project_path,
             spec_id,
             f"Successfully merged {worktree_branch} into {base_branch}",
