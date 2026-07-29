@@ -38,7 +38,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.services.approval import approved, merge_pull_request
-from server.services.task_branch import resolve_task_branch
+from server.services.task_branch import resolve_task_branch, resolve_work_ref
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -68,6 +68,15 @@ async def get_worktree_merge_preview(
     Returns conflict info and files that will be merged.
     """
     import subprocess
+
+    # Accept both id shapes like the sibling endpoints: "project:spec" or bare.
+    if ":" in task_id:
+        task_id = task_id.split(":", 1)[1]
+    # Barrier BEFORE task_id reaches any path expression (#1056).
+    try:
+        task_id = safe_spec_component(task_id)
+    except ValueError:
+        return {"success": False, "error": "Invalid task ID format"}
 
     # Find the task's spec directory and worktree
     projects_data_dir = get_data_dir()
@@ -111,19 +120,6 @@ async def get_worktree_merge_preview(
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
 
-    # Get the branch name from the worktree
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return {"success": False, "error": "Could not determine worktree branch"}
-
     # Get the base branch (usually develop or main)
     try:
         result = subprocess.run(
@@ -137,10 +133,38 @@ async def get_worktree_merge_preview(
     except subprocess.CalledProcessError:
         base_branch = "develop"
 
+    # #1082: under the kubejob backend the worktree's HEAD is the BASE branch
+    # -- the work lives on the branch the build Job pushed. Previewing the
+    # worktree HEAD diffed base...base and reported "nothing to merge, can
+    # merge" for every task. Resolve the real task branch and read it through
+    # a ref that exists in the project repo (origin/<branch> after a fetch).
+    worktree_branch, work_ref, _branch_reason = resolve_work_ref(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=task_id,
+        base_branch=base_branch,
+    )
+    if not work_ref:
+        # No task branch anywhere (nothing pushed yet, or a subprocess build
+        # mid-flight): fall back to the worktree HEAD, the legacy read, which
+        # honestly reports "no changes" in that state.
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            worktree_branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return {"success": False, "error": "Could not determine worktree branch"}
+        work_ref = worktree_branch
+
     # Get list of changed files
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-status", f"{base_branch}...{worktree_branch}"],
+            ["git", "diff", "--name-status", f"{base_branch}...{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -175,7 +199,7 @@ async def get_worktree_merge_preview(
     try:
         # Use --write-tree explicitly for git 2.38+ behavior
         result = subprocess.run(
-            ["git", "merge-tree", "--write-tree", base_branch, worktree_branch],
+            ["git", "merge-tree", "--write-tree", base_branch, work_ref],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -242,7 +266,7 @@ async def get_worktree_merge_preview(
     # Get commit counts
     try:
         result = subprocess.run(
-            ["git", "rev-list", "--count", f"{base_branch}..{worktree_branch}"],
+            ["git", "rev-list", "--count", f"{base_branch}..{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -254,7 +278,7 @@ async def get_worktree_merge_preview(
 
     try:
         result = subprocess.run(
-            ["git", "rev-list", "--count", f"{worktree_branch}..{base_branch}"],
+            ["git", "rev-list", "--count", f"{work_ref}..{base_branch}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -276,8 +300,11 @@ async def get_worktree_merge_preview(
             text=True,
             check=True,
         )
-        for line in result.stdout.strip().split("\n"):
-            if line:
+        # splitlines(), NOT strip().split("\n"): stripping the whole output
+        # eats the leading space of the FIRST porcelain line (" M app.py"),
+        # shifting the fixed-width XY columns and mangling its filename.
+        for line in result.stdout.splitlines():
+            if line.strip():
                 # Format: "XY filename" or "XY original -> renamed"
                 parts = line[3:].split(" -> ")
                 filename = parts[-1].strip()  # Use renamed name if present
@@ -287,7 +314,7 @@ async def get_worktree_merge_preview(
         # Get files modified in task branch (for conflict detection)
         if uncommitted_files:
             task_files_result = subprocess.run(
-                ["git", "diff", "--name-only", f"{base_branch}...{worktree_branch}"],
+                ["git", "diff", "--name-only", f"{base_branch}...{work_ref}"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -478,18 +505,34 @@ async def resolve_worktree_conflicts(
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
 
-    # Get worktree branch name
+    # The branch being merged INTO is whatever the project checkout sits on.
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
+            cwd=project_path,
             capture_output=True,
             text=True,
             check=True,
         )
-        worktree_branch = result.stdout.strip()
+        base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
-        return {"success": False, "error": "Could not determine worktree branch"}
+        base_branch = "develop"
+
+    # #1082: under the kubejob backend the worktree's HEAD is the BASE branch,
+    # so merging it ran base-into-base and reported a clean merge of nothing
+    # while the AI resolved conflicts on the wrong branch. Merge the branch
+    # the build actually pushed.
+    worktree_branch, work_ref, branch_reason = resolve_work_ref(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if not work_ref:
+        return {
+            "success": False,
+            "error": f"Could not determine task branch: {branch_reason}",
+        }
 
     # Check if a merge is already in progress
     merge_head = project_path / ".git" / "MERGE_HEAD"
@@ -503,7 +546,7 @@ async def resolve_worktree_conflicts(
             f"Starting git merge of {worktree_branch} into current branch for task {task_id}"
         )
         merge_result = subprocess.run(
-            ["git", "merge", worktree_branch, "--no-commit", "--no-ff"],
+            ["git", "merge", work_ref, "--no-commit", "--no-ff"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -745,6 +788,16 @@ async def resolve_uncommitted_conflicts(
     import logging
 
     logger = logging.getLogger(__name__)
+
+    # Accept both id shapes like the sibling endpoints: "project:spec" or bare.
+    if ":" in task_id:
+        task_id = task_id.split(":", 1)[1]
+    # Barrier BEFORE task_id reaches any path expression (#1056).
+    try:
+        task_id = safe_spec_component(task_id)
+    except ValueError:
+        return {"success": False, "error": "Invalid task ID format"}
+
     logger.info(f"Resolving uncommitted conflicts for task {task_id}")
 
     # Find the task's project
@@ -794,17 +847,32 @@ async def resolve_uncommitted_conflicts(
             check=True,
         )
         base_branch = result.stdout.strip()
-
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        spec_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
         return {"success": False, "error": "Could not determine branches"}
+
+    # #1082: under the kubejob backend the worktree's HEAD is the BASE branch,
+    # so the three-way merge read the task's versions off base and the overlap
+    # with the task branch always came out empty. Read the pushed branch.
+    _spec_branch_name, spec_branch, _branch_reason = resolve_work_ref(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=task_id,
+        base_branch=base_branch,
+    )
+    if not spec_branch:
+        # No task branch anywhere: fall back to the worktree HEAD, the legacy
+        # read, which honestly yields "no conflicting files" in that state.
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            spec_branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            return {"success": False, "error": "Could not determine branches"}
 
     # Get uncommitted files that conflict with task
     uncommitted_files = []
@@ -816,8 +884,10 @@ async def resolve_uncommitted_conflicts(
             text=True,
             check=True,
         )
-        for line in result.stdout.strip().split("\n"):
-            if line:
+        # splitlines(), NOT strip().split("\n") -- see the identical note in
+        # merge-preview: a whole-output strip mangles the first line's columns.
+        for line in result.stdout.splitlines():
+            if line.strip():
                 parts = line[3:].split(" -> ")
                 filename = parts[-1].strip()
                 if filename:
@@ -1721,19 +1791,6 @@ async def get_worktree_status(
             },
         }
 
-    # Get worktree branch
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError:
-        worktree_branch = f"aifactory/{spec_id}"
-
     # Get base branch from main project
     try:
         result = subprocess.run(
@@ -1747,10 +1804,35 @@ async def get_worktree_status(
     except subprocess.CalledProcessError:
         base_branch = "develop"
 
+    # #1082: under the kubejob backend the worktree's HEAD is the BASE branch
+    # -- reading it reported branch=main, 0 commits ahead, 0 files changed for
+    # a task whose work sat pushed on origin. Resolve the real task branch.
+    worktree_branch, work_ref, _branch_reason = resolve_work_ref(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if not work_ref:
+        # No task branch anywhere: fall back to the worktree HEAD, the legacy
+        # read, which honestly reports zero changes in that state.
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            worktree_branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            worktree_branch = f"aifactory/{spec_id}"
+        work_ref = worktree_branch
+
     # Count commits ahead
     try:
         result = subprocess.run(
-            ["git", "rev-list", "--count", f"{base_branch}..{worktree_branch}"],
+            ["git", "rev-list", "--count", f"{base_branch}..{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1767,7 +1849,7 @@ async def get_worktree_status(
 
     try:
         result = subprocess.run(
-            ["git", "diff", "--stat", f"{base_branch}...{worktree_branch}"],
+            ["git", "diff", "--stat", f"{base_branch}...{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1864,19 +1946,6 @@ async def get_worktree_diff(
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
 
-    # Get worktree branch
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError:
-        worktree_branch = f"aifactory/{spec_id}"
-
     # Get base branch from main project
     try:
         result = subprocess.run(
@@ -1890,11 +1959,37 @@ async def get_worktree_diff(
     except subprocess.CalledProcessError:
         base_branch = "develop"
 
+    # #1082: THE review surface. Under the kubejob backend the worktree's HEAD
+    # is the BASE branch, so diffing it showed the reviewer an EMPTY diff --
+    # every human_review approval since the kubejob flip was made against
+    # nothing. Resolve the branch the build pushed and diff that.
+    worktree_branch, work_ref, _branch_reason = resolve_work_ref(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if not work_ref:
+        # No task branch anywhere: fall back to the worktree HEAD, the legacy
+        # read (its untracked-file fallback below still applies).
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            worktree_branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            worktree_branch = f"aifactory/{spec_id}"
+        work_ref = worktree_branch
+
     # Get detailed diff with numstat
     files = []
     try:
         result = subprocess.run(
-            ["git", "diff", "--numstat", f"{base_branch}...{worktree_branch}"],
+            ["git", "diff", "--numstat", f"{base_branch}...{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1924,7 +2019,7 @@ async def get_worktree_diff(
     # Get file statuses (A/M/D/R)
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-status", f"{base_branch}...{worktree_branch}"],
+            ["git", "diff", "--name-status", f"{base_branch}...{work_ref}"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -2008,7 +2103,7 @@ async def get_worktree_diff(
     for f in files:
         try:
             result = subprocess.run(
-                ["git", "diff", f"{base_branch}...{worktree_branch}", "--", f["path"]],
+                ["git", "diff", f"{base_branch}...{work_ref}", "--", f["path"]],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -2029,6 +2124,8 @@ async def get_worktree_diff(
         "data": {
             "files": files,
             "summary": summary,
+            "branch": worktree_branch,
+            "baseBranch": base_branch,
         },
     }
 

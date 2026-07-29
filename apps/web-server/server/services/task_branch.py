@@ -156,6 +156,72 @@ def resolve_task_branch(
     return _discover(project_path, spec_id, base_branch, worktree_path)
 
 
+def resolve_work_ref(
+    *,
+    worktree_path: Path,
+    project_path: Path,
+    spec_id: str,
+    base_branch: str,
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve the task branch AND a ref for it readable in the project repo.
+
+    Returns ``(branch, ref, None)`` or ``(None, None, reason)``. ``branch`` is
+    the display name; ``ref`` is what to hand to git commands run in
+    *project_path* (``origin/<branch>`` when the work was pushed, the local
+    branch otherwise). Read the diff as ``{base_branch}...{ref}`` — never the
+    worktree's HEAD, which under the kubejob backend sits on the base branch
+    (#1082).
+
+    Fetches from origin, twice at most:
+
+    - if plain resolution finds nothing, fetch everything and retry once —
+      ``_exists`` and discovery only see refs that are ALREADY fetched, so on
+      a fresh pod a real pushed branch would otherwise be refused;
+    - once resolved, fetch that branch so the ref reflects the push, not a
+      stale local copy.
+
+    Both fetches are best-effort (``_git`` swallows failures): offline, this
+    degrades to whatever the local refs say instead of erroring.
+    """
+    branch, reason = resolve_task_branch(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if branch is None:
+        _git(["fetch", "--prune", "origin"], project_path)
+        branch, reason = resolve_task_branch(
+            worktree_path=worktree_path,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base_branch,
+        )
+    if branch is None:
+        return None, None, reason
+
+    _git(["fetch", "origin", branch], project_path)
+    # Prefer the pushed branch: the local ref (or the worktree clone's) may
+    # predate the build's push.
+    refs = _git(
+        [
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+        project_path,
+    )
+    if f"origin/{branch}" in refs:
+        return branch, f"origin/{branch}", None
+    if branch in refs:
+        return branch, branch, None
+    return None, None, (
+        f"branch {branch!r} was resolved but no ref for it is readable in the "
+        f"project repo, even after fetching origin"
+    )
+
+
 def _discover(
     project_path: Path, spec_id: str, base_branch: str, worktree_path: Path | None = None
 ) -> tuple[str | None, str | None]:
