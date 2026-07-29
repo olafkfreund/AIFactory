@@ -27,6 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from server.services.task_branch import resolve_task_branch
+
 logger = logging.getLogger(__name__)
 
 # Copilot's code-review reviewer slug (GitHub's automated PR reviewer). Requesting
@@ -746,7 +748,18 @@ def gather_pr_context(
     # never opened. Compare against THIS task's base, keeping main/master as a
     # backstop since a worktree sitting on either is never a valid head.
     if not branch or branch in {"HEAD", "main", "master", base}:
-        branch = f"aifactory/{spec_id}"
+        # #1082: don't hardcode the aifactory/<spec> convention -- this was
+        # the second, disagreeing branch resolver. Ask the canonical one
+        # (marker first, then ref discovery); keep the convention only as the
+        # last-resort backstop when nothing is discoverable, preserving the
+        # historical behaviour for specs whose branch was never pushed.
+        resolved, _reason = resolve_task_branch(
+            worktree_path=worktree,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base,
+        )
+        branch = resolved or f"aifactory/{spec_id}"
 
     repo = ""
     try:
