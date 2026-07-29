@@ -100,6 +100,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from server.specpath import safe_spec_component
+
 from .task_phase import (
     _append_parallel_flags,
     _append_quick_mode_flag,
@@ -830,7 +832,7 @@ def _packed_nix_in_image() -> bool:
     one predicate — two copies is how the gate path missed the #258 flip (#253).
     """
     from core.nix_env import (
-        nix_in_image,  # noqa: PLC0415 - core is a startup sys.path add
+        nix_in_image,
     )
 
     return nix_in_image()
@@ -1014,11 +1016,12 @@ def _populate_self_contained_worktree(
     # task branch off a directory. Without this the approve path had to
     # rediscover it from git refs, and task.branchName was None in the API.
     try:
-        (source_spec_dir / ".task_branch").write_text(branch + "\n")
+        marker = source_spec_dir.parent / safe_spec_component(spec_id) / ".task_branch"
+        marker.write_text(branch + "\n")
     except OSError as exc:  # pragma: no cover - a full/RO volume
         # Non-fatal: resolve_task_branch still discovers the branch from git.
         # Logged rather than swallowed so a silently-missing record is visible.
-        _log.warning("could not record task branch for %s: %s", spec_id, exc)
+        _log.warning("could not record the task branch: %s", exc)
 
     populated = str(wt_path)
     _log.info(

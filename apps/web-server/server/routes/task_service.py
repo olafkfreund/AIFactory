@@ -702,7 +702,10 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # the deployed backend. This is also the AUTHORITATIVE value: the line
     # above reconstructs the name from a convention, which is a second copy of
     # a rule core.worktree.get_branch_name owns.
-    branch_marker = spec_dir / ".task_branch"
+    # Rebuilt through safe_spec_component so the path CodeQL traces carries the
+    # barrier -- spec_dir reaches here from a directory scan, but the scan root
+    # is caller-derived and the analyser is right not to take that on trust.
+    branch_marker = spec_dir.parent / safe_spec_component(spec_dir.name) / ".task_branch"
     if branch_marker.is_file():
         recorded = branch_marker.read_text().strip()
         if recorded:
@@ -1006,8 +1009,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
                 started_at = log_data["started_at"]
             elif log_data.get("started_at") and started_at:
                 # Keep the earliest timestamp
-                if log_data["started_at"] < started_at:
-                    started_at = log_data["started_at"]
+                started_at = min(started_at, log_data["started_at"])
 
             if log_data.get("status") == "active":
                 current_phase = phase_map.get(log_phase, log_phase)
@@ -1023,9 +1025,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             elif has_completed:
                 validation = phases.get("validation", {})
                 coding = phases.get("coding", {})
-                if validation.get("status") == "completed":
-                    current_phase = "complete"
-                elif coding.get("status") == "completed":
+                if validation.get("status") == "completed" or coding.get("status") == "completed":
                     current_phase = "complete"
 
         # Calculate overall progress from subtasks

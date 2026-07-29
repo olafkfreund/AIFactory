@@ -46,7 +46,8 @@ def _git(args: list[str], cwd: Path) -> list[str]:
             check=True,
         )
     except (subprocess.CalledProcessError, OSError) as exc:
-        logger.warning("git %s failed in %s: %s", args[0], cwd, exc)
+        # args[0] is a literal subcommand; cwd is caller-derived and left out.
+        logger.warning("git %s failed: %s", args[0], exc)
         return []
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
 
