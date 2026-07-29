@@ -3,7 +3,14 @@
 # Commit message validation
 # Enforces conventional commit format: type(scope)!?: description
 #
-# Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
+# This file must stay executable (100755). core.hooksPath points at .husky/ and
+# there is no .husky/_ wrapper, so git invokes this file itself and SKIPS it
+# without a word if the executable bit is missing. It was committed 100644 and
+# had therefore never run once (#1087), while its sibling .husky/pre-commit was
+# 100755 and did.
+#
+# Valid types: feat, fix, docs, style, refactor, perf, test, build, ci, chore,
+#              revert, release, security
 # Scope allows: letters, numbers, hyphens, underscores, slashes, dots
 # Optional ! for breaking changes
 # Examples:
@@ -19,9 +26,15 @@ commit_msg=$(cat "$commit_msg_file")
 
 # Regex for conventional commits
 # Format: type(optional-scope)!?: description
-# Scope allows: letters, numbers, hyphens, underscores, slashes, dots (consistent with GitHub workflow)
+# Scope allows: letters, numbers, hyphens, underscores, slashes, dots
 # Optional ! for breaking changes: feat!: or feat(scope)!:
-pattern="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_/.-]+\))?!?: .{1,100}$"
+#
+# release and security are here because the repository USES them, measured over
+# the last ~220 commits on main: release 31, security 3. Every other type in
+# real use was already listed. This hook had never executed (see below), so the
+# list was never tested against reality and drifted from it; enabling the hook
+# without these two would have rejected AIFactory's own release commits.
+pattern="^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|release|security)(\([a-zA-Z0-9_/.-]+\))?!?: .{1,100}$"
 
 # Allow merge commits
 if echo "$commit_msg" | grep -qE "^Merge "; then
@@ -56,6 +69,8 @@ if ! echo "$first_line" | grep -qE "$pattern"; then
   echo "  ci       - CI/CD configuration"
   echo "  chore    - Other changes (maintenance)"
   echo "  revert   - Reverting a previous commit"
+  echo "  release  - A release commit"
+  echo "  security - A security fix"
   echo ""
   echo "Examples:"
   echo "  feat(tasks): add drag and drop support"
