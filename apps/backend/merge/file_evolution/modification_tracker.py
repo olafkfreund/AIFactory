@@ -177,9 +177,13 @@ class ModificationTracker:
         # bug. In-Job callers pass neither and behave exactly as before, which
         # matters because that is the majority caller and its worktree HEAD
         # genuinely IS the task branch.
-        by_ref = bool(work_ref and repo_path)
-        git_cwd = Path(repo_path) if by_ref else worktree_path
-        head = work_ref if by_ref else "HEAD"
+        # Written as an if/else rather than conditional expressions so the None
+        # narrowing is visible to mypy --strict: `bool(a and b)` does not tell it
+        # that b is non-None later on.
+        if work_ref and repo_path:
+            by_ref, git_cwd, head = True, repo_path, work_ref
+        else:
+            by_ref, git_cwd, head = False, worktree_path, "HEAD"
 
         # Determine the target branch to compare against
         if not target_branch:
