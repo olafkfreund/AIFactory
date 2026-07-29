@@ -22,6 +22,7 @@ if str(_WEB_SERVER) not in sys.path:
 
 from server.services.stale_tasks import (  # noqa: E402
     DEFAULT_STALE_AFTER,
+    TERMINAL_STATES,
     find_stale,
     is_reapable,
     summarise,
@@ -238,8 +239,6 @@ def test_reaped_status_is_terminal_so_it_is_not_reaped_twice() -> None:
     If the status written were still machine-owned, every sweep would re-reap
     the same tasks forever and the report would never settle.
     """
-    from server.services.stale_tasks import TERMINAL_STATES, is_reapable
-
     stale_mod = pytest.importorskip("server.routes.stale")
     assert stale_mod._REAPED_STATUS in TERMINAL_STATES
     assert not is_reapable(stale_mod._REAPED_STATUS)
