@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from server.services.gh import run_gh_command
 from server.services.task_status import write_status
 from server.specpath import safe_spec_component
 
@@ -74,8 +75,6 @@ def approved(
 
 def _open_pr(project_path: Path, branch: str) -> tuple[int, str] | None:
     """The most recent PR for *branch* as (number, state), or None if there is none."""
-    from server.routes.github import run_gh_command  # noqa: PLC0415 - import cycle
-
     found = run_gh_command(
         [
             "pr", "list", "--head", branch, "--state", "all",
@@ -112,8 +111,6 @@ def merge_pull_request(project_path: Path, branch: str) -> tuple[bool, str]:
         return True, f"pull request #{number} was already merged"
     if state == "CLOSED":
         return False, f"pull request #{number} is closed; reopen it to merge"
-
-    from server.routes.github import run_gh_command  # noqa: PLC0415 - import cycle
 
     merged = run_gh_command(
         ["pr", "merge", str(number), "--squash"], cwd=str(project_path)
