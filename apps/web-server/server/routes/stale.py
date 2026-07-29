@@ -29,9 +29,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
-
-from server.routes.project_authz import require_task_access
+from fastapi import APIRouter, Query
 
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
 # are in task_service.py. Importing either from the wrong module breaks app
@@ -44,6 +42,15 @@ from server.services.stale_tasks import (
     summarise,
 )
 
+# No route-level access dependency. `require_task_access` is task-scoped -- it
+# reads a `task_id`, and on a path without one FastAPI promotes that to a
+# REQUIRED QUERY PARAM, so the endpoint answered
+# `422 {"loc":["query","task_id"],"msg":"Field required"}` and could never be
+# called. These endpoints are not task-scoped; they scan every project.
+#
+# Authentication still applies: TokenAuthMiddleware covers everything outside
+# PUBLIC_PREFIXES, verified against the live service (401 without a token, 200
+# with one).
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -90,7 +97,6 @@ async def report_stale(
         DEFAULT_STALE_AFTER.total_seconds() / 3600,
         description="idle hours before a machine-owned task counts as orphaned",
     ),
-    _access: dict[str, Any] = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """What the reaper would act on. Changes nothing."""
     stale = find_stale(_all_tasks(), now=_now(), stale_after=timedelta(hours=hours))
@@ -104,7 +110,6 @@ async def reap_stale(
         True,
         description="default true: the destructive form must be asked for",
     ),
-    _access: dict[str, Any] = Depends(require_task_access("member")),  # noqa: B008
 ) -> dict[str, Any]:
     """Mark orphaned tasks failed, with the reason recorded on each.
 

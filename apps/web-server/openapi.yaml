@@ -8289,12 +8289,6 @@ paths:
           default: 4.0
           title: Hours
         description: idle hours before a machine-owned task counts as orphaned
-      - name: task_id
-        in: query
-        required: true
-        schema:
-          type: string
-          title: Task Id
       responses:
         '200':
           description: Successful Response
@@ -8339,12 +8333,6 @@ paths:
           default: true
           title: Dry Run
         description: 'default true: the destructive form must be asked for'
-      - name: task_id
-        in: query
-        required: true
-        schema:
-          type: string
-          title: Task Id
       responses:
         '200':
           description: Successful Response
