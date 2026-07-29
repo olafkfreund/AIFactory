@@ -20,13 +20,14 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.services.task_branch import recorded_branch
 from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
 
 
 from ..services import task_control
-from .projects import load_projects
+from .projects import load_projects, resolve_project_path
 from .task_models import (
     Subtask,
     SubtaskVerification,
@@ -696,6 +697,13 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         metadata["worktree_path"] = worktree_marker.read_text().strip()
         metadata["branch_name"] = f"aifactory/{spec_dir.name}"
 
+    # #1073: the branch the build actually pushed, recorded at dispatch. Under
+    # the kubejob backend there is no .worktree_path marker at all, so the
+    # block above never fired and branchName was None for every task built by
+    # the deployed backend. This is also the AUTHORITATIVE value: the line
+    # above reconstructs the name from a convention, which is a second copy of
+    # a rule core.worktree.get_branch_name owns.
+
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"
     if requirements_file.exists():
@@ -817,6 +825,23 @@ def project_repo(project_data: dict) -> str | None:
 def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     """Convert a spec directory to a Task model."""
     metadata = load_spec_metadata(spec_dir)
+
+    # #1073: the branch the build pushed. Resolved HERE rather than inside
+    # load_spec_metadata because it needs a TRUSTED root: project_id is a
+    # registry key (resolve_project_path 404s on anything unknown), whereas the
+    # spec_dir that load_spec_metadata receives is a ready-made path that
+    # cannot be sanitised after the fact.
+    #
+    # Under the kubejob backend there is no .worktree_path marker, so the
+    # convention-derived branch_name above never fires and this is the only
+    # source. The recorded value wins: the other is reconstructed from a
+    # convention core.worktree.get_branch_name owns.
+    try:
+        recorded = recorded_branch(resolve_project_path(project_id), spec_dir.name)
+    except Exception:  # noqa: BLE001 - a bad/absent project must not 500 a task list
+        recorded = None
+    if recorded:
+        metadata["branch_name"] = recorded
 
     # Get timestamps from directory
     stat = spec_dir.stat()
@@ -994,8 +1019,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
                 started_at = log_data["started_at"]
             elif log_data.get("started_at") and started_at:
                 # Keep the earliest timestamp
-                if log_data["started_at"] < started_at:
-                    started_at = log_data["started_at"]
+                started_at = min(started_at, log_data["started_at"])
 
             if log_data.get("status") == "active":
                 current_phase = phase_map.get(log_phase, log_phase)
@@ -1011,9 +1035,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             elif has_completed:
                 validation = phases.get("validation", {})
                 coding = phases.get("coding", {})
-                if validation.get("status") == "completed":
-                    current_phase = "complete"
-                elif coding.get("status") == "completed":
+                if validation.get("status") == "completed" or coding.get("status") == "completed":
                     current_phase = "complete"
 
         # Calculate overall progress from subtasks

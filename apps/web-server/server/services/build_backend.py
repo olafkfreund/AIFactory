@@ -100,6 +100,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from server.services.task_branch import record_branch
+
 from .task_phase import (
     _append_parallel_flags,
     _append_quick_mode_flag,
@@ -830,7 +832,7 @@ def _packed_nix_in_image() -> bool:
     one predicate — two copies is how the gate path missed the #258 flip (#253).
     """
     from core.nix_env import (
-        nix_in_image,  # noqa: PLC0415 - core is a startup sys.path add
+        nix_in_image,
     )
 
     return nix_in_image()
@@ -1007,6 +1009,18 @@ def _populate_self_contained_worktree(
     # Materialize the spec into the clone working tree (gitignored/uncommitted —
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
+
+    # #1073 follow-up: record the branch this build will push. The control
+    # plane knows it HERE and nowhere afterwards -- /work is deliberately left
+    # on the base branch (see #716 above), so nothing downstream can read the
+    # task branch off a directory. Without this the approve path had to
+    # rediscover it from git refs, and task.branchName was None in the API.
+    try:
+        record_branch(project_path, spec_id, branch)
+    except OSError as exc:  # pragma: no cover - a full/RO volume
+        # Non-fatal: resolve_task_branch still discovers the branch from git.
+        # Logged rather than swallowed so a silently-missing record is visible.
+        _log.warning("could not record the task branch: %s", exc)
 
     populated = str(wt_path)
     _log.info(
