@@ -130,7 +130,15 @@ def get_next_spec_id(project_path: Path, title: str) -> str:
     if not slug:
         slug = "untitled-task"
 
-    return f"{next_num:03d}-{slug}"
+    # The slug above is a best-effort `re.sub` over a request-supplied title,
+    # and the returned id is joined straight onto the specs root by every
+    # caller. Assert the result really is a safe component before it becomes a
+    # path: `re.sub` narrows, it does not guarantee, and this id is the single
+    # origin of every spec_dir the readers later walk. (Also the barrier CodeQL
+    # recognises -- it models a `fullmatch` and not a `sub`, which is why the
+    # slug alone left the whole downstream flow tainted.) Cannot raise: the
+    # slug is `[a-z0-9-]` and the prefix is digits.
+    return safe_spec_component(f"{next_num:03d}-{slug}")
 
 
 def get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
