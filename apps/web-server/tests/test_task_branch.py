@@ -27,6 +27,17 @@ def _git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)  # noqa: S603, S607
 
 
+def _refs(where: Path) -> list[str]:
+    out = subprocess.run(
+        ["git", "for-each-ref", "--format=%(refname:short)"],  # noqa: S607
+        cwd=where,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.split()
+
+
 def _clone_on_base(repo: Path, dest: Path) -> None:
     """A checkout of the project sitting on the base branch.
 
@@ -252,3 +263,31 @@ def test_spec_to_task_survives_an_unresolvable_project(tmp_path: Path) -> None:
         mod.resolve_project_path = original
 
     assert task is not None
+
+
+def test_the_branch_lives_in_the_standalone_clone(repo: Path, tmp_path: Path) -> None:
+    """The real kubejob shape, which the other tests did not reproduce.
+
+    build_backend prepares /work with `git clone --local --no-hardlinks`, NOT
+    `git worktree add`. That clone has its OWN refs, so the branch the build
+    pushed exists inside it and NOT in the project repo.
+
+    The first version of this resolver searched only the project, found
+    nothing, and refused a task whose branch was one directory away -- verified
+    live on task 097 before this test existed.
+    """
+    wt = tmp_path / "wt"
+    _clone_on_base(repo, wt)
+    # The build creates the branch inside its own clone and pushes it.
+    _git("branch", "aifactory/300-thing", cwd=wt)
+    # The project repo knows nothing about it.
+    assert not [
+        r for r in _refs(repo) if "300-thing" in r
+    ], "fixture wrong: the project must not know this branch"
+    assert [r for r in _refs(wt) if "300-thing" in r], "fixture wrong: the clone must"
+
+    branch, err = _resolver()(
+        worktree_path=wt, project_path=repo, spec_id="300-thing", base_branch="main"
+    )
+    assert err is None, err
+    assert branch == "aifactory/300-thing"

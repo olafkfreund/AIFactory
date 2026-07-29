@@ -153,26 +153,40 @@ def resolve_task_branch(
             if branch not in {"HEAD", base_branch}:
                 return branch, None
 
-    return _discover(project_path, spec_id, base_branch)
+    return _discover(project_path, spec_id, base_branch, worktree_path)
 
 
 def _discover(
-    project_path: Path, spec_id: str, base_branch: str
+    project_path: Path, spec_id: str, base_branch: str, worktree_path: Path | None = None
 ) -> tuple[str | None, str | None]:
-    """Find the branch from git refs when nothing else identified it."""
-    for scope, refspec in (("local", "refs/heads"), ("origin", "refs/remotes/origin")):
-        found = _matches(
-            _git(["for-each-ref", "--format=%(refname:short)", refspec], project_path),
-            spec_id,
-        )
-        if len(found) > 1:
-            return None, f"ambiguous: {len(found)} {scope} branches match {spec_id!r}: {found}"
-        if len(found) == 1:
-            # Strip the remote name: callers push/compare by branch, not by ref.
-            return (found[0].split("/", 1)[1] if scope == "origin" else found[0]), None
+    """Find the branch from git refs when nothing else identified it.
+
+    Searches the worktree FIRST. Under the kubejob backend the task directory
+    is a standalone clone (`git clone --local --no-hardlinks`, see
+    build_backend), not a `git worktree add` -- so it has its OWN refs, and the
+    branch the build pushed exists there and NOT in the project repo. Searching
+    only the project found nothing and refused a task whose branch was sitting
+    one directory away.
+    """
+    roots = [r for r in (worktree_path, project_path) if r is not None and r.is_dir()]
+    for root in roots:
+        for scope, refspec in (("local", "refs/heads"), ("origin", "refs/remotes/origin")):
+            found = _matches(
+                _git(["for-each-ref", "--format=%(refname:short)", refspec], root),
+                spec_id,
+            )
+            if len(found) > 1:
+                return None, (
+                    f"ambiguous: {len(found)} {scope} branches match {spec_id!r}: {found}"
+                )
+            if len(found) == 1:
+                # Strip the remote name: callers compare by branch, not by ref.
+                return (
+                    found[0].split("/", 1)[1] if scope == "origin" else found[0]
+                ), None
 
     return None, (
         f"no branch found for {spec_id!r}: the worktree is on {base_branch!r} and "
-        f"no local or origin branch ends with that spec id. The build may not "
-        f"have pushed."
+        f"no local or origin branch ends with that spec id, in either the "
+        f"worktree or the project. The build may not have pushed."
     )
