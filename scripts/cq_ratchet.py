@@ -26,6 +26,14 @@ Two tools are supported:
 Usage:
     cq_ratchet.py --tool ruff --base <ref> --ruff <bin> --config <ruff.toml> [--paths GLOB ...]
     cq_ratchet.py --tool mypy --base <ref> --mypy <bin> --config <mypy.ini> [--paths GLOB ...]
+    cq_ratchet.py --tool ruff --staged --ruff <bin> --config <ruff.toml> [--paths GLOB ...]
+
+``--staged`` gates the files staged in the git index against HEAD instead of a
+committed range — the pre-commit hook mode (#1084). File selection comes from
+the index; the head side is measured on the working tree, because both sides
+must be measured inside a real package tree (#1058) and for a normal commit
+the working tree IS the staged content. Under partial staging (git add -p)
+unstaged hunks are judged too — CI re-judges the committed range either way.
 
 Exit code 1 if any changed file's violation count increased; else 0.
 """
@@ -36,6 +44,7 @@ import argparse
 import atexit
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -57,18 +66,13 @@ def _run(cmd: list[str], check: bool = True) -> str:
     return subprocess.run(cmd, capture_output=True, text=True, check=check).stdout
 
 
-def changed_python_files(base: str, paths: list[str]) -> list[str]:
-    out = _run(
-        [
-            "git",
-            "diff",
-            "--name-only",
-            "--diff-filter=ACMR",
-            f"{base}...HEAD",
-            "--",
-            *paths,
-        ]
-    )
+def changed_python_files(base: str, paths: list[str], staged: bool = False) -> list[str]:
+    if staged:
+        # Index vs HEAD: what `git commit` is about to record.
+        cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
+    else:
+        cmd = ["git", "diff", "--name-only", "--diff-filter=ACMR", f"{base}...HEAD"]
+    out = _run([*cmd, "--", *paths])
     excludes = _ruff_excludes()
     return [
         f
@@ -233,6 +237,22 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def _worktree_env() -> dict[str, str]:
+    """Environment for `git worktree add/remove`, minus git's hook exports.
+
+    Inside a pre-commit hook git exports GIT_INDEX_FILE (and often GIT_DIR),
+    and a worktree add that inherits them populates the CALLER'S index with
+    the base tree -- the staged changes silently vanish and the commit being
+    gated becomes empty. Only these two subprocesses get the stripped env;
+    the index-reading commands (`git diff --cached`) must keep the exports so
+    they see exactly what is being committed.
+    """
+    env = os.environ.copy()
+    for key in ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_PREFIX"):
+        env.pop(key, None)
+    return env
+
+
 @lru_cache(maxsize=1)
 def _base_worktree(base: str) -> str | None:
     """A detached git worktree of *base*, created once per run.
@@ -253,6 +273,7 @@ def _base_worktree(base: str) -> str | None:
         ["git", "worktree", "add", "--detach", "-q", tmp, base],
         capture_output=True,
         text=True,
+        env=_worktree_env(),
     )
     if res.returncode != 0:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -266,6 +287,7 @@ def _remove_worktree(path: str) -> None:
         ["git", "worktree", "remove", "--force", path],
         capture_output=True,
         text=True,
+        env=_worktree_env(),
     )
     shutil.rmtree(path, ignore_errors=True)
 
@@ -293,12 +315,22 @@ def base_count(base: str, counter, config: str, path: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tool", choices=["ruff", "mypy"], default="ruff")
-    ap.add_argument("--base", required=True)
+    ap.add_argument("--base")
+    ap.add_argument(
+        "--staged",
+        action="store_true",
+        help="gate the staged index against HEAD (pre-commit hook mode)",
+    )
     ap.add_argument("--ruff", help="ruff binary (required for --tool ruff)")
     ap.add_argument("--mypy", help="mypy binary (required for --tool mypy)")
     ap.add_argument("--config", required=True)
     ap.add_argument("--paths", nargs="*", default=["apps/backend/**/*.py"])
     args = ap.parse_args()
+
+    if args.staged:
+        args.base = "HEAD"
+    elif not args.base:
+        ap.error("--base is required unless --staged is given")
 
     if args.tool == "ruff":
         if not args.ruff:
@@ -317,7 +349,7 @@ def main() -> int:
 
         label = "mypy --strict"
 
-    files = changed_python_files(args.base, args.paths)
+    files = changed_python_files(args.base, args.paths, staged=args.staged)
     if not files:
         print(f"cq-ratchet ({args.tool}): no changed Python files in scope")
         return 0
