@@ -58,7 +58,13 @@ def kubejob_shape(tmp_path: Path) -> dict[str, Path]:
     """origin + project clone on main + a task branch pushed by the build Job."""
     origin = tmp_path / "origin"
     origin.mkdir()
-    _git(["init", "-q", "--bare"], origin)
+    # -b main explicitly: `git init --bare` sets HEAD from the ambient
+    # init.defaultBranch, which is "main" on some machines and "master" on GitHub
+    # runners. Cloning an origin whose HEAD names a nonexistent ref leaves the
+    # clone with NO local main -- only origin/main -- so the product's
+    # `git diff main...<ref>` had nothing to resolve. That looked exactly like the
+    # bug under test.
+    _git(["init", "-q", "--bare", "-b", "main"], origin)
 
     seed = tmp_path / "seed"
     seed.mkdir()
@@ -90,10 +96,9 @@ def kubejob_shape(tmp_path: Path) -> dict[str, Path]:
     _git(["config", "user.email", "t@t"], job)
     _git(["config", "user.name", "t"], job)
     _git(["checkout", "-q", "-b", TASK_BRANCH], job)
-    # A real SEMANTIC change (a new function), not just a literal tweak:
-    # get_task_modifications filters on snapshot.semantic_changes, so a
-    # cosmetic edit would be dropped by the production query and the test
-    # would be measuring the analyser rather than the diff.
+    # A new function rather than a literal tweak, so the change is unambiguous
+    # to any reader of the diff and the "content after" assertion has something
+    # distinctive to look for.
     (job / "app.py").write_text(
         "def handler():\n    return 'v2'\n\n\ndef added_by_the_task():\n"
         "    return 'new'\n"
