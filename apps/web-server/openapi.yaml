@@ -8307,7 +8307,7 @@ paths:
   /api/maintenance/stale-tasks/reap:
     post:
       summary: Reap Stale
-      description: 'Mark orphaned tasks failed, with the reason recorded on each.
+      description: 'Mark orphaned tasks cancelled, with the reason recorded on each.
 
 
         Marked, not deleted. An orphan is evidence about the execution layer and
