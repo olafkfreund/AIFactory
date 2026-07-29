@@ -91,67 +91,63 @@ fi
 if git diff --cached --name-only | grep -q "^apps/backend/.*\.py$"; then
   echo "Python changes detected, running backend checks..."
 
-  # Determine ruff command (venv or global)
-  RUFF=""
-  if [ -f "apps/backend/.venv/bin/ruff" ]; then
-    RUFF="apps/backend/.venv/bin/ruff"
-  elif [ -f "apps/backend/.venv/Scripts/ruff.exe" ]; then
-    RUFF="apps/backend/.venv/Scripts/ruff.exe"
-  elif command -v ruff >/dev/null 2>&1; then
-    RUFF="ruff"
-  fi
+  if [ "${AIFACTORY_SKIP_PYTHON_GATE:-0}" = "1" ]; then
+    echo "AIFACTORY_SKIP_PYTHON_GATE=1 set: SKIPPING the Python quality gate."
+    echo "This commit's Python changes are NOT checked; CI will still gate the PR."
+  else
+    # Resolve each tool from the repo venv first, then PATH. -x (not -f) so a
+    # dangling venv symlink (nix-GC'd store path) falls through to PATH.
+    resolve_tool() {
+      for cand in "apps/backend/.venv/bin/$1" "apps/backend/.venv/Scripts/$1.exe"; do
+        if [ -x "$cand" ]; then
+          echo "$cand"
+          return
+        fi
+      done
+      command -v "$1" || true
+    }
 
-  if [ -n "$RUFF" ]; then
-    # Get only staged Python files in apps/backend (process only what's being committed)
+    RUFF=$(resolve_tool ruff)
+    MYPY=$(resolve_tool mypy)
+    PYTHON=$(resolve_tool python3)
+    MISSING=""
+    [ -n "$RUFF" ] || MISSING="$MISSING ruff"
+    [ -n "$MYPY" ] || MISSING="$MISSING mypy"
+    [ -n "$PYTHON" ] || MISSING="$MISSING python3"
+
+    # A gate that cannot run must FAIL, never silently pass (#1084).
+    if [ -n "$MISSING" ]; then
+      echo "ERROR: cannot run the Python quality gate; missing:$MISSING"
+      echo "Looked in apps/backend/.venv/bin, apps/backend/.venv/Scripts, and PATH."
+      echo "Fix: cd apps/backend && uv venv && uv pip install ruff mypy"
+      echo "Deliberate one-off skip: AIFACTORY_SKIP_PYTHON_GATE=1 git commit ..."
+      exit 1
+    fi
+
+    # Same gate as CI (.github/workflows/cq-ratchet.yml): the diff-scoped
+    # per-file no-regression ratchet under the shared strict configs.
+    # Pre-existing debt in a touched file is allowed; net-new violations fail.
+    echo "Running cq ratchet (ruff, staged vs HEAD)..."
+    "$PYTHON" scripts/cq_ratchet.py --staged --ruff "$RUFF" \
+      --config standards/ruff.toml --paths 'apps/backend/**/*.py' || exit 1
+
+    echo "Running cq ratchet (mypy, staged vs HEAD)..."
+    "$PYTHON" scripts/cq_ratchet.py --staged --tool mypy --mypy "$MYPY" \
+      --config standards/mypy.ini --paths 'apps/backend/**/*.py' || exit 1
+
+    # Mirror CI's repo-wide `ruff format --check` by auto-formatting the
+    # staged files and re-staging them.
     STAGED_PY_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep "^apps/backend/.*\.py$" || true)
-
     if [ -n "$STAGED_PY_FILES" ]; then
-      # Run ruff linting (auto-fix) only on staged files
-      echo "Running ruff lint on staged files..."
-      echo "$STAGED_PY_FILES" | xargs $RUFF check --fix
-      if [ $? -ne 0 ]; then
-        echo "Ruff lint failed. Please fix Python linting errors before committing."
-        exit 1
-      fi
-
-      # Run ruff format (auto-fix) only on staged files
       echo "Running ruff format on staged files..."
-      echo "$STAGED_PY_FILES" | xargs $RUFF format
-
-      # Re-stage only the files that were originally staged (in case ruff modified them)
+      echo "$STAGED_PY_FILES" | xargs "$RUFF" format || exit 1
       echo "$STAGED_PY_FILES" | xargs git add
     fi
-  else
-    echo "Warning: ruff not found, skipping Python linting. Install with: uv pip install ruff"
   fi
 
-  # Run pytest (skip slow/integration tests and Windows-incompatible tests for pre-commit speed)
-  echo "Running Python tests..."
-  cd apps/backend
-  # Tests to skip: graphiti (external deps), merge_file_tracker/service_orchestrator/worktree*/workspace
-  # (these shell out to real `git worktree`, which breaks inside the pre-commit
-  #  hook because git exports GIT_INDEX_FILE/GIT_DIR and holds .git/index.lock —
-  #  the subprocess git then fails with "index file open failed". They run in CI's
-  #  full suite.) test_p42_otel_e2e needs a live OTEL collector.
-  IGNORE_TESTS="--ignore=../../tests/test_graphiti.py --ignore=../../tests/test_merge_file_tracker.py --ignore=../../tests/test_merge_orchestrator.py --ignore=../../tests/test_service_orchestrator.py --ignore=../../tests/test_worktree.py --ignore=../../tests/test_worktree_merge_dirty.py --ignore=../../tests/test_worktree_commit_logging.py --ignore=../../tests/test_workspace.py --ignore=../../tests/obs/test_p42_otel_e2e.py"
-  if [ -d ".venv" ]; then
-    # Use venv if it exists
-    if [ -f ".venv/bin/pytest" ]; then
-      PYTHONPATH=. .venv/bin/pytest ../../tests/ -v --tb=short -x -m "not slow and not integration" $IGNORE_TESTS
-    elif [ -f ".venv/Scripts/pytest.exe" ]; then
-      # Windows
-      PYTHONPATH=. .venv/Scripts/pytest.exe ../../tests/ -v --tb=short -x -m "not slow and not integration" $IGNORE_TESTS
-    else
-      PYTHONPATH=. python -m pytest ../../tests/ -v --tb=short -x -m "not slow and not integration" $IGNORE_TESTS
-    fi
-  else
-    PYTHONPATH=. python -m pytest ../../tests/ -v --tb=short -x -m "not slow and not integration" $IGNORE_TESTS
-  fi
-  if [ $? -ne 0 ]; then
-    echo "Python tests failed. Please fix failing tests before committing."
-    exit 1
-  fi
-  cd ../..
+  # pytest is deliberately NOT run here: CI runs the full suite, and a
+  # multi-minute hook gets bypassed with --no-verify as surely as a wrong one
+  # (#1084). The ratchet above is the fast, CI-identical commit gate.
 
   echo "Backend checks passed!"
 fi
