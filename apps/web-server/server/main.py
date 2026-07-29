@@ -205,6 +205,28 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
+    # #1064: sweep tasks whose worker died and left them looking active. Runs
+    # here rather than as a CronJob because the spec tree lives on a RWO
+    # local-path PVC -- a separate pod scheduled off-node would find nothing,
+    # report zero orphans and exit green. Off by default; report-only until
+    # REAPER_DRY_RUN=false.
+    from .services import stale_reaper as _reaper  # noqa: PLC0415
+
+    app.state.stale_reaper_stop = None
+    app.state.stale_reaper_task = None
+    if _reaper.reaper_enabled():
+        reaper_stop = _asyncio.Event()
+        app.state.stale_reaper_stop = reaper_stop
+        app.state.stale_reaper_task = _asyncio.create_task(
+            _reaper.reaper_loop(stop=reaper_stop)
+        )
+        logger.info(
+            "Stale-task reaper enabled (%s)",
+            "report-only" if _reaper.dry_run() else "WRITING: orphans get cancelled",
+        )
+    else:
+        logger.info("Stale-task reaper disabled (AIFACTORY_STALE_REAPER unset)")
+
     yield
 
     # Shutdown
@@ -224,6 +246,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (_asyncio.TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.stale_reaper_task is not None:
+        app.state.stale_reaper_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.stale_reaper_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.stale_reaper_task.cancel()
     if app.state.intake_poller_task is not None:
         app.state.intake_poller_stop.set()
         try:

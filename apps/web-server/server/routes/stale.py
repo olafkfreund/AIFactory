@@ -130,31 +130,13 @@ def _all_tasks() -> list[dict[str, Any]]:
     return tasks
 
 
-@router.get("/api/maintenance/stale-tasks")
-async def report_stale(
-    hours: float = Query(
-        DEFAULT_STALE_AFTER.total_seconds() / 3600,
-        description="idle hours before a machine-owned task counts as orphaned",
-    ),
-) -> dict[str, Any]:
-    """What the reaper would act on. Changes nothing."""
-    stale = find_stale(_all_tasks(), now=_now(), stale_after=timedelta(hours=hours))
-    return summarise(stale, dry_run=True)
+def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
+    """Find orphans and, unless dry_run, cancel them. Returns the report.
 
-
-@router.post("/api/maintenance/stale-tasks/reap")
-async def reap_stale(
-    hours: float = Query(DEFAULT_STALE_AFTER.total_seconds() / 3600),
-    dry_run: bool = Query(
-        True,
-        description="default true: the destructive form must be asked for",
-    ),
-) -> dict[str, Any]:
-    """Mark orphaned tasks failed, with the reason recorded on each.
-
-    Marked, not deleted. An orphan is evidence about the execution layer and
-    worth keeping; marking is enough to drop it out of the active board without
-    claiming it succeeded.
+    The HTTP route and the scheduled job both call this. Neither owns the
+    logic, so a fix to one cannot leave the other behind -- which is the
+    failure mode for anything that exists on both a manual and an automatic
+    path.
     """
     tasks = _all_tasks()
     stale = find_stale(tasks, now=_now(), stale_after=timedelta(hours=hours))
@@ -189,3 +171,31 @@ async def reap_stale(
     if failures:
         report["failed_to_reap"] = failures
     return report
+
+
+@router.get("/api/maintenance/stale-tasks")
+async def report_stale(
+    hours: float = Query(
+        DEFAULT_STALE_AFTER.total_seconds() / 3600,
+        description="idle hours before a machine-owned task counts as orphaned",
+    ),
+) -> dict[str, Any]:
+    """What the reaper would act on. Changes nothing."""
+    return sweep(hours=hours, dry_run=True)
+
+
+@router.post("/api/maintenance/stale-tasks/reap")
+async def reap_stale(
+    hours: float = Query(DEFAULT_STALE_AFTER.total_seconds() / 3600),
+    dry_run: bool = Query(
+        True,
+        description="default true: the destructive form must be asked for",
+    ),
+) -> dict[str, Any]:
+    """Mark orphaned tasks cancelled, with the reason recorded on each.
+
+    Marked, not deleted. An orphan is evidence about the execution layer and
+    worth keeping; marking is enough to drop it out of the active board without
+    claiming it succeeded.
+    """
+    return sweep(hours=hours, dry_run=dry_run)
