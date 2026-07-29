@@ -415,7 +415,35 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         return None, None
 
 
-def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+def _recorded_commit_count(spec_dir: Path) -> int | None:
+    """Commits the build itself recorded in ``memory/build_commits.json``, or None.
+
+    ``RecoveryManager`` creates this ledger at the start of every build and
+    appends to it whenever a coding session leaves a new commit behind (both a
+    completed subtask and one that only made partial progress), so an EXISTING
+    ledger with an empty ``commits`` list is the build's own record that it
+    committed nothing. A missing or unparseable ledger says nothing at all and
+    returns ``None``.
+
+    This is the only evidence source that survives the kubejob path: the build
+    runs inside the k8s Job, and its memory tree is fetched back into the
+    control-plane spec dir on completion (#1038) while the local worktree stays
+    on the base branch. Without it every kubejob build was unmeasurable, which
+    is how #1070 handed a branch identical to main to TFactory.
+    """
+    try:
+        data = json.loads(
+            (Path(spec_dir) / "memory" / "build_commits.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        return None
+    commits = data.get("commits") if isinstance(data, dict) else None
+    return len(commits) if isinstance(commits, list) else None
+
+
+def build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     """Commits the build added on top of its base branch, or ``None`` if unknowable.
 
     ``None`` and ``0`` mean different things and callers must not conflate them:
@@ -435,7 +463,18 @@ def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     correct only because the run it was written for happened to be genuinely
     empty as well. So the count is trusted only when HEAD is the branch the build
     is supposed to have produced.
+
+    When git cannot answer, the build's own commit ledger does (#1070) — that is
+    the ONLY reason a kubejob build is measurable at all. Git wins where both
+    speak: a worktree parked on the build branch is the ground truth about what
+    the branch holds, where the ledger can only be stale.
     """
+    git = _git_commit_count(spec_dir, spec_id)
+    return git if git is not None else _recorded_commit_count(spec_dir)
+
+
+def _git_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+    """``build_commit_count``'s git half — see its docstring for the HEAD check."""
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None
@@ -703,7 +742,7 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     # success in four minutes, and verify was handed a tree with no build in it.
     # Only an explicit 0 blocks — `None` means unknowable, and refusing a build
     # we merely could not measure would be worse than the bug.
-    if _build_commit_count(spec_dir, spec_id) == 0:
+    if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
         payload = build_ingest_payload(spec_dir, spec_id)
