@@ -38,6 +38,13 @@ def test_merge_worktree_does_not_nameerror_on_blocker(tmp_path):
     (project_path / ".aifactory" / "specs" / spec_id).mkdir(parents=True)
     worktree_path = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
     _init_repo(worktree_path)
+    # #1073: the worktree must be on the TASK branch, not on the base branch.
+    # It was on `main` -- same as the project -- and merge now refuses that
+    # outright, because a worktree sitting on the base branch is the kubejob
+    # case where the work lives elsewhere and merging would be a no-op merge of
+    # main into itself. Without a real task branch this test no longer reaches
+    # the blocker-clearing line it exists to exercise.
+    _git(["checkout", "-q", "-b", f"aifactory/{spec_id}"], worktree_path)
     # A merge-blocking file → the logger.info path executes (the bug site).
     (project_path / ".aifactory-status").write_text("x")
 

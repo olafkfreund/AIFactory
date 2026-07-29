@@ -37,6 +37,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.task_branch import resolve_task_branch
 from server.services.task_status import write_status
 from server.specpath import safe_spec_component
 
@@ -1519,19 +1520,6 @@ async def merge_worktree(
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": f"Could not determine worktree branch: {e}"}
-
-    # Get the current branch in main repo
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -1540,6 +1528,18 @@ async def merge_worktree(
         base_branch = result.stdout.strip()
     except subprocess.CalledProcessError:
         base_branch = "develop"
+
+    # #1073: same defect as create-pr -- the worktree's HEAD is the base branch
+    # under the kubejob backend, so merging it would have been a no-op merge of
+    # main into main. Resolve the branch that actually holds the work.
+    worktree_branch, branch_error = resolve_task_branch(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if not worktree_branch:
+        return {"success": False, "error": f"Could not determine task branch: {branch_error}"}
 
     # Clean up internal auto-generated files that can block merge
     # These are untracked files created by agents in worktrees that would
