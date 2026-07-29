@@ -1008,6 +1008,18 @@ def _populate_self_contained_worktree(
     # exactly as the in-pod worktree carries it).
     workspace.copy_spec_to_worktree(source_spec_dir, wt_path, spec_id)
 
+    # #1073 follow-up: record the branch this build will push. The control
+    # plane knows it HERE and nowhere afterwards -- /work is deliberately left
+    # on the base branch (see #716 above), so nothing downstream can read the
+    # task branch off a directory. Without this the approve path had to
+    # rediscover it from git refs, and task.branchName was None in the API.
+    try:
+        (source_spec_dir / ".task_branch").write_text(branch + "\n")
+    except OSError as exc:  # pragma: no cover - a full/RO volume
+        # Non-fatal: resolve_task_branch still discovers the branch from git.
+        # Logged rather than swallowed so a silently-missing record is visible.
+        _log.warning("could not record task branch for %s: %s", spec_id, exc)
+
     populated = str(wt_path)
     _log.info(
         "[build_backend] built self-contained build repo for %s at %s "

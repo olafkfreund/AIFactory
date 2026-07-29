@@ -696,6 +696,18 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         metadata["worktree_path"] = worktree_marker.read_text().strip()
         metadata["branch_name"] = f"aifactory/{spec_dir.name}"
 
+    # #1073: the branch the build actually pushed, recorded at dispatch. Under
+    # the kubejob backend there is no .worktree_path marker at all, so the
+    # block above never fired and branchName was None for every task built by
+    # the deployed backend. This is also the AUTHORITATIVE value: the line
+    # above reconstructs the name from a convention, which is a second copy of
+    # a rule core.worktree.get_branch_name owns.
+    branch_marker = spec_dir / ".task_branch"
+    if branch_marker.is_file():
+        recorded = branch_marker.read_text().strip()
+        if recorded:
+            metadata["branch_name"] = recorded
+
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"
     if requirements_file.exists():

@@ -143,3 +143,68 @@ def test_a_missing_worktree_still_resolves_from_the_branch(
     )
     assert err is None, err
     assert branch == "aifactory/101-thing"
+
+
+def test_a_recorded_branch_is_preferred(repo: Path, tmp_path: Path) -> None:
+    """Data beats archaeology: the build records what it pushed."""
+    _git("branch", "custom/prefix/102-thing", cwd=repo)
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / ".task_branch").write_text("custom/prefix/102-thing\n")
+    wt = tmp_path / "wt"
+    _clone_on_base(repo, wt)
+
+    branch, err = _resolver()(
+        worktree_path=wt,
+        project_path=repo,
+        spec_id="102-thing",
+        base_branch="main",
+        spec_dir=spec,
+    )
+    assert err is None, err
+    assert branch == "custom/prefix/102-thing"
+
+
+def test_a_stale_record_is_not_trusted(repo: Path, tmp_path: Path) -> None:
+    """The record is VALIDATED, not obeyed.
+
+    A branch recorded then deleted -- merged previously, or a reused spec dir --
+    must fall through to discovery. Handing git a branch because a file says so
+    is how you merge the wrong thing, or nothing.
+    """
+    _git("branch", "aifactory/103-thing", cwd=repo)
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / ".task_branch").write_text("aifactory/deleted-long-ago\n")
+    wt = tmp_path / "wt"
+    _clone_on_base(repo, wt)
+
+    branch, err = _resolver()(
+        worktree_path=wt,
+        project_path=repo,
+        spec_id="103-thing",
+        base_branch="main",
+        spec_dir=spec,
+    )
+    assert err is None, err
+    assert branch == "aifactory/103-thing", "a dead recorded branch must not win"
+
+
+def test_a_record_naming_the_base_branch_is_ignored(repo: Path, tmp_path: Path) -> None:
+    """Belt and braces on the one value that must never be returned."""
+    _git("branch", "aifactory/104-thing", cwd=repo)
+    spec = tmp_path / "spec"
+    spec.mkdir()
+    (spec / ".task_branch").write_text("main\n")
+    wt = tmp_path / "wt"
+    _clone_on_base(repo, wt)
+
+    branch, err = _resolver()(
+        worktree_path=wt,
+        project_path=repo,
+        spec_id="104-thing",
+        base_branch="main",
+        spec_dir=spec,
+    )
+    assert err is None, err
+    assert branch == "aifactory/104-thing"

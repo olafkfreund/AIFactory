@@ -61,12 +61,43 @@ def _matches(refs: list[str], spec_id: str) -> list[str]:
     return [r for r in refs if r.rsplit("/", 1)[-1] == spec_id]
 
 
+def recorded_branch(spec_dir: Path) -> str | None:
+    """The branch the build recorded at dispatch, if it left one.
+
+    Written by the kubejob workspace preparation, which is the only place the
+    control plane knows the branch -- /work is deliberately left on the base
+    branch, so nothing downstream can read it off a directory.
+    """
+    marker = spec_dir / ".task_branch"
+    if not marker.is_file():
+        return None
+    try:
+        return marker.read_text().strip() or None
+    except OSError:
+        return None
+
+
+def _exists(branch: str, project_path: Path) -> bool:
+    """Is *branch* a real ref, locally or on origin?"""
+    refs = _git(
+        [
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes/origin",
+        ],
+        project_path,
+    )
+    return branch in refs or f"origin/{branch}" in refs
+
+
 def resolve_task_branch(
     *,
     worktree_path: Path,
     project_path: Path,
     spec_id: str,
     base_branch: str,
+    spec_dir: Path | None = None,
 ) -> tuple[str | None, str | None]:
     """Return ``(branch, None)`` or ``(None, reason)``.
 
@@ -74,6 +105,17 @@ def resolve_task_branch(
     build happened *in* the worktree it is the most direct evidence; the
     discovered branch is the fallback for builds that happened elsewhere.
     """
+    # 0. What the build recorded at dispatch -- data beats archaeology.
+    #
+    #    VALIDATED, not trusted: a recorded branch that no longer exists (deleted
+    #    after a previous merge, or a spec dir reused) must fall through to
+    #    discovery rather than being handed to git as a merge source. Returning a
+    #    branch because a file says so is how you merge the wrong thing.
+    if spec_dir is not None:
+        recorded = recorded_branch(spec_dir)
+        if recorded and recorded != base_branch and _exists(recorded, project_path):
+            return recorded, None
+
     # 1. The worktree's HEAD -- but only if it is a real branch that is not the
     #    base. `main` here means "this worktree was never switched", which is
     #    the kubejob case, not a task branch.
@@ -84,33 +126,23 @@ def resolve_task_branch(
             if branch not in {"HEAD", base_branch}:
                 return branch, None
 
-    # 2. A local branch for this spec.
-    local = _matches(
-        _git(["for-each-ref", "--format=%(refname:short)", "refs/heads"], project_path),
-        spec_id,
-    )
-    if len(local) == 1:
-        return local[0], None
-    if len(local) > 1:
-        return (
-            None,
-            f"ambiguous: {len(local)} local branches match {spec_id!r}: {local}",
-        )
+    return _discover(project_path, spec_id, base_branch)
 
-    # 3. A remote branch -- the kubejob build pushes there and may not leave a
-    #    local ref behind at all.
-    remote = _matches(
-        _git(
-            ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
-            project_path,
-        ),
-        spec_id,
-    )
-    if len(remote) == 1:
-        # Strip the remote name: callers push/compare by branch, not by ref.
-        return remote[0].split("/", 1)[1], None
-    if len(remote) > 1:
-        return None, f"ambiguous: {len(remote)} remote branches match {spec_id!r}"
+
+def _discover(
+    project_path: Path, spec_id: str, base_branch: str
+) -> tuple[str | None, str | None]:
+    """Find the branch from git refs when nothing else identified it."""
+    for scope, refspec in (("local", "refs/heads"), ("origin", "refs/remotes/origin")):
+        found = _matches(
+            _git(["for-each-ref", "--format=%(refname:short)", refspec], project_path),
+            spec_id,
+        )
+        if len(found) > 1:
+            return None, f"ambiguous: {len(found)} {scope} branches match {spec_id!r}: {found}"
+        if len(found) == 1:
+            # Strip the remote name: callers push/compare by branch, not by ref.
+            return (found[0].split("/", 1)[1] if scope == "origin" else found[0]), None
 
     return None, (
         f"no branch found for {spec_id!r}: the worktree is on {base_branch!r} and "

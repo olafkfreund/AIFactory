@@ -14,11 +14,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-def _git(args, cwd):
+def _git(args: list[str], cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
-def _init_repo(path: Path):
+def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     _git(["init", "-b", "main"], path)
     _git(["config", "user.email", "t@t.t"], path)
@@ -28,7 +28,7 @@ def _init_repo(path: Path):
     _git(["commit", "-m", "seed"], path)
 
 
-def test_merge_worktree_does_not_nameerror_on_blocker(tmp_path):
+def test_merge_worktree_does_not_nameerror_on_blocker(tmp_path: Path) -> None:
     from server.routes import worktree_merge
 
     project_id, spec_id = "proj-1", "041-feat"
