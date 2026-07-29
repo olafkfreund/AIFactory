@@ -173,3 +173,28 @@ def test_the_route_is_not_shadowed_by_another_router() -> None:
     assert matched[0].endpoint.__name__ == "report_stale", (
         f"shadowed by {matched[0].path} -> {matched[0].endpoint.__name__}"
     )
+
+
+def test_endpoint_requires_no_undocumented_query_parameter() -> None:
+    """The third distinct wiring failure in this feature, so it gets a test.
+
+    `require_task_access` is task-scoped: it reads a `task_id`, and on a path
+    that has no such path parameter FastAPI promotes it to a REQUIRED QUERY
+    parameter. The deployed endpoint answered
+
+        422 {"loc": ["query", "task_id"], "msg": "Field required"}
+
+    and could not be called at all. It was registered, resolvable, and unusable
+    -- which no test asserting registration or resolution could see.
+
+    Asserts against the schema the app generates, so it covers parameters
+    contributed by dependencies rather than only those written in the signature.
+    """
+    main = pytest.importorskip("server.main")
+
+    schema = main.create_app().openapi()
+    params = schema["paths"]["/api/maintenance/stale-tasks"]["get"].get(
+        "parameters", []
+    )
+    required = {p["name"] for p in params if p.get("required")}
+    assert required == set(), f"endpoint demands query parameters: {sorted(required)}"
