@@ -135,14 +135,12 @@ class ModificationTracker:
         )
         return snapshot
 
-    def refresh_from_git(  # noqa: PLR0913 - see below
+    def refresh_from_git(
         self,
         task_id: str,
         worktree_path: Path,
         evolutions: dict[str, FileEvolution],
         target_branch: str | None = None,
-        work_ref: str | None = None,
-        repo_path: Path | None = None,
     ) -> None:
         """
         Refresh task snapshots by analyzing git diff from worktree.
@@ -155,40 +153,11 @@ class ModificationTracker:
             worktree_path: Path to the task's worktree
             evolutions: Current evolution data (will be updated)
             target_branch: Branch to compare against (default: detect from worktree)
-            work_ref: Ref holding the task's work, read in *repo_path* instead of
-                the worktree's HEAD. Control-plane callers pass what
-                ``resolve_work_ref`` found; in-Job callers omit it (#1089).
-            repo_path: Repository to run git in when *work_ref* is given.
-
-        PLR0913 is suppressed rather than fixed: the two new parameters are
-        optional and additive precisely so that every existing in-Job caller
-        keeps working unchanged. Bundling them into a config object to satisfy
-        the argument count would force a signature change on callers that have
-        no interest in either.
         """
-        # #1089: under the kubejob build backend the control plane's worktree is
-        # a standalone clone left on the BASE branch -- the work escapes the
-        # build Job by `git push`. Reading `{target}...HEAD` there diffs base
-        # against base, so the semantic conflict detector was handed an EMPTY
-        # change set and reported zero conflicts for every task.
-        #
-        # Both arguments are required together: a ref without a repo to read it
-        # in is not resolvable, and silently falling back to the worktree is the
-        # bug. In-Job callers pass neither and behave exactly as before, which
-        # matters because that is the majority caller and its worktree HEAD
-        # genuinely IS the task branch.
-        # Written as an if/else rather than conditional expressions so the None
-        # narrowing is visible to mypy --strict: `bool(a and b)` does not tell it
-        # that b is non-None later on.
-        if work_ref and repo_path:
-            by_ref, git_cwd, head = True, repo_path, work_ref
-        else:
-            by_ref, git_cwd, head = False, worktree_path, "HEAD"
-
         # Determine the target branch to compare against
         if not target_branch:
-            # Detect in whichever repository the refs are actually readable.
-            target_branch = self._detect_target_branch(git_cwd)
+            # Try to detect the base branch from the worktree's upstream
+            target_branch = self._detect_target_branch(worktree_path)
 
         debug(
             MODULE,
@@ -201,8 +170,8 @@ class ModificationTracker:
         try:
             # Get list of files changed in the worktree vs target branch
             result = subprocess.run(
-                ["git", "diff", "--name-only", f"{target_branch}...{head}"],
-                cwd=git_cwd,
+                ["git", "diff", "--name-only", f"{target_branch}...HEAD"],
+                cwd=worktree_path,
                 capture_output=True,
                 text=True,
                 check=True,
@@ -226,8 +195,8 @@ class ModificationTracker:
             for file_path in changed_files:
                 # Get the diff for this file
                 diff_result = subprocess.run(
-                    ["git", "diff", f"{target_branch}...{head}", "--", file_path],
-                    cwd=git_cwd,
+                    ["git", "diff", f"{target_branch}...HEAD", "--", file_path],
+                    cwd=worktree_path,
                     capture_output=True,
                     text=True,
                     check=True,
@@ -237,7 +206,7 @@ class ModificationTracker:
                 try:
                     show_result = subprocess.run(
                         ["git", "show", f"{target_branch}:{file_path}"],
-                        cwd=git_cwd,
+                        cwd=worktree_path,
                         capture_output=True,
                         text=True,
                         check=True,
@@ -247,38 +216,17 @@ class ModificationTracker:
                     # File is new
                     old_content = ""
 
-                if by_ref:
-                    # The work is on a REF, not on disk: the control plane's
-                    # worktree does not contain these files at all. Reading the
-                    # filesystem here would silently yield "" for every file and
-                    # record each one as a deletion.
+                current_file = worktree_path / file_path
+                if current_file.exists():
                     try:
-                        # S603/S607: same shape as the sibling calls in this
-                        # method -- literal "git", no shell, and head/file_path
-                        # come from git's own output, not from a caller.
-                        after = subprocess.run(  # noqa: S603
-                            ["git", "show", f"{head}:{file_path}"],  # noqa: S607
-                            cwd=git_cwd,
-                            capture_output=True,
-                            text=True,
-                            check=True,
+                        new_content = current_file.read_text(encoding="utf-8")
+                    except UnicodeDecodeError:
+                        new_content = current_file.read_text(
+                            encoding="utf-8", errors="replace"
                         )
-                        new_content = after.stdout
-                    except subprocess.CalledProcessError:
-                        # Genuinely deleted on the task branch.
-                        new_content = ""
                 else:
-                    current_file = worktree_path / file_path
-                    if current_file.exists():
-                        try:
-                            new_content = current_file.read_text(encoding="utf-8")
-                        except UnicodeDecodeError:
-                            new_content = current_file.read_text(
-                                encoding="utf-8", errors="replace"
-                            )
-                    else:
-                        # File was deleted
-                        new_content = ""
+                    # File was deleted
+                    new_content = ""
 
                 # Record the modification
                 self.record_modification(
@@ -315,22 +263,15 @@ class ModificationTracker:
             if snapshot and snapshot.completed_at is None:
                 snapshot.completed_at = now
 
-    def _detect_target_branch(self, repo_path: Path) -> str:
+    def _detect_target_branch(self, worktree_path: Path) -> str:
         """
-        Detect the target branch to compare against, in *repo_path*.
+        Detect the target branch to compare against for a worktree.
 
-        Finds the branch the work was based on by looking at the merge-base
-        between HEAD and common branch names.
-
-        Named ``repo_path`` rather than ``worktree_path``: ``refresh_from_git``
-        hands this the PROJECT repository when reading by ref (#1089). A
-        parameter called worktree_path that receives the project repo is a
-        comment that lies, and it is what made the enforcement check flag this
-        line even though the runtime behaviour was already correct.
+        This finds the branch that the worktree was created from by looking
+        at the merge-base between the worktree and common branch names.
 
         Args:
-            repo_path: Repository to detect in -- the task worktree in-Job, the
-                project repo on the control plane
+            worktree_path: Path to the worktree
 
         Returns:
             The detected target branch name, defaults to 'main' if detection fails
@@ -339,7 +280,7 @@ class ModificationTracker:
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-                cwd=repo_path,
+                cwd=worktree_path,
                 capture_output=True,
                 text=True,
             )
@@ -357,7 +298,7 @@ class ModificationTracker:
             try:
                 result = subprocess.run(
                     ["git", "merge-base", branch, "HEAD"],
-                    cwd=repo_path,
+                    cwd=worktree_path,
                     capture_output=True,
                     text=True,
                 )
@@ -370,6 +311,6 @@ class ModificationTracker:
         debug_warning(
             MODULE,
             "Could not detect target branch, defaulting to 'main'",
-            repo_path=str(repo_path),
+            worktree_path=str(worktree_path),
         )
         return "main"

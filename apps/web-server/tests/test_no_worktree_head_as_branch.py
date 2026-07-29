@@ -308,12 +308,34 @@ def _range_violations_in(path: Path) -> list[int]:
     return lines
 
 
+# Directories that are not this repository's source. apps/backend carries a
+# .venv in CI, and ast.parse dies on third-party files -- msal ships one with a
+# BOM. Scanning them made this check fail on the environment rather than on the
+# code, which is its own kind of dishonest gate: it was red for a reason that has
+# nothing to do with the invariant.
+_NOT_OUR_CODE = frozenset(
+    {
+        ".venv",
+        "venv",
+        "site-packages",
+        "node_modules",
+        "__pycache__",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
+
+
 def test_no_worktree_range_read_as_the_task_work() -> None:
     violations: list[str] = []
     for root, label in ((SERVER_DIR, "server"), (_BACKEND_DIR, "backend")):
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("*.py")):
+            if _NOT_OUR_CODE & set(path.parts):
+                continue
             rel = path.relative_to(root).as_posix()
             if rel in ALLOWLIST or rel in _RANGE_ALLOWLIST or "test" in path.name:
                 continue

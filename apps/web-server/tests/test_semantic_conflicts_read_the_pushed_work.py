@@ -123,9 +123,25 @@ def _tracker(project: Path):
 
 
 def _modified(tracker) -> dict[str, object]:
-    return {
-        Path(rel).name: snap for rel, snap in tracker.get_task_modifications(TASK_ID)
-    }
+    """Snapshots this task recorded, by file name.
+
+    Read from the evolution data rather than through ``get_task_modifications``,
+    which filters on ``snapshot.semantic_changes`` -- an analyser-dependent
+    property. That made the first version of this test pass locally, where
+    tree-sitter is absent and the regex fallback runs, and fail in CI, where
+    tree-sitter is installed. Whether a given edit is "semantic" is the
+    analyser's business; what this file asserts is which side of the diff was
+    read, so it must not depend on the analyser at all.
+    """
+    out: dict[str, object] = {}
+    for rel in list(tracker._evolutions):  # noqa: SLF001 - no public accessor
+        snap = tracker.get_file_evolution(rel)
+        if snap is None:
+            continue
+        recorded = snap.get_task_snapshot(TASK_ID)
+        if recorded is not None and recorded.content_hash_after:
+            out[Path(rel).name] = recorded
+    return out
 
 
 def test_the_worktree_read_sees_nothing_which_is_the_defect(
