@@ -226,6 +226,10 @@ async def get_task(
         )
 
     task = spec_to_task(project_id, spec_dir)
+    # #1069: the list endpoints apply the durable-lifecycle overlay and this one
+    # did not, so the same task read one status on the board and another on the
+    # page the board links to. Same derivation, same answer.
+    await overlay_durable_status([task])
     return task_to_dict(task)
 
 

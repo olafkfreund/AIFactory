@@ -19,6 +19,7 @@ from server.specpath import safe_spec_component as _safe_spec_component
 from ..websockets.events import emit_subtask_update
 from . import task_control
 from .task_phase import TaskPhase, scale_progress
+from .task_status import read_plan
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -124,6 +125,18 @@ class WorktreeSyncMixin:
             src = worktree_spec / filename
             dst = main_spec / filename
             if src.exists():
+                # #1069: fail at WRITE time, where the cause is one line away.
+                # A build that emits unparseable JSON must not have that file
+                # copied into the spec dir the control plane reads; the last
+                # good copy is strictly better than garbage, and the read side
+                # only ever saw the fault hours later as a status discrepancy.
+                if filename == "implementation_plan.json":
+                    _, plan_error = read_plan(src)
+                    if plan_error is not None:
+                        _log.error(
+                            "[AgentService] refusing to sync %s: %s", src, plan_error
+                        )
+                        continue
                 try:
                     # For implementation_plan.json we still merge SUBTASK status
                     # forward-only (a legitimate agent-artifact concern), but we
