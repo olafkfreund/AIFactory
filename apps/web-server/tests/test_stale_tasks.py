@@ -124,13 +124,9 @@ def test_the_route_module_imports() -> None:
     Testing only the pure module could not catch that: the pure module has no
     such imports. This asserts the wiring, which is the part that broke.
     """
-    try:
-        from server.routes import stale  # noqa: PLC0415
-    except ModuleNotFoundError as exc:  # pragma: no cover - env without app deps
-        # A MISSING THIRD-PARTY package is an environment gap, not a defect.
-        # A wrong NAME raises plain ImportError and is deliberately NOT caught,
-        # because that is the bug this test exists for.
-        pytest.skip(f"app dependency unavailable here: {exc.name}")
+    # importorskip skips on a MISSING PACKAGE (an environment gap) but lets a
+    # wrong NAME surface as ImportError, which is the bug this test exists for.
+    stale = pytest.importorskip("server.routes.stale")
 
     assert stale.router is not None
     assert any(
@@ -153,12 +149,13 @@ def test_the_route_is_not_shadowed_by_another_router() -> None:
     so the assertion held either way). Resolution is the thing that broke, so
     resolution is what this asserts.
     """
-    try:
-        from server.main import create_app  # noqa: PLC0415
-    except (ModuleNotFoundError, ImportError) as exc:  # pragma: no cover
-        pytest.skip(f"app dependency unavailable here: {exc}")
+    # importorskip rather than try/except+skip: it returns the module, so there
+    # is no code path where the name is unbound. CodeQL flagged the earlier
+    # form as py/uninitialized-local-variable because it does not model
+    # pytest.skip as terminating - and it was right that the path existed.
+    main = pytest.importorskip("server.main")
 
-    app = create_app()
+    app = main.create_app()
     scope = {
         "type": "http",
         "method": "GET",
