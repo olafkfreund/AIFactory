@@ -30,9 +30,11 @@ handlers ``merge_worktree`` / ``get_worktree_diff`` historically lived in
 """
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -48,7 +50,9 @@ from .projects import get_projects_file
 router = APIRouter()
 
 
-def _approved(project_path: Path, spec_id: str, message: str, **extra: object) -> dict:
+def _approved(
+    project_path: Path, spec_id: str, message: str, **extra: object
+) -> dict[str, Any]:
     """Record the approval and shape the success response.
 
     Shared by the PR-merge and local-merge paths so they cannot disagree about
@@ -59,8 +63,18 @@ def _approved(project_path: Path, spec_id: str, message: str, **extra: object) -
     joining it addresses a directory that does not exist -- and write_control
     would helpfully create it, landing the status nowhere.
     """
+    # Bound locally, as every other function in this module does -- there is no
+    # module-level logger here. Referencing a global one raised NameError on the
+    # status-error path: the code reporting a failure would itself have failed,
+    # which is the same defect #649 fixed in merge_worktree.
+    logger = logging.getLogger(__name__)
+
+    # Barriered HERE, not just at the call sites. Callers do sanitise, but a
+    # helper that trusts its parameter is one refactor away from a caller that
+    # does not -- and the analyser is right to say so. safe_spec_component is
+    # idempotent, so an already-safe value passes straight through.
     status_error = write_status(
-        project_path / ".aifactory" / "specs" / spec_id,
+        project_path / ".aifactory" / "specs" / safe_spec_component(spec_id),
         status="done",
         reason=f"approved: {message}",
         updated_by="approve-merge",

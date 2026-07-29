@@ -130,8 +130,10 @@ def test_merge_addresses_the_spec_dir_by_sanitized_spec_id() -> None:
     src = (_WEB_SERVER / "server" / "routes" / "worktree_merge.py").read_text()
     call = src.index("status_error = write_status(")
     args = src[call : src.index("updated_by=", call)]
-    assert '"specs" / spec_id' in args, (
-        "merge must address the spec dir by sanitized spec_id"
+    assert '"specs" / safe_spec_component(spec_id)' in args, (
+        "the spec dir must be addressed by a BARRIERED spec_id -- callers do "
+        "sanitise, but a helper that trusts its parameter is one refactor away "
+        "from a caller that does not, and CodeQL is right to say so"
     )
     assert "/ task_id" not in args, (
         "task_id is raw URL input and carries the project prefix"
