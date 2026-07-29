@@ -134,7 +134,7 @@ def _modified(tracker) -> dict[str, object]:
     read, so it must not depend on the analyser at all.
     """
     out: dict[str, object] = {}
-    for rel in list(tracker._evolutions):  # noqa: SLF001 - no public accessor
+    for rel in list(tracker._evolutions):  # private: no public accessor exists
         snap = tracker.get_file_evolution(rel)
         if snap is None:
             continue
