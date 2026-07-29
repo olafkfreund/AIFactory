@@ -9,6 +9,7 @@ Age alone cannot tell those apart; ownership can.
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -198,3 +199,47 @@ def test_endpoint_requires_no_undocumented_query_parameter() -> None:
     )
     required = {p["name"] for p in params if p.get("required")}
     assert required == set(), f"endpoint demands query parameters: {sorted(required)}"
+
+
+def test_reaping_actually_writes_both_stores(tmp_path: Path) -> None:
+    """The reap must CHANGE something, and change it in both places.
+
+    The first implementation logged, appended the id to a `reaped` list, and
+    returned `"action": "marked failed"` -- while writing nothing at all. It
+    reported success and left the task exactly as it found it, which is the
+    precise defect this whole feature exists to detect.
+
+    Both stores matter: implementation_plan.json is what the task list renders
+    from, task_control.json is authoritative for the board column (#259).
+    Writing one and not the other leaves them disagreeing.
+    """
+    stale_mod = pytest.importorskip("server.routes.stale")
+
+    spec = tmp_path / "001-orphan"
+    spec.mkdir(parents=True)
+    (spec / "implementation_plan.json").write_text(
+        json.dumps({"status": "in_progress", "title": "orphan"})
+    )
+
+    stale_mod._mark_cancelled(spec, "orphaned: no worker for 27h")
+
+    plan = json.loads((spec / "implementation_plan.json").read_text())
+    assert plan["status"] == "cancelled", "plan file still says in_progress"
+    assert "orphaned" in plan["reviewReason"]
+
+    control = json.loads((spec / "task_control.json").read_text())
+    assert control["status"] == "cancelled", "control store still says in_progress"
+    assert control.get("updatedBy") == "stale-task-reaper"
+
+
+def test_reaped_status_is_terminal_so_it_is_not_reaped_twice() -> None:
+    """A reaped task must not come back round the loop.
+
+    If the status written were still machine-owned, every sweep would re-reap
+    the same tasks forever and the report would never settle.
+    """
+    from server.services.stale_tasks import TERMINAL_STATES, is_reapable
+
+    stale_mod = pytest.importorskip("server.routes.stale")
+    assert stale_mod._REAPED_STATUS in TERMINAL_STATES
+    assert not is_reapable(stale_mod._REAPED_STATUS)

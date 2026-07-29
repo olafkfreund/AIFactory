@@ -25,17 +25,21 @@ destructive form has to be asked for explicitly.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
 
+from server.routes.projects import load_projects, resolve_project_path
+from server.routes.task_service import get_spec_dirs, spec_to_task
+
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
 # are in task_service.py. Importing either from the wrong module breaks app
 # startup, which fails every test in the suite rather than just this route's.
-from server.routes.projects import load_projects, resolve_project_path
-from server.routes.task_service import get_spec_dirs, spec_to_task
+from server.services import task_control
 from server.services.stale_tasks import (
     DEFAULT_STALE_AFTER,
     find_stale,
@@ -63,6 +67,41 @@ def _now() -> datetime:
     data must agree -- this is the one place that decides which.
     """
     return datetime.now()  # noqa: DTZ005 - deliberate: mtimes are naive local
+
+
+# Status written to a reaped task. `cancelled` rather than `failed` for two
+# checked reasons:
+#   - AIFactory's own validator lists cancelled as valid and does NOT list
+#     failed, and map_backend_status_to_frontend defaults anything unknown to
+#     "backlog" -- so writing "failed" would put the orphan back in the backlog
+#     column looking like fresh work.
+#   - CFactory's is_failed() tokenises the status and matches "cancelled", so
+#     the card lands in the cockpit's Failed tab and leaves Active.
+# It also does not claim success, which "done" would.
+_REAPED_STATUS = "cancelled"
+
+
+def _mark_cancelled(spec_dir: Path, reason: str) -> None:
+    """Persist the reap to BOTH stores the board reads.
+
+    implementation_plan.json is what the task list renders from;
+    task_control.json is the agent-immutable control store and is authoritative
+    for the board column (#259). Writing only one leaves the two disagreeing,
+    which is how a task ends up displayed in two states at once.
+    """
+    plan_file = spec_dir / "implementation_plan.json"
+    if plan_file.is_file():
+        plan = json.loads(plan_file.read_text())
+        plan["status"] = _REAPED_STATUS
+        plan["reviewReason"] = reason
+        plan_file.write_text(json.dumps(plan, indent=2))
+
+    task_control.write_control(
+        spec_dir,
+        status=_REAPED_STATUS,
+        review_reason=reason,
+        updated_by="stale-task-reaper",
+    )
 
 
 def _all_tasks() -> list[dict[str, Any]]:
@@ -126,14 +165,27 @@ async def reap_stale(
 
     by_id = {t["id"]: t for t in tasks}
     reaped: list[str] = []
+    failures: list[str] = []
     for item in stale:
         source = by_id.get(item.task_id)
         if not source:
             continue
+        spec_dir = Path(str(source["_spec_dir"]))
         # Loud on purpose: a reap is a state change nobody asked for
         # interactively, so it must be legible afterwards in the logs.
         logger.warning("reaping orphaned task %s: %s", item.task_id, item.reason())
+        try:
+            _mark_cancelled(spec_dir, item.reason())
+        except OSError as exc:
+            # Report the failure rather than counting it as reaped. A reaper
+            # that says it acted and did not is the exact defect it exists to
+            # find.
+            logger.exception("could not reap %s", item.task_id)
+            failures.append(f"{item.task_id}: {exc}")
+            continue
         reaped.append(item.task_id)
 
     report["reaped"] = reaped
+    if failures:
+        report["failed_to_reap"] = failures
     return report
