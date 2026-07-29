@@ -167,7 +167,7 @@ def test_empty_build_is_not_handed_off(tmp_path, monkeypatch):
         raise AssertionError("handoff sent for a build that produced nothing")
 
     monkeypatch.setattr(tc, "send_handoff", fail_send)
-    assert tc._build_commit_count(spec_dir, "005-x") == 0
+    assert tc.build_commit_count(spec_dir, "005-x") == 0
     result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "005-x"))
     assert result == {"sent": False, "reason": "empty_build"}
 
@@ -182,7 +182,7 @@ def test_real_build_is_still_handed_off(tmp_path, monkeypatch):
         return {"sent": True, "reason": None, "status": 200}
 
     monkeypatch.setattr(tc, "send_handoff", fake_send)
-    assert tc._build_commit_count(spec_dir, "006-x") == 1
+    assert tc.build_commit_count(spec_dir, "006-x") == 1
     result = asyncio.run(tc.maybe_auto_handoff_tfactory(spec_dir, "006-x"))
     assert result["sent"] is True
     assert sent["payload"]["spec_id"] == "006-x"
@@ -191,7 +191,7 @@ def test_real_build_is_still_handed_off(tmp_path, monkeypatch):
 def test_unmeasurable_build_fails_open(tmp_path, monkeypatch):
     """No worktree (RFC-0017 packed path) → None, not 0 → handoff proceeds."""
     _spec(tmp_path, True)
-    assert tc._build_commit_count(tmp_path, "007-x") is None
+    assert tc.build_commit_count(tmp_path, "007-x") is None
 
     async def fake_send(_payload, **_kwargs):
         return {"sent": True, "reason": None, "status": 200}
@@ -210,7 +210,7 @@ def test_kubejob_worktree_on_base_is_unmeasurable_not_empty(tmp_path, monkeypatc
     That must read as "cannot tell" — never as "the build wrote nothing".
     """
     spec_dir = _repo_with_build(tmp_path, "006-x", on_base=True)
-    assert tc._build_commit_count(spec_dir, "006-x") is None
+    assert tc.build_commit_count(spec_dir, "006-x") is None
 
     async def fake_send(_payload, **_kwargs):
         return {"sent": True, "reason": None, "status": 200}
