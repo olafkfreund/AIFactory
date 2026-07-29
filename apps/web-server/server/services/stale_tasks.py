@@ -24,7 +24,7 @@ states are therefore never stale, however old.
 
 ## Why mark rather than delete
 
-A reaped task becomes `failed` with a recorded reason. Deleting would remove
+A reaped task becomes `cancelled` with a recorded reason. Deleting would remove
 the evidence of what died and why, and an orphan is a signal about the
 execution layer worth keeping. Marking also lets it drop out of "Active"
 without pretending it succeeded.
@@ -54,6 +54,15 @@ TERMINAL_STATES: frozenset[str] = frozenset(
 # while, and a false reap kills real work, whereas a late reap only means an
 # orphan lingers a bit longer. Asymmetric costs, asymmetric default.
 DEFAULT_STALE_AFTER = timedelta(hours=4)
+
+# What a reaped task is set to. Lives here, next to TERMINAL_STATES, so the
+# writer and the report cannot disagree about it -- they did: the report said
+# "marked failed" while the writer wrote "cancelled".
+#
+# Not "failed": AIFactory does not accept that status and maps anything
+# unknown to "backlog", which would put the orphan back in the queue looking
+# like fresh work. Not "done": it did not succeed.
+REAPED_STATUS = "cancelled"
 
 
 @dataclass(frozen=True)
@@ -142,7 +151,7 @@ def summarise(stale: list[StaleTask], *, dry_run: bool) -> dict[str, Any]:
     return {
         "stale_count": len(stale),
         "dry_run": dry_run,
-        "action": "reported" if dry_run else "marked failed",
+        "action": "reported" if dry_run else f"marked {REAPED_STATUS}",
         "tasks": [
             {
                 "id": s.task_id,
