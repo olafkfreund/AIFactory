@@ -30,10 +30,17 @@ What is NOT flagged (the sanctioned patterns on main):
 - ``services/task_branch.py`` itself (allowlisted below): the resolver's own
   base-branch-guarded read IS the implementation.
 
-Known ceiling: detection keys on the ``worktree`` naming convention. A read
-through a cwd named, say, ``task_dir`` slips past. The repo has no such site
-today; precision (never flagging a legitimate read, so the check is never
-suppressed into decoration) is deliberately preferred over coverage.
+Known ceilings, both accepted because precision (never flagging a legitimate
+read, so the check is never suppressed into decoration) is deliberately
+preferred over coverage:
+
+- detection keys on the ``worktree`` naming convention: a read through a cwd
+  named, say, ``task_dir`` slips past. The repo has no such site today.
+- the resolver exemption is function-scoped and unconditional: a function
+  that calls ``resolve_task_branch``/``resolve_work_ref``, ignores the
+  result, and then uses the worktree HEAD anyway is NOT flagged. Verifying
+  the HEAD read actually sits in the resolver-failed fallback position needs
+  dataflow analysis, which would misfire on legitimate shapes.
 """
 
 from __future__ import annotations
