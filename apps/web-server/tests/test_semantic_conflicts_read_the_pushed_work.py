@@ -27,6 +27,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -108,73 +109,69 @@ def kubejob_shape(tmp_path: Path) -> dict[str, Path]:
     return {"project": project, "worktree": worktree, "origin": origin}
 
 
-def _tracker(project: Path):
-    """A FileEvolutionTracker with baselines captured, as production has.
+def _refresh(project: Path, worktree: Path, **kwargs) -> list[tuple[str, str]]:
+    """Run refresh_from_git and capture what it decided the task changed.
 
-    ``record_modification`` only records files that already carry a baseline, so
-    a tracker with none records nothing no matter what the diff says. Capturing
-    baselines first is what makes this a test of the DIFF rather than of the
-    baseline precondition.
+    Asserts at the seam this fix actually moves: which files the diff yields, and
+    where their "after" content is read from. Everything downstream --
+    baseline capture, the semantic analyser, evolution persistence -- is
+    deliberately out of the picture.
+
+    Two earlier versions of this probe went through that downstream machinery and
+    were environment-dependent in two different ways: `get_task_modifications`
+    filters on analyser output (tree-sitter in CI, regex fallback locally), and
+    `capture_baselines` captured 1 file locally and 0 in CI. Both made the test
+    report on something other than the change under test.
     """
     tracker_mod = pytest.importorskip("merge.file_evolution.tracker")
+    mt_mod = pytest.importorskip("merge.file_evolution.modification_tracker")
+
+    seen: list[tuple[str, str]] = []
+
+    def _capture(_self: object, **kw: object) -> None:
+        """Stand in for record_modification and keep what it was handed.
+
+        **kw rather than the real signature on purpose: this asserts on
+        file_path and new_content, and spelling out the other four parameters
+        just to ignore them is what makes a stub drift from the method it
+        replaces.
+        """
+        seen.append((Path(str(kw["file_path"])).name, str(kw["new_content"])))
+
     tracker = tracker_mod.FileEvolutionTracker(project)
-    tracker.capture_baselines(TASK_ID, [project / "app.py"])
-    return tracker
-
-
-def _modified(tracker) -> dict[str, object]:
-    """Snapshots this task recorded, by file name.
-
-    Read from the evolution data rather than through ``get_task_modifications``,
-    which filters on ``snapshot.semantic_changes`` -- an analyser-dependent
-    property. That made the first version of this test pass locally, where
-    tree-sitter is absent and the regex fallback runs, and fail in CI, where
-    tree-sitter is installed. Whether a given edit is "semantic" is the
-    analyser's business; what this file asserts is which side of the diff was
-    read, so it must not depend on the analyser at all.
-    """
-    out: dict[str, object] = {}
-    for rel in list(tracker._evolutions):  # private: no public accessor exists
-        snap = tracker.get_file_evolution(rel)
-        if snap is None:
-            continue
-        recorded = snap.get_task_snapshot(TASK_ID)
-        if recorded is not None and recorded.content_hash_after:
-            out[Path(rel).name] = recorded
-    return out
+    with patch.object(mt_mod.ModificationTracker, "record_modification", _capture):
+        tracker.refresh_from_git(TASK_ID, worktree, target_branch="main", **kwargs)
+    return seen
 
 
 def test_the_worktree_read_sees_nothing_which_is_the_defect(
     kubejob_shape: dict[str, Path],
 ) -> None:
-    """Documents the bug: reading the worktree records no modification.
+    """Documents the bug: reading the worktree yields no changed files.
 
     Kept as a test rather than a comment so the premise stays true. If the
-    worktree ever DOES hold the work, this fails and the fix can be
-    reconsidered rather than quietly carrying an obsolete workaround.
+    worktree ever DOES hold the work, this fails and the fix can be reconsidered
+    rather than quietly carrying an obsolete workaround.
     """
-    tracker = _tracker(kubejob_shape["project"])
-    tracker.refresh_from_git(TASK_ID, kubejob_shape["worktree"], target_branch="main")
-    assert _modified(tracker) == {}, (
+    seen = _refresh(kubejob_shape["project"], kubejob_shape["worktree"])
+    assert seen == [], (
         "the control-plane worktree is on the base branch and holds none of the "
-        "work, so base...HEAD there must be empty"
+        f"work, so base...HEAD there must be empty; got {seen!r}"
     )
 
 
 def test_the_ref_read_sees_the_pushed_work(kubejob_shape: dict[str, Path]) -> None:
-    """The fix: given the ref and the repo, the task's change is recorded."""
-    tracker = _tracker(kubejob_shape["project"])
-    tracker.refresh_from_git(
-        TASK_ID,
+    """The fix: given the ref and the repo, the pushed files are what it reads."""
+    seen = _refresh(
+        kubejob_shape["project"],
         kubejob_shape["worktree"],
-        target_branch="main",
         work_ref=f"origin/{TASK_BRANCH}",
         repo_path=kubejob_shape["project"],
     )
 
-    mods = _modified(tracker)
-    assert "app.py" in mods, (
-        f"the semantic detector was handed {sorted(mods) or 'nothing'} -- it must "
+    names = {name for name, _ in seen}
+    assert {"app.py", "feature.py"} <= names, (
+        f"the semantic detector was handed {sorted(names) or 'nothing'} -- it must "
         "see what the build pushed, or it reports zero conflicts for every task"
     )
 
@@ -184,30 +181,25 @@ def test_the_new_content_comes_from_the_ref_not_the_filesystem(
 ) -> None:
     """The trap inside the fix.
 
-    Fixing only the diff command leaves the per-file "content after" read
-    hitting ``worktree_path / file_path``. Those files do not exist in the
-    control plane's worktree, so each would be recorded with empty content --
-    i.e. as a DELETION. That is worse than seeing nothing: it invents conflicts
-    rather than missing them.
+    Fixing only the diff command leaves the per-file "content after" read hitting
+    ``worktree_path / file_path``. Those files do not exist in the control
+    plane's worktree, so each would be handed over with empty content -- recorded
+    as a DELETION. That is worse than seeing nothing: it invents conflicts rather
+    than missing them.
     """
-    tracker = _tracker(kubejob_shape["project"])
-    tracker.refresh_from_git(
-        TASK_ID,
-        kubejob_shape["worktree"],
-        target_branch="main",
-        work_ref=f"origin/{TASK_BRANCH}",
-        repo_path=kubejob_shape["project"],
+    seen = dict(
+        _refresh(
+            kubejob_shape["project"],
+            kubejob_shape["worktree"],
+            work_ref=f"origin/{TASK_BRANCH}",
+            repo_path=kubejob_shape["project"],
+        )
     )
 
-    snap = _modified(tracker).get("app.py")
-    assert snap is not None, "app.py was not recorded against the task"
-    seen = " ".join(
-        str(getattr(snap, attr, "") or "")
-        for attr in ("content_after", "raw_diff", "content_hash_after")
-    )
-    assert "v2" in seen or (snap.raw_diff and "+" in snap.raw_diff), (
+    after = seen.get("app.py", "")
+    assert "added_by_the_task" in after, (
         "the task's new content is missing -- it was read from the worktree "
-        f"filesystem, where these files do not exist. got {seen!r}"
+        f"filesystem, where these files do not exist. got {after!r}"
     )
 
 
