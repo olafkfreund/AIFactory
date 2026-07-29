@@ -37,8 +37,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.approval import approved, merge_pull_request
 from server.services.task_branch import resolve_task_branch
-from server.services.task_status import write_status
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -1269,7 +1269,7 @@ async def resolve_git_merge_conflicts(
             commit_result = f"Commit failed: {result.stderr}"
             logger.warning(f"Failed to auto-commit merge: {result.stderr}")
     except Exception as e:
-        commit_result = f"Commit error: {str(e)}"
+        commit_result = f"Commit error: {e!s}"
         logger.error(f"Error during auto-commit: {e}")
 
     return {
@@ -1396,7 +1396,7 @@ async def abort_worktree_merge(
             errors.append("Worktree: git merge --abort timed out")
         except Exception as e:
             logger.error(f"Error aborting merge in worktree: {e}")
-            errors.append(f"Worktree: {str(e)}")
+            errors.append(f"Worktree: {e!s}")
 
     # Try to abort merge in main project
     if project_path and project_path.exists():
@@ -1428,7 +1428,7 @@ async def abort_worktree_merge(
             errors.append("Main project: git merge --abort timed out")
         except Exception as e:
             logger.error(f"Error aborting merge in main project: {e}")
-            errors.append(f"Main project: {str(e)}")
+            errors.append(f"Main project: {e!s}")
 
     if aborted_locations:
         return {
@@ -1557,7 +1557,28 @@ async def merge_worktree(
             except OSError:
                 pass
 
-    # Perform the merge
+    # #1076: merge the PULL REQUEST, not a local branch, when one exists.
+    #
+    # The local `git merge` below updates the control plane's own checkout and
+    # never pushes -- there is not one push in this handler -- so GitHub never
+    # saw the result and the PR stayed open. Under the kubejob build backend it
+    # cannot even do that: the branch lives in the build's separate clone and on
+    # origin, so `git merge <branch>` in the project repo fails with "not
+    # something we can merge".
+    #
+    # The PR is the artefact the button's own label refers to, exists for both
+    # build backends, and merging it is visible to everyone rather than to one
+    # pod's filesystem.
+    pr_merged, pr_detail = merge_pull_request(project_path, worktree_branch)
+    if pr_merged:
+        return approved(project_path, spec_id, pr_detail)
+    if pr_detail:
+        # A PR exists and GitHub REFUSED the merge (conflicts, required checks,
+        # branch protection). Falling through to a local merge would report
+        # success for something GitHub declined.
+        return {"success": False, "error": pr_detail}
+
+    # No PR for this branch: the historical local-merge path.
     try:
         merge_cmd = ["git", "merge", worktree_branch]
         if options.noCommit:
@@ -1592,48 +1613,18 @@ async def merge_worktree(
             logger.warning(f"Failed to cleanup worktree after merge: {e}")
             # Don't fail the merge just because cleanup failed
 
-        # #1071: the merge IS the approval. Until this existed, Approve did the
-        # git work and left the task at `human_review`, so an approved+merged
-        # task sat on the board forever asking for a review that had already
-        # happened -- and no third call existed to advance it.
-        #
-        # Success path only: a conflict or a failed merge returns above, and
-        # must not be recorded as done.
-        # spec_id, NOT task_id: task_id still carries the "project_id:" prefix,
-        # so joining it would address a directory that does not exist -- and
-        # write_control would helpfully create it, landing the status nowhere.
-        # spec_id has also been through safe_spec_component above, which is what
-        # keeps a "../" out of the join.
-        status_error = write_status(
-            project_path / ".aifactory" / "specs" / spec_id,
-            status="done",
-            reason=f"approved: merged {worktree_branch} into {base_branch}",
-            updated_by="approve-merge",
+        # #1071: the merge IS the approval -- see _approved. Success path only:
+        # a conflict or a failed merge returns below and must never be recorded
+        # as done.
+        return approved(
+            project_path,
+            spec_id,
+            f"Successfully merged {worktree_branch} into {base_branch}",
+            output=result.stdout,
+            worktreeDeleted=worktree_deleted,
+            branchDeleted=branch_deleted,
         )
-        if status_error:
-            # Reported, not swallowed. The merge really happened and cannot be
-            # undone, so this is not a failure of the request -- but a caller
-            # that is told "merged" while the board still says human_review
-            # deserves to know why.
-            logger.warning(
-                "merged %s but could not record status: %s",
-                spec_id.replace("\n", " "),
-                status_error.replace("\n", " "),
-            )
 
-        return {
-            "success": True,
-            "data": {
-                "success": True,  # Frontend checks this for merge result display
-                "merged": True,
-                "message": f"Successfully merged {worktree_branch} into {base_branch}",
-                "output": result.stdout,
-                "worktreeDeleted": worktree_deleted,
-                "branchDeleted": branch_deleted,
-                "taskStatus": "done" if not status_error else "unchanged",
-                **({"statusError": status_error} if status_error else {}),
-            },
-        }
     except subprocess.CalledProcessError as e:
         # Check if it's a conflict
         if "CONFLICT" in e.stdout or "CONFLICT" in e.stderr:
@@ -1707,10 +1698,7 @@ async def get_worktree_status(
     else:
         for project in projects_data:
             path = Path(project.get("path", ""))
-            if project_id and project.get("id") == project_id:
-                project_path = path
-                break
-            elif (path / ".aifactory" / "specs" / spec_id).exists():
+            if (project_id and project.get("id") == project_id) or (path / ".aifactory" / "specs" / spec_id).exists():
                 project_path = path
                 break
 
@@ -1863,10 +1851,7 @@ async def get_worktree_diff(
     else:
         for project in projects_data:
             path = Path(project.get("path", ""))
-            if project_id and project.get("id") == project_id:
-                project_path = path
-                break
-            elif (path / ".aifactory" / "specs" / spec_id).exists():
+            if (project_id and project.get("id") == project_id) or (path / ".aifactory" / "specs" / spec_id).exists():
                 project_path = path
                 break
 
@@ -2144,4 +2129,4 @@ async def discard_worktree(
             },
         }
     except Exception as e:
-        return {"success": False, "error": f"Failed to discard worktree: {str(e)}"}
+        return {"success": False, "error": f"Failed to discard worktree: {e!s}"}
