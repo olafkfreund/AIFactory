@@ -20,13 +20,14 @@ from pathlib import Path
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.services.task_branch import recorded_branch
 from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
 
 
 from ..services import task_control
-from .projects import load_projects
+from .projects import load_projects, resolve_project_path
 from .task_models import (
     Subtask,
     SubtaskVerification,
@@ -702,12 +703,6 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # the deployed backend. This is also the AUTHORITATIVE value: the line
     # above reconstructs the name from a convention, which is a second copy of
     # a rule core.worktree.get_branch_name owns.
-    # NOTE (#1073): the recorded task branch is deliberately NOT read here.
-    # task_branch.recorded_branch takes (project_path, spec_id) so it can build
-    # the path from a trusted root -- load_spec_metadata only receives a
-    # ready-made spec_dir, and sanitising a path after the fact does not cut
-    # the taint. Surfacing branchName for kubejob-built tasks needs a signature
-    # change to this function; the approve path resolves the branch without it.
 
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"
@@ -830,6 +825,23 @@ def project_repo(project_data: dict) -> str | None:
 def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     """Convert a spec directory to a Task model."""
     metadata = load_spec_metadata(spec_dir)
+
+    # #1073: the branch the build pushed. Resolved HERE rather than inside
+    # load_spec_metadata because it needs a TRUSTED root: project_id is a
+    # registry key (resolve_project_path 404s on anything unknown), whereas the
+    # spec_dir that load_spec_metadata receives is a ready-made path that
+    # cannot be sanitised after the fact.
+    #
+    # Under the kubejob backend there is no .worktree_path marker, so the
+    # convention-derived branch_name above never fires and this is the only
+    # source. The recorded value wins: the other is reconstructed from a
+    # convention core.worktree.get_branch_name owns.
+    try:
+        recorded = recorded_branch(resolve_project_path(project_id), spec_dir.name)
+    except Exception:  # noqa: BLE001 - a bad/absent project must not 500 a task list
+        recorded = None
+    if recorded:
+        metadata["branch_name"] = recorded
 
     # Get timestamps from directory
     stat = spec_dir.stat()

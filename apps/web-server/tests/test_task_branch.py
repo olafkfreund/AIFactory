@@ -205,3 +205,54 @@ def test_a_record_naming_the_base_branch_is_ignored(repo: Path, tmp_path: Path) 
     )
     assert err is None, err
     assert branch == "aifactory/104-thing"
+
+
+def test_spec_to_task_surfaces_the_recorded_branch(tmp_path: Path) -> None:
+    """branchName was None for every kubejob-built task (#1073).
+
+    The only code setting it keyed off a `.worktree_path` marker the kubejob
+    backend never writes, so the API reported no branch for the tasks the
+    deployed backend produces.
+    """
+    ts = pytest.importorskip("server.routes.task_service")
+    tb = pytest.importorskip("server.services.task_branch")
+
+    project = tmp_path / "proj"
+    spec = project / ".aifactory" / "specs" / "200-thing"
+    spec.mkdir(parents=True)
+    (spec / "requirements.json").write_text('{"title": "Thing"}')
+    tb.record_branch(project, "200-thing", "aifactory/200-thing")
+
+    import server.routes.task_service as mod
+
+    original = mod.resolve_project_path
+    mod.resolve_project_path = lambda _pid: project
+    try:
+        task = mod.spec_to_task("p1", spec)
+    finally:
+        mod.resolve_project_path = original
+
+    assert task.branch_name == "aifactory/200-thing"
+
+
+def test_spec_to_task_survives_an_unresolvable_project(tmp_path: Path) -> None:
+    """A bad project must not 500 a whole task list."""
+    ts = pytest.importorskip("server.routes.task_service")
+    spec = tmp_path / "specs" / "201-thing"
+    spec.mkdir(parents=True)
+    (spec / "requirements.json").write_text('{"title": "Thing"}')
+
+    import server.routes.task_service as mod
+
+    original = mod.resolve_project_path
+
+    def _boom(_pid: str) -> Path:
+        raise RuntimeError("no such project")
+
+    mod.resolve_project_path = _boom
+    try:
+        task = mod.spec_to_task("nope", spec)
+    finally:
+        mod.resolve_project_path = original
+
+    assert task is not None
