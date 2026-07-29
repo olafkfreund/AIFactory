@@ -25,7 +25,6 @@ destructive form has to be asked for explicitly.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -39,13 +38,13 @@ from server.routes.task_service import get_spec_dirs, spec_to_task
 # load_projects/resolve_project_path live in projects.py; only the spec helpers
 # are in task_service.py. Importing either from the wrong module breaks app
 # startup, which fails every test in the suite rather than just this route's.
-from server.services import task_control
 from server.services.stale_tasks import (
     DEFAULT_STALE_AFTER,
     REAPED_STATUS,
     find_stale,
     summarise,
 )
+from server.services.task_status import write_status
 
 # No route-level access dependency. `require_task_access` is task-scoped -- it
 # reads a `task_id`, and on a path without one FastAPI promotes that to a
@@ -82,26 +81,19 @@ def _now() -> datetime:
 
 
 def _mark_cancelled(spec_dir: Path, reason: str) -> None:
-    """Persist the reap to BOTH stores the board reads.
+    """Persist the reap to both stores the board reads.
 
-    implementation_plan.json is what the task list renders from;
-    task_control.json is the agent-immutable control store and is authoritative
-    for the board column (#259). Writing only one leaves the two disagreeing,
-    which is how a task ends up displayed in two states at once.
+    Delegates to services.task_status so the reaper and the approve/merge path
+    (#1071) cannot drift on what "write the status" means.
     """
-    plan_file = spec_dir / "implementation_plan.json"
-    if plan_file.is_file():
-        plan = json.loads(plan_file.read_text())
-        plan["status"] = REAPED_STATUS
-        plan["reviewReason"] = reason
-        plan_file.write_text(json.dumps(plan, indent=2))
-
-    task_control.write_control(
+    error = write_status(
         spec_dir,
         status=REAPED_STATUS,
-        review_reason=reason,
+        reason=reason,
         updated_by="stale-task-reaper",
     )
+    if error:
+        raise OSError(error)
 
 
 def _all_tasks() -> list[dict[str, Any]]:

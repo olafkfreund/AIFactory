@@ -37,6 +37,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.task_status import write_status
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -1591,6 +1592,26 @@ async def merge_worktree(
             logger.warning(f"Failed to cleanup worktree after merge: {e}")
             # Don't fail the merge just because cleanup failed
 
+        # #1071: the merge IS the approval. Until this existed, Approve did the
+        # git work and left the task at `human_review`, so an approved+merged
+        # task sat on the board forever asking for a review that had already
+        # happened -- and no third call existed to advance it.
+        #
+        # Success path only: a conflict or a failed merge returns above, and
+        # must not be recorded as done.
+        status_error = write_status(
+            project_path / ".aifactory" / "specs" / task_id,
+            status="done",
+            reason=f"approved: merged {worktree_branch} into {base_branch}",
+            updated_by="approve-merge",
+        )
+        if status_error:
+            # Reported, not swallowed. The merge really happened and cannot be
+            # undone, so this is not a failure of the request -- but a caller
+            # that is told "merged" while the board still says human_review
+            # deserves to know why.
+            logger.warning("merged %s but could not record status: %s", task_id, status_error)
+
         return {
             "success": True,
             "data": {
@@ -1600,6 +1621,8 @@ async def merge_worktree(
                 "output": result.stdout,
                 "worktreeDeleted": worktree_deleted,
                 "branchDeleted": branch_deleted,
+                "taskStatus": "done" if not status_error else "unchanged",
+                **({"statusError": status_error} if status_error else {}),
             },
         }
     except subprocess.CalledProcessError as e:
