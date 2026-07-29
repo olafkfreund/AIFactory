@@ -14,10 +14,10 @@ defects (#1070-#1076) after four earlier bugs of the same class (#190, #218,
 #852, #1038). The doc stated the rule; nothing enforced it. This test is the
 enforcement (#1082).
 
-What is flagged: a call whose argv contains the literals ``rev-parse``,
-``--abbrev-ref`` and ``HEAD`` and whose remaining arguments (``cwd=`` or a
-runner-style positional) mention a worktree -- any identifier containing
-``worktree``.
+What is flagged: a call whose argv asks git for the current branch name
+(``rev-parse --abbrev-ref HEAD``, or its ``branch --show-current``
+equivalent) and whose remaining arguments (``cwd=`` or a runner-style
+positional) mention a worktree -- any identifier containing ``worktree``.
 
 What is NOT flagged (the sanctioned patterns on main):
 
@@ -54,7 +54,13 @@ ALLOWLIST: dict[str, str] = {
 }
 
 _RESOLVERS = {"resolve_task_branch", "resolve_work_ref"}
-_ARGV_MARKERS = {"rev-parse", "--abbrev-ref", "HEAD"}
+# Two argv shapes read "the current branch": the one the bug class used, and
+# its `git branch --show-current` equivalent (covered so the check cannot be
+# dodged by switching the command).
+_ARGV_MARKER_SETS = (
+    {"rev-parse", "--abbrev-ref", "HEAD"},
+    {"branch", "--show-current"},
+)
 
 
 def _string_constants(node: ast.AST) -> set[str]:
@@ -76,10 +82,10 @@ def _identifiers(node: ast.AST) -> set[str]:
 
 
 def _is_branch_head_read(call: ast.Call) -> bool:
-    """Does this call's argv contain rev-parse --abbrev-ref HEAD?"""
+    """Does this call's argv ask git for the current branch name?"""
     return any(
         isinstance(arg, (ast.List, ast.Tuple))
-        and _string_constants(arg) >= _ARGV_MARKERS
+        and any(_string_constants(arg) >= markers for markers in _ARGV_MARKER_SETS)
         for arg in call.args
     )
 
@@ -183,6 +189,14 @@ def test_check_catches_the_prefix_bug(tmp_path: Path) -> None:
         "    return head.out.strip()\n"
     )
     assert _violations_in(tmp) == [2]
+
+    # The `git branch --show-current` equivalent of the same read.
+    tmp.write_text(
+        prefix_site.replace(
+            '"rev-parse", "--abbrev-ref", "HEAD"', '"branch", "--show-current"'
+        )
+    )
+    assert _violations_in(tmp) == [3]
 
     # And the two sanctioned shapes are NOT flagged: the project-repo read...
     tmp.write_text(prefix_site.replace("cwd=worktree_path", "cwd=project_path"))
