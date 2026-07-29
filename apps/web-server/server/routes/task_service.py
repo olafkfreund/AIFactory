@@ -251,6 +251,12 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
 
     Returns (plan_dict, plan_file_path).
     """
+    # Barrier BEFORE spec_id reaches any path expression (#1056). This helper
+    # takes spec_id as a raw string and joins it onto a trusted root; both
+    # callers happen to validate first, but the join lives HERE, so the check
+    # belongs here too rather than depending on every caller remembering.
+    spec_id = safe_spec_component(spec_id)
+
     # Sync worktree to main spec first
     sync_worktree_to_main_spec(project_path, spec_id)
 
