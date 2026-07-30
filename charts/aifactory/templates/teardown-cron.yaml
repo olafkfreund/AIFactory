@@ -55,9 +55,10 @@ spec:
       backoffLimit: 0
       template:
         metadata:
+          # NOT selectorLabels — they are the `aifactory` Service's selector and
+          # this pod serves no traffic (AIFactory#1107).
           labels:
-            {{- include "aifactory.selectorLabels" . | nindent 12 }}
-            app.kubernetes.io/component: tenant-teardown-cron
+            {{- include "aifactory.jobPodLabels" (dict "ctx" . "component" "tenant-teardown-cron") | nindent 12 }}
         spec:
           serviceAccountName: {{ include "aifactory.serviceAccountName" . }}
           {{- with .Values.global.imagePullSecrets }}
