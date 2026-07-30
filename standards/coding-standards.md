@@ -144,7 +144,7 @@ downgraded).
 4.5 **Pin the toolchain:** committed lockfiles; Node via `engines`/`.nvmrc`/
 `packageManager`; `ruff`/`mypy` versions pinned.
 
-4.6 **Ratchet:** gates run on the PR diff; legacy hotspots are allowed until
+4.6 **ratchet:** gates run on the PR diff; legacy hotspots are allowed until
 touched.
 
 4.7 **A gate that cannot run must fail, never pass.** If a hook cannot resolve
