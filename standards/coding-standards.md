@@ -155,7 +155,13 @@ the skipped one is not. An opt-out is allowed only as an env var a developer
 sets deliberately, never as the fallback. Same rule for the executable bit -
 `core.hooksPath` without a `.husky/_` wrapper means git skips a non-executable
 hook without a word, so hook files are committed `100755` and a test asserts
-it.
+it. The rule is about gates, not only hooks: a CI job that cannot reach the
+input it compares against - a baseline checkout that 404s, a fetch that times
+out, a missing token - has not verified anything, so it exits non-zero. An
+unverifiable baseline is not a verified one. `continue-on-error: true` paired
+with an `if: steps.x.outcome == 'success'` diff, or a fetch loop that
+`continue`s past a failed download, reports the same green as a real pass
+while a job named "blocking" blocks nothing.
 
 4.8 **Hooks must scrub git's exported environment before running anything that
 shells git.** During a commit git exports `GIT_DIR`, `GIT_INDEX_FILE`,
@@ -190,6 +196,24 @@ extend = "path/to/factory-standards/ruff.toml"   # pinned hub baseline
 See [`standards/README.md`](./README.md) for the consumption mechanism (pinned
 vendored copy with a drift gate today; published package once `factory-core` is
 extracted - epic Factory#154).
+
+5.1 **This document is vendored too.** A rule nobody can read locally reaches
+nobody: an agent or a developer working in a service repo does not open the hub.
+So every service vendors `coding-standards.md` alongside the configs, and the
+drift gate compares it like any other vendored file. Copies are byte-identical
+to the hub - no provenance header, because the comparator for a Markdown file
+cannot strip leading `#` lines without also blinding itself to every heading.
+
+5.2 **One pin filename: `standards/.hub-sha`.** It holds the hub commit the
+whole directory was vendored from, and it is the only thing tooling needs to
+read to answer "which hub is this service on". A SHA hardcoded in a workflow is
+not a pin - nothing outside that workflow can find it. The same filename is used
+for any other directory vendored from the hub, next to that directory.
+
+5.3 **The vendored set is `ruff.toml`, `mypy.ini`, `.editorconfig`,
+`coding-standards.md`.** Adding a file to the hub does not add it to a service;
+vendor the file and register it in that service's gate in the same change, never
+one without the other.
 
 ## 6. Adoption
 
