@@ -101,7 +101,8 @@ def _env_scrub_outbound_default() -> bool:
     """
     from core.outbound_scrub import scrub_outbound_enabled  # noqa: PLC0415
 
-    return scrub_outbound_enabled()
+    enabled: bool = scrub_outbound_enabled()
+    return enabled
 
 
 # ---------------------------------------------------------------------------
@@ -203,11 +204,12 @@ class BaseLLMProvider(ABC):
         """
         from core.outbound_scrub import scrub_outbound_prompt  # noqa: PLC0415
 
-        return scrub_outbound_prompt(
+        scrubbed: str = scrub_outbound_prompt(
             prompt,
             owner=type(self).__name__,
             build_redactor=self._build_outbound_redactor,
         )
+        return scrubbed
 
     @abstractmethod
     async def query(self, prompt: str) -> None:

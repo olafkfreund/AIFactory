@@ -32,7 +32,6 @@ except ImportError:
     ClaudeSDKClient = None
 
 from core.auth import ensure_claude_code_oauth_token, get_auth_token
-from core.outbound_scrub import wrap_client_outbound_scrub
 from debug import (
     debug,
     debug_detailed,
@@ -195,7 +194,11 @@ Current question: {message}"""
             )
         )
         # #1128: this runner builds its own SDK client, so it does not
-        # inherit the scrub from create_client() or BaseLLMProvider.
+        # inherit the scrub from create_client() or BaseLLMProvider. The
+        # import is function-scoped because this module's sys.path shim
+        # already puts every module-level import past E402.
+        from core.outbound_scrub import wrap_client_outbound_scrub  # noqa: PLC0415
+
         client = wrap_client_outbound_scrub(client)
 
         # Use async context manager pattern
