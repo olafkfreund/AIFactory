@@ -13,6 +13,9 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.responses import JSONResponse
+from server.services.http_verdict import REFUSED_STATUS
+
 
 def _git(args: list[str], cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
@@ -56,8 +59,15 @@ def test_merge_worktree_does_not_nameerror_on_blocker(tmp_path: Path) -> None:
             worktree_merge.merge_worktree(f"{project_id}:{spec_id}", _access={})
         )
 
-    # The point: it returns a normal result dict (no NameError → no 500), and
-    # the blocker was cleared on the way through.
+    # The point: it returns a normal result (no NameError → no 500), and the
+    # blocker was cleared on the way through.
+    #
+    # Factory#460 changed the SHAPE of a refusal, not whether one is returned:
+    # a `{"success": False}` body now leaves as a 409 JSONResponse rather than a
+    # 200-wrapped dict. Unwrap it so this test keeps asserting what it is for.
+    if isinstance(result, JSONResponse):
+        assert result.status_code == REFUSED_STATUS
+        result = json.loads(bytes(result.body))
     assert isinstance(result, dict)
     assert "success" in result
     assert not (project_path / ".aifactory-status").exists()
