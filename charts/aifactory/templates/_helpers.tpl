@@ -43,11 +43,41 @@ app.kubernetes.io/part-of: aifactory
 {{- end }}
 
 {{/*
-Selector labels — also used by Service + NetworkPolicy.
+Selector labels — the SERVING identity. Used by the Service selector and the
+Deployment's own selector, and by nothing that a non-serving pod may carry.
+
+NEVER put these on a Job or CronJob pod template. A Service selector is a SUBSET
+match, so a Job pod carrying them joins the Service as an endpoint; it listens on
+nothing, so kube-proxy hands it a share of real traffic and it answers with
+connection refused. A fraction of requests fail for a bounded window while the
+Deployment stays Healthy, the Service exists and the pod is Running — it reads as
+flakiness. Use `aifactory.jobPodLabels` for pod templates that do not serve.
+(AIFactory#1107, TFactory#885, Factory endpoint-guard sweep.)
 */}}
 {{- define "aifactory.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "aifactory.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
+Pod labels for a NON-SERVING pod template (Job / CronJob). Call with a dict:
+
+    {{- include "aifactory.jobPodLabels" (dict "ctx" . "component" "audit-anchor-cron") | nindent 12 }}
+
+`app.kubernetes.io/name` is deliberately suffixed with the component, so the pod
+cannot satisfy the Service's selector. Adding a `component` label alone does NOT
+help: a selector matches on a subset, so extra labels never exclude a pod.
+
+`instance` is KEPT — it is what the chart's NetworkPolicy selects, so these pods
+stay inside the egress allowlist instead of falling out of every policy and
+becoming unrestricted. `part-of` is kept so ownership and log queries that group
+by it still see them.
+*/}}
+{{- define "aifactory.jobPodLabels" -}}
+app.kubernetes.io/name: {{ include "aifactory.name" .ctx }}-{{ .component }}
+app.kubernetes.io/instance: {{ .ctx.Release.Name }}
+app.kubernetes.io/component: {{ .component }}
+app.kubernetes.io/part-of: aifactory
 {{- end }}
 
 {{/*

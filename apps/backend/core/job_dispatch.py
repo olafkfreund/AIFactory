@@ -243,8 +243,34 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
                 # #812: the pod (not just the Job) must carry factory.io/kind so
                 # the chart's per-task NetworkPolicy (podSelector) covers it —
                 # the Helm selectorLabels policies never match Job pods.
+                #
+                # #1107: `app` is DELIBERATELY NOT spec.service. The `aifactory`
+                # Service selects exactly {"app": "aifactory"} and a Service
+                # selector is a subset match, so a task pod carrying that label
+                # joined the Service as an endpoint. The pod listens on nothing,
+                # so kube-proxy handed it a share of real API traffic and
+                # answered with connection refused — a fraction of requests, for
+                # as long as a build ran, which reads as flakiness rather than as
+                # a fault. It also made `kubectl exec deploy/aifactory` land in a
+                # build pod, which is how it was finally noticed (mid-demo).
+                # TFactory hit the identical defect from the other side and fixed
+                # it the same way (TFactory#885: app=tfactory-portal-ui).
+                #
+                # factory.io/service carries the association that `app` used to,
+                # so anything that legitimately wants "task pods of aifactory"
+                # can still ask for it — the fix removes an accidental selector
+                # match, not the information.
+                #
+                # The Job's OWN metadata.labels above keep app=spec.service on
+                # purpose: a Job object is never a Service endpoint and never a
+                # `kubectl exec` target, so `kubectl get jobs -l app=aifactory`
+                # stays useful. Only pods route traffic.
                 "metadata": {
-                    "labels": {"app": spec.service, "factory.io/kind": "task"}
+                    "labels": {
+                        "app": f"{spec.service}-task",
+                        "factory.io/service": spec.service,
+                        "factory.io/kind": "task",
+                    }
                 },
                 "spec": pod_spec,
             },
@@ -294,9 +320,27 @@ def _selftest() -> None:
         "alone cannot verify the image's `USER nonroot` name and every build "
         "Job dies CreateContainerConfigError",
     )
+    pod_labels = m["spec"]["template"]["metadata"]["labels"]
     _require(
-        m["spec"]["template"]["metadata"]["labels"]["factory.io/kind"] == "task",
+        pod_labels["factory.io/kind"] == "task",
         "pod label factory.io/kind=task (NetworkPolicy selector, #812)",
+    )
+    # #1107, asserted as the rule and not as one literal: NO pod label may equal
+    # the service name under a key a Service could select on, or the pod joins
+    # that Service and answers real traffic with connection refused. Written
+    # against spec.service rather than "aifactory" so it still holds for the
+    # tfactory/pfactory dispatches below.
+    _require(
+        pod_labels["app"] == "aifactory-task",
+        f"pod app label must NOT be the service name (#1107): {pod_labels['app']}",
+    )
+    _require(
+        spec.service not in {v for k, v in pod_labels.items() if k == "app"},
+        "no `app` label may equal the service name — the Service selects it",
+    )
+    _require(
+        pod_labels["factory.io/service"] == spec.service,
+        "factory.io/service keeps the association `app` used to carry (#1107)",
     )
     c = ps["containers"][0]
     _require(
