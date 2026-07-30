@@ -58,7 +58,7 @@ import logging
 import os
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -199,7 +199,7 @@ class _RateLimitFilter(logging.Filter):
         return True
 
 
-def rate_limit_exporter_log(exporter) -> None:
+def rate_limit_exporter_log(exporter: Any) -> None:
     """Attach the rate limiter to whichever SDK logger this exporter uses.
 
     Derived from the exporter's own module so it is exact for both the
@@ -215,7 +215,7 @@ def rate_limit_exporter_log(exporter) -> None:
 
 
 def _verify_export_auth(
-    exporter, endpoint: str, protocol: str, service_name: str
+    exporter: Any, endpoint: str, protocol: str, service_name: str
 ) -> None:
     """Prove the endpoint and credential with one empty export.
 
@@ -229,7 +229,11 @@ def _verify_export_auth(
     and reported as unverified rather than torn down.
     """
     try:
-        from opentelemetry.sdk.trace.export import SpanExportResult
+        # Deferred like every other OTel import in this module: it must stay
+        # importable with no SDK installed, hence the suppression.
+        from opentelemetry.sdk.trace.export import (  # noqa: PLC0415
+            SpanExportResult,
+        )
 
         ok = exporter.export([]) is SpanExportResult.SUCCESS
     except Exception:  # noqa: BLE001 — an unprobeable exporter still exports

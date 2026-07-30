@@ -49,6 +49,11 @@ from __future__ import annotations
 import logging
 import os
 
+# Top-level on purpose: tracing.py's own module-level imports are stdlib only,
+# so this costs nothing at import time and keeps this module's "no I/O, no SDK
+# import when OTel is off" contract intact.
+from server.observability.tracing import rate_limit_exporter_log
+
 logger = logging.getLogger(__name__)
 
 # Module-level lazy singletons. Built on first use *only* when OTel is enabled.
@@ -124,8 +129,6 @@ def _ensure_instruments() -> bool:
             # (Factory#465); the startup probe in tracing.py already states
             # whether that shared credential is accepted, so there is no
             # second probe here.
-            from server.observability.tracing import rate_limit_exporter_log
-
             rate_limit_exporter_log(metric_exporter)
             reader = PeriodicExportingMetricReader(metric_exporter)
             _meter_provider = MeterProvider(
