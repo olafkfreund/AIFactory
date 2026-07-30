@@ -12,6 +12,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from server.specpath import safe_spec_component
+
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
@@ -262,6 +264,16 @@ async def start_task(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:
@@ -810,6 +822,16 @@ async def handoff_to_tfactory(
             detail="Invalid task ID format. Expected 'project_id:spec_id'",
         )
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
     if project_id not in projects:
         raise HTTPException(
@@ -891,6 +913,16 @@ async def recover_task(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:

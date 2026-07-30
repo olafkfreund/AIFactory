@@ -20,6 +20,11 @@
 # excludes its shared/factory-github vendored mirror. (The diff-scoped strict
 # ratchet still lints them via standards/ruff.toml at the fleet line-length.)
 extend-exclude = [
+    # Byte-exact mirror of the Factory hub canonical scripts/ratchet_helpers.py,
+    # kept identical by the verification-core drift gate. The hub formats at 100;
+    # letting the local formatter touch it would silently break byte-exactness
+    # and the next re-vendor (Factory#403).
+    "scripts/ratchet_helpers.py",
     "apps/backend/core/factory_sandbox.py",
     "apps/backend/core/nix_provisioner.py",
     # RFC-0014 (#664): byte-exact mirror of the hub canonical
@@ -27,10 +32,21 @@ extend-exclude = [
     # AIFactory-native budget logic that consumes it lives in
     # budget_enforcement.py, which IS linted here.
     "apps/backend/core/cost_router_core.py",
+    # RFC-0016 (#190): same deal — byte-exact mirror of the hub canonical
+    # scripts/artifact_store.py at the fleet line-length (100). It was vendored
+    # but never excluded, so the local formatter could silently break a
+    # byte-exact re-vendor (Factory#400).
+    "apps/backend/core/artifact_store.py",
     # Vendored byte-exact mirror of the Factory hub canonical, kept identical by
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.
     "apps/backend/factory_common/",
+    # Same reason, same deal: the vendored factory-github provider layer is a
+    # byte-exact mirror of the hub canonical (formatted at the fleet
+    # line-length 100) and is kept identical by factory-github-drift.yml.
+    # Reformatting it under this config's default 88 would break that gate on
+    # the next re-vendor, which is exactly what the gate exists to prevent.
+    "apps/backend/runners/github/",
 ]
 
 [lint]

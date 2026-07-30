@@ -34,7 +34,11 @@ class _FakeStore:
     def __init__(self, blobs: dict[str, bytes] | None = None) -> None:
         self.blobs = blobs or {}
 
-    def put_bytes(self, key: str, data: bytes, _content_type: str | None = None) -> str:
+    def put_bytes(
+        self, key: str, data: bytes, _content_type: str | None = None, **_: object
+    ) -> str:
+        # **_ swallows the `role=` kwarg (and any future ones) the real
+        # ArtifactStore.put_bytes accepts, so callers like maybe_push_plan work.
         self.blobs[key] = data
         return f"s3://factory-artifacts/{key}"
 

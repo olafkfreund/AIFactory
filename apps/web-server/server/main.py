@@ -50,8 +50,10 @@ from .routes import (
     projects,
     search,
     skills,
+    stale,
     tasks,
     terminal,
+    well_known,
 )
 from .routes import cli_accounts as cli_accounts_routes
 from .routes import llm_endpoints as llm_endpoints_routes
@@ -203,6 +205,28 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("RFC-0016 #671 kubejob build backend disabled (subprocess default)")
 
+    # #1064: sweep tasks whose worker died and left them looking active. Runs
+    # here rather than as a CronJob because the spec tree lives on a RWO
+    # local-path PVC -- a separate pod scheduled off-node would find nothing,
+    # report zero orphans and exit green. Off by default; report-only until
+    # REAPER_DRY_RUN=false.
+    from .services import stale_reaper as _reaper  # noqa: PLC0415
+
+    app.state.stale_reaper_stop = None
+    app.state.stale_reaper_task = None
+    if _reaper.reaper_enabled():
+        reaper_stop = _asyncio.Event()
+        app.state.stale_reaper_stop = reaper_stop
+        app.state.stale_reaper_task = _asyncio.create_task(
+            _reaper.reaper_loop(stop=reaper_stop)
+        )
+        logger.info(
+            "Stale-task reaper enabled (%s)",
+            "report-only" if _reaper.dry_run() else "WRITING: orphans get cancelled",
+        )
+    else:
+        logger.info("Stale-task reaper disabled (AIFACTORY_STALE_REAPER unset)")
+
     yield
 
     # Shutdown
@@ -222,6 +246,12 @@ async def lifespan(app: FastAPI):
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
         except (_asyncio.TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
+    if app.state.stale_reaper_task is not None:
+        app.state.stale_reaper_stop.set()
+        try:
+            await _asyncio.wait_for(app.state.stale_reaper_task, timeout=5.0)
+        except (TimeoutError, _asyncio.CancelledError):
+            app.state.stale_reaper_task.cancel()
     if app.state.intake_poller_task is not None:
         app.state.intake_poller_stop.set()
         try:
@@ -506,6 +536,17 @@ def create_app() -> FastAPI:
     # consults this on load to know whether to render the Live Agent
     # Console tab.  The router already declares its own prefix.
     app.include_router(capabilities.router, tags=["Capabilities"])
+
+    # Agent-skills manifest (RFC-0019 §3.4) — always mounted, and readable
+    # WITHOUT auth: an agent enumerates what this service can do before it
+    # holds a token.  TokenAuthMiddleware only guards /api/*, so the
+    # /.well-known/ path is exempt by construction.  Registered ahead of the
+    # SPA catch-all "/" static mount so it resolves to JSON, not index.html.
+    app.include_router(well_known.router)
+    # Orphaned-task reaper: a task whose worker died stays in a
+    # machine-owned state forever and shows as active in the cockpit.
+    app.include_router(stale.router)
+
     app.include_router(search.router, tags=["Search"])
     app.include_router(mcp.router)
     # Copilot-facing MCP server at /mcp (JSON-RPC 2.0, POST-only).

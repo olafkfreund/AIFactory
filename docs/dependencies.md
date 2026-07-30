@@ -113,7 +113,7 @@ AIFactory pins **17** backend, **36** web-server, and **47** frontend runtime de
 | `react-dom` | `^19.2.3` |
 | `react-i18next` | `^16.5.0` |
 | `react-markdown` | `^10.1.0` |
-| `react-router-dom` | `^7.1.0` |
+| `react-router` | `^8.3.0` |
 | `rehype-highlight` | `^7.0.2` |
 | `rehype-raw` | `^7.0.0` |
 | `rehype-sanitize` | `^6.0.0` |

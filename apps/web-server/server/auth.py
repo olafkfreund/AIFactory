@@ -43,6 +43,7 @@ request first.
 
 import hmac
 import logging
+from functools import lru_cache
 
 from fastapi import HTTPException, Request, WebSocket, status
 from jose import JWTError, jwt
@@ -58,7 +59,6 @@ logger = logging.getLogger(__name__)
 # compatibility, but each emits a single loud warning per process so the
 # signal isn't drowned out by per-request log spam.
 _LEGACY_TOKEN_DEPRECATION_LOGGED = False
-_WS_QUERY_TOKEN_DEPRECATION_LOGGED = False
 
 
 def _warn_legacy_api_token_once() -> None:
@@ -75,7 +75,7 @@ def _warn_legacy_api_token_once() -> None:
         return
     _LEGACY_TOKEN_DEPRECATION_LOGGED = True
     logger.warning(
-        "⚠️  DEPRECATED: request authenticated via the legacy wildcard "
+        "DEPRECATED: request authenticated via the legacy wildcard "
         "API_TOKEN, which grants host-wide service access shared across "
         "Factory siblings. Migrate machine-to-machine traffic to scoped "
         "acw_ keys (Settings → API Keys). This token is retained only for "
@@ -83,19 +83,22 @@ def _warn_legacy_api_token_once() -> None:
     )
 
 
+@lru_cache(maxsize=1)
 def _warn_ws_query_token_once() -> None:
     """Emit a one-time deprecation warning for WS ``?token=`` query auth (#555).
 
     Passing a bearer token in the URL leaks it into proxy/access logs and
     browser history — especially dangerous for the PTY/shell terminal socket.
     Clients should send ``Authorization: Bearer <token>`` instead.
+
+    ``lru_cache`` rather than a module-level flag: it says "run once" without a
+    `global` (which the stricter PFactory/TFactory ruff configs flag as
+    PLW0603), and it gives tests a clean reset via ``cache_clear()``. Keeping
+    the mechanism identical across the three services is the point - this helper
+    exists in all of them and they should not drift on cosmetics.
     """
-    global _WS_QUERY_TOKEN_DEPRECATION_LOGGED
-    if _WS_QUERY_TOKEN_DEPRECATION_LOGGED:
-        return
-    _WS_QUERY_TOKEN_DEPRECATION_LOGGED = True
     logger.warning(
-        "⚠️  DEPRECATED: WebSocket token supplied via the ?token= query "
+        "DEPRECATED: WebSocket token supplied via the ?token= query "
         "param, which leaks into proxy/access logs and browser history. "
         "Send it via the 'Authorization: Bearer <token>' header instead "
         "(#555)."
@@ -136,6 +139,35 @@ def _is_legacy_api_token(token: str) -> bool:
     return hmac.compare_digest(token, configured)
 
 
+async def _audit_auth_failure(request: Request, reason: str) -> None:
+    """Record a chained audit event for a rejected credential (Factory#313).
+
+    Emitted only when a token was PRESENTED and rejected (invalid / expired /
+    unknown ``acw_`` key) — not for the unauthenticated "no token" probes, which
+    are high-volume, low-signal noise. The middleware has no request-scoped DB
+    session, so this uses the background writer (now hash-chained). No token
+    material is stored, only a coarse reason + path.
+
+    Fail-safe: any failure here is swallowed so audit logging can never turn a
+    401 into a 500.
+
+    ponytail: unbounded 1 write per rejected token; a credential-stuffing flood
+    amplifies to one chained DB write each. Add IP-based rate-limiting/coalescing
+    here if that write volume ever bites.
+    """
+    try:
+        from .services.audit_service import ACTION_AUTH_FAILURE, log_audit_event_bg
+
+        await log_audit_event_bg(
+            action=ACTION_AUTH_FAILURE,
+            resource_type="auth",
+            details={"reason": reason, "path": request.url.path},
+            ip=request.client.host if request.client else None,
+        )
+    except Exception:  # pragma: no cover - defensive; bg already swallows
+        logger.warning("Failed to record auth-failure audit event", exc_info=True)
+
+
 def _try_decode_jwt(token: str) -> dict | None:
     """Attempt to decode a JWT access token.
 
@@ -155,6 +187,33 @@ def _try_decode_jwt(token: str) -> dict | None:
         return payload
     except JWTError:
         return None
+
+
+def _acw_principal(key, *, scoped_service_tokens_enabled: bool) -> dict:
+    """Build the ``request.state.user`` principal for a validated ``acw_`` key.
+
+    Scoped service tokens (Factory#312, step 1 — additive, off by default). When
+    ``scoped_service_tokens_enabled`` is true, the key's EXPLICIT scopes are
+    surfaced on the principal (``scopes`` + ``scoped_service`` markers) so a later
+    phase can gate M2M access per-scope instead of the wildcard's blanket
+    ``is_service`` bypass. The flag only ADDS keys to the dict; ``is_service`` is
+    unchanged, so with the flag off (default) the result is byte-identical to the
+    pre-change behaviour and nothing that reads the principal today is affected.
+
+    See docs/compliance/scoped-service-tokens.md.
+    """
+    principal = {
+        "id": key.user_id,
+        "email": None,
+        "role": "user",
+        "org_id": key.org_id,
+        "api_key_id": key.key_id,
+        "is_service": key.user_id is None,
+    }
+    if scoped_service_tokens_enabled:
+        principal["scopes"] = sorted(key.scopes)
+        principal["scoped_service"] = key.user_id is None
+    return principal
 
 
 class TokenAuthMiddleware(BaseHTTPMiddleware):
@@ -305,20 +364,20 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
                 from .mcp_remote.auth import authenticate as _authenticate_acw
 
                 key = await _authenticate_acw(f"Bearer {token}")
-                request.state.user = {
-                    "id": key.user_id,
-                    "email": None,
-                    "role": "user",
-                    "org_id": key.org_id,
-                    "api_key_id": key.key_id,
-                    "is_service": key.user_id is None,
-                }
+                request.state.user = _acw_principal(
+                    key,
+                    scoped_service_tokens_enabled=getattr(
+                        settings, "SCOPED_SERVICE_TOKENS_ENABLED", False
+                    ),
+                )
                 return await call_next(request)
             except Exception:
                 # Unknown/disabled/expired acw_ key → fall through to 401.
                 pass
 
-        # Neither JWT, legacy token, nor a valid acw_ key matched
+        # Neither JWT, legacy token, nor a valid acw_ key matched. A credential
+        # was presented and rejected — record it (Factory#313). Fail-safe.
+        await _audit_auth_failure(request, reason="invalid_token")
         return JSONResponse(
             {"error": "Invalid token"},
             status_code=status.HTTP_401_UNAUTHORIZED,

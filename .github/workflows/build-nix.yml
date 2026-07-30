@@ -39,6 +39,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write        # cosign keyless via GitHub OIDC (Factory#430)
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/aifactory
@@ -83,6 +84,22 @@ jobs:
             ${{ env.IMAGE }}:latest-nix
           cache-from: type=gha,scope=aifactory-nix
           cache-to: type=gha,mode=max,scope=aifactory-nix
+
+      # Factory#430 — the Kyverno policy matches `ghcr.io/olafkfreund/aifactory:*`,
+      # which includes the `-nix` tags published here. Build Jobs run this image,
+      # so it is code execution and must be signed like any other.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign -nix image (cosign keyless via Sigstore + GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Verify signature (self-test)
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository_owner }}/AIFactory/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
 
       # #856 half 2 — auto-pin AIFACTORY_BUILD_IMAGE so the freshly built image is
       # actually what build Jobs run. Without this the pin was manual and drifted

@@ -80,6 +80,22 @@ def test_workspace_pack_unpack_round_trip(tmp_path: Path) -> None:
     assert (dest / "pkg" / "mod.py").read_text() == "X = 1\n"
 
 
+@pytest.mark.parametrize("role", ["evidence", "log"])
+def test_uploads_are_tagged_with_role(role: str) -> None:
+    # MinIO lifecycle rules filter by the `role=<role>` object tag; an untagged
+    # upload matches nothing and evidence retention stays inert (Factory#329).
+    store = a_s._fake_store()
+    ref = a_s.ArtifactRef(
+        service="aifactory", job_id="j", role=role, correlation_key=1
+    )
+    store.put_artifact(ref, b"payload")
+    # The canonical fake records every put's kwargs (`calls`) rather than a
+    # bucket/key -> tag dict; it carries strictly more, and it is what the hub
+    # self-test asserts on. Factory#400 re-vendored this module, so the test
+    # follows the canonical rather than the canonical growing a second API.
+    assert store._s3.calls[-1]["Tagging"] == f"role={role}"
+
+
 @pytest.mark.parametrize("evil_name", ["../escape.txt", "/etc/passwd"])
 def test_unpack_rejects_path_traversal(tmp_path: Path, evil_name: str) -> None:
     # An archive whose member escapes the destination must be refused before

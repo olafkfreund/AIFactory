@@ -25,6 +25,9 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.task_branch import resolve_task_branch
+from server.specpath import safe_spec_component
+
 from .project_authz import require_task_access
 from .projects import get_projects_file
 
@@ -58,6 +61,15 @@ async def create_pr_from_task(
     # task_id could be "project_id:spec_id" or just "spec_id"
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
+        # Barrier BEFORE spec_id reaches any path expression (#1056). Path
+        # joins collapse traversal silently, so validating after is too late.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            return {
+                "success": False,
+                "error": "Task ID must include project ID (format: project_id:spec_id)",
+            }
         # Look up project path
         projects_file = get_projects_file()
         if not projects_file.exists():
@@ -97,20 +109,8 @@ async def create_pr_from_task(
     if not worktree_path.exists():
         return {"success": False, "error": "No worktree found for this task"}
 
-    # Get the branch name from the worktree
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        worktree_branch = result.stdout.strip()
-    except subprocess.CalledProcessError as e:
-        return {"success": False, "error": f"Could not determine worktree branch: {e}"}
-
-    # Get the base branch (from options or detect from main project)
+    # Base branch first: resolving the task branch needs to know which branch
+    # does NOT count as one.
     base_branch = options.baseBranch
     if not base_branch:
         try:
@@ -124,6 +124,19 @@ async def create_pr_from_task(
             base_branch = result.stdout.strip()
         except subprocess.CalledProcessError:
             base_branch = "main"
+
+    # #1073: do NOT read the worktree's HEAD and call it the task branch. Under
+    # the kubejob build backend the build runs in a separate pod and pushes; the
+    # control plane's worktree is never switched off the base branch, so that
+    # read yielded "main" and this endpoint asked GitHub to open main -> main.
+    worktree_branch, branch_error = resolve_task_branch(
+        worktree_path=worktree_path,
+        project_path=project_path,
+        spec_id=spec_id,
+        base_branch=base_branch,
+    )
+    if not worktree_branch:
+        return {"success": False, "error": f"Could not determine task branch: {branch_error}"}
 
     # Fetch latest base branch from remote
     try:

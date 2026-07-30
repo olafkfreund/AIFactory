@@ -205,25 +205,39 @@ class TimelineGitHelper:
         return ""
 
     def get_changed_files_in_worktree(
-        self, worktree_path: Path, target_branch: str | None = None
+        self,
+        worktree_path: Path,
+        target_branch: str | None = None,
+        work_ref: str | None = None,
     ) -> list[str]:
         """
-        Get all changed files in a worktree vs target branch.
+        Get all changed files for a task vs target branch.
 
         Args:
             worktree_path: Path to the worktree directory
             target_branch: Branch to compare against (default: auto-detect)
+            work_ref: Ref holding the pushed work, resolvable in the PROJECT
+                repo. Given, the range is read there instead of in the worktree
+                (#1089). Omitted, the behaviour is exactly as before.
 
         Returns:
-            List of file paths changed in the worktree
+            List of file paths changed by the task
         """
         if not target_branch:
+            # Detected from the worktree either way: what this finds is the BASE
+            # branch, which the worktree does sit on, and that is the endpoint
+            # both readings need.
             target_branch = self._detect_target_branch(worktree_path)
 
+        # #1089: with the kubejob backend the worktree is a clone left on the base
+        # branch, so `{base}...HEAD` there is base against base and the caller is
+        # handed an empty change set.
+        head = work_ref or "HEAD"
+        git_cwd = self.project_path if work_ref else worktree_path
         try:
             result = subprocess.run(
-                ["git", "diff", "--name-only", f"{target_branch}...HEAD"],
-                cwd=worktree_path,
+                ["git", "diff", "--name-only", f"{target_branch}...{head}"],
+                cwd=git_cwd,
                 capture_output=True,
                 text=True,
             )

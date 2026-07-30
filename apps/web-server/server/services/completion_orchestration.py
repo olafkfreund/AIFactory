@@ -11,7 +11,9 @@ agent_service):
   - ``is_completed`` (COMPLETED only): write the ``.terminal_side_effects_done``
     fire-once marker and run the TFactory handoff + PR endgame.
 
-Behaviour is unchanged from the inlined version; see
+A COMPLETED build must show its work first (#1070): see ``_build_wrote_nothing``.
+
+Behaviour is otherwise unchanged from the inlined version; see
 tests/test_terminal_completion_characterization.py.
 """
 
@@ -22,6 +24,48 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .task_control import write_control
+
+
+def _build_wrote_nothing(
+    spec_dir: Path, spec_id: str, backend_path: Path | None, logger: Any
+) -> bool:
+    """True only when the build DEMONSTRABLY produced no commit (#1070).
+
+    The evidence gate. A build is allowed to report COMPLETED — which the board
+    renders as "built, awaiting a person" and which fires the TFactory handoff
+    and the PR endgame — only once it can show a commit. Its own subtask
+    statuses do not count: #1070 spent 898k tokens, wrote a plan document and no
+    source file, exited 0, advanced to human_review and handed TFactory a branch
+    identical to main, because nothing on the path ever asked the cheapest
+    question there is. (Same principle as the #851 honesty gate, one stage
+    earlier: no green checkbox without the thing it claims.)
+
+    Fails OPEN. Only a MEASURED zero blocks; ``None`` means the question could
+    not be answered here, and failing a build we merely could not measure would
+    be worse than the bug it prevents. The memory tree is fetched first because
+    on the packed path the build's commit ledger is still in object storage at
+    this point (#1038) — emit_terminal_completion fetches it too, a few lines
+    below, but the answer is needed BEFORE the status is decided.
+    """
+    try:
+        if backend_path and str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+        # Deferred: both live under backend_path, which is only on sys.path
+        # from the line above — so mypy cannot resolve them from here either.
+        # (``unused-ignore`` too: the cq-ratchet runs mypy with
+        # --ignore-missing-imports, where the ignore above is redundant.)
+        from core.workspace_fetch import (  # type: ignore[import-not-found,unused-ignore] # noqa: PLC0415
+            maybe_fetch_memory,
+        )
+        from pfactory.tfactory_client import build_commit_count  # noqa: PLC0415
+
+        maybe_fetch_memory(spec_dir, spec_id)
+        return bool(build_commit_count(spec_dir, spec_id) == 0)
+    except Exception:  # noqa: BLE001 — unmeasurable is not empty
+        logger.debug("build-evidence check unavailable", exc_info=True)
+        return False
 
 
 async def run_terminal_completion(
@@ -37,6 +81,34 @@ async def run_terminal_completion(
     logger: Any,
 ) -> None:
     """Fire-once terminal-completion emission + side-effects (see module docstring)."""
+    # Evidence gate (#1070): a build with nothing to show is a FAILED build, not
+    # a review request. Downgrading here covers both build backends at once —
+    # the in-pod subprocess path and the kubejob path both finish through this
+    # function — and, because it lands before the emit below, the RFC-0001 event,
+    # the board status and the TFactory handoff all tell the same true story.
+    if is_completed and _build_wrote_nothing(spec_dir, spec_id, backend_path, logger):
+        logger.error(
+            "[AgentService] %s reported completed with no commit on its branch; "
+            "recording it as a failed build instead of a review request, and "
+            "skipping the TFactory handoff + PR endgame (#1070)",
+            spec_id,
+        )
+        is_completed = False
+        terminal_status = "failed"
+        try:
+            # The established needs-attention pair (#287): a failed build is
+            # human_review/errors, never human_review/completed. Without this the
+            # board keeps reading the agent's own "completed" out of the plan /
+            # task_logs the Job pushed back.
+            write_control(
+                spec_dir,
+                status="human_review",
+                review_reason="errors",
+                updated_by="evidence_gate",
+            )
+        except Exception:  # noqa: BLE001 — never break the completion path
+            logger.debug("evidence-gate control write failed", exc_info=True)
+
     if is_terminal:
         _completion_marker = spec_dir / ".terminal_completion_emitted"
         if not _completion_marker.exists():
@@ -351,6 +423,10 @@ async def run_terminal_completion(
                             branch=ctx["branch"],
                             base=ctx["base"],
                             repo=ctx["repo"],
+                            # RFC-0020 3.5: the tenant's declared host. The
+                            # endgame refuses off GitHub rather than running
+                            # `gh` against a repo that is not there.
+                            provider=ctx.get("provider", "github"),
                             auto_merge=is_auto_merge_enabled(project_path),
                             reviewer=_reviewer,
                             review_fn=_review_fn,

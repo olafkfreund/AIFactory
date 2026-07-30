@@ -14,9 +14,12 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from server.specpath import safe_spec_component as _safe_spec_component
+
 from ..websockets.events import emit_subtask_update
 from . import task_control
 from .task_phase import TaskPhase, scale_progress
+from .task_status import read_plan
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,6 +31,9 @@ _log = logging.getLogger(__name__)
 # window so the cockpit shows accruing cost WHILE a build runs without flooding
 # the completion webhook. Env-overridable for ops/tests.
 _USAGE_EMIT_WINDOW_S = 15.0
+
+
+
 
 
 class WorktreeSyncMixin:
@@ -59,6 +65,9 @@ class WorktreeSyncMixin:
         logger = logging.getLogger(__name__)
 
         # Paths
+        # Barrier BEFORE the value reaches any path expression.
+        spec_id = _safe_spec_component(spec_id)
+
         worktree_spec = (
             project_path
             / ".aifactory"
@@ -91,7 +100,22 @@ class WorktreeSyncMixin:
         # the agent's worktree (control-plane #259, QA review-cycle #260) and a
         # worktree copy must never reset or replay them.
 
-        # Directories to sync (will copy entire directory tree)
+        # Directories to sync (merged into the destination, see below).
+        #
+        # TWO mechanisms write `memory/` back, deliberately, and they do
+        # different jobs (#1033):
+        #
+        #   * THIS one is a VISIBILITY MIRROR. It ticks every few seconds while
+        #     an in-pod build runs, so `routes/context.py` can show session
+        #     insights before the build finishes. It only covers builds this
+        #     process monitors.
+        #   * `agents/utils.sync_memory_to_source` is the DURABLE WRITE. It runs
+        #     inside the build itself, so it also covers Job-dispatched builds
+        #     that no monitor is watching, and it is what makes memory survive
+        #     worktree teardown (#1030).
+        #
+        # Both MERGE, so running both is harmless and order does not matter. If
+        # a third is ever added, make it merge too — see the note on the loop.
         dirs_to_sync = [
             "memory",  # Session insights and memory data
         ]
@@ -101,6 +125,18 @@ class WorktreeSyncMixin:
             src = worktree_spec / filename
             dst = main_spec / filename
             if src.exists():
+                # #1069: fail at WRITE time, where the cause is one line away.
+                # A build that emits unparseable JSON must not have that file
+                # copied into the spec dir the control plane reads; the last
+                # good copy is strictly better than garbage, and the read side
+                # only ever saw the fault hours later as a status discrepancy.
+                if filename == "implementation_plan.json":
+                    _, plan_error = read_plan(src)
+                    if plan_error is not None:
+                        _log.error(
+                            "[AgentService] refusing to sync %s: %s", src, plan_error
+                        )
+                        continue
                 try:
                     # For implementation_plan.json we still merge SUBTASK status
                     # forward-only (a legitimate agent-artifact concern), but we
@@ -199,21 +235,57 @@ class WorktreeSyncMixin:
                 f"[AgentService] Failed to scan worktree spec dir for extra files: {e}"
             )
 
-        # Sync directories
+        # Sync directories — MERGE, never replace (#1033).
+        #
+        # This used to `rmtree(dst_dir)` and copy fresh. For `memory/` that is a
+        # data-loss bug: the destination is a MEMORY STORE that accumulates
+        # across tasks, and wiping it discards anything written since this
+        # worktree was seeded. Under RFC-0016 concurrency two tasks can build the
+        # same spec, and the slower one's replace would silently delete the
+        # faster one's session insights — the exact failure #1030 was about.
+        #
+        # Replace was safe only under the assumption that the worktree copy is
+        # always a superset of the destination, which holds at seed time and
+        # stops holding the moment anything else writes.
+        #
+        # Merging costs nothing here: every file this syncs is either identical
+        # or newer in the worktree, so copy2's overwrite still wins for the
+        # files this build owns.
         for dirname in dirs_to_sync:
             src_dir = worktree_spec / dirname
             dst_dir = main_spec / dirname
             if src_dir.exists() and src_dir.is_dir():
                 try:
-                    # Remove existing and copy fresh
-                    if dst_dir.exists():
-                        shutil.rmtree(dst_dir)
-                    shutil.copytree(src_dir, dst_dir)
+                    shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
                     synced_count += 1
                 except Exception as e:
                     logger.warning(
                         f"[AgentService] Failed to sync directory {dirname}: {e}"
                     )
+
+        # RFC-0021 Phase 0, corrected: pool this spec's memory at PROJECT level
+        # HERE, in the control plane.
+        #
+        # The in-build sync (agents/utils.sync_memory_to_project) cannot do it
+        # for a Job-dispatched build: inside the Job every path — including
+        # source_spec_dir — is under /work, the pod's emptyDir, so anything it
+        # writes dies with the pod. A live build proved it: the project pool
+        # stayed at 0 files across two runs while this mirror carried 6 and 4
+        # files to the PVC. THIS function is the only component that knows the
+        # real durable project path.
+        #
+        # Merged, never replaced: the pool is the union of every spec's
+        # insights, and one spec may not clear it.
+        try:
+            project_memory = project_path / ".aifactory" / "memory"
+            spec_memory = main_spec / "memory"
+            if spec_memory.is_dir():
+                project_memory.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(spec_memory, project_memory, dirs_exist_ok=True)
+        except (OSError, shutil.Error) as e:
+            # Never fatal: a build that produced working code must not fail
+            # because its memory could not be pooled.
+            logger.warning(f"[AgentService] Failed to pool memory at project level: {e}")
 
         if synced_count > 0:
             logger.debug(

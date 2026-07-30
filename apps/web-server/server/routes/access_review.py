@@ -78,6 +78,27 @@ async def export_access_review(
     )
 
 
+def _member_line(member: OrgMember, user: User) -> dict[str, object]:
+    """The access-review columns for one OrgMember+User pair.
+
+    Extracted so the scheduled evidence push
+    (``server.jobs.access_review_evidence_cron``) emits byte-identical
+    lines to the ``/api/admin/access-review`` endpoint — one exporter,
+    two callers.
+    """
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "role": member.role,
+        "active": user.is_active,
+        "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+        "last_login_at": (
+            user.last_login_at.isoformat() if user.last_login_at else None
+        ),
+    }
+
+
 async def _stream_review(
     db: AsyncSession,
     *,
@@ -92,15 +113,4 @@ async def _stream_review(
     )
     result = await db.execute(stmt)
     for member, user in result.all():
-        line = {
-            "user_id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "role": member.role,
-            "active": user.is_active,
-            "joined_at": member.joined_at.isoformat() if member.joined_at else None,
-            "last_login_at": (
-                user.last_login_at.isoformat() if user.last_login_at else None
-            ),
-        }
-        yield (json.dumps(line) + "\n").encode("utf-8")
+        yield (json.dumps(_member_line(member, user)) + "\n").encode("utf-8")

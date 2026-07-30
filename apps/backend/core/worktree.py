@@ -1040,14 +1040,42 @@ class WorktreeManager:
 
         return branches
 
+    def discover_pushed_ref(self, spec_name: str) -> str | None:
+        """The remote-tracking ref holding *spec_name*'s work, or None (#1089).
+
+        Under ``AIFACTORY_BUILD_BACKEND=kubejob`` the build runs in a separate
+        pod and the work escapes only by ``git push``; this manager's worktree
+        is deliberately left on the BASE branch (see
+        ``build_backend._populate_self_contained_worktree``). Anything asking
+        "what did this task change" must therefore read the pushed ref in the
+        project repo, not the worktree's HEAD.
+
+        This class owns the branch convention (``get_branch_name``), so the
+        lookup is exact rather than a pattern match. The canonical control-plane
+        resolver is ``server/services/task_branch.resolve_work_ref``; if the two
+        ever disagree, that one is right.
+        """
+        ref = f"origin/{self.get_branch_name(spec_name)}"
+        result = self._run_git(["rev-parse", "--verify", "--quiet", ref])
+        return ref if result.returncode == 0 else None
+
     def get_changed_files(self, spec_name: str) -> list[tuple[str, str]]:
-        """Get list of changed files in a spec's worktree."""
+        """Get changed files for a spec, from the pushed ref when there is one."""
         worktree_path = self.get_worktree_path(spec_name)
         if not worktree_path.exists():
             return []
 
+        # #1089: `{base}...HEAD` in the worktree is base-against-base whenever the
+        # build pushed from somewhere else, and this feeds `--review`, `--merge`
+        # and `--discard`, all of which then print "No changes were made." The
+        # pushed ref read in the project repo is the same range against the real
+        # work. With nothing pushed (subprocess builds, in-Job) the worktree HEAD
+        # IS the task branch and the read below is unchanged.
+        work_ref = self.discover_pushed_ref(spec_name)
+        head = work_ref or "HEAD"
+        git_cwd = self.project_dir if work_ref else worktree_path
         result = self._run_git(
-            ["diff", "--name-status", f"{self.base_branch}...HEAD"], cwd=worktree_path
+            ["diff", "--name-status", f"{self.base_branch}...{head}"], cwd=git_cwd
         )
 
         files = []

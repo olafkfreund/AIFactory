@@ -1,0 +1,23 @@
+# CodeQL advanced-setup config. Runs the default query suite for every rule,
+# but swaps the stock py/path-injection for our barrier-aware variant
+# (py/path-injection-sanitized), which recognises this repo's sanitizers so
+# verified-safe code clears organically instead of being suppressed by hand.
+#
+# Stock py/path-injection reported 404 open alerts here - the largest single
+# category, more than empty-except (245) or log-injection (224). At that volume
+# nobody triages the list, which means a real path-injection finding is
+# invisible. The point of this config is not a smaller number; it is a list
+# short enough that the remaining entries get read.
+name: "AIFactory CodeQL config"
+queries:
+  # security-and-quality is listed EXPLICITLY. The workflow previously passed
+  # it via `queries: security-and-quality`, and a config-file REPLACES that
+  # input -- so omitting it here would quietly drop the repo from the broad
+  # suite to CodeQL's narrower default while this change advertised itself as
+  # an improvement. That would have cost the quality rules that make up most
+  # of the current alert volume (py/unused-import, py/empty-except, ...).
+  - uses: security-and-quality
+  - uses: ./.github/codeql/custom-queries
+query-filters:
+  - exclude:
+      id: py/path-injection

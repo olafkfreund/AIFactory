@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Body
-from pydantic import BaseModel, ConfigDict, Field, field_validator, AliasChoices
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    AliasChoices,
+)
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -198,11 +205,13 @@ class AppSettings(BaseModel):
 
     # Global API keys
     globalClaudeOAuthToken: str | None = Field(
-        None, description="Global Claude OAuth token"
+        None, description="Global Claude OAuth token", repr=False
     )
-    globalOpenAIApiKey: str | None = Field(None, description="Global OpenAI API key")
+    globalOpenAIApiKey: str | None = Field(
+        None, description="Global OpenAI API key", repr=False
+    )
     globalAnthropicApiKey: str | None = Field(
-        None, description="Global Anthropic API key"
+        None, description="Global Anthropic API key", repr=False
     )
 
     # Onboarding
@@ -302,13 +311,17 @@ class AppSettings(BaseModel):
         None, description="Microsoft OAuth Client ID for email notifications"
     )
     emailMicrosoftClientSecret: str | None = Field(
-        None, description="Microsoft OAuth Client Secret for email notifications"
+        None,
+        description="Microsoft OAuth Client Secret for email notifications",
+        repr=False,
     )
     emailGoogleClientId: str | None = Field(
         None, description="Google OAuth Client ID for email notifications"
     )
     emailGoogleClientSecret: str | None = Field(
-        None, description="Google OAuth Client Secret for email notifications"
+        None,
+        description="Google OAuth Client Secret for email notifications",
+        repr=False,
     )
 
     # LLM Provider Settings (for AI features: changelog, insights)
@@ -428,9 +441,9 @@ class SettingsUpdate(BaseModel):
     memoryEmbeddingProvider: str | None = None
     autoBuildPath: str | None = None
     autoUpdateAutoBuild: bool | None = None
-    globalClaudeOAuthToken: str | None = None
-    globalOpenAIApiKey: str | None = None
-    globalAnthropicApiKey: str | None = None
+    globalClaudeOAuthToken: str | None = Field(default=None, repr=False)
+    globalOpenAIApiKey: str | None = Field(default=None, repr=False)
+    globalAnthropicApiKey: str | None = Field(default=None, repr=False)
     onboardingCompleted: bool | None = None
     betaUpdates: bool | None = None
     bmadSessionSegmentation: bool | None = None
@@ -438,7 +451,7 @@ class SettingsUpdate(BaseModel):
     parallelExecution: bool | None = Field(None, alias="parallel_execution")
     parallelWorkers: int | None = Field(None, alias="parallel_workers")
     emailMicrosoftClientId: str | None = None
-    emailMicrosoftClientSecret: str | None = None
+    emailMicrosoftClientSecret: str | None = Field(default=None, repr=False)
     llmProvider: str | None = None
     llmOllamaBaseUrl: str | None = None
     llmOllamaModel: str | None = None
@@ -1038,7 +1051,9 @@ class OpenAICompatTestRequest(BaseModel):
     """Request model for testing an OpenAI-compatible server connection."""
 
     baseUrl: str = Field(..., description="Base URL of the OpenAI-compatible server")
-    apiKey: str | None = Field(None, description="Optional API key for authentication")
+    apiKey: SecretStr | None = Field(
+        None, description="Optional API key for authentication"
+    )
 
 
 @router.post("/openai-compat/test")
@@ -1054,7 +1069,7 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
 
         headers: dict[str, str] = {}
         if request.apiKey:
-            headers["Authorization"] = f"Bearer {request.apiKey}"
+            headers["Authorization"] = f"Bearer {request.apiKey.get_secret_value()}"
 
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{request.baseUrl}/v1/models", headers=headers)
@@ -1306,7 +1321,7 @@ class ClaudeProfile(BaseModel):
     name: str
     email: str | None = None
     # Frontend expects oauthToken, backend stored token - alias for backward compat
-    oauthToken: str | None = Field(None, alias="token")
+    oauthToken: str | None = Field(None, alias="token", repr=False)
     # Frontend expects isDefault, backend stored isActive - alias for backward compat
     isDefault: bool = Field(False, alias="isActive")
 
@@ -1660,7 +1675,7 @@ async def complete_claude_profile_oauth(profile_id: str, body: dict):
 
 
 class SetTokenRequest(BaseModel):
-    token: str
+    token: SecretStr
     email: str | None = None
 
 
@@ -1670,18 +1685,19 @@ async def set_claude_profile_token(profile_id: str, request: SetTokenRequest):
     try:
         logger = logging.getLogger(__name__)
         # Validate token
-        if not request.token or not request.token.strip():
+        secret = request.token.get_secret_value() if request.token else ""
+        if not secret.strip():
             return {"success": False, "error": "Token cannot be empty"}
 
         # Validate token length (Claude tokens are typically > 20 characters)
-        if len(request.token) < 20:
+        if len(secret) < 20:
             return {
                 "success": False,
                 "error": "Token appears invalid. Must be at least 20 characters.",
             }
 
         # Validate token format (Claude session tokens start with 'sess-' or API keys with 'sk-ant-')
-        token = request.token.strip()
+        token = secret.strip()
         if not (token.startswith("sess-") or token.startswith("sk-ant-")):
             return {
                 "success": False,
@@ -2127,7 +2143,7 @@ class ApiProfileUpdate(BaseModel):
     )
     baseUrl: str | None = Field(None, min_length=1, description="API endpoint URL")
     apiKey: str | None = Field(
-        None, min_length=20, description="API key (minimum 20 characters)"
+        None, min_length=20, description="API key (minimum 20 characters)", repr=False
     )
     models: ApiProfileModels | None = Field(None, description="Optional model mappings")
 
@@ -2348,7 +2364,7 @@ async def set_active_api_profile(request: dict):
 
 class TestConnectionRequest(BaseModel):
     baseUrl: str
-    apiKey: str
+    apiKey: SecretStr
 
 
 @router.post("/api-profiles/test")
@@ -2359,7 +2375,7 @@ async def test_api_connection(request: TestConnectionRequest):
     try:
         req = urllib.request.Request(
             f"{request.baseUrl}/models",
-            headers={"Authorization": f"Bearer {request.apiKey}"},
+            headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
         urllib.request.urlopen(req, timeout=10)
         return {"success": True, "data": {"connected": True}}
@@ -2376,7 +2392,7 @@ async def discover_api_models(request: TestConnectionRequest):
     try:
         req = urllib.request.Request(
             f"{request.baseUrl}/models",
-            headers={"Authorization": f"Bearer {request.apiKey}"},
+            headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
         response = urllib.request.urlopen(req, timeout=10)
         data = json_module.loads(response.read().decode())
@@ -2395,7 +2411,9 @@ class SourceEnvUpdate(BaseModel):
     """Model for updating Magestic AI source environment configuration."""
 
     claudeToken: str | None = Field(
-        None, description="Claude Code OAuth token (CLAUDE_CODE_OAUTH_TOKEN)"
+        None,
+        description="Claude Code OAuth token (CLAUDE_CODE_OAUTH_TOKEN)",
+        repr=False,
     )
     anthropicBaseUrl: str | None = Field(
         None, description="Custom Anthropic API endpoint (ANTHROPIC_BASE_URL)"
@@ -2404,10 +2422,10 @@ class SourceEnvUpdate(BaseModel):
         None, description="Enable Graphiti memory system (GRAPHITI_ENABLED)"
     )
     githubToken: str | None = Field(
-        None, description="GitHub personal access token (GITHUB_TOKEN)"
+        None, description="GitHub personal access token (GITHUB_TOKEN)", repr=False
     )
     openaiApiKey: str | None = Field(
-        None, description="OpenAI API key for Graphiti (OPENAI_API_KEY)"
+        None, description="OpenAI API key for Graphiti (OPENAI_API_KEY)", repr=False
     )
     debug: bool | None = Field(None, description="Enable debug mode (DEBUG)")
 

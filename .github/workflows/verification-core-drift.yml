@@ -25,6 +25,14 @@ on:
     paths:
       - "apps/backend/core/factory_sandbox.py"
       - "apps/backend/core/nix_provisioner.py"
+      # Newly gated by Factory#400. Without these the gate is REGISTERED for
+      # these modules but never TRIGGERED by them: a PR editing a vendored
+      # copy would skip the blocking check entirely.
+      - "apps/backend/core/artifact_store.py"
+      - "apps/backend/core/cost_router_core.py"
+      # Newly gated by Factory#403/#411. Without this the gate is
+      # REGISTERED for this module but never TRIGGERED by it.
+      - "scripts/ratchet_helpers.py"
       - ".github/workflows/verification-core-drift.yml"
   push:
     branches: [dev, main]
@@ -39,7 +47,7 @@ permissions:
 env:
   # Pinned Factory hub commit carrying the canonical verification-core modules.
   # Bump deliberately when re-vendoring (see header).
-  HUB_PIN_SHA: "4065c697f1045d8fa20ce90e8fed35c59fde8ad5"
+  HUB_PIN_SHA: "1c58319d0657dd86b6c4536edfa85abb4bd8e2b1"
 
 jobs:
   drift:
@@ -59,13 +67,23 @@ jobs:
           path: factory-hub
           # If the Factory hub is private, provide a read token here.
 
+      - name: Check out the hub drift CHECKER at main
+        # Not at HUB_PIN_SHA: a gate fetched from its own pin cannot ship its
+        # own fix. The CANONICAL above stays pinned, so comparisons remain
+        # reproducible; only the gate's own logic floats (Factory#405).
+        uses: actions/checkout@v4
+        with:
+          repository: olafkfreund/Factory
+          ref: main
+          path: factory-hub-main
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Run the hub drift gate against this service (blocking)
         run: |
-          python factory-hub/scripts/check_verification_core_drift.py \
+          python factory-hub-main/scripts/check_verification_core_drift.py \
             --canonical factory-hub/scripts \
             --service aifactory \
             --root service

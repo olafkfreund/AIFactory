@@ -185,6 +185,9 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
 | `AIFACTORY_ROUTING_POLICY` | `""` | no | Named per-phase model routing policy (`routing_policy.py`). |
+| `AIFACTORY_RUNTIMES` | `""` (only `claude`) | no (spend) | RFC-0014 operator allowlist of non-default runtimes — comma-separated (`codex`, `antigravity`, `ollama`, `ollama-cloud`), or `all`. `claude` is always on; the fan-out runtimes `claude-subagents` / `dynamic-workflow` multiply spend and must be named explicitly (never implied by `all`). A runtime also needs the contract's `execution.runtime` opt-in (`core/runtime_gating.py`). |
+| `AIFACTORY_PROVIDER_FAILOVER` | (built-in chain) | no | Comma-separated provider failover order tried when the primary provider errors (`core/provider_failover.py`). Empty = default chain. |
+| `AIFACTORY_PROVIDER_DEADLINE_S` | `900` | no | Total wall-clock budget (seconds) for a phase across all failover attempts (`core/provider_failover.py`). |
 | `AUTO_BUILD_MODEL` | (built-in) | no | Default model for CLI auto-builds (`cli/main.py`). |
 | `UTILITY_MODEL_ID` | (built-in) | no | Model for small utility completions (`core/model_config.py`). |
 | `UTILITY_THINKING_BUDGET` | `""` | no | Thinking-token budget for the utility model. |
@@ -374,6 +377,8 @@ Read in `apps/web-server/server/services/sandbox.py`,
 | `AIFACTORY_EXTRA_ALLOWED_COMMANDS` | `""` | no | Extend the dynamic command allowlist (`project/models.py`). |
 | `AIFACTORY_EGRESS_POLICY` | `off` | no | Agent egress policy mode (`security/egress.py`). |
 | `AIFACTORY_EGRESS_ALLOWED_HOSTS` | `""` | no | Allowed egress hosts when the egress policy is on. |
+| `AIFACTORY_INJECTION_SCAN` | `on` | no (fail-closed) | Prompt-injection content-scan gate mode: `on` / `warn` / `off`. Unrecognised values resolve to `on` so a typo can't silently disable it (`security/content_scan.py`). |
+| `AIFACTORY_AUTH_PREFLIGHT` | `warn` | no | Provider-credential pre-flight check before a run: `off` / `warn` / `enforce` (`core/auth_preflight.py`). |
 | `METRICS_SCRAPE_TOKEN` | `""` | no | Bearer token gating the `/metrics` scrape endpoint (`observability/metrics.py`). |
 
 ## Identity providers (OIDC / SAML / SCIM / email OAuth)
@@ -553,7 +558,18 @@ Baked into the static bundle at build time. Read in `apps/frontend-web/src/*`.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). Legacy single-key entry; matches envelopes with no `kid`. See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>` | (none) | no | Keyed rotation entry: registers one verification key under `authority/kid` (kid case-insensitive). Multiple kids can be active at once for zero-downtime rotation. See [Trusted-plan Key Rotation](./compliance/trusted-plan-key-rotation). |
+| `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` | (none) | no | Comma-separated `authority/kid` (or bare `kid`) to revoke; a retired kid is rejected at verify time even if its key material is still configured. |
+
+## Approved-model registry
+
+Read in `apps/backend/model_registry.py`. See [Approved-model Registry](./compliance/model-registry).
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_MODEL_REGISTRY_ENFORCE` | `warn` | no | Registry assertion mode: `warn` (log unregistered/mis-staged model, never block), `deny` (raise and fail the stage), `off` (skip). Default is advisory — routing behaviour is unchanged. |
+| `AIFACTORY_MODEL_REGISTRY` | (built-in) | no | Override the approved-model allowlist: inline JSON or a path to a JSON file. Invalid/unreadable value fails safe to the built-in `DEFAULT_REGISTRY`. |
 
 ## Debug helpers
 
@@ -590,8 +606,8 @@ This reference was reconciled against an exhaustive grep of the codebase
 `import.meta.env`, every `APP_`-prefixed pydantic `Settings` field, the
 `_PASSTHROUGH_BUILD_ENV` allowlist, and every indirected `_ENV_*` constant).
 
-- **298** unique variable names found in code.
-- **283** documented above (including the `_PASSTHROUGH_BUILD_ENV` allowlist and
+- **303** unique variable names found in code.
+- **288** documented above (including the `_PASSTHROUGH_BUILD_ENV` allowlist and
   recognized/scrubbed credentials).
 - **15** intentionally excluded as incidental (OS/runtime noise, CLI-injected
   vars, the analyzer `PORT` example) — a subset of the fuller excluded list

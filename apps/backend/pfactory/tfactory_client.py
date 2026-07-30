@@ -21,12 +21,15 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "build_handoff_payload",
@@ -309,40 +312,138 @@ def _project_git_url(spec_dir: Path) -> str | None:
         return None
 
 
+def _authed_push_url(url: str) -> str:
+    """``url`` with a token injected for authenticated push, when one is available.
+
+    Unchanged https URL when there is no token or it is not a github.com https
+    remote (ssh remotes carry their own auth).
+    """
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and url.startswith("https://github.com/"):
+        return url.replace("https://", f"https://x-access-token:{token}@", 1)
+    return url
+
+
+def _remote_tip(repo: Path, push_url: str, branch: str) -> str:
+    """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
+    line = _git_stdout(repo, ["ls-remote", push_url, branch])
+    return line.split()[0] if line else ""
+
+
+def _build_branch_commit(repo: Path, build_branch: str) -> str:
+    """The commit ``build_branch`` points at in ``repo``, or "" if it is absent.
+
+    ``--verify --quiet`` so a missing ref returns "" instead of noise on stderr.
+    """
+    return _git_stdout(
+        repo, ["rev-parse", "--verify", "--quiet", f"refs/heads/{build_branch}"]
+    )
+
+
+def _locate_build_commit(spec_dir: Path, spec_id: str) -> tuple[Path, str] | None:
+    """Find the repo that HOLDS the built commit and that commit's sha, or None.
+
+    The built code lives on the ``aifactory/<spec>`` branch, but WHERE that ref
+    resolves depends on the build path. On the RFC-0017 packed path the build runs
+    inside the k8s Job and the control-plane build clone is left on the BASE branch
+    (``main``); the built branch ref is unpacked into the PROJECT repo, not the
+    build clone. So pushing the build clone's HEAD pushes base, not the build
+    (#1007). Resolve the build branch in the project repo first, then the build
+    clone (the non-packed path, where the clone genuinely sits on the build
+    branch). Return the repo + sha of whichever holds it.
+    """
+    build_branch = _build_branch(spec_id)
+    for cand in (_project_dir(spec_dir), _build_worktree(spec_dir, spec_id)):
+        if cand.is_dir():
+            sha = _build_branch_commit(cand, build_branch)
+            if sha:
+                return cand, sha
+    return None
+
+
 def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | None]:
-    """Return ``(git_url, source_branch)`` for the build worktree, pushing the branch
+    """Return ``(git_url, source_branch)`` for the build, pushing the BUILD BRANCH
     to origin so TFactory (separate PVC) can fetch the built code.
 
-    Best-effort and never raises: returns ``(None, None)`` if the worktree/remote is
-    missing or git fails — the handoff then degrades gracefully.
-    """
-    wt = _build_worktree(spec_dir, spec_id)
-    if not wt.is_dir():
-        return None, None
+    Pushes ``aifactory/<spec>`` resolved from whichever local repo holds it (the
+    project repo on the RFC-0017 packed path, the build clone otherwise) --
+    explicitly the built commit onto ``refs/heads/aifactory/<spec>``, never the
+    build clone's HEAD, which on the packed path is the BASE branch. Pushing base
+    left the build off origin and handed TFactory a tree WITHOUT the build:
+    pre-flight then rejects the missing symbols and the run reads as an ordinary
+    failure (#1007, the "verify the wrong tree" class, cf. TFactory #729).
 
+    The push is ``--force``: the per-spec ``aifactory/<spec>`` branch is
+    build-owned, the local commit is its truth, and it cannot clobber anyone
+    else's work -- this also repairs a diverged remote tip (only-base-pushed). We
+    then VERIFY origin carries the built commit; if it still does not, return the
+    branch as unusable (``(url, None)``) and log, rather than claim a stale tree
+    is verifiable.
+
+    Best-effort and never raises: returns ``(None, None)`` when nothing local holds
+    the build branch (the caller then falls back to the branch convention).
+    """
+    located = _locate_build_commit(spec_dir, spec_id)
+    if located is None:
+        return None, None
+    repo, sha = located
+    build_branch = _build_branch(spec_id)
     try:
-        branch = _git_stdout(wt, ["rev-parse", "--abbrev-ref", "HEAD"])
-        url = _git_stdout(wt, ["remote", "get-url", "origin"])
-        if not branch or not url:
+        url = _git_stdout(repo, ["remote", "get-url", "origin"])
+        if not url:
             return None, None
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        push_url = url
-        if token and url.startswith("https://github.com/"):
-            push_url = url.replace("https://", f"https://x-access-token:{token}@", 1)
-        # Push the build branch so TFactory can clone/fetch it. Best-effort.
+        push_url = _authed_push_url(url)
         subprocess.run(
-            ["git", "push", push_url, f"HEAD:{branch}"],
-            cwd=str(wt),
+            ["git", "push", "--force", push_url, f"{sha}:refs/heads/{build_branch}"],
+            cwd=str(repo),
             capture_output=True,
             text=True,
             timeout=120,
         )
-        return url, branch
+        # Verify origin actually carries the built commit now — a swallowed push
+        # failure sending TFactory to a stale tree was the whole #1007 bug.
+        if _remote_tip(repo, push_url, build_branch) != sha:
+            _log.warning(
+                "[handoff] build commit %s did not land on origin/%s after push; "
+                "refusing the branch so TFactory does not verify a stale tree (#1007)",
+                sha[:12],
+                build_branch,
+            )
+            return url, None
+        return url, build_branch
     except Exception:  # noqa: BLE001 - handoff prep must never break the build
         return None, None
 
 
-def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+def _recorded_commit_count(spec_dir: Path) -> int | None:
+    """Commits the build itself recorded in ``memory/build_commits.json``, or None.
+
+    ``RecoveryManager`` creates this ledger at the start of every build and
+    appends to it whenever a coding session leaves a new commit behind (both a
+    completed subtask and one that only made partial progress), so an EXISTING
+    ledger with an empty ``commits`` list is the build's own record that it
+    committed nothing. A missing or unparseable ledger says nothing at all and
+    returns ``None``.
+
+    This is the only evidence source that survives the kubejob path: the build
+    runs inside the k8s Job, and its memory tree is fetched back into the
+    control-plane spec dir on completion (#1038) while the local worktree stays
+    on the base branch. Without it every kubejob build was unmeasurable, which
+    is how #1070 handed a branch identical to main to TFactory.
+    """
+    try:
+        data = json.loads(
+            (Path(spec_dir) / "memory" / "build_commits.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError):
+        return None
+    commits = data.get("commits") if isinstance(data, dict) else None
+    return len(commits) if isinstance(commits, list) else None
+
+
+def build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     """Commits the build added on top of its base branch, or ``None`` if unknowable.
 
     ``None`` and ``0`` mean different things and callers must not conflate them:
@@ -362,7 +463,18 @@ def _build_commit_count(spec_dir: Path, spec_id: str) -> int | None:
     correct only because the run it was written for happened to be genuinely
     empty as well. So the count is trusted only when HEAD is the branch the build
     is supposed to have produced.
+
+    When git cannot answer, the build's own commit ledger does (#1070) — that is
+    the ONLY reason a kubejob build is measurable at all. Git wins where both
+    speak: a worktree parked on the build branch is the ground truth about what
+    the branch holds, where the ledger can only be stale.
     """
+    git = _git_commit_count(spec_dir, spec_id)
+    return git if git is not None else _recorded_commit_count(spec_dir)
+
+
+def _git_commit_count(spec_dir: Path, spec_id: str) -> int | None:
+    """``build_commit_count``'s git half — see its docstring for the HEAD check."""
     wt = _build_worktree(spec_dir, spec_id)
     if not wt.is_dir():
         return None
@@ -630,7 +742,7 @@ async def maybe_auto_handoff_tfactory(spec_dir: Path, spec_id: str) -> dict:
     # success in four minutes, and verify was handed a tree with no build in it.
     # Only an explicit 0 blocks — `None` means unknowable, and refusing a build
     # we merely could not measure would be worse than the bug.
-    if _build_commit_count(spec_dir, spec_id) == 0:
+    if build_commit_count(spec_dir, spec_id) == 0:
         return {"sent": False, "reason": "empty_build"}
     try:
         payload = build_ingest_payload(spec_dir, spec_id)

@@ -86,23 +86,71 @@ def _detect_default_branch(project_dir: Path) -> str:
     return "main"
 
 
+def _discover_pushed_ref(project_dir: Path, spec_name: str) -> str | None:
+    """The ref holding *spec_name*'s work, as seen from the project repo.
+
+    Mirrors the rule in ``server/services/task_branch.resolve_work_ref``: match
+    on the ref's final path segment so the ``aifactory/`` prefix is not baked in,
+    and refuse on ambiguity rather than guess. Kept local because apps/backend
+    cannot import the web server; if these two ever disagree, this one is wrong.
+    """
+    try:
+        out = subprocess.run(
+            # S607: literal "git", no shell, fixed arguments.
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],  # noqa: S607
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    matches = [
+        r.strip()
+        for r in out.splitlines()
+        if r.strip() and r.strip().rsplit("/", 1)[-1] == spec_name
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _get_changed_files_from_git(
-    worktree_path: Path, base_branch: str = "main"
+    worktree_path: Path,
+    base_branch: str = "main",
+    project_dir: Path | None = None,
+    spec_name: str | None = None,
 ) -> list[str]:
     """
-    Get list of changed files from git diff between base branch and HEAD.
+    Get list of changed files from git diff between base branch and the work.
 
     Args:
         worktree_path: Path to the worktree
         base_branch: Base branch to compare against (default: main)
+        project_dir: Project repository. Given with *spec_name*, the pushed ref
+            is discovered and read here instead of the worktree's HEAD (#1089).
+        spec_name: Spec id whose pushed branch to look for.
 
     Returns:
         List of changed file paths
     """
+    # #1089: under the kubejob backend the worktree is left on the BASE branch
+    # and the work escapes the build Job by `git push`, so `{base}...HEAD` here
+    # is base against base -- and this function's caller calls the result "the
+    # authoritative count". It was authoritatively zero.
+    #
+    # Discovery lives in here rather than at the call site so there is one place
+    # that decides which repository and which ref to read.
+    work_ref = (
+        _discover_pushed_ref(project_dir, spec_name)
+        if project_dir and spec_name
+        else None
+    )
+    git_cwd = project_dir if (work_ref and project_dir) else worktree_path
+    head = work_ref or "HEAD"
+
     try:
         result = subprocess.run(
-            ["git", "diff", "--name-only", f"{base_branch}...HEAD"],
-            cwd=worktree_path,
+            ["git", "diff", "--name-only", f"{base_branch}...{head}"],
+            cwd=git_cwd,
             capture_output=True,
             text=True,
             check=True,
@@ -119,8 +167,8 @@ def _get_changed_files_from_git(
         # Fallback: try without the three-dot notation
         try:
             result = subprocess.run(
-                ["git", "diff", "--name-only", base_branch, "HEAD"],
-                cwd=worktree_path,
+                ["git", "diff", "--name-only", base_branch, head],
+                cwd=git_cwd,
                 capture_output=True,
                 text=True,
                 check=True,
@@ -589,8 +637,14 @@ def handle_merge_preview_command(
             task_source_branch = _detect_default_branch(project_dir)
 
         # Get actual changed files from git diff (this is the authoritative count)
+        #
+        # #1089: read the branch the build PUSHED, not the worktree's HEAD. Under
+        # the kubejob backend the worktree sits on task_source_branch, so this
+        # "authoritative count" was authoritatively zero and the preview reported
+        # nothing to merge. When no pushed ref is found this falls back to the
+        # worktree, which is correct for the in-Job/subprocess shape.
         all_changed_files = _get_changed_files_from_git(
-            worktree_path, task_source_branch
+            worktree_path, task_source_branch, project_dir, spec_name
         )
         debug(
             MODULE,

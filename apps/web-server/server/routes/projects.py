@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.specpath import safe_spec_component
+
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # --------------------------------------------------------------------------
@@ -23,6 +25,7 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 
 # BUG-1.2-003: Memory backend must be one of these values
 MemoryBackendType = Literal["graphiti", "file"]
+
 
 from ..config import get_settings
 from ..tenancy import (
@@ -185,7 +188,7 @@ class ProjectSettings(BaseModel):
     mainBranch: str | None = Field(default=None, alias="main_branch")
     useClaudeMd: bool = Field(default=True, alias="use_claude_md")
     gitProvider: str = Field(default="github", alias="git_provider")
-    gitToken: str | None = Field(default=None, alias="git_token")
+    gitToken: str | None = Field(default=None, alias="git_token", repr=False)
     gitBaseUrl: str | None = Field(default=None, alias="git_base_url")
     gitOrg: str | None = Field(default=None, alias="git_org")
     gitProject: str | None = Field(default=None, alias="git_project")
@@ -285,7 +288,9 @@ def resolve_project_id(project_id: str) -> str | None:
     for pid, meta in projects.items():
         name = meta.get("name", "")
         path = str(meta.get("path", ""))
-        if name in (project_id, repo) or path.endswith(("/" + path_suffix, "-" + path_suffix)):
+        if name in (project_id, repo) or path.endswith(
+            ("/" + path_suffix, "-" + path_suffix)
+        ):
             return pid
     return None
 
@@ -855,7 +860,7 @@ class ProjectSettingsUpdate(BaseModel):
     mainBranch: str | None = None
     useClaudeMd: bool | None = None
     gitProvider: str | None = Field(default=None, alias="git_provider")
-    gitToken: str | None = Field(default=None, alias="git_token")
+    gitToken: str | None = Field(default=None, alias="git_token", repr=False)
     gitBaseUrl: str | None = Field(default=None, alias="git_base_url")
     gitOrg: str | None = Field(default=None, alias="git_org")
     gitProject: str | None = Field(default=None, alias="git_project")
@@ -1443,6 +1448,14 @@ async def archive_tasks(
         else:
             spec_id = task_id
 
+        # Barrier BEFORE the join (#1056). BOTH branches carry request data -
+        # the bare-id branch is not safer, it just skips the split.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            errors.append("Task not found")
+            continue
+
         spec_dir = specs_dir / spec_id
         if not spec_dir.exists():
             errors.append(f"Task {spec_id} not found")
@@ -1509,6 +1522,14 @@ async def unarchive_tasks(
             _, spec_id = task_id.split(":", 1)
         else:
             spec_id = task_id
+
+        # Barrier BEFORE the join (#1056). BOTH branches carry request data -
+        # the bare-id branch is not safer, it just skips the split.
+        try:
+            spec_id = safe_spec_component(spec_id)
+        except ValueError:
+            errors.append("Task not found")
+            continue
 
         spec_dir = specs_dir / spec_id
         if not spec_dir.exists():

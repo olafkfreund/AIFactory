@@ -146,6 +146,114 @@ def test_kubejob_worktree_on_base_still_stamps_build_branch(tmp_path):
     assert payload["source_branch"] == "aifactory/042-x"  # NOT "main"
 
 
+def test_diverged_remote_is_force_repaired_not_left_stale(tmp_path):
+    # #1007: origin's build branch has DIVERGED from the built HEAD (only the base
+    # was ever pushed, so the remote tip is not an ancestor of the build commit).
+    # A plain `git push` is rejected non-fast-forward; swallowing that rejection
+    # (as the old code did) left origin at the base and handed TFactory a tree
+    # WITHOUT the build. The handoff must force the built HEAD onto origin so the
+    # verifier clones the ACTUAL build.
+    import subprocess
+
+    def g(cwd, *a):
+        return subprocess.run(
+            ["git", *a], cwd=str(cwd), capture_output=True, text=True
+        )
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    g(origin, "init", "-q", "--bare")
+
+    proj = tmp_path / "workspaces" / "proj"
+    wt = proj / ".aifactory" / "worktrees" / "tasks" / "084-x"
+    wt.mkdir(parents=True)
+    g(wt, "init", "-q", "-b", "aifactory/084-x")
+    g(wt, "config", "user.email", "t@t")
+    g(wt, "config", "user.name", "t")
+    g(wt, "config", "commit.gpgsign", "false")
+    g(wt, "remote", "add", "origin", str(origin))
+    # Base commit, pushed to origin so origin/aifactory/084-x = base.
+    (wt / "f").write_text("base")
+    g(wt, "add", "-A")
+    g(wt, "commit", "-qm", "base")
+    g(wt, "push", "-q", "origin", "aifactory/084-x")
+    base_sha = g(wt, "rev-parse", "HEAD").stdout.strip()
+    # DIVERGE: amend so local HEAD is a different, non-descendant commit — the
+    # build — which a plain push cannot fast-forward onto the remote base.
+    (wt / "f").write_text("def factorial(n): ...")
+    g(wt, "add", "-A")
+    g(wt, "commit", "-q", "--amend", "-m", "build: factorial")
+    build_sha = g(wt, "rev-parse", "HEAD").stdout.strip()
+    assert build_sha != base_sha
+
+    sd = proj / ".aifactory" / "specs" / "084-x"
+    sd.mkdir(parents=True)
+    url, branch = _git_info_and_push(sd, "084-x")
+
+    assert branch == "aifactory/084-x"
+    # origin now carries the BUILT commit, not the stale base (#1007).
+    remote_tip = g(wt, "ls-remote", str(origin), "aifactory/084-x").stdout.split()[0]
+    assert remote_tip == build_sha, "handoff left origin at the stale base tree"
+    assert remote_tip != base_sha
+
+
+def test_packed_path_pushes_build_ref_from_project_repo_not_clone_base(tmp_path):
+    # #1007 (RFC-0017 packed path): the build ran in the k8s Job; the control-plane
+    # build clone is left on the BASE branch (main), while the built branch ref is
+    # unpacked into the PROJECT repo. The handoff must push the build branch
+    # resolved from the PROJECT repo -- pushing the clone's base HEAD leaves the
+    # build off origin and sends TFactory to a tree without it.
+    import subprocess
+
+    def g(cwd, *a):
+        return subprocess.run(
+            ["git", *a], cwd=str(cwd), capture_output=True, text=True
+        )
+
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    g(origin, "init", "-q", "--bare")
+
+    proj = tmp_path / "workspaces" / "proj"
+    proj.mkdir(parents=True)
+    g(proj, "init", "-q", "-b", "main")
+    g(proj, "config", "user.email", "t@t")
+    g(proj, "config", "user.name", "t")
+    g(proj, "config", "commit.gpgsign", "false")
+    g(proj, "remote", "add", "origin", str(origin))
+    (proj / "f").write_text("base")
+    g(proj, "add", "-A")
+    g(proj, "commit", "-qm", "base")
+    g(proj, "push", "-q", "origin", "main")
+    # The built branch exists only as a REF in the project repo (unpacked artifact).
+    g(proj, "checkout", "-q", "-b", "aifactory/090-x")
+    (proj / "impl.py").write_text("def is_prime(n): ...")
+    g(proj, "add", "-A")
+    g(proj, "commit", "-qm", "build: is_prime")
+    build_sha = g(proj, "rev-parse", "HEAD").stdout.strip()
+    g(proj, "checkout", "-q", "main")  # control plane sits on base, not the build
+
+    # The build clone (worktree path) is a SEPARATE clone left on the base branch.
+    wt = proj / ".aifactory" / "worktrees" / "tasks" / "090-x"
+    wt.mkdir(parents=True)
+    g(wt, "init", "-q", "-b", "main")
+    g(wt, "config", "user.email", "t@t")
+    g(wt, "config", "user.name", "t")
+    g(wt, "config", "commit.gpgsign", "false")
+    g(wt, "remote", "add", "origin", str(origin))
+    (wt / "f").write_text("base")
+    g(wt, "add", "-A")
+    g(wt, "commit", "-qm", "base")
+
+    sd = proj / ".aifactory" / "specs" / "090-x"
+    sd.mkdir(parents=True)
+    url, branch = _git_info_and_push(sd, "090-x")
+
+    assert branch == "aifactory/090-x"
+    remote = g(proj, "ls-remote", str(origin), "aifactory/090-x").stdout.split()
+    assert remote and remote[0] == build_sha, "build branch not pushed from project repo"
+
+
 def test_worktree_on_real_build_branch_is_trusted(tmp_path):
     # The legacy path where the worktree genuinely IS on aifactory/<spec_id> keeps
     # working: a non-base branch is used verbatim.

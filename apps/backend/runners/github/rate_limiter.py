@@ -133,15 +133,16 @@ class TokenBucket:
                 if elapsed >= timeout:
                     return False
 
-            # Wait for next refill. Calculate time until we have enough tokens.
-            # refill_rate <= 0 means a hard cap that never refills (#882): don't
-            # divide by zero — poll at the 1s cap so the timeout (if any) still
-            # ends the wait, and a None timeout blocks as intended.
+            # Wait for next refill
+            # Calculate time until we have enough tokens
             tokens_needed = tokens - self.tokens
+            # refill_rate <= 0 means a hard cap that never refills (AIFactory#882):
+            # don't divide by zero - poll at the 1s cap so the timeout (if any)
+            # still ends the wait, and a None timeout blocks as intended.
             wait_time = (
                 1.0
                 if self.refill_rate <= 0
-                else min(tokens_needed / self.refill_rate, 1.0)  # Max 1s wait
+                else min(tokens_needed / self.refill_rate, 1.0)  # Max 1 second wait
             )
             await asyncio.sleep(wait_time)
 
@@ -160,11 +161,11 @@ class TokenBucket:
         self._refill()
         if self.tokens >= tokens:
             return 0.0
+        tokens_needed = tokens - self.tokens
         # refill_rate <= 0 never refills, so the tokens are never available
-        # (#882): report infinity rather than dividing by zero.
+        # (AIFactory#882): report infinity rather than dividing by zero.
         if self.refill_rate <= 0:
             return float("inf")
-        tokens_needed = tokens - self.tokens
         return tokens_needed / self.refill_rate
 
 
@@ -533,11 +534,11 @@ def rate_limited(
 
             for attempt in range(max_retries + 1):
                 try:
-                    # Consume a token for EVERY GitHub call (#883). The happy
-                    # path previously only did the non-consuming
+                    # Consume a token for EVERY GitHub call (AIFactory#883). The
+                    # happy path previously only did the non-consuming
                     # check_github_available(), so the decorator never drew down
-                    # the bucket (the 5000/hr cap was unenforced) and never
-                    # recorded the request. acquire_github() returns immediately
+                    # the bucket - the 5000/hr cap was UNENFORCED and the request
+                    # was never recorded. acquire_github() returns immediately
                     # when a token is available, waits up to the timeout when the
                     # bucket is empty, and returns False on timeout.
                     if operation_type == "github":

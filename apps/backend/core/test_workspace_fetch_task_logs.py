@@ -17,7 +17,11 @@ class _FakeStore:
 
     _blobs: dict[str, bytes] = {}
 
-    def put_bytes(self, key: str, data: bytes, content_type: str | None = None) -> str:
+    def put_bytes(
+        self, key: str, data: bytes, _content_type: str | None = None, **_: object
+    ) -> str:
+        # **_ swallows the role= kwarg the real put_bytes accepts (push_task_logs
+        # passes role="build"), keeping this fake in step with production.
         _FakeStore._blobs[key] = data
         return key
 

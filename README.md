@@ -31,9 +31,27 @@ It also runs standalone or as the **build node of the Factory line**: [PFactory]
 
 You watch the whole thing happen live in the **Agent Console** — read-only by default, one-click Attach when you want to drive — or open the task in **Mission Control**, a full-page three-pane workspace (plan · live activity + console · preview / files / review). See [`docs/docs/concepts/mission-control-workspace.md`](docs/docs/concepts/mission-control-workspace.md).
 
-> **Where we are (June 2026, v3.6.x)** — recent work on top of the enterprise and
+> **Where we are (July 2026, v3.6.x)** — recent work on top of the enterprise and
 > MCP shipsets:
 >
+> - **Autonomous plan→build→verify handoff (RFC-0008)** — a PFactory→AIFactory
+>   plan build now opens the PR *and* auto-hands off to TFactory for verification,
+>   not just the from-issue path. One opt-out (`AIFACTORY_INTAKE_AUTO_HANDOFF`),
+>   no-op unless `TFACTORY_BASE_URL` is set.
+> - **Per-stage cost-aware model routing (RFC-0014)** — each stage routes to a
+>   `small` / `mid` / `frontier` tier instead of paying frontier prices
+>   everywhere, with the difficulty tier as a capability floor. Measured 55%
+>   cost cut at the same token volume. Non-default runtimes (codex, ollama,
+>   agent swarms) are gated behind an operator allowlist (`AIFACTORY_RUNTIMES`).
+> - **Provider coder CLIs baked into the image (#791)** — claude-code / codex /
+>   gemini are baked into the runtime image at build time, so the control-plane
+>   boot never npm-installs them and a slow registry can't stall a rollout.
+> - **Graphify code-graph cache (#804)** — the Tree-sitter code graph is cached
+>   in MinIO keyed by repo + commit, so a cache hit skips the rebuild; still
+>   opt-in behind `AIFACTORY_GRAPHIFY_ENABLED`.
+> - **Real OS sandbox around agent bash (#363)** — bwrap binds the worktree
+>   read-write and everything else read-only, enabled by default in the chart,
+>   pure passthrough where bwrap is absent. Sandbox-escape corpus tests run live.
 > - **Parallel build executor + per-worker observability** — independent subtasks
 >   build concurrently, each worker's tokens, cost, and progress tracked and shown
 >   live; honest completion accounting (a failed plan-load no longer reads as a

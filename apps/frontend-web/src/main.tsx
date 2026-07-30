@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router';
 import { MotionConfig } from 'motion/react';
 import App from './App';
 // Distinctive self-hosted type — warm humanist UI sans + a terminal/retro mono
