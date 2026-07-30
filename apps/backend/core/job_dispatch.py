@@ -7,17 +7,56 @@ toolchain provisioning (RFC-0016 §4.1 / RFC-0005 Tier A). It is the single sour
 of truth the per-service consumers vendor, mirroring how ``nix_provisioner.py``
 is shared byte-identically.
 
-Vendored, byte-exact, by exactly one consumer today (Factory#477):
+Vendored, byte-exact (Factory#477, Factory#483):
 
     AIFactory  apps/backend/core/job_dispatch.py
+    TFactory   apps/backend/tools/runners/job_dispatch.py
 
 and kept identical by the hub's drift gate — ``scripts/check_verification_core_drift.py``
-run from each consumer's ``verification-core-drift`` workflow. TFactory (#466) and
-PFactory (#218) were once listed here as consumers but hold no copy: they dispatch
-through their own ``tools/runners/kube_sandbox.py`` and ``plan/service.py``. If
-either later vendors this file, add it to the gate's ``SERVICE_LAYOUTS`` in the
-SAME change — an unregistered copy is exactly the silent divergence Factory#477
-opened on.
+run from each consumer's ``verification-core-drift`` workflow. PFactory (#218) holds
+no copy and needs none: it runs a bounded pooled-worker model, not Job-per-task, so
+it builds no Job manifest at all (the citation in its ``plan/service.py`` names this
+file as the seam to use IF a governed planning Job ever lands). If it later vendors
+this file, add it to the gate's ``SERVICE_LAYOUTS`` in the SAME change — an
+unregistered copy is exactly the silent divergence Factory#477 opened on.
+
+TWO WAYS TO CONSUME THIS FILE (Factory#483)
+-------------------------------------------
+``build_job_manifest`` builds the whole manifest and is the right entry point when
+a service has nothing to add. TFactory does have something to add — credential
+seeding via an initContainer, a 23-var provider-env allowlist, a service account it
+genuinely needs a token for — so it builds its own manifest and calls the *policy*
+helpers below instead:
+
+    ``job_labels`` / ``task_pod_labels``   the label rules, constructed not copied
+    ``assert_job_policy``                  the rules, checked, in the consumer's tests
+
+That split exists because the alternative was tried and failed. TFactory restated
+the naming, labelling and hardening rules by hand under a comment citing this file,
+which is a fork with a citation: nothing compares a constant to its source, and no
+drift gate can help when there is no vendored file to compare. The cost was not
+theoretical — the pod-label defect below arrived THREE times independently and was
+filed as four unconnected symptoms (TFactory#885, AIFactory#1107, Factory#456,
+Factory#458).
+
+WHAT IS SHARED, AND WHAT IS DELIBERATELY NOT
+--------------------------------------------
+``assert_job_policy`` checks only rules that must hold for EVERY factory Job.
+Several neighbouring rules are legitimately per-service and are deliberately left
+out of it, because asserting them would force a consumer to break itself to pass:
+
+- pod ``securityContext``: TFactory's nix lanes run as ROOT on purpose (the
+  nixos/nix image builds as root; forcing nonroot breaks every lane, #840), so
+  ``runAsNonRoot``/``runAsUser`` cannot be universal.
+- ``automountServiceAccountToken``: False here, but TFactory's verify-orchestration
+  Job dispatches nested per-lane Jobs through the k8s API and needs a token.
+- container capability add-backs: TFactory adds SETUID/SETGID/KILL back because
+  local nix builds setuid to a nixbld user (#623).
+- the Job NAME prefix: ``kube_sandbox`` uses ``tfsbx-`` and portal-UI uses
+  ``portal-ui-``. Only DNS-1123 VALIDITY is universal, not the prefix.
+
+Anything on that list is a per-service decision with a per-service test. Everything
+``assert_job_policy`` does check is a rule a service is not free to opt out of.
 
 This module is intentionally I/O-free: it returns a Job manifest dict and the
 dispatch/reconcile contract constants. Applying the Job, watching it, and writing
@@ -67,6 +106,11 @@ _DNS_LABEL_MAX = 63  # Kubernetes object-name (DNS-1123 label) length limit
 # It is also the uid the control plane creates worktree files as, so pinning it
 # preserves ownership rather than changing it (#848).
 NONROOT_UID = 65532
+# Every service that dispatches Jobs through this contract. This is what makes the
+# pod-label rule checkable as a RULE rather than against one literal (Factory#479):
+# no task pod's `app` label may equal any of these, because that is exactly what
+# each service's Service selects.
+SERVICES = ("aifactory", "cfactory", "pfactory", "tfactory")
 TERMINAL_STATES = ("done", "failed", "stuck")
 # The control plane reconciles by polling the job-state table, so a missed
 # completion event never strands a job; reporting is idempotent on (job_id, state).
@@ -124,6 +168,118 @@ def nix_develop_wrap(commands: list[str]) -> str:
 
 def _shq(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _require(cond: bool, msg: str) -> None:
+    if not cond:
+        raise AssertionError(msg)
+
+
+def job_labels(service: str, job_id: str) -> dict[str, str]:
+    """Labels for the Job OBJECT.
+
+    ``app`` deliberately IS the service name here, unlike the pod labels below: a
+    Job object is never a Service endpoint and never a ``kubectl exec`` target, so
+    ``kubectl get jobs -l app=aifactory`` stays useful. Only pods route traffic.
+    """
+    return {
+        "app": service,
+        "factory.io/job-id": _short(job_id),
+        "factory.io/kind": "task",
+    }
+
+
+def task_pod_labels(service: str, *, role: str = "task") -> dict[str, str]:
+    """Labels for the POD TEMPLATE of a dispatched Job. Use this, never a literal.
+
+    ``app`` is DELIBERATELY NOT ``service``. The ``aifactory`` Service selects
+    exactly {"app": "aifactory"} and a Service selector is a SUBSET match, so a task
+    pod carrying that label joins the Service as an endpoint. The pod listens on
+    nothing, so kube-proxy hands it a share of real API traffic and answers with
+    connection refused — a fraction of requests, for as long as a build runs, which
+    reads as flakiness rather than as a fault. It also makes ``kubectl exec
+    deploy/aifactory`` land in a build pod, which is how it was finally noticed
+    (mid-demo). Confirmed three times over: TFactory's portal-ui browser test took
+    the portal it was testing offline and then reported it broken (TFactory#885);
+    AIFactory's task Jobs did it to the aifactory API (AIFactory#1107); and
+    factory-gitops' minio-create-bucket Job did it to the minio Service.
+
+    ``role`` distinguishes pods of different dispatchers within one service —
+    TFactory's nix lanes are ``tfactory-sandbox`` (its Job NetworkPolicy selects
+    that value, so it is load-bearing) and its portal-UI Jobs are
+    ``tfactory-portal-ui``. It is NOT the same axis as ``factory.io/kind``, which
+    stays literally "task" for every dispatcher: that is the "this pod is a
+    dispatched task, not a serving pod" label the per-task NetworkPolicy selects
+    (#812), and splitting it per role would silently drop pods out of that policy.
+
+    ``factory.io/service`` carries the association ``app`` used to, so anything that
+    legitimately wants "task pods of aifactory" can still ask for it — this removes
+    an accidental selector match, not the information.
+
+    Because ``role`` may not be empty, an ``app`` label equal to the service name is
+    not reachable through this function. That is the entire point of it existing.
+    """
+    _require(bool(role), f"role must not be empty (app would collide with {service!r})")
+    return {
+        "app": f"{service}-{role}",
+        "factory.io/service": service,
+        "factory.io/kind": "task",
+    }
+
+
+def assert_job_policy(manifest: dict[str, Any]) -> None:
+    """Raise AssertionError unless *manifest* obeys the rules EVERY factory Job
+    must obey — whoever built it, and whatever else it carries.
+
+    This is the half of the contract a consumer that builds its own manifest still
+    has to honour. Call it from that consumer's tests: the module docstring lists
+    what is deliberately NOT checked here and why.
+    """
+    _require(manifest.get("kind") == "Job", f"kind must be Job: {manifest.get('kind')!r}")
+
+    name = manifest["metadata"]["name"]
+    _require(
+        len(name) <= _DNS_LABEL_MAX
+        and re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", name) is not None,
+        f"Job name must be a DNS-1123 label (<={_DNS_LABEL_MAX} chars, lowercase "
+        f"alphanumeric and '-', not starting or ending with '-'): {name!r}. A name "
+        f"built by interpolating an unsanitised id is how this breaks — run the id "
+        f"through _short() first.",
+    )
+
+    _require(
+        manifest["spec"]["backoffLimit"] == 0,
+        "backoffLimit must be 0 — a retry is a new attempt with an incremented "
+        "job-state `attempt`, never a silent one (concurrency-conventions.md 3)",
+    )
+
+    template = manifest["spec"]["template"]
+    pod_labels = template["metadata"]["labels"]
+    service = pod_labels.get("factory.io/service")
+    _require(
+        service is not None,
+        f"pod label factory.io/service is required: it names which service this task "
+        f"belongs to, and without it the `app` rule below cannot be checked at all. "
+        f"Build pod labels with task_pod_labels(). Got: {pod_labels}",
+    )
+    _require(
+        pod_labels.get("factory.io/kind") == "task",
+        f"pod label factory.io/kind=task is required — it is what the per-task "
+        f"NetworkPolicy selects (#812), and a pod without it matches no policy and "
+        f"runs unrestricted. Got: {pod_labels}",
+    )
+    app = pod_labels.get("app")
+    _require(
+        app != service and app not in SERVICES,
+        f"pod `app` label must not equal a service name (it would join that "
+        f"service's Service and answer real traffic with connection refused — "
+        f"TFactory#885 / AIFactory#1107 / Factory#456): {app!r}",
+    )
+
+    _require(
+        template["spec"]["restartPolicy"] == "Never",
+        "restartPolicy must be Never (retries are dispatched, not restarted)",
+    )
 
 
 def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
@@ -239,66 +395,23 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         "metadata": {
             "name": name,
             "namespace": spec.namespace,
-            "labels": {
-                "app": spec.service,
-                "factory.io/job-id": _short(spec.job_id),
-                "factory.io/kind": "task",
-            },
+            "labels": job_labels(spec.service, spec.job_id),
         },
         "spec": {
             "backoffLimit": 0,
             "ttlSecondsAfterFinished": spec.ttl_seconds,
             "activeDeadlineSeconds": spec.deadline_seconds,
             "template": {
-                # #812: the pod (not just the Job) must carry factory.io/kind so
-                # the chart's per-task NetworkPolicy (podSelector) covers it —
-                # the Helm selectorLabels policies never match Job pods.
-                #
-                # #1107: `app` is DELIBERATELY NOT spec.service. The `aifactory`
-                # Service selects exactly {"app": "aifactory"} and a Service
-                # selector is a subset match, so a task pod carrying that label
-                # joined the Service as an endpoint. The pod listens on nothing,
-                # so kube-proxy handed it a share of real API traffic and
-                # answered with connection refused — a fraction of requests, for
-                # as long as a build ran, which reads as flakiness rather than as
-                # a fault. It also made `kubectl exec deploy/aifactory` land in a
-                # build pod, which is how it was finally noticed (mid-demo).
-                # Confirmed three times over: TFactory's portal-ui browser test
-                # took the portal it was testing offline and then reported it
-                # broken (TFactory#885); AIFactory's task Jobs did it to the
-                # aifactory API (AIFactory#1107); and factory-gitops'
-                # minio-create-bucket Job did it to the minio Service.
-                #
-                # This is the REFERENCE library the per-service consumers vendor,
-                # so the label belongs here rather than in each consumer — the
-                # same defect arriving a fourth time by way of a fresh vendoring
-                # is the failure mode worth spending a comment on.
-                #
-                # factory.io/service carries the association that `app` used to,
-                # so anything that legitimately wants "task pods of aifactory"
-                # can still ask for it — the fix removes an accidental selector
-                # match, not the information.
-                #
-                # The Job's OWN metadata.labels above keep app=spec.service on
-                # purpose: a Job object is never a Service endpoint and never a
-                # `kubectl exec` target, so `kubectl get jobs -l app=aifactory`
-                # stays useful. Only pods route traffic.
-                "metadata": {
-                    "labels": {
-                        "app": f"{spec.service}-task",
-                        "factory.io/service": spec.service,
-                        "factory.io/kind": "task",
-                    }
-                },
+                # The #812 NetworkPolicy label and the #1107 no-Service-collision
+                # rule both live in task_pod_labels() — see its docstring. They are
+                # constructed rather than spelled out here so that a consumer which
+                # builds its OWN manifest (TFactory does) gets the identical labels
+                # from the identical function instead of a hand-copy (Factory#483).
+                "metadata": {"labels": task_pod_labels(spec.service)},
                 "spec": pod_spec,
             },
         },
     }
-
-
-def _require(cond: bool, msg: str) -> None:
-    if not cond:
-        raise AssertionError(msg)
 
 
 def _selftest() -> None:
@@ -316,13 +429,8 @@ def _selftest() -> None:
     )
     m = build_job_manifest(spec)
     name = m["metadata"]["name"]
-    _require(m["kind"] == "Job", "kind must be Job")
-    _require(m["spec"]["backoffLimit"] == 0, "backoffLimit must be 0 (no silent retries)")
+    assert_job_policy(m)
     _require(name.startswith("factory-aifactory-"), f"name prefix: {name}")
-    _require(
-        len(name) <= _DNS_LABEL_MAX and re.fullmatch(r"[a-z0-9-]+", name) is not None,
-        f"DNS-1123: {name}",
-    )
     ps = m["spec"]["template"]["spec"]
     _require(ps["serviceAccountName"] == "aifactory-sandbox", "SA")
     _require(ps["automountServiceAccountToken"] is False, "no token automount")
@@ -337,35 +445,71 @@ def _selftest() -> None:
         "alone cannot verify the image's `USER nonroot` name and every build "
         "Job dies CreateContainerConfigError",
     )
-    pod_labels = m["spec"]["template"]["metadata"]["labels"]
-    _require(
-        pod_labels["factory.io/kind"] == "task",
-        "pod label factory.io/kind=task (NetworkPolicy selector, #812)",
-    )
+    _require(m["metadata"]["labels"]["app"] == "aifactory", "Job object keeps app=service")
     # A NON-SERVING pod must not be selectable as a Service backend (#1107).
-    # Asserted as the RULE rather than against one literal, so it still holds for
-    # the pfactory/tfactory dispatches and for any service added later: no `app`
-    # label may ever equal the service name, because that is what every Service
-    # selects.
-    for svc in ("aifactory", "pfactory", "tfactory"):
-        pod = build_job_manifest(
+    # Checked as the RULE for EVERY dispatching service rather than against one
+    # literal, so it still holds for any service added later (Factory#479).
+    for svc in SERVICES:
+        built = build_job_manifest(
             JobSpec(service=svc, job_id="s", commands=["true"], nix_develop=False)
-        )["spec"]["template"]["metadata"]["labels"]
-        _require(
-            pod["app"] != svc,
-            f"pod app label must not equal the service name (would join the "
-            f"{svc} Service and answer real traffic with connection refused): "
-            f"{pod['app']}",
         )
+        assert_job_policy(built)
+        pod = built["spec"]["template"]["metadata"]["labels"]
         _require(pod["app"] == f"{svc}-task", f"pod app label: {pod['app']}")
         _require(
             pod["factory.io/service"] == svc,
             "factory.io/service keeps the association `app` used to carry",
         )
-        _require(
-            pod["factory.io/kind"] == "task",
-            f"pod label factory.io/kind=task (NetworkPolicy selector, #812): {pod}",
+
+    # Every rule assert_job_policy states needs a manifest that BREAKS it, or the
+    # rule is unverified: feeding it only well-formed manifests passes whether the
+    # check is there or not, and deleting the check would keep this self-test green.
+    # Each entry below is a real way a hand-built manifest goes wrong.
+    def _tf() -> dict[str, Any]:
+        return build_job_manifest(
+            JobSpec(service="tfactory", job_id="s", commands=["true"], nix_develop=False)
         )
+
+    def _pod_labels(m: dict[str, Any]) -> Any:
+        return m["spec"]["template"]["metadata"]["labels"]
+
+    def _pod_spec(m: dict[str, Any]) -> Any:
+        return m["spec"]["template"]["spec"]
+
+    rejections: list[tuple[str, Any]] = [
+        # The pod joins the tfactory Service and answers real traffic with
+        # connection refused (TFactory#885 / AIFactory#1107 / Factory#458).
+        ("pod app == its own service", lambda m: _pod_labels(m).__setitem__("app", "tfactory")),
+        # Same defect via a DIFFERENT service's selector - a tfactory Job whose pod
+        # is labelled app=minio joins the minio Service.
+        ("pod app == another service", lambda m: _pod_labels(m).__setitem__("app", "aifactory")),
+        # A consumer interpolating a raw run_id instead of _short()-ing it.
+        ("non-DNS-1123 Job name", lambda m: m["metadata"].__setitem__("name", "factory-tf-Run_1")),
+        ("Job name over 63 chars", lambda m: m["metadata"].__setitem__("name", "f" * 64)),
+        # The pod matches no NetworkPolicy and runs unrestricted (#812).
+        ("no factory.io/kind label", lambda m: _pod_labels(m).pop("factory.io/kind")),
+        # Without it the app rule above cannot be checked at all.
+        ("no factory.io/service label", lambda m: _pod_labels(m).pop("factory.io/service")),
+        # A silent retry re-runs a task under the same job-state row (conventions 3).
+        ("backoffLimit != 0", lambda m: m["spec"].__setitem__("backoffLimit", 3)),
+        ("restartPolicy != Never", lambda m: _pod_spec(m).__setitem__("restartPolicy", "Always")),
+        ("kind != Job", lambda m: m.__setitem__("kind", "Pod")),
+    ]
+    for why, break_it in rejections:
+        bad = _tf()
+        break_it(bad)
+        try:
+            assert_job_policy(bad)
+        except AssertionError:
+            continue
+        raise AssertionError(f"assert_job_policy ACCEPTED a manifest with: {why}")
+    # task_pod_labels itself must not be able to produce the colliding label.
+    try:
+        task_pod_labels("tfactory", role="")
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("task_pod_labels(role='') produced app == the service name")
     c = ps["containers"][0]
     _require(
         c["securityContext"]
@@ -392,9 +536,32 @@ def _selftest() -> None:
         "volumes" not in bare["spec"]["template"]["spec"],
         "no volumes when none requested",
     )
+    # Factory#482: the packed-workspace branch is `elif spec.workspace_uri`, so the
+    # fixture above — which sets the co-mount AND workspace_uri — never reaches it.
+    # It is not a branch to get wrong: without the emptyDir, /work is the image's
+    # root-owned dir and the nonroot unpack dies with `PermissionError: /work`,
+    # caught only in live #190 validation.
+    packed = build_job_manifest(
+        JobSpec(
+            service="aifactory",
+            job_id="p1",
+            commands=["true"],
+            nix_develop=False,
+            workspace_uri="s3://factory-artifacts/aifactory/1/p/workspace/workspace.tar.gz",
+        )
+    )["spec"]["template"]["spec"]
+    _require(
+        packed["volumes"] == [{"name": "work", "emptyDir": {}}],
+        f"packed workspace -> writable emptyDir /work (no RWO co-mount): {packed.get('volumes')}",
+    )
+    _require(
+        packed["containers"][0]["workingDir"] == "/work",
+        "packed workspace still runs in /work",
+    )
     sys.stdout.write(
-        "job_dispatch self-test: PASS — manifest, nix-develop wrap, "
-        "warm-store + worktree mounts, env, bare fallback\n"
+        "job_dispatch self-test: PASS — manifest, policy rules (incl. the "
+        "app-label and DNS-1123 rejections), nix-develop wrap, warm-store + "
+        "worktree mounts, packed-workspace emptyDir, env, bare fallback\n"
     )
 
 

@@ -377,16 +377,25 @@ def _requirements_present(project_dir: Path) -> bool:
 
 
 def _python_libs(m: Manifest, project_dir=None) -> list[str]:
-    """Python libraries to put in the withPackages set. Always include
-    pytest + pytest-cov for the verify lane (the runner always passes ``--cov``);
-    add fastapi/uvicorn/httpx when the commands imply a web app; and, when
+    """Python libraries to put in the withPackages set. Always include the verify
+    lane's own harness — pytest + pytest-cov (the runner always passes ``--cov``)
+    and ``requests`` (the api lane's HTTP client, TFactory#892); add
+    fastapi/uvicorn/httpx when the commands imply a web app; and, when
     ``project_dir`` is given, the SUT's own declared deps + test extras read from
     its pyproject.toml (#615) so an ingested repo imports without a hand-written
     manifest."""
     libs: list[str] = []
     hay = " ".join(m.verify_commands + m.build_commands + m.proof_verify).lower()
     if (m.language or "").lower() in ("", "python") or "pytest" in hay:
-        libs += ["pytest", "pytest-cov"]
+        # `requests` is HARNESS surface, not app surface, so it rides with pytest
+        # rather than waiting on the SUT to declare it. TFactory's pytest
+        # descriptor instructs Gen-Functional to drive the api lane with
+        # `requests` ("already installed" — true of the legacy docker runner
+        # image, false of a generated flake). A SUT that doesn't happen to depend
+        # on requests therefore produced an env where EVERY api test died at
+        # `import requests`, i.e. at collection, and every HTTP-level acceptance
+        # criterion came back unverifiable against correct code (TFactory#892).
+        libs += ["pytest", "pytest-cov", "requests"]
     if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or _needs_browser(m):
         libs += ["fastapi", "uvicorn", "httpx"]
     if project_dir is not None:
@@ -483,6 +492,11 @@ def _test() -> None:
     assert "python312" in f2, f2
     assert "playwright" not in f2 and "PLAYWRIGHT_BROWSERS_PATH" not in f2, f2
     assert "pytest" in f2, f2
+    # TFactory#892: the api lane's HTTP client is harness surface — it must be in
+    # EVERY python verify env, including one whose SUT never declares it (a plain
+    # manifest with no project_dir at all). Without it `import requests` fails at
+    # collection and every HTTP acceptance criterion is unverifiable.
+    assert 'p."requests"' in f2, f2  # noqa: S101
 
     # 3. system packages pass through (minus browser drops).
     env_sys = {
@@ -506,6 +520,7 @@ def _test() -> None:
     assert "pkgs.gotestsum" in fg and "pkgs.gocover-cobertura" in fg, fg  # noqa: S101
     assert "withPackages" not in fg and "python" not in fg, fg  # noqa: S101
     assert "pytest" not in fg, fg  # noqa: S101 — no python libs inferred for a go env
+    assert "requests" not in fg, fg  # noqa: S101 — harness libs are python-lane only
     # unknown/unset go version degrades to bare `pkgs.go` (no system pkgs here,
     # so `pkgs.go` is the sole package line — no false match on gocover etc.).
     fg2 = generate_flake({"language": "go", "verify_commands": ["go test ./..."]})
