@@ -174,8 +174,8 @@ class BaseLLMProvider(ABC):
             self._outbound_prompt_scrubbed = outbound != prompt
             return await query(self, outbound, *args, **kwargs)
 
-        setattr(_scrubbing_query, "__outbound_scrub__", True)  # noqa: B010
-        setattr(cls, "query", _scrubbing_query)
+        _scrubbing_query.__outbound_scrub__ = True  # type: ignore[attr-defined]
+        cls.query = _scrubbing_query  # type: ignore[method-assign]
 
     def _build_outbound_redactor(self) -> Any:
         """Construct a ``PiiRedactor`` for the pre-send scrub (#210, #320).
@@ -190,7 +190,7 @@ class BaseLLMProvider(ABC):
         compilation is microseconds); no caching keeps the operator
         reload path simple.
         """
-        from services.llm_pii_redactor import PiiRedactor
+        from services.llm_pii_redactor import PiiRedactor  # noqa: PLC0415
 
         return PiiRedactor(scrub_outbound=True)
 
