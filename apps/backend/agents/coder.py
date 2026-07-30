@@ -66,6 +66,7 @@ from .deploy_scaffold import scaffold_deploy_for_spec
 from .inbox import drain_unread as drain_inbox
 from .inbox import format_for_prompt as format_inbox_for_prompt
 from .memory_manager import debug_memory_system_status, get_graphiti_context
+from .route_wiring import route_wiring_gate
 from .session import post_session_processing, run_session_guarded
 from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import (
@@ -1270,8 +1271,6 @@ async def _run_trailing_gates_if_build_complete(
         # per-subtask gate cannot see this: it judges each worker's own worktree,
         # never the merge, so a router written by one worker and never registered
         # by another passes every subtask and 404s in production.
-        from .route_wiring import route_wiring_gate
-
         route_gate = route_wiring_gate(plan_path, gate_dir)
         if route_gate is not None:
             gates.append(route_gate)
