@@ -41,20 +41,24 @@ jobs:
         id: pin
         run: echo "sha=$(cat aifactory/apps/backend/factory_common/.hub-sha)" >> "$GITHUB_OUTPUT"
 
+      # No continue-on-error: an unreachable hub is a gate that cannot run, and
+      # per standards rule 4.7 that must fail rather than pass. This step used
+      # to be `continue-on-error: true` with the diff below guarded on
+      # `steps.hub.outcome == 'success'`, so a private repo, an expired token,
+      # a renamed hub or a garbage-collected pin would skip the diff and report
+      # SUCCESS from a blocking gate. If Factory becomes private, add a read
+      # token here - do not restore the soft-skip. AIFactory#1095, and the same
+      # removal #1092 made in cq-ratchet.yml.
       - name: Check out hub factory-common at the pinned SHA
         uses: actions/checkout@v4
         with:
           repository: olafkfreund/Factory
           ref: ${{ steps.pin.outputs.sha }}
           path: factory-hub
-          # If Factory is private, a token with read access is needed here.
-        continue-on-error: true
-        id: hub
 
       - name: Diff vendored factory_common against the pinned hub canonical
-        if: steps.hub.outcome == 'success'
         run: |
-          set -e
+          set -euo pipefail
           canonical="factory-hub/shared/factory-common/factory_common"
           vendored="aifactory/apps/backend/factory_common"
           for f in __init__.py http.py secrets.py; do
@@ -66,7 +70,3 @@ jobs:
             fi
           done
           echo "No drift: vendored factory_common matches the pinned hub canonical."
-
-      - name: Hub unavailable (private repo / no token)
-        if: steps.hub.outcome != 'success'
-        run: echo "Hub checkout unavailable; skipping drift diff (configure a read token to enforce)."

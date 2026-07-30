@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- **The test-evidence gate now checks the test touched the deliverable, not just that a test ran (#1111).** #851 proves a test *executed*; it cannot prove the test exercised what was *built*. Observed live on `101-vat-quote-endpoint`: wave worker C2 wrote a correct `APIRouter`, never registered it in `app.main` (deliberately, to avoid a file another wave worker might edit), and tested it through a `FastAPI()` instance constructed inside its own test file. 45/45 genuinely green, #851 satisfied, `POST /api/quote` a 404 on the shipped service — the tests passed against an application that existed only inside the test file. A later wiring subtask happened to catch it, which was luck of the plan shape, not a control. `update_subtask_status` now also refuses to complete a subtask that names an HTTP path (description, acceptance criteria, or the planner's `verification.url`) when every Python test mentioning that path fails to reach the shipped app — a file counts as reaching it by importing an application entrypoint (`app.main` and friends, `conftest.py` included so the ordinary `client` fixture pattern passes) without constructing a rival app, or by calling a live server over HTTP. Deliberately narrow so it never fires on correct work, because a gate that does gets switched off: no HTTP path in the subtask means no check at all (pure-function unit tests are untouched), no Python test mentioning the path means no check (a Go service is never judged by a Python heuristic), and one honest file frees the hollow ones. ON by default with the existing escape hatch `AIFACTORY_TEST_EVIDENCE_GATE=off`. Coder-path code that runs inside the build Job, so it ships via the `-nix` build image.
+
 
 ## 3.6.73 - 2026-07-23
 

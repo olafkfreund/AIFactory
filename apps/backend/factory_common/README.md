@@ -25,7 +25,10 @@ These files are owned by the hub. To change the behaviour, land the change in
 `shared/factory-common/` in the Factory hub first (CODEOWNERS-reviewed), then
 re-vendor here and bump `.hub-sha` to the new hub commit. The
 `factory_common drift` CI job (`.github/workflows/cq-factory-common-drift.yml`)
-fails the build if this copy diverges from the hub at the pinned SHA.
+fails the build if this copy diverges from the hub at the pinned SHA, and
+**also fails when the hub cannot be reached at all** — a private repo, an
+expired token, a rename or a garbage-collected pin — because a skipped diff is
+not a passed diff (hub standards rule 4.7).
 
 ## Pinned hub commit
 
