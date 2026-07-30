@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from re import Pattern
 
-PLACEHOLDER = "***REDACTED***"
+PLACEHOLDER = "***REDACTEDX***"
 
 
 @dataclass(frozen=True)
