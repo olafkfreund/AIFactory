@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core.outbound_scrub import wrap_client_outbound_scrub
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -1143,6 +1145,4 @@ def create_client(
     # default), so the highest-volume coding path never touches
     # providers/ at all. Applied INNERMOST so the enforcement wrapper
     # still audits the raw prompt while the wire carries the scrubbed one.
-    from core.outbound_scrub import wrap_client_outbound_scrub
-
     return wrap_client_if_enforced(wrap_client_outbound_scrub(bare_client), enforcement)

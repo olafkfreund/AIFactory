@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from core.outbound_scrub import wrap_client_outbound_scrub
+
 try:
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
     from phase_config import resolve_model_id
@@ -117,8 +119,6 @@ class ClaudeAnalysisClient:
 
         # #1128: built directly, so it does not inherit the outbound PII
         # scrub from create_client() or BaseLLMProvider.
-        from core.outbound_scrub import wrap_client_outbound_scrub
-
         return wrap_client_outbound_scrub(
             ClaudeSDKClient(
                 options=ClaudeAgentOptions(
