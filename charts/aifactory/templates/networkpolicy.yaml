@@ -6,9 +6,25 @@ metadata:
   labels:
     {{- include "aifactory.labels" . | nindent 4 }}
 spec:
+  # RELEASE-scoped, not selectorLabels-scoped, and deliberately so.
+  #
+  # The Job/CronJob pod templates in this chart used to carry selectorLabels,
+  # which is what put them inside this policy — and also what made them join the
+  # `aifactory` Service and answer real API traffic with connection refused
+  # (AIFactory#1107). Fixing that by giving them a distinct
+  # `app.kubernetes.io/name` would have dropped them out of every NetworkPolicy,
+  # and a pod selected by NO policy is UNRESTRICTED — so the audit-anchor and
+  # teardown pods, which hold DB and KMS credentials, would have quietly gained
+  # unrestricted egress. Trading a traffic bug for a weaker egress posture is the
+  # same defect in a new place.
+  #
+  # Selecting on `instance` alone covers every pod of this release — the web pods
+  # (which also carry it) and the job pods (which keep it) — so the change is
+  # monotonic: nothing that was covered becomes uncovered, at any point during the
+  # upgrade. The narrowing lives on the Service selector, where it belongs.
   podSelector:
     matchLabels:
-      {{- include "aifactory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
   policyTypes:
     - Ingress
     - Egress

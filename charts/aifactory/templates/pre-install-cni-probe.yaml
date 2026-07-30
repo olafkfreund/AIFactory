@@ -69,9 +69,13 @@ spec:
   activeDeadlineSeconds: 60
   template:
     metadata:
+      # NOT selectorLabels — they are the `aifactory` Service's selector and this
+      # probe serves no traffic (AIFactory#1107). Worse here than elsewhere: this
+      # is a pre-install/pre-upgrade hook, so it runs at exactly the moment an
+      # operator is watching the upgrade and would read the 502s as the upgrade
+      # failing.
       labels:
-        {{- include "aifactory.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: tenant-cni-probe
+        {{- include "aifactory.jobPodLabels" (dict "ctx" . "component" "tenant-cni-probe") | nindent 8 }}
     spec:
       serviceAccountName: {{ include "aifactory.serviceAccountName" . }}
       restartPolicy: Never
