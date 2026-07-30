@@ -36,6 +36,12 @@ version: 2
 updates:
   - package-ecosystem: docker
     directory: "/"
+    # Factory#491: without this, Dependabot raises against whatever the repo
+    # default happens to be, and the default-branch flip to `dev` therefore split
+    # bumps across both branches — base-image changes reaching the deployed
+    # branch without passing through `dev`, and `main` ending up ahead of `dev`
+    # in every service repo. Pin it rather than inherit it.
+    target-branch: dev
     schedule:
       interval: daily
     labels:
