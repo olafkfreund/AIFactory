@@ -65,44 +65,17 @@ import asyncio
 import fnmatch
 import json
 import logging
-import os
 import time
 import urllib.error
 import urllib.request
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
-from providers import BaseLLMProvider
+from providers import BaseLLMProvider, _env_scrub_outbound_default
 from providers._openai_headers import OpenAICompatibleHeadersMixin
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
-
-
-def _env_scrub_outbound_default() -> bool:
-    """Resolve the deployment default for ``scrub_outbound`` (#320).
-
-    Outbound PII scrubbing now defaults ON. The built-in redactor set
-    is deliberately high-precision — hyphenated SSN, email, US phone,
-    and Luhn-validated credit cards — and does NOT touch bare code
-    identifiers, so it is safe to run on prompts that legitimately
-    carry source code (this is a code factory; over-broad redaction
-    would corrupt prompts and wreck output quality). Operator-supplied
-    ``extraRedactionPatterns`` are NOT applied outbound (they may be
-    broad); only the built-in safe set is scrubbed before egress — see
-    ``_build_outbound_redactor``.
-
-    ``LITELLM_AUDIT_SCRUB_OUTBOUND`` is the kill-switch: set it to
-    ``false`` / ``0`` / ``no`` / ``off`` to disable outbound scrubbing
-    and restore the pre-#320 behaviour (audit-row redaction only). Any
-    other value — including unset — leaves scrubbing ON. Read once at
-    provider construction so a single deployment-wide toggle applies to
-    every provider instance without a per-call lookup.
-    """
-    raw = os.environ.get("LITELLM_AUDIT_SCRUB_OUTBOUND", "").strip().lower()
-    # ponytail: kill-switch semantics — only an explicit falsey value
-    # disables; unset means default-on.
-    return raw not in ("false", "0", "no", "off")
 
 
 class ModelNotAllowedError(RuntimeError):
@@ -287,47 +260,24 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
             )
             return
 
-        # v1.2 #210 scrubBeforeSend: when enabled, the OUTBOUND prompt
-        # is run through the redactor BEFORE the API call. The raw
-        # prompt is still captured for the audit row so operators can
-        # see what the user typed AND what we actually sent. The
+        # v1.2 #210 scrubBeforeSend: the OUTBOUND prompt was already run
+        # through the redactor by ``BaseLLMProvider.query`` (#1128 lifted
+        # the scrub there so every adapter gets it, not just this one), so
+        # ``_pending_prompt`` is what actually goes on the wire. The raw
+        # prompt is still captured for the audit row so operators can see
+        # what the user typed AND what we actually sent. The
         # `prompt_outbound_scrubbed` flag is True only when redaction
         # actually changed the text — operators query
         # ``details_json->>'prompt_outbound_scrubbed' = true`` for
         # "show me every call where PII was scrubbed before send".
-        prompt_text = self._pending_prompt
-        outbound_prompt = prompt_text
-        prompt_outbound_scrubbed = False
-        if self._scrub_outbound:
-            # #320 fail-CLOSED: outbound scrub is enabled, so a missing
-            # or crashing redactor must NOT silently fall through to
-            # sending the raw prompt — that silent fail-open is exactly
-            # the PII-leak gap this guard closes. Log ERROR and abort
-            # the call. Operators who want prompts sent unredacted set
-            # the kill-switch LITELLM_AUDIT_SCRUB_OUTBOUND=false.
-            try:
-                redactor = self._build_outbound_redactor()
-                scrubbed = redactor.redact_outbound(prompt_text)
-            except Exception as exc:
-                logger.error(
-                    "OpenAICompatibleProvider: outbound PII scrub is ENABLED "
-                    "but the redactor is unavailable (%s); refusing to send "
-                    "the prompt unredacted. Set "
-                    "LITELLM_AUDIT_SCRUB_OUTBOUND=false to disable outbound "
-                    "scrubbing.",
-                    exc,
-                    exc_info=True,
-                )
-                raise RuntimeError(
-                    "Outbound PII scrub is enabled but the redactor is "
-                    "unavailable; refusing to send an unredacted prompt to "
-                    "the LLM provider (set LITELLM_AUDIT_SCRUB_OUTBOUND=false "
-                    "to disable outbound scrubbing)."
-                ) from exc
-            outbound_prompt = scrubbed
-            prompt_outbound_scrubbed = scrubbed != prompt_text
+        prompt_text = (
+            getattr(self, "_outbound_prompt_raw", None) or self._pending_prompt
+        )
+        prompt_outbound_scrubbed = bool(
+            getattr(self, "_outbound_prompt_scrubbed", False)
+        )
 
-        payload = self._build_payload(outbound_prompt)
+        payload = self._build_payload(self._pending_prompt)
         url = f"{self._base_url}{_PATH_CHAT}"
 
         logger.debug("OpenAICompatibleProvider: POST %s model=%r", url, self._model)
@@ -393,22 +343,6 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
                     "unexpectedly; swallowed",
                     exc_info=True,
                 )
-
-    def _build_outbound_redactor(self) -> Any:
-        """Construct a PiiRedactor for the pre-send scrub (#210, #320).
-
-        Lazy import, mirroring the audit hook. Unlike the audit hook,
-        an ImportError here is NOT survivable: the caller catches it
-        and refuses to send (#320 fail-closed), because a CLI / agent
-        context without the redactor on PYTHONPATH would otherwise ship
-        the raw prompt. Built-in patterns only — operator
-        ``extraRedactionPatterns`` stay audit-scoped (they can be broad
-        and would corrupt code prompts). Cheap (regex compilation is
-        microseconds); no caching keeps the operator reload path simple.
-        """
-        from services.llm_pii_redactor import PiiRedactor
-
-        return PiiRedactor(scrub_outbound=True)
 
     async def _write_audit(
         self,
