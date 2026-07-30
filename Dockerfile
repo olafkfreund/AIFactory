@@ -37,7 +37,7 @@
 # surface. The runtime stage stays on Chainguard, where it does matter.
 # Digest bumps land via Dependabot PRs (.github/dependabot.yml).
 
-FROM docker.io/debian:bookworm-slim AS frontend-build
+FROM docker.io/node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS frontend-build
 
 USER root
 WORKDIR /build
