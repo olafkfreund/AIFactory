@@ -37,6 +37,12 @@ extend-exclude = [
     # but never excluded, so the local formatter could silently break a
     # byte-exact re-vendor (Factory#400).
     "apps/backend/core/artifact_store.py",
+    # Factory#477: byte-exact mirror of the hub canonical scripts/job_dispatch.py
+    # at the fleet line-length (100). It was vendored, gated by nothing and
+    # excluded from nothing, so the two copies drifted in both directions and the
+    # #1107 pod-label defect had to be fixed twice. Now gated; letting the local
+    # 88-column formatter touch it would break the next re-vendor.
+    "apps/backend/core/job_dispatch.py",
     # Vendored byte-exact mirror of the Factory hub canonical, kept identical by
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.

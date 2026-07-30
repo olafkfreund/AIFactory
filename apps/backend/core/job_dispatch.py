@@ -4,8 +4,20 @@
 Pure, dependency-free builder for the per-task Kubernetes Job that runs one PARR
 job (plan / build / verify) on the **thin nix-base image** with per-task Nix
 toolchain provisioning (RFC-0016 §4.1 / RFC-0005 Tier A). It is the single source
-of truth the per-service consumers vendor (AIFactory #671, TFactory #466,
-PFactory #218), mirroring how ``nix_provisioner.py`` is shared byte-identically.
+of truth the per-service consumers vendor, mirroring how ``nix_provisioner.py``
+is shared byte-identically.
+
+Vendored, byte-exact, by exactly one consumer today (Factory#477):
+
+    AIFactory  apps/backend/core/job_dispatch.py
+
+and kept identical by the hub's drift gate — ``scripts/check_verification_core_drift.py``
+run from each consumer's ``verification-core-drift`` workflow. TFactory (#466) and
+PFactory (#218) were once listed here as consumers but hold no copy: they dispatch
+through their own ``tools/runners/kube_sandbox.py`` and ``plan/service.py``. If
+either later vendors this file, add it to the gate's ``SERVICE_LAYOUTS`` in the
+SAME change — an unregistered copy is exactly the silent divergence Factory#477
+opened on.
 
 This module is intentionally I/O-free: it returns a Job manifest dict and the
 dispatch/reconcile contract constants. Applying the Job, watching it, and writing
@@ -21,10 +33,16 @@ Design (matches apis/concurrency-conventions.md §3 + the proven kube_sandbox sh
   ``nix_develop_wrap``).
 - Warm ``/nix/store`` mounted from the per-service nix-store PVC (RFC-0016 #197) so
   Jobs don't cold-fetch the closure.
-- The task worktree co-mounted at ``/work`` from the data PVC via ``subPath``.
+- The task worktree co-mounted at ``/work`` from the data PVC via ``subPath`` —
+  OR, for multi-node scale-out (RFC-0017 §2.3), fetched from object storage: set
+  ``workspace_uri`` and the Job receives ``WORKSPACE_URI`` to ``unpack_workspace``
+  into ``/work`` at start and ``pack_workspace`` its outputs back at the end
+  (scripts/artifact_store.py). That replaces the RWO worktree co-mount, which pins
+  the Job to one node; the RWO mount stays available for the single-node path and
+  is removed only by the gitops rollout (out of scope here).
 - Env carries the short scalar identifiers + shared-state coordinates: ``JOB_ID``,
   ``CORRELATION_KEY``, ``DATABASE_URL`` (the job writes its own job-state row),
-  ``ARTIFACTS_URI`` (object-store prefix).
+  ``ARTIFACTS_URI`` (object-store prefix), ``WORKSPACE_URI`` (packed-workspace URI).
 
 Run ``python3 scripts/job_dispatch.py`` for the self-test.
 """
@@ -112,11 +130,7 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
     """Return a complete k8s Job manifest dict for one PARR task. Pure."""
     name = job_name(spec.service, spec.job_id)
 
-    inner = (
-        nix_develop_wrap(spec.commands)
-        if spec.nix_develop
-        else " && ".join(spec.commands)
-    )
+    inner = nix_develop_wrap(spec.commands) if spec.nix_develop else " && ".join(spec.commands)
 
     env = [
         {"name": "JOB_ID", "value": spec.job_id},
@@ -137,12 +151,8 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
     mounts: list[dict[str, Any]] = []
     work_co_mount = bool(spec.data_pvc and spec.worktree_subpath)
     if work_co_mount:
-        volumes.append(
-            {"name": "work", "persistentVolumeClaim": {"claimName": spec.data_pvc}}
-        )
-        mounts.append(
-            {"name": "work", "mountPath": "/work", "subPath": spec.worktree_subpath}
-        )
+        volumes.append({"name": "work", "persistentVolumeClaim": {"claimName": spec.data_pvc}})
+        mounts.append({"name": "work", "mountPath": "/work", "subPath": spec.worktree_subpath})
     elif spec.workspace_uri:
         # RFC-0017 #190: a packed-workspace Job has NO RWO worktree co-mount (that
         # co-mount is exactly what pins a Job to the worktree's single node). The
@@ -253,8 +263,16 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
                 # as long as a build ran, which reads as flakiness rather than as
                 # a fault. It also made `kubectl exec deploy/aifactory` land in a
                 # build pod, which is how it was finally noticed (mid-demo).
-                # TFactory hit the identical defect from the other side and fixed
-                # it the same way (TFactory#885: app=tfactory-portal-ui).
+                # Confirmed three times over: TFactory's portal-ui browser test
+                # took the portal it was testing offline and then reported it
+                # broken (TFactory#885); AIFactory's task Jobs did it to the
+                # aifactory API (AIFactory#1107); and factory-gitops'
+                # minio-create-bucket Job did it to the minio Service.
+                #
+                # This is the REFERENCE library the per-service consumers vendor,
+                # so the label belongs here rather than in each consumer — the
+                # same defect arriving a fourth time by way of a fresh vendoring
+                # is the failure mode worth spending a comment on.
                 #
                 # factory.io/service carries the association that `app` used to,
                 # so anything that legitimately wants "task pods of aifactory"
@@ -294,13 +312,12 @@ def _selftest() -> None:
         worktree_subpath="workspaces/x/worktrees/tasks/042-go-hello",
         nix_store_pvc="aifactory-nix-store",
         artifacts_uri="s3://factory-artifacts/aifactory/482/proj-abc/",
+        workspace_uri="s3://factory-artifacts/aifactory/482/proj-abc/workspace/workspace.tar.gz",
     )
     m = build_job_manifest(spec)
     name = m["metadata"]["name"]
     _require(m["kind"] == "Job", "kind must be Job")
-    _require(
-        m["spec"]["backoffLimit"] == 0, "backoffLimit must be 0 (no silent retries)"
-    )
+    _require(m["spec"]["backoffLimit"] == 0, "backoffLimit must be 0 (no silent retries)")
     _require(name.startswith("factory-aifactory-"), f"name prefix: {name}")
     _require(
         len(name) <= _DNS_LABEL_MAX and re.fullmatch(r"[a-z0-9-]+", name) is not None,
@@ -325,23 +342,30 @@ def _selftest() -> None:
         pod_labels["factory.io/kind"] == "task",
         "pod label factory.io/kind=task (NetworkPolicy selector, #812)",
     )
-    # #1107, asserted as the rule and not as one literal: NO pod label may equal
-    # the service name under a key a Service could select on, or the pod joins
-    # that Service and answers real traffic with connection refused. Written
-    # against spec.service rather than "aifactory" so it still holds for the
-    # tfactory/pfactory dispatches below.
-    _require(
-        pod_labels["app"] == "aifactory-task",
-        f"pod app label must NOT be the service name (#1107): {pod_labels['app']}",
-    )
-    _require(
-        spec.service not in {v for k, v in pod_labels.items() if k == "app"},
-        "no `app` label may equal the service name — the Service selects it",
-    )
-    _require(
-        pod_labels["factory.io/service"] == spec.service,
-        "factory.io/service keeps the association `app` used to carry (#1107)",
-    )
+    # A NON-SERVING pod must not be selectable as a Service backend (#1107).
+    # Asserted as the RULE rather than against one literal, so it still holds for
+    # the pfactory/tfactory dispatches and for any service added later: no `app`
+    # label may ever equal the service name, because that is what every Service
+    # selects.
+    for svc in ("aifactory", "pfactory", "tfactory"):
+        pod = build_job_manifest(
+            JobSpec(service=svc, job_id="s", commands=["true"], nix_develop=False)
+        )["spec"]["template"]["metadata"]["labels"]
+        _require(
+            pod["app"] != svc,
+            f"pod app label must not equal the service name (would join the "
+            f"{svc} Service and answer real traffic with connection refused): "
+            f"{pod['app']}",
+        )
+        _require(pod["app"] == f"{svc}-task", f"pod app label: {pod['app']}")
+        _require(
+            pod["factory.io/service"] == svc,
+            "factory.io/service keeps the association `app` used to carry",
+        )
+        _require(
+            pod["factory.io/kind"] == "task",
+            f"pod label factory.io/kind=task (NetworkPolicy selector, #812): {pod}",
+        )
     c = ps["containers"][0]
     _require(
         c["securityContext"]
@@ -355,14 +379,12 @@ def _selftest() -> None:
     _require(mount_paths == {"/work", "/nix/store"}, f"mounts: {mount_paths}")
     names = {e["name"] for e in c["env"]}
     _require(
-        {"JOB_ID", "CORRELATION_KEY", "ARTIFACTS_URI", "FACTORY_SERVICE"} <= names,
+        {"JOB_ID", "CORRELATION_KEY", "ARTIFACTS_URI", "WORKSPACE_URI", "FACTORY_SERVICE"} <= names,
         "env",
     )
     # No-store / no-worktree (PFactory light planning) still builds.
     bare = build_job_manifest(
-        JobSpec(
-            service="pfactory", job_id="s1", commands=["echo hi"], nix_develop=False
-        )
+        JobSpec(service="pfactory", job_id="s1", commands=["echo hi"], nix_develop=False)
     )
     bare_cmd = bare["spec"]["template"]["spec"]["containers"][0]["command"][2]
     _require(bare_cmd == "echo hi", "bare command (no nix wrap)")
