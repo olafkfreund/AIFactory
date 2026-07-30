@@ -389,10 +389,19 @@ def _try_smart_merge_inner(
     try:
         print(muted("  Analyzing changes with intent-aware merge..."))
 
-        # Capture worktree state in FileTimelineTracker before merge
+        # Capture worktree state in FileTimelineTracker before merge.
+        #
+        # #1089: --merge runs on the control plane, where a kubejob build's
+        # worktree is a clone left on the base branch. The manager owns branch
+        # discovery, so the ref is resolved once here and passed down rather
+        # than re-derived inside the timeline subsystem.
         try:
             timeline_tracker = FileTimelineTracker(project_dir)
-            timeline_tracker.capture_worktree_state(spec_name, worktree_path)
+            timeline_tracker.capture_worktree_state(
+                spec_name,
+                worktree_path,
+                work_ref=manager.discover_pushed_ref(spec_name),
+            )
             debug(MODULE, "Captured worktree state for timeline tracking")
         except Exception as e:
             debug_warning(MODULE, f"Could not capture worktree state: {e}")
