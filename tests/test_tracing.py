@@ -22,6 +22,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 from pathlib import Path
@@ -332,3 +333,105 @@ def test_event_bus_extract_traceparent_from_new_envelope():
     )
     tp = _extract_traceparent_from_raw(new_envelope)
     assert tp == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+
+# --------------------------------------------------------------------------
+# Factory#465 — the "enabled" line must be earned, and a rejection must not
+# become 12 log lines a minute forever.
+# --------------------------------------------------------------------------
+
+
+class _StubExporter:
+    """Stands in for OTLPSpanExporter. ``export`` is all the probe touches."""
+
+    def __init__(self, result):
+        self._result = result
+        self.calls = []
+
+    def export(self, spans):
+        self.calls.append(list(spans))
+        return self._result
+
+
+def test_startup_probe_logs_error_when_the_collector_rejects(caplog, monkeypatch):
+    """A rejected credential says NO SPANS WILL LAND, and names the scheme.
+
+    This is the whole of #465: the old code logged "OTel tracing enabled"
+    off the back of a constructor that never touched the network.
+    """
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer sekrit")
+    exporter = _StubExporter(SpanExportResult.FAILURE)
+    with caplog.at_level(logging.INFO):
+        tracing_module._verify_export_auth(
+            exporter, "http://collector:5080/api/default", "http/protobuf", "svc"
+        )
+
+    assert exporter.calls == [[]], "probe must cost one EMPTY export, not a real span"
+    text = caplog.text
+    assert "NO SPANS WILL LAND" in text
+    assert "Bearer" in text, "the scheme is the diagnosis"
+    assert "sekrit" not in text, "the credential must never reach the log"
+    assert "enabled" not in text
+
+
+def test_startup_probe_logs_enabled_when_the_collector_accepts(caplog):
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    exporter = _StubExporter(SpanExportResult.SUCCESS)
+    with caplog.at_level(logging.INFO):
+        tracing_module._verify_export_auth(
+            exporter, "http://collector:5080/api/default", "http/protobuf", "svc"
+        )
+    assert "OTel tracing enabled" in caplog.text
+    assert "startup export accepted" in caplog.text
+    assert "NO SPANS WILL LAND" not in caplog.text
+
+
+def test_startup_probe_never_raises_when_the_exporter_cannot_be_probed(caplog):
+    """An exporter that explodes on probe stays installed and is reported
+    UNVERIFIED — tracing must never take startup down with it."""
+
+    class Boom:
+        def export(self, spans):
+            raise RuntimeError("connection refused")
+
+    with caplog.at_level(logging.INFO):
+        tracing_module._verify_export_auth(Boom(), "http://x", "grpc", "svc")
+    assert "UNVERIFIED" in caplog.text
+
+
+def test_export_error_log_is_rate_limited():
+    """The 199-of-300-log-lines symptom: one line through, the rest counted."""
+    f = tracing_module._RateLimitFilter(interval=3600.0)
+
+    def rec():
+        return logging.LogRecord(
+            "otlp",
+            logging.ERROR,
+            __file__,
+            1,
+            "Failed to export span batch code: %d, reason: Unauthorized",
+            (401,),
+            None,
+        )
+
+    assert f.filter(rec()) is True, "the first failure is always reported"
+    for _ in range(50):
+        assert f.filter(rec()) is False
+
+    f._last = 0.0  # interval elapsed
+    passed = rec()
+    assert f.filter(passed) is True
+    assert "+50 identical messages suppressed" in passed.getMessage()
+    assert "401" in passed.getMessage(), "the summary keeps the original message"
+
+
+def test_auth_scheme_reports_the_scheme_and_never_the_secret(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "foo=bar,Authorization=Basic Zm9v")
+    assert tracing_module._auth_scheme() == "Basic"
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "x-api-key=abc")
+    assert tracing_module._auth_scheme() == "<no Authorization header>"
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS")
+    assert tracing_module._auth_scheme() == "<no Authorization header>"
