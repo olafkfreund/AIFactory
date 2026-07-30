@@ -26,6 +26,7 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write        # cosign keyless via GitHub OIDC (Factory#430)
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/aifactory
@@ -75,6 +76,34 @@ jobs:
             ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ----------------------------------------------------------------------
+      # Sign the image THIS workflow ships (Factory#430).
+      #
+      # release.yml already signed :vX.Y.Z, but nothing in the cluster runs a
+      # semver tag — ArgoCD is pinned to the :sha-<short> tag produced right
+      # above. So the Kyverno verify-factory-image-signatures policy reported
+      # `fail: unverified image` for 100% of running Pods while looking, on
+      # every artefact except the outcome, like a working control.
+      #
+      # Sign by DIGEST, not tag: cosign signatures are digest-keyed, so this one
+      # signature covers both :sha-<short> and :latest.
+      # ----------------------------------------------------------------------
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image (cosign keyless via Sigstore + GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Not decoration: without it a broken signing step fails open and we are
+      # back to an unverifiable image that looks shipped. This is the same
+      # assertion Kyverno makes at admission, run at build time.
+      - name: Verify signature (self-test)
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "^https://github\.com/${{ github.repository_owner }}/AIFactory/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
 
       - name: Checkout factory-gitops
         uses: actions/checkout@v4
