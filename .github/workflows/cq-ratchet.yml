@@ -119,6 +119,11 @@ jobs:
     # baseline at the pinned SHA (standards/.hub-sha). Per the standard the
     # vendored copies must stay byte-identical to the hub (Factory#154); local
     # tighten-only overrides live in the root ruff.toml, never in standards/.
+    #
+    # The compared set is ruff.toml, mypy.ini, .editorconfig and
+    # coding-standards.md (hub standards rule 5.3). The standard was previously
+    # not vendored anywhere in this repo, so a hub rule could say one thing
+    # while the service did another and no gate noticed - Factory#434.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,22 +133,25 @@ jobs:
         id: pin
         run: echo "sha=$(cat aifactory/standards/.hub-sha)" >> "$GITHUB_OUTPUT"
 
+      # No continue-on-error: an unreachable hub is a gate that cannot run, and
+      # per standards rule 4.7 that must fail rather than pass. This step used
+      # to be `continue-on-error: true` with the diff below guarded on
+      # `steps.hub.outcome == 'success'`, so a private repo, an expired token or
+      # a renamed hub would skip the diff and report SUCCESS from a job named
+      # blocking. If Factory becomes private, add a read token here - do not
+      # restore the soft-skip.
       - name: Check out hub standards at the pinned SHA
         uses: actions/checkout@v4
         with:
           repository: olafkfreund/Factory
           ref: ${{ steps.pin.outputs.sha }}
           path: factory-hub
-          # If Factory is private, a token with read access is needed here.
-        continue-on-error: true
-        id: hub
 
-      - name: Diff vendored configs against the pinned hub baseline
-        if: steps.hub.outcome == 'success'
+      - name: Diff vendored files against the pinned hub baseline
         run: |
-          set -e
-          # Vendored copies carry a header above the body; compare the rule body
-          # only by stripping leading comment/blank lines from both sides.
+          set -euo pipefail
+          # Configs carry a provenance header above the body, so compare the
+          # body only by stripping leading comment/blank lines from both sides.
           strip() { grep -vE '^[[:space:]]*([#;]|$)' "$1"; }
           for f in ruff.toml mypy.ini .editorconfig; do
             if ! diff <(strip "aifactory/standards/$f") <(strip "factory-hub/standards/$f"); then
@@ -152,8 +160,13 @@ jobs:
               exit 1
             fi
           done
-          echo "No drift: vendored configs match the pinned hub baseline."
-
-      - name: Hub unavailable (private repo / no token)
-        if: steps.hub.outcome != 'success'
-        run: echo "Hub checkout unavailable; skipping drift diff (configure a read token to enforce)."
+          # coding-standards.md is compared BYTE-EXACT and carries no header:
+          # strip() drops lines starting with '#', which in Markdown is every
+          # heading (58 of its 198 lines), so a stripped compare would be blind
+          # to every section title. Hub standards rule 5.1.
+          if ! diff "aifactory/standards/coding-standards.md" "factory-hub/standards/coding-standards.md"; then
+            echo "DRIFT: aifactory/standards/coding-standards.md diverged from the pinned hub baseline."
+            echo "The standard is vendored, not editable here. Change it in the hub, then re-vendor and bump standards/.hub-sha."
+            exit 1
+          fi
+          echo "No drift: vendored files match the pinned hub baseline."
