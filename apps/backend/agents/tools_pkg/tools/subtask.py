@@ -24,12 +24,29 @@ def _text(msg: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": msg}]}
 
 
+def _project_root(spec_dir: Path, project_dir: Path | None) -> Path:
+    """The repo the build is writing to. Callers pass it; when they do not, derive
+    it from the ``<root>/.aifactory/specs/<spec>`` layout. Falling back to
+    ``spec_dir`` is safe — the #1111 check finds no test files and stays inert."""
+    if project_dir is not None:
+        return project_dir
+    parents = spec_dir.resolve().parents
+    if len(parents) >= 3 and parents[1].name == ".aifactory":
+        return parents[2]
+    return spec_dir
+
+
 async def apply_subtask_status_update(
-    spec_dir: Path, subtask_id: str, status: str, notes: str = ""
+    spec_dir: Path,
+    subtask_id: str,
+    status: str,
+    notes: str = "",
+    project_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Update a subtask's status in implementation_plan.json, enforcing the #851
-    honest-verification gate. Plain (SDK-free) so it is directly testable; the
-    ``update_subtask_status`` tool is a thin wrapper resolving the spec dir.
+    honest-verification gate and the #1111 deliverable-coverage gate. Plain
+    (SDK-free) so it is directly testable; the ``update_subtask_status`` tool is
+    a thin wrapper resolving the spec and project dirs.
     """
     valid_statuses = ["pending", "in_progress", "completed", "failed"]
     if status not in valid_statuses:
@@ -75,10 +92,24 @@ async def apply_subtask_status_update(
         # leaves implementation_plan.json untouched.
         if status == "completed":
             from agents.test_evidence import (  # noqa: PLC0415
+                deliverable_evidence_gap,
                 gate_enabled,
                 is_verification_subtask,
                 read_test_evidence,
             )
+
+            # #1111: "a test ran" is not "a test ran against the deliverable".
+            # A subtask that promises an HTTP path may not be completed when the
+            # only tests naming that path assert against an app built inside the
+            # test file — genuinely green, and blind to a route nobody
+            # registered. Inert unless the subtask names a path and a Python
+            # test mentions it, so pure-function work is untouched.
+            if gate_enabled():
+                gap = deliverable_evidence_gap(
+                    target_subtask or {}, _project_root(spec_dir, project_dir)
+                )
+                if gap:
+                    return _text(gap)
 
             if gate_enabled() and is_verification_subtask(target_subtask or {}):
                 ev = read_test_evidence(spec_dir)
@@ -148,6 +179,12 @@ def create_subtask_tools(
         fixed: Path = spec_dir
         get_spec_dir = lambda: fixed  # noqa: E731 — tiny fixed-path accessor
 
+    if callable(project_dir):
+        get_project_dir: Callable[[], Path] = project_dir
+    else:
+        fixed_project: Path = project_dir
+        get_project_dir = lambda: fixed_project  # noqa: E731 — fixed-path accessor
+
     tools = []
 
     # -------------------------------------------------------------------------
@@ -160,12 +197,14 @@ def create_subtask_tools(
     )
     async def update_subtask_status(args: dict[str, Any]) -> dict[str, Any]:
         """Update subtask status in the implementation plan (thin wrapper over
-        :func:`apply_subtask_status_update`, which holds the logic + #851 gate)."""
+        :func:`apply_subtask_status_update`, which holds the logic + the #851
+        and #1111 gates)."""
         return await apply_subtask_status_update(
             get_spec_dir(),
             args["subtask_id"],
             args["status"],
             args.get("notes", ""),
+            get_project_dir(),
         )
 
     tools.append(update_subtask_status)
