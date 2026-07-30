@@ -12,11 +12,18 @@ wraps every subclass's ``query()``. They are written against the wire
 against the wrapper, so a regression that removes the chokepoint fails
 them regardless of how the scrub is re-implemented.
 
+A second family exists that #1128 did not name: ``agents/coder.py`` and
+``agents/planner.py`` call ``core.client.create_client()`` directly
+whenever the model is Claude (the fleet default), so the highest-volume
+coding path never enters ``providers/`` and a BaseLLMProvider-only hook
+would still have leaked it. ``TestSdkClientFamily`` covers that seam.
+
 Coverage:
 - TestAdapterInventory      -- every registered adapter is wrapped.
 - TestHttpAdapters          -- agentic HTTP payload carries no raw PII.
 - TestCliAdapters           -- CLI argv carries no raw PII.
 - TestClaudeAdapter         -- prompt forwarded to the SDK is scrubbed.
+- TestSdkClientFamily       -- create_client / create_simple_client scrub.
 - TestFailClosed            -- a broken redactor refuses to send.
 - TestKillSwitch            -- the one escape hatch still works.
 - TestCodeIsNotCorrupted    -- code identifiers survive the scrub.
@@ -233,6 +240,99 @@ class TestClaudeAdapter:
 
         assert forwarded, "ClaudeProvider never forwarded the prompt"
         _assert_scrubbed(forwarded[0])
+
+
+# ---------------------------------------------------------------------------
+# 4b. The Claude Agent SDK family -- never enters providers/ at all
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSDKClient:
+    """Stand-in for ClaudeSDKClient; records what would go over the wire."""
+
+    def __init__(self, **_kwargs: Any) -> None:
+        self.sent: list[str] = []
+
+    async def query(self, prompt: str) -> None:
+        self.sent.append(prompt)
+
+    async def __aenter__(self) -> _RecordingSDKClient:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+
+class TestSdkClientFamily:
+    """agents/coder.py takes create_client() directly for Claude models.
+
+    That path never constructs a BaseLLMProvider, so the provider hook
+    alone leaves the dominant coding path unscrubbed.
+    """
+
+    def test_create_client_scrubs_the_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from core import client as core_client
+
+        recorded = _RecordingSDKClient()
+        monkeypatch.setattr(
+            core_client, "ClaudeSDKClient", lambda **_kw: recorded, raising=False
+        )
+
+        wrapped = core_client.create_client(
+            project_dir=tmp_path,
+            spec_dir=tmp_path,
+            model="claude-opus-4-7",
+            agent_type="coder",
+        )
+        asyncio.run(wrapped.query(PROMPT))
+
+        assert recorded.sent, "the SDK client never received a prompt"
+        _assert_scrubbed(recorded.sent[0])
+
+    def test_create_simple_client_scrubs_the_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from core import simple_client as core_simple_client
+
+        recorded = _RecordingSDKClient()
+        monkeypatch.setattr(
+            core_simple_client,
+            "ClaudeSDKClient",
+            lambda **_kw: recorded,
+            raising=False,
+        )
+
+        wrapped = core_simple_client.create_simple_client(
+            model="claude-haiku-4-5",
+            agent_type="commit_message",
+            cwd=tmp_path,
+        )
+        asyncio.run(wrapped.query(PROMPT))
+
+        assert recorded.sent, "the SDK client never received a prompt"
+        _assert_scrubbed(recorded.sent[0])
+
+    def test_the_proxy_is_otherwise_transparent(self) -> None:
+        """Everything but query() must pass straight through."""
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        class _Inner:
+            marker = "inner-attribute"
+
+            def receive_response(self) -> str:
+                return "stream"
+
+        wrapped = wrap_client_outbound_scrub(_Inner())
+        assert wrapped.marker == "inner-attribute"
+        assert wrapped.receive_response() == "stream"
+
+    def test_wrapping_twice_is_a_no_op(self) -> None:
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        once = wrap_client_outbound_scrub(_RecordingSDKClient())
+        assert wrap_client_outbound_scrub(once) is once
 
 
 # ---------------------------------------------------------------------------

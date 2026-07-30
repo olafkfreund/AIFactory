@@ -115,15 +115,24 @@ class ClaudeAnalysisClient:
             f"Output your analysis as valid JSON only."
         )
 
-        return ClaudeSDKClient(
-            options=ClaudeAgentOptions(
-                model=resolve_model_id(self.DEFAULT_MODEL),  # Resolve via API Profile
-                system_prompt=system_prompt,
-                allowed_tools=self.ALLOWED_TOOLS,
-                max_turns=self.MAX_TURNS,
-                cwd=str(self.project_dir.resolve()),
-                settings=str(settings_file.resolve()),
-                permission_mode="bypassPermissions",  # Bypass prompts for headless execution
+        # #1128: built directly, so it does not inherit the outbound PII
+        # scrub from create_client() or BaseLLMProvider.
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        return wrap_client_outbound_scrub(
+            ClaudeSDKClient(
+                options=ClaudeAgentOptions(
+                    model=resolve_model_id(
+                        self.DEFAULT_MODEL
+                    ),  # Resolve via API Profile
+                    system_prompt=system_prompt,
+                    allowed_tools=self.ALLOWED_TOOLS,
+                    max_turns=self.MAX_TURNS,
+                    cwd=str(self.project_dir.resolve()),
+                    settings=str(settings_file.resolve()),
+                    # Bypass prompts for headless execution
+                    permission_mode="bypassPermissions",
+                )
             )
         )
 

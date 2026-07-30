@@ -61,8 +61,6 @@ Usage::
 from __future__ import annotations
 
 import functools
-import logging
-import os
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
@@ -74,9 +72,6 @@ from .types import (
     ToolUseBlock,
     UserMessage,
 )
-
-logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Outbound PII scrub (#320 / #1010 / #1128)
@@ -100,11 +95,13 @@ def _env_scrub_outbound_default() -> bool:
     ``false`` / ``0`` / ``no`` / ``off`` to disable outbound scrubbing
     and restore the pre-#320 behaviour (audit-row redaction only). Any
     other value — including unset — leaves scrubbing ON.
+
+    Thin alias over ``core.outbound_scrub`` so the adapters and the
+    Claude-SDK call sites read the same switch.
     """
-    raw = os.environ.get("LITELLM_AUDIT_SCRUB_OUTBOUND", "").strip().lower()
-    # ponytail: kill-switch semantics — only an explicit falsey value
-    # disables; unset means default-on.
-    return raw not in ("false", "0", "no", "off")
+    from core.outbound_scrub import scrub_outbound_enabled  # noqa: PLC0415
+
+    return scrub_outbound_enabled()
 
 
 # ---------------------------------------------------------------------------
@@ -189,41 +186,28 @@ class BaseLLMProvider(ABC):
         be broad and would corrupt code prompts). Cheap (regex
         compilation is microseconds); no caching keeps the operator
         reload path simple.
-        """
-        from services.llm_pii_redactor import PiiRedactor  # noqa: PLC0415
 
-        return PiiRedactor(scrub_outbound=True)
+        Kept as a method (rather than calling the module function
+        directly) because it is the seam the #1010 fail-closed tests
+        monkeypatch on a concrete provider class.
+        """
+        from core.outbound_scrub import build_outbound_redactor  # noqa: PLC0415
+
+        return build_outbound_redactor()
 
     def _scrub_outbound_prompt(self, prompt: str) -> str:
         """Redact built-in PII from a prompt that is about to leave the process.
 
-        Fail-CLOSED (#320): the scrub is enabled, so a missing or
-        crashing redactor must NOT silently fall through to sending the
-        raw prompt — that silent fail-open is exactly the PII-leak gap
-        this guard closes. Log ERROR and abort the call. Operators who
-        want prompts sent unredacted set the kill-switch
-        ``LITELLM_AUDIT_SCRUB_OUTBOUND=false``.
+        Fail-CLOSED (#320) — see ``core.outbound_scrub``, which holds the
+        single implementation shared with the Claude-SDK call sites.
         """
-        try:
-            redactor = self._build_outbound_redactor()
-            scrubbed: str = redactor.redact_outbound(prompt)
-        except Exception as exc:
-            logger.error(
-                "%s: outbound PII scrub is ENABLED but the redactor is "
-                "unavailable (%s); refusing to send the prompt unredacted. "
-                "Set LITELLM_AUDIT_SCRUB_OUTBOUND=false to disable outbound "
-                "scrubbing.",
-                type(self).__name__,
-                exc,
-                exc_info=True,
-            )
-            raise RuntimeError(
-                "Outbound PII scrub is enabled but the redactor is "
-                "unavailable; refusing to send an unredacted prompt to "
-                "the LLM provider (set LITELLM_AUDIT_SCRUB_OUTBOUND=false "
-                "to disable outbound scrubbing)."
-            ) from exc
-        return scrubbed
+        from core.outbound_scrub import scrub_outbound_prompt  # noqa: PLC0415
+
+        return scrub_outbound_prompt(
+            prompt,
+            owner=type(self).__name__,
+            build_redactor=self._build_outbound_redactor,
+        )
 
     @abstractmethod
     async def query(self, prompt: str) -> None:

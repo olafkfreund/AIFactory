@@ -193,6 +193,11 @@ Current question: {message}"""
                 permission_mode="bypassPermissions",  # Bypass prompts for headless execution
             )
         )
+        # #1128: this runner builds its own SDK client, so it does not
+        # inherit the scrub from create_client() or BaseLLMProvider.
+        from core.outbound_scrub import wrap_client_outbound_scrub
+
+        client = wrap_client_outbound_scrub(client)
 
         # Use async context manager pattern
         async with client:

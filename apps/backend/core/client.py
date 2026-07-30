@@ -1136,4 +1136,13 @@ def create_client(
     enforcement.enforce_allowlist()
 
     bare_client = ClaudeSDKClient(options=ClaudeAgentOptions(**options_kwargs))
-    return wrap_client_if_enforced(bare_client, enforcement)
+
+    # #1128 outbound PII scrub. The provider adapters get this from
+    # BaseLLMProvider, but agents/coder.py and agents/planner.py call
+    # create_client() directly whenever the model is Claude (the fleet
+    # default), so the highest-volume coding path never touches
+    # providers/ at all. Applied INNERMOST so the enforcement wrapper
+    # still audits the raw prompt while the wire carries the scrubbed one.
+    from core.outbound_scrub import wrap_client_outbound_scrub
+
+    return wrap_client_if_enforced(wrap_client_outbound_scrub(bare_client), enforcement)

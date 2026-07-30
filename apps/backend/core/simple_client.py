@@ -122,4 +122,7 @@ def create_simple_client(
         allowed_models=_effective_allowed_models,
     )
     enforcement.enforce_allowlist()
-    return wrap_client_if_enforced(bare_client, enforcement)
+    # #1128 outbound PII scrub, innermost — see core.client.create_client.
+    from core.outbound_scrub import wrap_client_outbound_scrub
+
+    return wrap_client_if_enforced(wrap_client_outbound_scrub(bare_client), enforcement)
