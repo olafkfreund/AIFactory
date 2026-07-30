@@ -60,6 +60,7 @@ Usage::
 
 from __future__ import annotations
 
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
@@ -71,6 +72,38 @@ from .types import (
     ToolUseBlock,
     UserMessage,
 )
+
+# ---------------------------------------------------------------------------
+# Outbound PII scrub (#320 / #1010 / #1128)
+# ---------------------------------------------------------------------------
+
+
+def _env_scrub_outbound_default() -> bool:
+    """Resolve the deployment default for the outbound scrub (#320).
+
+    Outbound PII scrubbing defaults ON. The built-in redactor set is
+    deliberately high-precision — hyphenated SSN, email, US phone, and
+    Luhn-validated credit cards — and does NOT touch bare code
+    identifiers, so it is safe to run on prompts that legitimately
+    carry source code (this is a code factory; over-broad redaction
+    would corrupt prompts and wreck output quality). Operator-supplied
+    ``extraRedactionPatterns`` are NOT applied outbound (they may be
+    broad); only the built-in safe set is scrubbed before egress — see
+    ``BaseLLMProvider._build_outbound_redactor``.
+
+    ``LITELLM_AUDIT_SCRUB_OUTBOUND`` is the ONE kill-switch: set it to
+    ``false`` / ``0`` / ``no`` / ``off`` to disable outbound scrubbing
+    and restore the pre-#320 behaviour (audit-row redaction only). Any
+    other value — including unset — leaves scrubbing ON.
+
+    Thin alias over ``core.outbound_scrub`` so the adapters and the
+    Claude-SDK call sites read the same switch.
+    """
+    from core.outbound_scrub import scrub_outbound_enabled  # noqa: PLC0415
+
+    enabled: bool = scrub_outbound_enabled()
+    return enabled
+
 
 # ---------------------------------------------------------------------------
 # Abstract base class
@@ -88,7 +121,95 @@ class BaseLLMProvider(ABC):
     - ``providers.antigravity``     — Antigravity CLI text-only
     - ``providers.antigravity_agentic`` — Antigravity CLI ``--yolo`` (agentic)
     - ``providers.ollama``          — local Ollama / OpenAI-compatible
+
+    Outbound PII scrub (#1128): ``__init_subclass__`` wraps every
+    subclass's ``query()`` so no adapter can send an unscrubbed prompt.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Wrap the subclass's ``query()`` with the outbound PII scrub (#1128).
+
+        #1010 landed the scrub inside ``OpenAICompatibleProvider`` only,
+        so the agentic path and every CLI adapter (claude, codex,
+        antigravity, copilot, opencode, ollama) sent prompts verbatim —
+        an audit control that reads as satisfied while covering a
+        minority of calls.
+
+        ``query()`` is the ONE place a prompt enters any adapter: HTTP
+        adapters stash it and build the payload later, CLI adapters
+        stash it and build argv later, ``ClaudeProvider`` forwards it
+        straight to the SDK. Wrapping it here therefore covers every
+        adapter that exists AND every adapter added later, with no
+        per-adapter opt-in that a new adapter can forget.
+
+        The wrapper records, on the instance:
+
+        - ``_outbound_prompt_raw`` — the prompt as the caller passed it,
+          so audit rows can still show what the user typed.
+        - ``_outbound_prompt_scrubbed`` — True only when redaction
+          actually changed the text.
+
+        An adapter may pin the behaviour by setting ``_scrub_outbound``
+        in ``__init__`` (``OpenAICompatibleProvider`` does, for its
+        ``scrub_outbound=`` kwarg); otherwise the deployment default
+        applies.
+        """
+        super().__init_subclass__(**kwargs)
+
+        query = cls.__dict__.get("query")
+        if query is None or getattr(query, "__outbound_scrub__", False):
+            return
+
+        @functools.wraps(query)
+        async def _scrubbing_query(
+            self: Any, prompt: str, *args: Any, **kwargs: Any
+        ) -> Any:
+            enabled = getattr(self, "_scrub_outbound", None)
+            if enabled is None:
+                enabled = _env_scrub_outbound_default()
+            self._outbound_prompt_raw = prompt
+            outbound = self._scrub_outbound_prompt(prompt) if enabled else prompt
+            self._outbound_prompt_scrubbed = outbound != prompt
+            return await query(self, outbound, *args, **kwargs)
+
+        _scrubbing_query.__outbound_scrub__ = True  # type: ignore[attr-defined]
+        cls.query = _scrubbing_query  # type: ignore[method-assign]
+
+    def _build_outbound_redactor(self) -> Any:
+        """Construct a ``PiiRedactor`` for the pre-send scrub (#210, #320).
+
+        Lazy import, mirroring the audit hook. Unlike the audit hook, an
+        ImportError here is NOT survivable: ``_scrub_outbound_prompt``
+        turns it into a refusal to send (#320 fail-closed), because a
+        CLI / agent context without the redactor on PYTHONPATH would
+        otherwise ship the raw prompt. Built-in patterns only —
+        operator ``extraRedactionPatterns`` stay audit-scoped (they can
+        be broad and would corrupt code prompts). Cheap (regex
+        compilation is microseconds); no caching keeps the operator
+        reload path simple.
+
+        Kept as a method (rather than calling the module function
+        directly) because it is the seam the #1010 fail-closed tests
+        monkeypatch on a concrete provider class.
+        """
+        from core.outbound_scrub import build_outbound_redactor  # noqa: PLC0415
+
+        return build_outbound_redactor()
+
+    def _scrub_outbound_prompt(self, prompt: str) -> str:
+        """Redact built-in PII from a prompt that is about to leave the process.
+
+        Fail-CLOSED (#320) — see ``core.outbound_scrub``, which holds the
+        single implementation shared with the Claude-SDK call sites.
+        """
+        from core.outbound_scrub import scrub_outbound_prompt  # noqa: PLC0415
+
+        scrubbed: str = scrub_outbound_prompt(
+            prompt,
+            owner=type(self).__name__,
+            build_redactor=self._build_outbound_redactor,
+        )
+        return scrubbed
 
     @abstractmethod
     async def query(self, prompt: str) -> None:

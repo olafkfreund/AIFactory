@@ -27,6 +27,7 @@ from agents.tools_pkg import get_agent_config, get_default_thinking_level
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from core.auth import get_sdk_env_vars, require_auth_token
 from core.model_config import DEFAULT_UTILITY_MODEL
+from core.outbound_scrub import wrap_client_outbound_scrub
 from phase_config import get_thinking_budget
 
 
@@ -122,4 +123,5 @@ def create_simple_client(
         allowed_models=_effective_allowed_models,
     )
     enforcement.enforce_allowlist()
-    return wrap_client_if_enforced(bare_client, enforcement)
+    # #1128 outbound PII scrub, innermost — see core.client.create_client.
+    return wrap_client_if_enforced(wrap_client_outbound_scrub(bare_client), enforcement)
