@@ -619,3 +619,74 @@ def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
         )
     finally:
         loop.close()
+
+
+def test_outbound_scrub_fails_closed_when_a_pattern_raises(monkeypatch):
+    """#320: a redaction PASS that blows up must also fail closed.
+
+    ``PiiRedactor.redact()`` is deliberately fail-open — for the audit
+    row, a partially redacted row beats no row. On the outbound path
+    that same contract silently puts the raw prompt on the wire to a
+    third-party LLM. ``redact_outbound`` therefore runs strict, and the
+    provider turns the raise into a refusal to send. Without the strict
+    flag this test sees the un-redacted SSN in the HTTP payload.
+    """
+    monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LITELLM_AUDIT_SCRUB_OUTBOUND", raising=False)
+
+    import re
+
+    from providers.openai_compatible import OpenAICompatibleProvider
+    from services import llm_pii_redactor
+
+    class _ExplodingPattern:
+        pattern = "<exploding>"
+
+        def sub(self, *_args, **_kwargs):
+            raise re.error("simulated pathological backtrack")
+
+    monkeypatch.setattr(
+        llm_pii_redactor,
+        "_BUILTIN_PATTERNS",
+        [(_ExplodingPattern(), "[REDACTED]")],
+    )
+
+    captured: dict[str, dict] = {}
+
+    def _fake_http_post(self, url, payload):
+        captured["payload"] = payload
+        return {"choices": [{"message": {"role": "assistant", "content": "ack"}}]}
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "_http_post", _fake_http_post)
+
+    async def _noop_audit(self, **_kwargs):
+        return None
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "_write_audit", _noop_audit)
+
+    import asyncio
+
+    async def _run():
+        provider = OpenAICompatibleProvider(
+            model="gpt-4o-mini",
+            base_url="http://fake.invalid",
+            api_key="sk-test",
+        )
+        assert provider._scrub_outbound is True
+        await provider.query("SSN 123-45-6789")
+        async for _ in provider.receive_response():
+            pass
+
+    loop = asyncio.new_event_loop()
+    try:
+        raised = False
+        try:
+            loop.run_until_complete(_run())
+        except RuntimeError:
+            raised = True
+        assert raised, "a failed redaction pass must fail closed, not send raw"
+        assert "payload" not in captured, (
+            "no HTTP call may carry the prompt when a redaction pass failed"
+        )
+    finally:
+        loop.close()

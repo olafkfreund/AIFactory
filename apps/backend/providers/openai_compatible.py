@@ -395,14 +395,16 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
                 )
 
     def _build_outbound_redactor(self) -> Any:
-        """Construct a PiiRedactor for the pre-send scrub (v1.2 #210).
+        """Construct a PiiRedactor for the pre-send scrub (#210, #320).
 
-        Mirrors the audit-hook lazy import so CLI / agent contexts that
-        don't have the redactor on PYTHONPATH still get a clear
-        WARNING + raw-prompt fallback rather than a hard ImportError.
-        Cheap (regex compilation is microseconds); no caching keeps the
-        operator extra-pattern reload path simple — same posture as
-        the audit hook.
+        Lazy import, mirroring the audit hook. Unlike the audit hook,
+        an ImportError here is NOT survivable: the caller catches it
+        and refuses to send (#320 fail-closed), because a CLI / agent
+        context without the redactor on PYTHONPATH would otherwise ship
+        the raw prompt. Built-in patterns only — operator
+        ``extraRedactionPatterns`` stay audit-scoped (they can be broad
+        and would corrupt code prompts). Cheap (regex compilation is
+        microseconds); no caching keeps the operator reload path simple.
         """
         from services.llm_pii_redactor import PiiRedactor
 
