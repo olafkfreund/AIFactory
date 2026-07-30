@@ -59,6 +59,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -245,6 +246,12 @@ _METHOD_PATH = re.compile(
     re.IGNORECASE,
 )
 _URL_PATH = re.compile(r"https?://[^\s\"'`\\]*?(/[\w\-./{}]*)")
+# Same shape, restricted to a loopback host: the service being built, never a
+# link to somebody's documentation. Used by the #1123 wave check, which asserts
+# against a real app and so cannot afford ``https://docs.example/latest/``.
+_LOCAL_URL_PATH = re.compile(
+    r"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?(/[\w\-./{}]*)"
+)
 _BARE_PATH = re.compile(r"(?<![\w./])(/(?:api|v\d)/[\w\-./{}]*)", re.IGNORECASE)
 
 # Modules a service is actually SERVED from. A test importing one of these is
@@ -296,16 +303,22 @@ _MAX_TEST_FILES = 500
 _MAX_TEST_BYTES = 400_000
 
 
-def http_paths(subtask: dict[str, Any]) -> list[str]:
+def http_paths(subtask: dict[str, Any], *, local_urls_only: bool = False) -> list[str]:
     """HTTP paths this subtask promises to deliver, from anywhere in its record.
 
     Serialising the whole subtask is deliberate: description, acceptance
     criteria and the planner's ``verification`` block all carry the path, and
     which one is populated varies by plan shape.
+
+    ``local_urls_only`` narrows the URL shape to loopback hosts. The per-subtask
+    gate leans permissive because over-extraction only leaves it inert; the
+    wave-level route check (#1123) asserts each path against a real running
+    application, where a stray documentation link would be a false failure.
     """
     blob = json.dumps(subtask, default=str)
     found: list[str] = []
-    for pattern in (_METHOD_PATH, _URL_PATH, _BARE_PATH):
+    url_pattern = _LOCAL_URL_PATH if local_urls_only else _URL_PATH
+    for pattern in (_METHOD_PATH, url_pattern, _BARE_PATH):
         for raw in pattern.findall(blob):
             path = raw.rstrip("/.,;:)\"'").strip()
             if len(path) > 1 and path not in found:
@@ -313,16 +326,30 @@ def http_paths(subtask: dict[str, Any]) -> list[str]:
     return found
 
 
+def app_entrypoints(text: str) -> list[tuple[str, str]]:
+    """``(module, name)`` pairs where ``text`` imports an application object from
+    an entrypoint module — ``from app.main import app`` -> ``("app.main", "app")``.
+
+    :func:`imports_app_entrypoint` is this same discovery reduced to a boolean;
+    the #1123 route check needs the pair itself, because it imports the thing for
+    real. One engine, so the static gate and the wave check can never disagree
+    about what counts as the shipped application.
+    """
+    found: list[tuple[str, str]] = []
+    for module, names in _IMPORT_FROM.findall(text):
+        if module.rsplit(".", 1)[-1] not in _ENTRYPOINT_MODULES:
+            continue
+        for part in names.replace("(", "").replace(")", "").split(","):
+            name = part.strip().split(" as ")[0].strip()
+            if name in _APP_NAMES and (module, name) not in found:
+                found.append((module, name))
+    return found
+
+
 def imports_app_entrypoint(text: str) -> bool:
     """True when ``text`` imports the application object from an entrypoint
     module (``from app.main import app``, ``import server``, …)."""
-    for module, names in _IMPORT_FROM.findall(text):
-        if module.rsplit(".", 1)[-1] in _ENTRYPOINT_MODULES and any(
-            part.strip().split(" as ")[0].strip() in _APP_NAMES
-            for part in names.replace("(", "").replace(")", "").split(",")
-        ):
-            return True
-    return any(
+    return bool(app_entrypoints(text)) or any(
         module.rsplit(".", 1)[-1] in _ENTRYPOINT_MODULES
         for module in _IMPORT_PLAIN.findall(text)
     )
@@ -378,6 +405,28 @@ def _with_conftests(path: Path, project_dir: Path) -> str:
         if parent in (project_dir, parent.parent):
             break
     return "\n".join(chunks)
+
+
+def discover_app_entrypoint(project_dir: Path | str) -> str | None:
+    """``"module:name"`` of the application THIS repo's own tests import, if any.
+
+    Grounded in the tree rather than guessed: a test (or its conftest) that says
+    ``from app.main import app`` is telling us where the shipped application
+    lives, in that repo's own words. Returns the most-imported entrypoint, or
+    ``None`` when no test names one — in which case the #1123 route check stays
+    inert rather than guessing an import that would fail for reasons that say
+    nothing about the build.
+    """
+    root = Path(project_dir)
+    counts: Counter[tuple[str, str]] = Counter()
+    for path in _python_test_files(root):
+        counts.update(set(app_entrypoints(_with_conftests(path, root))))
+    if not counts:
+        return None
+    # Sort by frequency then lexically, so the choice is stable across
+    # filesystems rather than dependent on os.walk order.
+    module, name = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    return f"{module}:{name}"
 
 
 def deliverable_evidence_gap(
@@ -493,15 +542,31 @@ if __name__ == "__main__":  # pragma: no cover - runnable self-check
     assert not exercises_shipped_app(_HOLLOW)
     assert exercises_shipped_app(_HONEST)
 
+    # #1123 entrypoint discovery — the pair, and the boolean it still backs
+    assert app_entrypoints(_HONEST) == [("app.main", "app")]
+    assert app_entrypoints(_HOLLOW) == []
+    assert imports_app_entrypoint(_HONEST)
+    assert not imports_app_entrypoint(_HOLLOW)
+    assert imports_app_entrypoint("import server\n")  # plain-import branch
+
+    # #1123 local-URL narrowing: a doc link is not a promise to serve /latest/
+    _docs = {"description": "see https://docs.example.com/latest/ for rounding"}
+    assert http_paths(_docs) == ["/latest"]
+    assert http_paths(_docs, local_urls_only=True) == []
+    _local = {"verification": {"url": "http://localhost:5000/api/x"}}
+    assert http_paths(_local, local_urls_only=True) == ["/api/x"]
+
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         (root / "tests").mkdir()
         st = {"id": "1.1", "description": "Add POST /api/quote endpoint"}
         (root / "tests" / "test_vat_quote.py").write_text(_HOLLOW)
         assert deliverable_evidence_gap(st, root)  # C2's shape is refused
+        assert discover_app_entrypoint(root) is None  # nothing names an entrypoint
         (root / "tests" / "test_api.py").write_text(_HONEST)
         assert deliverable_evidence_gap(st, root) is None  # one honest file frees it
         # a subtask with no HTTP path is never judged
         assert deliverable_evidence_gap({"description": "Add slugify()"}, root) is None
+        assert discover_app_entrypoint(root) == "app.main:app"
 
     print("test_evidence self-check passed")  # noqa: T201

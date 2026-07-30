@@ -1264,6 +1264,18 @@ async def _run_trailing_gates_if_build_complete(
                 print_status(f"Nix env materialize skipped: {exc}", "info")
 
         gates = detect_gates(gate_dir)
+        # #1123: the only point in a build where the tree is the tree that ships
+        # — every wave merged, nothing left pending. Assert the paths the plan
+        # promised actually resolve on the service's real entrypoint. #1111's
+        # per-subtask gate cannot see this: it judges each worker's own worktree,
+        # never the merge, so a router written by one worker and never registered
+        # by another passes every subtask and 404s in production.
+        from .route_wiring import route_wiring_gate
+
+        route_gate = route_wiring_gate(plan_path, gate_dir)
+        if route_gate is not None:
+            gates.append(route_gate)
+
         if not gates:
             # A skipped gate must be VISIBLE, never silently treated as green. (#597)
             done_marker.write_text(
