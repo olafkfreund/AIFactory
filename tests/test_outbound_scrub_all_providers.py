@@ -104,8 +104,7 @@ class TestAdapterInventory:
             if not getattr(cls.query, "__outbound_scrub__", False)
         ]
         assert not unwrapped, (
-            "these adapters send prompts without the outbound PII scrub: "
-            f"{unwrapped}"
+            f"these adapters send prompts without the outbound PII scrub: {unwrapped}"
         )
 
     def test_the_inventory_is_not_trivially_empty(self) -> None:
@@ -134,9 +133,7 @@ class TestHttpAdapters:
             captured.append(payload)
             return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
 
-        monkeypatch.setattr(
-            OpenAICompatibleAgenticProvider, "_http_post", _fake_post
-        )
+        monkeypatch.setattr(OpenAICompatibleAgenticProvider, "_http_post", _fake_post)
 
         async def _go() -> None:
             provider = OpenAICompatibleAgenticProvider(
@@ -263,6 +260,17 @@ class _RecordingSDKClient:
         return None
 
 
+def _stub_sdk_auth(monkeypatch: pytest.MonkeyPatch, module: Any) -> None:
+    """Neutralise the OAuth lookup both client factories perform.
+
+    CI has no Claude token, and this suite is about what leaves the
+    process, not about auth. A placeholder string, never a real
+    credential, and it never leaves the test.
+    """
+    monkeypatch.setattr(module, "require_auth_token", lambda: "not-a-real-token")
+    monkeypatch.setattr(module, "get_sdk_env_vars", dict)
+
+
 class TestSdkClientFamily:
     """agents/coder.py takes create_client() directly for Claude models.
 
@@ -275,6 +283,7 @@ class TestSdkClientFamily:
     ) -> None:
         from core import client as core_client
 
+        _stub_sdk_auth(monkeypatch, core_client)
         recorded = _RecordingSDKClient()
         monkeypatch.setattr(
             core_client, "ClaudeSDKClient", lambda **_kw: recorded, raising=False
@@ -296,6 +305,7 @@ class TestSdkClientFamily:
     ) -> None:
         from core import simple_client as core_simple_client
 
+        _stub_sdk_auth(monkeypatch, core_simple_client)
         recorded = _RecordingSDKClient()
         monkeypatch.setattr(
             core_simple_client,
