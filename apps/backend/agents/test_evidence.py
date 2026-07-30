@@ -342,18 +342,21 @@ def exercises_shipped_app(text: str) -> bool:
 
 
 def _python_test_files(project_dir: Path | str) -> list[Path]:
-    """Python test modules under ``project_dir``, bounded so the gate stays cheap."""
+    """Python test modules under ``project_dir``, bounded so the gate stays cheap.
+
+    ``os.walk`` rather than ``rglob`` so ``node_modules``/``.venv`` are pruned
+    before they are descended — this runs on every subtask completion.
+    """
     out: list[Path] = []
-    try:
-        for path in Path(project_dir).rglob("*.py"):
-            if len(out) >= _MAX_TEST_FILES:
-                break
-            if any(part in _SKIP_DIRS for part in path.parts):
-                continue
-            if path.name.startswith("test_") or path.name.endswith("_test.py"):
-                out.append(path)
-    except OSError:
-        pass
+    for dirpath, dirnames, filenames in os.walk(project_dir):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for name in filenames:
+            if name.startswith("test_") or name.endswith("_test.py"):
+                if not name.endswith(".py"):
+                    continue
+                out.append(Path(dirpath) / name)
+                if len(out) >= _MAX_TEST_FILES:
+                    return out
     return out
 
 
