@@ -47,6 +47,11 @@ class Gate:
 
     name: str  # e.g. "mypy", "pytest"
     command: list[str]  # argv, e.g. ["mypy", "--strict", "."]
+    # Exit code by which this gate reports "I could not determine anything".
+    # Reported as *skipped*, never as *passed*, so a check that never really ran
+    # reads differently from one that ran clean — otherwise a dead lane is
+    # quieter than a failing one (#1123). None = no such code.
+    skip_code: int | None = None
 
 
 @dataclass
@@ -336,11 +341,15 @@ async def run_gates(
     results: list[GateResult] = []
     for gate in gates:
         exit_code, output = await asyncio.to_thread(run, gate.command, project_dir)
-        if exit_code is None:
+        if exit_code is None or exit_code == gate.skip_code:
             results.append(
                 GateResult(gate.name, passed=True, skipped=True, output_tail=output)
             )
-            logger.info("[gate] %s skipped (tool not available)", gate.name)
+            logger.info(
+                "[gate] %s skipped (%s)",
+                gate.name,
+                "tool not available" if exit_code is None else "nothing determined",
+            )
             continue
         passed = exit_code == 0
         results.append(

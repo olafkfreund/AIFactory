@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.services.approval import approved, merge_pull_request
+from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch, resolve_work_ref
 from server.specpath import safe_spec_component
 
@@ -1525,6 +1526,7 @@ async def abort_worktree_merge(
 
 
 @router.post("/{task_id}/worktree/merge")
+@honest_status
 async def merge_worktree(
     task_id: str,
     options: WorktreeMergeOptions = None,

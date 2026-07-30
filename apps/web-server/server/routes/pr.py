@@ -25,6 +25,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
 
@@ -43,6 +44,7 @@ class CreatePRFromTaskOptions(BaseModel):
 
 
 @router.post("/{task_id}/worktree/create-pr")
+@honest_status
 async def create_pr_from_task(
     task_id: str,
     options: CreatePRFromTaskOptions = None,

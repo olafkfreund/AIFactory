@@ -173,7 +173,7 @@ Read in `providers/_gateway.py`, `phase_config.py`, `core/enforcement.py`,
 | `LITELLM_API_KEY` | `""` | conditional | Auth key for the LiteLLM gateway. |
 | `LITELLM_MASTER_KEY` | `""` | conditional | Master key for LiteLLM admin operations. |
 | `LITELLM_MASTER_KEY_WRAPPED` | `""` | no | KMS-wrapped master key (base64) unwrapped at runtime. |
-| `LITELLM_AUDIT_SCRUB_OUTBOUND` | off | no | Scrub secrets from outbound LiteLLM audit payloads. |
+| `LITELLM_AUDIT_SCRUB_OUTBOUND` | on | no | Scrub high-precision PII (SSN, email, phone, Luhn-checked CC) from the prompt BEFORE it is sent to the LLM provider (#320). On by default; kill-switch — set `false`/`0`/`no`/`off` to disable and restore audit-row-only redaction. |
 | `LITELLM_AUDIT_EXTRA_PATTERNS` | `""` | no | Extra comma-separated regex patterns for the audit scrubber. |
 
 ## Model, agent & routing tuning
@@ -208,7 +208,7 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_ACT_GUARDRAIL` | off | no | Enable the act-loop guardrail hook (`agents/act_loop_hooks.py`). |
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
-| `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. |
+| `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
 | `AIFACTORY_SELF_HEAL` | off | no | Enable the pre-merge security self-heal gate (`agents/self_heal_integration.py`, `core/worktree.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED` | off | no | Enable per-org Claude enforcement (`core/enforcement.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE` | `open` | no | `open` (fail-open) or `closed` (fail-closed) when enforcement can't decide. |
