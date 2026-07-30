@@ -193,6 +193,13 @@ Current question: {message}"""
                 permission_mode="bypassPermissions",  # Bypass prompts for headless execution
             )
         )
+        # #1128: this runner builds its own SDK client, so it does not
+        # inherit the scrub from create_client() or BaseLLMProvider. The
+        # import is function-scoped because this module's sys.path shim
+        # already puts every module-level import past E402.
+        from core.outbound_scrub import wrap_client_outbound_scrub  # noqa: PLC0415
+
+        client = wrap_client_outbound_scrub(client)
 
         # Use async context manager pattern
         async with client:
