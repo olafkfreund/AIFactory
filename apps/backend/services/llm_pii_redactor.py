@@ -44,6 +44,12 @@ Failure-safe contract (per design §"Failure-safe contract")
 A failed redaction pass logs WARNING + returns the ORIGINAL text. The
 audit hook still writes the row; the value is "audit captured PII"
 rather than "audit missing entirely". Same pattern as #40/#41/#42/#43.
+
+That trade is inverted on the OUTBOUND path (#320). ``redact_outbound``
+runs with ``strict=True``: a pass that cannot run re-raises rather than
+returning the original, because "return the original" there means the
+raw prompt goes to a third-party LLM with only a log line to show for
+it. Inbound/audit redaction keeps the fail-open contract above.
 """
 
 from __future__ import annotations
@@ -197,13 +203,19 @@ class PiiRedactor:
         # with rather than re-resolving env vars per call.
         self.scrub_outbound: bool = bool(scrub_outbound)
 
-    def redact(self, text: str) -> str:
+    def redact(self, text: str, *, strict: bool = False) -> str:
         """Apply every pattern. Returns the redacted string.
 
         On any regex execution failure (re.error, unexpected
         exception), logs WARNING + returns the input unchanged. This
         matches the failure-safe contract: an audit row with PII is
         worse than no audit row, but an audit miss is worse still.
+
+        ``strict=True`` inverts that trade for the OUTBOUND call site
+        (#320). Fail-open is correct when the text is on its way into
+        our own audit table; it is a silent PII-egress bug when the
+        text is on its way to a third-party LLM. Under ``strict`` a
+        pattern failure re-raises so the caller can refuse to send.
         """
         if not text:
             return text
@@ -220,6 +232,8 @@ class PiiRedactor:
                     compiled.pattern,
                     exc_info=True,
                 )
+                if strict:
+                    raise
                 continue
         # v1.2 #210: Luhn-checked CC pass runs LAST. The Luhn arithmetic
         # is more expensive than a single regex.sub, so the cheap
@@ -232,17 +246,21 @@ class PiiRedactor:
                 "PiiRedactor: CC/Luhn pass failed; leaving text unchanged",
                 exc_info=True,
             )
+            if strict:
+                raise
         return out
 
     def redact_outbound(self, text: str) -> str:
-        """v1.2 #210 alias of ``redact()`` for the pre-send call site.
+        """Pre-send scrub for the outbound call site (#210, #320).
 
-        Behaviour is identical to ``redact()``; the separate name
-        documents intent at the call-site: provider code reads
-        ``redactor.redact_outbound(prompt)`` and the reader knows
-        scrubBeforeSend mode is involved without chasing definitions.
+        Same patterns as ``redact()`` but ``strict=True``: a redaction
+        pass that cannot run raises instead of returning the input
+        unchanged. Returning the input here would put the raw prompt on
+        the wire to the LLM provider with nothing but a WARNING in the
+        log -- the exact silent fail-open #320 closes. The provider
+        call-site turns the exception into a refusal to send.
         """
-        return self.redact(text)
+        return self.redact(text, strict=True)
 
     def redact_dict(self, data: Any) -> Any:
         """Deep-redact a JSON-serializable value (dict / list / str / scalar).

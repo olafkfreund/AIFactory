@@ -173,7 +173,7 @@ Read in `providers/_gateway.py`, `phase_config.py`, `core/enforcement.py`,
 | `LITELLM_API_KEY` | `""` | conditional | Auth key for the LiteLLM gateway. |
 | `LITELLM_MASTER_KEY` | `""` | conditional | Master key for LiteLLM admin operations. |
 | `LITELLM_MASTER_KEY_WRAPPED` | `""` | no | KMS-wrapped master key (base64) unwrapped at runtime. |
-| `LITELLM_AUDIT_SCRUB_OUTBOUND` | off | no | Scrub secrets from outbound LiteLLM audit payloads. |
+| `LITELLM_AUDIT_SCRUB_OUTBOUND` | on | no | Scrub high-precision PII (SSN, email, phone, Luhn-checked CC) from the prompt BEFORE it is sent to the LLM provider (#320). On by default; kill-switch — set `false`/`0`/`no`/`off` to disable and restore audit-row-only redaction. |
 | `LITELLM_AUDIT_EXTRA_PATTERNS` | `""` | no | Extra comma-separated regex patterns for the audit scrubber. |
 
 ## Model, agent & routing tuning
