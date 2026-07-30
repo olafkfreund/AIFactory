@@ -14,6 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.specpath import safe_spec_component
+
 from ..database.engine import get_db
 from ..services import task_control
 from ..tenancy import (
@@ -196,6 +198,16 @@ async def get_task(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:
@@ -214,6 +226,10 @@ async def get_task(
         )
 
     task = spec_to_task(project_id, spec_dir)
+    # #1069: the list endpoints apply the durable-lifecycle overlay and this one
+    # did not, so the same task read one status on the board and another on the
+    # page the board links to. Same derivation, same answer.
+    await overlay_durable_status([task])
     return task_to_dict(task)
 
 
@@ -370,6 +386,16 @@ async def update_task_status(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:
@@ -452,6 +478,16 @@ async def update_task(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:
@@ -604,6 +640,16 @@ async def delete_task(
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid task ID format",
+        ) from None
     projects = load_projects()
 
     if project_id not in projects:

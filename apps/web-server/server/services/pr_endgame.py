@@ -27,6 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from server.services.task_branch import resolve_task_branch
+
 logger = logging.getLogger(__name__)
 
 # Copilot's code-review reviewer slug (GitHub's automated PR reviewer). Requesting
@@ -463,6 +465,23 @@ def resolve_pr_conflicts(
 # ---------------------------------------------------------------------------
 
 
+# RFC-0020 3.5. Imported lazily so this module keeps working when it is loaded
+# without the backend path shim (it is reachable from both the web server and the
+# agent service), falling back to "treat it as GitHub" — which is exactly what an
+# unqualified reference means anyway.
+def _parse_repo_ref(repo: str) -> tuple[str, str]:
+    """``(provider, bare project path)`` for a possibly-qualified reference."""
+    try:
+        from repo_ref import parse_repo_ref
+    except ImportError:  # pragma: no cover — backend seam absent
+        return "github", repo
+    return parse_repo_ref(repo) or ("github", repo)
+
+
+def _is_github(provider: str) -> bool:
+    return (provider or "github").strip().lower() == "github"
+
+
 def _split_repo(repo: str) -> tuple[str, str] | None:
     if repo and "/" in repo:
         owner, name = repo.split("/", 1)
@@ -683,10 +702,16 @@ def gather_pr_context(
     *,
     runner: Runner = _default_runner,
 ) -> dict | None:
-    """Resolve {worktree, branch, base, repo} for a finished task, or None.
+    """Resolve {worktree, branch, base, repo, provider} for a task, or None.
 
     Returns None (skip the endgame) when there's no worktree branch or no
-    resolvable GitHub repo — both required to open a PR.
+    resolvable repo — both required to open a PR.
+
+    ``provider`` is read off the repo reference's RFC-0020 3.5 qualification
+    (``gitlab:group/project``), defaulting to ``github`` for an unqualified one.
+    ``repo`` is the BARE path with any qualification stripped, because that is
+    what ``gh`` and ``_split_repo`` take. The caller uses ``provider`` to decide
+    whether this GitHub-shaped endgame may run at all — see ``run_pr_endgame``.
     """
     worktree = project_path / ".aifactory" / "worktrees" / "tasks" / spec_id
     if not worktree.exists():
@@ -723,7 +748,18 @@ def gather_pr_context(
     # never opened. Compare against THIS task's base, keeping main/master as a
     # backstop since a worktree sitting on either is never a valid head.
     if not branch or branch in {"HEAD", "main", "master", base}:
-        branch = f"aifactory/{spec_id}"
+        # #1082: don't hardcode the aifactory/<spec> convention -- this was
+        # the second, disagreeing branch resolver. Ask the canonical one
+        # (marker first, then ref discovery); keep the convention only as the
+        # last-resort backstop when nothing is discoverable, preserving the
+        # historical behaviour for specs whose branch was never pushed.
+        resolved, _reason = resolve_task_branch(
+            worktree_path=worktree,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base,
+        )
+        branch = resolved or f"aifactory/{spec_id}"
 
     repo = ""
     try:
@@ -747,7 +783,18 @@ def gather_pr_context(
                 repo = m.group(1)
     if not repo:
         return None
-    return {"worktree": worktree, "branch": branch, "base": base, "repo": repo}
+    # The reference may be provider-qualified. Split it BEFORE anything treats it
+    # as an owner/name: "gitlab:group/project" would otherwise reach _split_repo
+    # and yield the owner "gitlab:group", which is a plausible-looking GitHub
+    # repo that does not exist — the failure mode worth ruling out by parsing.
+    provider, bare = _parse_repo_ref(repo)
+    return {
+        "worktree": worktree,
+        "branch": branch,
+        "base": base,
+        "repo": bare,
+        "provider": provider,
+    }
 
 
 async def run_pr_endgame(
@@ -758,6 +805,7 @@ async def run_pr_endgame(
     branch: str,
     base: str,
     repo: str,
+    provider: str = "github",
     auto_merge: bool = False,
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
@@ -777,6 +825,31 @@ async def run_pr_endgame(
     PR is opened; the verdict-watch runs as a background task unless
     ``background=False`` (tests await it inline). Never raises.
     """
+    # RFC-0020 3.5, Factory#366: this endgame is GITHUB-SHAPED and cannot be
+    # pointed elsewhere. Every step below shells out to `gh` — create, request a
+    # Copilot review, merge — and the canonical GitLab/Azure DevOps providers
+    # raise NotImplementedError for enable_auto_merge anyway. So a non-GitHub
+    # tenant is REFUSED here rather than allowed to run `gh pr create` against a
+    # repo that is not on GitHub.
+    #
+    # Refused, and refused LOUDLY: the branch is already pushed by the build, the
+    # reason is returned and logged, and the merge request is the tenant's to
+    # open. Failing halfway through a `gh` call, or opening a PR on a
+    # same-named GitHub repo that happens to exist, are both worse.
+    if not _is_github(provider):
+        logger.info(
+            "[pr-endgame] skipping the auto-PR for %s: %s is not GitHub, and the "
+            "endgame is gh-CLI-driven. Push is done; open the merge request there.",
+            spec_id,
+            provider,
+        )
+        return {
+            "ok": False,
+            "reason": "provider_not_github",
+            "provider": provider,
+            "repo": repo,
+        }
+
     parts = _split_repo(repo)
     if parts is None:
         return {"ok": False, "reason": "no_repo", "repo": repo}

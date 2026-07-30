@@ -38,9 +38,11 @@ spec:
       backoffLimit: {{ .Values.audit.anchor.cron.backoffLimit | default 3 }}
       template:
         metadata:
+          # NOT selectorLabels: they are the `aifactory` Service's selector, and a
+          # pod carrying them joins the Service and answers real API traffic with
+          # connection refused (AIFactory#1107). See aifactory.jobPodLabels.
           labels:
-            {{- include "aifactory.selectorLabels" . | nindent 12 }}
-            app.kubernetes.io/component: audit-anchor-cron
+            {{- include "aifactory.jobPodLabels" (dict "ctx" . "component" "audit-anchor-cron") | nindent 12 }}
         spec:
           serviceAccountName: {{ include "aifactory.serviceAccountName" . }}
           {{- with .Values.global.imagePullSecrets }}

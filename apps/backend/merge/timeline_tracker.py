@@ -488,22 +488,41 @@ class FileTimelineTracker:
     # CAPTURE METHODS (for integration with existing code)
     # =========================================================================
 
-    def capture_worktree_state(self, task_id: str, worktree_path: Path) -> None:
+    def capture_worktree_state(
+        self, task_id: str, worktree_path: Path, work_ref: str | None = None
+    ) -> None:
         """
-        Capture the current state of all modified files in a worktree.
+        Capture the current state of all modified files for a task.
 
-        Called before merge to ensure we have the latest worktree content.
+        Called before merge to ensure we have the latest content.
 
         Args:
             task_id: Unique task identifier
             worktree_path: Path to the worktree directory
+            work_ref: Ref holding the pushed work, resolvable in the project
+                repo. Given, both the file list AND each file's content come
+                from that ref instead of the worktree's filesystem (#1089).
+                Omitted, the behaviour is exactly as before.
         """
         debug(MODULE, f"capture_worktree_state: {task_id}")
 
         try:
-            changed_files = self.git.get_changed_files_in_worktree(worktree_path)
+            changed_files = self.git.get_changed_files_in_worktree(
+                worktree_path, work_ref=work_ref
+            )
 
             for file_path in changed_files:
+                # #1089: the ref and the filesystem must move together. Fixing
+                # only the file list would read each file off the worktree,
+                # which under kubejob is checked out at the BASE branch --
+                # recording base content as the task's version, which asserts
+                # the task changed nothing rather than merely failing to see it.
+                if work_ref:
+                    content = self.git.get_file_content_at_commit(file_path, work_ref)
+                    if content is not None:
+                        self.on_task_worktree_change(task_id, file_path, content)
+                    continue
+
                 full_path = worktree_path / file_path
                 if full_path.exists():
                     try:

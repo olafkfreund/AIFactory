@@ -36,6 +36,7 @@ from intake.poller import (  # noqa: E402
     poll_once,
 )
 from pfactory.tiers import Tier  # noqa: E402
+from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +116,34 @@ def load_repo_configs() -> list[RepoConfig]:
 
 
 def _provider_for(cfg: RepoConfig):
+    """The provider for THIS repo config — from the declaration, not the default.
+
+    RFC-0020 3.5. This used to be a bare ``_get_project_provider(cfg.project_id)``,
+    which read the AIFactory project's own ``gitProvider`` setting and defaulted
+    it to ``github``. A ``RepoConfig`` that plainly said ``"provider": "gitlab"``
+    was therefore polled through a GitHub client, and RFC-0011 label intake
+    ignored the tenant's declaration entirely.
+
+    ``cfg.repo`` is the provider-qualified reference; where it carries no
+    qualification, ``cfg.provider`` (the older per-repo hint in
+    ``AIFACTORY_INTAKE_REPOS``) supplies the host, so a deployment configured
+    before phase 5 keeps working. The project's settings still supply the
+    credential.
+    """
     from ..routes.github import _get_project_provider
 
-    return _get_project_provider(cfg.project_id)
+    # The reference's OWN qualification wins; cfg.provider only fills a gap.
+    # Reversing this would let the field's "github" default silently override an
+    # explicit gitlab: reference, which is the whole bug.
+    return _get_project_provider(cfg.project_id, repo_ref=_declared_ref(cfg))
+
+
+def _declared_ref(cfg: RepoConfig) -> str:
+    """``cfg``'s repo reference, qualified from ``cfg.provider`` if it is not."""
+    provider, project = parse_repo_ref(cfg.repo) or ("github", "")
+    if provider == "github" and ":" not in (cfg.repo or ""):
+        provider = (cfg.provider or "github").strip().lower()
+    return qualify_repo(provider, project)
 
 
 def _run_async(coro):

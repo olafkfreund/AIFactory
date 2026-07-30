@@ -823,6 +823,38 @@ otel:
 # Failure-safe: every code path in the cron + signer wraps in
 # try/except. A broken KMS or DB never crashes the lifespan; the
 # next tick retries.
+# #1064 — orphaned-task reaper.
+#
+# A task's status is written by the worker running it. When that worker dies
+# (pod evicted, node drained, OOM) nothing writes the terminal status and the
+# task shows as active forever. `089-memory-chain-probe-three` sat at
+# in_progress for 36 hours before anyone noticed.
+#
+# Runs as a loop inside the web pod rather than a CronJob, because the spec
+# tree is on a ReadWriteOnce volume: a separate pod scheduled off-node would
+# read an empty directory and report zero orphans while exiting 0.
+staleReaper:
+  # Master toggle. Off by default -- existing deployments are unchanged.
+  enabled: false
+  # true  (default): report only. Logs one JSON line per sweep naming every
+  #                  task it WOULD cancel, and changes nothing.
+  # false          : cancel them, recording the reason on each.
+  #
+  # Deliberately separate from `enabled`. Read a few weeks of reports before
+  # letting it write -- a reaper that starts writing on the day it ships has
+  # never been observed being wrong.
+  dryRun: true
+  # Idle hours before a task that claims to be executing is presumed orphaned.
+  # Generous on purpose: a slow build legitimately goes quiet, and a false
+  # reap kills real work whereas a late reap only means an orphan lingers.
+  # Never reaped at any age: tasks awaiting a human, tasks merely queued
+  # (nothing is running them, so nothing died), and any status the reaper was
+  # not taught about.
+  staleHours: 4
+  # Seconds between sweeps. 30 minutes: an orphan is not an emergency, and
+  # each sweep walks the whole spec tree.
+  intervalSeconds: 1800
+
 audit:
   anchor:
     # Master toggle. When false (default), no anchors are emitted —

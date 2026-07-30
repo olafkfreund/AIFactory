@@ -28,7 +28,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # nixpkgs pin for generated flakes. A FULL commit rev (not a branch) keeps
 # generated flakes reproducible AND avoids a GitHub API call to resolve the
@@ -36,6 +39,47 @@ from dataclasses import dataclass, field
 # (proven 2026-06-17: a branch ref 403'd; the pinned rev fetches the tarball
 # directly). Bump deliberately (Renovate can automate).
 DEFAULT_NIXPKGS = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f"
+
+# Pinned lock metadata for DEFAULT_NIXPKGS (#778). Captured from `nix flake lock`
+# in the runner image — NEVER hand-edit: a wrong narHash makes nix REJECT the lock
+# and re-lock (or error), so it must come from nix and stay in lockstep with
+# DEFAULT_NIXPKGS (test_nix_provisioner pins them together). Every generated flake
+# has exactly ONE input (nixpkgs at a full rev), so this ONE lock fits them all —
+# shipping it beside the flake stops each ephemeral verify Job from re-locking
+# nixpkgs on every run (a per-Job `nix flake lock` roundtrip, #778).
+_DEFAULT_NIXPKGS_NARHASH = "sha256-lrp67w8AulE9Ks53n27I45ADSzbOCn4H+CNW1Ck8B+8="
+_DEFAULT_NIXPKGS_LASTMODIFIED = 1781577229
+
+
+def generate_lock(nixpkgs: str = DEFAULT_NIXPKGS) -> str | None:
+    """The ``flake.lock`` for a generated flake, or None when the rev is unknown.
+
+    Only emitted for ``DEFAULT_NIXPKGS`` — the single rev whose narHash we captured
+    from nix. Any other ``nixpkgs`` returns None so nix resolves + locks it itself
+    (correct, just not pre-locked). The lock's ``original`` must match the flake's
+    ``inputs.nixpkgs.url`` (a rev-pinned github ref) exactly, or nix re-locks.
+    """
+    if nixpkgs != DEFAULT_NIXPKGS or not nixpkgs.startswith("github:NixOS/nixpkgs/"):
+        return None
+    rev = nixpkgs.rsplit("/", 1)[-1]
+    github_ref = {"owner": "NixOS", "repo": "nixpkgs", "rev": rev, "type": "github"}
+    lock = {
+        "nodes": {
+            "nixpkgs": {
+                "locked": {
+                    "lastModified": _DEFAULT_NIXPKGS_LASTMODIFIED,
+                    "narHash": _DEFAULT_NIXPKGS_NARHASH,
+                    **github_ref,
+                },
+                "original": dict(github_ref),
+            },
+            "root": {"inputs": {"nixpkgs": "nixpkgs"}},
+        },
+        "root": "root",
+        "version": 7,
+    }
+    return json.dumps(lock, indent=2) + "\n"
+
 
 # language -> (nix python attr | node attr). Extend as the fleet grows.
 _PY_ATTR = {
@@ -52,6 +96,71 @@ _PY_PKG_ALIASES = {
     "beautifulsoup4": "beautifulsoup4",
     "scikit-learn": "scikit-learn",
 }
+
+# Curated PyPI-name -> nixpkgs python3Packages attr for deps we seed into a
+# generated flake from the SUT's pyproject.toml (#615). Only vetted, stable
+# attrs — an unmapped dependency is skipped (logged), never guessed, so a bad
+# attr can't break the flake build. Extend as real repos need it.
+_PYPROJECT_DEP_MAP = {
+    "fastapi": "fastapi",
+    "uvicorn": "uvicorn",
+    "starlette": "starlette",
+    "httpx": "httpx",
+    "pydantic": "pydantic",
+    "pydantic-settings": "pydantic-settings",
+    "requests": "requests",
+    "flask": "flask",
+    "aiohttp": "aiohttp",
+    "sqlalchemy": "sqlalchemy",
+    "jinja2": "jinja2",
+    "click": "click",
+    "typer": "typer",
+    "numpy": "numpy",
+    "pandas": "pandas",
+    "pyyaml": "pyyaml",
+    "python-dateutil": "python-dateutil",
+    "pytest": "pytest",
+    "pytest-cov": "pytest-cov",
+    "pytest-asyncio": "pytest-asyncio",
+    "pytest-mock": "pytest-mock",
+    "anyio": "anyio",
+}
+
+
+def _dep_base_name(spec: str) -> str:
+    """Strip version/extras/markers from a PEP 508 dep string -> lowercase name.
+
+    ``uvicorn[standard]>=0.32`` -> ``uvicorn``; ``httpx>=0.27`` -> ``httpx``.
+    """
+    return re.split(r"[<>=!~;\[\s]", spec.strip(), maxsplit=1)[0].strip().lower()
+
+
+def _deps_from_pyproject(project_dir) -> list[str]:
+    """Mapped nixpkgs attrs for the SUT's declared deps + test extras (#615).
+
+    Reads ``<project_dir>/pyproject.toml`` ``[project].dependencies`` and any
+    ``[project.optional-dependencies]`` ``test``/``dev`` group, maps known names
+    via ``_PYPROJECT_DEP_MAP`` and drops the rest. Best-effort: a missing or
+    unparseable pyproject yields ``[]`` (the flake still ships the base toolchain).
+    """
+    pp = Path(project_dir) / "pyproject.toml"
+    if not pp.is_file():
+        return []
+    try:
+        data = tomllib.loads(pp.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return []
+    proj = data.get("project", {}) if isinstance(data, dict) else {}
+    specs = list(proj.get("dependencies", []) or [])
+    extras = proj.get("optional-dependencies", {}) or {}
+    for group in ("test", "tests", "dev"):
+        specs += list(extras.get(group, []) or [])
+    out: list[str] = []
+    for spec in specs:
+        attr = _PYPROJECT_DEP_MAP.get(_dep_base_name(str(spec)))
+        if attr and attr not in out:
+            out.append(attr)
+    return out
 
 
 class ProvisionError(RuntimeError):
@@ -148,6 +257,22 @@ def _python_attr(m: Manifest) -> str:
     return _PY_ATTR.get(ver or "", "python313")
 
 
+# go toolchain version -> nixpkgs attr. Bare `go` tracks the pinned nixpkgs'
+# default Go (always present); a requested minor only maps to an explicit
+# attr for versions we know exist in the pin, else degrades to `go` rather
+# than emitting a non-existent attr (which would fail the flake eval).
+_GO_ATTR = {
+    "1.21": "go_1_21",
+    "1.22": "go_1_22",
+    "1.23": "go_1_23",
+}
+
+
+def _go_attr(m: Manifest) -> str:
+    ver = m.toolchain.get("go")
+    return _GO_ATTR.get(ver or "", "go")
+
+
 # nixpkgs top-level attrs we know how to map system_packages onto. Browser libs
 # come bundled with playwright-driver.browsers, so a bare 'chromium' is dropped
 # in favour of the playwright stack (added separately) to avoid version skew.
@@ -158,7 +283,7 @@ def _system_pkg_attrs(m: Manifest) -> list[str]:
     return [p for p in m.system_packages if p.lower() not in _DROP_SYSTEM_PKGS]
 
 
-def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
+def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS, project_dir=None) -> str:
     """Render a reproducible `flake.nix` from an RFC-0005 environment manifest.
 
     Mirrors the proven PoC: a single devShell with the language toolchain, any
@@ -167,16 +292,25 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
     consumers call the Nix binaries directly.
     """
     m = Manifest.from_contract(env)
-    py = _python_attr(m)
-    py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m)]
+    lang = (m.language or "python").lower()
     sys_attrs = _system_pkg_attrs(m)
 
     pkg_lines: list[str] = []
-    if py_pkgs:
-        joined = " ".join(py_pkgs)
-        pkg_lines.append(f"(pkgs.{py}.withPackages (p: with p; [ {joined} ]))")
+    if lang == "go":
+        # Go has no withPackages set — the toolchain is one attr; test/coverage
+        # tools (gotestsum, gocover-cobertura) ride in as system_packages.
+        pkg_lines.append(f"pkgs.{_go_attr(m)}")
     else:
-        pkg_lines.append(f"pkgs.{py}")
+        py = _python_attr(m)
+        py_pkgs = [_PY_PKG_ALIASES.get(p, p) for p in _python_libs(m, project_dir=project_dir)]
+        if py_pkgs:
+            # Reference each attr as ``p."name"`` (quoted) rather than
+            # ``with p; [ name ]`` so hyphenated attrs (pytest-cov,
+            # scikit-learn) don't parse as Nix subtraction.
+            joined = " ".join(f'p."{name}"' for name in py_pkgs)
+            pkg_lines.append(f"(pkgs.{py}.withPackages (p: [ {joined} ]))")
+        else:
+            pkg_lines.append(f"pkgs.{py}")
     sys_attrs_with_node = list(sys_attrs)
     browser = _needs_browser(m)
     if browser:
@@ -227,15 +361,44 @@ def generate_flake(env: dict, *, nixpkgs: str = DEFAULT_NIXPKGS) -> str:
 """
 
 
-def _python_libs(m: Manifest) -> list[str]:
-    """Python libraries to put in the withPackages set. Always include pytest for
-    the verify lane; add fastapi/uvicorn/httpx when the commands imply a web app."""
+def _requirements_present(project_dir: Path) -> bool:
+    """True when the checkout declares deps in a requirements.txt the lane can install.
+
+    Bounded the same way the runner's discovery is, so this answers the same
+    question the Job will ask at run time.
+    """
+    root = Path(project_dir)
+    skip = {".git", ".venv", "venv", "node_modules", "__pycache__"}
+    for pattern in ("requirements.txt", "*/requirements.txt", "*/*/requirements.txt"):
+        for hit in root.glob(pattern):
+            if not any(part in skip for part in hit.relative_to(root).parts):
+                return True
+    return False
+
+
+def _python_libs(m: Manifest, project_dir=None) -> list[str]:
+    """Python libraries to put in the withPackages set. Always include
+    pytest + pytest-cov for the verify lane (the runner always passes ``--cov``);
+    add fastapi/uvicorn/httpx when the commands imply a web app; and, when
+    ``project_dir`` is given, the SUT's own declared deps + test extras read from
+    its pyproject.toml (#615) so an ingested repo imports without a hand-written
+    manifest."""
     libs: list[str] = []
     hay = " ".join(m.verify_commands + m.build_commands + m.proof_verify).lower()
     if (m.language or "").lower() in ("", "python") or "pytest" in hay:
-        libs.append("pytest")
+        libs += ["pytest", "pytest-cov"]
     if "uvicorn" in hay or "fastapi" in hay or "httpx" in hay or _needs_browser(m):
         libs += ["fastapi", "uvicorn", "httpx"]
+    if project_dir is not None:
+        libs += _deps_from_pyproject(project_dir)
+        # #764: the allowlist above can never be complete, and a repo that
+        # declares its deps in requirements.txt gets nothing from it at all.
+        # Ship pip so the verify Job can install whatever the map missed — the
+        # lane installs into a writable target and prepends it to PYTHONPATH.
+        # The allowlist stays: it is the hermetic path when the deps happen to
+        # be mapped, and pip only fills the gap.
+        if _requirements_present(project_dir):
+            libs += ["pip"]
     # de-dup, stable order
     seen: set[str] = set()
     out: list[str] = []
@@ -329,6 +492,24 @@ def _test() -> None:
     }
     f3 = generate_flake(env_sys)
     assert "pkgs.pkg-config" in f3 and "pkgs.openssl" in f3, f3
+
+    # 3b. go manifest -> go toolchain + test/coverage tools, no python/withPackages.
+    env_go = {
+        "language": "go",
+        "toolchain": {"go": "1.22"},
+        "system_packages": ["gotestsum", "gocover-cobertura"],
+        "verify_commands": ["go test ./..."],
+        "provisioning": {"method": "nix", "ref": "flake.nix", "generated": True},
+    }
+    fg = generate_flake(env_go)
+    assert "pkgs.go_1_22" in fg, fg  # noqa: S101
+    assert "pkgs.gotestsum" in fg and "pkgs.gocover-cobertura" in fg, fg  # noqa: S101
+    assert "withPackages" not in fg and "python" not in fg, fg  # noqa: S101
+    assert "pytest" not in fg, fg  # noqa: S101 — no python libs inferred for a go env
+    # unknown/unset go version degrades to bare `pkgs.go` (no system pkgs here,
+    # so `pkgs.go` is the sole package line — no false match on gocover etc.).
+    fg2 = generate_flake({"language": "go", "verify_commands": ["go test ./..."]})
+    assert "pkgs.go" in fg2 and "pkgs.gocover" not in fg2, fg2  # noqa: S101
 
     # 4. nix develop argv shape.
     argv = nix_develop_argv("/work", ["pytest -q", "playwright test"])

@@ -16,14 +16,20 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.services.task_branch import recorded_branch
+from server.services.task_status import PLAN_UNREADABLE, read_plan
+from server.specpath import safe_spec_component
+
 logger = logging.getLogger(__name__)
 
+
 from ..services import task_control
-from .projects import load_projects
+from .projects import load_projects, resolve_project_path
 from .task_models import (
     Subtask,
     SubtaskVerification,
@@ -50,6 +56,18 @@ def _resolve_task(task_id: str) -> tuple[str, str, Path, Path]:
         )
 
     project_id, spec_id = task_id.split(":", 1)
+
+    # Barrier BEFORE spec_id reaches any path expression (#1056). Path joins
+    # collapse traversal silently, so validating after the join is too late.
+    # This is the canonical seam for the projectId:specId parse, so validating
+    # here covers every caller that uses it rather than each one separately.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid task_id format (expected projectId:specId)"
+        ) from None
+
     projects = load_projects()
 
     if project_id not in projects:
@@ -112,7 +130,15 @@ def get_next_spec_id(project_path: Path, title: str) -> str:
     if not slug:
         slug = "untitled-task"
 
-    return f"{next_num:03d}-{slug}"
+    # The slug above is a best-effort `re.sub` over a request-supplied title,
+    # and the returned id is joined straight onto the specs root by every
+    # caller. Assert the result really is a safe component before it becomes a
+    # path: `re.sub` narrows, it does not guarantee, and this id is the single
+    # origin of every spec_dir the readers later walk. (Also the barrier CodeQL
+    # recognises -- it models a `fullmatch` and not a `sub`, which is why the
+    # slug alone left the whole downstream flow tainted.) Cannot raise: the
+    # slug is `[a-z0-9-]` and the prefix is digits.
+    return safe_spec_component(f"{next_num:03d}-{slug}")
 
 
 def get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
@@ -233,6 +259,12 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
 
     Returns (plan_dict, plan_file_path).
     """
+    # Barrier BEFORE spec_id reaches any path expression (#1056). This helper
+    # takes spec_id as a raw string and joins it onto a trusted root; both
+    # callers happen to validate first, but the join lives HERE, so the check
+    # belongs here too rather than depending on every caller remembering.
+    spec_id = safe_spec_component(spec_id)
+
     # Sync worktree to main spec first
     sync_worktree_to_main_spec(project_path, spec_id)
 
@@ -240,12 +272,12 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
     main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     plan_file = main_spec_dir / "implementation_plan.json"
 
-    plan = {}
+    plan: dict[str, Any] = {}
     if plan_file.exists():
-        try:
-            plan = json.loads(plan_file.read_text())
-        except json.JSONDecodeError:
-            pass
+        # #1069: read_plan logs the path and the parse offset. It used to be a
+        # bare ``pass``, which is how an unparseable plan reached the callers
+        # below as an empty dict.
+        plan, _error = read_plan(plan_file)
 
     return plan, plan_file
 
@@ -507,9 +539,15 @@ def load_spec_metadata(spec_dir: Path) -> dict:
     # Try to load implementation_plan.json for status/subtasks
     plan_file = spec_dir / "implementation_plan.json"
     explicit_status = None  # Track if user explicitly set status via kanban
+    plan_unreadable = False
     if plan_file.exists():
+        # #1069: parse OUTSIDE the tolerant handler below. That handler exists to
+        # degrade gracefully when part of a well-formed plan is odd (#941); a file
+        # that does not parse at all is a different thing — a fault — and must be
+        # remembered rather than silently becoming an empty plan.
+        plan, plan_error = read_plan(plan_file)
+        plan_unreadable = plan_error is not None
         try:
-            plan = json.loads(plan_file.read_text())
             # Only set phase from plan if not already set from task_logs
             if not metadata["phase"]:
                 metadata["phase"] = plan.get("phase")
@@ -681,6 +719,13 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         metadata["worktree_path"] = worktree_marker.read_text().strip()
         metadata["branch_name"] = f"aifactory/{spec_dir.name}"
 
+    # #1073: the branch the build actually pushed, recorded at dispatch. Under
+    # the kubejob backend there is no .worktree_path marker at all, so the
+    # block above never fired and branchName was None for every task built by
+    # the deployed backend. This is also the AUTHORITATIVE value: the line
+    # above reconstructs the name from a convention, which is a second copy of
+    # a rule core.worktree.get_branch_name owns.
+
     # Load task metadata from requirements.json
     requirements_file = spec_dir / "requirements.json"
     if requirements_file.exists():
@@ -756,6 +801,16 @@ def load_spec_metadata(spec_dir: Path) -> dict:
         elif metadata["phase"]:
             metadata["status"] = "in_progress"
 
+    # #1069: the plan file exists but does not parse, and nothing else on disk
+    # said anything about this task. Report the FAULT rather than falling through
+    # to the ``backlog`` default: ``backlog`` means "queued, not started", a claim
+    # the code cannot support once it has failed to read the plan — and it also
+    # hides the task from the orphan reaper (#1064), which deliberately treats
+    # backlog as not-reapable because a queued task has no worker to lose.
+    if plan_unreadable and metadata["status"] == "backlog":
+        metadata["status"] = PLAN_UNREADABLE
+        metadata["reviewReason"] = PLAN_UNREADABLE
+
     # Control-plane override (Issue #259): the dedicated control store is the
     # authoritative source for board column / status and reviewReason. It is
     # written ONLY by the web-server and is never touched by worktree sync, so
@@ -802,6 +857,23 @@ def project_repo(project_data: dict) -> str | None:
 def spec_to_task(project_id: str, spec_dir: Path) -> Task:
     """Convert a spec directory to a Task model."""
     metadata = load_spec_metadata(spec_dir)
+
+    # #1073: the branch the build pushed. Resolved HERE rather than inside
+    # load_spec_metadata because it needs a TRUSTED root: project_id is a
+    # registry key (resolve_project_path 404s on anything unknown), whereas the
+    # spec_dir that load_spec_metadata receives is a ready-made path that
+    # cannot be sanitised after the fact.
+    #
+    # Under the kubejob backend there is no .worktree_path marker, so the
+    # convention-derived branch_name above never fires and this is the only
+    # source. The recorded value wins: the other is reconstructed from a
+    # convention core.worktree.get_branch_name owns.
+    try:
+        recorded = recorded_branch(resolve_project_path(project_id), spec_dir.name)
+    except Exception:  # noqa: BLE001 - a bad/absent project must not 500 a task list
+        recorded = None
+    if recorded:
+        metadata["branch_name"] = recorded
 
     # Get timestamps from directory
     stat = spec_dir.stat()
@@ -906,6 +978,13 @@ def map_backend_status_to_frontend(backend_status: str) -> str:
         "qa_failed": "human_review",  # Failed QA needs human attention
         "completed": "human_review",  # Completed tasks need merge approval
         "cancelled": "backlog",  # Cancelled tasks shown in backlog (could be hidden later)
+        # #1069: the plan file could not be parsed. A human has to look at the
+        # spec dir, so human_review is the honest column — and it must be mapped
+        # explicitly, because this function defaults anything unknown to
+        # ``backlog`` (which is the bug) and the Kanban board silently DROPS a
+        # card whose status is not one of its five columns (which would be
+        # worse). The distinct fault survives in review_reason.
+        PLAN_UNREADABLE: "human_review",
         # Frontend statuses (pass through when already mapped or set via kanban)
         "ai_review": "ai_review",
         "human_review": "human_review",
@@ -979,8 +1058,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
                 started_at = log_data["started_at"]
             elif log_data.get("started_at") and started_at:
                 # Keep the earliest timestamp
-                if log_data["started_at"] < started_at:
-                    started_at = log_data["started_at"]
+                started_at = min(started_at, log_data["started_at"])
 
             if log_data.get("status") == "active":
                 current_phase = phase_map.get(log_phase, log_phase)
@@ -996,9 +1074,7 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             elif has_completed:
                 validation = phases.get("validation", {})
                 coding = phases.get("coding", {})
-                if validation.get("status") == "completed":
-                    current_phase = "complete"
-                elif coding.get("status") == "completed":
+                if validation.get("status") == "completed" or coding.get("status") == "completed":
                     current_phase = "complete"
 
         # Calculate overall progress from subtasks

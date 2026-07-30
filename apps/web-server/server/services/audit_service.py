@@ -66,6 +66,16 @@ ACTION_TASK_MERGE = "task.merge"
 ACTION_API_KEY_CREATE = "api_key.create"
 ACTION_API_KEY_REVOKE = "api_key.revoke"
 
+# Security-relevant negative events (Factory#313 — audit COMPLETENESS gap).
+# The hash chain was strong but auth/authz rejections were never recorded, so a
+# credential-stuffing or privilege-probing attempt left no chained trail. These
+# are emitted at the central chokepoints: the 401 in ``auth.py`` (invalid /
+# expired token) and the 403 in ``routes/project_authz.py`` (project-authz
+# denial / insufficient-role gate).
+ACTION_AUTH_FAILURE = "auth.failure"
+ACTION_AUTHZ_DENIED = "authz.denied"
+ACTION_GATE_REJECTED = "gate.rejected"
+
 # MCP control-plane actions (Epic #50 acceptance criterion #2).
 # Every write tool exposed via the ``/api/mcp-stdio/*`` proxy logs
 # its action under the ``mcp.*`` namespace. The mcp prefix keeps these
@@ -80,6 +90,37 @@ ACTION_MCP_TASK_RECOVER = "mcp.task.recover"
 ACTION_MCP_TASK_APPROVE_PLAN = "mcp.task.approve_plan"
 ACTION_MCP_TASK_CREATE_PR = "mcp.task.create_pr"
 ACTION_MCP_TASK_MERGE = "mcp.task.merge"
+
+
+# ---------------------------------------------------------------------------
+# Hash-chain helpers (shared by the request-scoped and background paths)
+# ---------------------------------------------------------------------------
+
+
+async def _next_prev_hash(session: AsyncSession) -> str:
+    """Return the ``prev_hash`` a new row should carry: the chained hash of the
+    current chain head, or ``GENESIS`` for an empty log.
+
+    Epic #26 P5.2 concurrency note: parallel writers across sessions can race so
+    two rows share a prev_hash. v1.0 mitigates via the single-replica
+    constraint; a SELECT FOR UPDATE on the head lands with multi-replica.
+    """
+    from sqlalchemy import select as _select
+
+    from .audit_chain import GENESIS, compute_hash, row_as_mapping
+
+    last = await session.execute(
+        _select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1)
+    )
+    last_row = last.scalar_one_or_none()
+    if last_row is None:
+        return GENESIS
+    return compute_hash(last_row.prev_hash, row_as_mapping(last_row))
+
+
+def _default_retention_until() -> datetime:
+    """Default retention: 13 months (SOC2 12mo + buffer)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=395)
 
 
 # ---------------------------------------------------------------------------
@@ -128,32 +169,9 @@ async def log_audit_event(
         The IP address of the client, if available.
     """
     try:
-        # Epic #26 P5.2 — hash chain on write. Look up the most-recent
-        # row's hash; this row's prev_hash = compute_hash(that, this).
-        # Concurrency note: SQLAlchemy serializes within a session, but
-        # parallel writers across sessions can race. Worst case: two
-        # rows share the same prev_hash, breaking the chain at that
-        # point. v1.0 mitigates via the FastAPI single-replica
-        # constraint; v1.1 multi-replica adds a SELECT FOR UPDATE on
-        # the chain head.
-        from sqlalchemy import select as _select
-
-        from .audit_chain import GENESIS, compute_hash, row_as_mapping
-
-        last = await db.execute(
-            _select(AuditLog).order_by(AuditLog.created_at.desc()).limit(1)
-        )
-        last_row = last.scalar_one_or_none()
-        prev_hash_value = (
-            compute_hash(last_row.prev_hash, row_as_mapping(last_row))
-            if last_row is not None
-            else GENESIS
-        )
-
-        # Default retention: 13 months (SOC2 12mo + buffer).
-        retention_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-            days=395
-        )
+        # Epic #26 P5.2 — hash chain on write. This row's prev_hash =
+        # compute_hash(current chain head). See ``_next_prev_hash``.
+        prev_hash_value = await _next_prev_hash(db)
 
         entry = AuditLog(
             user_id=user_id,
@@ -163,7 +181,7 @@ async def log_audit_event(
             resource_id=resource_id,
             details_json=json.dumps(details) if details is not None else None,
             ip=ip,
-            retention_until=retention_until,
+            retention_until=_default_retention_until(),
             prev_hash=prev_hash_value,
         )
         db.add(entry)
@@ -204,11 +222,19 @@ async def log_audit_event_bg(
     Like :func:`log_audit_event`, failures are caught and logged as
     warnings so they never crash the caller.
 
+    The row is hash-chained exactly like :func:`log_audit_event`
+    (Factory#313 — previously this background path wrote UNCHAINED rows
+    with a NULL ``prev_hash``, so security-relevant events emitted from
+    background/WebSocket/MCP code and the auth middleware fell outside the
+    tamper-evident chain). ``prev_hash`` is now computed from the chain
+    head inside the self-managed session.
+
     Parameters are identical to :func:`log_audit_event` except there is
     no ``db`` parameter.
     """
     try:
         async with async_session_factory() as session:
+            prev_hash_value = await _next_prev_hash(session)
             entry = AuditLog(
                 user_id=user_id,
                 org_id=org_id,
@@ -217,6 +243,8 @@ async def log_audit_event_bg(
                 resource_id=resource_id,
                 details_json=json.dumps(details) if details is not None else None,
                 ip=ip,
+                retention_until=_default_retention_until(),
+                prev_hash=prev_hash_value,
             )
             session.add(entry)
             await session.commit()

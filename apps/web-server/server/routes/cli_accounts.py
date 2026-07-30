@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class CLIAccountStatus(BaseModel):
 
 
 class APIKeyRequest(BaseModel):
-    api_key: str = Field(min_length=5)
+    api_key: SecretStr = Field(min_length=5)
 
 
 # ---------------------------------------------------------------------------
@@ -692,7 +692,7 @@ async def set_cli_api_key(cli: str, body: APIKeyRequest):
         cli,
         {
             "source": "api_key",
-            "api_key": body.api_key,
+            "api_key": body.api_key.get_secret_value(),
             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
     )

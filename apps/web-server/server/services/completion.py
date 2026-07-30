@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import time
 import uuid
 from datetime import datetime, timezone
@@ -83,6 +84,51 @@ _WORKER_PROGRESS_WINDOW_S = 10.0
 # a single task's lifetime. ``{worker_id: last_emit_monotonic}``.
 _progress_last_emit: dict[str, float] = {}
 
+
+
+def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
+    """Pool a spec's memory into the PROJECT store, so it compounds (#1038).
+
+    Runs in the CONTROL PLANE, right after the packed-path fetch, because this is
+    the first moment the memory exists on a durable filesystem. The build process
+    cannot do it: on the packed path every path it can see is under ``/work``, an
+    emptyDir that dies with the pod.
+
+    ``spec_dir`` is ``<project>/.aifactory/specs/<id>``, so the project's
+    ``.aifactory/`` is its grandparent and the store sits beside ``specs/``.
+
+    **Why project level.** A project holds many specs (86 tasks in one live
+    workspace) and each is built roughly once, so a spec-scoped store has almost
+    nothing to read it — the next build is a different spec in a different
+    directory. Memory is only worth keeping if a lesson from spec 034 reaches
+    spec 041.
+
+    MERGES, never replaces: the pool is the union of every spec's insights and no
+    single spec may clear it. Best-effort — a build that produced working code
+    must not fail because its memory could not be pooled.
+    """
+    src = Path(spec_dir).resolve() / "memory"
+    if not src.is_dir():
+        return False
+    try:
+        # The project's .aifactory/ is the spec dir's grandparent. Both sides are
+        # resolved and the containment is CHECKED rather than assumed: spec_dir
+        # originates from a request, and a "../.." that walked out of the project
+        # would have this function copying a memory tree somewhere arbitrary.
+        project_aifactory = src.parent.parent.parent
+        dest = (project_aifactory / "memory").resolve()
+        if not dest.is_relative_to(project_aifactory.resolve()):
+            logger.warning("[completion] refusing to pool memory outside the project")
+            return False
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+        # The path is deliberately NOT interpolated: it derives from request data
+        # and a log line is not the place to echo it back (py/log-injection).
+        logger.info("[completion] pooled memory at project level")
+        return True
+    except (OSError, shutil.Error) as exc:
+        logger.warning("[completion] could not pool memory: %s", exc)
+        return False
 
 def _progress_window_s() -> float:
     """The throttle window in seconds (env-overridable, defaults to ~10s)."""
@@ -854,6 +900,7 @@ def emit_terminal_completion(
     # already present) and best-effort (never raises).
     try:
         from core.workspace_fetch import (  # noqa: PLC0415
+            maybe_fetch_memory,
             maybe_fetch_plan,
             maybe_fetch_task_logs,
             maybe_fetch_usage,
@@ -870,6 +917,10 @@ def emit_terminal_completion(
         # and escalates to human_review — blocking the TFactory handoff behind a
         # bookkeeping gap (Factory#253 "output propagation").
         maybe_fetch_plan(spec_dir, spec_id)
+        # #1038: and the memory tree, which otherwise dies in the Job's emptyDir.
+        # Fetched BEFORE pooling below, since the pool is built from this copy.
+        maybe_fetch_memory(spec_dir, spec_id)
+        _pool_memory_at_project_level(spec_dir)
     except Exception:  # noqa: BLE001 - defensive; emit must still proceed
         logger.debug("usage fetch skipped (best-effort)", exc_info=True)
     usage = read_usage(spec_dir)

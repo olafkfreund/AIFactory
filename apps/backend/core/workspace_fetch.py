@@ -189,7 +189,7 @@ def maybe_push_usage(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _usage_key(spec_id), src.read_bytes(), "application/json"
+            _usage_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _USAGE_FILE
@@ -271,7 +271,7 @@ def maybe_push_task_logs(spec_dir: str | os.PathLike[str], spec_id: str) -> bool
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _task_logs_key(spec_id), src.read_bytes(), "application/json"
+            _task_logs_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _TASK_LOGS_FILE
@@ -359,7 +359,7 @@ def maybe_push_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         from core.artifact_store import ArtifactStore  # noqa: PLC0415
 
         ArtifactStore().put_bytes(
-            _plan_key(spec_id), src.read_bytes(), "application/json"
+            _plan_key(spec_id), src.read_bytes(), "application/json", role="build"
         )
         _log.info(
             "[workspace_fetch] pushed %s to object store (packed path)", _PLAN_FILE
@@ -400,4 +400,152 @@ def maybe_fetch_plan(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
         return True
     except OSError as exc:
         _log.warning("[workspace_fetch] could not write fetched plan: %s", exc)
+        return False
+
+
+# ── memory (#1038) ───────────────────────────────────────────────────────────
+#
+# The FIFTH artefact with the same packed-path propagation gap as the branch,
+# the usage file, the task logs and the plan — and the last one that was still
+# missing. It cost three wrong fixes (#1031, #1036, #1037) before anyone traced
+# the mechanism, because every one of them assumed `/work` was durable.
+#
+# It is not, and the manifest builder says so outright
+# (``core/job_dispatch.py``): a Job gets the data-PVC co-mounted at ``/work``
+# ONLY when ``data_pvc`` and ``worktree_subpath`` are both set. On the packed
+# path (``WORKSPACE_URI`` present) it gets an ``emptyDir`` instead, and the
+# workspace is unpacked into it at start. So the Job's filesystem is
+# write-once-and-discard: CODE escapes via ``git push``, and anything else
+# written to disk escapes only if it is explicitly pushed HERE.
+#
+# Memory is a DIRECTORY, unlike the four single-file artefacts above, so it
+# travels as a tar.gz rather than raw bytes.
+
+_MEMORY_DIR = "memory"
+_MEMORY_ARCHIVE = "memory.tar.gz"
+
+
+def _memory_key(spec_id: str) -> str:
+    """Deterministic object key for a task's memory tree (#1038).
+
+    Same derivation as :func:`_plan_key`: both sides compute it from ``spec_id``
+    alone, so no URI threading is needed.
+    """
+    from core.artifact_store import ArtifactRef  # noqa: PLC0415
+
+    return str(
+        ArtifactRef(
+            service="aifactory", job_id=spec_id, role="build", path=_MEMORY_ARCHIVE
+        ).key()
+    )
+
+
+def _memory_source(spec_dir: Path) -> Path | None:
+    """The spec's non-empty ``memory/``, or None.
+
+    Prefers the spec dir itself, which is where
+    :func:`agents.utils.sync_memory_to_source` files it at the end of each
+    session. Falls back to the WORKTREE copy the build actually wrote into.
+
+    The fallback is not belt-and-braces: a build that exits early or degrades
+    (this happened live — a branch push rejected non-fast-forward and the
+    worktree reset to main) may never run that sync, and the insights would then
+    be stranded in a directory about to be deleted with the pod. Pushing what is
+    there beats pushing nothing.
+    """
+    direct = spec_dir / _MEMORY_DIR
+    if direct.is_dir() and any(direct.rglob("*")):
+        return direct
+    # <project>/.aifactory/specs/<id> -> <project>/.aifactory/worktrees/tasks/*/
+    aifactory = spec_dir.parent.parent
+    worktrees = aifactory / "worktrees" / "tasks"
+    if not worktrees.is_dir():
+        return None
+    for wt in sorted(worktrees.iterdir()):
+        cand = wt / ".aifactory" / "specs" / spec_dir.name / _MEMORY_DIR
+        if cand.is_dir() and any(cand.rglob("*")):
+            _log.info("[workspace_fetch] memory found in the worktree copy: %s", cand)
+            return cand
+    return None
+
+
+def maybe_push_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Push the Job's ``memory/`` tree to object storage (#1038).
+
+    Without this, every session insight a packed build produces dies with the
+    pod, so the fleet's memory never accumulates and the second pass over a
+    codebase costs exactly what the first did.
+
+    No-op off the packed path (``WORKSPACE_URI`` unset) where the spec dir is on
+    the data PVC already. Best-effort: never raises — a push failure must not
+    turn a green build red.
+    """
+    if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+        return False
+    src = _memory_source(Path(spec_dir))
+    if src is None:
+        # INFO, not debug (#1038 follow-up). This early return is the single
+        # most likely outcome when memory fails to propagate, and at debug level
+        # it said nothing at all — so a failed run was indistinguishable from a
+        # run that never tried. Two builds were spent unable to tell those apart.
+        # The path is included because "which directory did you look in" was
+        # exactly the question that could not be answered from the logs.
+        _log.info(
+            "[workspace_fetch] nothing to push: no non-empty memory/ under %s",
+            spec_dir,
+        )
+        return False
+    try:
+        import io  # noqa: PLC0415
+        import tarfile  # noqa: PLC0415
+
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            tar.add(str(src), arcname=_MEMORY_DIR)
+        ArtifactStore().put_bytes(
+            _memory_key(spec_id), buf.getvalue(), "application/gzip", role="build"
+        )
+        _log.info(
+            "[workspace_fetch] pushed %s to object store (packed path)", _MEMORY_DIR
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - best-effort telemetry of state
+        _log.warning("[workspace_fetch] could not push memory: %s", exc)
+        return False
+
+
+def maybe_fetch_memory(spec_dir: str | os.PathLike[str], spec_id: str) -> bool:
+    """Restore the Job's pushed ``memory/`` tree into the control-plane spec dir.
+
+    MERGES into whatever is already there — never clears it. The destination
+    accumulates across sessions and, once pooled, across specs; a fetch that
+    replaced it would discard exactly what this whole chain exists to keep.
+
+    No-op off the packed path or when nothing was pushed. Best-effort.
+    """
+    try:
+        from core.artifact_store import ArtifactStore  # noqa: PLC0415
+
+        data = ArtifactStore().get_bytes(_memory_key(spec_id))
+    except Exception as exc:  # noqa: BLE001 - nothing pushed / store unreachable
+        _log.debug("[workspace_fetch] no pushed memory to fetch: %s", exc)
+        return False
+    try:
+        import io  # noqa: PLC0415
+        import tarfile  # noqa: PLC0415
+
+        dest = Path(spec_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            # filter="data" refuses absolute paths and ".." members, so a crafted
+            # archive cannot write outside the spec dir.
+            tar.extractall(path=str(dest), filter="data")
+        _log.info(
+            "[workspace_fetch] fetched %s from object store (packed path)", _MEMORY_DIR
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 - best-effort
+        _log.warning("[workspace_fetch] could not write fetched memory: %s", exc)
         return False

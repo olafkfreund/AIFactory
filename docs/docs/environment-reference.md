@@ -208,7 +208,7 @@ Read across `apps/backend/` (`routing_policy.py`, `core/model_config.py`,
 | `AIFACTORY_ACT_GUARDRAIL` | off | no | Enable the act-loop guardrail hook (`agents/act_loop_hooks.py`). |
 | `AIFACTORY_CONTEXT_SUMMARY` | off | no | Enable rolling context summarization (`agents/context_summary.py`). |
 | `AIFACTORY_MUTATION_LEDGER` | off | no | Record agent file mutations to a ledger (`agents/mutation_ledger.py`). |
-| `AIFACTORY_TEST_EVIDENCE_GATE` | off | no | Honesty gate: no green test checkbox unless a real test command ran (`agents/test_evidence.py`). |
+| `AIFACTORY_TEST_EVIDENCE_GATE` | on (set to `off`/`0`/`false`/`no` to disable) | no | Honesty gate (`agents/test_evidence.py`). Two checks, both at `update_subtask_status(... "completed")`: (1) #851 — a test/verification subtask needs a real, non-failing test command recorded this build; (2) #1111 — a subtask naming an HTTP path needs at least one Python test mentioning that path which reaches the shipped app (imports an application entrypoint without building its own, or calls a live server), so a suite asserting against a `FastAPI()` built inside the test file no longer counts. Inert when the subtask names no HTTP path or no Python test mentions it. (3) #1123 — one post-merge gate (`agents/route_wiring.py`), run once at the trailing-gate step when every wave has merged, that imports the application entrypoint the repo's own tests name and asserts every HTTP path the plan promised resolves on the real app. No gate at all when the plan promises no HTTP path or no test names an entrypoint; reported `skipped` (never `passed`) when the app cannot be imported. |
 | `AIFACTORY_SELF_HEAL` | off | no | Enable the pre-merge security self-heal gate (`agents/self_heal_integration.py`, `core/worktree.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED` | off | no | Enable per-org Claude enforcement (`core/enforcement.py`). |
 | `AIFACTORY_CLAUDE_ENFORCEMENT_FAILURE_MODE` | `open` | no | `open` (fail-open) or `closed` (fail-closed) when enforcement can't decide. |
@@ -558,7 +558,18 @@ Baked into the static bundle at build time. Read in `apps/frontend-web/src/*`.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). Legacy single-key entry; matches envelopes with no `kid`. See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
+| `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>` | (none) | no | Keyed rotation entry: registers one verification key under `authority/kid` (kid case-insensitive). Multiple kids can be active at once for zero-downtime rotation. See [Trusted-plan Key Rotation](./compliance/trusted-plan-key-rotation). |
+| `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` | (none) | no | Comma-separated `authority/kid` (or bare `kid`) to revoke; a retired kid is rejected at verify time even if its key material is still configured. |
+
+## Approved-model registry
+
+Read in `apps/backend/model_registry.py`. See [Approved-model Registry](./compliance/model-registry).
+
+| Variable | Default | Required | Purpose |
+|----------|---------|----------|---------|
+| `AIFACTORY_MODEL_REGISTRY_ENFORCE` | `warn` | no | Registry assertion mode: `warn` (log unregistered/mis-staged model, never block), `deny` (raise and fail the stage), `off` (skip). Default is advisory — routing behaviour is unchanged. |
+| `AIFACTORY_MODEL_REGISTRY` | (built-in) | no | Override the approved-model allowlist: inline JSON or a path to a JSON file. Invalid/unreadable value fails safe to the built-in `DEFAULT_REGISTRY`. |
 
 ## Debug helpers
 

@@ -146,8 +146,58 @@ async def authorize_project_for_user(
         )
         membership = result.scalar_one_or_none()
 
-    check_project_access(user, project, membership, minimum_role)
+    try:
+        check_project_access(user, project, membership, minimum_role)
+    except HTTPException as exc:
+        # Factory#313 — record project-authz denials as chained audit events.
+        # A member whose role is too low is a privilege-GATE rejection
+        # (``gate.rejected``); everyone else denied at 403 is a plain access
+        # denial (``authz.denied``). 401/404 from the rule aren't authz denials.
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            from ..services.audit_service import (
+                ACTION_AUTHZ_DENIED,
+                ACTION_GATE_REJECTED,
+            )
+
+            action = (
+                ACTION_GATE_REJECTED if membership is not None else ACTION_AUTHZ_DENIED
+            )
+            await _audit_authz_denial(
+                db, action, user, project_id, org_id, minimum_role, exc.detail
+            )
+        raise
     return org_id
+
+
+async def _audit_authz_denial(
+    db: AsyncSession,
+    action: str,
+    user: dict | None,
+    project_id: str | None,
+    org_id: str | None,
+    minimum_role: str,
+    detail: object,
+) -> None:
+    """Write a chained authz-denial audit row on the request-scoped session.
+
+    Fail-safe: ``log_audit_event`` already swallows its own errors, but the
+    whole emit is additionally guarded so a denial is always re-raised
+    unchanged even if audit wiring breaks.
+    """
+    try:
+        from ..services.audit_service import log_audit_event
+
+        await log_audit_event(
+            db=db,
+            action=action,
+            resource_type="project",
+            resource_id=project_id,
+            user_id=user.get("id") if isinstance(user, dict) else None,
+            org_id=org_id,
+            details={"detail": str(detail), "minimum_role": minimum_role},
+        )
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 class ProjectAccessChecker:

@@ -103,6 +103,8 @@ class ConflictService:
         task_id: str,
         worktree_path: Path,
         base_branch: str = "develop",
+        work_ref: str | None = None,
+        repo_path: Path | None = None,
     ) -> dict[str, Any]:
         """
         Run semantic conflict detection for a task.
@@ -111,6 +113,12 @@ class ConflictService:
             task_id: The task/spec ID
             worktree_path: Path to the task's worktree
             base_branch: The target branch for merge
+            work_ref: Ref holding the task's work, read in *repo_path* instead of
+                the worktree's HEAD. Required under the kubejob build backend,
+                where the worktree sits on the base branch and reading it fed the
+                detector an empty change set -- so every task reported zero
+                semantic conflicts (#1089).
+            repo_path: Project repository to resolve *work_ref* in.
 
         Returns:
             Dictionary with conflict analysis results
@@ -126,6 +134,8 @@ class ConflictService:
                 task_id,
                 worktree_path,
                 base_branch,
+                work_ref,
+                repo_path,
             )
             return result
 
@@ -150,14 +160,22 @@ class ConflictService:
         task_id: str,
         worktree_path: Path,
         base_branch: str,
+        work_ref: str | None = None,
+        repo_path: Path | None = None,
     ) -> dict[str, Any]:
         """Synchronous conflict detection (runs in executor)."""
         try:
             orchestrator = self._get_orchestrator()
 
-            # Refresh evolution data from git for this task
+            # Refresh evolution data from git for this task. work_ref/repo_path
+            # make this read the branch the build PUSHED rather than the
+            # control-plane worktree's HEAD, which is the base branch (#1089).
             orchestrator.evolution_tracker.refresh_from_git(
-                task_id, worktree_path, target_branch=base_branch
+                task_id,
+                worktree_path,
+                target_branch=base_branch,
+                work_ref=work_ref,
+                repo_path=repo_path,
             )
 
             # Get the preview of what would happen

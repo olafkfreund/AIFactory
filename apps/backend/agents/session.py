@@ -49,6 +49,8 @@ from .utils import (
     get_commit_count,
     get_latest_commit,
     load_implementation_plan,
+    sync_memory_to_project,
+    sync_memory_to_source,
     sync_plan_to_source,
 )
 
@@ -235,6 +237,22 @@ async def post_session_processing(
             logger.warning(f"Error saving session memory: {e}")
             print_status("Memory save failed", "warning")
 
+        # #1030: file the memory OUTSIDE the worktree, or it dies with it.
+        # save_session_memory above writes to `spec_dir`, which in worktree mode
+        # is inside the worktree — so before this, every session insight the
+        # fleet ever produced was discarded at teardown and the next task started
+        # blind. copy_spec_to_worktree seeds each new worktree from the source
+        # spec dir, so landing it there is what makes it readable next time.
+        #
+        # Unconditional rather than inside the `if save_success` above: a partial
+        # save is still worth keeping, and the helper is a no-op when there is
+        # nothing to copy or no source (non-worktree mode already writes durably).
+        if sync_memory_to_source(spec_dir, source_spec_dir):
+            print_status("Session memory filed to the project", "success")
+        # RFC-0021 Phase 0: also pool it at PROJECT level, which is the only
+        # scope at which a lesson from this spec can reach the next one.
+        sync_memory_to_project(spec_dir, source_spec_dir)
+
         # Append to build-progress.txt for frontend visibility
         _append_build_progress(spec_dir, subtask_id, subtask, session_num, commit_after)
         if source_spec_dir:
@@ -293,6 +311,12 @@ async def post_session_processing(
         except Exception as e:
             logger.debug(f"Failed to save incomplete session memory: {e}")
 
+        # #1030, and this branch matters MORE than the success one: a session
+        # that failed or stalled is where the dead ends live, and a dead end the
+        # next task can see is the difference between learning and repeating.
+        sync_memory_to_source(spec_dir, source_spec_dir)
+        sync_memory_to_project(spec_dir, source_spec_dir)
+
         return False
 
     else:
@@ -338,6 +362,12 @@ async def post_session_processing(
             )
         except Exception as e:
             logger.debug(f"Failed to save failed session memory: {e}")
+
+        # #1030, and this branch matters MORE than the success one: a session
+        # that failed or stalled is where the dead ends live, and a dead end the
+        # next task can see is the difference between learning and repeating.
+        sync_memory_to_source(spec_dir, source_spec_dir)
+        sync_memory_to_project(spec_dir, source_spec_dir)
 
         return False
 

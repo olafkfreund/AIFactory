@@ -180,6 +180,9 @@ def copy_env_files_to_worktree(project_dir: Path, worktree_path: Path) -> list[s
     return copied
 
 
+from agents.utils import seed_memory_from_project  # noqa: E402  (see below)
+
+
 def copy_spec_to_worktree(
     source_spec_dir: Path,
     worktree_path: Path,
@@ -278,6 +281,14 @@ def setup_workspace(
             source_spec_dir, worktree_info.path, spec_name
         )
         print_status("Spec files copied to workspace", "success")
+
+        # RFC-0021 Phase 0: seed this worktree with what the PROJECT has learned.
+        # The agent's filesystem is confined to the worktree, so the project's
+        # durable memory store must be copied in or it may as well not exist.
+        # Runs AFTER copy_spec_to_worktree deliberately: that call rmtree's the
+        # target spec dir first, so seeding before it would be undone.
+        if seed_memory_from_project(project_dir, localized_spec_dir):
+            print_status("Project memory seeded into workspace", "success")
 
     print_status(f"Workspace ready: {worktree_info.path.name}", "success")
     print()

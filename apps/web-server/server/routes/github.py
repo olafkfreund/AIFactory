@@ -17,6 +17,8 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from server.services.gh import run_gh_command  # re-exported: see services/gh.py
+
 router = APIRouter()
 
 
@@ -83,22 +85,6 @@ class CreateReleaseRequest(BaseModel):
 # GitHub CLI Helpers
 # ============================================
 
-
-def run_gh_command(args: list[str], cwd: str | None = None) -> dict:
-    """Run a gh CLI command and return the result."""
-    try:
-        result = subprocess.run(
-            ["gh"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
-        )
-        if result.returncode != 0:
-            return {"success": False, "error": result.stderr.strip()}
-        return {"success": True, "output": result.stdout.strip()}
-    except FileNotFoundError:
-        return {"success": False, "error": "GitHub CLI (gh) not installed"}
-    except subprocess.TimeoutExpired:
-        return {"success": False, "error": "Command timed out"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 
 def _persist_cli_token_to_project(project_id: str) -> bool:
@@ -564,7 +550,7 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
                 "error": "Authentication flow did not complete. Please try again.",
             }
             log.warning(f"[GitHub Auth] Process exited with code {proc.returncode}")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         _gh_auth_status = {
             "complete": True,
             "success": False,
@@ -648,7 +634,7 @@ async def start_github_auth():
                 while True:
                     try:
                         line = await asyncio.wait_for(stream.readline(), timeout=15)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         break
                     if not line:
                         break
@@ -890,7 +876,7 @@ def _map_gh_issue(issue: dict, repo_full_name: str = "") -> dict:
     author = issue.get("author", {}) or {}
     assignees = issue.get("assignees", []) or []
     labels = issue.get("labels", []) or []
-    milestone = issue.get("milestone", None)
+    milestone = issue.get("milestone")
 
     return {
         "id": issue.get("number", 0),
@@ -932,7 +918,7 @@ def _map_gh_issue(issue: dict, repo_full_name: str = "") -> dict:
         "repoFullName": repo_full_name,
         "createdAt": issue.get("createdAt", ""),
         "updatedAt": issue.get("updatedAt", ""),
-        "closedAt": issue.get("closedAt", None),
+        "closedAt": issue.get("closedAt"),
     }
 
 
@@ -962,12 +948,32 @@ def _use_provider_api(projectId: str) -> bool:
     )
 
 
-def _get_project_provider(projectId: str):
-    """Get the appropriate GitProvider instance for the project based on settings."""
+def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
+    """Get the appropriate GitProvider instance for the project.
+
+    ``repo_ref`` is the task contract's provider-qualified repo reference
+    (RFC-0020 3.5, Factory#366): ``owner/repo``, ``gitlab:group/project``,
+    ``azure_devops:org/project/repo``. When it names a host, THAT host wins over
+    the project's ``gitProvider`` setting, and its project path wins over
+    ``gitRepo``.
+
+    Why the contract outranks the setting, rather than the other way round: the
+    setting defaults to ``github`` for any project nobody has configured by hand,
+    which is most of them on the intake path. A default silently overriding an
+    explicit declaration is exactly how a GitLab tenant's run came to open a
+    GitHub PR. An ABSENT reference changes nothing — the project's settings are
+    the answer, as they were before this phase.
+
+    The credential and the host still come from the project's settings either
+    way. A declaration says WHERE the work lives; it does not carry a token, and
+    it must not be able to.
+    """
     # Ensure backend is in Python path
     backend_path = FilePath(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
+
+    from repo_ref import parse_repo_ref
 
     from .projects import load_projects
 
@@ -980,6 +986,11 @@ def _get_project_provider(projectId: str):
     provider_type = settings.get("gitProvider", "github").lower()
     project_path = project.get("path", "")
 
+    declared = parse_repo_ref(repo_ref)
+    declared_repo = ""
+    if declared is not None:
+        provider_type, declared_repo = declared
+
     # Import factory and protocol
     from runners.github.providers.factory import get_provider
     from runners.github.providers.protocol import ProviderType
@@ -990,6 +1001,11 @@ def _get_project_provider(projectId: str):
     org = settings.get("gitOrg")
     proj_name = settings.get("gitProject")
     repo_name = settings.get("gitRepo")
+
+    # A declared repo outranks the configured one for the same reason the
+    # declared provider does: the contract knows which repository this task is
+    # for, and gitRepo is a project-wide default that may name another.
+    repo_name = declared_repo or repo_name
 
     # If repo name is not configured, try to auto-detect from the folder or settings
     if not repo_name:
@@ -1025,9 +1041,12 @@ def _get_project_provider(projectId: str):
         kwargs = {}
         if project_path:
             kwargs["_project_dir"] = project_path
-        # Pass token if present
+        # Pass token if present. The key is `token` (not `_token`): the factory
+        # reads it to SELECT the REST provider, which is the only GitHub provider
+        # that honours a per-tenant credential. `_token` would be forwarded to
+        # the gh-CLI GitHubProvider, which has no such field — TypeError (#1043).
         if token:
-            kwargs["_token"] = token
+            kwargs["token"] = token
         return get_provider(ProviderType.GITHUB, repo=repo_name, **kwargs)
 
 
@@ -1234,7 +1253,7 @@ async def get_project_github_repositories(projectId: str):
                 "isPrivate": repo_info.get("isPrivate", False),
             }
             return {"success": True, "data": [mapped_repo]}
-        except Exception as e:
+        except Exception:
             return {"success": True, "data": []}
 
     result = run_gh_command(
@@ -1297,7 +1316,7 @@ async def check_project_github_connection(projectId: str):
                     "repoFullName": None,
                     "repoDescription": None,
                     "issueCount": 0,
-                    "error": f"Connection failed: {str(e)}",
+                    "error": f"Connection failed: {e!s}",
                 },
             }
 
@@ -1637,7 +1656,7 @@ async def investigate_github_issue(
             # If AI analysis fails, still return the issue data
             analysis_status = "failed"
             analysis_data = {
-                "error": f"AI analysis failed: {str(ai_error)}",
+                "error": f"AI analysis failed: {ai_error!s}",
                 "summary": None,
                 "issue_type": None,
                 "complexity": None,
@@ -1656,7 +1675,7 @@ async def investigate_github_issue(
         return {"success": True, "data": investigation_data}
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to investigate issue: {str(e)}"}
+        return {"success": False, "error": f"Failed to investigate issue: {e!s}"}
 
 
 @project_router.post("/import")

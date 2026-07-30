@@ -11,6 +11,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
+
 logger = logging.getLogger(__name__)
 
 
@@ -182,6 +184,134 @@ def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
         return True
     except Exception as e:
         logger.warning(f"Failed to sync implementation plan to source: {e}")
+        return False
+
+
+def sync_memory_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
+    """Sync the spec's ``memory/`` tree from the worktree back to the source.
+
+    **The bug this closes (#1030): agent memory never survived a task.** Session
+    insights are written to ``<worktree>/.aifactory/specs/<spec>/memory/``, and
+    :func:`sync_plan_to_source` copies ``implementation_plan.json`` and nothing
+    else — so ``memory/`` died with the worktree. Every one of the 8 insight
+    files on the live cluster sat inside a worktree; none had ever reached a
+    source spec directory.
+
+    That made the whole subsystem inert across tasks. Sessions accumulate memory
+    *within* one task (they share a worktree), then it is thrown away, so the
+    second pass over a codebase costs exactly what the first did — the opposite
+    of what memory exists for, and of RFC-0010's premise.
+
+    **Why syncing here is sufficient.** ``copy_spec_to_worktree`` seeds each new
+    worktree with ``shutil.copytree(source_spec_dir, target_spec_dir)`` — the
+    WHOLE spec directory. So once memory reaches the source, the next task's
+    worktree is seeded with it and the loop closes. No read-path change is
+    needed, and adding one would be the wrong fix.
+
+    Mirrors rather than replaces: files are copied worktree → source, and
+    nothing in the source is deleted. A stale source file whose worktree
+    counterpart vanished is left alone, because losing memory is the failure
+    mode being fixed and this function should never be able to cause it.
+
+    Returns True if anything was copied.
+    """
+    if not source_spec_dir:
+        return False
+
+    if spec_dir.resolve() == source_spec_dir.resolve():
+        return False  # not in worktree mode; already writing to the durable path
+
+    memory_dir = spec_dir / "memory"
+    if not memory_dir.is_dir():
+        return False
+
+    target = source_spec_dir / "memory"
+    try:
+        # dirs_exist_ok so a re-sync merges into an existing store rather than
+        # failing; copy2 preserves mtimes, which the expiry policy in RFC-0021
+        # will want to trust.
+        shutil.copytree(memory_dir, target, dirs_exist_ok=True)
+        logger.debug(f"Synced memory to source: {target}")
+        return True
+    # Narrow rather than blind: these are what copytree can actually raise
+    # (shutil.Error aggregates per-file failures, OSError covers the rest). A
+    # bare `except Exception` would also swallow a programming error here and
+    # report it as "memory could not be filed", which is the kind of quiet
+    # mislabelling that hid this bug in the first place.
+    except (OSError, shutil.Error) as e:
+        # Never fatal: a build that produced working code must not fail because
+        # its memory could not be filed.
+        logger.warning(f"Failed to sync memory to source: {e}")
+        return False
+
+
+def sync_memory_to_project(spec_dir: Path, source_spec_dir: Path | None) -> bool:
+    """Mirror a spec's ``memory/`` into the PROJECT's durable store (RFC-0021 P0).
+
+    Spec-scoped memory survives worktree teardown (#1030) and then has almost
+    nothing to read it: a project holds many specs, each is built about once, so
+    the next build looks in a different directory. This is the half that makes a
+    lesson from spec 034 reachable by spec 041.
+
+    Merges, never replaces — the project store is the accumulation of every
+    spec's insights, and no single spec may clear it. Never raises, for the same
+    reason :func:`sync_memory_to_source` does not: a build that produced working
+    code must not fail because its memory could not be filed.
+    """
+    if not source_spec_dir:
+        return False
+
+    memory_dir = spec_dir / "memory"
+    if not memory_dir.is_dir():
+        return False
+
+    # Anchored on source_spec_dir, NOT project_dir. Inside a build Job,
+    # `project_dir` is the EPHEMERAL clone under the pod's emptyDir, so pooling
+    # there writes to a filesystem that dies with the pod — the original #1030
+    # bug one level out, and a live Job build is the only thing that revealed it
+    # (the first release wrote 0 files while its neighbour wrote 6).
+    #
+    # source_spec_dir is `<project>/.aifactory/specs/<id>` on the co-mounted
+    # durable volume — proven durable by that same run — so its grandparent is
+    # the project's `.aifactory/` and the store belongs beside `specs/`.
+    project_root_aifactory = source_spec_dir.parent.parent
+
+    try:
+        shutil.copytree(
+            memory_dir,
+            project_memory_dir_from_aifactory(project_root_aifactory),
+            dirs_exist_ok=True,
+        )
+        return True
+    except (OSError, shutil.Error) as e:
+        logger.warning(f"Failed to sync memory to the project store: {e}")
+        return False
+
+
+def seed_memory_from_project(project_dir: Path | None, spec_dir: Path) -> bool:
+    """Seed a fresh worktree's spec ``memory/`` from the project store (RFC-0021 P0).
+
+    The read half. The agent's filesystem is confined to its worktree, so the
+    project store has to be copied IN before a build starts or it may as well
+    not exist.
+
+    Seeded rather than replaced: anything the spec already carries wins, because
+    a spec's own history is more specific than the project's pooled memory.
+    """
+    if not project_dir:
+        return False
+
+    try:
+        src = project_memory_dir(project_dir)
+        if not any(src.iterdir()):
+            return False
+        target = spec_dir / "memory"
+        # dirs_exist_ok merges; the spec's own files are written after this and
+        # therefore win on any collision.
+        shutil.copytree(src, target, dirs_exist_ok=True)
+        return True
+    except (OSError, shutil.Error) as e:
+        logger.warning(f"Failed to seed memory from the project store: {e}")
         return False
 
 

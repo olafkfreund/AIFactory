@@ -163,11 +163,7 @@ def _sort_key(
     # class first (don't burn a frontier model when a balanced one qualifies);
     # then model id for determinism. None cost (subscription/local) sorts as 0.0
     # so free/flat-rate models are preferred when they meet the floor.
-    return (
-        cost if cost is not None else 0.0,
-        _CLASS_RANK.get(_entry_class(entry), 99),
-        mid,
-    )
+    return (cost if cost is not None else 0.0, _CLASS_RANK.get(_entry_class(entry), 99), mid)
 
 
 def cheapest_capable_model(
@@ -190,9 +186,7 @@ def cheapest_capable_model(
         for mid, entry in catalog.items()
         if _serves_role(entry, role)
         and _meets_floor(entry, floor_class)
-        and _under_ceiling(
-            estimate_cost(mid, in_tokens, out_tokens, {mid: entry}), ceiling_usd
-        )
+        and _under_ceiling(estimate_cost(mid, in_tokens, out_tokens, {mid: entry}), ceiling_usd)
     ]
     if not candidates:
         return None
@@ -209,6 +203,37 @@ def planning_floor_class(tier: str, routing_class: str) -> str:
         if _CLASS_RANK.get(base, 0) < forced_rank:
             return _GOVERNED_PLANNING_FLOOR
     return base
+
+
+def admit_within_budget(
+    *,
+    active_jobs: int,
+    max_concurrency: int | None,
+    tenant_spend_usd: float,
+    ceiling_usd: float | None,
+    est_job_cost_usd: float | None,
+) -> tuple[str, str]:
+    """Admission decision tying RFC-0016 concurrency control to the RFC-0014 budget.
+
+    The single gate a control plane consults before starting another concurrent
+    Job. Returns ``(decision, reason)`` where decision is:
+
+    - ``"queue"`` — the concurrency cap is full (RFC-0016); wait for a slot.
+    - ``"deny"``  — admitting would exceed the tenant/team spend ceiling (RFC-0014).
+    - ``"admit"`` — under both the cap and the budget.
+
+    Concurrency is checked first (a full fleet always queues, regardless of cost).
+    A metered estimate of ``None`` (subscription/local billing — see
+    ``estimate_cost``) never charges the budget. ``max_concurrency`` None/<=0 means
+    unlimited; ``ceiling_usd`` None means no budget enforcement (observe-only).
+    """
+    if max_concurrency is not None and max_concurrency > 0 and active_jobs >= max_concurrency:
+        return ("queue", f"concurrency cap reached ({active_jobs}/{max_concurrency})")
+    if ceiling_usd is not None and est_job_cost_usd is not None:
+        projected = tenant_spend_usd + est_job_cost_usd
+        if projected > ceiling_usd:
+            return ("deny", f"budget: ${projected:.2f} would exceed ${ceiling_usd:.2f} ceiling")
+    return ("admit", "within concurrency cap and budget")
 
 
 # --------------------------------------------------------------------------- #
@@ -262,14 +287,8 @@ def _test_estimate(cat: dict[str, ModelEntry]) -> None:
     cost = estimate_cost("claude-opus-4-8", 1_000_000, 1_000_000, cat)
     _check(cost == opus_full_mtok, f"opus 1M/1M cost {cost} != {opus_full_mtok}")
     # Subscription / local / unknown -> None (no $ estimate).
-    _check(
-        estimate_cost("codex", 1_000_000, 1_000_000, cat) is None,
-        "subscription must be None",
-    )
-    _check(
-        estimate_cost("ollama:<model>", 1_000_000, 1_000_000, cat) is None,
-        "local must be None",
-    )
+    _check(estimate_cost("codex", 1_000_000, 1_000_000, cat) is None, "subscription must be None")
+    _check(estimate_cost("ollama:<model>", 1_000_000, 1_000_000, cat) is None, "local must be None")
     _check(estimate_cost("nope", 10, 10, cat) is None, "unknown model must be None")
 
 
@@ -277,9 +296,7 @@ def _test_floor(cat: dict[str, ModelEntry]) -> None:
     _check(capability_floor_class("low") == "cheap", "low floor")
     _check(capability_floor_class("medium") == "balanced", "medium floor")
     _check(capability_floor_class("hard") == "frontier", "hard floor")
-    _check(
-        capability_floor_class("???") == "balanced", "unknown tier never below balanced"
-    )
+    _check(capability_floor_class("???") == "balanced", "unknown tier never below balanced")
 
     # Floor respected: a `hard` (frontier) coding pick must be the frontier model,
     # never the cheaper balanced/cheap ones, even though they are cheaper.
@@ -291,35 +308,18 @@ def _test_cheapest_under_ceiling(cat: dict[str, ModelEntry]) -> None:
     # Constrain to a metered-only sub-catalog: with the full catalog the
     # subscription/local options sort as cost 0.0 and would win. Among metered
     # models at/above the balanced floor, the cheapest is sonnet (haiku is below).
-    metered = {
-        k: v for k, v in cat.items() if (v.get("price") or {}).get("mode") == "metered"
-    }
-    pick = cheapest_capable_model(
-        "coding", "balanced", 5.0, (100_000, 100_000), metered
-    )
-    _check(
-        pick == "claude-sonnet-4-6",
-        f"cheapest balanced metered must be sonnet, got {pick}",
-    )
+    metered = {k: v for k, v in cat.items() if (v.get("price") or {}).get("mode") == "metered"}
+    pick = cheapest_capable_model("coding", "balanced", 5.0, (100_000, 100_000), metered)
+    _check(pick == "claude-sonnet-4-6", f"cheapest balanced metered must be sonnet, got {pick}")
 
     # A tight ceiling that sonnet's estimate exceeds forces None (no metered model
     # under it at/above the floor): sonnet on 1M/1M = 3+15 = 18 > 1.0.
-    none_pick = cheapest_capable_model(
-        "coding", "balanced", 1.0, (1_000_000, 1_000_000), metered
-    )
-    _check(
-        none_pick is None,
-        f"nothing under a $1 ceiling at balanced floor, got {none_pick}",
-    )
+    none_pick = cheapest_capable_model("coding", "balanced", 1.0, (1_000_000, 1_000_000), metered)
+    _check(none_pick is None, f"nothing under a $1 ceiling at balanced floor, got {none_pick}")
 
     # cheap floor, looser ceiling: haiku (0.8+4=4.8) is the cheapest capable.
-    haiku_pick = cheapest_capable_model(
-        "coding", "cheap", 10.0, (1_000_000, 1_000_000), metered
-    )
-    _check(
-        haiku_pick == "claude-haiku-4-5-20251001",
-        f"cheap floor must pick haiku, {haiku_pick}",
-    )
+    haiku_pick = cheapest_capable_model("coding", "cheap", 10.0, (1_000_000, 1_000_000), metered)
+    _check(haiku_pick == "claude-haiku-4-5-20251001", f"cheap floor must pick haiku, {haiku_pick}")
 
 
 def _test_subscription_local_preferred(cat: dict[str, ModelEntry]) -> None:
@@ -340,9 +340,55 @@ def _test_governed_forces_frontier(cat: dict[str, ModelEntry]) -> None:
 
     # Non-governed medium planning defers to the tier floor (balanced).
     base = planning_floor_class("medium", "standard")
-    _check(
-        base == "balanced", f"standard medium planning defers to balanced, got {base}"
+    _check(base == "balanced", f"standard medium planning defers to balanced, got {base}")
+
+
+def _test_admission_budget() -> None:
+    # Under cap and under budget -> admit.
+    d, _ = admit_within_budget(
+        active_jobs=2,
+        max_concurrency=5,
+        tenant_spend_usd=10.0,
+        ceiling_usd=100.0,
+        est_job_cost_usd=3.0,
     )
+    _check(d == "admit", f"under cap+budget must admit, got {d}")
+    # Cap full -> queue (concurrency checked before budget).
+    d, _ = admit_within_budget(
+        active_jobs=5,
+        max_concurrency=5,
+        tenant_spend_usd=0.0,
+        ceiling_usd=None,
+        est_job_cost_usd=None,
+    )
+    _check(d == "queue", f"full cap must queue, got {d}")
+    # Over budget -> deny.
+    d, _ = admit_within_budget(
+        active_jobs=0,
+        max_concurrency=5,
+        tenant_spend_usd=99.0,
+        ceiling_usd=100.0,
+        est_job_cost_usd=5.0,
+    )
+    _check(d == "deny", f"over-budget must deny, got {d}")
+    # Subscription/local (None est) never charges the budget -> admit near the ceiling.
+    d, _ = admit_within_budget(
+        active_jobs=0,
+        max_concurrency=5,
+        tenant_spend_usd=99.0,
+        ceiling_usd=100.0,
+        est_job_cost_usd=None,
+    )
+    _check(d == "admit", f"flat-rate job must not be budget-denied, got {d}")
+    # Unlimited concurrency + no ceiling -> always admit.
+    d, _ = admit_within_budget(
+        active_jobs=999,
+        max_concurrency=None,
+        tenant_spend_usd=1e9,
+        ceiling_usd=None,
+        est_job_cost_usd=1e9,
+    )
+    _check(d == "admit", f"unlimited+no-ceiling must admit, got {d}")
 
 
 def _test() -> None:
@@ -352,7 +398,8 @@ def _test() -> None:
     _test_cheapest_under_ceiling(cat)
     _test_subscription_local_preferred(cat)
     _test_governed_forces_frontier(cat)
-    print("cost_router_core self-tests: 5 groups passed")  # noqa: T201  # CLI self-test report sink
+    _test_admission_budget()
+    print("cost_router_core self-tests: 6 groups passed")  # noqa: T201  # CLI self-test report sink
 
 
 if __name__ == "__main__":

@@ -41,6 +41,7 @@ if str(_BACKEND_DIR) not in sys.path:
 
 from intake import build_execution_block  # noqa: E402 — needs sys.path above
 from pfactory.tiers import classify_parallel, classify_tier, tier_for  # noqa: E402
+from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
 from trusted_plan import apply_execution_profile  # noqa: E402
 
 router = APIRouter()
@@ -53,7 +54,16 @@ class FromIssueRequest(BaseModel):
     provider: str | None = Field(
         None, description="Git provider hint (github|gitlab|azure_devops)"
     )
-    repo: str | None = Field(None, description="owner/repo (informational)")
+    repo: str | None = Field(
+        None,
+        description=(
+            "The task contract's repo reference, optionally provider-qualified "
+            "(RFC-0020 3.5): 'owner/repo' | 'gitlab:group/project' | "
+            "'azure_devops:org/project/repo'. Decides which git HOST this build "
+            "belongs to, outranking the project's gitProvider setting, and is "
+            "recorded on the spec so the PR endgame honours it too."
+        ),
+    )
     issue_number: int | None = Field(
         None, description="Issue/work-item number to fetch via the provider"
     )
@@ -87,11 +97,36 @@ def _normalize_issue(payload: dict | None) -> dict:
     }
 
 
-async def _fetch_issue_via_provider(project_id: str, issue_number: int) -> dict:
-    """Fetch an issue through the project's GitProvider (provider-agnostic)."""
+def _declared_repo(request: FromIssueRequest) -> str:
+    """This request's provider-qualified repo reference (RFC-0020 3.5).
+
+    ``repo``'s own qualification wins; the older ``provider`` hint fills a gap in
+    an unqualified one, so a caller written before phase 5 keeps working. The
+    other order would let ``provider``'s default silently override an explicit
+    ``gitlab:`` reference, which is the bug Factory#366 closes.
+    """
+    provider, project = parse_repo_ref(request.repo) or ("github", "")
+    if not project:
+        return ""
+    if provider == "github" and ":" not in (request.repo or ""):
+        provider = (request.provider or "github").strip().lower()
+    return qualify_repo(provider, project)
+
+
+async def _fetch_issue_via_provider(
+    project_id: str, issue_number: int, *, repo_ref: str | None = None
+) -> dict:
+    """Fetch an issue through the project's GitProvider (provider-agnostic).
+
+    ``repo_ref`` carries the declared host, so an issue is FETCHED from the same
+    place the build will be pushed to. Without it the fetch used the project's
+    default provider while the rest of the run used the declaration, which is a
+    worse failure than either alone: the issue reads fine and the work lands
+    somewhere else.
+    """
     from .github import _get_project_provider
 
-    provider = _get_project_provider(project_id)
+    provider = _get_project_provider(project_id, repo_ref=repo_ref)
     issue = await provider.fetch_issue(issue_number)
     return {
         "number": issue.number,
@@ -110,6 +145,7 @@ def _write_spec(
     execution: dict,
     tier_value: str,
     tenant: str = "default",
+    repo_ref: str | None = None,
 ) -> Path:
     """Create the spec dir, write requirements.json + apply the execution profile."""
     specs_dir = project_path / ".aifactory" / "specs"
@@ -128,13 +164,28 @@ def _write_spec(
             "url": issue.get("url", ""),
             "state": issue.get("state", ""),
             "labels": issue.get("labels", []),
+            # The provider-qualified reference (RFC-0020 3.5). Recorded HERE
+            # because gather_pr_context already reads githubIssue.repo to find
+            # the repository, so the host arrives on the endgame's existing path
+            # rather than through a new one it would have to be taught. The key
+            # name is a legacy of when GitHub was the only host; the value is
+            # not GitHub-specific any more.
+            "repo": repo_ref or "",
         },
     }
     # RFC-0001 correlation: stamp the issue number on first write so the cockpit
     # threads plan->code->test instead of minting an orphan card.
     number = issue.get("number")
+    provenance: dict = {}
     if isinstance(number, int):
-        requirements["provenance"] = {"issue_number": number}
+        provenance["issue_number"] = number
+    if repo_ref:
+        # Mirrors the contract's own provenance.repo, so a spec created from an
+        # issue and one created from a signed plan describe their target the
+        # same way.
+        provenance["repo"] = repo_ref
+    if provenance:
+        requirements["provenance"] = provenance
 
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
@@ -235,7 +286,9 @@ async def create_from_issue(
     elif request.issue_number is not None:
         try:
             fetched = await _fetch_issue_via_provider(
-                request.project_id, request.issue_number
+                request.project_id,
+                request.issue_number,
+                repo_ref=_declared_repo(request),
             )
         except Exception as exc:  # noqa: BLE001 — surface a clean 502
             raise HTTPException(
@@ -305,6 +358,7 @@ async def create_from_issue(
         execution,
         tier.value,
         tenant=resolve_tenant(raw_request),
+        repo_ref=_declared_repo(request),
     )
     # Persist the integration branch so the PR endgame targets it too —
     # gather_pr_context reads task_metadata.base_branch; without this a fleet

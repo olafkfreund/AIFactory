@@ -84,6 +84,71 @@ async def test_runs_only_once(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_route_wiring_gate_joins_the_trailing_run(tmp_path, monkeypatch):
+    """#1123: the merged tree is checked against the service's real entrypoint.
+
+    This is the only point in a build where every wave has merged and nothing is
+    pending — the tree that ships. The gate must be detected here, against the
+    worktree, or a router nobody registered ships as a 404.
+    """
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    (spec_dir / "implementation_plan.json").write_text(
+        '{"subtasks": [{"description": "Add POST /api/quote"}]}'
+    )
+    (worktree / "tests").mkdir()
+    (worktree / "tests" / "test_root.py").write_text("from app.main import app\n")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+    seen = {}
+
+    async def fake_run_gates(cwd, gates, **kw):
+        seen["cwd"] = Path(cwd)
+        seen["gates"] = [g.name for g in gates]
+        return []
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert seen["cwd"] == worktree
+    assert "route-wiring" in seen["gates"]
+
+
+@pytest.mark.asyncio
+async def test_no_route_wiring_gate_when_the_plan_has_no_http_path(
+    tmp_path, monkeypatch
+):
+    """A gate that fires on correct work gets switched off — so a CLI/library
+    build never sees it."""
+    project_dir, spec_dir, worktree = _setup(
+        tmp_path, go_in_worktree=True, go_in_root=False
+    )
+    (spec_dir / "implementation_plan.json").write_text(
+        '{"subtasks": [{"description": "Add slugify()"}]}'
+    )
+    (worktree / "tests").mkdir()
+    (worktree / "tests" / "test_root.py").write_text("from app.main import app\n")
+    monkeypatch.setattr(
+        ipp.ImplementationPlan, "load", staticmethod(lambda _p: _FakePlan())
+    )
+    seen = {}
+
+    async def fake_run_gates(cwd, gates, **kw):
+        seen["gates"] = [g.name for g in gates]
+        return []
+
+    monkeypatch.setattr(gate_runner, "run_gates", fake_run_gates)
+
+    await _run_trailing_gates_if_build_complete(spec_dir, project_dir)
+
+    assert "route-wiring" not in seen["gates"]
+    assert "go-test" in seen["gates"]  # the ordinary gates still ran
+
+
+@pytest.mark.asyncio
 async def test_no_gates_is_recorded_not_silent(tmp_path, monkeypatch):
     # Neither worktree nor root has a recognizable project -> no gates. The fix
     # records this visibly (honest) instead of returning with no trace.
