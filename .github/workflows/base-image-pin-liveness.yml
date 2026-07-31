@@ -1,0 +1,72 @@
+# Are the Dockerfile's pinned base-image digests still pullable? (#1091)
+#
+# A digest pin is only reproducible while the registry still serves that digest.
+# Chainguard rebuilds `latest-*` continuously and garbage-collects superseded
+# digests, so a pin against a moving tag has a shelf life measured in days --
+# which is how `node:latest-dev@sha256:ce3f18...` came to 404 and break
+# `docker (P0 acceptance)` on every PR, for reasons unconnected to any PR.
+#
+# The frontend stage was moved to a Docker Official versioned tag, whose digests
+# are retained. The runtime stage cannot follow: the public Chainguard catalog
+# publishes ONLY `latest` and `latest-dev` for python (verified against
+# cgr.dev/v2/chainguard/python/tags/list -- every other entry is a
+# `sha256-*.sig/.att/.sbom` attachment), and versioned tags are a paid
+# Production-tier feature. So that pin will rot again.
+#
+# Dependabot's docker ecosystem is configured and would turn the rot into a PR,
+# but it has never run in this repo (#1104). Until it does, this is the thing
+# that makes the rot LOUD and EARLY: one failed scheduled run naming the dead
+# pin, instead of every open PR failing at `load metadata` with no clue why.
+name: base-image pin liveness
+
+on:
+  schedule:
+    # Daily. Chainguard's GC window is days, so this catches a dead pin well
+    # before someone opens a PR into it.
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    # Also on PRs that touch the pins, so a bad digest is caught at review time
+    # rather than a day later.
+    paths:
+      - Dockerfile
+      - .github/workflows/base-image-pin-liveness.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pins-resolve:
+    name: every pinned base-image digest still resolves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve each digest-pinned FROM
+        run: |
+          set -uo pipefail
+          pins=$(grep -oE '^FROM +[^ ]+@sha256:[0-9a-f]{64}' Dockerfile | awk '{print $2}' | sort -u)
+          if [ -z "$pins" ]; then
+            echo "::error::no digest-pinned FROM lines found — this check is looking at the wrong thing"
+            exit 1
+          fi
+
+          dead=0
+          for ref in $pins; do
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              echo "ok    $ref"
+            else
+              echo "DEAD  $ref"
+              # The tag half of the ref is a human hint only; report it so the
+              # fix ("bump to the current digest of that tag") is obvious.
+              echo "::error::pinned digest no longer resolves: $ref"
+              dead=$((dead + 1))
+            fi
+          done
+
+          if [ "$dead" -gt 0 ]; then
+            echo "$dead pinned base image(s) have been garbage-collected upstream."
+            echo "Bump them to the tag's current digest; see the header of this workflow."
+            exit 1
+          fi
+          echo "all $(echo "$pins" | wc -l) pinned base image(s) resolve"
