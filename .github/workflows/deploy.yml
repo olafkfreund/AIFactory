@@ -127,17 +127,62 @@ jobs:
       - name: Commit + push the bump
         working-directory: gitops
         run: |
+          set -euo pipefail
+          SHA="${{ steps.tags.outputs.sha }}"
+
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           if git diff --quiet; then
-            echo "No image change to commit."
-            exit 0
+            # "No image change" had two causes and treated both as success:
+            # already pinned to this sha (fine), or the kustomize edit matched
+            # nothing (a broken bump reporting green). Tell them apart.
+            if grep -rq "${{ env.IMAGE }}:${SHA}" "${{ env.GITOPS_PATH }}/"; then
+              echo "gitops already pinned to ${SHA}; nothing to do."
+              exit 0
+            fi
+            echo "::error::the image edit changed nothing AND the pin is not ${SHA}."
+            echo "::error::The kustomize pattern no longer matches this manifest."
+            exit 1
           fi
+
           git add ${{ env.GITOPS_PATH }}/kustomization.yaml
-          git commit -m "cd(aifactory): ${{ steps.tags.outputs.sha }} [skip ci]
+          git commit -m "cd(aifactory): ${SHA} [skip ci]
 
           From olafkfreund/AIFactory@${{ github.sha }}"
-          git push
+
+          # Factory#527: every service bumps this same repo, so two deploys in
+          # flight together race and the loser gets `! [rejected] (fetch first)`,
+          # leaving its pin on the previous sha while the build reports success.
+          # Unlike the sibling services this is a FULL checkout (actions/checkout,
+          # not a shallow clone), so a rebase is clean and cheap -- our single
+          # commit replays on top of whoever landed first, preserving their bump.
+          pushed=""
+          for attempt in 1 2 3 4 5; do
+            if git push --quiet; then
+              pushed="yes"
+              break
+            fi
+            echo "push rejected (attempt ${attempt}/5) - another service bumped first; rebasing"
+            git pull --rebase --quiet origin HEAD
+            sleep $(( attempt * 3 ))
+          done
+
+          if [ -z "$pushed" ]; then
+            echo "::error::could not push the image bump after 5 attempts (Factory#527)."
+            exit 1
+          fi
+
+          # A deploy that cannot prove the pin moved must not report success
+          # (Factory#433). Re-read from the remote rather than trusting the push.
+          git fetch --quiet origin
+          if git show "origin/HEAD:${{ env.GITOPS_PATH }}/kustomization.yaml" 2>/dev/null | grep -q "${SHA}" \
+             || git show "origin/main:${{ env.GITOPS_PATH }}/kustomization.yaml" | grep -q "${SHA}"; then
+            echo "verified: factory-gitops pins ${SHA}"
+          else
+            echo "::error::pushed, but factory-gitops does not pin ${SHA}."
+            exit 1
+          fi
 
       - name: Summary
         run: |
