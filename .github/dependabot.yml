@@ -1,46 +1,41 @@
-# Base-image updates for the root Dockerfile. This file is now the only thing in
-# the repo that bumps a base image (Factory#436).
+# Base-image updates for the root Dockerfile (Factory#436).
 #
-# How the gap happened. Routine version updates were switched off deliberately on
-# 2026-05-20 in #34 ("Dependabot security-only mode") because one weekly
-# all-ecosystem run opened 9 PRs at once. renovate.json arrived six days later on
-# 2026-05-26 and read as the replacement -- pinDigests, a dockerfile manager, a
-# digest rule labelled base-image. It never ran: the Renovate GitHub App is not
-# installed on this account, so across all five Factory repos there are zero
-# Renovate PRs and no Dependency Dashboard issue despite ":dependencyDashboard"
-# being set. For nine weeks nothing watched the base images at all. The frontend
-# stage's digest went stale, upstream garbage-collected it, and "docker (P0
-# acceptance)" could no longer start a build (#1091).
+# Rewritten lean on 2026-07-31 as a #1104 diagnostic. The previous version was
+# functionally identical to PFactory's and TFactory's -- same ecosystem, same
+# directory, same target-branch, same schedule -- and those two raise a docker PR
+# within a minute of the config landing, while this repo has never raised one at
+# all. Dependabot is not dormant here: it raises npm PRs against /docs. Only the
+# docker lane is silent, and the per-job log that would explain it is behind the
+# Insights UI, not the REST API.
 #
-# Docker-only on purpose. That is the lane that actually broke, and a narrow
-# config is one that does not get switched off again for noise the way #34 was.
+# So this rewrite changes the two things left that a config can change: the file
+# content (which re-triggers evaluation) and the 30-line comment header the old
+# file carried. Neither should matter. Trying it is the point -- and if a docker
+# PR appears within the hour, the cause was one of those two and worth knowing.
 #
-# Daily, not weekly. A digest pin rots in one direction only, and the gate is
-# hard-down for the whole window between upstream moving and the bump landing.
+# Nothing else moved. Routine version updates stay off (#34, one weekly
+# all-ecosystem run opened 9 PRs at once); docker-only is deliberate, because
+# that is the lane that broke and a narrow config is one that does not get
+# switched off again for noise. Daily rather than weekly because a digest pin
+# rots in one direction only.
 #
-# Verified 2026-07-30 with dependabot-cli v1.91.0 against this repo: the docker
-# updater reads `tag@sha256:` pins and proposed
-#   chainguard/python latest-dev  7a568bc -> 534fb1a
-# rewriting the FROM line. That is the same shape of pin that failed in #1091,
-# on the same tag class, so this config covers the real case and not just the
-# tidy one.
+# target-branch is pinned rather than inherited (Factory#491): without it,
+# Dependabot raises against whatever the repo default happens to be, and a
+# default-branch flip splits bumps across both branches.
 #
-# Known gap from that same run: Dependabot's Dockerfile parser only reads FROM.
-# The `COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:latest@sha256:...`
-# pins near line 310 are invisible to it and remain hand-managed. Risk is low --
-# that registry is ours, so upstream garbage collection is not a threat -- but it
-# is genuinely uncovered, not covered. Renovate's dockerfile manager does read
-# COPY --from; if the App is ever installed, delete this file rather than let two
-# bots rewrite the same FROM lines.
+# Known gap, unchanged: Dependabot's Dockerfile parser only reads FROM. The
+# `COPY --from=ghcr.io/olafkfreund/tfactory-runner-nix:...` pins are invisible to
+# it and stay hand-managed. Risk is low -- that registry is ours, so upstream
+# garbage collection is not a threat -- but it is uncovered, not covered.
+#
+# WHILE THE DOCKER LANE IS DEAD, .github/workflows/base-image-pin-liveness.yml
+# does this job instead: it checks the pins daily and opens its own PR (#1104).
+# If Dependabot ever starts working here, delete that workflow's pins-bump job
+# rather than let two bots rewrite the same FROM lines.
 version: 2
 updates:
   - package-ecosystem: docker
     directory: "/"
-    # Factory#491: without this, Dependabot raises against whatever the repo
-    # default happens to be, and the default-branch flip to `dev` therefore split
-    # bumps across both branches — base-image changes reaching the deployed
-    # branch without passing through `dev`, and `main` ending up ahead of `dev`
-    # in every service repo. Pin it rather than inherit it.
     target-branch: dev
     schedule:
       interval: daily

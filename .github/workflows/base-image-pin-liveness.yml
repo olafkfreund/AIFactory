@@ -1,0 +1,69 @@
+# Keep the Dockerfile's pinned base-image digests alive and current (#1091, #1104).
+#
+# One job, driven by scripts/base_image_pins.py so the parsing is tested
+# (tests/test_base_image_pins.py) rather than living in inline shell:
+#
+#   pins-resolve  every pinned digest still PULLS. Fails naming any that do not.
+#
+# pins-bump was REMOVED on 2026-07-31. Dependabot's docker lane now works here
+# (#1104: the cause was that AIFactory is a FORK, and version updates are off by
+# default on forks -- nothing to do with the config, which is why every config
+# hypothesis came back clean). It raised its first docker PR within minutes of
+# being enabled. Two bots rewriting the same FROM lines is worse than either, so
+# the bump half is retired exactly as this file said it should be.
+#
+# `check` is deliberately KEPT. Dependabot proposes newer versions; it does not
+# tell you when the digest you are pinned to TODAY has been garbage-collected
+# out of the registry, which is what actually broke #1091 -- `docker (P0
+# acceptance)` could not start a build, on every PR, for reasons unconnected to
+# the change under review. That gap is this job's whole reason to exist and
+# Dependabot does not close it.
+#
+# Why this repo bumps its own pins instead of leaving it to Dependabot: the
+# docker ecosystem is configured here (.github/dependabot.yml, daily,
+# target-branch dev) and has never produced a single PR, while the identical
+# setup in PFactory and TFactory bumps within a minute of the config landing
+# (#1104). Dependabot is not dormant here -- it raises npm PRs against /docs --
+# only the docker lane is silent, and the per-job log that would explain it is
+# not exposed by the REST API.
+#
+# The pins genuinely rot, fast: `chainguard/python:latest-dev` moved
+# 7a568bc -> 534fb1a -> 92b8a0af inside about a day. A superseded Chainguard
+# digest is garbage-collected, and once it is, `docker (P0 acceptance)` cannot
+# start a build at all -- that is #1091, red for reasons unconnected to the PR
+# under review. Pinning a versioned tag would fix it properly, but the public
+# Chainguard catalog publishes only `latest` and `latest-dev` for python.
+#
+# DEPENDENCY: pins-bump needs the repo setting "Allow GitHub Actions to create
+# and approve pull requests" (`can_approve_pull_request_reviews`). It is ON for
+# this repo and OFF for every other Factory repo -- that is deliberate, and the
+# trade-off (the same toggle also lets Actions APPROVE PRs, which touches the
+# segregation-of-duties finding in the compliance docs) is recorded in the hub
+# at docs/compliance/actions-workflow-permissions.md. Without it the job still
+# pushes a ready branch and fails with a one-click link; it just cannot open the
+# PR itself.
+#
+name: base-image pins
+
+on:
+  schedule:
+    # Daily, ahead of the working day. Chainguard's GC window is days, so this
+    # catches a moved tag well before the old digest is collected.
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - Dockerfile
+      - scripts/base_image_pins.py
+      - .github/workflows/base-image-pin-liveness.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pins-resolve:
+    name: every pinned base-image digest still resolves
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/base_image_pins.py check

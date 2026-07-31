@@ -27,6 +27,26 @@ Exporter failures (network down, credential expired, collector OOM)
 log a WARNING via the OTel SDK's own machinery and drop spans. The
 calling code path is never crashed by tracing.
 
+## The "enabled" line is checked, not claimed (Factory#465)
+
+Constructing an ``OTLPSpanExporter`` touches no network, so logging
+"OTel tracing enabled" straight after it says nothing about whether
+a span will ever land. It said nothing for 35 days while every batch
+came back 401 and the whole subsystem was dark.
+
+So ``init_tracing()`` now spends one empty OTLP POST proving the
+endpoint and the credential before it makes any claim: SUCCESS logs
+the enabled line as before, FAILURE logs an ERROR that names the
+endpoint, the protocol and the auth scheme. The exporter is
+installed either way — a collector that is merely restarting must
+still be able to recover without a pod bounce.
+
+The same probe answers the second half of #465: a persistently
+rejected exporter used to emit ~12 identical ERROR lines a minute,
+199 of the last 300 log lines, which is how a genuine error gets
+missed. The SDK exporter's own logger is rate-limited to one line
+per interval plus a suppressed-count summary.
+
 ## See
 
 Design doc: docs/plans/2026-05-28-otel-tracing-design.md
@@ -36,13 +56,17 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 logger = logging.getLogger(__name__)
+
+# How long a rejected exporter stays quiet between log lines, seconds.
+_EXPORT_ERROR_INTERVAL = float(os.environ.get("OTEL_EXPORT_ERROR_INTERVAL", "300"))
 
 # Module-level state — set on first init_tracing() call. Subsequent
 # calls no-op so tests can re-init cheaply.
@@ -111,13 +135,12 @@ def init_tracing() -> None:
                         OTLPSpanExporter,
                     )
                 exporter = OTLPSpanExporter()
+                # Quieten the SDK exporter BEFORE the probe, so a broken
+                # credential costs one line here and not one every 5s
+                # forever after (Factory#465).
+                rate_limit_exporter_log(exporter)
                 _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
-                logger.info(
-                    "OTel tracing enabled — endpoint=%s protocol=%s service=%s",
-                    endpoint,
-                    protocol,
-                    service_name,
-                )
+                _verify_export_auth(exporter, endpoint, protocol, service_name)
             except Exception:
                 logger.warning(
                     "Failed to install OTLP exporter; tracing degrades to "
@@ -144,6 +167,120 @@ def init_tracing() -> None:
             "init_tracing() failed; continuing without distributed tracing",
             exc_info=True,
         )
+
+
+class _RateLimitFilter(logging.Filter):
+    """Pass one record per ``interval``; count and summarise the rest.
+
+    ponytail: one counter, not one per message key. The OTLP exporter
+    logs a single message shape ("Failed to export ... code: N"), so
+    keying by message would buy nothing and cost a dict.
+    """
+
+    def __init__(self, interval: float) -> None:
+        super().__init__()
+        self._interval = interval
+        self._last = 0.0
+        self._suppressed = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        now = time.monotonic()
+        if self._last and now - self._last < self._interval:
+            self._suppressed += 1
+            return False
+        if self._suppressed:
+            record.msg = (
+                f"{record.getMessage()} [+{self._suppressed} identical messages "
+                f"suppressed in the previous {self._interval:.0f}s]"
+            )
+            record.args = ()
+            self._suppressed = 0
+        self._last = now
+        return True
+
+
+def rate_limit_exporter_log(exporter: Any) -> None:
+    """Attach the rate limiter to whichever SDK logger this exporter uses.
+
+    Derived from the exporter's own module so it is exact for both the
+    http and grpc variants — a filter on a parent logger would not
+    apply, because filters do not run on propagated records.
+    """
+    try:
+        logging.getLogger(type(exporter).__module__).addFilter(
+            _RateLimitFilter(_EXPORT_ERROR_INTERVAL)
+        )
+    except Exception:  # noqa: BLE001 — noise control must never break startup
+        logger.debug("could not rate-limit the OTLP exporter log", exc_info=True)
+
+
+def _verify_export_auth(
+    exporter: Any, endpoint: str, protocol: str, service_name: str
+) -> None:
+    """Prove the endpoint and credential with one empty export.
+
+    ``export([])`` posts an empty OTLP payload: it costs one request,
+    carries no span data, and still round-trips the auth header, so it
+    separates "configured" from "actually accepted". Measured against
+    OpenObserve v0.90.3 on 2026-07-30: a Bearer header returns FAILURE
+    (401 Not Supported), Basic root credentials return SUCCESS.
+
+    Never raises. An exporter that cannot be probed is left installed
+    and reported as unverified rather than torn down.
+    """
+    try:
+        # Deferred like every other OTel import in this module: it must stay
+        # importable with no SDK installed, hence the suppression.
+        from opentelemetry.sdk.trace.export import (  # noqa: PLC0415
+            SpanExportResult,
+        )
+
+        ok = exporter.export([]) is SpanExportResult.SUCCESS
+    except Exception:  # noqa: BLE001 — an unprobeable exporter still exports
+        logger.warning(
+            "OTel tracing enabled but UNVERIFIED — the startup export probe "
+            "could not run. endpoint=%s protocol=%s service=%s",
+            endpoint,
+            protocol,
+            service_name,
+            exc_info=True,
+        )
+        return
+
+    if ok:
+        logger.info(
+            "OTel tracing enabled — endpoint=%s protocol=%s service=%s "
+            "(startup export accepted)",
+            endpoint,
+            protocol,
+            service_name,
+        )
+        return
+
+    logger.error(
+        "OTel tracing is configured but the collector REJECTED the startup "
+        "export: NO SPANS WILL LAND. endpoint=%s protocol=%s service=%s "
+        "auth=%s. Check OTEL_EXPORTER_OTLP_HEADERS against what the collector "
+        "accepts (Factory#465).",
+        endpoint,
+        protocol,
+        service_name,
+        _auth_scheme(),
+    )
+
+
+def _auth_scheme() -> str:
+    """The auth scheme name from OTEL_EXPORTER_OTLP_HEADERS, never its value.
+
+    Naming the scheme is the whole diagnosis for #465 ("Bearer" where the
+    collector only accepts "Basic") and it leaks nothing.
+    """
+    raw = os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", "")
+    for part in raw.split(","):
+        name, _, value = part.partition("=")
+        if name.strip().lower() == "authorization":
+            return value.strip().split(" ")[0] or "<empty>"
+    return "<no Authorization header>"
 
 
 def _instrument_libraries() -> None:
