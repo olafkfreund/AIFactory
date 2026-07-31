@@ -95,8 +95,12 @@ jobs:
           # Force-push: this branch is a rolling proposal, not history worth keeping.
           git push -f origin "$branch"
 
-          if gh pr view "$branch" --json number >/dev/null 2>&1; then
-            echo "PR already open for $branch; the force-push updated it."
+          # `gh pr view` exits 0 for a CLOSED or MERGED PR too, so guarding on it
+          # would treat a closed bot PR as "already open" and silently stop
+          # proposing bumps forever. Ask for an OPEN one specifically.
+          open_pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$open_pr" ]; then
+            echo "PR #$open_pr already open for $branch; the force-push updated it."
             exit 0
           fi
 
