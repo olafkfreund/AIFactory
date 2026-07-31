@@ -27,10 +27,21 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # `actions` analysis reads workflow definitions; CodeQL wants this scope to
+      # resolve reusable-workflow and action references it does not have on disk.
+      actions: read
     strategy:
       fail-fast: false
+      # `actions` added. TFactory already scanned it; the other three did not.
+      # This repo's workflows ARE attack surface, and have carried real defects:
+      # a required status context no job produced (Factory#529), a gitops push
+      # with no retry that shipped nothing while reporting success (Factory#527),
+      # and a bot guard that read a closed PR as open (#1148). CodeQL's actions
+      # pack catches the security-shaped subset of that class -- untrusted
+      # `github.event.*` interpolated into `run:`, over-broad permissions,
+      # unpinned third-party actions.
       matrix:
-        language: [python, javascript-typescript]
+        language: [python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@v4
 
