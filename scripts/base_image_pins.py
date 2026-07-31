@@ -7,11 +7,21 @@ Two subcommands, both operating on the digest-pinned ``FROM`` lines:
     bump    rewrite each pin to its tag's CURRENT digest. Exit 0 with no changes
             when nothing moved; prints one line per change otherwise.
 
-Why this exists rather than leaving it to Dependabot: Dependabot's docker
-ecosystem is configured in this repo and has never produced a single PR, while
-the identical setup in PFactory and TFactory bumps within a minute (#1104). It
-is not dormant here -- it raises npm PRs -- only the docker lane is silent, and
-the per-job log that would explain it is not exposed by the REST API.
+``check`` is what CI runs. Dependabot proposes newer versions; it does NOT tell
+you when the digest you are pinned to TODAY has been garbage-collected out of
+the registry -- which is what actually broke #1091, leaving `docker (P0
+acceptance)` unable to start a build on every PR for reasons unconnected to the
+change under review. Dependabot does not close that gap.
+
+``bump`` is no longer wired into CI (#1104 was root-caused to AIFactory being a
+FORK, where version updates are off by default; enabling them made Dependabot's
+docker lane work within minutes, so the bot half was retired rather than have
+two bots rewrite the same FROM lines). It is KEPT as a manual escape hatch:
+Dependabot has silently done nothing here once already, and
+
+    python3 scripts/base_image_pins.py bump
+
+is a one-command recovery that needs no GitHub setting to be right.
 
 Meanwhile the pins genuinely rot. `chainguard/python:latest-dev` moved from
 7a568bc to 534fb1a to 92b8a0af inside about a day, and a superseded Chainguard
