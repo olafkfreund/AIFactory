@@ -7,6 +7,16 @@ __pycache__/
 # Built frontend (rebuilt in Stage 1)
 apps/web-server/static/
 
+# Archived documentation: 44 files with no runtime reference, copied into the
+# production image by the `COPY . /home/projects/MagesticAI/` at Dockerfile:174
+# (#1105). `docs/` and `tests/` were already excluded; this one was missed.
+#
+# NOT excluding `scripts/`, deliberately: it looks like the same class, but
+# apps/ references `scripts/start-aifactory-mcp.sh` at runtime, so dropping the
+# directory would break the MCP start path. It needs file-level treatment, not
+# a directory exclusion.
+docs-archive/
+
 # Git
 .git/
 .gitignore
