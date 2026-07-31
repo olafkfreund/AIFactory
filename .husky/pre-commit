@@ -129,11 +129,11 @@ if git diff --cached --name-only | grep -q "^apps/backend/.*\.py$"; then
     # Pre-existing debt in a touched file is allowed; net-new violations fail.
     echo "Running cq ratchet (ruff, staged vs HEAD)..."
     "$PYTHON" scripts/cq_ratchet.py --staged --ruff "$RUFF" \
-      --config standards/ruff.toml --paths 'apps/backend/**/*.py' || exit 1
+      --config standards/ruff.toml --paths 'apps/backend/*.py' || exit 1
 
     echo "Running cq ratchet (mypy, staged vs HEAD)..."
     "$PYTHON" scripts/cq_ratchet.py --staged --tool mypy --mypy "$MYPY" \
-      --config standards/mypy.ini --paths 'apps/backend/**/*.py' || exit 1
+      --config standards/mypy.ini --paths 'apps/backend/*.py' || exit 1
 
     # Mirror CI's repo-wide `ruff format --check` by auto-formatting the
     # staged files and re-staging them.

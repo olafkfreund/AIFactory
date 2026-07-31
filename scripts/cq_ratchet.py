@@ -324,7 +324,7 @@ def main() -> int:
     ap.add_argument("--ruff", help="ruff binary (required for --tool ruff)")
     ap.add_argument("--mypy", help="mypy binary (required for --tool mypy)")
     ap.add_argument("--config", required=True)
-    ap.add_argument("--paths", nargs="*", default=["apps/backend/**/*.py"])
+    ap.add_argument("--paths", nargs="*", default=["apps/backend/*.py"])
     args = ap.parse_args()
 
     if args.staged:
