@@ -111,6 +111,24 @@ jobs:
             echo "that has not built."
           } > pr-body.md
 
-          gh pr create --base dev --head "$branch" \
-            --title "chore(deps): move base-image pins to their tags' current digests" \
-            --body-file pr-body.md
+          if gh pr create --base dev --head "$branch" \
+               --title "chore(deps): move base-image pins to their tags' current digests" \
+               --body-file pr-body.md 2>pr-err.txt; then
+            exit 0
+          fi
+
+          cat pr-err.txt
+          if grep -q "not permitted to create or approve pull requests" pr-err.txt; then
+            # `can_approve_pull_request_reviews` is false on this repo. The SAME
+            # toggle that would let this job open a PR also lets Actions APPROVE
+            # PRs, so it is a segregation-of-duties control and not one to flip
+            # for a convenience. The branch is pushed and the work is done;
+            # opening it is one click, and this failure is the notification.
+            echo "::error::Pins are behind. Branch '$branch' is pushed and ready, but this"
+            echo "::error::repo does not permit Actions to open PRs. Open it in one click:"
+            echo "::error::  https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
+            echo "::error::Settings > Actions > General > 'Allow GitHub Actions to create and"
+            echo "::error::approve pull requests' would automate it -- but that same setting"
+            echo "::error::also lets Actions APPROVE PRs. Left off deliberately."
+          fi
+          exit 1
