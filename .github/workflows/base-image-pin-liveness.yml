@@ -1,10 +1,23 @@
 # Keep the Dockerfile's pinned base-image digests alive and current (#1091, #1104).
 #
-# Two jobs, both driven by scripts/base_image_pins.py so the parsing is tested
+# One job, driven by scripts/base_image_pins.py so the parsing is tested
 # (tests/test_base_image_pins.py) rather than living in inline shell:
 #
 #   pins-resolve  every pinned digest still PULLS. Fails naming any that do not.
-#   pins-bump     opens a PR moving each pin to its tag's CURRENT digest.
+#
+# pins-bump was REMOVED on 2026-07-31. Dependabot's docker lane now works here
+# (#1104: the cause was that AIFactory is a FORK, and version updates are off by
+# default on forks -- nothing to do with the config, which is why every config
+# hypothesis came back clean). It raised its first docker PR within minutes of
+# being enabled. Two bots rewriting the same FROM lines is worse than either, so
+# the bump half is retired exactly as this file said it should be.
+#
+# `check` is deliberately KEPT. Dependabot proposes newer versions; it does not
+# tell you when the digest you are pinned to TODAY has been garbage-collected
+# out of the registry, which is what actually broke #1091 -- `docker (P0
+# acceptance)` could not start a build, on every PR, for reasons unconnected to
+# the change under review. That gap is this job's whole reason to exist and
+# Dependabot does not close it.
 #
 # Why this repo bumps its own pins instead of leaving it to Dependabot: the
 # docker ecosystem is configured here (.github/dependabot.yml, daily,
@@ -30,8 +43,6 @@
 # pushes a ready branch and fails with a one-click link; it just cannot open the
 # PR itself.
 #
-# If Dependabot's docker lane ever starts working here, delete pins-bump rather
-# than let two bots rewrite the same FROM lines.
 name: base-image pins
 
 on:
@@ -56,94 +67,3 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/base_image_pins.py check
-
-  pins-bump:
-    name: open a PR when a pin is behind its tag
-    # Only on the scheduled/manual run: on a PR there is nothing to raise a PR
-    # against, and pins-resolve already covers the review-time case.
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: dev
-
-      - name: Move each pin to its tag's current digest
-        id: bump
-        run: |
-          python3 scripts/base_image_pins.py bump | tee bump.log
-          if git diff --quiet -- Dockerfile; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Raise the PR
-        if: steps.bump.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          branch="bot/base-image-pins"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "$branch"
-          git commit -am "chore(deps): move base-image pins to their tags' current digests"
-          # Force-push: this branch is a rolling proposal, not history worth keeping.
-          git push -f origin "$branch"
-
-          # `gh pr view` exits 0 for a CLOSED or MERGED PR too, so guarding on it
-          # would treat a closed bot PR as "already open" and silently stop
-          # proposing bumps forever. Ask for an OPEN one specifically.
-          open_pr=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
-          if [ -n "$open_pr" ]; then
-            echo "PR #$open_pr already open for $branch; the force-push updated it."
-            exit 0
-          fi
-
-          # NOTE: a PR opened with GITHUB_TOKEN does NOT trigger other workflows,
-          # so `docker (P0 acceptance)` will not run on it by itself. That is
-          # called out in the body rather than left as a surprise: an unreviewed
-          # base-image bump merging without a build is exactly the failure this
-          # workflow exists to prevent.
-          {
-            echo "Automated by \`.github/workflows/base-image-pin-liveness.yml\` (#1104)."
-            echo
-            sed 's/^/    /' bump.log
-            echo
-            echo "Raised because Dependabot's docker lane has never run in this repo,"
-            echo "while the pins move within a day and a superseded Chainguard digest is"
-            echo "garbage-collected (#1091)."
-            echo
-            echo "**CI will not start on its own.** This PR was opened with \`GITHUB_TOKEN\`,"
-            echo "which cannot trigger other workflows. Close and reopen it to run"
-            echo "\`docker (P0 acceptance)\` before merging - do not merge a base-image bump"
-            echo "that has not built."
-          } > pr-body.md
-
-          if gh pr create --base dev --head "$branch" \
-               --title "chore(deps): move base-image pins to their tags' current digests" \
-               --body-file pr-body.md 2>pr-err.txt; then
-            exit 0
-          fi
-
-          cat pr-err.txt
-          if grep -q "not permitted to create or approve pull requests" pr-err.txt; then
-            # `can_approve_pull_request_reviews` is false on this repo. The SAME
-            # toggle that would let this job open a PR also lets Actions APPROVE
-            # PRs, so it is a segregation-of-duties control and not one to flip
-            # for a convenience. The branch is pushed and the work is done;
-            # opening it is one click, and this failure is the notification.
-            echo "::error::Pins are behind. Branch '$branch' is pushed and ready, but this"
-            echo "::error::repo does not permit Actions to open PRs. Open it in one click:"
-            echo "::error::  https://github.com/${GITHUB_REPOSITORY}/pull/new/${branch}"
-            echo "::error::Re-enable Settings > Actions > General > 'Allow GitHub Actions to"
-            echo "::error::create and approve pull requests'. It is ON for this repo as a"
-            echo "::error::deliberate dependency -- see Factory docs/compliance/"
-            echo "::error::actions-workflow-permissions.md. If it has been turned off, that"
-            echo "::error::was a decision, and this one click is its cost."
-          fi
-          exit 1
