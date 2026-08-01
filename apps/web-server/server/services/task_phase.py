@@ -135,7 +135,18 @@ def should_pass_force(spec_dir: Path, force: bool) -> bool:
 
 
 def phase_to_status(phase: TaskPhase) -> str:
-    """Map execution phase to task status for kanban column placement."""
+    """Map execution phase to task status for kanban column placement.
+
+    Every current ``TaskPhase`` member has an entry below, so the fallback
+    only fires for a phase this table has never heard of -- a future member
+    added to the enum without a matching entry here, or a caller that bypassed
+    the enum with a raw string. That used to default to "in_progress", which
+    asserts the task is actively moving when nobody has decided that; an
+    unmapped phase silently rode into the "still working" kanban column. Route
+    it to "human_review" instead -- the same already-accepted status COMPLETED
+    and FAILED use to stop and ask a person, rather than inventing progress
+    (Factory#431).
+    """
     mapping = {
         TaskPhase.SPEC_CREATION: "in_progress",
         TaskPhase.PLANNING: "in_progress",
@@ -146,7 +157,15 @@ def phase_to_status(phase: TaskPhase) -> str:
         TaskPhase.COMPLETED: "human_review",
         TaskPhase.FAILED: "human_review",
     }
-    return mapping.get(phase, "in_progress")
+    status = mapping.get(phase)
+    if status is None:
+        _log.warning(
+            "Unmapped TaskPhase %r has no kanban status; routing to "
+            "'human_review' instead of assuming 'in_progress'.",
+            phase,
+        )
+        return "human_review"
+    return status
 
 
 def phase_to_review_reason(phase: TaskPhase) -> str | None:
