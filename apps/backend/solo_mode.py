@@ -16,8 +16,9 @@ flows through the same channels as other opt-in features):
 
 1. ``AIFACTORY_SOLO_MODE`` environment variable (1/true/yes/on or 0/false/no/off)
 2. Per-spec ``task_metadata.json`` ``soloMode`` flag (set by the web UI)
-3. Global ``~/.aifactory/config.json`` ``solo.enabled``
-4. Default: disabled (opt-in, backward compatible)
+3. Per-spec ``task_metadata.json`` ``skipPlanning`` flag (RFC-0011 intake tier)
+4. Global ``~/.aifactory/config.json`` ``solo.enabled``
+5. Default: disabled (opt-in, backward compatible)
 """
 
 import json
@@ -77,8 +78,8 @@ def is_solo_mode_enabled_for_spec(spec_dir: Path) -> bool:
     """Check whether solo mode is enabled for a specific spec.
 
     The environment variable, when set, wins over everything (operator
-    override). Otherwise the per-spec ``task_metadata.json`` ``soloMode`` flag
-    is honoured, falling back to the global setting.
+    override). Otherwise the per-spec ``task_metadata.json`` ``soloMode`` /
+    ``skipPlanning`` flags are honoured, falling back to the global setting.
 
     Args:
         spec_dir: Path to the spec directory.
@@ -92,19 +93,36 @@ def is_solo_mode_enabled_for_spec(spec_dir: Path) -> bool:
         return env
 
     # Per-spec override from the web UI / task creation.
+    #
+    # ``skipPlanning`` is the RFC-0011 intake tier's spelling of the same
+    # request: ``factory:low``/``factory:medium`` mean "too small to plan", and
+    # skipping the dedicated planner session, the plan-review gate and the QA
+    # loop is exactly what solo mode does. The tier path wrote the key into
+    # task_metadata.json but nothing in the build ever read it, so a low-tier
+    # run planned and stopped there instead of coding (#1078). Reading it HERE
+    # rather than at the tier's own call site fixes it for every producer of the
+    # key — the intake execution block and PFactory-signed contracts alike.
+    #
+    # ``soloMode`` is checked first: it is the explicit per-task toggle, so it
+    # wins when a task carries both. A present-but-false value of either key is
+    # an answer, not an omission, and short-circuits the global setting — the
+    # same semantics ``soloMode`` has always had (a ``hard`` tier that says
+    # ``skip_planning: false`` must not be silently solo'd by a global default).
     metadata_file = spec_dir / "task_metadata.json"
     if metadata_file.exists():
         try:
             with open(metadata_file) as f:
                 metadata = json.load(f)
-            if "soloMode" in metadata:
-                enabled = bool(metadata["soloMode"])
-                logger.info(
-                    "[Solo Mode] %s — read soloMode=%s from task_metadata.json",
-                    "ENABLED" if enabled else "disabled",
-                    enabled,
-                )
-                return enabled
+            for key in ("soloMode", "skipPlanning"):
+                if key in metadata:
+                    enabled = bool(metadata[key])
+                    logger.info(
+                        "[Solo Mode] %s — read %s=%s from task_metadata.json",
+                        "ENABLED" if enabled else "disabled",
+                        key,
+                        enabled,
+                    )
+                    return enabled
         except (json.JSONDecodeError, OSError):
             pass
 

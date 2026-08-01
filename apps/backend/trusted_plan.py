@@ -455,6 +455,10 @@ _EXECUTION_TO_METADATA = {
     "complexity": "complexity",
     "review_tier": "reviewTier",
     "skills": "selectedSkills",
+    # Consumed by solo_mode.is_solo_mode_enabled_for_spec (#1078): "too small to
+    # plan" is the same request as solo mode, so the coder plans inline and does
+    # not park at the plan-review gate. Was inert until then — written here and
+    # read by nothing, which is why factory:low ran the planner and stopped.
     "skip_planning": "skipPlanning",
     # RFC-0011 difficulty tier (low/medium/hard) -> the capability FLOOR the
     # RFC-0014 router must not route a stage below (#825 follow-up). The tier
