@@ -191,10 +191,10 @@ class TestSkipPlanningEnablesSolo:
         """
         monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        import solo_mode
         from intake.execution_block import build_execution_block
         from pfactory.tiers import Tier
         from trusted_plan import execution_profile_to_metadata
-        import solo_mode
 
         block = build_execution_block(Tier.LOW, low_model_resolver=lambda: "haiku")
         meta = execution_profile_to_metadata(block)
