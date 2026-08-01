@@ -123,6 +123,95 @@ class TestSoloModeFlag:
 
 
 # ---------------------------------------------------------------------------
+# skipPlanning -> solo (#1078)
+# ---------------------------------------------------------------------------
+class TestSkipPlanningEnablesSolo:
+    """The RFC-0011 intake tier writes ``skipPlanning``; the build must read it.
+
+    ``build_execution_block`` sets ``skip_planning=True`` for factory:low and
+    factory:medium and ``execution_profile_to_metadata`` maps it to
+    ``skipPlanning`` in task_metadata.json. Before #1078 nothing in apps/ read
+    that key, so a low-tier run spent its budget on a planner session and
+    stopped there. "Too small to plan" is solo mode's contract, so this is where
+    the flag lands.
+    """
+
+    @staticmethod
+    def _spec(tmp_path: Path, metadata: dict) -> Path:
+        spec_dir = tmp_path / "spec"
+        spec_dir.mkdir()
+        (spec_dir / "task_metadata.json").write_text(json.dumps(metadata))
+        return spec_dir
+
+    def test_skip_planning_true_enables_solo(self, tmp_path: Path, monkeypatch):
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        import solo_mode
+
+        spec_dir = self._spec(tmp_path, {"skipPlanning": True})
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is True
+
+    def test_skip_planning_false_disables_solo(self, tmp_path: Path, monkeypatch):
+        """The hard tier's explicit ``false`` beats a global solo default."""
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        fake_home = tmp_path / "home"
+        (fake_home / ".aifactory").mkdir(parents=True)
+        (fake_home / ".aifactory" / "config.json").write_text(
+            json.dumps({"solo": {"enabled": True}})
+        )
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+        import solo_mode
+
+        spec_dir = self._spec(tmp_path, {"skipPlanning": False})
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+    def test_solo_mode_key_wins_over_skip_planning(self, tmp_path: Path, monkeypatch):
+        """``soloMode`` is the explicit toggle and wins when both are present."""
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        import solo_mode
+
+        spec_dir = self._spec(tmp_path, {"soloMode": False, "skipPlanning": True})
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+    def test_env_overrides_skip_planning(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("AIFACTORY_SOLO_MODE", "off")
+        import solo_mode
+
+        spec_dir = self._spec(tmp_path, {"skipPlanning": True})
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is False
+
+    def test_low_tier_execution_block_reaches_solo_end_to_end(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """intake tier -> execution block -> task_metadata.json -> solo ON.
+
+        The seam the ticket is really about: run the real producers rather than
+        hand-writing the key, so a rename on either side fails here.
+        """
+        monkeypatch.delenv("AIFACTORY_SOLO_MODE", raising=False)
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+        import solo_mode
+        from intake.execution_block import build_execution_block
+        from pfactory.tiers import Tier
+        from trusted_plan import execution_profile_to_metadata
+
+        block = build_execution_block(Tier.LOW, low_model_resolver=lambda: "haiku")
+        meta = execution_profile_to_metadata(block)
+        assert meta["skipPlanning"] is True
+
+        spec_dir = self._spec(tmp_path, meta)
+        assert solo_mode.is_solo_mode_enabled_for_spec(spec_dir) is True
+
+        # ...and the hard tier still gets the full planner.
+        hard = execution_profile_to_metadata(build_execution_block(Tier.HARD))
+        hard_dir = tmp_path / "hard"
+        hard_dir.mkdir()
+        (hard_dir / "task_metadata.json").write_text(json.dumps(hard))
+        assert solo_mode.is_solo_mode_enabled_for_spec(hard_dir) is False
+
+
+# ---------------------------------------------------------------------------
 # Solo prompt (self-management contract)
 # ---------------------------------------------------------------------------
 class TestSoloPrompt:
