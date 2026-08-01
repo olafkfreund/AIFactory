@@ -31,7 +31,10 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
-from trusted_plan import ingest_trusted_plan  # noqa: E402 — needs sys.path above (#390)
+from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
+    ingest_trusted_plan,
+    verify_trusted_plan,
+)
 
 router = APIRouter()
 
@@ -1185,6 +1188,24 @@ async def create_from_trusted_plan(
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()
 
+    # Gate FIRST, allocate second (#1108). verify_trusted_plan is pure — the same
+    # signature + completeness gates ingest_trusted_plan runs internally, with no
+    # filesystem dependency — so a rejected plan must not reach the allocator.
+    # Before this, every 422 left an orphan spec dir holding only
+    # requirements.json and advanced .counter, so any caller with `member` access
+    # could inflate the counter and litter the workspace by POSTing tampered
+    # plans in a loop. The orphans were also indistinguishable from a spec whose
+    # build failed early — noise exactly where an auditor looks after a rejection.
+    verdict = verify_trusted_plan(request.plan)
+    if not verdict.ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — not trusted-complete",
+                "reasons": verdict.reasons,
+            },
+        )
+
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
     spec_id = get_next_spec_id(project_path, title)
@@ -1216,7 +1237,9 @@ async def create_from_trusted_plan(
         requirements["provenance"] = prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
-    # Gate: verify signature + completeness, then install the plan. Nothing is
+    # Install the plan. ingest re-runs the same gate — kept as the authoritative
+    # check so the install can never outrun verification even if the pre-check
+    # above is moved or removed. Nothing is
     # built unless the plan is trusted-complete. Passing project_path lets ingest
     # seed required_commands into the allowlist and apply the v2 execution profile
     # (model/parallel/workers/complexity/skills) to task_metadata.json (RFC-0002).
