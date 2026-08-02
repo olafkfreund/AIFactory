@@ -47,7 +47,37 @@ _REPO = Path(__file__).resolve().parents[1]
 _RUFF_CONFIG = str(_REPO / "standards" / "ruff.toml")
 _ASSERT_SOURCE = "def f(x):\n    assert x\n    return x\n"
 
-pytestmark = pytest.mark.skipif(shutil.which("ruff") is None, reason="ruff not on PATH")
+@pytest.fixture(autouse=True)
+def ruff_on_path() -> Iterator[None]:
+    """Make bare ``ruff`` resolvable, the way the ratchet itself needs it.
+
+    CI runs the suite as ``apps/backend/.venv/bin/pytest``, which does NOT put
+    the venv's bin on PATH — so the pinned ruff installed into that venv is
+    invisible to ``shutil.which``, while `_ruff_count` is handed a bare
+    ``"ruff"`` here. Venv first, then PATH.
+
+    A hard failure, not a skip. This started life as
+    ``skipif(shutil.which("ruff") is None)``, which in CI would have skipped
+    every case in this file and reported green — a gate that did not run,
+    reading like one that passed, which is the exact shape this line of work
+    exists to stamp out.
+    """
+    venv_bin = Path(sys.executable).parent
+    ruff_dir = str(venv_bin) if (venv_bin / "ruff").exists() else None
+    if ruff_dir is None:
+        found = shutil.which("ruff")
+        if found is None:
+            pytest.fail(
+                "ruff is not in this venv or on PATH; these cases cannot measure "
+                "the gate. Install the pinned ruff (tests/requirements-test.txt)."
+            )
+        ruff_dir = str(Path(found).parent)
+    original = os.environ["PATH"]
+    os.environ["PATH"] = f"{ruff_dir}{os.pathsep}{original}"
+    try:
+        yield
+    finally:
+        os.environ["PATH"] = original
 
 
 def _git(repo: Path, *args: str) -> None:

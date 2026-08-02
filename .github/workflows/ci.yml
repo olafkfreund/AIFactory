@@ -53,7 +53,6 @@ jobs:
           uv pip install -r requirements.txt
           uv pip install -r ../web-server/requirements.txt
           uv pip install -r ../../tests/requirements-test.txt
-          uv pip install ruff
 
       - name: Ruff lint
         run: apps/backend/.venv/bin/ruff check apps/backend tests
