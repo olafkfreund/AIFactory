@@ -64,7 +64,7 @@ env:
   # CHECKER is fetched from main while the CANONICAL stays pinned, so registering
   # first would compare this repo's new copy against an old canonical and turn
   # every AIFactory PR red until this landed.
-  HUB_PIN_SHA: "c6ce50cfcccec343a0549e18392999aba4b4f7ac"
+  HUB_PIN_SHA: "23ae047253e39dc3531050852eb38b1f35519525"
 
 jobs:
   drift:
