@@ -27,24 +27,27 @@ name: verification-core drift gate
 on:
   pull_request:
     branches: [dev, main, "feat/**", "release/**"]
-    paths:
-      - "apps/backend/core/factory_sandbox.py"
-      - "apps/backend/core/nix_provisioner.py"
-      # Newly gated by Factory#400. Without these the gate is REGISTERED for
-      # these modules but never TRIGGERED by them: a PR editing a vendored
-      # copy would skip the blocking check entirely.
-      - "apps/backend/core/artifact_store.py"
-      - "apps/backend/core/cost_router_core.py"
-      # Newly gated by Factory#403/#411. Without this the gate is
-      # REGISTERED for this module but never TRIGGERED by it.
-      - "scripts/ratchet_helpers.py"
-      # Newly gated by Factory#477. This copy was vendored from the hub and
-      # governed by nothing, so it drifted in BOTH directions and the #1107
-      # pod-label defect had to be found and fixed once per copy. The trigger
-      # goes in with the registration, not after it: a gate registered for a
-      # module but not triggered by it is the latent-red pattern of #400.
-      - "apps/backend/core/job_dispatch.py"
-      - ".github/workflows/verification-core-drift.yml"
+    # NO paths: FILTER, deliberately (Factory#525). This used to list the
+    # vendored copies, which was correct while the gate only compared bytes --
+    # it had nothing to say unless one of those paths changed, and Factory#400
+    # is the story of that list being incomplete.
+    #
+    # The stray-copy guard (Factory#523) inverted the requirement. It exists to
+    # catch a vendored module appearing at a path NOBODY HAS LISTED: a fresh
+    # copy, or one left behind when a mapping was removed. Such a PR touches
+    # none of the listed paths by definition, so the filter switched the gate
+    # off in exactly the case the guard was written for, and the unmapped copy
+    # landed on the default branch unseen.
+    #
+    # The list was also a second, hand-maintained copy of the hub's
+    # SERVICE_LAYOUTS living in a workflow file -- the fork-with-a-citation
+    # shape Factory#483 exists to undo. Its history here is a changelog of
+    # being patched one module at a time, always after the fact.
+    #
+    # The gate is a few seconds of Python against a checkout. Running it on
+    # every PR costs almost nothing and removes a whole class of "the check did
+    # not run" -- which on a green PR page is indistinguishable from "the check
+    # passed" (Factory#471).
   push:
     branches: [dev, main]
 
