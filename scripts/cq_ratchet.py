@@ -59,7 +59,7 @@ import tomllib
 # Canonical shared ratchet rules, vendored byte-exact from the Factory hub
 # and byte-exact drift-gated (Factory#403). scripts/ is sys.path[0] when this
 # runs as a script, so the sibling import resolves without packaging.
-from ratchet_helpers import MYPY_TEST_RELAX, is_test_file
+from ratchet_helpers import MYPY_TEST_RELAX, is_test_file, ruff_stdin_argv
 
 
 def _run(cmd: list[str], check: bool = True) -> str:
@@ -83,8 +83,10 @@ def changed_python_files(base: str, paths: list[str], staged: bool = False) -> l
 def _ruff_excludes() -> list[str]:
     """Exclude globs from the repo ruff config (root ``ruff.toml`` + ``extend``).
 
-    The ratchet writes each changed file to a temp path before checking, so
-    ruff's own path-based ``extend-exclude`` never matches. VENDORED MIRRORS —
+    Ruff lints whatever it is handed explicitly and applies ``extend-exclude``
+    only when it walks the tree itself — so the excludes never match here, and
+    that stays true now the base side is judged by its real repo path
+    (Factory#510 fixed the per-file-IGNORES, not this). VENDORED MIRRORS —
     the factory-github layer and factory_common, whose fidelity is enforced by
     their own drift gates, not by the local linter — are excluded there; honour
     that here so the ratchet does not gate files ruff is configured to skip.
@@ -140,20 +142,42 @@ def _is_excluded(path: str, patterns: list[str]) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _ruff_count(ruff: str, config: str, file_on_disk: str) -> int:
+def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> int:
+    """Violations in *file_on_disk*, judged as though it were at *repo_path*.
+
+    The two arguments differ for the BASE side, and that difference is the whole
+    point (Factory#510). The base version lives in a worktree under /tmp, and
+    ruff relativises a path against the project root before matching
+    per-file-ignores — a path outside that root falls back to matching the
+    BASENAME only. So ``**/tests/**`` matched the HEAD file and could never match
+    its base counterpart, and the two sides of a no-regression comparison were
+    measured under DIFFERENT RULES.
+
+    That is not the too-strict failure the other services saw; it is the gate
+    going blind. The base count comes back inflated by every S101/PLR2004 the
+    carve-out would have exempted, so a file can absorb exactly that many
+    genuine NEW violations and still compare clean. Measured on
+    apps/web-server/tests/verify_file_based_endpoints.py: head 56, base 60 —
+    four free violations.
+
+    ``--stdin-filename`` fixes it by decoupling the two: the CONTENT still comes
+    from the worktree (which is why the worktree exists — see _base_worktree),
+    while the PATH ruff judges by is the real repo-relative one, identical on
+    both sides. mypy needs no equivalent: its carve-out is decided by
+    :func:`is_test_file`, which matches ``/tests/`` anywhere in the path and so
+    was already symmetric.
+    """
+    # The canonical argv names a bare `ruff`; this service always passes an
+    # explicit binary (the pinned venv), so argv[0] is replaced. --no-fix is kept
+    # from the previous invocation and matters MORE on stdin than it did on a
+    # path: with `fix = true` ever set in the config, ruff writes the fixed
+    # source to stdout and the json parse below would read code as findings.
+    argv = ruff_stdin_argv(config, repo_path)
     res = subprocess.run(
-        [
-            ruff,
-            "check",
-            "--no-fix",
-            "--config",
-            config,
-            "--output-format",
-            "json",
-            file_on_disk,
-        ],
+        [ruff, argv[1], "--no-fix", *argv[2:]],
         capture_output=True,
         text=True,
+        input=Path(file_on_disk).read_text(),
     )
     return len(json.loads(res.stdout)) if res.stdout.strip() else 0
 
@@ -295,7 +319,11 @@ def _remove_worktree(path: str) -> None:
 def base_count(base: str, counter, config: str, path: str) -> int:
     """Violation count for ``path`` as it exists on ``base`` (0 if new).
 
-    ``counter`` is a callable ``(config, file_on_disk) -> int``.
+    ``counter`` is a callable ``(config, file_on_disk, repo_path) -> int``. The
+    two paths are the same thing on the head side and deliberately different
+    here: content from the worktree, identity from the repo. A counter that
+    judged the file by ``file_on_disk`` would measure the two sides of the
+    comparison under different rules (Factory#510).
     """
     worktree = _base_worktree(base)
     if worktree is None:
@@ -309,7 +337,7 @@ def base_count(base: str, counter, config: str, path: str) -> int:
     candidate = Path(worktree) / path
     if not candidate.is_file():
         return 0  # file did not exist on base -> new file, base count is 0
-    return counter(config, str(candidate))
+    return counter(config, str(candidate), path)
 
 
 def main() -> int:
@@ -336,15 +364,18 @@ def main() -> int:
         if not args.ruff:
             ap.error("--ruff is required for --tool ruff")
 
-        def counter(config: str, f: str) -> int:
-            return _ruff_count(args.ruff, config, f)
+        def counter(config: str, f: str, repo_path: str) -> int:
+            return _ruff_count(args.ruff, config, f, repo_path)
 
         label = "strict ruff"
     else:
         if not args.mypy:
             ap.error("--mypy is required for --tool mypy")
 
-        def counter(config: str, f: str) -> int:
+        def counter(config: str, f: str, repo_path: str) -> int:  # noqa: ARG001
+            # repo_path is unused: mypy's test carve-out is decided by
+            # is_test_file, which matches "/tests/" anywhere in the path, so the
+            # worktree copy and the real file were always classified alike.
             return _mypy_count(args.mypy, config, f)
 
         label = "mypy --strict"
@@ -358,7 +389,8 @@ def main() -> int:
     summary: Counter[str] = Counter()
     for path in files:
         before = base_count(args.base, counter, args.config, path)
-        after = counter(args.config, path)
+        # Head side: the file IS at its repo path, so the two coincide.
+        after = counter(args.config, path, path)
         if after > before:
             regressions.append((path, before, after))
         elif after < before:
