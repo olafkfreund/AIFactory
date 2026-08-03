@@ -33,6 +33,10 @@ one place.
 `E,F,W,I,N,UP,B,C4,S,SIM,RUF,PTH,TID,ASYNC,A,DTZ,T20,ARG,ERA,PL` (curated `PL`
 including `C901,PLR0912,PLR0913,PLR0915`). No bare `ruff check`, no blanket
 category ignores. The shared baseline is [`standards/ruff.toml`](./ruff.toml).
+Aliased imports from one module go in ONE statement (`combine-as-imports`):
+ruff's default splits them one statement per alias, which manufactures
+byte-identical prologues in any two files importing the same helpers and put the
+import-sort rule in direct conflict with the jscpd clone budget (Factory#415).
 
 1.2 **Types.** `mypy --strict` over the whole package as a BLOCKING gate
 (`disallow_untyped_defs`, `disallow_any_generics`, `warn_return_any`,
@@ -204,11 +208,27 @@ drift gate compares it like any other vendored file. Copies are byte-identical
 to the hub - no provenance header, because the comparator for a Markdown file
 cannot strip leading `#` lines without also blinding itself to every heading.
 
-5.2 **One pin filename: `standards/.hub-sha`.** It holds the hub commit the
-whole directory was vendored from, and it is the only thing tooling needs to
-read to answer "which hub is this service on". A SHA hardcoded in a workflow is
-not a pin - nothing outside that workflow can find it. The same filename is used
-for any other directory vendored from the hub, next to that directory.
+5.2 **One pin filename for a vendored DIRECTORY: `.hub-sha`, beside it.**
+`standards/.hub-sha` holds the hub commit that whole directory was vendored
+from, and it is the only thing tooling needs to read to answer "which hub is
+this service on". The same filename is used for any other directory vendored
+from the hub - `apps/backend/factory_common/.hub-sha` and so on.
+
+The rule binds a directory whose CONTENTS ARE THE VENDORED SET. That is what
+makes "beside it" a defined location. Two of the fleet's four hub-vendored sets
+are not that shape: verification-core is six individual files across three roots,
+and factory-ui is two files inside a components directory the portal otherwise
+owns - a `.hub-sha` there would sit next to a hundred files it says nothing
+about.
+
+Those sets pin in their gate's workflow, and that is permitted **only while the
+hub can read the pin without opening the workflow**. The original objection to a
+workflow SHA was exactly that nothing outside the workflow could find it, and
+that objection is answered by machinery, not by exemption:
+`scripts/check_pin_freshness.py` declares every file-granular gate, reads all of
+its consumers' pins daily, and fails if one is gating against a canonical that
+has since moved. A gate absent from that list is a pin nobody can find, and the
+exemption does not cover it. See Factory#514, Factory#519.
 
 5.3 **The vendored set is `ruff.toml`, `mypy.ini`, `.editorconfig`,
 `coding-standards.md`.** Adding a file to the hub does not add it to a service;
