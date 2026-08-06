@@ -49,14 +49,51 @@ from prompt_generator import (
 from providers.factory import get_provider
 from task_logger import LogPhase, TaskLogger
 
+from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_session_guarded
+from .test_evidence import read_test_evidence
 from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import record_subtask_completion, sync_plan_to_source
 from .wave_log import WaveRecorder
 
 logger = logging.getLogger(__name__)
+
+
+async def gated_mark_complete(
+    subtask: Any,
+    *,
+    plan_path: Path,
+    source_spec_dir: Path | None,
+    project_dir: Path,
+    evidence: dict[str, Any],
+) -> bool:
+    """Record a wave subtask's completion — through the gates the serial coder
+    passes (#1177). Returns False when a gate refused it.
+
+    Module-level rather than a closure so the wave completion path is directly
+    testable: this is the function that decides whether a wave child is allowed
+    to be called "completed".
+
+    ``project_dir`` is the task worktree *after* this child's merge-back, so the
+    gates judge the tree that ships. ``evidence`` was read from the child's own
+    worktree spec dir before the merge deleted it (see ``run_subtask``).
+    """
+    subtask_dict = subtask.to_dict() if hasattr(subtask, "to_dict") else dict(subtask)
+    refusal = completion_refusal(subtask_dict, project_dir, evidence)
+    if refusal:
+        logger.error("[parallel] completion REFUSED for %s: %s", subtask.id, refusal)
+        return False
+    if not record_subtask_completion(subtask.id, plan_path, source_spec_dir):
+        logger.error(
+            "[parallel] mark_complete %s: completion not recorded "
+            "(plan not found at %s or source %s)",
+            subtask.id,
+            plan_path,
+            source_spec_dir,
+        )
+    return True
 
 
 # Cache for the lazily-loaded web-server completion module (#45 P1). The backend
@@ -373,6 +410,13 @@ async def run_parallel_coding_phase(
     plan_lock = asyncio.Lock()
     memory_lock = asyncio.Lock()
 
+    # #851 evidence per wave child, read while its worktree still exists: the
+    # PostToolUse hook records test runs into the CHILD spec dir, and a
+    # successful merge deletes that worktree before mark_complete runs. Written
+    # once per subtask id from its own coroutine, read in the sequential
+    # post-wave step, so there is no shared-key race.
+    child_evidence: dict[str, dict[str, Any]] = {}
+
     def _make_client(child_path: Path, child_spec_dir: Path, sub_model: str):
         # Per-subtask model override (#376 right-sizing): a subtask may declare
         # its own model (e.g. "haiku" for scaffolding); fall back to the phase
@@ -489,6 +533,10 @@ async def run_parallel_coding_phase(
             _t_end = time.monotonic()
 
             session_ok = status != "error"
+
+            # Capture this child's own test-run evidence NOW: the merge deletes
+            # its worktree, and with it the evidence the #851 gate reads (#1177).
+            child_evidence[subtask.id] = read_test_evidence(child_spec_dir)
 
             # --- per-worker token attribution (#45 P1, additive) ---
             # Each parallel subtask IS a worker. Fold its real SDK usage into the
@@ -647,25 +695,38 @@ async def run_parallel_coding_phase(
             await _reset_to_pending(subtask.id)
         return ok
 
-    async def mark_complete(subtask: Any) -> None:
+    async def mark_complete(subtask: Any) -> bool:
         # Parent-owned, serialized canonical plan write (concurrency invariant #3).
         # record_subtask_completion falls back to the canonical source plan when
         # the worktree spec dir has no implementation_plan.json — otherwise the
         # update is silently lost and the successful build is reported failed.
-        async with plan_lock:
-            try:
-                if not record_subtask_completion(
-                    subtask.id, plan_path, source_spec_dir
-                ):
-                    logger.error(
-                        "[parallel] mark_complete %s: completion not recorded "
-                        "(plan not found at %s or source %s)",
-                        subtask.id,
-                        plan_path,
-                        source_spec_dir,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("[parallel] mark_complete %s failed: %s", subtask.id, exc)
+        #
+        # The gate runs INSIDE the same serialized step, on the post-merge tree,
+        # so it reads a tree no sibling is mutating (invariants #2 and #3).
+        try:
+            async with plan_lock:
+                ok = await gated_mark_complete(
+                    subtask,
+                    plan_path=plan_path,
+                    source_spec_dir=source_spec_dir,
+                    project_dir=project_dir,
+                    evidence=child_evidence.get(subtask.id)
+                    or read_test_evidence(spec_dir),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[parallel] mark_complete %s failed: %s", subtask.id, exc)
+            return True  # bookkeeping error, not a gate refusal — see #1106
+        if not ok:
+            # Refused: the work is merged but unproven. Reset to PENDING so the
+            # serial loop redoes it — there the coder receives the refusal text
+            # from update_subtask_status and can fix it or honestly fail it.
+            TaskLogger(spec_dir, emit_markers=False).log_error(
+                f"[parallel] subtask {subtask.id}: completion refused by the "
+                "honesty gate; queued for a serial redo",
+                LogPhase.CODING,
+            )
+            await _reset_to_pending(subtask.id)
+        return ok
 
     # Persist wave lifecycle to parallel_report.json + build-progress.txt so the
     # wave path is verifiable after the fact, not just on the live console (#393).

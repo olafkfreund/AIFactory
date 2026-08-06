@@ -43,8 +43,8 @@ async def apply_subtask_status_update(
     notes: str = "",
     project_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Update a subtask's status in implementation_plan.json, enforcing the #851
-    honest-verification gate and the #1111 deliverable-coverage gate. Plain
+    """Update a subtask's status in implementation_plan.json, enforcing the
+    honesty gates in :mod:`agents.completion_gate` (#851, #1111). Plain
     (SDK-free) so it is directly testable; the ``update_subtask_status`` tool is
     a thin wrapper resolving the spec and project dirs.
     """
@@ -83,54 +83,22 @@ async def apply_subtask_status_update(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
 
-        # #851 honest-verification gate: a test/verification subtask may not be
-        # reported "completed" unless a real test command actually ran this build
-        # (captured tamper-evidently by the PostToolUse hook). No run — or a run
-        # that clearly failed — is refused with actionable guidance, so the coder
-        # can no longer self-report a green checkbox for tests it never executed
-        # (RFC-0006). The plan is not written until AFTER this, so a refusal
-        # leaves implementation_plan.json untouched.
+        # The honesty gates (#851 test evidence, #1111 deliverable coverage) live
+        # in agents.completion_gate because the parallel wave path has to pass
+        # the SAME ones — it completes subtasks itself, without this tool (#1177).
+        # Add a gate there, not here. The plan is not written until AFTER this,
+        # so a refusal leaves implementation_plan.json untouched.
         if status == "completed":
-            from agents.test_evidence import (  # noqa: PLC0415
-                deliverable_evidence_gap,
-                gate_enabled,
-                is_verification_subtask,
-                read_test_evidence,
+            from agents.completion_gate import completion_refusal  # noqa: PLC0415
+            from agents.test_evidence import read_test_evidence  # noqa: PLC0415
+
+            refusal = completion_refusal(
+                target_subtask or {},
+                _project_root(spec_dir, project_dir),
+                read_test_evidence(spec_dir),
             )
-
-            # #1111: "a test ran" is not "a test ran against the deliverable".
-            # A subtask that promises an HTTP path may not be completed when the
-            # only tests naming that path assert against an app built inside the
-            # test file — genuinely green, and blind to a route nobody
-            # registered. Inert unless the subtask names a path and a Python
-            # test mentions it, so pure-function work is untouched.
-            if gate_enabled():
-                gap = deliverable_evidence_gap(
-                    target_subtask or {}, _project_root(spec_dir, project_dir)
-                )
-                if gap:
-                    return _text(gap)
-
-            if gate_enabled() and is_verification_subtask(target_subtask or {}):
-                ev = read_test_evidence(spec_dir)
-                if not ev["ran"]:
-                    return _text(
-                        f"Refused: subtask '{subtask_id}' is a test/verification subtask, "
-                        "but no test command ran this build. Run the tests now (e.g. "
-                        "pytest / go test / npm test) — the build records the run "
-                        "automatically — then mark it completed. If this repo has NO "
-                        "runnable test environment, mark this subtask 'failed' with a note "
-                        "saying tests could not be executed. Do NOT report it completed "
-                        "unverified (RFC-0006: never claim verification that did not happen)."
-                    )
-                if ev["last_failed"]:
-                    return _text(
-                        f"Refused: the last recorded test run failed (command: "
-                        f"{ev['last_command']!r}). Fix the failures and re-run the tests "
-                        f"green before completing subtask '{subtask_id}', or mark it "
-                        "'failed' with the reason. Do NOT report it completed over failing "
-                        "tests."
-                    )
+            if refusal:
+                return _text(refusal)
 
         # Update plan metadata
         plan["last_updated"] = datetime.now(timezone.utc).isoformat()
