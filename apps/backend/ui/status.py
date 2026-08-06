@@ -103,14 +103,24 @@ class BuildStatus:
 
 
 class StatusManager:
-    """Manages the .aifactory-status file for ccstatusline integration."""
+    """Manages the build-status file for ccstatusline integration.
+
+    Written to ``.aifactory/status.json`` — INSIDE the gitignored runtime dir,
+    never at the repo root (#1106). A build's ``project_dir`` is its task
+    worktree, so the old root-level ``.aifactory-status`` was a repo-root file
+    rewritten on every subtask: in any project that already tracked it (the
+    Factory#245 demo repo did) the coder staged it, it landed in the PR the
+    Approve control opens, and the PR was unmergeable against a base that had
+    its own version. ``.aifactory/`` is gitignored in every managed project
+    (``init.ensure_project_dirs``), so nothing here can reach a commit.
+    """
 
     # Class-level debounce delay (ms) for batched writes
     _WRITE_DEBOUNCE_MS = 50
 
     def __init__(self, project_dir: Path):
         self.project_dir = Path(project_dir)
-        self.status_file = self.project_dir / ".aifactory-status"
+        self.status_file = self.project_dir / ".aifactory" / "status.json"
         self._status = BuildStatus()
         self._write_pending = False
         self._write_timer: threading.Timer | None = None
@@ -146,6 +156,9 @@ class StatusManager:
             status_dict = self._status.to_dict()
 
         try:
+            # .aifactory/ may not exist yet in a freshly cut worktree — the spec
+            # copy that normally creates it can run after the first status write.
+            self.status_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self.status_file, "w") as f:
                 json.dump(status_dict, f, indent=2)
 

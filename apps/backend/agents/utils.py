@@ -15,6 +15,17 @@ from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
 
 logger = logging.getLogger(__name__)
 
+# AIFactory's own runtime bookkeeping inside a task worktree. Never belongs in a
+# task commit (and so never in the PR the Approve control opens) — see #1106.
+# ``.aifactory-status`` is legacy: StatusManager now writes .aifactory/status.json,
+# but a repo that already tracks the old root file still has it in the worktree.
+_BOOKKEEPING_PATHS = (
+    ".aifactory/",
+    "aifactory/specs/",
+    ".aifactory-status",
+    ".aifactory-security.json",
+)
+
 
 def get_latest_commit(project_dir: Path) -> str | None:
     """Get the hash of the latest git commit."""
@@ -61,30 +72,33 @@ def commit_uncommitted_changes(
     nothing to commit or the commit could not be made (never raises).
     """
     try:
-        # Stage everything EXCEPT AIFactory's own bookkeeping. .aifactory-status
-        # (the ccstatusline file) and .aifactory-security.json churn on every
-        # subtask; once one of them slips into a commit they become tracked and
-        # every later safety-net re-commits the churn, cluttering the branch with
-        # "safety-net" commits (and leaving one as the branch tip). The net is
-        # meant to rescue real uncommitted CODE the agent forgot, so exclude the
-        # bookkeeping via pathspec. (.aifactory/ is already gitignored; excluded
-        # here too for the case where it isn't.)
+        # Stage everything, then UNSTAGE AIFactory's own bookkeeping.
+        # .aifactory-status (the ccstatusline file) and .aifactory-security.json
+        # churn on every subtask; once one of them slips into a commit they
+        # become tracked and every later safety-net re-commits the churn — and
+        # in a repo where one is already tracked, that lands a factory-internal
+        # file in the PR and conflicts with the base (#1106). The net is meant to
+        # rescue real uncommitted CODE the agent forgot.
+        #
+        # Two steps rather than one `git add -A -- . :(exclude)...`: the
+        # exclude-pathspec form failed outright in the pod (#1106, non-zero exit
+        # from git add), which took the WHOLE add down and rescued nothing.
+        # `git add -A` cannot fail on a pathspec, and `git reset` on paths that
+        # are absent from the index is a no-op, so the unstage step is safe
+        # whether or not the bookkeeping is present or tracked.
         subprocess.run(
-            [
-                "git",
-                "add",
-                "-A",
-                "--",
-                ".",
-                ":(exclude).aifactory/",
-                ":(exclude)aifactory/specs/",
-                ":(exclude).aifactory-status",
-                ":(exclude).aifactory-security.json",
-            ],
+            ["git", "add", "-A"],
             cwd=project_dir,
             capture_output=True,
             text=True,
             check=True,
+        )
+        subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", "reset", "--quiet", "HEAD", "--", *_BOOKKEEPING_PATHS],  # noqa: S607
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,  # absent paths / an unborn HEAD must not break the net
         )
         # If nothing (real) got staged, the only changes were bookkeeping churn —
         # don't manufacture a commit. `git diff --cached --quiet` exits 0 when the
@@ -111,7 +125,18 @@ def commit_uncommitted_changes(
         )
         return get_latest_commit(project_dir)
     except (subprocess.CalledProcessError, OSError) as exc:
-        logger.warning("safety-net commit failed in %s: %s", project_dir, exc)
+        # ERROR, not warning: this is the net that stops agent work being lost,
+        # so "it silently did not run" is itself a hazard (#1106). Still
+        # non-raising — the caller's build may be fine and failing it here would
+        # trade a possible loss for a certain one.
+        stderr = getattr(exc, "stderr", "") or ""
+        logger.error(
+            "safety-net commit FAILED in %s (uncommitted agent work is NOT "
+            "protected): %s %s",
+            project_dir,
+            exc,
+            stderr.strip()[:500],
+        )
         return None
 
 
