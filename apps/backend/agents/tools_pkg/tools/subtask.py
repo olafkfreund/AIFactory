@@ -44,9 +44,10 @@ async def apply_subtask_status_update(
     project_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Update a subtask's status in implementation_plan.json, enforcing the #851
-    honest-verification gate and the #1111 deliverable-coverage gate. Plain
-    (SDK-free) so it is directly testable; the ``update_subtask_status`` tool is
-    a thin wrapper resolving the spec and project dirs.
+    honest-verification gate, the #1111 deliverable-coverage gate and the #1113
+    CI-pipeline gate. Plain (SDK-free) so it is directly testable; the
+    ``update_subtask_status`` tool is a thin wrapper resolving the spec and
+    project dirs.
     """
     valid_statuses = ["pending", "in_progress", "completed", "failed"]
     if status not in valid_statuses:
@@ -106,6 +107,24 @@ async def apply_subtask_status_update(
             # test mentions it, so pure-function work is untouched.
             if gate_enabled():
                 gap = deliverable_evidence_gap(
+                    target_subtask or {}, _project_root(spec_dir, project_dir)
+                )
+                if gap:
+                    return _text(gap)
+
+            # #1113: the CI/CD subtask may not be satisfied with prose. Its
+            # acceptance criteria are about stages that RUN on push and PR, so
+            # the only evidence is the pipeline file — twice in a row the coder
+            # committed a design document under docs/plans/ and left ci.yml
+            # untouched, because the plan named that document as its only file
+            # to create. Inert unless the subtask is a CI/CD subtask AND names
+            # stages its repo's pipeline does not have.
+            if gate_enabled():
+                from agents.pipeline_evidence import (  # noqa: PLC0415
+                    pipeline_evidence_gap,
+                )
+
+                gap = pipeline_evidence_gap(
                     target_subtask or {}, _project_root(spec_dir, project_dir)
                 )
                 if gap:
