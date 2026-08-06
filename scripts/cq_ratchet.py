@@ -179,6 +179,16 @@ def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> in
         text=True,
         input=Path(file_on_disk).read_text(),
     )
+    # ruff exits 0 clean, 1 with violations, and >=2 on its OWN failure: binary
+    # missing, config parse error, bad argv. Those write nothing to stdout, so
+    # without this the empty-stdout fallback below reads "ruff is broken" as
+    # "no violations" and the ratchet passes green on an unrunnable linter --
+    # both sides of the base-vs-head comparison come back 0, because the cause
+    # is environmental and hits both. A CLEAN run prints "[]", never nothing
+    # (PFactory#455, TFactory#951).
+    if res.returncode not in (0, 1):
+        sys.stderr.write(res.stdout + res.stderr)
+        sys.exit(2)
     return len(json.loads(res.stdout)) if res.stdout.strip() else 0
 
 
@@ -253,6 +263,14 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
             # base-version errors point at a temp file that is the only path
             # mypy was given, so any error line is this file's.
             count += 1
+    # Same defect as the ruff branch, in the other half of the gate. mypy exits
+    # 0 clean, 1 with errors, and 2 both for its OWN failure (missing config,
+    # bad argv) and for a blocking error. A blocking error still NAMES a file,
+    # so it lands in `count`; mypy failing to run names nothing. Zero errors out
+    # of a failed run is "did not run", not "clean" (PFactory#455).
+    if res.returncode not in (0, 1) and count == 0:
+        sys.stderr.write(res.stdout + res.stderr)
+        sys.exit(2)
     return count
 
 
