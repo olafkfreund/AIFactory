@@ -245,6 +245,24 @@ async def test_escape_hatch_is_the_same_one(tmp_path, monkeypatch):
     assert result.completed_ids == ["C2"]
 
 
+async def test_a_gate_that_errors_fails_closed(tmp_path, monkeypatch):
+    """A control that could not measure must not read as clean."""
+    import agents.parallel_integration as wave_mod
+
+    def _boom(subtask, project_dir, evidence):  # noqa: ARG001
+        raise RuntimeError("gate exploded")
+
+    monkeypatch.setattr(wave_mod, "completion_refusal", _boom)
+    project = _project(tmp_path, None)
+    st = Subtask(id="C1", description="Add slugify()")
+    plan_file = _plan_file(tmp_path, [st])
+
+    result = await _run_wave([st], plan_file, project, {})
+
+    assert result.failed_ids == ["C1"]
+    assert _status(plan_file, "C1") != SubtaskStatus.COMPLETED
+
+
 # ── the seam itself ──────────────────────────────────────────────────────────
 
 

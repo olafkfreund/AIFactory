@@ -81,7 +81,14 @@ async def gated_mark_complete(
     worktree spec dir before the merge deleted it (see ``run_subtask``).
     """
     subtask_dict = subtask.to_dict() if hasattr(subtask, "to_dict") else dict(subtask)
-    refusal = completion_refusal(subtask_dict, project_dir, evidence)
+    try:
+        refusal = completion_refusal(subtask_dict, project_dir, evidence)
+    except Exception as exc:  # noqa: BLE001 - a gate that errored has not passed
+        # Fails closed, exactly as the serial path does (an exception there
+        # leaves the plan unwritten): a control that could not measure must not
+        # read as clean. The subtask is redone serially, where the same gate runs.
+        logger.error("[parallel] completion gate ERRORED for %s: %s", subtask.id, exc)
+        return False
     if refusal:
         logger.error("[parallel] completion REFUSED for %s: %s", subtask.id, refusal)
         return False
