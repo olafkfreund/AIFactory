@@ -55,6 +55,13 @@ logger = logging.getLogger(__name__)
 # target races concurrent holders — same rationale as agents/inbox.py).
 _GIT_LOCK_TIMEOUT_SECONDS = float(os.getenv("AIFACTORY_GIT_LOCK_TIMEOUT", "120"))
 _GIT_LOCK_FILENAME = "aifactory-worktree.lock"
+# Bound the pre-worktree `git fetch origin <base>` (#1106) so an unreachable
+# remote fails the build in a couple of minutes instead of hanging it.
+_FETCH_TIMEOUT_SECONDS = 180.0
+# git's verdict for "this branch is not on the remote", as opposed to an
+# unreachable or unauthorised remote. Only this one is safe to proceed past
+# (#1106): a branch the remote has never heard of cannot be behind it.
+_REMOTE_REF_MISSING = "couldn't find remote ref"
 
 # Ambient git env vars that pin git to ONE specific repo/index/work tree.
 #
@@ -78,8 +85,16 @@ _AMBIENT_GIT_VARS = frozenset(
 
 
 def _git_env() -> dict[str, str]:
-    """The current environment, minus the git vars that would pin git elsewhere."""
-    return {k: v for k, v in os.environ.items() if k not in _AMBIENT_GIT_VARS}
+    """The current environment, minus the git vars that would pin git elsewhere.
+
+    ``GIT_TERMINAL_PROMPT=0`` is forced on: this manager runs headless (control
+    plane pod, build Job), so a remote that wants credentials must FAIL rather
+    than block forever on a prompt nobody can answer (#1106 added a network
+    fetch to the worktree path; a hang there would wedge the build).
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _AMBIENT_GIT_VARS}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 # Build/test artifacts that must never be committed — committing them makes
@@ -248,6 +263,112 @@ class WorktreeManager:
             return requested
         return self._detect_base_branch()
 
+    def _resolve_start_point(self) -> str:
+        """The revision a new task worktree is cut from, refreshed from origin (#1106).
+
+        The checkout a build runs in is cloned once and reused, so its LOCAL
+        base branch drifts behind ``origin/<base>`` by however many merges have
+        landed since. Cutting the task branch from that stale ref produces a PR
+        based on an old commit, which conflicts with everything merged in the
+        meantime — the Factory#245 HITL demo hit exactly this
+        (``mergeable_state: dirty``).
+
+        So fetch ``origin`` and cut from the FETCHED tip. Deliberately does NOT
+        move the local base ref (the #960 helper's ``reset --hard`` is safe only
+        on the disposable kubejob clone; the subprocess backend shares one
+        checkout with concurrent builds and a merge-back that has it checked
+        out). Both backends route their build worktree through
+        ``create_worktree``, so fixing it here covers subprocess and kubejob.
+
+        Failure is LOUD — a fetch that fails RAISES rather than falling back to
+        the local ref. Falling back is the whole bug: it produces a green-looking
+        build whose PR cannot merge, discovered only by a human clicking Approve.
+        A failed build says so immediately and costs one retry. The only case
+        that proceeds is a repo with no ``origin`` at all, which has nothing to
+        be stale against (offline dev, unit fixtures).
+
+        A base branch that does not exist on the remote AT ALL is the same
+        category as having no remote: there is nothing it could be behind, so it
+        proceeds. This is the documented ``_detect_base_branch`` fallback (a repo
+        with no main/master, cut from the current branch), which would otherwise
+        hard-fail every build on a remote ref that was never supposed to exist.
+
+        Note there is deliberately NO "the local base already matches
+        ``origin/<base>``, so it must be fine" escape hatch. A remote-tracking
+        ref is the memory of some earlier fetch, not evidence of currency — in a
+        checkout that never fetched it matches the stale local branch exactly,
+        which is the reported failure. Unreachable, unauthorised and unresolvable
+        remotes all still raise; only a branch the remote has never heard of
+        passes, and only on git's own "couldn't find remote ref" verdict.
+        """
+        remotes = self._run_git(["remote"])
+        if remotes.returncode != 0 or "origin" not in remotes.stdout.split():
+            logger.info(
+                "no 'origin' remote in %s; cutting the worktree from the local "
+                "base branch %r (#1106)",
+                self.project_dir,
+                self.base_branch,
+            )
+            return self.base_branch
+
+        self._setup_git_credentials()
+        fetch = self._run_git(
+            ["fetch", "origin", self.base_branch], timeout=_FETCH_TIMEOUT_SECONDS
+        )
+        if fetch.returncode != 0:
+            stderr = fetch.stderr.strip()
+            if _REMOTE_REF_MISSING in stderr.lower():
+                logger.warning(
+                    "base branch %r does not exist on origin; it is local-only, so "
+                    "there is no remote tip to be behind — cutting the worktree "
+                    "from the local ref (#1106)",
+                    self.base_branch,
+                )
+                return self.base_branch
+            raise WorktreeError(
+                f"Could not fetch base branch '{self.base_branch}' from origin in "
+                f"{self.project_dir}:\n"
+                f"  {fetch.stderr.strip() or 'no stderr'}\n"
+                f"\n"
+                f"Refusing to cut a build branch from an unverified base. A stale "
+                f"base is what produces a PR that cannot be merged (#1106), which "
+                f"breaks the Approve control silently. Fix the remote or its "
+                f"credentials and retry the build."
+            )
+
+        logger.info(
+            "refreshed base %r from origin before cutting the worktree (#1106)",
+            self.base_branch,
+        )
+        # FETCH_HEAD was just written by the fetch above to the fetched tip. More
+        # reliable than origin/<base>, which a remote configured without a
+        # fetch refspec leaves unwritten.
+        return "FETCH_HEAD"
+
+    def _setup_git_credentials(self) -> None:
+        """Wire ``gh`` as git's credential helper, best-effort (#540 pattern).
+
+        The deployed pod and the build Job hold a gh token but no git credential
+        config, so a raw HTTPS ``git fetch``/``git push`` fails with "could not
+        read Username for https://github.com". Same call the PR push path
+        already makes; done here so the #1106 fetch above fails only for a
+        genuinely broken remote, never for a missing credential helper.
+        """
+        try:
+            subprocess.run(
+                ["gh", "auth", "setup-git"],  # noqa: S607 - fixed argv, no shell
+                cwd=self.project_dir,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=_git_env(),
+                check=False,  # advisory: the fetch below reports the real outcome
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            # gh absent (local dev) or slow — the fetch below reports the real
+            # outcome, so nothing to escalate here.
+            logger.debug("gh auth setup-git skipped: %s", exc)
+
     def _resolve_git_lock_path(self) -> Path:
         """Path to the per-base-repo git mutation sentinel.
 
@@ -399,7 +520,7 @@ class WorktreeManager:
         return result.stdout.strip()
 
     def _run_git(
-        self, args: list[str], cwd: Path | None = None
+        self, args: list[str], cwd: Path | None = None, timeout: float | None = None
     ) -> subprocess.CompletedProcess:
         """Run a git command and return the result.
 
@@ -419,6 +540,7 @@ class WorktreeManager:
             encoding="utf-8",
             errors="replace",
             env=_git_env(),
+            timeout=timeout,
         )
 
     def _unstage_gitignored_files(self) -> None:
@@ -570,16 +692,35 @@ class WorktreeManager:
         if not worktree_path.exists():
             return stats
 
+        # Compare against the REMOTE base, matching what the worktree was cut
+        # from (#1106). The local base ref lags origin, and now that the branch
+        # is cut from the fetched tip every commit the checkout had not seen
+        # would otherwise be counted as this task's work — a task with two
+        # commits reporting dozens in the cockpit.
+        base = (
+            f"origin/{self.base_branch}"
+            if self._run_git(
+                [
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    f"refs/remotes/origin/{self.base_branch}",
+                ]
+            ).returncode
+            == 0
+            else self.base_branch
+        )
+
         # Commit count
         result = self._run_git(
-            ["rev-list", "--count", f"{self.base_branch}..HEAD"], cwd=worktree_path
+            ["rev-list", "--count", f"{base}..HEAD"], cwd=worktree_path
         )
         if result.returncode == 0:
             stats["commit_count"] = int(result.stdout.strip() or "0")
 
         # Diff stats
         result = self._run_git(
-            ["diff", "--shortstat", f"{self.base_branch}...HEAD"], cwd=worktree_path
+            ["diff", "--shortstat", f"{base}...HEAD"], cwd=worktree_path
         )
         if result.returncode == 0 and result.stdout.strip():
             # Parse: "3 files changed, 50 insertions(+), 10 deletions(-)"
@@ -624,6 +765,11 @@ class WorktreeManager:
                 f"  git branch -m {conflicting_branch} {conflicting_branch}-backup"
             )
 
+        # Cut the branch from the CURRENT remote tip, not the checkout's stale
+        # local base ref (#1106). Raises WorktreeError when the base cannot be
+        # verified as current — see _resolve_start_point.
+        start_point = self._resolve_start_point()
+
         # Serialize the shared-.git mutations below across CONCURRENT BUILDS:
         # `worktree remove`, `branch -D`, and `worktree add` all take git's
         # index.lock and rewrite .git/worktrees + refs. Two builds racing here
@@ -653,7 +799,7 @@ class WorktreeManager:
                     "-b",
                     branch_name,
                     str(worktree_path),
-                    self.base_branch,
+                    start_point,
                 ]
             )
 
