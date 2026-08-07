@@ -20,6 +20,13 @@ except ImportError:
     tool = None  # type: ignore[assignment]
 
 
+# How far above a spec dir its project root sits, in ``Path.parents`` steps:
+# ``<root>/.aifactory/specs/<spec>`` puts ``.aifactory`` at parents[1] and the
+# root at parents[2]. The same number bounds the guard and picks the result, so
+# the layout is stated once.
+_ROOT_PARENTS_ABOVE_SPEC = 2
+
+
 def _text(msg: str) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": msg}]}
 
@@ -31,8 +38,8 @@ def _project_root(spec_dir: Path, project_dir: Path | None) -> Path:
     if project_dir is not None:
         return project_dir
     parents = spec_dir.resolve().parents
-    if len(parents) >= 3 and parents[1].name == ".aifactory":
-        return parents[2]
+    if len(parents) > _ROOT_PARENTS_ABOVE_SPEC and parents[1].name == ".aifactory":
+        return parents[_ROOT_PARENTS_ABOVE_SPEC]
     return spec_dir
 
 
