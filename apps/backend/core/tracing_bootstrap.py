@@ -103,11 +103,11 @@ def init_agent_tracing() -> None:
         return
 
     try:
-        from opentelemetry import trace
-        from opentelemetry.context import attach
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.trace.propagation.tracecontext import (
+        from opentelemetry import trace  # noqa: PLC0415
+        from opentelemetry.context import attach  # noqa: PLC0415
+        from opentelemetry.sdk.resources import Resource  # noqa: PLC0415
+        from opentelemetry.sdk.trace import TracerProvider  # noqa: PLC0415
+        from opentelemetry.trace.propagation.tracecontext import (  # noqa: PLC0415
             TraceContextTextMapPropagator,
         )
     except ImportError:
@@ -143,7 +143,9 @@ def init_agent_tracing() -> None:
         # Extract the parent context from the env var, then open THIS process's
         # span inside it and make that span current — so anything the agent
         # starts later is a child of it rather than a sibling of the dispatcher.
-        parent_ctx = TraceContextTextMapPropagator().extract({"traceparent": traceparent})
+        parent_ctx = TraceContextTextMapPropagator().extract(
+            {"traceparent": traceparent}
+        )
         _job_span = trace.get_tracer(__name__).start_span(
             _span_name(), context=parent_ctx, attributes=_span_attributes()
         )
@@ -157,7 +159,7 @@ def init_agent_tracing() -> None:
             _span_name(),
         )
         _initialized = True
-    except Exception:
+    except Exception:  # noqa: BLE001 — tracing must never break the agent's work
         logger.warning(
             "agent OTel bootstrap failed; agent will run untraced",
             exc_info=True,
@@ -205,10 +207,10 @@ def _install_exporter(provider) -> None:
         )
         return
     try:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: PLC0415
             OTLPSpanExporter,
         )
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # noqa: PLC0415
 
         # BatchSpanProcessor, not SimpleSpanProcessor: batching is what makes
         # the export asynchronous, so a slow or dead collector drops spans off
@@ -218,8 +220,10 @@ def _install_exporter(provider) -> None:
         provider.add_span_processor(
             BatchSpanProcessor(OTLPSpanExporter(timeout=_EXPORT_TIMEOUT_SECONDS))
         )
-        logger.info("agent OTel bootstrap: OTLP exporter installed endpoint=%s", endpoint)
-    except Exception:
+        logger.info(
+            "agent OTel bootstrap: OTLP exporter installed endpoint=%s", endpoint
+        )
+    except Exception:  # noqa: BLE001 — tracing must never break the agent's work
         logger.warning(
             "agent OTel bootstrap: could not install the OTLP exporter; this "
             "process joins the trace but its spans will not be exported",
@@ -237,7 +241,7 @@ def _flush_at_exit() -> None:
             # flush a second time on the SDK's own 30s budget, and the exiting
             # process does not need the worker thread stopped politely.
             _provider.force_flush(timeout_millis=_FLUSH_TIMEOUT_MS)
-    except Exception:
+    except Exception:  # noqa: BLE001 — tracing must never break the agent's work
         logger.debug("agent OTel bootstrap: flush at exit failed", exc_info=True)
 
 
