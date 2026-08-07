@@ -9,6 +9,7 @@ and output capabilities.
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from .enums import SubtaskStatus
 from .verification import Verification
@@ -84,9 +85,11 @@ class Subtask:
         """
         return (self.service or "").lower() in _HANDOFF_SERVICES
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        result = {
+        # Annotated because the seed keys are all str, so an unannotated literal
+        # infers dict[str, str] and every non-str field below is a type error.
+        result: dict[str, Any] = {
             "id": self.id,
             "description": self.description,
             "status": self.status.value,
