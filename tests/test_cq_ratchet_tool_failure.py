@@ -25,6 +25,7 @@ so it lands in the count, while mypy failing to run names nothing. Hence the
 from __future__ import annotations
 
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,7 @@ def stub(monkeypatch: pytest.MonkeyPatch):
     return _apply
 
 
-def _ruff_count() -> int:
+def _ruff_count() -> Counter[str]:
     return cq_ratchet._ruff_count("ruff", "ruff.toml", _FILE, _FILE)
 
 
@@ -88,13 +89,15 @@ def test_ruff_failure_surfaces_stderr_for_diagnosis(stub, capsys) -> None:
 def test_ruff_clean_file_still_counts_zero(stub) -> None:
     # Control: exit 0 with "[]" is ruff saying "checked it, nothing wrong".
     stub(_Res(0, stdout="[]"))
-    assert _ruff_count() == 0
+    assert _ruff_count() == Counter()
 
 
 def test_ruff_violations_are_still_counted(stub) -> None:
     # Control: exit 1 is the ordinary "found something" path, not a failure.
     stub(_Res(1, stdout='[{"code": "S101"}, {"code": "PLR2004"}]'))
-    assert _ruff_count() == 2
+    # Keyed by rule code since #1189, so the two are separable rather than
+    # summed into one number an added violation can hide inside.
+    assert _ruff_count() == Counter({"S101": 1, "PLR2004": 1})
 
 
 # --------------------------------------------------------------------------- #
