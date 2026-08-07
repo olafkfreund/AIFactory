@@ -38,6 +38,14 @@ unstaged hunks are judged too — CI re-judges the committed range either way.
 Exit code 1 if any changed file's violation count increased; else 0.
 """
 
+# T201 (no print) targets SERVICE code, where stdout is not an output channel.
+# This is a CI command-line tool whose entire product is what it prints: the
+# per-file verdict, the REGRESSION lines and the findings behind them all go to
+# the CI log, and the workflow has no other way to show them. Scoped to the one
+# rule: the code-less blanket form is what PGH004 forbids, and it would hide the
+# next real finding in this file. Same carve-out PFactory's sibling fork carries.
+# ruff: noqa: T201
+
 from __future__ import annotations
 
 import argparse
@@ -46,27 +54,41 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import shutil
 import tempfile
+import tomllib
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
-import tomllib
-
 # Canonical shared ratchet rules, vendored byte-exact from the Factory hub
 # and byte-exact drift-gated (Factory#403). scripts/ is sys.path[0] when this
 # runs as a script, so the sibling import resolves without packaging.
-from ratchet_helpers import MYPY_TEST_RELAX, is_test_file, require_tool_ran, ruff_stdin_argv
+from ratchet_helpers import (
+    MYPY_TEST_RELAX,
+    is_test_file,
+    require_tool_ran,
+    ruff_stdin_argv,
+)
 
 
+# S603 applies to every subprocess call in this file and is suppressed per call,
+# never file-wide: the argv are assembled here from repo-relative config paths,
+# `git` literals and the CI-supplied ruff/mypy binaries, with no shell and no
+# caller string ever becoming a command word. Kept per-line so a genuinely new
+# subprocess site still has to argue its own case. This is a CI developer tool,
+# not a request-handling surface.
 def _run(cmd: list[str], check: bool = True) -> str:
-    return subprocess.run(cmd, capture_output=True, text=True, check=check).stdout
+    return subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, check=check
+    ).stdout
 
 
-def changed_python_files(base: str, paths: list[str], staged: bool = False) -> list[str]:
+def changed_python_files(
+    base: str, paths: list[str], staged: bool = False
+) -> list[str]:
     if staged:
         # Index vs HEAD: what `git commit` is about to record.
         cmd = ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]
@@ -79,6 +101,7 @@ def changed_python_files(base: str, paths: list[str], staged: bool = False) -> l
         for f in out.split()
         if f.endswith(".py") and Path(f).is_file() and not _is_excluded(f, excludes)
     ]
+
 
 def _ruff_excludes() -> list[str]:
     """Exclude globs from the repo ruff config (root ``ruff.toml`` + ``extend``).
@@ -136,7 +159,6 @@ def _is_excluded(path: str, patterns: list[str]) -> bool:
     return False
 
 
-
 # --------------------------------------------------------------------------- #
 # ruff                                                                         #
 # --------------------------------------------------------------------------- #
@@ -173,10 +195,11 @@ def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> in
     # path: with `fix = true` ever set in the config, ruff writes the fixed
     # source to stdout and the json parse below would read code as findings.
     argv = ruff_stdin_argv(config, repo_path)
-    res = subprocess.run(
+    res = subprocess.run(  # noqa: S603
         [ruff, argv[1], "--no-fix", *argv[2:]],
         capture_output=True,
         text=True,
+        check=False,
         input=Path(file_on_disk).read_text(),
     )
     # The shared "did the tool actually run" rule (Factory#590). This used to be
@@ -194,10 +217,6 @@ def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> in
 
 # mypy text output lines look like:  path/to/file.py:12: error: <msg>  [code]
 _MYPY_ERROR_RE = re.compile(r"^(?P<path>.+?):\d+: error:")
-
-
-
-
 
 
 def _cache_dir_for(file_on_disk: str) -> str:
@@ -219,7 +238,7 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
     error lines whose path matches the file we asked about are counted, so an
     error surfaced in a followed dependency never lands on this file's ledger.
     """
-    res = subprocess.run(
+    res = subprocess.run(  # noqa: S603
         [
             mypy,
             "--config-file",
@@ -243,6 +262,7 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
         ],
         capture_output=True,
         text=True,
+        check=False,
     )
     target = str(Path(file_on_disk).resolve())
     count = 0
@@ -303,10 +323,14 @@ def _base_worktree(base: str) -> str | None:
     mutated.
     """
     tmp = tempfile.mkdtemp(prefix="cq-ratchet-base-")
-    res = subprocess.run(
-        ["git", "worktree", "add", "--detach", "-q", tmp, base],
+    # S607: `git` stays a bare name so PATH decides, exactly as every other git
+    # call in this repo's tooling does; pinning an absolute path here would make
+    # the ratchet unrunnable on any host that installs git elsewhere.
+    res = subprocess.run(  # noqa: S603
+        ["git", "worktree", "add", "--detach", "-q", tmp, base],  # noqa: S607
         capture_output=True,
         text=True,
+        check=False,
         env=_worktree_env(),
     )
     if res.returncode != 0:
@@ -317,10 +341,11 @@ def _base_worktree(base: str) -> str | None:
 
 
 def _remove_worktree(path: str) -> None:
-    subprocess.run(
-        ["git", "worktree", "remove", "--force", path],
+    subprocess.run(  # noqa: S603
+        ["git", "worktree", "remove", "--force", path],  # noqa: S607
         capture_output=True,
         text=True,
+        check=False,
         env=_worktree_env(),
     )
     shutil.rmtree(path, ignore_errors=True)
@@ -348,6 +373,41 @@ def base_count(base: str, counter, config: str, path: str) -> int:
     if not candidate.is_file():
         return 0  # file did not exist on base -> new file, base count is 0
     return counter(config, str(candidate), path)
+
+
+def _report_regressions(
+    args: argparse.Namespace, label: str, regressions: list[tuple[str, int, int]]
+) -> None:
+    """Print each regression and re-run the tool so the findings are visible.
+
+    Split out of ``main`` (Factory#597): the reporting tail is the only part of
+    ``main`` that branches on ``--tool`` a second time, and lifting it takes the
+    branch count back under the shared PLR0912 cap. It also puts the two raw
+    subprocess sites in one place instead of buried at the end of the entry
+    point.
+    """
+    for path, before, after in regressions:
+        print(f"REGRESSION {path}: {label} violations {before} -> {after}")
+        # Show the actual findings to make the failure actionable.
+        if args.tool == "ruff":
+            subprocess.run(  # noqa: S603
+                [args.ruff, "check", "--no-fix", "--config", args.config, path],
+                check=False,
+            )
+        else:
+            subprocess.run(  # noqa: S603
+                [
+                    args.mypy,
+                    "--config-file",
+                    args.config,
+                    "--ignore-missing-imports",
+                    "--follow-imports=silent",
+                    "--no-error-summary",
+                    *(MYPY_TEST_RELAX if is_test_file(path) else []),
+                    path,
+                ],
+                check=False,
+            )
 
 
 def main() -> int:
@@ -413,28 +473,7 @@ def main() -> int:
         f"the {label} baseline ({summary['improved']} improved, "
         f"{summary['unchanged']} unchanged, {len(regressions)} regressed)"
     )
-    for path, before, after in regressions:
-        print(f"REGRESSION {path}: {label} violations {before} -> {after}")
-        # Show the actual findings to make the failure actionable.
-        if args.tool == "ruff":
-            subprocess.run(
-                [args.ruff, "check", "--no-fix", "--config", args.config, path],
-                check=False,
-            )
-        else:
-            subprocess.run(
-                [
-                    args.mypy,
-                    "--config-file",
-                    args.config,
-                    "--ignore-missing-imports",
-                    "--follow-imports=silent",
-                    "--no-error-summary",
-                    *(MYPY_TEST_RELAX if is_test_file(path) else []),
-                    path,
-                ],
-                check=False,
-            )
+    _report_regressions(args, label, regressions)
     return 1 if regressions else 0
 
 
