@@ -14,12 +14,38 @@ name: cq-ratchet
 #     error COUNT increased vs the base branch (#647). Touched legacy files keep
 #     their existing type debt; net-new type errors fail. Same count-scoped
 #     no-regression contract as the ruff ratchet above.
-#   * ruff format --check is enforced repo-wide (the tree is formatter-clean as
-#     of cq-phase0).
+#   * ruff format --check runs over apps/backend and scripts/ (the tree is
+#     formatter-clean there as of cq-phase0 plus Factory#597).
 # Adopting issues: #647, #652.
 #
 # Intended to be BLOCKING under branch protection. The pre-existing lenient
 # repo-wide `ruff check` in ci.yml stays as-is for the legacy backlog.
+#
+# SCOPE: apps/backend, apps/web-server and scripts/.
+#
+# scripts/ was added in Factory#597 for one reason: scripts/cq_ratchet.py IS
+# this gate, and it sat outside every ruff and mypy scope this repo has — the
+# file that counts findings on each changed backend file was the one file no run
+# looked at. Measured on dev before the change: 18 ungated ruff findings in it
+# (7 S603, 4 PLW1510, 3 T201, 2 S607, 1 I001, 1 PLR0912) plus `ruff format`
+# drift. All 18 are FIXED in that PR, not grandfathered — PLW1510 by passing
+# check=False for real, PLR0912 by lifting the reporting tail out of main(), the
+# rest per-line with the argv provenance stated. The format gate is WHOLE-TREE
+# and cannot grandfather anything, so the drift was swept in the same PR.
+#
+# The format-check job was also called "repo-wide" while running only over
+# apps/backend. It now says what it does.
+#
+# scripts/ratchet_helpers.py stays out, and needed no new config to do so: it is
+# already in ruff.toml's extend-exclude as the byte-exact hub canonical, and this
+# ratchet honours those excludes itself (_ruff_excludes, #1028). Reformatting a
+# vendored copy to satisfy a LOCAL rule is what breaks the next re-vendor.
+#
+# .husky/pre-commit is deliberately NOT widened to match. It resolves ruff from
+# the local venv and rewrites staged files with it, so extending its glob to
+# scripts/ would let a version skew land the drift this change removes
+# (PFactory#452, same hook lineage). The hook keeps its apps/backend glob;
+# scripts/ is gated here, where the pin holds.
 
 on:
   pull_request:
@@ -74,7 +100,7 @@ jobs:
             --base "origin/${{ github.base_ref }}" \
             --ruff apps/backend/.venv/bin/ruff \
             --config standards/ruff.toml \
-            --paths 'apps/backend/*.py' 'apps/web-server/*.py'
+            --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 
       - name: Mypy --strict (shared baseline, per-file no-regression ratchet)
         run: |
@@ -93,10 +119,10 @@ jobs:
             --base "origin/${{ github.base_ref }}" \
             --mypy apps/backend/.venv/bin/mypy \
             --config standards/mypy.ini \
-            --paths 'apps/backend/*.py' 'apps/web-server/*.py'
+            --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 
   format-check:
-    name: ruff format --check (repo-wide)
+    name: ruff format --check (apps/backend + scripts)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -109,8 +135,8 @@ jobs:
       - name: Install pinned ruff
         run: pip install "ruff==${RUFF_VERSION}"
 
-      - name: Ruff format check (apps/backend)
-        run: ruff format --check apps/backend
+      - name: Ruff format check (apps/backend + scripts)
+        run: ruff format --check apps/backend scripts
 
   config-drift:
     name: shared-baseline drift gate (blocking)
