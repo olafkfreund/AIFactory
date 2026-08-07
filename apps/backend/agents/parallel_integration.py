@@ -53,7 +53,7 @@ from .completion_gate import completion_refusal
 from .memory_manager import get_graphiti_context, save_session_memory
 from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_session_guarded
-from .test_evidence import read_test_evidence
+from .test_evidence import read_test_evidence, record_subtask_completed
 from .token_attribution import PromptSegments, TurnUsage, record_turn
 from .utils import record_subtask_completion, sync_plan_to_source
 from .wave_log import WaveRecorder
@@ -92,6 +92,12 @@ async def gated_mark_complete(
     if refusal:
         logger.error("[parallel] completion REFUSED for %s: %s", subtask.id, refusal)
         return False
+    # Close this subtask's evidence window, exactly as the serial funnel does
+    # (#1187) — and in the same ledger, since ``plan_path`` is
+    # ``spec_dir/implementation_plan.json`` and ``spec_dir`` is what both the
+    # serial gate and this engine's own fallback read. Writing to the child's
+    # spec dir instead would be lost: the merge deletes that worktree.
+    record_subtask_completed(plan_path.parent, subtask.id)
     if not record_subtask_completion(subtask.id, plan_path, source_spec_dir):
         logger.error(
             "[parallel] mark_complete %s: completion not recorded "
@@ -543,7 +549,7 @@ async def run_parallel_coding_phase(
 
             # Capture this child's own test-run evidence NOW: the merge deletes
             # its worktree, and with it the evidence the #851 gate reads (#1177).
-            child_evidence[subtask.id] = read_test_evidence(child_spec_dir)
+            child_evidence[subtask.id] = read_test_evidence(child_spec_dir, subtask.id)
 
             # --- per-worker token attribution (#45 P1, additive) ---
             # Each parallel subtask IS a worker. Fold its real SDK usage into the
@@ -718,7 +724,7 @@ async def run_parallel_coding_phase(
                     source_spec_dir=source_spec_dir,
                     project_dir=project_dir,
                     evidence=child_evidence.get(subtask.id)
-                    or read_test_evidence(spec_dir),
+                    or read_test_evidence(spec_dir, subtask.id),
                 )
         except Exception as exc:  # noqa: BLE001
             logger.error("[parallel] mark_complete %s failed: %s", subtask.id, exc)

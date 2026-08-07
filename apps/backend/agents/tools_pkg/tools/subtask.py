@@ -62,26 +62,26 @@ async def apply_subtask_status_update(
         with open(plan_file) as f:
             plan = json.load(f)
 
-        # Find and update the subtask
-        subtask_found = False
-        target_subtask: dict[str, Any] | None = None
-        for phase in plan.get("phases", []):
-            for subtask in phase.get("subtasks", []):
-                if subtask.get("id") == subtask_id:
-                    subtask["status"] = status
-                    if notes:
-                        subtask["notes"] = notes
-                    subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    subtask_found = True
-                    target_subtask = subtask
-                    break
-            if subtask_found:
-                break
-
-        if not subtask_found:
+        # Find and update the subtask (the record is the one IN ``plan``, so
+        # mutating it here is what the write below persists).
+        target_subtask: dict[str, Any] | None = next(
+            (
+                st
+                for phase in plan.get("phases", [])
+                for st in phase.get("subtasks", [])
+                if st.get("id") == subtask_id
+            ),
+            None,
+        )
+        if target_subtask is None:
             return _text(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
+
+        target_subtask["status"] = status
+        if notes:
+            target_subtask["notes"] = notes
+        target_subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # The honesty gates (#851 test evidence, #1111 deliverable coverage,
         # #1113 pipeline evidence) live in agents.completion_gate because the
@@ -94,9 +94,12 @@ async def apply_subtask_status_update(
             from agents.test_evidence import read_test_evidence  # noqa: PLC0415
 
             refusal = completion_refusal(
-                target_subtask or {},
+                target_subtask,
                 _project_root(spec_dir, project_dir),
-                read_test_evidence(spec_dir),
+                # Scoped to THIS subtask (#1187): build-wide evidence let the
+                # second verification subtask in a build ride the first one's
+                # green run and complete having executed nothing.
+                read_test_evidence(spec_dir, subtask_id),
             )
             if refusal:
                 return _text(refusal)
@@ -106,6 +109,13 @@ async def apply_subtask_status_update(
 
         with open(plan_file, "w") as f:
             json.dump(plan, f, indent=2)
+
+        if status == "completed":
+            # Close this subtask's evidence window — AFTER the gate accepted it,
+            # so a refusal leaves the runs for the retry to use (#1187).
+            from agents.test_evidence import record_subtask_completed  # noqa: PLC0415
+
+            record_subtask_completed(spec_dir, subtask_id)
 
         return _text(
             f"Successfully updated subtask '{subtask_id}' to status '{status}'"
