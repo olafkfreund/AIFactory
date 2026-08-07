@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The parallel wave path must pass the same honesty gates as the serial coder (#1177).
 
-The three gates (#851 test evidence, #1111 deliverable coverage, and #1113 once
-it lands) were wired into ``apply_subtask_status_update`` — the tool the SERIAL
+The three gates (#851 test evidence, #1111 deliverable coverage, #1113 pipeline
+evidence) were wired into ``apply_subtask_status_update`` — the tool the SERIAL
 coder calls. A wave child never calls it: it is completed by the orchestrator
 via ``record_subtask_completion``, so a subtask the serial path would refuse
 completed silently on the wave path. Waves are the path used for the larger
@@ -55,6 +55,40 @@ HONEST_TEST = (
     "    assert client.post('/api/quote').status_code == 200\n"
 )
 
+# The live #1113 shape: aifactory-demo's ci.yml as the CICD subtask left it —
+# one pytest job — beside the acceptance criteria that subtask promised. The
+# wave engine dispatches this subtask: parallel_integration passes
+# `phase.subtasks` raw, not `get_pending_subtasks()`, so `is_handoff` does not
+# keep a `cicd` child out of a wave (#1176).
+CI_ONE_TEST_JOB = (
+    "name: CI\n"
+    "on: [push, pull_request]\n"
+    "jobs:\n"
+    "  test:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: pytest -q\n"
+)
+CI_FULL = CI_ONE_TEST_JOB + (
+    "  lint:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: ruff check .\n"
+    "  build:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: docker build -t app .\n"
+    "  security-scan:\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - run: pip-audit\n"
+)
+CICD_CRITERIA = [
+    "Lint, test, build, and security-scan stages run on every push and PR.",
+    "The test stage runs the full suite and publishes a coverage report.",
+    "Deploy stages are gated on a green build and require manual approval.",
+]
+
 RAN_GREEN: dict[str, Any] = {
     "ran": True,
     "last_failed": False,
@@ -76,6 +110,28 @@ def _project(tmp_path: Path, test_source: str | None) -> Path:
     if test_source:
         (root / "tests" / "test_vat_quote.py").write_text(test_source)
     return root
+
+
+def _cicd_project(tmp_path: Path, ci: str) -> Path:
+    """A repo whose pipeline is `ci` — the tree a wave child is judged on."""
+    root = tmp_path / "project"
+    wf = root / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(ci)
+    return root
+
+
+def _cicd_subtask() -> Subtask:
+    """The CICD child PFactory emits, as it reaches the wave engine."""
+    return Subtask(
+        id="CICD",
+        description=(
+            "Implement the CI/CD pipeline specified in "
+            "`docs/plans/030-vat-quote-endpoint-cicd-pipeline.md`."
+        ),
+        service="cicd",
+        acceptance_criteria=list(CICD_CRITERIA),
+    )
 
 
 def _plan_file(tmp_path: Path, subtasks: list[Subtask]) -> Path:
@@ -162,7 +218,105 @@ async def test_the_bypass(tmp_path):
     assert refusal and "never touch the shipped application" in refusal
 
 
+async def test_the_bypass_cicd(tmp_path):
+    """Same control for #1113: ungated, the documenting coder completes green.
+
+    The CICD subtask promises lint/test/build/security-scan stages "on every
+    push and PR" and the repo's ci.yml still runs one pytest job — the live
+    #1113 defect, on the wave engine.
+    """
+    project = _cicd_project(tmp_path, CI_ONE_TEST_JOB)
+    cicd = _cicd_subtask()
+    plan_file = _plan_file(tmp_path, [cicd])
+
+    result = await _run_wave([cicd], plan_file, project, {}, gated=False)
+
+    assert result.completed_ids == ["CICD"]
+    assert _status(plan_file, "CICD") == SubtaskStatus.COMPLETED
+
+    # ...and the shared gate, on the same subtask and the same tree, refuses.
+    from agents.completion_gate import completion_refusal
+
+    refusal = completion_refusal(cicd.to_dict(), project, RAN_GREEN)
+    assert refusal and "no lint, build, security scan stage" in refusal
+
+
+def test_the_wave_engine_can_see_what_the_subtask_promised():
+    """The plumbing the #1113 gate rides on: a wave child is judged through
+    ``Subtask.to_dict()``, and the stage demands live in acceptance_criteria.
+
+    Unmodelled, they were dropped by every to_dict() — and by every
+    ImplementationPlan.save(), which deleted them from the plan on disk for the
+    serial gate too. A gate reading a field the model throws away sees nothing
+    and passes everything, which is worse than no gate.
+    """
+    from agents.pipeline_evidence import demanded_stages
+
+    round_tripped = Subtask.from_dict(_cicd_subtask().to_dict())
+
+    assert round_tripped.acceptance_criteria == CICD_CRITERIA
+    assert demanded_stages(round_tripped.to_dict()) == [
+        "lint",
+        "test",
+        "build",
+        "security scan",
+    ]
+
+
 # ── the bypass, closed ───────────────────────────────────────────────────────
+
+
+async def test_wave_child_refused_when_the_cicd_subtask_shipped_prose(tmp_path):
+    """#1113 on the wave path: refused, not completed, and queued for a redo."""
+    project = _cicd_project(tmp_path, CI_ONE_TEST_JOB)
+    cicd = _cicd_subtask()
+    plan_file = _plan_file(tmp_path, [cicd])
+
+    result = await _run_wave([cicd], plan_file, project, {})
+
+    assert result.completed_ids == []
+    assert result.failed_ids == ["CICD"]
+    assert _status(plan_file, "CICD") != SubtaskStatus.COMPLETED
+
+
+async def test_wave_cicd_child_completes_once_the_pipeline_really_runs(tmp_path):
+    """The same subtask, the same wave, a ci.yml that has the stages: allowed.
+
+    A gate that cannot be satisfied by doing the work is just an outage.
+    """
+    project = _cicd_project(tmp_path, CI_FULL)
+    cicd = _cicd_subtask()
+    plan_file = _plan_file(tmp_path, [cicd])
+
+    result = await _run_wave([cicd], plan_file, project, {})
+
+    assert result.completed_ids == ["CICD"]
+    assert _status(plan_file, "CICD") == SubtaskStatus.COMPLETED
+
+
+def test_the_operator_reads_the_most_specific_refusal(tmp_path):
+    """Gate order: two gates can fire on one CI/CD subtask, and only one of them
+    names the thing that is actually wrong.
+
+    "the test suite runs on every push" makes this a verification subtask to
+    #851, so with no recorded test run #851 would answer "run pytest now" — true,
+    and no help at all when what is missing is the test STAGE in ci.yml. #1113
+    runs first and says so.
+    """
+    from agents.completion_gate import completion_refusal
+
+    project = _cicd_project(tmp_path, CI_ONE_TEST_JOB)
+    subtask = Subtask(
+        id="CICD",
+        description="Set up CI/CD so the test suite and a build run on every push.",
+        service="cicd",
+        acceptance_criteria=list(CICD_CRITERIA),
+    )
+
+    refusal = completion_refusal(subtask.to_dict(), project, NEVER_RAN)
+
+    assert refusal and "Edit the pipeline file itself" in refusal
+    assert "no test command ran this build" not in refusal
 
 
 async def test_wave_child_refused_when_tests_never_touch_the_shipped_app(tmp_path):

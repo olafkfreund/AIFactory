@@ -44,7 +44,7 @@ async def apply_subtask_status_update(
     project_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Update a subtask's status in implementation_plan.json, enforcing the
-    honesty gates in :mod:`agents.completion_gate` (#851, #1111). Plain
+    honesty gates in :mod:`agents.completion_gate` (#851, #1111, #1113). Plain
     (SDK-free) so it is directly testable; the ``update_subtask_status`` tool is
     a thin wrapper resolving the spec and project dirs.
     """
@@ -83,9 +83,10 @@ async def apply_subtask_status_update(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
 
-        # The honesty gates (#851 test evidence, #1111 deliverable coverage) live
-        # in agents.completion_gate because the parallel wave path has to pass
-        # the SAME ones — it completes subtasks itself, without this tool (#1177).
+        # The honesty gates (#851 test evidence, #1111 deliverable coverage,
+        # #1113 pipeline evidence) live in agents.completion_gate because the
+        # parallel wave path has to pass the SAME ones — it completes subtasks
+        # itself, without this tool (#1177).
         # Add a gate there, not here. The plan is not written until AFTER this,
         # so a refusal leaves implementation_plan.json untouched.
         if status == "completed":
