@@ -51,6 +51,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ def _span_attributes() -> dict[str, str]:
     return attrs
 
 
-def _install_exporter(provider) -> None:
+def _install_exporter(provider: Any) -> None:
     """Add the OTLP exporter, or say plainly that spans will not land.
 
     No endpoint means no exporter: the Job still joins the trace (so its logs
