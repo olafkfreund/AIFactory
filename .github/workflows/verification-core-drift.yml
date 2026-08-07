@@ -67,7 +67,19 @@ env:
   # CHECKER is fetched from main while the CANONICAL stays pinned, so registering
   # first would compare this repo's new copy against an old canonical and turn
   # every AIFactory PR red until this landed.
-  HUB_PIN_SHA: "d7c7687b35f497e3cfc94c56df8a3103c2f83404"
+  #
+  # !! RE-POINT BEFORE MERGING (Factory#638) !!
+  # The value below is the HEAD OF AN OPEN HUB PR BRANCH
+  # (olafkfreund/Factory#644, feat/638-verify-job-tracing). The hub squash-merges,
+  # so that commit ceases to exist when the PR lands and this pin then resolves to
+  # nothing. Replace it with the SQUASH-MERGE commit on hub `main` before merging.
+  # It is deliberately left pointing at the branch so CI goes RED rather than
+  # green-on-a-stale-canonical: a pin that still resolves is the failure mode that
+  # cost four re-points in one day.
+  #
+  # Why it has to move: this PR vendors apps/backend/core/job_tracing.py, which
+  # does not exist at d7c7687b.
+  HUB_PIN_SHA: "ad73d71f4aa7c7ae8be2547ef4ee327866df16a7"
 
 jobs:
   drift:

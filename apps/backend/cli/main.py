@@ -320,7 +320,7 @@ def main() -> None:
     # No-op without TRACEPARENT, so local CLI runs are untouched — and this
     # module had NO production caller at all before now, which is why the
     # subprocess path was "half-built" too.
-    from core.tracing_bootstrap import init_agent_tracing  # noqa: PLC0415
+    from core.job_tracing import init_agent_tracing  # noqa: PLC0415
 
     init_agent_tracing()
 

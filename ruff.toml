@@ -43,6 +43,12 @@ extend-exclude = [
     # #1107 pod-label defect had to be fixed twice. Now gated; letting the local
     # 88-column formatter touch it would break the next re-vendor.
     "apps/backend/core/job_dispatch.py",
+    # Factory#638: the far half of job_dispatch.trace_env — the bootstrap the
+    # dispatched Job calls to join the run's trace and emit. This WAS this repo's
+    # own core/tracing_bootstrap.py until TFactory's verify Job needed the same
+    # emitter; it is now the hub canonical, vendored here and in TFactory, so the
+    # local 88-column formatter must leave it alone like the others.
+    "apps/backend/core/job_tracing.py",
     # Vendored byte-exact mirror of the Factory hub canonical, kept identical by
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.
