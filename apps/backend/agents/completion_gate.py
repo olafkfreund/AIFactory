@@ -30,7 +30,9 @@ Inputs, and why they are these:
 * ``evidence`` — an already-read :func:`agents.test_evidence.read_test_evidence`
   summary rather than a spec dir, because a wave child records its test runs in
   its own worktree spec dir and that worktree is deleted by the merge. The
-  caller reads the summary while it still exists.
+  caller reads the summary while it still exists. It is scoped to the subtask
+  being completed, not to the build (#1187): both callers pass the subtask id,
+  and both mean "the runs recorded while this subtask was being worked".
 
 All gates share the single ``AIFACTORY_TEST_EVIDENCE_GATE=off`` escape hatch;
 no second flag. Marking a subtask ``failed`` is never blocked (RFC-0006) — that
@@ -114,12 +116,19 @@ def completion_refusal(
     # hook). No run — or a run that clearly failed — is refused with actionable
     # guidance, so the coder can no longer self-report a green checkbox for tests
     # it never executed (RFC-0006).
+    #
+    # ``evidence`` is scoped to THIS subtask's own working window (#1187): it was
+    # build-wide, so the second verification subtask in a build passed on the
+    # first one's green run having executed nothing. Only a verification subtask
+    # is asked the question at all, so a subtask that legitimately runs no tests
+    # is still never refused for it.
     if is_verification_subtask(subtask):
         if not evidence.get("ran"):
             return (
                 f"Refused: subtask '{subtask_id}' is a test/verification subtask, "
-                "but no test command ran this build. Run the tests now (e.g. "
-                "pytest / go test / npm test) — the build records the run "
+                "but no test command ran while it was being worked. A run recorded "
+                "under an EARLIER subtask does not count for this one. Run the tests "
+                "now (e.g. pytest / go test / npm test) — the build records the run "
                 "automatically — then mark it completed. If this repo has NO "
                 "runnable test environment, mark this subtask 'failed' with a note "
                 "saying tests could not be executed. Do NOT report it completed "

@@ -17,10 +17,49 @@ actually ran (and did not clearly fail). No evidence -> the coder must run the
 tests, or honestly mark the subtask ``failed`` with a reason. It can no longer
 silently self-report a green checkbox.
 
-Coarse by design: the gate asks "did tests run in this build", not "for this
-exact subtask" — which is what catches #851 (zero runs on a toolchain-less repo)
-without threading per-subtask timing. Default ON; escape hatch
-``AIFACTORY_TEST_EVIDENCE_GATE=off`` for the rare repo where the gate misfires.
+Scoped to the subtask being completed, not to the build (#1187)
+---------------------------------------------------------------
+The gate originally asked "did tests run in this build". That answers a question
+adjacent to the one being asked: the SECOND verification subtask in a build
+inherited the first one's green run and passed having executed nothing. Observed
+live — a subtask whose only deliverable was ``docs/plans/030-testing-strategy.md``
+completed green off an earlier subtask's ``pytest -q``.
+
+So the window is now "runs recorded while THIS subtask was being worked", and
+its boundary is written by the harness, in this same append-only file, by the
+one funnel that accepts a completion: :func:`record_subtask_completed` appends a
+marker when a subtask is allowed to complete. Everything after the last marker
+naming a *different* subtask is this subtask's own work.
+
+Why not the plan's ``started_at``: nothing writes it. ``Subtask.start()`` has no
+caller in either coding engine and ``apply_subtask_status_update`` never stamps
+it, so a ``started_at``-scoped window would fall back to build-wide on every
+real build. It would also be model-supplied — the coder is merely *asked* to
+mark a subtask ``in_progress`` — and a gate must not depend on the party it
+gates. The marker is written by the gate's own funnel, after it has decided, so
+a refused attempt never consumes the runs.
+
+Old evidence files carry no markers, so the whole file is the window and they
+read exactly as before: nothing already on disk is retroactively refused, and an
+entry shape this module has never seen is simply counted as a run rather than
+crashing the gate.
+
+Both engines mean the same thing by it, and both write the marker. The wave path
+was described as already per-subtask because a child records into its own
+worktree spec dir, which the merge then deletes (#1178) — true when that dir
+exists, and then "the whole file" and "since the last marker" are the same
+window. But ``.aifactory`` is gitignored, so a freshly created child worktree
+usually does not have one and ``run_subtask`` falls back to the SHARED spec dir,
+where a child sees every sibling's runs. Scoping is load-bearing there too.
+
+# ponytail: concurrent wave children appending to one shared ledger can land a
+# sibling's run inside this subtask's window. Timestamps would not fix it
+# either — the runs genuinely interleave. It errs permissive (never refuses
+# honest work), which is the right direction for a gate; attribute per subtask
+# at record time only if a wave child is ever seen riding a sibling.
+
+Default ON; escape hatch ``AIFACTORY_TEST_EVIDENCE_GATE=off`` for the rare repo
+where the gate misfires.
 
 #1111 — "a test ran" is not "a test ran against the deliverable"
 --------------------------------------------------------------
@@ -64,6 +103,11 @@ from pathlib import Path
 from typing import Any
 
 _EVIDENCE_REL = ".aifactory/test_evidence.jsonl"
+
+# Key that marks a ledger line as a completion boundary rather than a test run
+# (#1187). Absent from every line written before #1187, which is what makes an
+# old evidence file read exactly as it always did.
+_COMPLETION_KEY = "subtask_completed"
 
 # Test-RUNNER invocations, across the languages the fleet builds. A command is
 # evidence of a real run only when one of these appears at the START of a
@@ -192,13 +236,8 @@ def _evidence_path(spec_dir: Path | str) -> Path:
     return Path(spec_dir) / _EVIDENCE_REL
 
 
-def record_test_run(spec_dir: Path | str, command: str, output: Any) -> None:
-    """Append one recorded test-command execution. Best-effort; never raises."""
-    entry = {
-        "ts": round(time.time(), 3),
-        "command": command[:500],
-        "failed": looks_failed(output),
-    }
+def _append(spec_dir: Path | str, entry: dict[str, Any]) -> None:
+    """Append one line to the evidence ledger. Best-effort; never raises."""
     try:
         path = _evidence_path(spec_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -208,22 +247,62 @@ def record_test_run(spec_dir: Path | str, command: str, output: Any) -> None:
         pass
 
 
-def read_test_evidence(spec_dir: Path | str) -> dict[str, Any]:
-    """Summarise the recorded runs for the gate.
+def record_test_run(spec_dir: Path | str, command: str, output: Any) -> None:
+    """Append one recorded test-command execution. Best-effort; never raises."""
+    _append(
+        spec_dir,
+        {
+            "ts": round(time.time(), 3),
+            "command": command[:500],
+            "failed": looks_failed(output),
+        },
+    )
+
+
+def record_subtask_completed(spec_dir: Path | str, subtask_id: str) -> None:
+    """Close the evidence window: the runs above this line were ``subtask_id``'s.
+
+    Called by the completion funnel AFTER a gate has accepted the completion, so
+    a refused attempt does not consume the runs the coder still owes (#1187).
+    """
+    _append(
+        spec_dir,
+        {"ts": round(time.time(), 3), _COMPLETION_KEY: str(subtask_id)},
+    )
+
+
+def read_test_evidence(
+    spec_dir: Path | str, subtask_id: str | None = None
+) -> dict[str, Any]:
+    """Summarise the test runs recorded while ``subtask_id`` was being worked.
 
     Returns ``{"ran": bool, "last_failed": bool, "runs": int, "last_command":
     str|None}``. ``last_failed`` reflects only the most recent run, so a coder
     that fixed a failure and re-ran green is not held to the earlier failure.
+
+    The window opens after the last completion marker naming a DIFFERENT
+    subtask (#1187) — a marker for this same subtask is its own earlier
+    completion, so re-reporting it is not refused for runs it already made. With
+    no ``subtask_id``, any marker closes the window; with no markers at all (an
+    evidence file written before #1187) the whole file is the window, which is
+    the pre-#1187 build-wide reading.
     """
-    path = _evidence_path(spec_dir)
-    runs: list[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
+        for raw in _evidence_path(spec_dir).read_text(encoding="utf-8").splitlines():
             line = raw.strip()
             if line:
-                runs.append(json.loads(line))
+                entries.append(json.loads(line))
     except (OSError, ValueError):
         pass
+
+    start = 0
+    for i, entry in enumerate(entries):
+        marker = entry.get(_COMPLETION_KEY)
+        if marker and (subtask_id is None or str(marker) != str(subtask_id)):
+            start = i + 1
+    runs = [e for e in entries[start:] if _COMPLETION_KEY not in e]
+
     last = runs[-1] if runs else None
     return {
         "ran": bool(runs),
@@ -517,6 +596,26 @@ if __name__ == "__main__":  # pragma: no cover - runnable self-check
         record_test_run(d, "pytest -q", "=== 1 failed ===")
         ev = read_test_evidence(d)
         assert ev["ran"] and ev["last_failed"] and ev["runs"] == 2
+
+    # #1187 window scoping — a completion closes it for the NEXT subtask
+    with tempfile.TemporaryDirectory() as d:
+        record_test_run(d, "pytest -q", "=== 5 passed ===")
+        assert read_test_evidence(d, "1.2")["ran"]  # no marker yet: build-wide
+        record_subtask_completed(d, "1.1")
+        assert not read_test_evidence(d, "1.2")["ran"]  # 1.1 consumed the run
+        assert read_test_evidence(d, "1.1")["ran"]  # 1.1 may re-report itself
+        record_test_run(d, "pytest -q", "=== 9 passed ===")
+        assert read_test_evidence(d, "1.2")["runs"] == 1  # 1.2 ran its own
+
+    # #1187 backward compatibility — a pre-#1187 file, and an unknown line shape
+    with tempfile.TemporaryDirectory() as d:
+        legacy = Path(d) / _EVIDENCE_REL
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(
+            '{"ts": 1, "command": "pytest -q", "failed": false}\n'
+            '{"ts": 2, "note": "written by a future version"}\n'
+        )
+        assert read_test_evidence(d, "1.2")["ran"]  # not retroactively refused
 
     # #1111 deliverable coverage — both directions, on the real C2 shape
     assert http_paths({"description": "Add POST /api/quote"}) == ["/api/quote"]
