@@ -58,6 +58,9 @@ _GIT_LOCK_FILENAME = "aifactory-worktree.lock"
 # Bound the pre-worktree `git fetch origin <base>` (#1106) so an unreachable
 # remote fails the build in a couple of minutes instead of hanging it.
 _FETCH_TIMEOUT_SECONDS = 180.0
+# `git check-ignore` is a purely local pattern match; if it has not answered in
+# 30s something is wrong and the gitignore step should give up, not wedge.
+_GIT_CHECK_IGNORE_TIMEOUT_SECONDS = 30.0
 # git's verdict for "this branch is not on the remote", as opposed to an
 # unreachable or unauthorised remote. Only this one is safe to proceed past
 # (#1106): a branch the remote has never heard of cannot be behind it.
@@ -97,48 +100,107 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-# Build/test artifacts that must never be committed — committing them makes
-# concurrent parallel coders collide on merge-back (binary .coverage conflicts,
-# duplicate .pyc). An untracked .gitignore is honored by `git add`, so writing
-# it into every worktree keeps waves merging cleanly.
-_ARTIFACT_GITIGNORE = """\
-# Build / test artifacts (auto-added by AIFactory so parallel waves merge cleanly)
-__pycache__/
-*.py[cod]
-.coverage
-.coverage.*
-htmlcov/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.tox/
-.nox/
-*.egg-info/
-.eggs/
-dist/
-build/
-node_modules/
-.DS_Store
-"""
-_GITIGNORE_MARKER = "auto-added by AIFactory"
+# Artifacts a task worktree must never commit, each paired with a probe path
+# used to ask git whether that rule is already in force here.
+#
+# Committing them makes concurrent parallel coders collide on merge-back
+# (binary .coverage conflicts, duplicate .pyc) — found live in the 001
+# benchmark. ``.aifactory/`` carries the factory's own runtime state
+# (``status.json`` since #1106); a worktree inherits the base branch's tracked
+# .gitignore, which is NOT where ``init.ensure_gitignore_entry`` writes, so the
+# rule has to be re-stated here or the coder can stage factory internals into
+# the PR the Approve control opens.
+_ARTIFACT_RULES: tuple[tuple[str, str], ...] = (
+    ("__pycache__/", "__pycache__/m.pyc"),
+    ("*.py[cod]", "m.pyc"),
+    (".coverage", ".coverage"),
+    (".coverage.*", ".coverage.1"),
+    ("htmlcov/", "htmlcov/index.html"),
+    (".pytest_cache/", ".pytest_cache/CACHEDIR.TAG"),
+    (".mypy_cache/", ".mypy_cache/m"),
+    (".ruff_cache/", ".ruff_cache/m"),
+    (".tox/", ".tox/m"),
+    (".nox/", ".nox/m"),
+    ("*.egg-info/", "m.egg-info/PKG-INFO"),
+    (".eggs/", ".eggs/m"),
+    ("dist/", "dist/m"),
+    ("build/", "build/m"),
+    ("node_modules/", "node_modules/m"),
+    (".DS_Store", ".DS_Store"),
+    (".aifactory/", ".aifactory/status.json"),
+)
+_GITIGNORE_HEADER = (
+    "# Build / test artifacts (auto-added by AIFactory so parallel waves merge cleanly)"
+)
+
+
+def _unignored_artifact_rules(worktree_path: Path) -> list[str]:
+    """The artifact patterns git does NOT already ignore in this worktree.
+
+    ``git check-ignore`` is the authority, and asking it is the whole point of
+    the check: it accounts for the worktree's own ``.gitignore``, nested ones,
+    ``.git/info/exclude`` and the user's global excludes, and for rules spelled
+    differently than ours (a project's ``*.pyc`` covers our ``*.py[cod]``). So
+    "already done" means "these paths are ignored", not "this file happens to
+    mention a string" — the #1172 defect, where any repo with a ``.coverage``
+    line, i.e. most Python repos, silently received nothing.
+
+    If git cannot answer (path is not a repo, git missing, timeout) fall back to
+    "nothing is ignored" and let the caller write the full block, best-effort.
+    """
+    if not _ARTIFACT_RULES:  # pragma: no cover - defensive
+        return []
+    try:
+        proc = subprocess.run(
+            # S607: literal "git", no shell, fixed argv — same shape as the
+            # sibling calls in this module. check=False: rc 1 ("nothing here is
+            # ignored") is a normal answer, not a failure.
+            ["git", "check-ignore", "--no-index", "--stdin"],  # noqa: S607
+            cwd=str(worktree_path),
+            input="\n".join(probe for _, probe in _ARTIFACT_RULES),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_env(),
+            timeout=_GIT_CHECK_IGNORE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("check-ignore unavailable in %s: %s", worktree_path, exc)
+        return [pattern for pattern, _ in _ARTIFACT_RULES]
+    # 0 = some path is ignored, 1 = none are; anything else (128: not a repo) is
+    # an answer we did not get, so assume nothing is covered.
+    if proc.returncode not in (0, 1):
+        logger.debug(
+            "check-ignore failed in %s: %s", worktree_path, proc.stderr.strip()[:200]
+        )
+        return [pattern for pattern, _ in _ARTIFACT_RULES]
+    ignored = set(proc.stdout.splitlines())
+    return [pattern for pattern, probe in _ARTIFACT_RULES if probe not in ignored]
 
 
 def _ensure_artifact_gitignore(worktree_path: Path) -> None:
     """Make sure a worktree ignores build/test artifacts. Best-effort/no-raise.
 
-    Creates ``.gitignore`` if absent; appends the artifact block if a
-    ``.gitignore`` exists but doesn't already carry it. Idempotent.
+    Appends ONLY the rules git does not already enforce here, as one clearly
+    marked block, leaving whatever the managed project already had byte-for-byte
+    intact — this is not a repo the factory owns. Idempotent by construction:
+    after a run git ignores every pattern, so the next run finds nothing missing
+    and writes nothing.
     """
+    missing = _unignored_artifact_rules(worktree_path)
+    if not missing:
+        return
+    block = _GITIGNORE_HEADER + "\n" + "".join(f"{pattern}\n" for pattern in missing)
     try:
         gi = Path(worktree_path) / ".gitignore"
-        if not gi.exists():
-            gi.write_text(_ARTIFACT_GITIGNORE, encoding="utf-8")
-            return
-        existing = gi.read_text(encoding="utf-8", errors="replace")
-        if _GITIGNORE_MARKER in existing or ".coverage" in existing:
-            return
-        sep = "" if existing.endswith("\n") else "\n"
-        gi.write_text(existing + sep + "\n" + _ARTIFACT_GITIGNORE, encoding="utf-8")
+        existing = (
+            gi.read_text(encoding="utf-8", errors="replace") if gi.exists() else ""
+        )
+        if existing:
+            if not existing.endswith("\n"):
+                existing += "\n"
+            existing += "\n"
+        gi.write_text(existing + block, encoding="utf-8")
     except OSError as exc:
         logger.debug("could not ensure .gitignore in %s: %s", worktree_path, exc)
 
