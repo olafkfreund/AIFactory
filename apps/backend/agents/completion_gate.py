@@ -8,9 +8,8 @@ parallel wave runner marks it complete itself, in
 
 The honesty gates (#851 test-execution evidence, #1111 deliverable coverage,
 #1113 pipeline evidence) were wired into the first path only, so a wave child
-was completed on "the
-session returned success and the merge worked" — which is not evidence that the
-work was done. #1111's own motivating failure (wave worker C2 shipping a route
+was completed on "the session returned success and the merge worked" — which is
+not evidence that the work was done. #1111's own motivating failure (wave worker C2 shipping a route
 it never registered) came through exactly that path.
 
 This module is the gate itself, so both engines *call* it rather than each
@@ -70,20 +69,18 @@ def completion_refusal(
 
     subtask_id = str(subtask.get("id", "")) or "?"
 
-    # Gates run narrowest-predicate first, so the refusal an operator reads is
-    # the most specific one available. That is not cosmetic here: a CI/CD
-    # subtask's own text says "the test stage runs the full suite", which makes
-    # it a verification subtask to #851 below — so an ungated order would answer
-    # "no ci.yml stages" with "run pytest", which is true and useless. #1113 is
-    # also the only gate keyed on a contract field (service == "cicd") rather
-    # than on text, so it is the one that cannot misfire on its way past.
-
     # #1113: the CI/CD subtask may not be satisfied with prose. Its acceptance
     # criteria are about stages that RUN on push and PR, so the only evidence is
     # the pipeline file — twice in a row the coder committed a design document
     # under docs/plans/ and left ci.yml untouched, because the plan named that
     # document as its only file to create. Inert unless the subtask is a CI/CD
     # subtask AND names stages its repo's pipeline does not have.
+    #
+    # FIRST of the three: gates run narrowest-predicate first so the refusal an
+    # operator reads is the most specific one. Not cosmetic — a CI/CD subtask's
+    # own text says "the test stage runs the full suite", which makes it a
+    # verification subtask to #851 below, so the other order answers "ci.yml has
+    # no stages" with "run pytest now": true, and no help.
     gap = pipeline_evidence_gap(subtask, project_dir)
     if gap:
         return gap
