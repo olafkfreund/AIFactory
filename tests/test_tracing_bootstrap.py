@@ -26,11 +26,16 @@ SAMPLE_TP = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 @pytest.fixture(autouse=True)
 def _reset_module_state():
     """Each test starts with a fresh module guard."""
-    tracing_bootstrap._initialized = False
-    tracing_bootstrap._attach_token = None
+    _reset()
     yield
+    _reset()
+
+
+def _reset():
     tracing_bootstrap._initialized = False
     tracing_bootstrap._attach_token = None
+    tracing_bootstrap._job_span = None
+    tracing_bootstrap._provider = None
 
 
 def test_no_traceparent_env_is_noop(monkeypatch):
@@ -113,3 +118,105 @@ def test_get_inherited_traceparent_strips_whitespace(monkeypatch):
     None when the value is whitespace-only."""
     monkeypatch.setenv("TRACEPARENT", "   ")
     assert tracing_bootstrap.get_inherited_traceparent() is None
+
+
+# ── Factory#607: the Job must EMIT, not just inherit ──────────────────────────
+#
+# This module used to attach the parent context and install no exporter, so a
+# PARR trace covered the control plane and stopped at the Job boundary — the
+# boundary the work is on the far side of. The tests above prove the trace_id is
+# inherited; on their own they passed for the entire time no job-side span had
+# ever reached the collector. These prove the other half.
+
+
+def test_a_span_is_actually_opened_and_parented(monkeypatch):
+    """Inheriting a trace_id is not emitting. There must be a real span, and it
+    must be a CHILD of the dispatcher's — a root span carrying the same
+    trace_id would look right in the collector and be parented to nothing."""
+    monkeypatch.setenv("TRACEPARENT", SAMPLE_TP)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    tracing_bootstrap.init_agent_tracing()
+
+    from opentelemetry import trace
+
+    span = trace.get_current_span()
+    assert span is tracing_bootstrap._job_span
+    assert span.is_recording()
+    ctx = span.get_span_context()
+    assert ctx.trace_id == int("4bf92f3577b34da6a3ce929d0e0e4736", 16)
+    assert span.parent is not None, "the job span must have a parent"
+    assert span.parent.span_id == int("00f067aa0ba902b7", 16)
+
+
+def test_no_traceparent_opens_no_span(monkeypatch):
+    """No parent means no trace to join, and an unparented job span is span
+    volume with no question attached (Factory#607 scope note 4)."""
+    monkeypatch.delenv("TRACEPARENT", raising=False)
+    tracing_bootstrap.init_agent_tracing()
+    assert tracing_bootstrap._job_span is None
+
+
+def test_span_carries_the_scalars_that_lead_back_to_the_run(monkeypatch):
+    monkeypatch.setenv("TRACEPARENT", SAMPLE_TP)
+    monkeypatch.setenv("FACTORY_SERVICE", "aifactory")
+    monkeypatch.setenv("JOB_ID", "proj-abc:042-go-hello")
+    monkeypatch.setenv("CORRELATION_KEY", "482")
+    tracing_bootstrap.init_agent_tracing()
+
+    span = tracing_bootstrap._job_span
+    assert span.name == "aifactory job"
+    assert span.attributes["factory.job_id"] == "proj-abc:042-go-hello"
+    assert span.attributes["factory.correlation_key"] == "482"
+
+
+def test_exit_flush_is_bounded_and_does_not_shut_down(monkeypatch):
+    """A build must not be held open by a collector that is down.
+
+    ``force_flush``'s timeout does not cancel an export already in flight, and
+    ``TracerProvider.shutdown()`` flushes AGAIN on the SDK's own 30s budget.
+    Measured in-pod against a black hole: 20.54s with shutdown() and the
+    exporter default, 4.52s without. So: bounded flush, and no shutdown.
+    """
+    calls = {}
+
+    class _StubProvider:
+        def force_flush(self, timeout_millis):
+            calls["flush"] = timeout_millis
+
+        def shutdown(self):
+            calls["shutdown"] = True
+
+    class _StubSpan:
+        ended = False
+
+        def end(self):
+            _StubSpan.ended = True
+
+    monkeypatch.setattr(tracing_bootstrap, "_provider", _StubProvider())
+    monkeypatch.setattr(tracing_bootstrap, "_job_span", _StubSpan())
+    tracing_bootstrap._flush_at_exit()
+
+    assert _StubSpan.ended, "the job span must be ended before the flush"
+    assert calls["flush"] == tracing_bootstrap._FLUSH_TIMEOUT_MS
+    assert calls["flush"] <= 5000, "an exiting Job must not wait on a dead collector"
+    assert "shutdown" not in calls, "shutdown() would flush again on a 30s budget"
+    assert tracing_bootstrap._EXPORT_TIMEOUT_SECONDS <= 3.0
+
+
+def test_exporter_is_installed_when_an_endpoint_is_configured(monkeypatch):
+    """The exporter is the whole fix: without it the span is built and dropped,
+    which is exactly the behaviour Factory#607 was filed against."""
+    added = []
+
+    class _StubProvider:
+        def add_span_processor(self, processor):
+            added.append(processor)
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://observe:5080/api/default")
+    tracing_bootstrap._install_exporter(_StubProvider())
+    assert len(added) == 1
+
+    added.clear()
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    tracing_bootstrap._install_exporter(_StubProvider())
+    assert added == [], "no endpoint must mean no exporter, not a broken one"
