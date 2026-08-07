@@ -126,6 +126,54 @@ def test_alternate_spelling_counts_as_covered(repo):
     assert unignored(repo) == []
 
 
+def test_linked_worktree_keeps_artifacts_out_of_git_add(tmp_path):
+    """The real shape, asserting the real effect.
+
+    The call site is a LINKED worktree (``.git`` is a file), cut from a base
+    branch whose TRACKED .gitignore is the #1172 shape — one ``.coverage``
+    line. What actually has to be true is that a coder who runs pytest and then
+    ``git add -A`` stages their work and nothing else; that is the merge-back
+    collision the control exists to prevent.
+    """
+    base = tmp_path / "base"
+    base.mkdir()
+
+    def git(*args, cwd=base):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    git("init", "-q", "-b", "main", ".")
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (base / ".gitignore").write_text(".coverage\n")
+    (base / "app.py").write_text("x = 1\n")
+    git("add", "-A")
+    git("commit", "-qm", "init")
+
+    link = tmp_path / "task-worktree"
+    git("worktree", "add", "-q", "-b", "aifactory/task", str(link), "main")
+    assert (link / ".git").is_file(), "not a linked worktree"
+    assert (link / ".gitignore").read_text() == ".coverage\n"
+
+    _ensure_artifact_gitignore(link)
+    assert unignored(link) == []
+
+    (link / ".coverage").write_bytes(b"\x00binary")
+    (link / "__pycache__").mkdir()
+    (link / "__pycache__" / "app.cpython-313.pyc").write_bytes(b"\x00")
+    (link / ".aifactory").mkdir()
+    (link / ".aifactory" / "status.json").write_text("{}")
+    (link / "feature.py").write_text("y = 2\n")
+    git("add", "-A", cwd=link)
+
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=link,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    assert staged == [".gitignore", "feature.py"], staged
+
+
 def test_best_effort_outside_a_repo(tmp_path):
     """No repo means no verdict from git: write the full block, never raise."""
     _ensure_artifact_gitignore(tmp_path)
