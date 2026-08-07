@@ -13,15 +13,29 @@ gate misattribute pre-existing violations to the reformat) while still making it
 impossible to ADD a violation to a touched file. Cleaning legacy violations only
 ever lowers the count, which is always allowed.
 
+The ruff count is kept PER RULE CODE, not as one number per file (#1189). A
+single total nets an added violation off against a removed one, so the gate
+reported "improved" on a diff that introduced a new finding — measured on this
+very file during Factory#597, where an injected F401 hid behind the 18 findings
+the same PR removed (base 18, head 1, exit 0). The three sibling forks
+(``scripts/ratchet_lint.py`` in PFactory, TFactory and CFactory) have always
+compared a ``Counter`` keyed by rule code; this fork was the odd one out and the
+weaker. Netting is precisely what a ratchet must not do: the case it exists for
+is the PR that pays down debt and adds a new violation in the same diff.
+
 Two tools are supported:
 
-* ``--tool ruff``  — counts strict ruff findings per changed file.
+* ``--tool ruff``  — strict ruff findings per changed file, counted per rule
+  code; a file regresses if ANY code's count went up, whatever the total did.
 * ``--tool mypy``  — counts mypy ``--strict`` errors attributed to each changed
   file. mypy cannot be line-scoped and the legacy tree is only partially
   annotated, so a whole-tree (or even whole-touched-file at error severity)
   --strict run would turn a formatting-only PR instantly red. Counting per file
   base-vs-head lets a touched legacy file keep its existing mypy debt while
   forbidding NET-NEW type errors — the same no-regression contract ruff uses.
+  This half stays a single scalar, as all four forks agree: mypy's blocking
+  errors are not rule-keyed the way ruff's are, so it is carried in a one-key
+  ``Counter`` purely so both tools share one comparison.
 
 Usage:
     cq_ratchet.py --tool ruff --base <ref> --ruff <bin> --config <ruff.toml> [--paths GLOB ...]
@@ -164,8 +178,14 @@ def _is_excluded(path: str, patterns: list[str]) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> int:
+def _ruff_count(
+    ruff: str, config: str, file_on_disk: str, repo_path: str
+) -> Counter[str]:
     """Violations in *file_on_disk*, judged as though it were at *repo_path*.
+
+    Returns a count PER RULE CODE, not a total (#1189). The JSON already carries
+    ``item["code"]``, and keeping the breakdown is the only thing that stops a
+    net-new violation being absorbed by an unrelated one the same diff removed.
 
     The two arguments differ for the BASE side, and that difference is the whole
     point (Factory#510). The base version lives in a worktree under /tmp, and
@@ -208,7 +228,9 @@ def _ruff_count(ruff: str, config: str, file_on_disk: str, repo_path: str) -> in
     # it once cost five PRs (PFactory#455, TFactory#951). It now lives in the
     # drift-gated canonical, so the next correction reaches every consumer.
     require_tool_ran("ruff", res)
-    return len(json.loads(res.stdout)) if res.stdout.strip() else 0
+    if not res.stdout.strip():
+        return Counter()
+    return Counter(item["code"] for item in json.loads(res.stdout))
 
 
 # --------------------------------------------------------------------------- #
@@ -228,6 +250,44 @@ def _cache_dir_for(file_on_disk: str) -> str:
     return str(Path(tempfile.gettempdir()) / "cq-ratchet-mypy-cache")
 
 
+def interpreter_target() -> str:
+    """The ``--python-version`` this gate must target: the venv it checks against.
+
+    The shared ``standards/mypy.ini`` declares ``python_version = 3.11``. That is
+    correct for the hub baseline — it is the fleet FLOOR (coding-standards.md
+    section 1, "Python (3.11+)"), the hub's own ratchet still builds 3.11, and
+    the fleet really is mixed (Factory 3.11, PFactory/AIFactory/TFactory 3.12,
+    CFactory 3.13), so raising it centrally would raise the floor for everyone.
+    Nothing in ``standards/`` should move.
+
+    It is wrong as THIS gate's target. cq-ratchet.yml builds the venv on 3.12,
+    ``apps/backend/requirements.txt`` pulls ``graphiti-core`` (hence numpy) on
+    3.12, and numpy's stubs there use PEP 695 ``type`` statements. Told to target
+    3.11, mypy refuses to parse them::
+
+        .venv/lib/python3.12/site-packages/numpy/__init__.pyi:737: error: Type
+        statement is only supported in Python 3.12 and greater  [syntax]
+
+    and exits 2 having checked nothing. Every file that reaches numpy
+    transitively is then either hard-failed by ``require_tool_ran`` or — worse —
+    silently under-counted, when the file emits one unrelated error of its own
+    and so satisfies that guard's ``measured`` arm (#1188; PFactory#467 was the
+    same defect, and its silent half was the damaging one).
+
+    Derived from the running interpreter rather than written as ``3.12``, because
+    a literal is exactly how ``3.11`` went stale: the venv moves and the target
+    does not. The workflow runs this script with ``apps/backend/.venv/bin/python``
+    and passes ``--mypy apps/backend/.venv/bin/mypy``, so the interpreter under
+    this process IS the one whose site-packages mypy reads.
+
+    Not a loosening under the tighten-only rule: every strict flag in the shared
+    baseline still applies, unchanged. Only the syntax/stdlib level moves, and it
+    moves to the one actually in use — which is what mypy would default to on its
+    own were the baseline not naming a version.
+    """
+    return f"{sys.version_info.major}.{sys.version_info.minor}"
+
+
 def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
     """Count mypy --strict errors attributed to ``file_on_disk``.
 
@@ -243,6 +303,10 @@ def _mypy_count(mypy: str, config: str, file_on_disk: str) -> int:
             mypy,
             "--config-file",
             config,
+            # The venv's Python, not the baseline's fleet floor — see
+            # interpreter_target (#1188).
+            "--python-version",
+            interpreter_target(),
             "--ignore-missing-imports",
             "--follow-imports=silent",
             # Separate cache per tree. The base and head copies of a file
@@ -351,14 +415,14 @@ def _remove_worktree(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def base_count(base: str, counter, config: str, path: str) -> int:
-    """Violation count for ``path`` as it exists on ``base`` (0 if new).
+def base_count(base: str, counter, config: str, path: str) -> Counter[str]:
+    """Violation counts for ``path`` as it exists on ``base`` (empty if new).
 
-    ``counter`` is a callable ``(config, file_on_disk, repo_path) -> int``. The
-    two paths are the same thing on the head side and deliberately different
-    here: content from the worktree, identity from the repo. A counter that
-    judged the file by ``file_on_disk`` would measure the two sides of the
-    comparison under different rules (Factory#510).
+    ``counter`` is a callable ``(config, file_on_disk, repo_path) ->
+    Counter[str]``. The two paths are the same thing on the head side and
+    deliberately different here: content from the worktree, identity from the
+    repo. A counter that judged the file by ``file_on_disk`` would measure the
+    two sides of the comparison under different rules (Factory#510).
     """
     worktree = _base_worktree(base)
     if worktree is None:
@@ -371,12 +435,33 @@ def base_count(base: str, counter, config: str, path: str) -> int:
         )
     candidate = Path(worktree) / path
     if not candidate.is_file():
-        return 0  # file did not exist on base -> new file, base count is 0
+        # File did not exist on base -> new file, every code's base count is 0.
+        return Counter()
     return counter(config, str(candidate), path)
 
 
+def regressed_codes(before: Counter[str], after: Counter[str]) -> list[str]:
+    """Rule codes whose count went UP, one formatted line each (empty if none).
+
+    THE gate rule (#1189). Comparing per code rather than on the total is what
+    stops a net-new violation being paid for with an unrelated one the same diff
+    removed — the case a ratchet exists for, and the one the previous
+    ``after > before`` on two ints got wrong. Ported from the three sibling forks
+    (``scripts/ratchet_lint.py::regressions``), deliberately not reinvented:
+    this rule family has already cost five PRs through independent restatement
+    (Factory#590).
+    """
+    return [
+        f"{code} +{n - before[code]} (base {before[code]} -> head {n})"
+        for code, n in sorted(after.items())
+        if n > before[code]
+    ]
+
+
 def _report_regressions(
-    args: argparse.Namespace, label: str, regressions: list[tuple[str, int, int]]
+    args: argparse.Namespace,
+    label: str,
+    regressions: list[tuple[str, Counter[str], Counter[str]]],
 ) -> None:
     """Print each regression and re-run the tool so the findings are visible.
 
@@ -385,9 +470,19 @@ def _report_regressions(
     branch count back under the shared PLR0912 cap. It also puts the two raw
     subprocess sites in one place instead of buried at the end of the entry
     point.
+
+    The totals stay in the headline because they are what a reader looks for
+    first, but the per-code lines below them are the verdict: a file can regress
+    while its TOTAL falls, and printing only the total would describe such a
+    failure as an improvement.
     """
     for path, before, after in regressions:
-        print(f"REGRESSION {path}: {label} violations {before} -> {after}")
+        print(
+            f"REGRESSION {path}: {label} violations "
+            f"{sum(before.values())} -> {sum(after.values())}"
+        )
+        for line in regressed_codes(before, after):
+            print(f"  {line}")
         # Show the actual findings to make the failure actionable.
         if args.tool == "ruff":
             subprocess.run(  # noqa: S603
@@ -400,6 +495,8 @@ def _report_regressions(
                     args.mypy,
                     "--config-file",
                     args.config,
+                    "--python-version",
+                    interpreter_target(),
                     "--ignore-missing-imports",
                     "--follow-imports=silent",
                     "--no-error-summary",
@@ -434,7 +531,7 @@ def main() -> int:
         if not args.ruff:
             ap.error("--ruff is required for --tool ruff")
 
-        def counter(config: str, f: str, repo_path: str) -> int:
+        def counter(config: str, f: str, repo_path: str) -> Counter[str]:
             return _ruff_count(args.ruff, config, f, repo_path)
 
         label = "strict ruff"
@@ -442,11 +539,15 @@ def main() -> int:
         if not args.mypy:
             ap.error("--mypy is required for --tool mypy")
 
-        def counter(config: str, f: str, repo_path: str) -> int:  # noqa: ARG001
+        def counter(config: str, f: str, repo_path: str) -> Counter[str]:  # noqa: ARG001
             # repo_path is unused: mypy's test carve-out is decided by
             # is_test_file, which matches "/tests/" anywhere in the path, so the
             # worktree copy and the real file were always classified alike.
-            return _mypy_count(args.mypy, config, f)
+            #
+            # One bucket, not one per mypy error code: this half is a scalar in
+            # all four sibling forks (#1189), and the Counter is only the shared
+            # carrier so both tools go through regressed_codes unchanged.
+            return Counter({"mypy": _mypy_count(args.mypy, config, f)})
 
         label = "mypy --strict"
 
@@ -455,15 +556,18 @@ def main() -> int:
         print(f"cq-ratchet ({args.tool}): no changed Python files in scope")
         return 0
 
-    regressions: list[tuple[str, int, int]] = []
+    regressions: list[tuple[str, Counter[str], Counter[str]]] = []
     summary: Counter[str] = Counter()
     for path in files:
         before = base_count(args.base, counter, args.config, path)
         # Head side: the file IS at its repo path, so the two coincide.
         after = counter(args.config, path, path)
-        if after > before:
+        # Any code going up is a regression, EVEN IF the total fell (#1189).
+        # The improved/unchanged split below is only cosmetic and stays on the
+        # totals; the verdict never is.
+        if regressed_codes(before, after):
             regressions.append((path, before, after))
-        elif after < before:
+        elif sum(after.values()) < sum(before.values()):
             summary["improved"] += 1
         else:
             summary["unchanged"] += 1

@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -86,7 +87,7 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
-def _counter(config: str, file_on_disk: str, repo_path: str) -> int:
+def _counter(config: str, file_on_disk: str, repo_path: str) -> Counter[str]:
     return cq_ratchet._ruff_count("ruff", config, file_on_disk, repo_path)
 
 
@@ -117,12 +118,15 @@ def seeded_repo() -> Iterator[Path]:
         shutil.rmtree(repo, ignore_errors=True)
 
 
+# The counters are keyed by rule code since #1189; these tests are about WHICH
+# PATH ruff judges a file by, which the total answers as well as the breakdown
+# does, so they keep comparing totals.
 def _base(path: str) -> int:
-    return cq_ratchet.base_count("HEAD", _counter, _RUFF_CONFIG, path)
+    return sum(cq_ratchet.base_count("HEAD", _counter, _RUFF_CONFIG, path).values())
 
 
 def _head(path: str) -> int:
-    return _counter(_RUFF_CONFIG, path, path)
+    return sum(_counter(_RUFF_CONFIG, path, path).values())
 
 
 @pytest.mark.usefixtures("seeded_repo")
