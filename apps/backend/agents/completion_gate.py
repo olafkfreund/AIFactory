@@ -7,10 +7,11 @@ parallel wave runner marks it complete itself, in
 ``agents.parallel_integration``, after merging the child worktree back.
 
 The honesty gates (#851 test-execution evidence, #1111 deliverable coverage,
-#1113 pipeline evidence) were wired into the first path only, so a wave child
-was completed on "the session returned success and the merge worked" — which is
-not evidence that the work was done. #1111's own motivating failure (wave worker C2 shipping a route
-it never registered) came through exactly that path.
+#1113 pipeline evidence, #1176 testing deliverable) were wired into the first
+path only, so a wave child was completed on "the session returned success and
+the merge worked" — which is not evidence that the work was done. #1111's own
+motivating failure (wave worker C2 shipping a route it never registered) came
+through exactly that path.
 
 This module is the gate itself, so both engines *call* it rather than each
 carrying a copy that can drift (the ruff/mypy ratchet shipped five drifted
@@ -50,6 +51,7 @@ from .test_evidence import (
     gate_enabled,
     is_verification_subtask,
 )
+from .testing_evidence import testing_deliverable_gap
 
 __all__ = ["completion_refusal"]
 
@@ -69,31 +71,43 @@ def completion_refusal(
 
     subtask_id = str(subtask.get("id", "")) or "?"
 
-    # #1113: the CI/CD subtask may not be satisfied with prose. Its acceptance
-    # criteria are about stages that RUN on push and PR, so the only evidence is
-    # the pipeline file — twice in a row the coder committed a design document
-    # under docs/plans/ and left ci.yml untouched, because the plan named that
-    # document as its only file to create. Inert unless the subtask is a CI/CD
-    # subtask AND names stages its repo's pipeline does not have.
+    # The record-and-tree gates, in order. ADD A GATE BY ADDING IT HERE — one
+    # line, both engines, no second copy to drift.
     #
-    # FIRST of the three: gates run narrowest-predicate first so the refusal an
-    # operator reads is the most specific one. Not cosmetic — a CI/CD subtask's
-    # own text says "the test stage runs the full suite", which makes it a
-    # verification subtask to #851 below, so the other order answers "ci.yml has
-    # no stages" with "run pytest now": true, and no help.
-    gap = pipeline_evidence_gap(subtask, project_dir)
-    if gap:
-        return gap
-
-    # #1111: "a test ran" is not "a test ran against the deliverable". A subtask
-    # that promises an HTTP path may not be completed when the only tests naming
-    # that path assert against an app built inside the test file — genuinely
-    # green, and blind to a route nobody registered. Inert unless the subtask
-    # names a path and a Python test mentions it, so pure-function work is
-    # untouched.
-    gap = deliverable_evidence_gap(subtask, project_dir)
-    if gap:
-        return gap
+    # ORDER IS LOAD-BEARING: narrowest predicate first, so the refusal an
+    # operator reads is the most specific one. Not cosmetic. Each of the first
+    # two is about a subtask whose own text says "the test stage runs the full
+    # suite" / "lanes are runnable", which makes it a verification subtask to
+    # #851 below — so any other order answers "your pipeline has no stages" or
+    # "you shipped a strategy document" with "run pytest now": true, and no help
+    # at all.
+    #
+    # * #1113 ``pipeline_evidence_gap`` — the CI/CD subtask may not be satisfied
+    #   with prose. Its criteria are about stages that RUN on push and PR, so the
+    #   only evidence is the pipeline file; twice in a row the coder committed a
+    #   design document under docs/plans/ and left ci.yml untouched, because the
+    #   plan named that document as its only file to create. Inert unless the
+    #   subtask is a CI/CD subtask AND names stages its pipeline does not have.
+    # * #1176 ``testing_deliverable_gap`` — the same, for that subtask's testing
+    #   sibling. It used to be declared ``is_handoff`` and excluded from the
+    #   coder's queue by the accounting layer while BOTH engines dispatched it
+    #   anyway; removing that fiction makes it honestly the coder's, so it is
+    #   honestly gated. Keyed on ``service == "testing"``, so ordinary work is
+    #   untouched.
+    # * #1111 ``deliverable_evidence_gap`` — "a test ran" is not "a test ran
+    #   against the deliverable". A subtask promising an HTTP path may not be
+    #   completed when the only tests naming that path assert against an app
+    #   built inside the test file: genuinely green, and blind to a route nobody
+    #   registered. Inert unless the subtask names a path and a Python test
+    #   mentions it, so pure-function work is untouched.
+    for gate in (
+        pipeline_evidence_gap,
+        testing_deliverable_gap,
+        deliverable_evidence_gap,
+    ):
+        gap = gate(subtask, project_dir)
+        if gap:
+            return gap
 
     # #851: a test/verification subtask may not be reported "completed" unless a
     # real test command actually ran (captured tamper-evidently by the PostToolUse

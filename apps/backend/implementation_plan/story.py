@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from .enums import SubtaskStatus
-from .subtask import _HANDOFF_SERVICES
 from .verification import Verification
 
 
@@ -95,16 +94,6 @@ class Story:
 
     # Legacy compatibility fields
     description: str | None = None  # Falls back to user_story
-
-    @property
-    def is_handoff(self) -> bool:
-        """Mirror of Subtask.is_handoff — Story promises Subtask compatibility.
-
-        Phase.is_complete()/get_pending_subtasks() call this on every phase
-        member; story-mode plans put Story objects there, and the missing
-        property crashed the parallel wave merge-back (#930).
-        """
-        return (self.service or "").lower() in _HANDOFF_SERVICES
 
     def to_dict(self) -> dict:
         """Convert to dictionary representation."""
