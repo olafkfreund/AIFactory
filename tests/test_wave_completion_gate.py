@@ -56,10 +56,9 @@ HONEST_TEST = (
 )
 
 # The live #1113 shape: aifactory-demo's ci.yml as the CICD subtask left it —
-# one pytest job — beside the acceptance criteria that subtask promised. The
-# wave engine dispatches this subtask: parallel_integration passes
-# `phase.subtasks` raw, not `get_pending_subtasks()`, so `is_handoff` does not
-# keep a `cicd` child out of a wave (#1176).
+# one pytest job — beside the acceptance criteria that subtask promised. Both
+# engines dispatch this subtask: it used to be declared `is_handoff` and skipped
+# by the accounting layer alone, which is the divergence #1176 removed.
 CI_ONE_TEST_JOB = (
     "name: CI\n"
     "on: [push, pull_request]\n"
@@ -418,6 +417,108 @@ async def test_a_gate_that_errors_fails_closed(tmp_path, monkeypatch):
 
 
 # ── the seam itself ──────────────────────────────────────────────────────────
+
+
+# ── #1176: the testing sibling, on the wave engine ───────────────────────────
+
+TEST_STRATEGY_DOC = "docs/plans/030-vat-quote-endpoint-testing-strategy.md"
+TEST_FILE = "tests/test_vat_quote.py"
+TESTING_CRITERIA = [
+    "Unit, integration, and e2e lanes are scaffolded and runnable.",
+    "Every plan acceptance criterion maps to at least one passing test.",
+]
+
+
+def _testing_subtask() -> Subtask:
+    """The TEST child PFactory emits, as it reaches the wave engine.
+
+    Verbatim shape from specs 101 and 108: its only declared deliverable is a
+    markdown strategy document (PFactory#461).
+    """
+    return Subtask(
+        id="TEST",
+        description=(
+            "Implement the testing strategy specified in "
+            "`docs/plans/030-vat-quote-endpoint-testing-strategy.md`."
+        ),
+        service="testing",
+        files_to_create=[TEST_STRATEGY_DOC],
+        acceptance_criteria=list(TESTING_CRITERIA),
+    )
+
+
+def _testing_project(tmp_path: Path, *, with_test_file: bool) -> Path:
+    root = tmp_path / "project"
+    (root / "docs" / "plans").mkdir(parents=True)
+    (root / TEST_STRATEGY_DOC).write_text("# Testing Strategy\n")
+    if with_test_file:
+        (root / "tests").mkdir()
+        (root / TEST_FILE).write_text("def test_quote():\n    assert True\n")
+    return root
+
+
+async def test_the_bypass_testing(tmp_path):
+    """The control for #1176: ungated, the documenting coder completes green.
+
+    Not hypothetical for a `testing` child. `parallel_integration` passes
+    `phase.subtasks` raw to the orchestrator, so a testing subtask always reached
+    a wave — the `is_handoff` exclusion lived in the accounting layer only.
+    """
+    project = _testing_project(tmp_path, with_test_file=False)
+    testing = _testing_subtask()
+    plan_file = _plan_file(tmp_path, [testing])
+
+    result = await _run_wave([testing], plan_file, project, {}, gated=False)
+
+    assert result.completed_ids == ["TEST"]
+    assert _status(plan_file, "TEST") == SubtaskStatus.COMPLETED
+
+    # ...and the shared gate, on the same subtask and the same tree, refuses.
+    from agents.completion_gate import completion_refusal
+
+    refusal = completion_refusal(testing.to_dict(), project, RAN_GREEN)
+    assert refusal and "every file it declares is documentation" in refusal
+
+
+async def test_wave_child_refused_when_the_testing_subtask_shipped_prose(tmp_path):
+    """#1176 on the wave path: refused, not completed, and queued for a redo."""
+    project = _testing_project(tmp_path, with_test_file=False)
+    testing = _testing_subtask()
+    plan_file = _plan_file(tmp_path, [testing])
+
+    result = await _run_wave([testing], plan_file, project, {})
+
+    assert result.completed_ids == []
+    assert result.failed_ids == ["TEST"]
+    assert _status(plan_file, "TEST") != SubtaskStatus.COMPLETED
+
+
+async def test_wave_testing_child_completes_once_real_tests_exist(tmp_path):
+    """The same subtask, the same wave, real tests in the tree: allowed.
+
+    A gate that cannot be satisfied by doing the work is just an outage.
+    """
+    project = _testing_project(tmp_path, with_test_file=True)
+    testing = _testing_subtask()
+    testing.files_to_create = [TEST_FILE, TEST_STRATEGY_DOC]
+    plan_file = _plan_file(tmp_path, [testing])
+
+    result = await _run_wave([testing], plan_file, project, {})
+
+    assert result.completed_ids == ["TEST"]
+    assert _status(plan_file, "TEST") == SubtaskStatus.COMPLETED
+
+
+def test_the_wave_engine_can_see_the_files_the_testing_subtask_promised():
+    """The #1176 gate reads `files_to_create`/`files_to_modify`, and a wave child
+    is judged through ``Subtask.to_dict()`` — the same plumbing requirement that
+    made #1113's gate nominal until `acceptance_criteria` was modelled (#1175)."""
+    from agents.testing_evidence import declared_files
+
+    round_tripped = Subtask.from_dict(_testing_subtask().to_dict())
+
+    assert round_tripped.service == "testing"
+    assert declared_files(round_tripped.to_dict()) == [TEST_STRATEGY_DOC]
 
 
 async def test_both_engines_call_the_same_gate(tmp_path, monkeypatch):
