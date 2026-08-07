@@ -49,6 +49,14 @@ class Subtask:
     # Verification
     verification: Verification | None = None
 
+    # What this subtask promised. PFactory's children carry them and the planner
+    # emits them, but the model did not, so every load/save round-trip DELETED
+    # them from implementation_plan.json — and the honesty gates read them: the
+    # CI/CD gate (#1113) learns which pipeline stages a subtask demands from
+    # here, and the wave engine judges a subtask through ``to_dict()`` (#1177),
+    # so an unmodelled field is a gate that silently sees nothing.
+    acceptance_criteria: list[str] = field(default_factory=list)
+
     # For investigation subtasks
     expected_output: str | None = None  # Knowledge/decision output
     actual_output: str | None = None  # What was discovered
@@ -99,6 +107,8 @@ class Subtask:
             result["patterns_from"] = self.patterns_from
         if self.verification:
             result["verification"] = self.verification.to_dict()
+        if self.acceptance_criteria:
+            result["acceptance_criteria"] = self.acceptance_criteria
         if self.expected_output:
             result["expected_output"] = self.expected_output
         if self.actual_output:
@@ -132,6 +142,7 @@ class Subtask:
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),
             verification=verification,
+            acceptance_criteria=data.get("acceptance_criteria") or [],
             expected_output=data.get("expected_output"),
             actual_output=data.get("actual_output"),
             started_at=data.get("started_at"),

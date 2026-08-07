@@ -17,10 +17,17 @@ tokens straight out of the child's text. The coder was handed one file to
 create, a markdown file, and created it. Any model would.
 
 PFactory now names the real pipeline file instead. This module is the half that
-does not depend on the planner getting it right: ``update_subtask_status``
-refuses to complete a CI/CD subtask while the repo's pipeline is still missing
-the stages that subtask promised. Evidence must match the claim (#851's shape),
-and here the evidence is the pipeline file itself.
+does not depend on the planner getting it right: a CI/CD subtask may not be
+reported completed while the repo's pipeline is still missing the stages that
+subtask promised. Evidence must match the claim (#851's shape), and here the
+evidence is the pipeline file itself.
+
+It is one of the checks in :mod:`agents.completion_gate`, so BOTH coding engines
+apply it — the serial coder's ``update_subtask_status`` and the parallel wave
+runner, which completes subtasks itself (#1177). The wave runner passes the task
+worktree *after* the child's merge-back, so what is judged is the pipeline file
+that ships. It needs no input the other gates do not already get: the subtask
+record and a repo tree.
 
 Narrow on purpose, because a gate that fires on correct work gets switched off:
 
@@ -37,9 +44,11 @@ Narrow on purpose, because a gate that fires on correct work gets switched off:
 
 Shares the ``AIFACTORY_TEST_EVIDENCE_GATE=off`` escape hatch with #851/#1111 —
 one switch for "the honesty gates misfire on this repo", not a switch per gate.
+``completion_refusal`` checks it once for all three, so there is no check here.
 
 Checked by ``tests/test_pipeline_evidence_gate.py``, whose fixtures are the two
-live subtask records and the live ``ci.yml`` they failed to change.
+live subtask records and the live ``ci.yml`` they failed to change, and by
+``tests/test_wave_completion_gate.py`` on the wave engine.
 """
 
 from __future__ import annotations
@@ -150,13 +159,6 @@ _STAGE_DEMAND: dict[str, tuple[str, ...]] = {
 }
 
 _MAX_CI_BYTES = 200_000
-
-
-def gate_enabled() -> bool:
-    """ON by default; shares the #851 escape hatch (see the module docstring)."""
-    from agents.test_evidence import gate_enabled as _shared  # noqa: PLC0415
-
-    return bool(_shared())
 
 
 def is_cicd_subtask(subtask: dict[str, Any]) -> bool:
