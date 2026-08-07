@@ -549,6 +549,9 @@ async def run_parallel_coding_phase(
 
             # Capture this child's own test-run evidence NOW: the merge deletes
             # its worktree, and with it the evidence the #851 gate reads (#1177).
+            # Scoped by subtask id (#1187) because ``child_spec_dir`` is often
+            # the SHARED spec dir — ``.aifactory`` is gitignored, so a fresh
+            # child worktree usually has none and the fallback above kicks in.
             child_evidence[subtask.id] = read_test_evidence(child_spec_dir, subtask.id)
 
             # --- per-worker token attribution (#45 P1, additive) ---

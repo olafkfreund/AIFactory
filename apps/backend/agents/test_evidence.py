@@ -44,10 +44,19 @@ read exactly as before: nothing already on disk is retroactively refused, and an
 entry shape this module has never seen is simply counted as a run rather than
 crashing the gate.
 
-Both engines mean the same thing by it. The wave path already scoped per
-subtask — a child records into its own worktree spec dir, which the merge then
-deletes (#1178) — and that dir starts empty, so "the whole file" and "since the
-last marker" are the same window there.
+Both engines mean the same thing by it, and both write the marker. The wave path
+was described as already per-subtask because a child records into its own
+worktree spec dir, which the merge then deletes (#1178) — true when that dir
+exists, and then "the whole file" and "since the last marker" are the same
+window. But ``.aifactory`` is gitignored, so a freshly created child worktree
+usually does not have one and ``run_subtask`` falls back to the SHARED spec dir,
+where a child sees every sibling's runs. Scoping is load-bearing there too.
+
+# ponytail: concurrent wave children appending to one shared ledger can land a
+# sibling's run inside this subtask's window. Timestamps would not fix it
+# either — the runs genuinely interleave. It errs permissive (never refuses
+# honest work), which is the right direction for a gate; attribute per subtask
+# at record time only if a wave child is ever seen riding a sibling.
 
 Default ON; escape hatch ``AIFACTORY_TEST_EVIDENCE_GATE=off`` for the rare repo
 where the gate misfires.
