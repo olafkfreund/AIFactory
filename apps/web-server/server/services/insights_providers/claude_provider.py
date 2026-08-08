@@ -195,7 +195,14 @@ class ClaudeProvider(ProviderStrategy):
         else:
             logger.warning("[ClaudeProvider] No OAuth token available")
 
-        logger.info(f"[ClaudeProvider] Starting CLI: {' '.join(cmd[:5])}...")
+        # Log the binary and the argument COUNT, never argv content (#1132).
+        # argv is where this strategy puts the user's prompt -- `cmd[:5]` only
+        # excluded it because the message happens to be appended last, so any
+        # reordering of the argv construction above would have started writing
+        # prompts into the log. CodeQL flags the slice as clear-text logging of
+        # sensitive data and is right to: the safety was positional, not
+        # structural.
+        logger.info("[ClaudeProvider] Starting CLI: %s (%d args)", claude_bin, len(cmd))
 
         try:
             await broadcast_event(
