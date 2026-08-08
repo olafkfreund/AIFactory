@@ -72,6 +72,13 @@ _AGENTIC_REGISTRY: dict[str, tuple[str, str]] = {
         "providers.openai_compatible_agentic",
         "OpenAICompatibleAgenticProvider",
     ),
+    # ollama-cloud routes to the same Ollama provider with the hosted endpoint
+    # injected in _apply_endpoint_defaults, exactly as github-models above.
+    # Registered for the same reason it is: every canonical an alias names must
+    # be a key here, which `test_all_aliases_map_to_known_canonical` asserts and
+    # which is a good invariant -- an alias pointing at a canonical no registry
+    # knows is a KeyError waiting for the first caller (#1213).
+    "ollama-cloud": ("providers.ollama_agentic", "OllamaAgenticProvider"),
 }
 
 _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
@@ -86,6 +93,8 @@ _TEXT_REGISTRY: dict[str, tuple[str, str]] = {
     "openai-compatible": ("providers.openai_compatible", "OpenAICompatibleProvider"),
     # github-models text-only variant (QA review, complexity assessment)
     "github-models": ("providers.openai_compatible", "OpenAICompatibleProvider"),
+    # ollama-cloud text-only variant; see the agentic registry above (#1213).
+    "ollama-cloud": ("providers.ollama", "OllamaProvider"),
 }
 
 # Phases that need agentic capability (file ops, code execution)

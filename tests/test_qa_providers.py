@@ -348,6 +348,13 @@ class TestListProviders:
             "codex",
             "antigravity",
             "ollama",
+            # Its own canonical since #1213, not an alias of "ollama". Like
+            # "github-models", it names a DESTINATION rather than a class: the
+            # transport is the Ollama provider, and only the endpoint and
+            # credential differ. It is registered because every canonical an
+            # alias names must be a registry key -- which the sibling test
+            # `test_all_aliases_map_to_known_canonical` asserts.
+            "ollama-cloud",
             "copilot",
             "opencode",
             "openai-compatible",
