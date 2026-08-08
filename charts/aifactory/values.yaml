@@ -135,18 +135,34 @@ serviceAccount:
   # could not reach the API server. Factory#504's chart-vs-gitops gate now
   # compares the VALUE against factory-gitops apps/aifactory/manifests.
   #
-  # NOTE this SA still gets no Role from this chart (`rbac.create: false`
-  # below), so a self-hosted install has a token that authorises nothing. That
-  # is a separate gap -- AIFactory#1199.
+  # The Role that makes this token mean something is `rbac.jobSandbox` below
+  # (AIFactory#1199). A mounted token with no RoleBinding authorises nothing.
   automountServiceAccountToken: true
 
 rbac:
-  # Still false, and still wrong for any install that runs builds: the comment
-  # this carried ("the app doesn't read the K8s API in v1.0") is false as of
-  # RFC-0016. Left alone here because adding a least-privilege Role is a design
-  # question, not a drift fix -- Factory#550 only makes the chart stop lying
-  # about the token. Tracked in AIFactory#1199.
+  # AIFactory#1199. This was `create: false` with the comment "the app doesn't
+  # read the K8s API in v1.0", which stopped being true at RFC-0016. It was also
+  # inert: no template ever referenced `.Values.rbac.create`, so flipping it to
+  # true rendered nothing. Kept at false, and now honest about being a no-op.
   create: false
+  # RFC-0016 Job-per-task: the control plane CREATES the per-task build Job and
+  # reads its pod logs (core/kube_sandbox.py, services/build_backend.py,
+  # services/build_log_stream.py). Without this Role a self-hosted `helm
+  # install` gets a control plane that reaches the API server and is refused on
+  # every call - builds fail at Job creation. The reference cluster does not hit
+  # it because factory-gitops declares its own `aifactory-sandbox` Role.
+  #
+  # Least-privilege: jobs + read-only pods/pod-logs, in the RELEASE NAMESPACE
+  # only. No cluster-wide rights. Same shape as TFactory's
+  # `rbac.jobSandbox.enabled`, so one model holds across the fleet.
+  #
+  # Default ON, unlike TFactory's, because AIFactory has no non-Kubernetes build
+  # lane to fall back to: an install with this off cannot run a build at all, so
+  # off-by-default would ship a chart whose primary function is broken. Set
+  # false only for an install that will never build (e.g. a read-only portal),
+  # and pair it with `serviceAccount.automountServiceAccountToken: false`.
+  jobSandbox:
+    enabled: true
 
 # Factory#550. OFF by default, and that is a decision rather than an oversight.
 # `replicaCount` is pinned to 1 above, and `minAvailable: 1` over a single

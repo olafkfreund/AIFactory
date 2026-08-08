@@ -2,95 +2,213 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "title": "AIFactory Helm chart values",
   "type": "object",
-  "required": ["image", "replicaCount"],
+  "required": [
+    "image",
+    "replicaCount"
+  ],
   "properties": {
     "image": {
       "type": "object",
-      "required": ["repository"],
+      "required": [
+        "repository"
+      ],
       "properties": {
-        "repository": {"type": "string", "minLength": 1},
-        "tag": {"type": "string"},
-        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]},
-        "pullSecrets": {"type": "array", "items": {"type": "object"}}
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "pullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
-    "replicaCount": {"type": "integer", "minimum": 1, "maximum": 5},
-    "resources": {"type": "object"},
-    "podSecurityContext": {"type": "object"},
-    "containerSecurityContext": {"type": "object"},
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "resources": {
+      "type": "object"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "containerSecurityContext": {
+      "type": "object"
+    },
     "service": {
       "type": "object",
       "properties": {
-        "type": {"enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "targetPort": {"type": "integer", "minimum": 1, "maximum": 65535}
+        "type": {
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "targetPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
       }
     },
     "ingress": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "className": {"type": "string"}
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        }
       }
     },
     "serviceAccount": {
       "type": "object",
       "properties": {
-        "create": {"type": "boolean"},
-        "automountServiceAccountToken": {"type": "boolean"}
+        "create": {
+          "type": "boolean"
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean"
+        }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "jobSandbox": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          }
+        }
       }
     },
     "networkPolicy": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"}
+        "enabled": {
+          "type": "boolean"
+        }
       }
     },
     "migrations": {
       "type": "object",
       "properties": {
-        "autoApply": {"type": "boolean"}
+        "autoApply": {
+          "type": "boolean"
+        }
       }
     },
     "postgres": {
       "type": "object",
       "properties": {
-        "bundled": {"type": "boolean"}
+        "bundled": {
+          "type": "boolean"
+        }
       }
     },
     "externalSecrets": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "backend": {"enum": ["vault", "aws-sm", "azure-kv", "gcp-sm"]}
+        "enabled": {
+          "type": "boolean"
+        },
+        "backend": {
+          "enum": [
+            "vault",
+            "aws-sm",
+            "azure-kv",
+            "gcp-sm"
+          ]
+        }
       }
     },
     "oidc": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "provider": {"enum": ["keycloak", "okta", "azure_ad"]}
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "enum": [
+            "keycloak",
+            "okta",
+            "azure_ad"
+          ]
+        }
       }
     },
     "saml": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "spEntityId": {"type": "string"},
-        "acsUrl": {"type": "string"},
-        "idpMetadataUrl": {"type": "string"},
-        "idpMetadataSecretName": {"type": "string"},
-        "idpName": {"type": "string"},
-        "idpDisplayName": {"type": "string"},
-        "spCertSecretName": {"type": "string"},
-        "requireEncryptedAssertion": {"type": "boolean"},
-        "idpInitDefaultReturnTo": {"type": "string"},
+        "enabled": {
+          "type": "boolean"
+        },
+        "spEntityId": {
+          "type": "string"
+        },
+        "acsUrl": {
+          "type": "string"
+        },
+        "idpMetadataUrl": {
+          "type": "string"
+        },
+        "idpMetadataSecretName": {
+          "type": "string"
+        },
+        "idpName": {
+          "type": "string"
+        },
+        "idpDisplayName": {
+          "type": "string"
+        },
+        "spCertSecretName": {
+          "type": "string"
+        },
+        "requireEncryptedAssertion": {
+          "type": "boolean"
+        },
+        "idpInitDefaultReturnTo": {
+          "type": "string"
+        },
         "slo": {
           "type": "object",
           "properties": {
-            "enabled": {"type": "boolean"},
-            "idpSloUrl": {"type": "string"},
-            "slsUrl": {"type": "string"}
+            "enabled": {
+              "type": "boolean"
+            },
+            "idpSloUrl": {
+              "type": "string"
+            },
+            "slsUrl": {
+              "type": "string"
+            }
           }
         }
       }
@@ -98,25 +216,54 @@
     "scim": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "tokenSecretName": {"type": "string"}
+        "enabled": {
+          "type": "boolean"
+        },
+        "tokenSecretName": {
+          "type": "string"
+        }
       }
     },
     "kms": {
       "type": "object",
       "properties": {
-        "backend": {"enum": ["fernet", "aws_kms", "vault_transit", "azure_kv", "gcp_kms"]}
+        "backend": {
+          "enum": [
+            "fernet",
+            "aws_kms",
+            "vault_transit",
+            "azure_kv",
+            "gcp_kms"
+          ]
+        }
       }
     },
     "otel": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "endpoint": {"type": "string"},
-        "protocol": {"enum": ["grpc", "http/protobuf"]},
-        "serviceName": {"type": "string"},
-        "samplingRatio": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "headersSecretName": {"type": "string"}
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "protocol": {
+          "enum": [
+            "grpc",
+            "http/protobuf"
+          ]
+        },
+        "serviceName": {
+          "type": "string"
+        },
+        "samplingRatio": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "headersSecretName": {
+          "type": "string"
+        }
       }
     },
     "audit": {
@@ -125,16 +272,37 @@
         "anchor": {
           "type": "object",
           "properties": {
-            "enabled": {"type": "boolean"},
-            "scheduler": {"enum": ["cronjob", "in-process"]},
+            "enabled": {
+              "type": "boolean"
+            },
+            "scheduler": {
+              "enum": [
+                "cronjob",
+                "in-process"
+              ]
+            },
             "cron": {
               "type": "object",
               "properties": {
-                "schedule": {"type": "string"},
-                "activeDeadlineSeconds": {"type": "integer", "minimum": 1},
-                "backoffLimit": {"type": "integer", "minimum": 0},
-                "successfulJobsHistoryLimit": {"type": "integer", "minimum": 0},
-                "failedJobsHistoryLimit": {"type": "integer", "minimum": 0}
+                "schedule": {
+                  "type": "string"
+                },
+                "activeDeadlineSeconds": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "backoffLimit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "successfulJobsHistoryLimit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "failedJobsHistoryLimit": {
+                  "type": "integer",
+                  "minimum": 0
+                }
               }
             }
           }
@@ -147,8 +315,15 @@
         "enforcement": {
           "type": "object",
           "properties": {
-            "enabled": {"type": "boolean"},
-            "failureMode": {"enum": ["open", "closed"]}
+            "enabled": {
+              "type": "boolean"
+            },
+            "failureMode": {
+              "enum": [
+                "open",
+                "closed"
+              ]
+            }
           }
         }
       }
@@ -156,23 +331,46 @@
     "litellm": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "masterKeySecretName": {"type": "string"},
-        "gatewayUrl": {"type": "string"},
+        "enabled": {
+          "type": "boolean"
+        },
+        "masterKeySecretName": {
+          "type": "string"
+        },
+        "gatewayUrl": {
+          "type": "string"
+        },
         "audit": {
           "type": "object",
           "properties": {
-            "enabled": {"type": "boolean"},
-            "fullTextCapture": {"type": "boolean"},
-            "failureMode": {"enum": ["closed", "open"]},
+            "enabled": {
+              "type": "boolean"
+            },
+            "fullTextCapture": {
+              "type": "boolean"
+            },
+            "failureMode": {
+              "enum": [
+                "closed",
+                "open"
+              ]
+            },
             "extraRedactionPatterns": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["pattern", "replacement"],
+                "required": [
+                  "pattern",
+                  "replacement"
+                ],
                 "properties": {
-                  "pattern": {"type": "string", "minLength": 1},
-                  "replacement": {"type": "string"}
+                  "pattern": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "replacement": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -182,13 +380,24 @@
       "allOf": [
         {
           "if": {
-            "properties": {"enabled": {"const": true}},
-            "required": ["enabled"]
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
           },
           "then": {
-            "required": ["masterKeySecretName"],
+            "required": [
+              "masterKeySecretName"
+            ],
             "properties": {
-              "masterKeySecretName": {"type": "string", "minLength": 1}
+              "masterKeySecretName": {
+                "type": "string",
+                "minLength": 1
+              }
             }
           }
         },
@@ -196,15 +405,29 @@
           "if": {
             "properties": {
               "audit": {
-                "properties": {"fullTextCapture": {"const": true}},
-                "required": ["fullTextCapture"]
+                "properties": {
+                  "fullTextCapture": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "fullTextCapture"
+                ]
               }
             },
-            "required": ["audit"]
+            "required": [
+              "audit"
+            ]
           },
           "then": {
-            "required": ["enabled"],
-            "properties": {"enabled": {"const": true}}
+            "required": [
+              "enabled"
+            ],
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
           }
         }
       ]
@@ -215,9 +438,15 @@
         "grafanaDashboards": {
           "type": "object",
           "properties": {
-            "enabled": {"type": "boolean"},
-            "namespaceLabel": {"type": "string"},
-            "folder": {"type": "string"}
+            "enabled": {
+              "type": "boolean"
+            },
+            "namespaceLabel": {
+              "type": "string"
+            },
+            "folder": {
+              "type": "string"
+            }
           }
         }
       }
@@ -225,7 +454,9 @@
     "tenant": {
       "type": "object",
       "properties": {
-        "isolationEnabled": {"type": "boolean"},
+        "isolationEnabled": {
+          "type": "boolean"
+        },
         "deletionGraceDays": {
           "type": "integer",
           "minimum": 0,
@@ -239,29 +470,52 @@
         "networkPolicy": {
           "type": "object",
           "properties": {
-            "cniBackend": {"enum": ["auto", "calico", "cilium"]}
+            "cniBackend": {
+              "enum": [
+                "auto",
+                "calico",
+                "cilium"
+              ]
+            }
           }
         },
         "limitRange": {
           "type": "object",
           "properties": {
-            "defaultCpu": {"type": "string"},
-            "defaultMemory": {"type": "string"}
+            "defaultCpu": {
+              "type": "string"
+            },
+            "defaultMemory": {
+              "type": "string"
+            }
           }
         },
         "resourceQuota": {
           "type": "object",
           "properties": {
-            "maxPods": {"type": "integer", "minimum": 1},
-            "maxPvcs": {"type": "integer", "minimum": 0}
+            "maxPods": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxPvcs": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         },
-        "gatekeeperEnabled": {"type": "boolean"},
+        "gatekeeperEnabled": {
+          "type": "boolean"
+        },
         "teardown": {
           "type": "object",
           "properties": {
-            "cronSchedule": {"type": "string"},
-            "dryRunHours": {"type": "integer", "minimum": 0}
+            "cronSchedule": {
+              "type": "string"
+            },
+            "dryRunHours": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
@@ -272,8 +526,12 @@
         "customCABundle": {
           "type": "object",
           "properties": {
-            "secretName": {"type": "string"},
-            "key": {"type": "string"}
+            "secretName": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            }
           }
         }
       }
