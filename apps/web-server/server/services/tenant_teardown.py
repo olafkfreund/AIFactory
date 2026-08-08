@@ -50,7 +50,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -65,7 +65,7 @@ _DRY_RUN_HOURS = int(os.environ.get("TENANT_TEARDOWN_DRY_RUN_HOURS", "24"))
 
 def _utcnow() -> datetime:
     """Naive UTC. Matches the rest of the codebase's datetime style."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 async def _candidate_orgs(db, now: datetime) -> list:

@@ -32,7 +32,7 @@ Usage::
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,7 +120,7 @@ async def _next_prev_hash(session: AsyncSession) -> str:
 
 def _default_retention_until() -> datetime:
     """Default retention: 13 months (SOC2 12mo + buffer)."""
-    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=395)
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(days=395)
 
 
 # ---------------------------------------------------------------------------

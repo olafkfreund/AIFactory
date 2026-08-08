@@ -32,6 +32,8 @@ _WEB_SERVER = Path(__file__).parent.parent.parent / "apps" / "web-server"
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
+from datetime import UTC
+
 from server.crypto import kms as kms_mod
 from server.services import audit_anchor as svc
 
@@ -154,7 +156,7 @@ def test_ensure_active_key_picks_highest_unretired(fresh_db, monkeypatch):
     monkeypatch.setenv("KMS_FERNET_KEY", _fernet_test_key())
     kms_mod.reset_backend_cache()
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from server.database.models import AuditSigningKey
 
@@ -166,7 +168,7 @@ def test_ensure_active_key_picks_highest_unretired(fresh_db, monkeypatch):
         async with SessionLocal() as db:
             v1 = AuditSigningKey(
                 wrapped_key=kms.encrypt(b"\x01" * 32),
-                retired_at=datetime.now(timezone.utc),
+                retired_at=datetime.now(UTC),
             )
             v2 = AuditSigningKey(
                 wrapped_key=kms.encrypt(b"\x02" * 32),

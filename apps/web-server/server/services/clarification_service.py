@@ -228,7 +228,7 @@ async def generate_clarification_questions(
 
         return safe_default
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("[ClarificationService] Timed out (60s)")
         return safe_default
     except Exception as e:

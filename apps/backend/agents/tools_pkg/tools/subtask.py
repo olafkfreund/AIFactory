@@ -7,7 +7,7 @@ Tools for managing subtask status in implementation_plan.json.
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -85,7 +85,7 @@ async def apply_subtask_status_update(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         target_subtask["status"] = status
         if notes:
             target_subtask["notes"] = notes
@@ -122,7 +122,7 @@ async def apply_subtask_status_update(
                 return _text(refusal)
 
         # Update plan metadata
-        plan["last_updated"] = datetime.now(timezone.utc).isoformat()
+        plan["last_updated"] = datetime.now(UTC).isoformat()
 
         with open(plan_file, "w") as f:
             json.dump(plan, f, indent=2)

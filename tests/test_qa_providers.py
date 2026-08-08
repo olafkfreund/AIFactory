@@ -791,7 +791,7 @@ class TestCodexCLIProviderReceiveResponse:
             await provider.query("slow prompt")
 
             mock_proc = MagicMock()
-            mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
             mock_proc.kill = MagicMock()
 
             with patch("shutil.which", return_value="/usr/bin/codex"):
@@ -1015,7 +1015,7 @@ class TestGeminiCLIProviderReceiveResponse:
             await provider.query("slow prompt")
 
             mock_proc = MagicMock()
-            mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
             mock_proc.kill = MagicMock()
 
             with patch("shutil.which", return_value="/usr/bin/gemini"):
@@ -1291,7 +1291,7 @@ class TestOllamaProviderReceiveResponse:
 
             with patch(
                 "asyncio.wait_for",
-                AsyncMock(side_effect=asyncio.TimeoutError()),
+                AsyncMock(side_effect=TimeoutError()),
             ):
                 with pytest.raises(asyncio.TimeoutError):
                     await _collect(provider.receive_response())

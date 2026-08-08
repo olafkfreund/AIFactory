@@ -8,7 +8,7 @@ gotchas, and patterns.
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -80,9 +80,9 @@ def create_memory_tools(
             codebase_map["discovered_files"][file_path] = {
                 "description": description,
                 "category": category,
-                "discovered_at": datetime.now(timezone.utc).isoformat(),
+                "discovered_at": datetime.now(UTC).isoformat(),
             }
-            codebase_map["last_updated"] = datetime.now(timezone.utc).isoformat()
+            codebase_map["last_updated"] = datetime.now(UTC).isoformat()
 
             with open(codebase_map_file, "w") as f:
                 json.dump(codebase_map, f, indent=2)
@@ -122,7 +122,7 @@ def create_memory_tools(
         gotchas_file = memory_dir / "gotchas.md"
 
         try:
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
 
             entry = f"\n## [{timestamp}]\n{gotcha}"
             if context:

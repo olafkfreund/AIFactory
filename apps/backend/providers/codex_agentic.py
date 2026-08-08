@@ -304,7 +304,7 @@ class CodexAgenticProvider(BaseLLMProvider):
                     self._proc.stdin.close()
                 self._proc.terminate()
                 await asyncio.wait_for(self._proc.wait(), timeout=5.0)
-            except (ProcessLookupError, asyncio.TimeoutError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     self._proc.kill()
                 except ProcessLookupError:
