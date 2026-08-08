@@ -43,6 +43,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from core import runtime_gating
+from providers._ollama_http import resolve_ollama_api_key, resolve_ollama_cloud_base_url
 
 if TYPE_CHECKING:
     from providers import BaseLLMProvider
@@ -110,6 +111,14 @@ _PROVIDER_ALIASES: dict[str, str] = {
     "ollama": "ollama",
     "local": "ollama",
     "local-ollama": "ollama",
+    # Hosted Ollama. Its own canonical, not an alias of "ollama" (#1213): the
+    # two differ ONLY in which endpoint/credential pair they resolve, and
+    # collapsing them here is what made `ollama-cloud` a gating label rather
+    # than a routing decision. get_provider() injects the endpoint and then
+    # delegates to the same provider classes, exactly as github-models does.
+    "ollama-cloud": "ollama-cloud",
+    "ollama.com": "ollama-cloud",
+    "cloud-ollama": "ollama-cloud",
     # GitHub Copilot CLI (routes to claude-sonnet-4.5 / gpt-5 under the hood)
     "copilot": "copilot",
     "github-copilot": "copilot",
@@ -153,6 +162,50 @@ def _resolve_canonical(provider_name: str) -> str:
     return canonical
 
 
+def _apply_endpoint_defaults(canonical: str, kwargs: dict[str, Any]) -> str:
+    """Fill in endpoint/credential for a canonical that is only a DESTINATION.
+
+    Some canonical names do not name a provider class at all -- they name where
+    a class should point. ``github-models`` and ``ollama-cloud`` are both that
+    shape: the transport is an existing provider, and the only thing that makes
+    them distinct is the base URL and credential. So this resolves those, then
+    returns the canonical of the class that actually gets built.
+
+    One function rather than one block per entry point (#1213). ``get_provider``
+    and ``get_qa_llm_provider`` each carried their own byte-identical copy of the
+    github-models block, and adding a second such runtime beside them would have
+    made four copies of a rule that must agree -- with the ollama-cloud half in
+    only one of them, which is a routing decision that silently applies on the
+    agentic path and not the text-only one.
+
+    ``setdefault`` throughout, so an explicitly passed base_url/api_key wins.
+    """
+    if canonical == "github-models":
+        kwargs.setdefault("base_url", "https://models.github.ai/inference")
+        kwargs.setdefault(
+            "api_key",
+            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
+        )
+        raw_model = kwargs.get("model", "openai/gpt-4.1")
+        if raw_model.startswith("github-models/"):
+            kwargs["model"] = raw_model[len("github-models/") :]
+        return "openai-compatible"
+
+    if canonical == "ollama-cloud":
+        kwargs.setdefault("base_url", resolve_ollama_cloud_base_url())
+        kwargs.setdefault("api_key", resolve_ollama_api_key())
+        # The Ollama providers strip a leading "ollama:" from the model, because
+        # /api/chat answers HTTP 400 if the prefix reaches it. They cannot strip
+        # "ollama-cloud:" -- that string does not start with "ollama:" -- so it
+        # is stripped here, before the class ever sees it.
+        raw_model = kwargs.get("model")
+        if isinstance(raw_model, str) and raw_model.startswith("ollama-cloud:"):
+            kwargs["model"] = raw_model[len("ollama-cloud:") :]
+        return "ollama"
+
+    return canonical
+
+
 def _instantiate(module_path: str, class_name: str, **kwargs: Any) -> BaseLLMProvider:
     """Lazy-import a provider class and instantiate it."""
     try:
@@ -184,7 +237,11 @@ _RUNTIME_TO_PROVIDER: dict[str, str] = {
     "codex": "codex",
     "antigravity": "antigravity",
     "ollama": "ollama",
-    "ollama-cloud": "ollama",
+    # Its own canonical since #1213. This said "ollama", so by the time
+    # get_provider built anything, "self-hosted" and "cloud" were
+    # indistinguishable and both read the same single OLLAMA_BASE_URL --
+    # `ollama-cloud` gated at admission and meant nothing at dispatch.
+    "ollama-cloud": "ollama-cloud",
     "claude-subagents": "claude",
     "dynamic-workflow": "claude",
 }
@@ -253,19 +310,11 @@ def get_provider(provider_name: str, phase: str, **kwargs: Any) -> BaseLLMProvid
     """
     canonical = _resolve_canonical(provider_name)
 
-    # GitHub Models: inject endpoint defaults then delegate to openai-compatible.
-    # base_url and api_key are set only when the caller hasn't already provided
-    # them (setdefault), so explicit overrides are honoured.
-    if canonical == "github-models":
-        kwargs.setdefault("base_url", "https://models.github.ai/inference")
-        kwargs.setdefault(
-            "api_key",
-            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
-        )
-        raw_model = kwargs.get("model", "openai/gpt-4.1")
-        if raw_model.startswith("github-models/"):
-            kwargs["model"] = raw_model[len("github-models/") :]
-        canonical = "openai-compatible"
+    # A canonical that names a DESTINATION rather than a class (github-models,
+    # ollama-cloud) is resolved to its transport here, with the endpoint and
+    # credential injected. Shared with get_qa_llm_provider so the two paths
+    # cannot route the same name differently (#1213).
+    canonical = _apply_endpoint_defaults(canonical, kwargs)
 
     if phase in _AGENTIC_PHASES:
         registry = _AGENTIC_REGISTRY
@@ -320,16 +369,7 @@ def get_qa_llm_provider(provider_name: str, **kwargs: Any) -> BaseLLMProvider:
             f"Unknown QA LLM provider: {provider_name!r}. Supported values: {known}"
         )
 
-    if canonical == "github-models":
-        kwargs.setdefault("base_url", "https://models.github.ai/inference")
-        kwargs.setdefault(
-            "api_key",
-            os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN", ""),
-        )
-        raw_model = kwargs.get("model", "openai/gpt-4.1")
-        if raw_model.startswith("github-models/"):
-            kwargs["model"] = raw_model[len("github-models/") :]
-        canonical = "openai-compatible"
+    canonical = _apply_endpoint_defaults(canonical, kwargs)
 
     module_path, class_name = _TEXT_REGISTRY[canonical]
 
