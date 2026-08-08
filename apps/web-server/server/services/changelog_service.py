@@ -6,7 +6,6 @@ Wraps the changelog_runner.py CLI as an async service with real-time progress st
 
 import asyncio
 import functools
-import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -119,7 +118,6 @@ class ChangelogService:
             return False
 
         # Use the web server's Python (which has shared dependencies)
-        import os
         import sys
 
         python_path = sys.executable
@@ -209,7 +207,7 @@ class ChangelogService:
             # Load token from backend .env if not already in environment
             if "CLAUDE_CODE_OAUTH_TOKEN" not in env:
                 try:
-                    with open(backend_env_file, "r") as f:
+                    with open(backend_env_file) as f:
                         for line in f:
                             if line.startswith("CLAUDE_CODE_OAUTH_TOKEN="):
                                 token = (
@@ -259,7 +257,7 @@ class ChangelogService:
             try:
                 proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
             except Exception as e:
                 logger.error(f"Error stopping changelog generation: {e}")

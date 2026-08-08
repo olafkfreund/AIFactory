@@ -282,13 +282,13 @@ class AntigravityCLIProvider(BaseLLMProvider):
                 timeout=float(self._timeout),
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if proc is not None:
                 try:
                     proc.kill()
                 except ProcessLookupError:
                     pass
-            raise asyncio.TimeoutError(
+            raise TimeoutError(
                 f"Antigravity CLI subprocess timed out after {self._timeout}s. "
                 "Increase timeout= or reduce prompt size."
             )

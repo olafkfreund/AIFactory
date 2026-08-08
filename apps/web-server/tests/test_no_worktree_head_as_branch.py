@@ -104,7 +104,9 @@ _ARGV_MARKER_SETS = (
 
 def _string_constants(node: ast.AST) -> set[str]:
     return {
-        n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        n.value
+        for n in ast.walk(node)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
     }
 
 
@@ -129,15 +131,21 @@ def _is_branch_head_read(call: ast.Call) -> bool:
 
 def _reads_worktree(call: ast.Call) -> bool:
     """Does any non-argv argument (cwd= or positional) mention a worktree?"""
-    others: list[ast.AST] = [a for a in call.args if not isinstance(a, (ast.List, ast.Tuple))]
+    others: list[ast.AST] = [
+        a for a in call.args if not isinstance(a, (ast.List, ast.Tuple))
+    ]
     others.extend(kw.value for kw in call.keywords)
-    return any("worktree" in name.lower() for node in others for name in _identifiers(node))
+    return any(
+        "worktree" in name.lower() for node in others for name in _identifiers(node)
+    )
 
 
 def _resolver_calls(func: ast.AST) -> list[ast.Call]:
     """Calls to a canonical resolver inside *func*. A mention is not a call."""
     return [
-        n for n in ast.walk(func) if isinstance(n, ast.Call) and _RESOLVERS & _identifiers(n.func)
+        n
+        for n in ast.walk(func)
+        if isinstance(n, ast.Call) and _RESOLVERS & _identifiers(n.func)
     ]
 
 
@@ -147,7 +155,10 @@ def _resolver_result_names(func: ast.AST) -> set[str]:
     for node in ast.walk(func):
         if not isinstance(node, ast.Assign):
             continue
-        if not (isinstance(node.value, ast.Call) and _RESOLVERS & _identifiers(node.value.func)):
+        if not (
+            isinstance(node.value, ast.Call)
+            and _RESOLVERS & _identifiers(node.value.func)
+        ):
             continue
         for target in node.targets:
             names |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
@@ -172,7 +183,9 @@ def _inside_guard_on(func: ast.AST, call: ast.Call, names: set[str]) -> bool:
     for node in ast.walk(func):
         if not isinstance(node, ast.If) or not (names & _identifiers(node.test)):
             continue
-        if any(n is call for stmt in (*node.body, *node.orelse) for n in ast.walk(stmt)):
+        if any(
+            n is call for stmt in (*node.body, *node.orelse) for n in ast.walk(stmt)
+        ):
             return True
     return False
 
@@ -318,7 +331,9 @@ def test_check_catches_the_prefix_bug(tmp_path: Path) -> None:
 
     # The `git branch --show-current` equivalent of the same read.
     tmp.write_text(
-        prefix_site.replace('"rev-parse", "--abbrev-ref", "HEAD"', '"branch", "--show-current"')
+        prefix_site.replace(
+            '"rev-parse", "--abbrev-ref", "HEAD"', '"branch", "--show-current"'
+        )
     )
     assert _violations_in(tmp) == [3]
 
@@ -517,7 +532,9 @@ def test_no_worktree_range_read_as_the_task_work() -> None:
             rel = path.relative_to(root).as_posix()
             if rel in ALLOWLIST or rel in _RANGE_ALLOWLIST or "test" in path.name:
                 continue
-            violations.extend(f"{label}/{rel}:{line}" for line in _range_violations_in(path))
+            violations.extend(
+                f"{label}/{rel}:{line}" for line in _range_violations_in(path)
+            )
 
     assert not violations, (
         "a git range ending at a worktree's HEAD is being read as the task's work:"

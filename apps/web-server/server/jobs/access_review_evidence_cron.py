@@ -38,7 +38,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +80,10 @@ async def build_ndjson(db: AsyncSession) -> bytes:
     result = await db.execute(stmt)
     lines: list[str] = []
     for member, user in result.all():
-        line: dict[str, object] = {"org_id": member.org_id, **_member_line(member, user)}
+        line: dict[str, object] = {
+            "org_id": member.org_id,
+            **_member_line(member, user),
+        }
         lines.append(json.dumps(line))
     return ("\n".join(lines) + "\n" if lines else "").encode("utf-8")
 
@@ -125,7 +128,7 @@ async def push_access_review_evidence(
     Returns the ``s3://`` URI on success, or None on any failure (logged
     WARNING). ``today`` and ``upload`` are injected for testability.
     """
-    day = today or datetime.now(timezone.utc).date()
+    day = today or datetime.now(UTC).date()
     key = evidence_key(day)
     try:
         data = await build_ndjson(db)
@@ -138,9 +141,7 @@ async def push_access_review_evidence(
         )
         return None
     uri = f"s3://{_EVIDENCE_BUCKET}/{key}"
-    logger.info(
-        "access-review evidence: pushed %d bytes to %s", len(data), uri
-    )
+    logger.info("access-review evidence: pushed %d bytes to %s", len(data), uri)
     return uri
 
 
@@ -156,7 +157,9 @@ def main() -> None:
         async with async_session_factory() as db:
             uri = await push_access_review_evidence(db)
             if uri is None:
-                logger.warning("access-review evidence: nothing pushed (see warning above)")
+                logger.warning(
+                    "access-review evidence: nothing pushed (see warning above)"
+                )
 
     asyncio.run(_go())
 

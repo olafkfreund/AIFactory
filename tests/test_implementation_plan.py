@@ -68,16 +68,29 @@ class TestChunk:
         """Chunk can be started."""
         chunk = Chunk(id="test", description="Test")
 
-        chunk.start(session_id=1)
+        chunk.start()
 
         assert chunk.status == ChunkStatus.IN_PROGRESS
+        # Aware UTC (#1195): the cockpit subtracts started_at from completed_at,
+        # so a naive local stamp here would skew the timer by the UTC offset.
         assert chunk.started_at is not None
-        assert chunk.session_id == 1
+        assert datetime.fromisoformat(chunk.started_at).tzinfo is not None
+
+    def test_chunk_start_is_idempotent_on_the_timestamp(self):
+        """A retried subtask keeps its ORIGINAL start, so the cockpit timer
+        does not reset mid-build (#1195)."""
+        chunk = Chunk(id="test", description="Test")
+        chunk.start()
+        first = chunk.started_at
+
+        chunk.start()
+
+        assert chunk.started_at == first
 
     def test_chunk_complete(self):
         """Chunk can be completed."""
         chunk = Chunk(id="test", description="Test")
-        chunk.start(session_id=1)
+        chunk.start()
 
         chunk.complete(output="Done successfully")
 
@@ -88,7 +101,7 @@ class TestChunk:
     def test_chunk_fail(self):
         """Chunk can be marked as failed."""
         chunk = Chunk(id="test", description="Test")
-        chunk.start(session_id=1)
+        chunk.start()
 
         chunk.fail(reason="Test error")
 
@@ -632,13 +645,15 @@ class TestChunkCritique:
         assert chunk.critique_result["score"] == 8
 
 
-# --- RFC-0008 #616: testing/cicd subtasks are handoff, not coder work ---
+# --- #1176: testing/cicd subtasks are the coder's, like every other subtask ---
 
 
-def test_handoff_subtasks_do_not_block_coding_completion():
-    """A plan whose only-pending subtasks are testing/cicd (service-tagged) is
-    coding-complete: the coder skips them (TFactory/CI own them) and they must
-    not falsely mark coding failed."""
+def test_testing_and_cicd_subtasks_block_coding_completion():
+    """#616 excluded service-tagged testing/cicd subtasks from completion as
+    downstream "handoff" work. Nothing downstream consumes them -- the TFactory
+    handoff carries no subtasks -- and both coding engines dispatched them
+    anyway, so the only effect was a build reporting itself complete with the
+    work still queued (#1176). They count now."""
     from implementation_plan.enums import PhaseType, SubtaskStatus, WorkflowType
     from implementation_plan.phase import Phase
     from implementation_plan.plan import ImplementationPlan
@@ -659,23 +674,22 @@ def test_handoff_subtasks_do_not_block_coding_completion():
             Subtask(id="CICD", description="set up ci", service="cicd"),
         ],
     )
-    assert testing.subtasks[0].is_handoff and testing.subtasks[1].is_handoff
     assert impl.is_complete()
-    assert testing.is_complete()  # all-handoff phase doesn't block
-    assert testing.get_pending_subtasks() == []  # coder skips handoff work
+    assert not testing.is_complete()  # pending work is pending work
+    assert [s.id for s in testing.get_pending_subtasks()] == ["TEST", "CICD"]
 
     plan = ImplementationPlan(
         feature="x", workflow_type=WorkflowType.FEATURE, phases=[impl, testing]
     )
-    assert plan.get_next_subtask() is None  # nothing left for the coder
-    assert plan.get_progress()["is_complete"] is True
+    nxt = plan.get_next_subtask()
+    assert nxt is not None and nxt[1].id == "TEST"
+    assert plan.get_progress()["is_complete"] is False
 
 
-def test_story_subtasks_support_is_handoff_like_subtask():
-    """#930: story-mode plans put Story objects in Phase.subtasks; the wave
-    merge-back path calls Phase.is_complete()/get_pending_subtasks(), which
-    touch .is_handoff on every member. Story promises Subtask compatibility,
-    so it must carry the same property — its absence crashed mark_complete and
+def test_story_members_work_in_the_phase_accessors():
+    """#930: story-mode plans put Story objects in Phase.subtasks, and the wave
+    merge-back path calls Phase.is_complete()/get_pending_subtasks() on them. A
+    Story missing an attribute those accessors read crashed mark_complete and
     merge-back for every wave subtask in the first live parallel run."""
     from implementation_plan.enums import PhaseType, SubtaskStatus
     from implementation_plan.phase import Phase
@@ -702,10 +716,9 @@ def test_story_subtasks_support_is_handoff_like_subtask():
             ),
         ],
     )
-    assert phase.subtasks[0].is_handoff is False
-    assert phase.subtasks[2].is_handoff is True  # same rule as Subtask
-    assert not phase.is_complete()  # US-2 pending, and this must not raise
-    assert [s.id for s in phase.get_pending_subtasks()] == ["US-2"]
+    assert not phase.is_complete()  # US-2/US-3 pending, and this must not raise
+    assert [s.id for s in phase.get_pending_subtasks()] == ["US-2", "US-3"]
 
     phase.subtasks[1].status = SubtaskStatus.COMPLETED
-    assert phase.is_complete()  # handoff story doesn't block completion
+    phase.subtasks[2].status = SubtaskStatus.COMPLETED
+    assert phase.is_complete()

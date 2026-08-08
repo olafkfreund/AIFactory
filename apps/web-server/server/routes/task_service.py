@@ -254,10 +254,19 @@ def validate_done_status(plan: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict, Path]:
+def get_plan_with_worktree_sync(
+    project_path: Path, spec_id: str
+) -> tuple[dict, Path, str | None]:
     """Get implementation plan, syncing from worktree first if needed.
 
-    Returns (plan_dict, plan_file_path).
+    Returns ``(plan_dict, plan_file_path, read_error)``. ``read_error`` is None
+    when the plan parsed (including when there is no plan file at all — absent
+    is not corrupt), and carries the parse location otherwise.
+
+    The error is RETURNED rather than collapsed into the empty dict (#1081): the
+    write callers cannot tell "the plan is empty" from "the plan could not be
+    read" without it, and they used to treat both as a licence to replace the
+    file with a single ``{"status": ...}`` key.
     """
     # Barrier BEFORE spec_id reaches any path expression (#1056). This helper
     # takes spec_id as a raw string and joins it onto a trusted root; both
@@ -273,13 +282,40 @@ def get_plan_with_worktree_sync(project_path: Path, spec_id: str) -> tuple[dict,
     plan_file = main_spec_dir / "implementation_plan.json"
 
     plan: dict[str, Any] = {}
+    error: str | None = None
     if plan_file.exists():
         # #1069: read_plan logs the path and the parse offset. It used to be a
         # bare ``pass``, which is how an unparseable plan reached the callers
         # below as an empty dict.
-        plan, _error = read_plan(plan_file)
+        plan, error = read_plan(plan_file)
 
-    return plan, plan_file
+    return plan, plan_file, error
+
+
+def reject_if_plan_unreadable(plan_file: Path, error: str | None) -> None:
+    """Refuse a plan-mutating request when the plan could not be read (#1081).
+
+    "I cannot read this" is never a licence to replace it. Both kanban status
+    writers used to persist the empty dict ``read_plan`` returns on a parse
+    failure, collapsing phases, subtasks and verification into a single
+    ``{"status": ...}`` key — the corrupt file was at least still diagnosable.
+    The same empty dict also made ``validate_done_status`` vacuous (no phases
+    means nothing to check), so ``done`` was approved for a task nobody could
+    evaluate.
+
+    Raises 409 naming the file and the parse location, so the operator learns
+    the plan needs regenerating instead of silently losing it. No-op when the
+    plan parsed, or when there is no plan file at all.
+    """
+    if error is None:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"{plan_file} could not be read ({error}). The status change was "
+            "not applied and the file was left untouched — regenerate the plan."
+        ),
+    )
 
 
 # Keys preferred (in order) when collapsing a stringified mapping down to a
@@ -1037,15 +1073,8 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             "failed": "failed",
         }
 
-        # Phase order for progress calculation
-        phase_order = ["planning", "plan_review", "coding", "validation", "qa_fixing"]
-        phase_weights = {
-            "planning": 10,
-            "plan_review": 5,
-            "coding": 60,
-            "validation": 15,
-            "qa_fixing": 10,
-        }  # % of total progress
+        # A weighted per-phase progress calculation was declared here and never
+        # written; the loop below reports the ACTIVE phase, not a weighted total.
 
         current_phase = "idle"
         current_phase_key = None
@@ -1074,7 +1103,10 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             elif has_completed:
                 validation = phases.get("validation", {})
                 coding = phases.get("coding", {})
-                if validation.get("status") == "completed" or coding.get("status") == "completed":
+                if (
+                    validation.get("status") == "completed"
+                    or coding.get("status") == "completed"
+                ):
                     current_phase = "complete"
 
         # Calculate overall progress from subtasks

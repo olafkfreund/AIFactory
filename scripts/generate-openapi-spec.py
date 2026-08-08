@@ -23,7 +23,6 @@ sys.path.insert(0, str(WEB_SERVER))
 
 def main() -> int:
     import yaml
-
     from server.main import app  # noqa: E402 — needs sys.path above
 
     spec = app.openapi()

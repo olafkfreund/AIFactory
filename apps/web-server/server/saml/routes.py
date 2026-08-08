@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -498,7 +498,7 @@ async def saml_acs(
 
     # Epic #35 #43 stamp — last successful login for the access-review
     # report. Same pattern as the OIDC callback.
-    user_row.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    user_row.last_login_at = datetime.now(UTC).replace(tzinfo=None)
     await db.commit()
 
     redirect = RedirectResponse(
@@ -806,7 +806,9 @@ async def saml_sls(
 
         # SDK validates the LogoutResponse signature + status.
         try:
-            redirect_url = auth.process_slo(
+            # Called for its VALIDATION, not its return: the redirect target is
+            # decided below from the local config, not from the IdP's response.
+            auth.process_slo(
                 keep_local_session=False,
                 request_id=None,
             )

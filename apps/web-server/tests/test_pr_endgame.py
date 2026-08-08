@@ -136,7 +136,9 @@ COPILOT = "copilot-pull-request-reviewer[bot]"
 
 def _reviews(*pairs):
     """pairs of (state, login) → the JSON gh returns for .../reviews."""
-    return CmdResult(0, json.dumps([{"state": s, "login": l} for s, l in pairs]), "")
+    return CmdResult(
+        0, json.dumps([{"state": s, "login": login} for s, login in pairs]), ""
+    )
 
 
 def test_read_review_verdict_copilot_aware():

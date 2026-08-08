@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import secrets as _secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -78,15 +78,13 @@ def _capture_idp_refresh_token(refresh_token: str | None) -> str | None:
 def _create_refresh_token(user: User, jti: str) -> str:
     """Create a refresh token with a JTI that ties it to a RefreshSession row."""
     settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(
-        days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
-    )
+    expires = datetime.now(UTC) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user.id,
         "type": "refresh",
         "jti": jti,
         "exp": expires,
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
@@ -223,14 +221,14 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # the /api/admin/access-review endpoint (SOC2 CC6.2 / ISO 27001
     # A.9.2.5). Naive-UTC by convention; we strip tzinfo to match the
     # DateTime column type.
-    user.last_login_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    user.last_login_at = datetime.now(UTC).replace(tzinfo=None)
 
     # Create a RefreshSession so the refresh path can hit IdP userinfo
     # and propagate revocation. The jti binds the refresh JWT to the
     # session row; logging out / revocation = deleting the row.
     settings = get_settings()
     jti = _secrets.token_urlsafe(32)
-    refresh_expires = datetime.now(timezone.utc) + timedelta(
+    refresh_expires = datetime.now(UTC) + timedelta(
         days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
     )
     session_row = OidcRefreshSession(
@@ -304,7 +302,6 @@ async def _fetch_userinfo_from_idp(sub: str) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as http:
             disc = (await http.get(discovery_url)).json()
-            userinfo_url = disc["userinfo_endpoint"]
 
             # Client-credentials grant to get a service token. Most
             # IdPs (Keycloak, Okta, AzureAD) support this with an
@@ -334,7 +331,6 @@ async def _fetch_userinfo_from_idp(sub: str) -> dict | None:
                     tr.status_code,
                 )
                 return None
-            svc_token = tr.json()["access_token"]
 
             # Now hit userinfo. Without a per-user access token we
             # can't get THIS user's userinfo via the standard endpoint
@@ -496,7 +492,7 @@ async def oidc_refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db))
     # Look up the user, mint new access token.
     user_result = await db.execute(select(User).where(User.id == session.user_id))
     user = user_result.scalar_one()
-    session.last_validated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.last_validated_at = datetime.now(UTC).replace(tzinfo=None)
     await db.commit()
     return RefreshResponse(access_token=create_access_token(user))
 

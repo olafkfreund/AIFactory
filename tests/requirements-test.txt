@@ -41,3 +41,15 @@ psycopg2-binary>=2.9.0
 # acceptance job's venv (which only installs requirements-test.txt),
 # so declare it explicitly.
 PyYAML>=6.0
+
+# tests/test_cq_ratchet_test_bar.py shells out to ruff to prove the ratchet
+# measures base and head under the same rules (Factory#510). Declared here
+# rather than per-job because several jobs run the suite off this file and only
+# one installed ruff at all.
+#
+# PINNED to cq-ratchet.yml's RUFF_VERSION, and the bare `uv pip install ruff` in
+# ci.yml is removed with it: that ran AFTER this file and, being unpinned, would
+# have resolved to latest and silently overridden the pin. A test job measuring
+# the gate with a different ruff than the gate uses is the two-tools-disagreeing
+# shape this whole line of work is about.
+ruff==0.14.10

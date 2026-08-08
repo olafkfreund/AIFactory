@@ -281,9 +281,9 @@ def test_the_branch_lives_in_the_standalone_clone(repo: Path, tmp_path: Path) ->
     # The build creates the branch inside its own clone and pushes it.
     _git("branch", "aifactory/300-thing", cwd=wt)
     # The project repo knows nothing about it.
-    assert not [
-        r for r in _refs(repo) if "300-thing" in r
-    ], "fixture wrong: the project must not know this branch"
+    assert not [r for r in _refs(repo) if "300-thing" in r], (
+        "fixture wrong: the project must not know this branch"
+    )
     assert [r for r in _refs(wt) if "300-thing" in r], "fixture wrong: the clone must"
 
     branch, err = _resolver()(

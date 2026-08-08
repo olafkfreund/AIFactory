@@ -313,6 +313,17 @@ def main() -> None:
     # Set up environment first
     setup_environment()
 
+    # Factory#607: this entry point IS the build Job (build_backend dispatches
+    # `python run.py --spec ... --project-dir /work`), so it is the far side of
+    # the boundary a PARR trace used to stop at. Joining the dispatcher's trace
+    # here is what makes the run's trace cover the part where the time goes.
+    # No-op without TRACEPARENT, so local CLI runs are untouched — and this
+    # module had NO production caller at all before now, which is why the
+    # subprocess path was "half-built" too.
+    from core.job_tracing import init_agent_tracing  # noqa: PLC0415
+
+    init_agent_tracing()
+
     # Parse arguments
     args = parse_args()
 

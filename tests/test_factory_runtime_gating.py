@@ -18,7 +18,12 @@ from providers import factory
 def test_runtime_to_provider_mapping() -> None:
     assert factory.runtime_to_provider("claude") == "claude"
     assert factory.runtime_to_provider("codex") == "codex"
-    assert factory.runtime_to_provider("ollama-cloud") == "ollama"
+    # The two Ollama runtimes are DISTINCT canonicals since #1213. This line
+    # asserted `== "ollama"`, which is the defect written down: both runtimes
+    # collapsed to one provider, so both read the same OLLAMA_BASE_URL and
+    # `ollama-cloud` was a gating label rather than a routing decision.
+    assert factory.runtime_to_provider("ollama") == "ollama"
+    assert factory.runtime_to_provider("ollama-cloud") == "ollama-cloud"
     # Speed-up runtimes are orchestration modes over claude.
     assert factory.runtime_to_provider("claude-subagents") == "claude"
     assert factory.runtime_to_provider("dynamic-workflow") == "claude"

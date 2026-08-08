@@ -31,7 +31,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -59,7 +59,7 @@ class Notification:
     message: str
     data: dict
     read: bool = False
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict:
         """Serialize the notification for API responses and WebSocket payloads."""
@@ -351,7 +351,7 @@ class NotificationService:
         # Send the email
         from .email_service import email_service
 
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        now_str = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
         task_id = data.get("task_id", "")
         project_id = data.get("project_id", "")
 

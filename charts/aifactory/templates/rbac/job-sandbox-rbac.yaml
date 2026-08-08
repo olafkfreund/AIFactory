@@ -1,0 +1,60 @@
+{{- /*
+  Job-per-task sandbox RBAC (RFC-0016, AIFactory#1199).
+
+  The control plane does not run builds in its own pod: it creates a Job per
+  task and streams that Job's pod logs back. Concretely --
+
+    apps/backend/core/kube_sandbox.py
+      create_namespaced_job, read_namespaced_job,
+      list_namespaced_pod, read_namespaced_pod_log, delete_namespaced_job
+    apps/web-server/server/services/build_backend.py
+      create_namespaced_job, read_namespaced_job, delete_namespaced_job
+    apps/web-server/server/services/build_log_stream.py
+      list_namespaced_pod, read_namespaced_pod_log (follow=True)
+
+  Factory#550 fixed the half of this that was a lie about a control: the chart
+  declared `serviceAccount.automountServiceAccountToken: false` while the app
+  needs the token. But a token with no RoleBinding authorises nothing, so a
+  self-hosted `helm install` still got a control plane that reached the API
+  server and was refused on every call. The reference cluster never hit it
+  because factory-gitops declares its own `aifactory-sandbox` Role.
+
+  Least-privilege and namespace-scoped: a Role (not a ClusterRole), bound only
+  to this release's ServiceAccount in this release's namespace. `watch` is
+  included on pods because build_log_stream follows a pod's logs.
+*/ -}}
+{{- if .Values.rbac.jobSandbox.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aifactory.fullname" . }}-sandbox
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aifactory.fullname" . }}-sandbox
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aifactory.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aifactory.fullname" . }}-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aifactory.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

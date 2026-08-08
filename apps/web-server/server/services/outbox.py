@@ -33,6 +33,7 @@ import logging
 import os
 import sqlite3
 import time
+from datetime import UTC
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -293,9 +294,9 @@ def pending_count(*, path: Path | None = None) -> int:
 
 
 def _iso(ts: float) -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
 
 async def relay_loop(
@@ -323,6 +324,6 @@ async def relay_loop(
             logger.exception("outbox relay tick failed (best-effort)")
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
     logger.info("completion outbox relay stopped")

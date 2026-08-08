@@ -8,8 +8,10 @@
 #   securityContext — PSS-restricted defaults; do not relax without review
 #   service         — ClusterIP by default; Ingress controls public exposure
 #   ingress         — disabled by default; operators wire their controller
-#   serviceAccount  — dedicated SA, no automount of API token
-#   podDisruptionBudget — minAvailable: 1
+#   serviceAccount  — dedicated SA; the API token IS mounted, because the build
+#                     lane creates Jobs (Factory#550)
+#   podDisruptionBudget — OFF; minAvailable: 1 at replicaCount 1 blocks node
+#                     drains outright (Factory#550)
 #   hpa             — disabled by default (single replica)
 #   networkPolicy   — default-deny + explicit 443 egress
 #   migrations      — Alembic Job mode (autoApply=false in prod)
@@ -121,16 +123,65 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
-  # API token automount is OFF: pods that don't talk to the K8s API
-  # don't need it, and dropping it shrinks the blast radius of a
-  # container compromise.
-  automountServiceAccountToken: false
+  # Factory#550. This WAS `false`, with a comment about pods that don't talk to
+  # the K8s API. AIFactory talks to it in six places: core/kube_sandbox.py and
+  # web-server/services/{build_backend,build_log_stream,k8s_client}.py call
+  # `load_incluster_config()`, and core/mcp_credentials.py plus
+  # services/vault_client.py read the token file directly. Job-per-task
+  # (RFC-0016) is built on the first of those.
+  #
+  # Unlike TFactory's chart, nothing here overrode it at the pod level, so this
+  # value was load-bearing and this chart shipped an install whose control plane
+  # could not reach the API server. Factory#504's chart-vs-gitops gate now
+  # compares the VALUE against factory-gitops apps/aifactory/manifests.
+  #
+  # The Role that makes this token mean something is `rbac.jobSandbox` below
+  # (AIFactory#1199). A mounted token with no RoleBinding authorises nothing.
+  automountServiceAccountToken: true
 
 rbac:
-  create: false  # the app doesn't read the K8s API in v1.0
+  # AIFactory#1199. This was `create: false` with the comment "the app doesn't
+  # read the K8s API in v1.0", which stopped being true at RFC-0016. It was also
+  # inert: no template ever referenced `.Values.rbac.create`, so flipping it to
+  # true rendered nothing. Kept at false, and now honest about being a no-op.
+  create: false
+  # RFC-0016 Job-per-task: the control plane CREATES the per-task build Job and
+  # reads its pod logs (core/kube_sandbox.py, services/build_backend.py,
+  # services/build_log_stream.py). Without this Role a self-hosted `helm
+  # install` gets a control plane that reaches the API server and is refused on
+  # every call - builds fail at Job creation. The reference cluster does not hit
+  # it because factory-gitops declares its own `aifactory-sandbox` Role.
+  #
+  # Least-privilege: jobs + read-only pods/pod-logs, in the RELEASE NAMESPACE
+  # only. No cluster-wide rights. Same shape as TFactory's
+  # `rbac.jobSandbox.enabled`, so one model holds across the fleet.
+  #
+  # Default ON, unlike TFactory's, because AIFactory has no non-Kubernetes build
+  # lane to fall back to: an install with this off cannot run a build at all, so
+  # off-by-default would ship a chart whose primary function is broken. Set
+  # false only for an install that will never build (e.g. a read-only portal),
+  # and pair it with `serviceAccount.automountServiceAccountToken: false`.
+  jobSandbox:
+    enabled: true
 
+# Factory#550. OFF by default, and that is a decision rather than an oversight.
+# `replicaCount` is pinned to 1 above, and `minAvailable: 1` over a single
+# replica allows ZERO disruptions: `kubectl drain` on the node hosting the pod
+# retries "Cannot evict pod as it would violate the pod's disruption budget"
+# forever. Measured on the reference cluster, where the same drain succeeds the
+# moment the PDB is removed. That is not availability protection, it is a node
+# you cannot take out of service.
+#
+# There is no PDB shape that both protects and drains at one replica:
+# `minAvailable: 50%` rounds UP to 1, and `maxUnavailable: 1` permits every
+# eviction and so protects nothing.
+#
+# Turn it on when you actually run more than one replica -- raise replicaCount
+# (or autoscaling.minReplicas) above minAvailable first. The template refuses to
+# render an unevictable PDB, so a mistake here fails `helm install` rather than
+# stranding a node.
 podDisruptionBudget:
-  enabled: true
+  enabled: false
   minAvailable: 1
 
 # Horizontal Pod Autoscaler. Default off — operators flip ``enabled: true``

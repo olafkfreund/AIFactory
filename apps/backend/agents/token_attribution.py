@@ -46,7 +46,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -419,7 +419,7 @@ def record_turn(
     phase: str | None = None,
     subtask_id: str | None = None,
     provider: str | None = None,
-    duration_ms: int | None = None,
+    duration_ms: int,
 ) -> dict[str, Any]:
     """Attribute one turn and fold it into the per-task aggregate (atomic).
 
@@ -431,8 +431,16 @@ def record_turn(
     ``workers`` map keyed by ``worker_id`` (the subtask id; a serial build is
     one implicit worker, ``"main"``). Every existing scalar aggregate field is
     written exactly as before — the workers map rides alongside, never replaces.
-    ``provider``/``subtask_id``/``phase``/``duration_ms`` describe the worker;
-    when omitted they default sensibly (``worker_id`` → ``"main"``).
+    ``provider``/``subtask_id``/``phase`` describe the worker; when omitted they
+    default sensibly (``worker_id`` → ``"main"``).
+
+    ``duration_ms`` is REQUIRED, and deliberately has no default (#1100). It
+    used to default to ``None``, which the fold then skipped — so the serial
+    coder, which simply never passed it, produced ``duration_ms: 0`` for every
+    worker for the life of the run. 0 read as a plausible measurement, not as
+    "unmeasured", and the swarm comparison it feeds (Factory#345 wall-clock)
+    silently had no denominator. A required kwarg makes the omission a
+    TypeError at the call site instead of a zero in an artifact.
     """
     attribution = attribute_turn(segments, usage)
     window = max_tokens or context_window_for_model(model)
@@ -494,7 +502,7 @@ def record_turn(
             cost_usd=attribution.cost_usd,
             duration_ms=duration_ms,
         )
-        agg["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        agg["updatedAt"] = datetime.now(UTC).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
         return render_breakdown(agg)
     except OSError:

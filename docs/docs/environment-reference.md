@@ -497,7 +497,7 @@ listed under [provider credentials](#non-claude-provider-credentials).
 ## Observability & tracing
 
 Read in `apps/web-server/server/observability/*`,
-`apps/backend/core/tracing_bootstrap.py`.
+`apps/backend/core/job_tracing.py`.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
@@ -561,6 +561,37 @@ Baked into the static bundle at build time. Read in `apps/frontend-web/src/*`.
 | `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>` | (none) | no | HMAC key verifying a signed Task Contract v2 from an upstream authority (e.g. `AIFACTORY_TRUSTED_PLAN_KEY_PFACTORY`). Legacy single-key entry; matches envelopes with no `kid`. See [Task Contract](./task-contract). Read in `apps/backend/trusted_plan.py`. |
 | `AIFACTORY_TRUSTED_PLAN_KEY_<AUTHORITY>__<KID>` | (none) | no | Keyed rotation entry: registers one verification key under `authority/kid` (kid case-insensitive). Multiple kids can be active at once for zero-downtime rotation. See [Trusted-plan Key Rotation](./compliance/trusted-plan-key-rotation). |
 | `AIFACTORY_TRUSTED_PLAN_RETIRED_KIDS` | (none) | no | Comma-separated `authority/kid` (or bare `kid`) to revoke; a retired kid is rejected at verify time even if its key material is still configured. |
+| `AIFACTORY_BASELINE_DRIFT` | `blast-radius` | no | Baseline-freshness policy on the trusted-plan path (#1109). `blast-radius` rejects with 422 only when a file in `baseline.blast_radius.files` changed between the approved commit and the target repo's HEAD, and records unrelated drift as a warning; `reject` rejects any divergence from `baseline.commit`; `warn` never rejects but still records the verdict on the spec's provenance; `off` skips the check. An unrecognised value falls back to `blast-radius` — a typo must not disable a supply-chain control. Read in `apps/backend/trusted_plan.py`. |
+
+### Baseline freshness (#1109)
+
+**User story.** As a reviewer who approved a plan against the repo as it stood
+last Tuesday, I want the build to refuse — or at minimum say so on the record —
+when the code the plan is about has moved since, so my approval does not silently
+attach to a tree nobody reviewed.
+
+The signature gate answers *did anyone edit the instructions*. Baseline
+freshness answers *are the instructions still about this codebase*. A contract
+carries the approved commit twice (`provenance.baseline_commit` and
+`baseline.commit`), both inside the signed bytes, so both are already
+tamper-evident; this gate is what reads them back.
+
+Verdicts recorded on `requirements.json` under `provenance.baseline_drift`:
+
+| Verdict | Meaning | Rejected under… |
+|---------|---------|-----------------|
+| `absent` | The contract carries no baseline (greenfield, or a v1 plan). Nothing recorded. | never |
+| `current` | HEAD is the approved commit (a short SHA still counts as the same commit). | never |
+| `unknown` | HEAD could not be resolved, or the approved commit is not in this clone (e.g. a shallow clone). | never |
+| `drifted` | The tree moved, but no blast-radius file was touched. | `reject` |
+| `blast_radius_changed` | A file the plan intends to touch changed since approval. | `reject`, `blast-radius` |
+
+`unknown` never rejects, deliberately: a control that cannot see must say so
+rather than guess. Guessing "current" would hide the very drift the gate exists
+to catch; guessing "drifted" would turn every shallow clone into an outage.
+Every non-`absent` verdict is written to the spec's provenance even when it does
+not reject — "we proceeded" is a decision, and an auditor should not have to
+reconstruct it from a log line.
 
 ## Approved-model registry
 

@@ -6,8 +6,6 @@ and suggesting skills from the local skills/ directory (or wherever
 APP_SKILLS_PATH points).
 """
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -26,9 +24,7 @@ class SkillCategory(BaseModel):
 
     name: str = Field(..., description="Category directory name")
     count: int = Field(..., description="Number of skills in this category")
-    description: Optional[str] = Field(
-        None, description="Optional category description"
-    )
+    description: str | None = Field(None, description="Optional category description")
 
 
 class SkillSummary(BaseModel):
@@ -42,7 +38,7 @@ class SkillSummary(BaseModel):
     description: str = Field(
         ..., description="First prose paragraph from the skill file"
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         None, description="Source URL extracted from skill metadata"
     )
 
@@ -150,7 +146,7 @@ async def list_skills(
 )
 async def search_skills(
     q: str = Query(..., min_length=1, description="Search query string"),
-    category: Optional[str] = Query(None, description="Optional category filter"),
+    category: str | None = Query(None, description="Optional category filter"),
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     limit: int = Query(20, ge=1, le=100, description="Number of results per page"),
 ) -> PaginatedSkillList:

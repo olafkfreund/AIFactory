@@ -5,6 +5,6 @@ Usage:
     from ..services.insights_providers import get_provider, detect_all_providers
 """
 
-from .registry import get_provider, detect_all_providers
+from .registry import detect_all_providers, get_provider
 
 __all__ = ["get_provider", "detect_all_providers"]

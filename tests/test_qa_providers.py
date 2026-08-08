@@ -348,6 +348,13 @@ class TestListProviders:
             "codex",
             "antigravity",
             "ollama",
+            # Its own canonical since #1213, not an alias of "ollama". Like
+            # "github-models", it names a DESTINATION rather than a class: the
+            # transport is the Ollama provider, and only the endpoint and
+            # credential differ. It is registered because every canonical an
+            # alias names must be a registry key -- which the sibling test
+            # `test_all_aliases_map_to_known_canonical` asserts.
+            "ollama-cloud",
             "copilot",
             "opencode",
             "openai-compatible",
@@ -791,7 +798,7 @@ class TestCodexCLIProviderReceiveResponse:
             await provider.query("slow prompt")
 
             mock_proc = MagicMock()
-            mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
             mock_proc.kill = MagicMock()
 
             with patch("shutil.which", return_value="/usr/bin/codex"):
@@ -1015,7 +1022,7 @@ class TestGeminiCLIProviderReceiveResponse:
             await provider.query("slow prompt")
 
             mock_proc = MagicMock()
-            mock_proc.communicate = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_proc.communicate = AsyncMock(side_effect=TimeoutError())
             mock_proc.kill = MagicMock()
 
             with patch("shutil.which", return_value="/usr/bin/gemini"):
@@ -1291,7 +1298,7 @@ class TestOllamaProviderReceiveResponse:
 
             with patch(
                 "asyncio.wait_for",
-                AsyncMock(side_effect=asyncio.TimeoutError()),
+                AsyncMock(side_effect=TimeoutError()),
             ):
                 with pytest.raises(asyncio.TimeoutError):
                     await _collect(provider.receive_response())

@@ -5,9 +5,11 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -31,7 +33,15 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
-from trusted_plan import ingest_trusted_plan  # noqa: E402 — needs sys.path above (#390)
+from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
+    DRIFT_ABSENT,
+    DRIFT_UNKNOWN,
+    BaselineDrift,
+    baseline_drift_rejects,
+    check_baseline_drift,
+    ingest_trusted_plan,
+    verify_trusted_plan,
+)
 
 router = APIRouter()
 
@@ -1155,6 +1165,46 @@ async def create_and_run_task(
     }
 
 
+def _gate_baseline_drift(plan: dict[str, Any], project_path: Path) -> BaselineDrift:
+    """Reject a plan approved against a stale baseline; warn otherwise (#1109).
+
+    A free function rather than inline in ``create_from_trusted_plan`` so the
+    route keeps its branch budget — the handler is already at the strict-ruff
+    PLR0912 ceiling, and a supply-chain gate is not the thing to cram in.
+    """
+    drift = check_baseline_drift(plan, project_path)
+    if baseline_drift_rejects(drift):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — approved against a stale baseline",
+                "reasons": [drift.reason()],
+                "baseline_drift": drift.to_provenance(),
+            },
+        )
+    if drift.diverged or drift.status == DRIFT_UNKNOWN:
+        logging.getLogger(__name__).warning(
+            "[trusted-plan] baseline %s: %s", drift.status, drift.reason()
+        )
+    return drift
+
+
+def _stamp_baseline_drift(requirements: dict[str, Any], drift: BaselineDrift) -> None:
+    """Record the baseline verdict on the spec's provenance (#1109).
+
+    Written even when it did not reject: a build that ran against a drifted (or
+    unverifiable) baseline has to say so on its own record — "we proceeded" is a
+    decision, and an auditor should not have to reconstruct it from a log line.
+    A contract with no baseline (greenfield / v1) records nothing.
+    """
+    if drift.status == DRIFT_ABSENT:
+        return
+    existing = requirements.get("provenance")
+    prov: dict[str, object] = existing if isinstance(existing, dict) else {}
+    prov["baseline_drift"] = drift.to_provenance()
+    requirements["provenance"] = prov
+
+
 @router.post("/from-plan")
 async def create_from_trusted_plan(
     project_id: str,
@@ -1185,6 +1235,33 @@ async def create_from_trusted_plan(
     project_path = Path(projects[project_id]["path"])
     agent_service = get_agent_service()
 
+    # Gate FIRST, allocate second (#1108). verify_trusted_plan is pure — the same
+    # signature + completeness gates ingest_trusted_plan runs internally, with no
+    # filesystem dependency — so a rejected plan must not reach the allocator.
+    # Before this, every 422 left an orphan spec dir holding only
+    # requirements.json and advanced .counter, so any caller with `member` access
+    # could inflate the counter and litter the workspace by POSTing tampered
+    # plans in a loop. The orphans were also indistinguishable from a spec whose
+    # build failed early — noise exactly where an auditor looks after a rejection.
+    verdict = verify_trusted_plan(request.plan)
+    if not verdict.ok:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — not trusted-complete",
+                "reasons": verdict.reasons,
+            },
+        )
+
+    # Baseline freshness (#1109). The signature answers "did anyone edit the
+    # instructions"; this answers "are the instructions still about this
+    # codebase". Both copies of the approved commit are inside the signed bytes,
+    # and nothing read them back — so a plan approved against commit A was built
+    # against commit B in silence. Gated here, before allocation, for the same
+    # reason as the verdict above (#1108): a rejected plan must not leave an
+    # orphan spec dir or advance the counter.
+    drift = _gate_baseline_drift(request.plan, project_path)
+
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
     spec_id = get_next_spec_id(project_path, title)
@@ -1214,9 +1291,16 @@ async def create_from_trusted_plan(
         prov = prov if isinstance(prov, dict) else {}
         prov.setdefault("issue_number", int(corr))
         requirements["provenance"] = prov
+    # #1109: record the baseline verdict even when it did not reject. A build
+    # that ran against a drifted (or unverifiable) baseline has to say so on its
+    # own provenance — "we proceeded" is a decision, and an auditor reading this
+    # spec afterwards should not have to reconstruct it from a log line.
+    _stamp_baseline_drift(requirements, drift)
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
-    # Gate: verify signature + completeness, then install the plan. Nothing is
+    # Install the plan. ingest re-runs the same gate — kept as the authoritative
+    # check so the install can never outrun verification even if the pre-check
+    # above is moved or removed. Nothing is
     # built unless the plan is trusted-complete. Passing project_path lets ingest
     # seed required_commands into the allowlist and apply the v2 execution profile
     # (model/parallel/workers/complexity/skills) to task_metadata.json (RFC-0002).

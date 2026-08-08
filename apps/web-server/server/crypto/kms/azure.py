@@ -39,7 +39,7 @@ class AzureKeyVaultBackend:
     """Wrap/unwrap data keys via Azure Key Vault RSA-OAEP."""
 
     @classmethod
-    def from_env(cls) -> "AzureKeyVaultBackend":
+    def from_env(cls) -> AzureKeyVaultBackend:
         url = os.environ.get("AZURE_KEYVAULT_URL")
         if not url:
             raise RuntimeError(

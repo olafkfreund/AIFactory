@@ -29,6 +29,7 @@ genuinely needs a token for — so it builds its own manifest and calls the *pol
 helpers below instead:
 
     ``job_labels`` / ``task_pod_labels``   the label rules, constructed not copied
+    ``trace_env``                          the trace-context + OTLP env (Factory#607)
     ``assert_job_policy``                  the rules, checked, in the consumer's tests
 
 That split exists because the alternative was tried and failed. TFactory restated
@@ -81,13 +82,17 @@ Design (matches apis/concurrency-conventions.md §3 + the proven kube_sandbox sh
   is removed only by the gitops rollout (out of scope here).
 - Env carries the short scalar identifiers + shared-state coordinates: ``JOB_ID``,
   ``CORRELATION_KEY``, ``DATABASE_URL`` (the job writes its own job-state row),
-  ``ARTIFACTS_URI`` (object-store prefix), ``WORKSPACE_URI`` (packed-workspace URI).
+  ``ARTIFACTS_URI`` (object-store prefix), ``WORKSPACE_URI`` (packed-workspace URI),
+  and — Factory#607 — the W3C ``TRACEPARENT`` plus the OTLP export config the Job
+  needs to CONTINUE the dispatcher's trace rather than start a new one. See
+  ``trace_env`` for why that is not a "nice to have".
 
 Run ``python3 scripts/job_dispatch.py`` for the self-test.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -111,6 +116,12 @@ NONROOT_UID = 65532
 # no task pod's `app` label may equal any of these, because that is exactly what
 # each service's Service selects.
 SERVICES = ("aifactory", "cfactory", "pfactory", "tfactory")
+# The Secret holding the collector's OTLP auth header, kept fresh by the
+# ``observe-otlp-auth-sync`` CronJob (factory-gitops). Named here rather than
+# read from env because it is a cluster fact with one value, and the Job needs a
+# REFERENCE to it rather than this pod's copy — see trace_env().
+OTLP_AUTH_SECRET = "otel-otlp-auth"  # noqa: S105 — k8s Secret name, not a credential
+OTLP_AUTH_SECRET_KEY = "headers"  # noqa: S105 — the Secret's KEY name, not a credential
 TERMINAL_STATES = ("done", "failed", "stuck")
 # The control plane reconciles by polling the job-state table, so a missed
 # completion event never strands a job; reporting is idempotent on (job_id, state).
@@ -227,6 +238,97 @@ def task_pod_labels(service: str, *, role: str = "task") -> dict[str, str]:
     }
 
 
+def current_traceparent() -> str | None:
+    """The W3C ``traceparent`` of the caller's ACTIVE span, or None.
+
+    Lazily imports OpenTelemetry so this module stays importable (and this file
+    stays vendorable) in a process that has no OTel installed at all — which is
+    every unit-test run and every CLI invocation. ``inject`` writes nothing into
+    the carrier when there is no valid active span, so "not tracing right now"
+    and "OTel absent" both come back as None and both mean the same thing here:
+    there is no trace for the Job to continue.
+    """
+    try:
+        from opentelemetry.propagate import inject  # noqa: PLC0415
+
+        carrier: dict[str, str] = {}
+        inject(carrier)
+        return carrier.get("traceparent")
+    except Exception:  # noqa: BLE001 — tracing must never break dispatch
+        return None
+
+
+def trace_env(service: str) -> list[dict[str, Any]]:
+    """Env entries that let a dispatched Job continue the dispatcher's trace.
+
+    Factory#607. Before this, a Job got ``CORRELATION_KEY`` and nothing else, so
+    a PARR trace covered the control plane and stopped exactly where the work
+    starts. ``CORRELATION_KEY`` is a LOG-correlation key, not trace context: it
+    cannot make a Job's spans children of the span that dispatched them, and the
+    Job had no OTLP config either, so it could not have exported one if it had.
+
+    Returns, when the dispatcher itself is exporting:
+
+    ``TRACEPARENT``                    the active span, so the Job's spans are
+                                       children of it and share its trace_id.
+                                       Omitted when there is no active span —
+                                       there is then no trace to join, and an
+                                       unparented Job span is span volume with
+                                       no question attached.
+    ``OTEL_EXPORTER_OTLP_ENDPOINT``    passed through from this pod's own env.
+    ``OTEL_EXPORTER_OTLP_PROTOCOL``    likewise; ``http/protobuf`` is the fleet's.
+    ``OTEL_EXPORTER_OTLP_HEADERS``     a ``secretKeyRef``, NEVER the value.
+    ``OTEL_SERVICE_NAME``              ``<service>-job``, so the collector can
+                                       tell a Job's spans from its dispatcher's.
+
+    Two deliberate properties:
+
+    1. **The credential is a reference, not a copy.** The collector header is a
+       Basic credential. Copying this pod's value into a Job manifest would (a)
+       write it into an object every namespace reader can ``kubectl get -o yaml``
+       and (b) freeze it: ``observe-otlp-auth-sync`` rotates that Secret hourly
+       (Factory#606), so a manifest built from a value captured at pod start goes
+       stale without anything saying so. A ``secretKeyRef`` is resolved by the
+       kubelet at pod start, which is the same thing the long-lived Deployments
+       do and for the same reason.
+    2. **Endpoint unset means nothing is added.** Outside the cluster and in
+       every test run there is no collector, and a Job that carries OTLP config
+       pointed at nothing spends its exporter's retry budget for no spans.
+
+    Ambient by design: it reads this process's OTEL_* env and its active span
+    rather than taking them as parameters. A parameter would have to be supplied
+    by every caller, and a rule every caller has to remember is the shape of the
+    defect this file exists to prevent (see the module docstring).
+    """
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+    if not endpoint:
+        return []
+    protocol = os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf").strip()
+    env: list[dict[str, Any]] = [
+        {"name": "OTEL_EXPORTER_OTLP_ENDPOINT", "value": endpoint},
+        {"name": "OTEL_EXPORTER_OTLP_PROTOCOL", "value": protocol},
+        {
+            "name": "OTEL_EXPORTER_OTLP_HEADERS",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": OTLP_AUTH_SECRET,
+                    "key": OTLP_AUTH_SECRET_KEY,
+                    # The credential is optional so a cluster without the Secret
+                    # dispatches Jobs that simply do not export, instead of Jobs
+                    # stuck in CreateContainerConfigError. A Job that cannot
+                    # trace must still be able to build.
+                    "optional": True,
+                }
+            },
+        },
+        {"name": "OTEL_SERVICE_NAME", "value": f"{service}-job"},
+    ]
+    traceparent = current_traceparent()
+    if traceparent:
+        env.append({"name": "TRACEPARENT", "value": traceparent})
+    return env
+
+
 def assert_job_policy(manifest: dict[str, Any]) -> None:
     """Raise AssertionError unless *manifest* obeys the rules EVERY factory Job
     must obey — whoever built it, and whatever else it carries.
@@ -298,8 +400,14 @@ def build_job_manifest(spec: JobSpec) -> dict[str, Any]:
         env.append({"name": "ARTIFACTS_URI", "value": spec.artifacts_uri})
     if spec.workspace_uri:
         env.append({"name": "WORKSPACE_URI", "value": spec.workspace_uri})
+    # Factory#607: trace context + OTLP export config, so the Job's spans join the
+    # dispatcher's trace instead of the trace ending at this boundary. Empty when
+    # this process is not exporting, which keeps every off-cluster path unchanged.
+    env.extend(trace_env(spec.service))
     # DATABASE_URL is injected by the consumer (often from a secretKeyRef); we only
     # name it so the Job knows to write its own job-state row.
+    # extra_env goes LAST so a consumer can still override anything above it —
+    # k8s takes the last value for a duplicated env name.
     for k, v in spec.extra_env.items():
         env.append({"name": k, "value": v})
 
@@ -558,11 +666,129 @@ def _selftest() -> None:
         packed["containers"][0]["workingDir"] == "/work",
         "packed workspace still runs in /work",
     )
+    _selftest_trace_env()
     sys.stdout.write(
         "job_dispatch self-test: PASS — manifest, policy rules (incl. the "
         "app-label and DNS-1123 rejections), nix-develop wrap, warm-store + "
-        "worktree mounts, packed-workspace emptyDir, env, bare fallback\n"
+        "worktree mounts, packed-workspace emptyDir, env, trace context "
+        "(Factory#607), bare fallback\n"
     )
+
+
+def _selftest_trace_env() -> None:
+    """Factory#607. Each check below has a way to FAIL that has actually shipped."""
+    saved = {
+        k: os.environ.get(k) for k in ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_PROTOCOL")
+    }
+
+    def _env_of(service: str = "aifactory") -> dict[str, Any]:
+        m = build_job_manifest(
+            JobSpec(service=service, job_id="t1", commands=["true"], nix_develop=False)
+        )
+        return {e["name"]: e for e in m["spec"]["template"]["spec"]["containers"][0]["env"]}
+
+    try:
+        # 1. No collector configured -> nothing added. A Job that carries OTLP
+        #    config pointing at nothing burns its exporter's retry budget on
+        #    every export for spans that can never land.
+        os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT", None)
+        _require(trace_env("aifactory") == [], "endpoint unset must add no env")
+        off = _env_of()
+        _require(
+            not [n for n in off if n.startswith("OTEL_") or n == "TRACEPARENT"],
+            f"endpoint unset must leave the manifest OTEL-free: {sorted(off)}",
+        )
+
+        # 2. Collector configured -> the Job can export, and can say who it is.
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://observe:5080/api/default"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+        on = _env_of()
+        _require(
+            on["OTEL_EXPORTER_OTLP_ENDPOINT"]["value"] == "http://observe:5080/api/default",
+            "endpoint is passed through to the Job",
+        )
+        _require(
+            on["OTEL_EXPORTER_OTLP_PROTOCOL"]["value"] == "http/protobuf",
+            "protocol is passed through to the Job",
+        )
+        # The whole point: the collector must be able to tell a Job's spans from
+        # its dispatcher's. Before Factory#607 no job-side service name had ever
+        # appeared in the traces stream at all.
+        _require(
+            on["OTEL_SERVICE_NAME"]["value"] == "aifactory-job",
+            f"job-side service name: {on['OTEL_SERVICE_NAME']}",
+        )
+        _require(
+            _env_of("tfactory")["OTEL_SERVICE_NAME"]["value"] == "tfactory-job",
+            "the job-side service name follows the dispatching service",
+        )
+
+        # 3. The credential is a REFERENCE. A literal here would be readable by
+        #    anything that can `kubectl get job -o yaml`, and would freeze a value
+        #    that observe-otlp-auth-sync rotates hourly (Factory#606).
+        headers = on["OTEL_EXPORTER_OTLP_HEADERS"]
+        _require(
+            "value" not in headers
+            and headers["valueFrom"]["secretKeyRef"]["name"] == OTLP_AUTH_SECRET,
+            f"the OTLP credential must be a secretKeyRef, never a literal: {headers}",
+        )
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "authorization=Basic SECRETVALUE"
+        try:
+            rendered = repr(_env_of())
+            _require("SECRETVALUE" not in rendered, "the header VALUE leaked into the manifest")
+        finally:
+            os.environ.pop("OTEL_EXPORTER_OTLP_HEADERS", None)
+
+        # 4. TRACEPARENT is present exactly when there is a trace to continue,
+        #    and carries the ACTIVE span byte for byte. A Job handed a stale or
+        #    fabricated traceparent still lands a span in the collector — under a
+        #    trace nobody is looking at, which reads exactly like the fix working.
+        #
+        #    current_traceparent() is stubbed rather than driven by a real span:
+        #    this self-test runs where OpenTelemetry is NOT installed (that is the
+        #    point of the lazy import), so asking a real SDK for a span would make
+        #    both halves of this check vacuously true — which is precisely how a
+        #    "TRACEPARENT is injected" test passes against code that injects
+        #    nothing.
+        _require("TRACEPARENT" not in _env_of(), "no active span -> no TRACEPARENT")
+        fake = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        real, globals()["current_traceparent"] = current_traceparent, lambda: fake
+        try:
+            _require(
+                _env_of()["TRACEPARENT"]["value"] == fake,
+                "the ACTIVE span's traceparent must reach the Job — without it the "
+                "Job starts a new trace and the run's trace stops at this boundary "
+                "(Factory#607)",
+            )
+        finally:
+            globals()["current_traceparent"] = real
+
+        # 5. extra_env still wins — a consumer must be able to override.
+        m = build_job_manifest(
+            JobSpec(
+                service="aifactory",
+                job_id="t1",
+                commands=["true"],
+                nix_develop=False,
+                extra_env={"OTEL_SERVICE_NAME": "custom"},
+            )
+        )
+        entries = m["spec"]["template"]["spec"]["containers"][0]["env"]
+        # k8s takes the LAST value for a duplicated env name, so the override only
+        # wins if extra_env is appended after trace_env. Assert the winning VALUE,
+        # not the position: with the two blocks swapped the name is still last and
+        # a position check passes while the override is silently discarded.
+        winner = [e for e in entries if e["name"] == "OTEL_SERVICE_NAME"][-1]
+        _require(
+            winner.get("value") == "custom",
+            f"extra_env must come AFTER trace_env so a consumer override wins: {entries}",
+        )
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 if __name__ == "__main__":

@@ -296,10 +296,10 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
                     asyncio.to_thread(self._http_post, url, payload),
                     timeout=float(self._timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 audit_action = "llm.call.failed"
                 audit_error = f"timeout after {self._timeout}s"
-                raise asyncio.TimeoutError(
+                raise TimeoutError(
                     f"OpenAI-compatible API request timed out after {self._timeout}s. "
                     "Increase timeout= or reduce prompt size."
                 )

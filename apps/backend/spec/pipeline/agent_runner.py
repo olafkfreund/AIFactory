@@ -195,7 +195,7 @@ class AgentRunner:
                             msg = await _resp_iter.__anext__()
                     except StopAsyncIteration:
                         break
-                    except asyncio.TimeoutError as _te:
+                    except TimeoutError as _te:
                         raise RuntimeError(
                             f"Agent SDK stream stalled: no message for "
                             f"{_stall_s:.0f}s (AIFACTORY_AGENT_STALL_TIMEOUT)"

@@ -90,7 +90,7 @@ class PhaseRunResult:
 # Type aliases for the injectable hooks.
 RunSubtaskFn = Callable[..., Awaitable[SubtaskResult]]
 MergeFn = Callable[..., Awaitable[bool]]
-MarkCompleteFn = Callable[..., Awaitable[None]]
+MarkCompleteFn = Callable[..., Awaitable[bool | None]]
 
 
 async def run_parallel_phase(
@@ -113,8 +113,11 @@ async def run_parallel_phase(
             canonical plan or the task branch (isolation invariant #1).
         merge_subtask: ``async (subtask, result) -> bool`` — merges the child
             branch back into the task branch. Called sequentially (invariant #2).
-        mark_complete: ``async (subtask) -> None`` — records completion in the
-            canonical plan. Called sequentially (invariant #3).
+        mark_complete: ``async (subtask) -> bool | None`` — records completion
+            in the canonical plan, having put the subtask through the honesty
+            gates (:mod:`agents.completion_gate`). Called sequentially
+            (invariant #3). Returning ``False`` means a gate REFUSED the
+            completion: the subtask is marked failed here instead (#1177).
         on_wave: optional callback ``(wave_index, wave_subtasks)`` for progress
             reporting/logging.
 
@@ -200,7 +203,14 @@ async def run_parallel_phase(
                 _mark_failed(subtask, failed_ids, "merge failed")
                 continue
 
-            await mark_complete(subtask)
+            # A completion the honesty gates refuse is NOT a completion (#1177):
+            # the work is merged but unproven, so the subtask fails here and the
+            # caller redoes it serially (where the coder gets the refusal text).
+            # ``None`` means "recorded" — the older hooks returned nothing.
+            if await mark_complete(subtask) is False:
+                _mark_failed(subtask, failed_ids, "completion gate refused")
+                continue
+
             if hasattr(subtask, "complete"):
                 subtask.complete()
             else:  # pragma: no cover - all real subtask types have complete()

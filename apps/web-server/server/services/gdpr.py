@@ -36,10 +36,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.models import AuditLog, EmailAccount, User
@@ -162,7 +161,7 @@ async def erase_user(db: AsyncSession, user_id: str) -> dict:
     user.email = None
     user.name = None
     user.avatar_url = None
-    user.gdpr_erased_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    user.gdpr_erased_at = datetime.now(UTC).replace(tzinfo=None)
 
     await db.commit()
     logger.info(

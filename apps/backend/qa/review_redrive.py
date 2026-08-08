@@ -45,7 +45,7 @@ The caller resolves both and passes them explicitly; this module never guesses.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +128,7 @@ def process_untouched_review(
 
     Returns the action record dict, or ``None`` when nothing was due.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     # 1. Is the CURRENT cycle an untouched, aged request?
     cycle = detect_untouched_review(

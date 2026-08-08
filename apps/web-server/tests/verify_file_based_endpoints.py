@@ -10,10 +10,8 @@ This script verifies that all file-based endpoints:
 5. Have comprehensive error handling
 """
 
-import ast
 import re
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 
 class EndpointVerifier:
@@ -27,7 +25,7 @@ class EndpointVerifier:
         self.stub_endpoints = 0
         self.issues = []
 
-    def verify_all(self) -> Dict:
+    def verify_all(self) -> dict:
         """Verify all 26 file-based endpoints."""
         print("=" * 80)
         print("Verifying 26 File-Based Endpoint Implementations")

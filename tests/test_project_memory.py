@@ -39,7 +39,11 @@ def _insight(spec: Path, name: str, body: str) -> None:
 
 
 def _names(d: Path) -> set[str]:
-    return {p.name for p in (d / "session_insights").iterdir()} if (d / "session_insights").is_dir() else set()
+    return (
+        {p.name for p in (d / "session_insights").iterdir()}
+        if (d / "session_insights").is_dir()
+        else set()
+    )
 
 
 # ── the property Phase 0 exists for ──────────────────────────────────────────
@@ -139,7 +143,12 @@ def test_no_project_dir_is_a_no_op(tmp_path):
 def test_a_spec_with_no_memory_is_a_no_op(tmp_path):
     spec = tmp_path / "spec"
     spec.mkdir()
-    assert sync_memory_to_project(spec, tmp_path / "project" / ".aifactory" / "specs" / "x") is False
+    assert (
+        sync_memory_to_project(
+            spec, tmp_path / "project" / ".aifactory" / "specs" / "x"
+        )
+        is False
+    )
 
 
 def test_a_failing_copy_never_raises(tmp_path, monkeypatch):
@@ -153,7 +162,12 @@ def test_a_failing_copy_never_raises(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(utils.shutil, "copytree", boom)
-    assert utils.sync_memory_to_project(spec, tmp_path / "p" / ".aifactory" / "specs" / "x") is False
+    assert (
+        utils.sync_memory_to_project(
+            spec, tmp_path / "p" / ".aifactory" / "specs" / "x"
+        )
+        is False
+    )
 
 
 # ── wiring: a helper nobody calls is decoration ──────────────────────────────
@@ -162,8 +176,14 @@ def test_a_failing_copy_never_raises(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "path,needle",
     [
-        ("apps/backend/agents/session.py", "sync_memory_to_project(spec_dir, source_spec_dir)"),
-        ("apps/backend/core/workspace/setup.py", "seed_memory_from_project(project_dir"),
+        (
+            "apps/backend/agents/session.py",
+            "sync_memory_to_project(spec_dir, source_spec_dir)",
+        ),
+        (
+            "apps/backend/core/workspace/setup.py",
+            "seed_memory_from_project(project_dir",
+        ),
     ],
 )
 def test_both_halves_are_actually_wired(path, needle):
@@ -228,7 +248,11 @@ def test_the_control_plane_mirror_pools_at_project_level():
     property is narrow and the regression is a one-line deletion.
     """
     src = (
-        _BACKEND.parent / "web-server" / "server" / "services" / "agent_worktree_sync.py"
+        _BACKEND.parent
+        / "web-server"
+        / "server"
+        / "services"
+        / "agent_worktree_sync.py"
     ).read_text()
     body = src.split("async def _sync_worktree_files", 1)[1]
 

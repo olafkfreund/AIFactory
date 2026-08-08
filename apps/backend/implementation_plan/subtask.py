@@ -8,14 +8,27 @@ and output capabilities.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 from .enums import SubtaskStatus
 from .verification import Verification
 
-# Subtask.service values that belong to a downstream PARR stage (TFactory tests,
-# CI pipeline) rather than the AIFactory coding agent. See Subtask.is_handoff.
-_HANDOFF_SERVICES = frozenset({"testing", "cicd"})
+# There is deliberately no "handoff" service class here (#1176). ``testing`` and
+# ``cicd`` used to be declared downstream work that the coder skipped, on the
+# premise that TFactory / the CI pipeline would pick them up. Nothing does: the
+# TFactory handoff carries spec text, the signed contract and the build branch —
+# `pfactory.tfactory_client.build_handoff_payload` / `build_ingest_payload` send
+# no subtasks at all — and TFactory VERIFIES a build, it never writes the target
+# repo's `.github/workflows/ci.yml`. A skipped `cicd` subtask was handed to
+# nobody, so QA rejected the build on its unmet criteria every run (#1113).
+#
+# Only the accounting layer ever honoured the exclusion; both engines that run
+# work dispatched these subtasks regardless, so the plan reported a build
+# complete while the coder was still being handed the work. See
+# `tests/test_subtask_queue_agreement.py`, which pins all three layers to the
+# same queue. `service` remains free-form scoping metadata; it no longer decides
+# whether a subtask is the coder's.
 
 
 @dataclass
@@ -49,36 +62,37 @@ class Subtask:
     # Verification
     verification: Verification | None = None
 
+    # What this subtask promised. PFactory's children carry them and the planner
+    # emits them, but the model did not, so every load/save round-trip DELETED
+    # them from implementation_plan.json — and the honesty gates read them: the
+    # CI/CD gate (#1113) learns which pipeline stages a subtask demands from
+    # here, and the wave engine judges a subtask through ``to_dict()`` (#1177),
+    # so an unmodelled field is a gate that silently sees nothing.
+    acceptance_criteria: list[str] = field(default_factory=list)
+
     # For investigation subtasks
     expected_output: str | None = None  # Knowledge/decision output
     actual_output: str | None = None  # What was discovered
 
-    # Tracking
+    # Tracking. Both are aware-UTC ISO strings (#1195) — CFactory's live
+    # execution diagram subtracts one from the other for the per-node timer, so
+    # a naive local timestamp on one side and an aware UTC one on the other
+    # would silently produce a duration out by the UTC offset.
+    #
+    # There is deliberately no ``session_id`` here. It was written only by a
+    # ``start()`` that no engine ever called, and no reader for it exists in any
+    # of the six fleet repos, so it could only ever serialize as absent (#1195).
     started_at: str | None = None
     completed_at: str | None = None
-    session_id: int | None = None  # Which session completed this
 
     # Self-Critique
     critique_result: dict | None = None  # Results from self-critique before completion
 
-    @property
-    def is_handoff(self) -> bool:
-        """True when this subtask belongs to a downstream PARR stage, not the
-        AIFactory coder.
-
-        PFactory's decomposition can emit ``testing`` / ``cicd`` children (it
-        tags them via ``service``). Those are TFactory's / the CI pipeline's job,
-        not work the coding agent should attempt — left in the coder's queue they
-        get a "SESSION 2" that fails (no committable output), which falsely marks
-        the whole coding phase ``failed`` even though the implementation work is
-        complete. The coder skips these and they don't block coding completion;
-        the full contract still carries them to TFactory via the handoff.
-        """
-        return (self.service or "").lower() in _HANDOFF_SERVICES
-
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        result = {
+        # Annotated because the seed keys are all str, so an unannotated literal
+        # infers dict[str, str] and every non-str field below is a type error.
+        result: dict[str, Any] = {
             "id": self.id,
             "description": self.description,
             "status": self.status.value,
@@ -99,6 +113,8 @@ class Subtask:
             result["patterns_from"] = self.patterns_from
         if self.verification:
             result["verification"] = self.verification.to_dict()
+        if self.acceptance_criteria:
+            result["acceptance_criteria"] = self.acceptance_criteria
         if self.expected_output:
             result["expected_output"] = self.expected_output
         if self.actual_output:
@@ -107,8 +123,6 @@ class Subtask:
             result["started_at"] = self.started_at
         if self.completed_at:
             result["completed_at"] = self.completed_at
-        if self.session_id is not None:
-            result["session_id"] = self.session_id
         if self.critique_result:
             result["critique_result"] = self.critique_result
         return result
@@ -132,19 +146,27 @@ class Subtask:
             files_to_create=data.get("files_to_create", []),
             patterns_from=data.get("patterns_from", []),
             verification=verification,
+            acceptance_criteria=data.get("acceptance_criteria") or [],
             expected_output=data.get("expected_output"),
             actual_output=data.get("actual_output"),
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
-            session_id=data.get("session_id"),
             critique_result=data.get("critique_result"),
         )
 
-    def start(self, session_id: int):
-        """Mark subtask as in progress."""
+    def start(self) -> None:
+        """Mark subtask as in progress and stamp ``started_at``.
+
+        Called by the wave engine's per-wave hook (#1195). Aware UTC, matching
+        ``complete()`` and ``apply_subtask_status_update`` — see the field
+        comment: the cockpit subtracts these two, so they must share a frame.
+
+        Idempotent on the timestamp: a re-entered subtask keeps its ORIGINAL
+        start, so a retry does not reset the clock the diagram is showing.
+        """
         self.status = SubtaskStatus.IN_PROGRESS
-        self.started_at = datetime.now().isoformat()
-        self.session_id = session_id
+        if not self.started_at:
+            self.started_at = datetime.now(UTC).isoformat()
         # Clear stale data from previous runs to ensure clean state
         self.completed_at = None
         self.actual_output = None
@@ -152,7 +174,7 @@ class Subtask:
     def complete(self, output: str | None = None):
         """Mark subtask as done."""
         self.status = SubtaskStatus.COMPLETED
-        self.completed_at = datetime.now().isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         if output:
             self.actual_output = output
 

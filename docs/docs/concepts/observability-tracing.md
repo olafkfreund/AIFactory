@@ -61,7 +61,7 @@ The three propagation boundaries:
 
 1. **In-process** (web-server → DB / httpx / redis): OTel auto-instrumentation handles it.
 2. **Cross-replica** (web-server pod A → pod B via Redis pub/sub): AIFactory adds a `trace.traceparent` field to the Redis envelope; the receiving pod re-attaches the parent context before dispatching the event locally. Backward-compatible — old envelopes without the field still dispatch normally.
-3. **Cross-process** (web-server → agent subprocess): AIFactory injects `TRACEPARENT` into the subprocess environment via `make_subprocess_env`. The agent's `init_agent_tracing()` (in `apps/backend/core/tracing_bootstrap.py`) extracts it on startup and attaches the parent context so the agent's logs and metrics carry the originating trace ID.
+3. **Cross-process** (web-server → agent subprocess): AIFactory injects `TRACEPARENT` into the subprocess environment via `make_subprocess_env`. The agent's `init_agent_tracing()` (in `apps/backend/core/job_tracing.py`, the hub canonical vendored here — Factory#638) extracts it on startup and attaches the parent context so the agent's logs and metrics carry the originating trace ID.
 
 ## Turning it on
 

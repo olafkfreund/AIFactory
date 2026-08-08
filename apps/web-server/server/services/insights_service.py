@@ -459,7 +459,6 @@ class InsightsService:
         Runs a lightweight ``claude --print`` call (no tool use,
         no streaming) to produce a JSON ``{title, description}`` object.
         """
-        import os
         import shutil
 
         session = self.get_current_session(project_path, project_id)
@@ -563,7 +562,7 @@ class InsightsService:
                 return _parse_task_json(response)
             return {"title": "", "description": ""}
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("[InsightsService] generate_task_from_chat timed out (120s)")
             return {"title": "", "description": ""}
         except Exception as e:

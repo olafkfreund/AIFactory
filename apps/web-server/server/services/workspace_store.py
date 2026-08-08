@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ..config import get_settings
@@ -170,9 +170,7 @@ class WorkspaceStore:
                 "project_id": project_id,
                 "triggered_by_task_id": triggered_by_task_id,
                 "triggered_by_phase": triggered_by_phase,
-                "uploaded_at": datetime.now(timezone.utc)
-                .isoformat()
-                .replace("+00:00", "Z"),
+                "uploaded_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "uploaded_by_replica": _self_replica_id(),
                 "file_count": file_count,
                 "total_bytes": total_bytes,

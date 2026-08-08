@@ -46,7 +46,6 @@ from sqlalchemy import create_engine
 from .kms import get_backend, reset_backend_cache
 from .rotation import rotate_root
 
-
 # Per-backend env var that holds the key reference. The "_NEW" suffix
 # is the convention for rotation.
 _KEY_ENV_BY_BACKEND: dict[str, str] = {

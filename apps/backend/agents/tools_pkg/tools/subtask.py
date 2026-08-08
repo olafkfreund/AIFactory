@@ -7,7 +7,7 @@ Tools for managing subtask status in implementation_plan.json.
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,13 @@ try:
 except ImportError:
     SDK_TOOLS_AVAILABLE = False
     tool = None  # type: ignore[assignment]
+
+
+# How far above a spec dir its project root sits, in ``Path.parents`` steps:
+# ``<root>/.aifactory/specs/<spec>`` puts ``.aifactory`` at parents[1] and the
+# root at parents[2]. The same number bounds the guard and picks the result, so
+# the layout is stated once.
+_ROOT_PARENTS_ABOVE_SPEC = 2
 
 
 def _text(msg: str) -> dict[str, Any]:
@@ -31,8 +38,8 @@ def _project_root(spec_dir: Path, project_dir: Path | None) -> Path:
     if project_dir is not None:
         return project_dir
     parents = spec_dir.resolve().parents
-    if len(parents) >= 3 and parents[1].name == ".aifactory":
-        return parents[2]
+    if len(parents) > _ROOT_PARENTS_ABOVE_SPEC and parents[1].name == ".aifactory":
+        return parents[_ROOT_PARENTS_ABOVE_SPEC]
     return spec_dir
 
 
@@ -43,8 +50,8 @@ async def apply_subtask_status_update(
     notes: str = "",
     project_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Update a subtask's status in implementation_plan.json, enforcing the #851
-    honest-verification gate and the #1111 deliverable-coverage gate. Plain
+    """Update a subtask's status in implementation_plan.json, enforcing the
+    honesty gates in :mod:`agents.completion_gate` (#851, #1111, #1113). Plain
     (SDK-free) so it is directly testable; the ``update_subtask_status`` tool is
     a thin wrapper resolving the spec and project dirs.
     """
@@ -62,81 +69,70 @@ async def apply_subtask_status_update(
         with open(plan_file) as f:
             plan = json.load(f)
 
-        # Find and update the subtask
-        subtask_found = False
-        target_subtask: dict[str, Any] | None = None
-        for phase in plan.get("phases", []):
-            for subtask in phase.get("subtasks", []):
-                if subtask.get("id") == subtask_id:
-                    subtask["status"] = status
-                    if notes:
-                        subtask["notes"] = notes
-                    subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    subtask_found = True
-                    target_subtask = subtask
-                    break
-            if subtask_found:
-                break
-
-        if not subtask_found:
+        # Find and update the subtask (the record is the one IN ``plan``, so
+        # mutating it here is what the write below persists).
+        target_subtask: dict[str, Any] | None = next(
+            (
+                st
+                for phase in plan.get("phases", [])
+                for st in phase.get("subtasks", [])
+                if st.get("id") == subtask_id
+            ),
+            None,
+        )
+        if target_subtask is None:
             return _text(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
 
-        # #851 honest-verification gate: a test/verification subtask may not be
-        # reported "completed" unless a real test command actually ran this build
-        # (captured tamper-evidently by the PostToolUse hook). No run — or a run
-        # that clearly failed — is refused with actionable guidance, so the coder
-        # can no longer self-report a green checkbox for tests it never executed
-        # (RFC-0006). The plan is not written until AFTER this, so a refusal
-        # leaves implementation_plan.json untouched.
+        now = datetime.now(UTC).isoformat()
+        target_subtask["status"] = status
+        if notes:
+            target_subtask["notes"] = notes
+        target_subtask["updated_at"] = now
+
+        # #1195: stamp ``started_at`` with the SAME write that sets the status,
+        # because CFactory's live execution diagram reads it —
+        # ``taskFlow.nodeElapsedSeconds`` returns null without it, so every
+        # subtask's timer chip in the cockpit rendered empty on every build.
+        # Only on the first transition: a retried subtask keeps its original
+        # start, so the clock does not reset under the reviewer mid-build.
+        if status == "in_progress" and not target_subtask.get("started_at"):
+            target_subtask["started_at"] = now
+
+        # The honesty gates (#851 test evidence, #1111 deliverable coverage,
+        # #1113 pipeline evidence) live in agents.completion_gate because the
+        # parallel wave path has to pass the SAME ones — it completes subtasks
+        # itself, without this tool (#1177).
+        # Add a gate there, not here. The plan is not written until AFTER this,
+        # so a refusal leaves implementation_plan.json untouched.
         if status == "completed":
-            from agents.test_evidence import (  # noqa: PLC0415
-                deliverable_evidence_gap,
-                gate_enabled,
-                is_verification_subtask,
-                read_test_evidence,
+            from agents.completion_gate import completion_refusal  # noqa: PLC0415
+            from agents.test_evidence import read_test_evidence  # noqa: PLC0415
+
+            refusal = completion_refusal(
+                target_subtask,
+                _project_root(spec_dir, project_dir),
+                # Scoped to THIS subtask (#1187): build-wide evidence let the
+                # second verification subtask in a build ride the first one's
+                # green run and complete having executed nothing.
+                read_test_evidence(spec_dir, subtask_id),
             )
-
-            # #1111: "a test ran" is not "a test ran against the deliverable".
-            # A subtask that promises an HTTP path may not be completed when the
-            # only tests naming that path assert against an app built inside the
-            # test file — genuinely green, and blind to a route nobody
-            # registered. Inert unless the subtask names a path and a Python
-            # test mentions it, so pure-function work is untouched.
-            if gate_enabled():
-                gap = deliverable_evidence_gap(
-                    target_subtask or {}, _project_root(spec_dir, project_dir)
-                )
-                if gap:
-                    return _text(gap)
-
-            if gate_enabled() and is_verification_subtask(target_subtask or {}):
-                ev = read_test_evidence(spec_dir)
-                if not ev["ran"]:
-                    return _text(
-                        f"Refused: subtask '{subtask_id}' is a test/verification subtask, "
-                        "but no test command ran this build. Run the tests now (e.g. "
-                        "pytest / go test / npm test) — the build records the run "
-                        "automatically — then mark it completed. If this repo has NO "
-                        "runnable test environment, mark this subtask 'failed' with a note "
-                        "saying tests could not be executed. Do NOT report it completed "
-                        "unverified (RFC-0006: never claim verification that did not happen)."
-                    )
-                if ev["last_failed"]:
-                    return _text(
-                        f"Refused: the last recorded test run failed (command: "
-                        f"{ev['last_command']!r}). Fix the failures and re-run the tests "
-                        f"green before completing subtask '{subtask_id}', or mark it "
-                        "'failed' with the reason. Do NOT report it completed over failing "
-                        "tests."
-                    )
+            if refusal:
+                return _text(refusal)
 
         # Update plan metadata
-        plan["last_updated"] = datetime.now(timezone.utc).isoformat()
+        plan["last_updated"] = datetime.now(UTC).isoformat()
 
         with open(plan_file, "w") as f:
             json.dump(plan, f, indent=2)
+
+        if status == "completed":
+            # Close this subtask's evidence window — AFTER the gate accepted it,
+            # so a refusal leaves the runs for the retry to use (#1187).
+            from agents.test_evidence import record_subtask_completed  # noqa: PLC0415
+
+            record_subtask_completed(spec_dir, subtask_id)
 
         return _text(
             f"Successfully updated subtask '{subtask_id}' to status '{status}'"

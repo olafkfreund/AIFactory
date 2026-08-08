@@ -6,9 +6,11 @@ heterogeneous parallel AIFactory build observable per provider and per model.
 
 ## Why the metrics live in the web-server (not the agent)
 
-The agent subprocess deliberately has NO OTel exporter — ``core/tracing_bootstrap.py``
-builds spans in memory and drops them. The OTLP exporter lives here, in the
-web-server, and is wired only when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set (see
+The agent subprocess has no METRICS exporter. ``core/job_tracing.py`` gave it a
+trace exporter (Factory#607/#638) because a Job's spans are the only record of
+where a run's time went, but that is one span per process on a bounded flush —
+not a metrics pipeline. The metric OTLP exporter lives here, in the web-server,
+and is wired only when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set (see
 ``tracing.py``). So the per-worker breakdown that the agent persists into
 ``token_usage.json`` (the ``workers`` map, read back by ``services/completion.py``)
 is re-emitted as OTel metrics from *here*, at task end, where it can actually

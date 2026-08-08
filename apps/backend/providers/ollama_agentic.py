@@ -54,7 +54,11 @@ from pathlib import Path
 from typing import Any
 
 from providers import BaseLLMProvider
-from providers._ollama_http import OllamaHTTPMixin
+from providers._ollama_http import (
+    OllamaHTTPMixin,
+    resolve_ollama_api_key,
+    resolve_ollama_base_url,
+)
 from providers.types import (
     AssistantMessage,
     TextBlock,
@@ -70,7 +74,6 @@ logger = logging.getLogger(__name__)
 # Defaults
 # ---------------------------------------------------------------------------
 
-_DEFAULT_BASE_URL: str = "http://localhost:11434"
 _DEFAULT_MODEL: str = "llama3.2"
 _DEFAULT_TIMEOUT: int = 600  # seconds per request (agentic needs more time)
 _DEFAULT_MAX_TURNS: int = 25
@@ -136,12 +139,13 @@ class OllamaAgenticProvider(OllamaHTTPMixin, BaseLLMProvider):
     def __init__(
         self,
         model: str = _DEFAULT_MODEL,
-        base_url: str = _DEFAULT_BASE_URL,
+        base_url: str | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
         working_dir: Path | str = Path("."),
         max_turns: int = _DEFAULT_MAX_TURNS,
         tool_names: list[str] | None = None,
         extra_options: dict[str, Any] | None = None,
+        api_key: str | None = None,
     ) -> None:
         # Callers (e.g. the phase resolver) pass the provider-prefixed form
         # ``ollama:qwen3:14b`` because that's how AIFactory threads the
@@ -151,7 +155,15 @@ class OllamaAgenticProvider(OllamaHTTPMixin, BaseLLMProvider):
         if model.startswith("ollama:"):
             model = model[len("ollama:") :]
         self._model = model
-        self._base_url = base_url.rstrip("/")
+        # #1099: resolve the endpoint from the environment when the caller does
+        # not name one. This constructor is where EVERY route into the provider
+        # converges (get_provider, the phase call sites, direct construction),
+        # so fixing it here fixes them all — previously nothing in the
+        # production call path passed a base_url and nothing read an env var,
+        # so a phase pinned to `ollama:<model>` tried localhost inside a pod.
+        # An explicit argument still wins.
+        self._base_url = (base_url or resolve_ollama_base_url()).rstrip("/")
+        self._api_key = api_key or resolve_ollama_api_key()
         self._timeout = timeout
         self._working_dir = Path(working_dir).resolve()
         self._max_turns = max_turns
@@ -236,7 +248,7 @@ class OllamaAgenticProvider(OllamaHTTPMixin, BaseLLMProvider):
                     asyncio.to_thread(self._http_post, url, payload),
                     timeout=float(self._timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_msg = (
                     f"[Ollama request timed out after {self._timeout}s "
                     f"on turn {turn + 1}]"

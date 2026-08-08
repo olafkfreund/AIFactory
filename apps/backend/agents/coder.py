@@ -42,6 +42,7 @@ from prompt_generator import (
 from prompts import get_solo_prompt, is_first_run
 from providers.factory import get_provider
 from recovery import RecoveryManager
+from review.state import requires_review_before_coding
 from solo_mode import is_solo_mode_enabled_for_spec
 from task_logger import (
     LogPhase,
@@ -745,9 +746,16 @@ async def run_autonomous_agent(
         # Run session with a watchdog on the client enter (#816): a stalled MCP
         # connect becomes a ~120s session_stall error + fresh-session retry
         # instead of a silent hang to the build deadline.
+        # Bracket the turn for per-worker wall-clock (#1100). `duration_ms` on
+        # the serial path was always 0, and 0 is not a fast worker, it is an
+        # unmeasured one — any swarm comparison built on it divides by a
+        # fiction. Monotonic: a wall-clock jump must not produce a negative or
+        # absurd duration.
+        _turn_start = time.monotonic()
         status, response, error_info = await run_session_guarded(
             client, prompt, spec_dir, verbose, phase=current_log_phase
         )
+        _turn_duration_ms = int((time.monotonic() - _turn_start) * 1000)
 
         # === PER-CATEGORY TOKEN ATTRIBUTION (#262) ===
         # Attribute the session's real SDK usage across source categories and
@@ -797,6 +805,7 @@ async def run_autonomous_agent(
                     subtask_id=subtask_id or None,
                     provider=_sub_provider,
                     phase=_agent_phase,
+                    duration_ms=_turn_duration_ms,
                 )
                 # Live per-worker PROGRESS heartbeat (#45 Tier 2): this worker is
                 # STILL RUNNING and just persisted another turn's spend — emit a
@@ -1187,10 +1196,16 @@ def _should_require_human_review(spec_dir: Path) -> bool:
     Thin alias for ``review.state.requires_review_before_coding`` (#916) — the
     run.py pre-flight gate must answer this question the SAME way the coder
     does, so there is exactly one definition of it.
-    """
-    from review.state import requires_review_before_coding
 
-    # bool(): the lazy import is untyped to mypy here, so the call is Any.
+    Imported at module scope, unlike the two deferred ``review`` imports in the
+    injection gate above: ``review`` reaches no further than ``ui``, which this
+    module already imports at module scope, so deferring it bought nothing
+    (#1192).
+    """
+    # bool(): the ratchet type-checks this file on its own, so `review.state` is
+    # outside the import graph and the call is Any whatever mypy_path says. The
+    # cast is what keeps the declared `-> bool` honest; moving the import above
+    # did NOT make it redundant, as the mypy half of the ratchet proved.
     return bool(requires_review_before_coding(spec_dir))
 
 

@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -155,10 +155,10 @@ async def post_session_processing(
             "info",
         )
         subtask["status"] = "completed"
-        subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
+        subtask["updated_at"] = datetime.now(UTC).isoformat()
         subtask["notes"] = f"Auto-completed: {new_commits} commit(s) detected"
         plan_file = spec_dir / "implementation_plan.json"
-        plan["last_updated"] = datetime.now(timezone.utc).isoformat()
+        plan["last_updated"] = datetime.now(UTC).isoformat()
         with open(plan_file, "w") as f:
             json.dump(plan, f, indent=2)
         sync_plan_to_source(spec_dir, source_spec_dir)

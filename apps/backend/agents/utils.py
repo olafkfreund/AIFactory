@@ -9,11 +9,23 @@ import json
 import logging
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
 
 logger = logging.getLogger(__name__)
+
+# AIFactory's own runtime bookkeeping inside a task worktree. Never belongs in a
+# task commit (and so never in the PR the Approve control opens) — see #1106.
+# ``.aifactory-status`` is legacy: StatusManager now writes .aifactory/status.json,
+# but a repo that already tracks the old root file still has it in the worktree.
+_BOOKKEEPING_PATHS = (
+    ".aifactory/",
+    "aifactory/specs/",
+    ".aifactory-status",
+    ".aifactory-security.json",
+)
 
 
 def get_latest_commit(project_dir: Path) -> str | None:
@@ -61,30 +73,33 @@ def commit_uncommitted_changes(
     nothing to commit or the commit could not be made (never raises).
     """
     try:
-        # Stage everything EXCEPT AIFactory's own bookkeeping. .aifactory-status
-        # (the ccstatusline file) and .aifactory-security.json churn on every
-        # subtask; once one of them slips into a commit they become tracked and
-        # every later safety-net re-commits the churn, cluttering the branch with
-        # "safety-net" commits (and leaving one as the branch tip). The net is
-        # meant to rescue real uncommitted CODE the agent forgot, so exclude the
-        # bookkeeping via pathspec. (.aifactory/ is already gitignored; excluded
-        # here too for the case where it isn't.)
+        # Stage everything, then UNSTAGE AIFactory's own bookkeeping.
+        # .aifactory-status (the ccstatusline file) and .aifactory-security.json
+        # churn on every subtask; once one of them slips into a commit they
+        # become tracked and every later safety-net re-commits the churn — and
+        # in a repo where one is already tracked, that lands a factory-internal
+        # file in the PR and conflicts with the base (#1106). The net is meant to
+        # rescue real uncommitted CODE the agent forgot.
+        #
+        # Two steps rather than one `git add -A -- . :(exclude)...`: the
+        # exclude-pathspec form failed outright in the pod (#1106, non-zero exit
+        # from git add), which took the WHOLE add down and rescued nothing.
+        # `git add -A` cannot fail on a pathspec, and `git reset` on paths that
+        # are absent from the index is a no-op, so the unstage step is safe
+        # whether or not the bookkeeping is present or tracked.
         subprocess.run(
-            [
-                "git",
-                "add",
-                "-A",
-                "--",
-                ".",
-                ":(exclude).aifactory/",
-                ":(exclude)aifactory/specs/",
-                ":(exclude).aifactory-status",
-                ":(exclude).aifactory-security.json",
-            ],
+            ["git", "add", "-A"],
             cwd=project_dir,
             capture_output=True,
             text=True,
             check=True,
+        )
+        subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", "reset", "--quiet", "HEAD", "--", *_BOOKKEEPING_PATHS],  # noqa: S607
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,  # absent paths / an unborn HEAD must not break the net
         )
         # If nothing (real) got staged, the only changes were bookkeeping churn —
         # don't manufacture a commit. `git diff --cached --quiet` exits 0 when the
@@ -111,7 +126,18 @@ def commit_uncommitted_changes(
         )
         return get_latest_commit(project_dir)
     except (subprocess.CalledProcessError, OSError) as exc:
-        logger.warning("safety-net commit failed in %s: %s", project_dir, exc)
+        # ERROR, not warning: this is the net that stops agent work being lost,
+        # so "it silently did not run" is itself a hazard (#1106). Still
+        # non-raising — the caller's build may be fine and failing it here would
+        # trade a possible loss for a certain one.
+        stderr = getattr(exc, "stderr", "") or ""
+        logger.error(
+            "safety-net commit FAILED in %s (uncommitted agent work is NOT "
+            "protected): %s %s",
+            project_dir,
+            exc,
+            stderr.strip()[:500],
+        )
         return None
 
 
@@ -363,3 +389,69 @@ def record_subtask_completion(
     # already the source).
     sync_plan_to_source(target.parent, source_spec_dir)
     return True
+
+
+def record_subtask_started(
+    subtask_ids: Iterable[str], plan_path: Path, source_spec_dir: Path | None
+) -> int:
+    """Stamp ``started_at`` on a wave's subtasks in the canonical plan (#1195).
+
+    The wave engine's counterpart to :func:`record_subtask_completion`. Without
+    it the wave path never wrote ``started_at`` at all, so CFactory's live
+    execution diagram could not classify a running subtask as active
+    (``taskFlow.flowStatus``) and its per-node timer chip was always blank
+    (``nodeElapsedSeconds`` returns null with no start).
+
+    Batched per WAVE, not per subtask: a wave is by definition the set that
+    starts together, so one plan write per wave is both accurate and cheap.
+
+    Called from the parent's ``on_wave`` hook, which runs BEFORE the wave's
+    ``asyncio.gather`` and after the previous wave's completions have been
+    written — i.e. on the same single-threaded, parent-owned step as every
+    other canonical plan mutation (concurrency invariant #3), so it needs no
+    lock of its own.
+
+    Best-effort bookkeeping: returns the number of subtasks stamped, and never
+    raises. A build must not fail because a timestamp could not be recorded.
+
+    Returns:
+        How many subtasks were found and stamped (0 when the plan is missing).
+    """
+    # Lazy, exactly as record_subtask_completion above: agents.utils is imported
+    # by the plan package's own callers, so a top-level import here cycles.
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415
+
+    target = plan_path
+    if not target.exists() and source_spec_dir is not None:
+        fallback = source_spec_dir / "implementation_plan.json"
+        if fallback.exists():
+            target = fallback
+    if not target.exists():
+        logger.warning(
+            "record_subtask_started: no implementation_plan.json at %s (nor "
+            "source %s); start times for %s not recorded",
+            plan_path,
+            source_spec_dir,
+            list(subtask_ids),
+        )
+        return 0
+
+    wanted = set(subtask_ids)
+    if not wanted:
+        return 0
+
+    try:
+        plan = ImplementationPlan.load(target)
+        stamped = 0
+        for phase in plan.phases:
+            for subtask in phase.subtasks:
+                if subtask.id in wanted:
+                    subtask.start()
+                    stamped += 1
+        if stamped:
+            plan.save(target)
+            sync_plan_to_source(target.parent, source_spec_dir)
+        return stamped
+    except Exception as exc:  # noqa: BLE001 - bookkeeping must not fail a build
+        logger.warning("record_subtask_started: could not stamp start times: %s", exc)
+        return 0

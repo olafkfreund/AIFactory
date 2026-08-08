@@ -60,7 +60,7 @@ import tempfile
 import time
 import uuid
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -287,7 +287,7 @@ def build_message(
         "from": sender or "user",
         "text": body,
         "summary": derived_summary,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "messageId": uuid.uuid4().hex,
         "read": False,
     }

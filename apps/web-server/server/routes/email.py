@@ -13,20 +13,20 @@ import os
 import secrets
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import delete, select
 
-from ..config import get_settings
-from ..database import EmailAccount
-from ..database.engine import async_session_factory
 from .._get_email_oauth_credentials import (
     get_email_oauth_credentials,
     get_google_oauth_credentials,
 )
+from ..config import get_settings
+from ..database import EmailAccount
+from ..database.engine import async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ async def send_test_email(account_id: str, request: Request):
 
     from ..services.email_service import email_service
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     subject = "AIFactory - Test Email"
     body_html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px;">
@@ -334,7 +334,7 @@ async def outlook_oauth_callback(
     access_token = token_data["access_token"]
     refresh_token = token_data.get("refresh_token")
     expires_in = token_data.get("expires_in", 3600)
-    token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    token_expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
 
     # Fetch user email from Microsoft Graph
     try:
@@ -550,7 +550,7 @@ async def gmail_oauth_callback(
     access_token = token_data["access_token"]
     refresh_token = token_data.get("refresh_token")
     expires_in = token_data.get("expires_in", 3600)
-    token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    token_expiry = datetime.now(UTC) + timedelta(seconds=expires_in)
 
     # Fetch user email from Google userinfo
     try:

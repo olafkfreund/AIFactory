@@ -5,7 +5,6 @@ Uses HTTP streaming to localhost:11434/api/chat (NDJSON format).
 Supports tool calling for models that implement OpenAI-compatible function calling.
 """
 
-import asyncio
 import json
 import logging
 import shutil

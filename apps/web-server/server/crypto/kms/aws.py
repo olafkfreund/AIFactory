@@ -30,7 +30,7 @@ class AwsKmsBackend:
     """Wrap/unwrap per-org data keys under an AWS KMS CMK."""
 
     @classmethod
-    def from_env(cls) -> "AwsKmsBackend":
+    def from_env(cls) -> AwsKmsBackend:
         key_id = os.environ.get("AWS_KMS_KEY_ID")
         if not key_id:
             raise RuntimeError(

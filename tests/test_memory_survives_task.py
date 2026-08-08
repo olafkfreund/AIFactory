@@ -94,7 +94,9 @@ def test_without_the_sync_the_next_task_starts_blind(tmp_path):
     wt2.mkdir(parents=True)
     spec_in_wt2 = copy_spec_to_worktree(source, wt2, "001-feature")
 
-    assert not (spec_in_wt2 / "memory" / "session_insights" / "session_001.json").exists()
+    assert not (
+        spec_in_wt2 / "memory" / "session_insights" / "session_001.json"
+    ).exists()
 
 
 # ── the sync itself ──────────────────────────────────────────────────────────

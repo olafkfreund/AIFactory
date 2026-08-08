@@ -20,7 +20,7 @@ delegation lands in V1.5 (#98); ADO is permanently unsupported.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
             "error": str(e),
         }
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for item in delegated:
         issue_number = item.get("issueNumber")

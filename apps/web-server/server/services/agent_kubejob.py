@@ -15,7 +15,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .agent_task_models import TaskLog
+from .task_log_writer import TaskLogWriter
+from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,6 +31,9 @@ class KubejobMixin:
         # Attributes/methods provided by the concrete host (AgentService);
         # declared here so mypy can resolve the self.* references in a mixin.
         _kubejob_log_streamers: dict[str, Any]
+        _task_current_phases: dict[str, Any]
+        _task_log_writers: dict[str, Any]
+        _handle_output_line: Callable[..., Any]
         backend_path: Path
         _store_enabled: bool
         _task_profiles: dict[str, Any]
@@ -314,6 +318,20 @@ class KubejobMixin:
         read from the durable worker_ref the backend just wrote. Wholly
         best-effort — never raises, never blocks dispatch.
         """
+        # #1110: the Job's stdout carries the same [PHASE_EVENT] lines the in-pod
+        # subprocess emits, and the control plane was throwing all of it at the
+        # log pane without reading it. `_spawn_task_execution` is the ONLY place
+        # that builds a TaskLogWriter, and the kubejob backend does not go
+        # through it — so `task_logs.json` never appeared beside the spec, and
+        # `get_execution_progress` (which reads exactly that file) returned None
+        # for the whole build. The Job writes its own copy inside its /work
+        # emptyDir and pushes it back at the END, which is why every phase
+        # arrived in one step at completion.
+        #
+        # Write to the MAIN spec dir, not the worktree one the in-pod path uses:
+        # the Job's worktree is inside the Job, and nothing syncs it here.
+        log_writer = self._kubejob_log_writer(project_path, spec_id, task_id)
+
         ref = await self._kubejob_worker_ref(task_id)
         if ref is None:
             return
@@ -336,8 +354,14 @@ class KubejobMixin:
         from .build_log_stream import KubeJobLogStreamer
 
         async def _cockpit_sink(line: str) -> None:
-            await self._emit_log(
-                TaskLog(task_id=task_id, content=line, source="stdout", level="info")
+            await self._handle_output_line(
+                task_id,
+                line,
+                current_phase=self._task_current_phases.get(
+                    task_id, TaskPhase.PLANNING
+                ),
+                log_writer=log_writer,
+                spec_id=spec_id,
             )
 
         rmux_feed = self._kubejob_rmux_feed()
@@ -355,6 +379,33 @@ class KubejobMixin:
         self._kubejob_log_streamers[task_id] = asyncio.create_task(
             _run_stream(), name=f"kubejob-log-stream-{task_id}"
         )
+
+    def _kubejob_log_writer(
+        self, project_path: Path, spec_id: str, task_id: str
+    ) -> TaskLogWriter | None:
+        """Open ``task_logs.json`` beside the spec for a dispatched Job (#1110).
+
+        Seeds the planning phase immediately, exactly as the in-pod path does at
+        spawn, so ``GET /api/tasks/{id}`` reports a phase from the moment the
+        Job is dispatched rather than ``executionProgress: null`` until the very
+        end. Best-effort: progress reporting must never fail a dispatch.
+        """
+        try:
+            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+            spec_dir.mkdir(parents=True, exist_ok=True)
+            writer = TaskLogWriter(spec_dir)
+            writer.set_phase_status(spec_id, TaskPhase.PLANNING, "active")
+        except Exception:  # noqa: BLE001 - reporting must not break the build
+            _log.warning(
+                "[AgentService] could not open task_logs.json for %s; the build "
+                "will run but report no live progress",
+                task_id,
+                exc_info=True,
+            )
+            return None
+        self._task_current_phases.setdefault(task_id, TaskPhase.PLANNING)
+        self._task_log_writers[task_id] = (writer, writer)
+        return writer
 
     async def _kubejob_worker_ref(self, task_id: str) -> tuple[str, str] | None:
         """Read (namespace, job_name) from the build's durable worker_ref (#680).
@@ -487,7 +538,7 @@ class KubejobMixin:
                 _log.exception("[AgentService] kubejob reconcile tick failed")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         _log.info("[AgentService] kubejob reconcile loop stopped")
 
@@ -579,7 +630,9 @@ class KubejobMixin:
                         deadline_seconds,
                     )
                 except Exception:  # noqa: BLE001
-                    _log.exception("[AgentService] reap of abandoned task %s failed", task.id)
+                    _log.exception(
+                        "[AgentService] reap of abandoned task %s failed", task.id
+                    )
         return reaped
 
     async def _has_live_kubejob(self, task_id: str) -> bool:

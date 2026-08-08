@@ -46,8 +46,17 @@ PROJECT_ID = "proj-1"
 
 def _git(args: list[str], cwd: Path) -> None:
     # S603/S607: fixed literals in a test fixture, no shell, no external input.
+    # Both suppressions sit on the lines they apply to -- S603 on the call, S607
+    # on the argv. They used to share one collapsed line, and the #1179 reflow
+    # split it and carried the S607 down to `text=True`, where it suppressed
+    # nothing and became a RUF100 of its own. A trailing noqa is positional, so
+    # a formatter that moves the line moves the suppression off its violation.
     subprocess.run(  # noqa: S603
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True  # noqa: S607
+        ["git", *args],  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
     )
 
 
@@ -187,9 +196,7 @@ def test_resolve_conflicts_merges_the_pushed_work(
     project = kubejob_shape["project"]
     projects_file = kubejob_shape["data_dir"] / "projects.json"
 
-    with patch.object(
-        worktree_merge, "get_projects_file", return_value=projects_file
-    ):
+    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
         result = asyncio.run(
             worktree_merge.resolve_worktree_conflicts(
                 f"{PROJECT_ID}:{SPEC_ID}", _access={}

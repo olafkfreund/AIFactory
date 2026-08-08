@@ -37,7 +37,7 @@ import secrets
 import shutil
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .billing import classify_billing_mode
@@ -85,7 +85,6 @@ _WORKER_PROGRESS_WINDOW_S = 10.0
 _progress_last_emit: dict[str, float] = {}
 
 
-
 def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
     """Pool a spec's memory into the PROJECT store, so it compounds (#1038).
 
@@ -130,6 +129,7 @@ def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
         logger.warning("[completion] could not pool memory: %s", exc)
         return False
 
+
 def _progress_window_s() -> float:
     """The throttle window in seconds (env-overridable, defaults to ~10s)."""
     raw = os.environ.get("AIFACTORY_WORKER_PROGRESS_INTERVAL_S")
@@ -143,7 +143,7 @@ def _progress_window_s() -> float:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _ce_source() -> str:
