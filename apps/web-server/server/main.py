@@ -244,7 +244,7 @@ async def lifespan(app: FastAPI):
         app.state.outbox_relay_stop.set()
         try:
             await _asyncio.wait_for(app.state.outbox_relay_task, timeout=5.0)
-        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+        except (TimeoutError, _asyncio.CancelledError):
             app.state.outbox_relay_task.cancel()
     if app.state.stale_reaper_task is not None:
         app.state.stale_reaper_stop.set()
@@ -256,13 +256,13 @@ async def lifespan(app: FastAPI):
         app.state.intake_poller_stop.set()
         try:
             await _asyncio.wait_for(app.state.intake_poller_task, timeout=5.0)
-        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+        except (TimeoutError, _asyncio.CancelledError):
             app.state.intake_poller_task.cancel()
     if app.state.kubejob_reconcile_task is not None:
         app.state.kubejob_reconcile_stop.set()
         try:
             await _asyncio.wait_for(app.state.kubejob_reconcile_task, timeout=5.0)
-        except (_asyncio.TimeoutError, _asyncio.CancelledError):
+        except (TimeoutError, _asyncio.CancelledError):
             app.state.kubejob_reconcile_task.cancel()
 
 

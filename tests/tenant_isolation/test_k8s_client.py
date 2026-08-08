@@ -12,7 +12,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -103,7 +103,7 @@ async def test_get_namespace_status_returns_phase_and_timestamp(client):
     deletion_timestamp, get_namespace_status surfaces both."""
     ns = MagicMock()
     ns.status.phase = "Terminating"
-    ns.metadata.deletion_timestamp = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
+    ns.metadata.deletion_timestamp = datetime(2026, 5, 28, 12, 0, tzinfo=UTC)
 
     api = MagicMock()
     api.read_namespace = AsyncMock(return_value=ns)

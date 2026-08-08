@@ -1268,7 +1268,7 @@ class AgentService(
 
         try:
             await asyncio.wait_for(proc.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._signal_process_tree(proc, signal.SIGKILL)
             await proc.wait()
 

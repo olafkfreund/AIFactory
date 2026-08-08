@@ -15,7 +15,7 @@ The module is dependency-free (stdlib only), so it imports directly; conftest
 already puts ``apps/backend`` on ``sys.path``.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from qa.review_cycle import (
@@ -205,7 +205,7 @@ class TestUntouchedDetection:
 
     def test_aged_unstarted_request_is_untouched(self, spec_dir):
         request_review(spec_dir)
-        future = datetime.now(timezone.utc) + timedelta(seconds=301)
+        future = datetime.now(UTC) + timedelta(seconds=301)
         stalled = detect_untouched_review(spec_dir, timeout_seconds=300, now=future)
         assert stalled is not None
         assert stalled.state is CycleState.REQUESTED
@@ -213,7 +213,7 @@ class TestUntouchedDetection:
     def test_started_request_never_untouched(self, spec_dir):
         c1 = request_review(spec_dir)
         record_started(spec_dir, cycle_id=c1.cycle_id)
-        far_future = datetime.now(timezone.utc) + timedelta(hours=1)
+        far_future = datetime.now(UTC) + timedelta(hours=1)
         assert (
             detect_untouched_review(spec_dir, timeout_seconds=1, now=far_future) is None
         )
@@ -223,7 +223,7 @@ class TestUntouchedDetection:
 
     def test_redrive_emits_signal_for_stalled_review(self, spec_dir):
         c1 = request_review(spec_dir)
-        future = datetime.now(timezone.utc) + timedelta(seconds=301)
+        future = datetime.now(UTC) + timedelta(seconds=301)
         signal = redrive_untouched_review(spec_dir, timeout_seconds=300, now=future)
         assert signal is not None
         assert signal["action"] == "redrive_review"
@@ -234,7 +234,7 @@ class TestUntouchedDetection:
     def test_redrive_silent_when_started(self, spec_dir):
         c1 = request_review(spec_dir)
         record_started(spec_dir, cycle_id=c1.cycle_id)
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
         assert redrive_untouched_review(spec_dir, timeout_seconds=1, now=future) is None
 
 
@@ -268,7 +268,7 @@ class TestPersistence:
 class TestRedriveBookkeeping:
     def test_record_redrive_increments_and_stamps(self, spec_dir):
         c1 = request_review(spec_dir)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         updated = record_redrive(spec_dir, cycle_id=c1.cycle_id, at=now)
         assert updated.redrive_attempts == 1
         assert updated.last_redrive_at == now.isoformat()
@@ -288,14 +288,14 @@ class TestRedriveBookkeeping:
     def test_window_elapsed_uses_request_time_before_first_strike(self, spec_dir):
         request_review(spec_dir)
         cycle = load_cycle(spec_dir)
-        soon = datetime.now(timezone.utc) + timedelta(seconds=10)
-        later = datetime.now(timezone.utc) + timedelta(seconds=301)
+        soon = datetime.now(UTC) + timedelta(seconds=10)
+        later = datetime.now(UTC) + timedelta(seconds=301)
         assert cycle.redrive_window_elapsed(window_seconds=300, now=soon) is False
         assert cycle.redrive_window_elapsed(window_seconds=300, now=later) is True
 
     def test_window_elapsed_uses_last_redrive_after_strike(self, spec_dir):
         c1 = request_review(spec_dir)
-        strike_at = datetime.now(timezone.utc) + timedelta(seconds=400)
+        strike_at = datetime.now(UTC) + timedelta(seconds=400)
         record_redrive(spec_dir, cycle_id=c1.cycle_id, at=strike_at)
         cycle = load_cycle(spec_dir)
         # Just after the strike: window not yet elapsed from last_redrive_at.

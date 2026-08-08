@@ -453,7 +453,7 @@ async def poller_loop(
                 logger.info("intake poll: %s", counts)
             elif tick % heartbeat_every == 0:
                 logger.info("intake poll heartbeat (idle): %s", counts)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "intake poll exceeded %.0fs and was abandoned this tick — a "
                 "provider/network call likely hung; continuing to the next tick",
@@ -463,6 +463,6 @@ async def poller_loop(
             logger.exception("intake poll tick failed (best-effort)")
         try:
             await asyncio.wait_for(stop.wait(), timeout=poll_interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
     logger.info("intake poller stopped")

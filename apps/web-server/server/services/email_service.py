@@ -18,7 +18,7 @@ Usage::
 
 import base64
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -141,13 +141,13 @@ class EmailService:
 
     async def _refresh_token_if_needed(self, account: EmailAccount) -> str | None:
         """Return a valid access token, refreshing if near expiry."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check if token needs refresh
         if account.token_expiry is not None:
             expiry = account.token_expiry
             if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=timezone.utc)
+                expiry = expiry.replace(tzinfo=UTC)
             seconds_until_expiry = (expiry - now).total_seconds()
             if seconds_until_expiry > self.REFRESH_THRESHOLD_SECONDS:
                 return account.access_token
@@ -206,7 +206,7 @@ class EmailService:
         new_refresh_token = token_data.get("refresh_token", account.refresh_token)
         expires_in = token_data.get("expires_in", 3600)
 
-        new_expiry = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+        new_expiry = datetime.now(UTC).replace(microsecond=0) + timedelta(
             seconds=expires_in
         )
 
@@ -307,7 +307,7 @@ class EmailService:
         new_refresh_token = token_data.get("refresh_token", account.refresh_token)
         expires_in = token_data.get("expires_in", 3600)
 
-        new_expiry = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+        new_expiry = datetime.now(UTC).replace(microsecond=0) + timedelta(
             seconds=expires_in
         )
 

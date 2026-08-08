@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -126,7 +126,7 @@ async def issue_tenant_anchor_key(
     # Step 6: upsert tenant_audit_state.  All three core steps (generate,
     # wrap, persist) succeeded — now mark the chain as started.
     genesis_sentinel = f"GENESIS-T-{org_id}"
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     await _upsert_tenant_audit_state(db, org_id, genesis_sentinel, now)
 
     return True

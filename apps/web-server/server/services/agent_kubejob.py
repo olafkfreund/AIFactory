@@ -538,7 +538,7 @@ class KubejobMixin:
                 _log.exception("[AgentService] kubejob reconcile tick failed")
             try:
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         _log.info("[AgentService] kubejob reconcile loop stopped")
 

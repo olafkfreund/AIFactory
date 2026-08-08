@@ -203,8 +203,8 @@ class OllamaProvider(OllamaHTTPMixin, BaseLLMProvider):
                 asyncio.to_thread(self._http_post, url, payload),
                 timeout=float(self._timeout),
             )
-        except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(
+        except TimeoutError:
+            raise TimeoutError(
                 f"Ollama API request timed out after {self._timeout}s. "
                 "Increase timeout= or reduce prompt size."
             )
