@@ -127,7 +127,7 @@ def test_only_a_recognised_tier_reaches_the_log(tier: object, expected: str) -> 
     """reviewTier comes off disk, so interpolating it into a log record lets a
     crafted value forge log entries. Anything not matching the allow-list is
     reported as a constant instead of echoed."""
-    assert pe._describe_tier(tier) == expected  # type: ignore[arg-type]
+    assert pe._describe_tier(tier) == expected
 
 
 # ---------------------------------------------------------------------------
