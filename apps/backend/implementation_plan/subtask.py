@@ -8,7 +8,7 @@ and output capabilities.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from .enums import SubtaskStatus
@@ -74,10 +74,16 @@ class Subtask:
     expected_output: str | None = None  # Knowledge/decision output
     actual_output: str | None = None  # What was discovered
 
-    # Tracking
+    # Tracking. Both are aware-UTC ISO strings (#1195) — CFactory's live
+    # execution diagram subtracts one from the other for the per-node timer, so
+    # a naive local timestamp on one side and an aware UTC one on the other
+    # would silently produce a duration out by the UTC offset.
+    #
+    # There is deliberately no ``session_id`` here. It was written only by a
+    # ``start()`` that no engine ever called, and no reader for it exists in any
+    # of the six fleet repos, so it could only ever serialize as absent (#1195).
     started_at: str | None = None
     completed_at: str | None = None
-    session_id: int | None = None  # Which session completed this
 
     # Self-Critique
     critique_result: dict | None = None  # Results from self-critique before completion
@@ -117,8 +123,6 @@ class Subtask:
             result["started_at"] = self.started_at
         if self.completed_at:
             result["completed_at"] = self.completed_at
-        if self.session_id is not None:
-            result["session_id"] = self.session_id
         if self.critique_result:
             result["critique_result"] = self.critique_result
         return result
@@ -147,15 +151,22 @@ class Subtask:
             actual_output=data.get("actual_output"),
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
-            session_id=data.get("session_id"),
             critique_result=data.get("critique_result"),
         )
 
-    def start(self, session_id: int):
-        """Mark subtask as in progress."""
+    def start(self) -> None:
+        """Mark subtask as in progress and stamp ``started_at``.
+
+        Called by the wave engine's per-wave hook (#1195). Aware UTC, matching
+        ``complete()`` and ``apply_subtask_status_update`` — see the field
+        comment: the cockpit subtracts these two, so they must share a frame.
+
+        Idempotent on the timestamp: a re-entered subtask keeps its ORIGINAL
+        start, so a retry does not reset the clock the diagram is showing.
+        """
         self.status = SubtaskStatus.IN_PROGRESS
-        self.started_at = datetime.now().isoformat()
-        self.session_id = session_id
+        if not self.started_at:
+            self.started_at = datetime.now(UTC).isoformat()
         # Clear stale data from previous runs to ensure clean state
         self.completed_at = None
         self.actual_output = None
@@ -163,7 +174,7 @@ class Subtask:
     def complete(self, output: str | None = None):
         """Mark subtask as done."""
         self.status = SubtaskStatus.COMPLETED
-        self.completed_at = datetime.now().isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         if output:
             self.actual_output = output
 

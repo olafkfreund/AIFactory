@@ -31,13 +31,15 @@ one funnel that accepts a completion: :func:`record_subtask_completed` appends a
 marker when a subtask is allowed to complete. Everything after the last marker
 naming a *different* subtask is this subtask's own work.
 
-Why not the plan's ``started_at``: nothing writes it. ``Subtask.start()`` has no
-caller in either coding engine and ``apply_subtask_status_update`` never stamps
-it, so a ``started_at``-scoped window would fall back to build-wide on every
-real build. It would also be model-supplied — the coder is merely *asked* to
-mark a subtask ``in_progress`` — and a gate must not depend on the party it
-gates. The marker is written by the gate's own funnel, after it has decided, so
-a refused attempt never consumes the runs.
+Why not the plan's ``started_at``: on the serial path it is model-supplied. Both
+engines do populate it since #1195 (``apply_subtask_status_update`` stamps it
+alongside the status, and the wave engine stamps a whole wave from its
+``on_wave`` hook), so it is no longer *absent* — but the serial stamp only lands
+if the coder actually calls ``update_subtask_status`` with ``in_progress``, and
+the coder is merely *asked* to. A gate must not depend on the party it gates.
+The marker below is written by the gate's own funnel, after it has decided, so a
+refused attempt never consumes the runs. That reasoning is unchanged; only the
+"nothing writes it" half of it went away.
 
 Old evidence files carry no markers, so the whole file is the window and they
 read exactly as before: nothing already on disk is retroactively refused, and an

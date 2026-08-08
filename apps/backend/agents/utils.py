@@ -9,6 +9,7 @@ import json
 import logging
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
 
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
@@ -388,3 +389,69 @@ def record_subtask_completion(
     # already the source).
     sync_plan_to_source(target.parent, source_spec_dir)
     return True
+
+
+def record_subtask_started(
+    subtask_ids: Iterable[str], plan_path: Path, source_spec_dir: Path | None
+) -> int:
+    """Stamp ``started_at`` on a wave's subtasks in the canonical plan (#1195).
+
+    The wave engine's counterpart to :func:`record_subtask_completion`. Without
+    it the wave path never wrote ``started_at`` at all, so CFactory's live
+    execution diagram could not classify a running subtask as active
+    (``taskFlow.flowStatus``) and its per-node timer chip was always blank
+    (``nodeElapsedSeconds`` returns null with no start).
+
+    Batched per WAVE, not per subtask: a wave is by definition the set that
+    starts together, so one plan write per wave is both accurate and cheap.
+
+    Called from the parent's ``on_wave`` hook, which runs BEFORE the wave's
+    ``asyncio.gather`` and after the previous wave's completions have been
+    written — i.e. on the same single-threaded, parent-owned step as every
+    other canonical plan mutation (concurrency invariant #3), so it needs no
+    lock of its own.
+
+    Best-effort bookkeeping: returns the number of subtasks stamped, and never
+    raises. A build must not fail because a timestamp could not be recorded.
+
+    Returns:
+        How many subtasks were found and stamped (0 when the plan is missing).
+    """
+    # Lazy, exactly as record_subtask_completion above: agents.utils is imported
+    # by the plan package's own callers, so a top-level import here cycles.
+    from implementation_plan.plan import ImplementationPlan  # noqa: PLC0415
+
+    target = plan_path
+    if not target.exists() and source_spec_dir is not None:
+        fallback = source_spec_dir / "implementation_plan.json"
+        if fallback.exists():
+            target = fallback
+    if not target.exists():
+        logger.warning(
+            "record_subtask_started: no implementation_plan.json at %s (nor "
+            "source %s); start times for %s not recorded",
+            plan_path,
+            source_spec_dir,
+            list(subtask_ids),
+        )
+        return 0
+
+    wanted = set(subtask_ids)
+    if not wanted:
+        return 0
+
+    try:
+        plan = ImplementationPlan.load(target)
+        stamped = 0
+        for phase in plan.phases:
+            for subtask in phase.subtasks:
+                if subtask.id in wanted:
+                    subtask.start()
+                    stamped += 1
+        if stamped:
+            plan.save(target)
+            sync_plan_to_source(target.parent, source_spec_dir)
+        return stamped
+    except Exception as exc:  # noqa: BLE001 - bookkeeping must not fail a build
+        logger.warning("record_subtask_started: could not stamp start times: %s", exc)
+        return 0
