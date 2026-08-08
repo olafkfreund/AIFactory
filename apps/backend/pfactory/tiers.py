@@ -25,9 +25,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.request
 from enum import Enum
+
+from providers._ollama_http import resolve_ollama_base_url
 
 __all__ = [
     "PARALLEL_LABEL",
@@ -45,8 +46,6 @@ logger = logging.getLogger(__name__)
 
 # Model the low tier falls back to when no local Ollama is reachable.
 _HAIKU_FALLBACK = "haiku"
-# Default Ollama endpoint when neither env var is set.
-_DEFAULT_OLLAMA_URL = "http://localhost:11434"
 # Short timeout — the low tier must not block intake waiting on a dead Ollama.
 _PROBE_TIMEOUT_S = 1.5
 
@@ -179,16 +178,6 @@ def tier_for(classification: object, change_mode: str | None = None) -> Tier:
     return tier
 
 
-def _ollama_base_url() -> str:
-    """Resolve the Ollama base URL from env (``OLLAMA_BASE_URL`` then
-    ``OLLAMA_API_URL``), falling back to localhost."""
-    for var in ("OLLAMA_BASE_URL", "OLLAMA_API_URL"):
-        val = os.environ.get(var)
-        if val and val.strip():
-            return val.strip().rstrip("/")
-    return _DEFAULT_OLLAMA_URL
-
-
 def _probe_ollama_models(base_url: str) -> list[str]:
     """Return the list of model names from ``GET {base_url}/api/tags``.
 
@@ -225,7 +214,7 @@ def resolve_low_tier_model() -> str:
     provider. Otherwise returns ``"haiku"``. Defensive: never raises.
     """
     try:
-        models = _probe_ollama_models(_ollama_base_url())
+        models = _probe_ollama_models(resolve_ollama_base_url())
     except Exception as exc:  # noqa: BLE001 — belt-and-braces, never raise
         logger.debug("resolve_low_tier_model fell back to haiku: %s", exc)
         return _HAIKU_FALLBACK

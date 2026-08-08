@@ -57,7 +57,11 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from providers import BaseLLMProvider
-from providers._ollama_http import OllamaHTTPMixin
+from providers._ollama_http import (
+    OllamaHTTPMixin,
+    resolve_ollama_api_key,
+    resolve_ollama_base_url,
+)
 from providers.types import AssistantMessage, TextBlock
 
 logger = logging.getLogger(__name__)
@@ -66,7 +70,6 @@ logger = logging.getLogger(__name__)
 # Module-level defaults (overridable per-instance)
 # ---------------------------------------------------------------------------
 
-_DEFAULT_BASE_URL: str = "http://localhost:11434"
 _DEFAULT_MODEL: str = "llama3.2"
 _DEFAULT_TIMEOUT: int = 300  # seconds
 
@@ -108,9 +111,10 @@ class OllamaProvider(OllamaHTTPMixin, BaseLLMProvider):
     def __init__(
         self,
         model: str = _DEFAULT_MODEL,
-        base_url: str = _DEFAULT_BASE_URL,
+        base_url: str | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
         extra_options: dict[str, Any] | None = None,
+        api_key: str | None = None,
     ) -> None:
         self._model = model
         # Epic #35 #38 PR-1 — when LITELLM_GATEWAY_URL is set, all
@@ -119,7 +123,12 @@ class OllamaProvider(OllamaHTTPMixin, BaseLLMProvider):
         # when the env var is unset.
         from ._gateway import resolve_base_url
 
-        self._base_url = resolve_base_url(base_url).rstrip("/")
+        # #1099: env-resolved endpoint when the caller names none. An explicit
+        # argument still wins, and the gateway override still outranks both.
+        self._base_url = resolve_base_url(base_url or resolve_ollama_base_url()).rstrip(
+            "/"
+        )
+        self._api_key = api_key or resolve_ollama_api_key()
         self._timeout = timeout
         self._extra_options: dict[str, Any] = extra_options or {}
         # Default to 32K context for QA review of large codebases
