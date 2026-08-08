@@ -22,7 +22,7 @@ import logging
 import os
 import subprocess
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ class CopilotDispatchService:
             raise RuntimeError(
                 f"[copilot-dispatch] gh api PATCH failed: {result.stderr.strip()}"
             )
-        dispatched_at = datetime.now(timezone.utc).isoformat()
+        dispatched_at = datetime.now(UTC).isoformat()
         logger.info(
             "[copilot-dispatch] assigned issue #%d in %s to %s",
             issue_number,

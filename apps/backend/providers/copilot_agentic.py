@@ -204,15 +204,13 @@ class CopilotAgenticProvider(BaseLLMProvider):
                 proc.communicate(),
                 timeout=float(self._timeout),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if proc is not None:
                 try:
                     proc.kill()
                 except ProcessLookupError:
                     pass
-            raise asyncio.TimeoutError(
-                f"GitHub Copilot CLI timed out after {self._timeout}s."
-            )
+            raise TimeoutError(f"GitHub Copilot CLI timed out after {self._timeout}s.")
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()
         stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()

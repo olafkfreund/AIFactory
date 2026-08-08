@@ -37,7 +37,7 @@ import secrets
 import shutil
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .billing import classify_billing_mode
@@ -143,7 +143,7 @@ def _progress_window_s() -> float:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _ce_source() -> str:

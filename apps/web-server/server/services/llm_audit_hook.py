@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # The PII redactor lives in apps/backend/services. The web-server
@@ -302,7 +302,7 @@ async def write_llm_call_audit(
                 resource_type="llm",
                 resource_id=model,
                 details_json=json.dumps(details, default=str),
-                retention_until=datetime.now(timezone.utc).replace(tzinfo=None)
+                retention_until=datetime.now(UTC).replace(tzinfo=None)
                 + timedelta(days=_RETENTION_DAYS),
                 prev_hash=prev_hash_value,
                 # Per design §5 — LLM prompts/responses are
