@@ -48,6 +48,18 @@ from .file_timeline import (
 )
 from .git_utils import find_worktree, get_file_from_branch
 from .merge_pipeline import MergePipeline
+
+# RFC-0011 / RFC-0009 merge-gate decision. Exported so a consumer does not have
+# to reach into the submodule -- the absence of this export was part of why the
+# policy sat unwired (#1158).
+from .merge_policy import (
+    AUTO_MERGE,
+    HOLD_ASYNC,
+    HOLD_BLOCKING,
+    decide_merge,
+    deployment_block_reasons,
+    tier_permits_auto_merge,
+)
 from .models import MergeReport, MergeStats, TaskMergeRequest
 from .orchestrator import MergeOrchestrator
 from .prompts import (
@@ -70,6 +82,13 @@ from .types import (
 )
 
 __all__ = [
+    # Merge policy (RFC-0011 / RFC-0009 / RFC-0013)
+    "AUTO_MERGE",
+    "HOLD_ASYNC",
+    "HOLD_BLOCKING",
+    "decide_merge",
+    "deployment_block_reasons",
+    "tier_permits_auto_merge",
     # Types
     "ChangeType",
     "SemanticChange",

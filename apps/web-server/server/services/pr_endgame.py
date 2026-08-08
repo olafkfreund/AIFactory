@@ -104,6 +104,49 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
+def read_review_tier(spec_dir: Path | None) -> str | None:
+    """The RFC-0011 ``reviewTier`` a task was routed with, or None (#1158).
+
+    Written by ``intake.build_execution_block`` (low -> auto, medium -> async,
+    hard -> blocking) and carried into ``task_metadata.json`` by
+    ``trusted_plan._EXECUTION_TO_METADATA``. Until now nothing read it back --
+    it was contract surface that read as implemented.
+
+    None on any absence/unreadability, which the caller treats as "no opinion".
+    """
+    if spec_dir is None:
+        return None
+    try:
+        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    tier = meta.get("reviewTier") if isinstance(meta, dict) else None
+    return tier if isinstance(tier, str) and tier.strip() else None
+
+
+def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
+    """Whether this task's review tier permits auto-merge at all (#1158).
+
+    Delegates the tier policy to ``merge.merge_policy`` -- the RFC-0011 routing
+    table lives there and must not be re-implemented here. Lazy import: the
+    backend package is on sys.path only at runtime (same pattern as
+    ``conflict_service``), and a missing backend must not break the endgame, so
+    an import failure degrades to "no opinion" rather than blocking a merge the
+    operator asked for.
+    """
+    tier = read_review_tier(spec_dir)
+    if tier is None:
+        return True
+    try:
+        from merge.merge_policy import tier_permits_auto_merge  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - backend always present in prod
+        logger.warning(
+            "[pr-endgame] merge_policy unavailable; reviewTier=%s not applied", tier
+        )
+        return True
+    return tier_permits_auto_merge(tier)
+
+
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
 # (Claude/Ollama — no Copilot credits, gated on the engine's verdict since GitHub
 # forbids self-approving the PR we opened). "copilot" = GitHub Copilot's review.
@@ -849,6 +892,24 @@ async def run_pr_endgame(
             "provider": provider,
             "repo": repo,
         }
+
+    # RFC-0011 per-tier merge policy (#1158). `AIFACTORY_AUTO_MERGE` stays the
+    # master switch; the tier may only ever make it STRICTER, never looser --
+    # the same "may only tighten" rule merge_policy applies to its deployment
+    # overlay. So a `factory:hard` task (reviewTier=blocking) cannot auto-merge
+    # even with the flag on, while `factory:low` (auto) is unaffected.
+    #
+    # Narrowed here rather than at the call site because every route into the
+    # endgame passes through this function, and `spec_dir` -- which is where
+    # `task_metadata.json` lives -- is already a parameter.
+    if auto_merge and not tier_allows_auto_merge(spec_dir):
+        logger.info(
+            "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
+            "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
+            spec_id,
+            read_review_tier(spec_dir),
+        )
+        auto_merge = False
 
     parts = _split_repo(repo)
     if parts is None:
