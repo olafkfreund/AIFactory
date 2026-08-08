@@ -52,8 +52,11 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 # Bump when the signed-payload construction or required envelope fields change,
 # so an old signer and a new verifier don't silently disagree.
@@ -433,6 +436,255 @@ def verify_trusted_plan(
         approved_by=envelope.get("approved_by"),
         approval_timestamp=envelope.get("approval_timestamp"),
     )
+
+
+# =============================================================================
+# Baseline freshness (#1109)
+# =============================================================================
+#
+# The signature answers "did anyone edit the instructions". It cannot answer
+# "are the instructions still about this codebase". A contract carries the
+# commit its RepoMap was built from -- inside the signed bytes, so it is already
+# tamper-evident -- and nothing read it back: a plan approved against commit A
+# was built against commit B in silence, however far the repo had moved. The
+# signature still verifies, correctly; what changed is the world the plan was
+# reasoned about (the blast-radius file list, the RepoMap, the existing test
+# command, every subtask that named a file by path).
+#
+# Policy, via ``AIFACTORY_BASELINE_DRIFT``:
+#   blast-radius (default) - reject only when a file the plan intends to touch
+#                            changed since approval; warn on unrelated drift.
+#   reject                 - reject on any divergence from the baseline commit.
+#   warn                   - never reject; record the verdict and proceed.
+#   off                    - skip the check entirely.
+#
+# ``blast-radius`` is the default because a hard reject on any divergence would
+# break every legitimate plan that sat through one unrelated merge, while
+# "a file this plan is about moved under it" is exactly the case where the
+# human's approval no longer covers what will be built.
+
+_DRIFT_POLICY_ENV = "AIFACTORY_BASELINE_DRIFT"
+_DRIFT_POLICIES = frozenset({"blast-radius", "reject", "warn", "off"})
+_DEFAULT_DRIFT_POLICY = "blast-radius"
+
+# Verdicts. Only ``blast_radius_changed`` and ``drifted`` mean the tree moved.
+DRIFT_ABSENT = "absent"  # no baseline in the contract (greenfield / v1 plan)
+DRIFT_CURRENT = "current"  # HEAD is the approved commit
+DRIFT_UNKNOWN = "unknown"  # cannot resolve HEAD, or baseline commit not local
+DRIFT_DRIFTED = "drifted"  # tree moved, no blast-radius file touched
+DRIFT_BLAST_RADIUS = "blast_radius_changed"  # a planned file moved under us
+
+# Blast-radius files named inline in a rejection reason before it says "+N more".
+_MAX_REASON_FILES = 10
+
+
+@dataclass
+class BaselineDrift:
+    """How far the target repo has moved since the plan was approved."""
+
+    status: str
+    baseline_commit: str | None = None
+    head_commit: str | None = None
+    commits_ahead: int | None = None
+    changed_blast_radius_files: list[str] = field(default_factory=list)
+    detail: str | None = None
+
+    @property
+    def diverged(self) -> bool:
+        return self.status in (DRIFT_DRIFTED, DRIFT_BLAST_RADIUS)
+
+    def reason(self) -> str:
+        """One line naming both commits and the distance, for a 422 body."""
+        head = (self.head_commit or "?")[:12]
+        base = (self.baseline_commit or "?")[:12]
+        ahead = (
+            f"{self.commits_ahead} commit(s)"
+            if self.commits_ahead is not None
+            else "an unknown distance"
+        )
+        line = f"plan approved against {base}, repo HEAD is now {head} ({ahead} ahead)"
+        if self.changed_blast_radius_files:
+            shown = self.changed_blast_radius_files[:_MAX_REASON_FILES]
+            hidden = len(self.changed_blast_radius_files) - len(shown)
+            files = ", ".join(shown)
+            more = f" (+{hidden} more)" if hidden else ""
+            line += f"; blast-radius files changed since approval: {files}{more}"
+        return line
+
+    def to_provenance(self) -> dict[str, Any]:
+        """Serializable record for requirements.json provenance."""
+        record: dict[str, Any] = {"status": self.status}
+        if self.baseline_commit:
+            record["baseline_commit"] = self.baseline_commit
+        if self.head_commit:
+            record["head_commit"] = self.head_commit
+        if self.commits_ahead is not None:
+            record["commits_ahead"] = self.commits_ahead
+        if self.changed_blast_radius_files:
+            record["changed_blast_radius_files"] = self.changed_blast_radius_files
+        if self.detail:
+            record["detail"] = self.detail
+        return record
+
+
+def drift_policy(env: dict[str, str] | None = None) -> str:
+    """Resolve the configured policy, falling back to the default when unset.
+
+    An UNRECOGNISED value falls back to the default rather than silently
+    disabling the gate: a typo in a deployment env var must not turn a
+    supply-chain control off (Factory#431).
+    """
+    source = os.environ if env is None else env
+    raw = (source.get(_DRIFT_POLICY_ENV) or "").strip().lower()
+    return raw if raw in _DRIFT_POLICIES else _DEFAULT_DRIFT_POLICY
+
+
+def _plan_baseline_commit(plan: dict[str, Any]) -> str | None:
+    """The approved commit, from either copy the contract carries."""
+    for block, key in (
+        (plan.get("baseline"), "commit"),
+        (plan.get("provenance"), "baseline_commit"),
+    ):
+        if isinstance(block, dict):
+            value = block.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _blast_radius_files(plan: dict[str, Any]) -> list[str]:
+    baseline = plan.get("baseline")
+    if not isinstance(baseline, dict):
+        return []
+    blast = baseline.get("blast_radius")
+    if not isinstance(blast, dict):
+        return []
+    files = blast.get("files")
+    if not isinstance(files, list):
+        return []
+    return [f.strip() for f in files if isinstance(f, str) and f.strip()]
+
+
+def _git_subprocess_env() -> dict[str, str] | None:
+    """The worktree manager's scrubbed git env, or None if it is unavailable.
+
+    Reuses ``core.worktree._git_env`` rather than re-deriving the scrub list:
+    git exports GIT_DIR/GIT_INDEX_FILE/... into hook environments, and a child
+    git that re-resolves a relative GIT_INDEX_FILE against its own cwd wrecks an
+    unrelated repo (#819). Two copies of that list is how one of them goes
+    stale. Imported lazily because ``core`` is only on the path when the backend
+    package is importable, which the pure-verification callers do not require.
+    """
+    try:
+        from core.worktree import _git_env  # noqa: PLC0415 - see docstring
+    except ImportError:  # pragma: no cover - defensive; core may be unavailable
+        return None
+    env: dict[str, str] = _git_env()
+    return env
+
+
+def _git(repo: Path, *args: str) -> str | None:
+    """Run a read-only git command in ``repo``; None on any failure."""
+    git_bin = shutil.which("git")
+    if not git_bin:  # pragma: no cover - git is a hard dependency of the app
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, resolved binary
+            [git_bin, "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=_git_subprocess_env(),
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def check_baseline_drift(
+    plan: dict[str, Any], project_dir: Path | None
+) -> BaselineDrift:
+    """Compare the contract's approved commit with the target repo's HEAD.
+
+    Read-only: resolves HEAD, the distance, and the changed-file set. Never
+    fetches, never mutates the repo.
+
+    Returns ``DRIFT_UNKNOWN`` (never a rejection) when the answer cannot be
+    established — no project dir, not a git repo, or the approved commit is not
+    present locally (a shallow clone). A control that cannot see must say so,
+    not guess in either direction: guessing "current" hides the very drift this
+    gate exists to catch, and guessing "drifted" turns every shallow clone into
+    an outage.
+    """
+    baseline_commit = _plan_baseline_commit(plan)
+    if not baseline_commit:
+        return BaselineDrift(status=DRIFT_ABSENT)
+
+    if project_dir is None:
+        return BaselineDrift(
+            status=DRIFT_UNKNOWN,
+            baseline_commit=baseline_commit,
+            detail="no project directory to resolve HEAD against",
+        )
+
+    head = _git(Path(project_dir), "rev-parse", "HEAD")
+    if not head:
+        return BaselineDrift(
+            status=DRIFT_UNKNOWN,
+            baseline_commit=baseline_commit,
+            detail=f"could not resolve HEAD in {project_dir}",
+        )
+
+    # A short/long SHA mismatch is not drift, so compare resolved objects — but
+    # skip the extra process when the strings already match.
+    resolved = (
+        head
+        if head == baseline_commit
+        else _git(Path(project_dir), "rev-parse", f"{baseline_commit}^{{commit}}")
+    )
+    if not resolved:
+        return BaselineDrift(
+            status=DRIFT_UNKNOWN,
+            baseline_commit=baseline_commit,
+            head_commit=head,
+            detail=(
+                f"approved commit {baseline_commit[:12]} is not present in this "
+                "clone; cannot compare"
+            ),
+        )
+    if resolved == head:
+        return BaselineDrift(
+            status=DRIFT_CURRENT,
+            baseline_commit=baseline_commit,
+            head_commit=head,
+            commits_ahead=0,
+        )
+
+    ahead = _git(Path(project_dir), "rev-list", "--count", f"{resolved}..HEAD")
+    changed = _git(Path(project_dir), "diff", "--name-only", resolved, "HEAD")
+    changed_files = set((changed or "").splitlines())
+    overlap = sorted(changed_files & set(_blast_radius_files(plan)))
+
+    return BaselineDrift(
+        status=DRIFT_BLAST_RADIUS if overlap else DRIFT_DRIFTED,
+        baseline_commit=baseline_commit,
+        head_commit=head,
+        commits_ahead=int(ahead) if ahead and ahead.isdigit() else None,
+        changed_blast_radius_files=overlap,
+    )
+
+
+def baseline_drift_rejects(drift: BaselineDrift, policy: str | None = None) -> bool:
+    """Does this verdict fail the gate under the configured policy?"""
+    policy = policy or drift_policy()
+    if policy in ("off", "warn"):
+        return False
+    if policy == "reject":
+        return drift.diverged
+    return drift.status == DRIFT_BLAST_RADIUS  # blast-radius (default)
 
 
 # =============================================================================
