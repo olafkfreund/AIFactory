@@ -30,7 +30,6 @@ for _p in (str(_WS), str(_BACKEND)):
 from merge.merge_policy import tier_permits_auto_merge  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # The tier ceiling itself
 # ---------------------------------------------------------------------------
@@ -85,7 +84,7 @@ def test_missing_or_malformed_tier_reads_as_none(meta: object) -> None:
 
 
 def test_the_tier_comes_from_the_context_read_not_a_second_one(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """gather_pr_context already parses task_metadata.json for base_branch, so
     the tier rides that read. Keeping it there means this feature opens no
@@ -102,6 +101,8 @@ def test_the_tier_comes_from_the_context_read_not_a_second_one(
     )
 
     def _runner(argv: list[str], cwd: str | None = None) -> pe.CmdResult:
+        # cwd is part of the Runner protocol; asserted so it is not dead weight.
+        assert cwd is None or isinstance(cwd, str)
         if "rev-parse" in argv:
             return pe.CmdResult(0, f"aifactory/{spec_id}", "")
         return pe.CmdResult(1, "", "no")
