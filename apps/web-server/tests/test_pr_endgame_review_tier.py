@@ -31,16 +31,6 @@ from merge.merge_policy import tier_permits_auto_merge  # noqa: E402
 from server.services import pr_endgame as pe  # noqa: E402
 
 
-def _spec(tmp_path: Path, tier: object) -> Path:
-    spec = tmp_path / "spec"
-    spec.mkdir(parents=True, exist_ok=True)
-    meta: dict[str, object] = {"model": "sonnet"}
-    if tier is not None:
-        meta["reviewTier"] = tier
-    (spec / "task_metadata.json").write_text(json.dumps(meta))
-    return spec
-
-
 # ---------------------------------------------------------------------------
 # The tier ceiling itself
 # ---------------------------------------------------------------------------
@@ -69,42 +59,58 @@ def test_unreadable_tier_is_not_a_licence_to_merge() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Reading it off the task
+# Picking the tier out of already-parsed metadata
 # ---------------------------------------------------------------------------
 
 
-def test_reads_review_tier_from_task_metadata(tmp_path: Path) -> None:
-    assert pe.read_review_tier(_spec(tmp_path, "blocking")) == "blocking"
+def test_reads_review_tier_from_metadata() -> None:
+    assert pe.review_tier_of({"model": "opus", "reviewTier": "blocking"}) == "blocking"
 
 
-@pytest.mark.parametrize("bad", [None, 123, "", "  "])
-def test_missing_or_malformed_tier_reads_as_none(tmp_path: Path, bad: object) -> None:
-    assert pe.read_review_tier(_spec(tmp_path, bad)) is None
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {},
+        {"reviewTier": None},
+        {"reviewTier": 123},
+        {"reviewTier": ""},
+        {"reviewTier": "  "},
+        None,
+        "not a dict",
+        [],
+    ],
+)
+def test_missing_or_malformed_tier_reads_as_none(meta: object) -> None:
+    assert pe.review_tier_of(meta) is None
 
 
-def test_no_metadata_file_reads_as_none(tmp_path: Path) -> None:
-    assert pe.read_review_tier(tmp_path) is None
-    assert pe.read_review_tier(None) is None
+def test_the_tier_comes_from_the_context_read_not_a_second_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """gather_pr_context already parses task_metadata.json for base_branch, so
+    the tier rides that read. Keeping it there means this feature opens no
+    second filesystem path built from a request-supplied spec id."""
+    spec_id = "spec-1"
+    (tmp_path / ".aifactory" / "worktrees" / "tasks" / spec_id).mkdir(parents=True)
+    spec = tmp_path / ".aifactory" / "specs" / spec_id
+    spec.mkdir(parents=True)
+    (spec / "requirements.json").write_text(
+        json.dumps({"github_repo": "olafkfreund/AIFactory"})
+    )
+    (spec / "task_metadata.json").write_text(
+        json.dumps({"base_branch": "dev", "reviewTier": "blocking"})
+    )
 
+    def _runner(argv: list[str], cwd: str | None = None) -> pe.CmdResult:
+        if "rev-parse" in argv:
+            return pe.CmdResult(0, f"aifactory/{spec_id}", "")
+        return pe.CmdResult(1, "", "no")
 
-def test_corrupt_metadata_reads_as_none(tmp_path: Path) -> None:
-    spec = tmp_path / "spec"
-    spec.mkdir()
-    (spec / "task_metadata.json").write_text("{not json")
-    assert pe.read_review_tier(spec) is None
+    ctx = pe.gather_pr_context(tmp_path, spec, spec_id, runner=_runner)
 
-
-def test_a_traversing_spec_dir_name_is_refused(tmp_path: Path) -> None:
-    """The spec dir's NAME carries the request-supplied spec_id. A Path join
-    collapses traversal silently, so it is validated before it is joined."""
-    outside = tmp_path / "task_metadata.json"
-    outside.write_text(json.dumps({"reviewTier": "auto"}))
-    nested = tmp_path / "a" / "b"
-    nested.mkdir(parents=True)
-
-    # ".." would resolve to tmp_path and read the file planted above.
-    assert pe.read_task_metadata(nested.parent / "..") == {}
-    assert pe.read_review_tier(nested.parent / "..") is None
+    assert ctx is not None
+    assert ctx["base"] == "dev"
+    assert ctx["review_tier"] == "blocking"
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +142,11 @@ def test_only_a_recognised_tier_reaches_the_log(tier: object, expected: str) -> 
 
 
 async def _endgame(
-    spec_dir: Path, *, auto_merge: bool, monkeypatch: pytest.MonkeyPatch
+    tier: str | None,
+    tmp_path: Path,
+    *,
+    auto_merge: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> bool:
     """Run the endgame far enough to capture the auto_merge it settled on."""
     captured: dict[str, bool] = {}
@@ -163,9 +173,10 @@ async def _endgame(
     monkeypatch.setattr(pe, "_pr_title_body", _fake_title_body)
 
     await pe.run_pr_endgame(
-        spec_dir=spec_dir,
+        spec_dir=tmp_path,
+        review_tier=tier,
         spec_id="001-x",
-        worktree=spec_dir,
+        worktree=tmp_path,
         branch="aifactory/001-x",
         base="main",
         repo="owner/repo",
@@ -181,7 +192,7 @@ async def test_blocking_tier_withholds_auto_merge_despite_the_flag(
 ) -> None:
     """The #1158 regression: a factory:hard task auto-merged like any other."""
     assert (
-        await _endgame(_spec(tmp_path, "blocking"), auto_merge=True, monkeypatch=monkeypatch)
+        await _endgame("blocking", tmp_path, auto_merge=True, monkeypatch=monkeypatch)
         is False
     )
 
@@ -190,7 +201,7 @@ async def test_async_tier_withholds_auto_merge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert (
-        await _endgame(_spec(tmp_path, "async"), auto_merge=True, monkeypatch=monkeypatch)
+        await _endgame("async", tmp_path, auto_merge=True, monkeypatch=monkeypatch)
         is False
     )
 
@@ -199,7 +210,7 @@ async def test_auto_tier_is_unaffected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert (
-        await _endgame(_spec(tmp_path, "auto"), auto_merge=True, monkeypatch=monkeypatch)
+        await _endgame("auto", tmp_path, auto_merge=True, monkeypatch=monkeypatch)
         is True
     )
 
@@ -209,8 +220,7 @@ async def test_task_without_a_tier_is_unaffected(
 ) -> None:
     """No behaviour change for every task that predates the tier."""
     assert (
-        await _endgame(_spec(tmp_path, None), auto_merge=True, monkeypatch=monkeypatch)
-        is True
+        await _endgame(None, tmp_path, auto_merge=True, monkeypatch=monkeypatch) is True
     )
 
 
@@ -220,6 +230,6 @@ async def test_the_tier_can_only_tighten_never_widen(
     """AIFACTORY_AUTO_MERGE stays the master switch: an `auto` tier must NOT
     turn a merge on that the operator left off."""
     assert (
-        await _endgame(_spec(tmp_path, "auto"), auto_merge=False, monkeypatch=monkeypatch)
+        await _endgame("auto", tmp_path, auto_merge=False, monkeypatch=monkeypatch)
         is False
     )

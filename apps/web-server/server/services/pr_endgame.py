@@ -22,7 +22,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -30,7 +29,6 @@ from pathlib import Path
 from typing import Any
 
 from server.services.task_branch import resolve_task_branch
-from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
 
@@ -107,69 +105,53 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
-def read_task_metadata(spec_dir: Path | None) -> dict[str, Any]:
-    """A task's ``task_metadata.json`` as a dict, or ``{}``.
-
-    THE reader for that file in this module -- ``gather_pr_context`` used to
-    inline its own copy. One reader means one place where the path is built and
-    one place where a malformed file is tolerated.
-
-    The spec directory's own NAME is the untrusted part -- it carries the
-    request-supplied spec_id -- so it goes through ``safe_spec_component``
-    before the path is rebuilt from it. A ``Path`` join collapses traversal
-    silently, so the component must be validated BEFORE it is joined, and an
-    allow-list ``fullmatch`` is what makes that a barrier CodeQL recognises
-    rather than an ad-hoc containment check (see ``server.specpath``).
-
-    Never raises: an unreadable, non-object or badly-named spec dir is
-    indistinguishable from an absent one to every caller here, and none of them
-    may fail a build over it.
-    """
-    if spec_dir is None:
-        return {}
-    try:
-        safe_dir = spec_dir.parent / safe_spec_component(spec_dir.name, "spec_dir")
-        meta = json.loads((safe_dir / "task_metadata.json").read_text())
-    except (OSError, ValueError):
-        return {}
-    return meta if isinstance(meta, dict) else {}
-
-
-def read_review_tier(spec_dir: Path | None) -> str | None:
-    """The RFC-0011 ``reviewTier`` a task was routed with, or None (#1158).
+def review_tier_of(meta: object) -> str | None:
+    """The RFC-0011 ``reviewTier`` from an already-read task_metadata (#1158).
 
     Written by ``intake.build_execution_block`` (low -> auto, medium -> async,
     hard -> blocking) and carried into ``task_metadata.json`` by
     ``trusted_plan._EXECUTION_TO_METADATA``. Until now nothing read it back --
     it was contract surface that read as implemented.
 
-    None on any absence/unreadability, which the caller treats as "no opinion".
+    Takes the parsed metadata rather than a directory ON PURPOSE.
+    ``gather_pr_context`` already reads that file for ``base_branch``, so
+    threading the tier out of the same read means this feature opens no second
+    filesystem path built from a request-supplied spec id -- there is nothing
+    new for a traversal to get into.
+
+    None for anything that is not a non-blank string, which every caller treats
+    as "no opinion".
     """
-    tier = read_task_metadata(spec_dir).get("reviewTier")
+    if not isinstance(meta, dict):
+        return None
+    tier = meta.get("reviewTier")
     return tier if isinstance(tier, str) and tier.strip() else None
 
 
-# The only tier spellings that may ever reach a log line. A `fullmatch` against
-# a restrictive allow-list rather than a set membership test: the value comes
-# from a file on disk, and interpolating file content into a log record lets a
-# crafted value forge log entries (py/log-injection). The same note as in
-# `server.specpath` applies -- CodeQL recognises a restrictive fullmatch as a
-# sanitizer and does NOT recognise an ad-hoc containment check, so the set
-# version hardened the code without clearing the alert.
-_LOGGABLE_TIER_RE = re.compile(r"auto|async|blocking|low|medium|hard")
+# Maps a tier onto a LITERAL for the log line. reviewTier comes off disk, and
+# interpolating file content into a log record lets a crafted value forge log
+# entries (py/log-injection). Returning a constant from this table rather than
+# the input itself means nothing from the file ever reaches the log -- a
+# `fullmatch` guard would harden it but still return the tainted string, which
+# hardens the code without clearing the finding.
+_TIER_LOG_LABEL: dict[str, str] = {
+    "auto": "auto",
+    "async": "async",
+    "blocking": "blocking",
+    "low": "low",
+    "medium": "medium",
+    "hard": "hard",
+}
 
 
 def _describe_tier(tier: str | None) -> str:
-    """A tier rendered safe to log: itself if recognised, else a constant."""
+    """A constant describing the tier, safe to put in a log record."""
     if tier is None:
         return "none"
-    normalised = tier.strip().lower()
-    if _LOGGABLE_TIER_RE.fullmatch(normalised):
-        return normalised
-    return "unrecognised"
+    return _TIER_LOG_LABEL.get(tier.strip().lower(), "unrecognised")
 
 
-def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
+def tier_allows_auto_merge(tier: str | None) -> bool:
     """Whether this task's review tier permits auto-merge at all (#1158).
 
     Delegates the tier policy to ``merge.merge_policy`` -- the RFC-0011 routing
@@ -179,7 +161,6 @@ def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
     an import failure degrades to "no opinion" rather than blocking a merge the
     operator asked for.
     """
-    tier = read_review_tier(spec_dir)
     if tier is None:
         return True
     try:
@@ -815,8 +796,15 @@ def gather_pr_context(
     # spec whose requirements.json named the repo silently PR'd against main
     # even when the repo integrates via dev. It is also read BEFORE the branch
     # resolution below, which needs to know what this task's base actually is.
-    meta = read_task_metadata(spec_dir)
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
     base = meta.get("base_branch") or meta.get("baseBranch") or "main"
+    # RFC-0011 tier, out of the SAME read (#1158) — see review_tier_of.
+    review_tier = review_tier_of(meta)
 
     # On the kubejob path the build runs inside the k8s Job and pushes
     # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
@@ -879,6 +867,7 @@ def gather_pr_context(
         "base": base,
         "repo": bare,
         "provider": provider,
+        "review_tier": review_tier,
     }
 
 
@@ -892,6 +881,7 @@ async def run_pr_endgame(
     repo: str,
     provider: str = "github",
     auto_merge: bool = False,
+    review_tier: str | None = None,
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
     fix_fn: Callable[[list], bool] | None = None,
@@ -941,18 +931,20 @@ async def run_pr_endgame(
     # overlay. So a `factory:hard` task (reviewTier=blocking) cannot auto-merge
     # even with the flag on, while `factory:low` (auto) is unaffected.
     #
-    # Narrowed here rather than at the call site because every route into the
-    # endgame passes through this function, and `spec_dir` -- which is where
-    # `task_metadata.json` lives -- is already a parameter.
-    if auto_merge and not tier_allows_auto_merge(spec_dir):
-        # The tier is logged through a fixed vocabulary, never raw: it comes
-        # from a file on disk, and interpolating file content into a log line
-        # lets a crafted value forge log entries (py/log-injection).
+    # The decision is made here rather than at the call site because every route
+    # into the endgame passes through this function. The tier is READ by
+    # `gather_pr_context` (which already parses task_metadata.json for the base
+    # branch) and passed in, so this feature adds no second filesystem path
+    # built from a request-supplied spec id.
+    if auto_merge and not tier_allows_auto_merge(review_tier):
+        # A CONSTANT, never the raw value: reviewTier comes off disk, and
+        # interpolating file content into a log record lets a crafted value
+        # forge log entries (py/log-injection).
         logger.info(
             "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
             "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
             spec_id,
-            _describe_tier(read_review_tier(spec_dir)),
+            _describe_tier(review_tier),
         )
         auto_merge = False
 
