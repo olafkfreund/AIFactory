@@ -100,7 +100,9 @@ class _Recorder(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        chunk = json.dumps({"choices": [{"delta": {"content": "Two charges timed out."}}]})
+        chunk = json.dumps(
+            {"choices": [{"delta": {"content": "Two charges timed out."}}]}
+        )
         self.wfile.write(f"data: {chunk}\n\ndata: [DONE]\n\n".encode())
 
     def log_message(self, *_args) -> None:
