@@ -448,7 +448,34 @@ def _remove_worktree(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def base_count(base: str, counter, config: str, path: str) -> Counter[str]:
+@lru_cache(maxsize=2)
+def _rename_sources(base: str, staged: bool) -> dict[str, str]:
+    """New path -> its pre-rename path on *base*, for renames in this diff.
+
+    A moved file does not exist at its NEW path on base, so ``base_count`` reads
+    an empty baseline and scores every violation the file already carried as
+    net-new. That makes ANY move of a legacy file unmergeable no matter what the
+    move does to its content -- 0 -> 167 on a pure ``git mv`` (#1218) -- which
+    is a gate punishing the cleanup it exists to encourage.
+
+    Renames are what ``-M`` reports; ask git for them rather than guessing from
+    content similarity here.
+    """
+    scope = ["--cached"] if staged else [f"{base}...HEAD"]
+    out = _run(["git", "diff", *scope, "--name-status", "-M", "--diff-filter=R"])
+    pairs: dict[str, str] = {}
+    for line in out.splitlines():
+        # `R<similarity>\told\tnew`
+        status, _, paths = line.partition("\t")
+        old, _, new = paths.partition("\t")
+        if status.startswith("R") and old and new:
+            pairs[new] = old
+    return pairs
+
+
+def base_count(
+    base: str, counter, config: str, path: str, staged: bool = False
+) -> Counter[str]:
     """Violation counts for ``path`` as it exists on ``base`` (empty if new).
 
     ``counter`` is a callable ``(config, file_on_disk, repo_path) ->
@@ -466,7 +493,10 @@ def base_count(base: str, counter, config: str, path: str) -> Counter[str]:
             f"cannot create a base worktree at {base!r}; "
             "the ratchet cannot measure a baseline without one"
         )
-    candidate = Path(worktree) / path
+    # Content from the file's pre-rename path when this diff moved it; identity
+    # (the `path` passed to the counter) stays the HEAD path so both sides are
+    # judged under the same per-file-ignores.
+    candidate = Path(worktree) / _rename_sources(base, staged).get(path, path)
     if not candidate.is_file():
         # File did not exist on base -> new file, every code's base count is 0.
         return Counter()
@@ -592,7 +622,7 @@ def main() -> int:
     regressions: list[tuple[str, Counter[str], Counter[str]]] = []
     summary: Counter[str] = Counter()
     for path in files:
-        before = base_count(args.base, counter, args.config, path)
+        before = base_count(args.base, counter, args.config, path, staged=args.staged)
         # Head side: the file IS at its repo path, so the two coincide.
         after = counter(args.config, path, path)
         # Any code going up is a regression, EVEN IF the total fell (#1189).
