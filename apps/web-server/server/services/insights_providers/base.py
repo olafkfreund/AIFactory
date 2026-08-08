@@ -139,7 +139,7 @@ class ProviderStrategy(abc.ABC):
         # pass these positionally or by keyword; the argument count is the
         # contract's, not a choice made here.
         @functools.wraps(send_message)
-        async def _scrubbing_send_message(  # noqa: PLR0913, PLR0917
+        async def _scrubbing_send_message(  # noqa: PLR0913
             self: Any,
             project_path: Path,
             project_id: str,

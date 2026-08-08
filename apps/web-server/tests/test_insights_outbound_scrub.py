@@ -258,7 +258,7 @@ async def test_a_new_strategy_cannot_opt_out_of_the_scrub():
         # Signature is fixed by the ABC, hence the argument-count and
         # unused-argument waivers: a strategy that narrowed it would not be a
         # strategy.
-        async def send_message(  # noqa: PLR0913, PLR0917
+        async def send_message(  # noqa: PLR0913
             self,
             project_path,  # noqa: ARG002
             project_id,  # noqa: ARG002
