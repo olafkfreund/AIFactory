@@ -12,7 +12,7 @@ and are imported here.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -83,7 +83,7 @@ def _not_running_resource_usage() -> dict:
         "cpuPercent": 0.0,
         "memoryMb": 0.0,
         "memoryPercent": 0.0,
-        "sampledAt": datetime.now(timezone.utc).isoformat(),
+        "sampledAt": datetime.now(UTC).isoformat(),
     }
 
 
@@ -148,7 +148,7 @@ def _sample_process_resources(pid: int) -> dict:
             "cpuPercent": round(cpu_percent, 1),
             "memoryMb": round(memory_mb, 1),
             "memoryPercent": round(memory_percent, 2),
-            "sampledAt": datetime.now(timezone.utc).isoformat(),
+            "sampledAt": datetime.now(UTC).isoformat(),
         }
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         # PID gone or inaccessible between the running-check and the sample.

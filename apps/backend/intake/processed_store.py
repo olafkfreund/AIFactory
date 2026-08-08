@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -95,11 +95,9 @@ def _now() -> float:
 
 
 def _iso(ts: float | None = None) -> str:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(
-        ts if ts is not None else _now(), tz=timezone.utc
-    ).isoformat()
+    return datetime.fromtimestamp(ts if ts is not None else _now(), tz=UTC).isoformat()
 
 
 def mark_processed(  # noqa: PLR0913 — all keyword-only; a claim needs its coordinates

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -63,7 +63,7 @@ def dirs(tmp_path):
 
 def _aged(seconds: float) -> datetime:
     """A clock value ``seconds`` after now (to drive timeouts)."""
-    return datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return datetime.now(UTC) + timedelta(seconds=seconds)
 
 
 # =============================================================================

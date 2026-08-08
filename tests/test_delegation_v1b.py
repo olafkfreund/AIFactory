@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,7 +148,7 @@ async def test_tracker_promotes_to_in_review_when_copilot_pr_matches():
         "issueNumber": 42,
         "specId": "001-gh42-test",
         "status": "delegated",
-        "delegatedAt": datetime.now(timezone.utc).isoformat(),
+        "delegatedAt": datetime.now(UTC).isoformat(),
     }
     mock_provider = MagicMock()
     mock_provider.provider_type = "github"
@@ -194,7 +194,7 @@ async def test_tracker_promotes_to_in_review_when_copilot_pr_matches():
 
 @pytest.mark.asyncio
 async def test_tracker_declines_after_24h_with_no_match():
-    too_old = datetime.now(timezone.utc) - timedelta(hours=DECLINE_AFTER_HOURS + 1)
+    too_old = datetime.now(UTC) - timedelta(hours=DECLINE_AFTER_HOURS + 1)
     delegated_item = {
         "issueNumber": 42,
         "specId": "001-gh42-test",
@@ -228,7 +228,7 @@ async def test_tracker_declines_after_24h_with_no_match():
 
 @pytest.mark.asyncio
 async def test_tracker_keeps_pending_within_window():
-    just_now = datetime.now(timezone.utc).isoformat()
+    just_now = datetime.now(UTC).isoformat()
     delegated_item = {
         "issueNumber": 42,
         "specId": "001-gh42-test",

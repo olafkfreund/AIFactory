@@ -7,7 +7,7 @@ Tools for managing QA status and sign-off in implementation_plan.json.
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +113,7 @@ def create_qa_tools(
                 "qa_session": qa_session,
                 "issues_found": issues,
                 "tests_passed": tests_passed,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "ready_for_qa_revalidation": status == "fixes_applied",
             }
 
@@ -128,7 +128,7 @@ def create_qa_tools(
                 plan["planStatus"] = "review"
                 plan["reviewReason"] = "qa_issues"
 
-            plan["last_updated"] = datetime.now(timezone.utc).isoformat()
+            plan["last_updated"] = datetime.now(UTC).isoformat()
 
             with open(plan_file, "w") as f:
                 json.dump(plan, f, indent=2)

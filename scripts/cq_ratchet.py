@@ -65,7 +65,6 @@ from __future__ import annotations
 import argparse
 import atexit
 import fnmatch
-import json
 import os
 import re
 import shutil
@@ -84,6 +83,7 @@ from ratchet_helpers import (
     MYPY_TEST_RELAX,
     is_test_file,
     require_tool_ran,
+    ruff_findings,
     ruff_stdin_argv,
 )
 
@@ -213,7 +213,7 @@ def _ruff_count(
     # explicit binary (the pinned venv), so argv[0] is replaced. --no-fix is kept
     # from the previous invocation and matters MORE on stdin than it did on a
     # path: with `fix = true` ever set in the config, ruff writes the fixed
-    # source to stdout and the json parse below would read code as findings.
+    # source to stdout and `ruff_findings` below would read code as findings.
     argv = ruff_stdin_argv(config, repo_path)
     res = subprocess.run(  # noqa: S603
         [ruff, argv[1], "--no-fix", *argv[2:]],
@@ -222,48 +222,16 @@ def _ruff_count(
         check=False,
         input=Path(file_on_disk).read_text(),
     )
-    # The shared "did the tool actually run" rule (Factory#590). This used to be
-    # four lines restated here, and in the mypy counter below, and in both halves
-    # of the four sibling ratchets -- nine copies of one rule, which is why fixing
-    # it once cost five PRs (PFactory#455, TFactory#951). It now lives in the
-    # drift-gated canonical, so the next correction reaches every consumer.
-    require_tool_ran("ruff", res)
-    # ...and then: is what ruff WROTE a measurement (#1174)? require_tool_ran
-    # answers only "did ruff exit for its own reasons". Two ways a run that
-    # exited 0 or 1 still measured nothing, both ending the same way, because
-    # the honest verdict for both is "could not measure":
+    # The shared "is this run a measurement" rule, both halves. #1174 fixed the
+    # second half HERE because the canonical is byte-exact and cannot be edited
+    # from a service repo; Factory#648 lifted it into that canonical, so the
+    # local guard is deleted and this fork now asks one question once:
     #
-    #   * empty stdout. Measured on the pinned ruff: a clean run under
-    #     --output-format json prints `[]`, never nothing -- including for empty
-    #     stdin. Nothing therefore means ruff wrote no report, and the
-    #     `return Counter()` that used to sit here is the same
-    #     nothing-reads-as-clean defect Factory#590 closed one exit code over.
-    #   * unparseable stdout. --no-fix above is passed for exactly this case:
-    #     with `fix = true` in the config ruff writes the FIXED SOURCE to stdout
-    #     and exits 0, and the parse would then be reading Python as findings.
-    #
-    # The four sibling ratchets guard only the second, bare, and still return
-    # Counter() for the first. Factory#648 lifts both into the drift-gated
-    # ratchet_helpers.py canonical beside require_tool_ran; delete this when it
-    # lands. It cannot be fixed there from here -- that file is byte-exact.
-    if not res.stdout.strip():
-        sys.stderr.write(
-            "ratchet: ruff exited 0 having written no report -- a clean run prints "
-            "`[]`, so this is not a measurement. A gate cannot report clean on a "
-            "count it never obtained.\n"
-        )
-        sys.stderr.write(res.stderr)
-        raise SystemExit(2)
-    try:
-        items = json.loads(res.stdout)
-    except json.JSONDecodeError:
-        sys.stderr.write(
-            "ratchet: ruff wrote output that is not the JSON finding list "
-            "--output-format json promises; refusing to read it as zero violations.\n"
-        )
-        sys.stderr.write(res.stdout + res.stderr)
-        raise SystemExit(2) from None
-    return Counter(item["code"] for item in items)
+    #   * did ruff exit for its own reasons (Factory#590), and
+    #   * is what ruff WROTE a finding list (#1174, Factory#648) -- empty stdout
+    #     is not a clean run, the pinned ruff prints `[]`; unparseable stdout is
+    #     the `fix = true` case --no-fix above exists for.
+    return ruff_findings(res)
 
 
 # --------------------------------------------------------------------------- #
@@ -448,7 +416,34 @@ def _remove_worktree(path: str) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def base_count(base: str, counter, config: str, path: str) -> Counter[str]:
+@lru_cache(maxsize=2)
+def _rename_sources(base: str, staged: bool) -> dict[str, str]:
+    """New path -> its pre-rename path on *base*, for renames in this diff.
+
+    A moved file does not exist at its NEW path on base, so ``base_count`` reads
+    an empty baseline and scores every violation the file already carried as
+    net-new. That makes ANY move of a legacy file unmergeable no matter what the
+    move does to its content -- 0 -> 167 on a pure ``git mv`` (#1218) -- which
+    is a gate punishing the cleanup it exists to encourage.
+
+    Renames are what ``-M`` reports; ask git for them rather than guessing from
+    content similarity here.
+    """
+    scope = ["--cached"] if staged else [f"{base}...HEAD"]
+    out = _run(["git", "diff", *scope, "--name-status", "-M", "--diff-filter=R"])
+    pairs: dict[str, str] = {}
+    for line in out.splitlines():
+        # `R<similarity>\told\tnew`
+        status, _, paths = line.partition("\t")
+        old, _, new = paths.partition("\t")
+        if status.startswith("R") and old and new:
+            pairs[new] = old
+    return pairs
+
+
+def base_count(
+    base: str, counter, config: str, path: str, staged: bool = False
+) -> Counter[str]:
     """Violation counts for ``path`` as it exists on ``base`` (empty if new).
 
     ``counter`` is a callable ``(config, file_on_disk, repo_path) ->
@@ -466,7 +461,10 @@ def base_count(base: str, counter, config: str, path: str) -> Counter[str]:
             f"cannot create a base worktree at {base!r}; "
             "the ratchet cannot measure a baseline without one"
         )
-    candidate = Path(worktree) / path
+    # Content from the file's pre-rename path when this diff moved it; identity
+    # (the `path` passed to the counter) stays the HEAD path so both sides are
+    # judged under the same per-file-ignores.
+    candidate = Path(worktree) / _rename_sources(base, staged).get(path, path)
     if not candidate.is_file():
         # File did not exist on base -> new file, every code's base count is 0.
         return Counter()
@@ -592,7 +590,7 @@ def main() -> int:
     regressions: list[tuple[str, Counter[str], Counter[str]]] = []
     summary: Counter[str] = Counter()
     for path in files:
-        before = base_count(args.base, counter, args.config, path)
+        before = base_count(args.base, counter, args.config, path, staged=args.staged)
         # Head side: the file IS at its repo path, so the two coincide.
         after = counter(args.config, path, path)
         # Any code going up is a regression, EVEN IF the total fell (#1189).

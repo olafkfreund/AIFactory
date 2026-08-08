@@ -38,7 +38,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -128,7 +128,7 @@ async def push_access_review_evidence(
     Returns the ``s3://`` URI on success, or None on any failure (logged
     WARNING). ``today`` and ``upload`` are injected for testability.
     """
-    day = today or datetime.now(timezone.utc).date()
+    day = today or datetime.now(UTC).date()
     key = evidence_key(day)
     try:
         data = await build_ndjson(db)
