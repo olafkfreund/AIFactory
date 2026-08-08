@@ -113,8 +113,10 @@ async def _endgame(
         assert kwargs["base"] == "main"
         return 42
 
-    def _fake_request_review(owner: str, name: str, pr: int, **kwargs: object) -> bool:
-        return bool(owner and name and pr)
+    def _fake_request_review(
+        owner: str, name: str, pr: int, runner: object = None
+    ) -> bool:
+        return bool(owner and name and pr and runner)
 
     def _fake_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
         return (spec_id, str(spec_dir))
