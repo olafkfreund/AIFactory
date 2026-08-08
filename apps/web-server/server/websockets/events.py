@@ -135,7 +135,7 @@ async def events_websocket(websocket: WebSocket):
                 if data == "ping":
                     await websocket.send_text("pong")
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     await websocket.send_text(json.dumps({"type": "ping"}))
                 except Exception:

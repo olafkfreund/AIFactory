@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -296,7 +296,7 @@ def test_classification_tampering_invalidates_anchor(fresh_db):
             key = await svc.load_key_by_version(db, stored.key_version)
 
             # Recompute what the verifier would compute now (post-tamper).
-            day_end = datetime(2026, 5, 28, 0, 0, 0, tzinfo=timezone.utc)
+            day_end = datetime(2026, 5, 28, 0, 0, 0, tzinfo=UTC)
             recomputed_cls = await cron._classifications_hash_before(
                 db,
                 day_end,

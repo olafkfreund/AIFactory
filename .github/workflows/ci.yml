@@ -62,12 +62,14 @@ jobs:
       # ratchet gated it, and a ratchet gates CHANGED files, which is exactly
       # the coverage a bot commit or a --no-verify does not have.
       #
-      # scripts/ is deliberately still absent: the root and strict ruff configs
-      # disagree about its import blocks (#1211) and each one's autofix is the
-      # other's violation. It is gated by the cq-ratchet --paths and by
-      # `ruff format --check`, and joins this list when #1211 lands.
+      # scripts/ joined the list in #1211, which is what made it possible. The
+      # root config declared no `target-version`, so ruff inferred one old
+      # enough to call `tomllib` third-party while standards/ruff.toml
+      # (target-version = "py311") called it stdlib -- each config's autofix was
+      # the other's violation, and the directory that holds the RATCHET ITSELF
+      # could not be added here while that was true.
       - name: Ruff lint
-        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server tests
+        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server scripts tests
 
       # MinIO for the S3-workspaces integration tests (Epic #35 #40
       # half-B). Started as a regular ``docker run`` rather than a

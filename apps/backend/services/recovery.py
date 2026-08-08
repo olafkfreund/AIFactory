@@ -17,7 +17,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 
@@ -89,8 +89,8 @@ class RecoveryManager:
             "subtasks": {},
             "stuck_subtasks": [],
             "metadata": {
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             },
         }
         with open(self.attempt_history_file, "w", encoding="utf-8") as f:
@@ -104,8 +104,8 @@ class RecoveryManager:
             "commits": [],
             "last_good_commit": None,
             "metadata": {
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             },
         }
         with open(self.build_commits_file, "w", encoding="utf-8") as f:
@@ -121,7 +121,7 @@ class RecoveryManager:
                 return json.load(f)
 
     def _save_attempt_history(self, data: dict) -> None:
-        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
+        data["metadata"]["last_updated"] = datetime.now(UTC).isoformat()
         with open(self.attempt_history_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
@@ -135,7 +135,7 @@ class RecoveryManager:
                 return json.load(f)
 
     def _save_build_commits(self, data: dict) -> None:
-        data["metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
+        data["metadata"]["last_updated"] = datetime.now(UTC).isoformat()
         with open(self.build_commits_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
@@ -180,9 +180,7 @@ class RecoveryManager:
         subtask_data = history["subtasks"].get(subtask_id, {})
         attempts = subtask_data.get("attempts", [])
 
-        cutoff_time = datetime.now(timezone.utc) - timedelta(
-            seconds=ATTEMPT_WINDOW_SECONDS
-        )
+        cutoff_time = datetime.now(UTC) - timedelta(seconds=ATTEMPT_WINDOW_SECONDS)
         cutoff_time_naive = datetime.now() - timedelta(seconds=ATTEMPT_WINDOW_SECONDS)
 
         recent_count = 0
@@ -214,7 +212,7 @@ class RecoveryManager:
 
         attempt = {
             "session": session,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "approach": approach,
             "success": success,
             "error": error,
@@ -359,7 +357,7 @@ class RecoveryManager:
         commit_record = {
             "hash": commit_hash,
             "subtask_id": subtask_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         commits["commits"].append(commit_record)
@@ -387,7 +385,7 @@ class RecoveryManager:
         stuck_entry = {
             "subtask_id": subtask_id,
             "reason": reason,
-            "escalated_at": datetime.now(timezone.utc).isoformat(),
+            "escalated_at": datetime.now(UTC).isoformat(),
             "attempt_count": self.get_attempt_count(subtask_id),
         }
 

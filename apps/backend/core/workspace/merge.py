@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Workspace Management - Per-Spec Architecture
-=============================================
+Workspace Merge Operations
+==========================
 
-Handles workspace isolation through Git worktrees, where each spec
-gets its own isolated worktree in .aifactory/worktrees/tasks/{spec-name}/.
+The complex merge half of workspace management, for workspaces isolated as
+Git worktrees under .aifactory/worktrees/tasks/{spec-name}/.
 
-This module has been refactored for better maintainability:
-- Models and enums: workspace/models.py
-- Git utilities: workspace/git_utils.py
-- Setup functions: workspace/setup.py
-- Display functions: workspace/display.py
-- Finalization: workspace/finalization.py
-- Complex merge operations: remain here (workspace.py)
+Sibling modules in this package:
+- Models and enums: models.py
+- Git utilities: git_utils.py
+- Setup functions: setup.py
+- Display functions: display.py
+- Finalization: finalization.py
 
-Public API is exported via workspace/__init__.py for backward compatibility.
+This file used to sit BESIDE the package as core/workspace.py, where Python
+could never import it — a package always wins over a same-named module — so
+__init__.py loaded it by path under the name "workspace_module". It now lives
+inside the package and is reachable by its real name, core.workspace.merge.
+
+Public API is re-exported from __init__.py.
 """
 
 import subprocess
@@ -70,49 +74,50 @@ except ImportError:
 
 
 # Import merge system
-from core.workspace.display import (
+from merge import (
+    FileTimelineTracker,
+    MergeOrchestrator,
+)
+
+from .display import (
     print_conflict_info as _print_conflict_info,
 )
-from core.workspace.display import (
+from .display import (
     print_merge_success as _print_merge_success,
 )
-from core.workspace.display import (
+from .display import (
     show_build_summary,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     MAX_PARALLEL_AI_MERGES,
     _is_magestic_ai_file,
     get_existing_build_worktree,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     apply_path_mapping as _apply_path_mapping,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     detect_file_renames as _detect_file_renames,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     get_changed_files_from_branch as _get_changed_files_from_branch,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     get_file_content_from_ref as _get_file_content_from_ref,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     is_lock_file as _is_lock_file,
 )
-from core.workspace.git_utils import (
+from .git_utils import (
     validate_merged_syntax as _validate_merged_syntax,
 )
 
 # Import from refactored modules in core/workspace/
-from core.workspace.models import (
+from .models import (
     MergeLock,
     MergeLockError,
     ParallelMergeResult,
     ParallelMergeTask,
-)
-from merge import (
-    FileTimelineTracker,
-    MergeOrchestrator,
 )
 
 MODULE = "workspace"
@@ -962,31 +967,37 @@ def _resolve_git_conflicts_with_ai(
 
         elapsed = time.time() - start_time
 
-        # Process results
-        for result in parallel_results:
-            if result.success:
-                target_path = project_dir / result.file_path
+        # Process results. `merge_result`, not `result`: the summary dict built
+        # further down in this function is also called `result`, and one name for
+        # two types is what let the assignments below go unchecked.
+        for merge_result in parallel_results:
+            # `success` does not imply content in the type, and a success with no
+            # content used to reach write_text(None) and raise. Report it as the
+            # unresolved conflict it is.
+            if merge_result.success and merge_result.merged_content is not None:
+                target_path = project_dir / merge_result.file_path
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(result.merged_content, encoding="utf-8")
+                target_path.write_text(merge_result.merged_content, encoding="utf-8")
                 subprocess.run(
-                    ["git", "add", result.file_path],
+                    ["git", "add", merge_result.file_path],
                     cwd=project_dir,
                     capture_output=True,
                 )
-                resolved_files.append(result.file_path)
+                resolved_files.append(merge_result.file_path)
 
-                if result.was_auto_merged:
+                if merge_result.was_auto_merged:
                     auto_merged_count += 1
-                    print(success(f"    ✓ {result.file_path} (git auto-merged)"))
+                    print(success(f"    ✓ {merge_result.file_path} (git auto-merged)"))
                 else:
                     ai_merged_count += 1
-                    print(success(f"    ✓ {result.file_path} (AI merged)"))
+                    print(success(f"    ✓ {merge_result.file_path} (AI merged)"))
             else:
-                print(error(f"    ✗ {result.file_path}: {result.error}"))
+                print(error(f"    ✗ {merge_result.file_path}: {merge_result.error}"))
                 remaining_conflicts.append(
                     {
-                        "file": result.file_path,
-                        "reason": result.error or "AI could not resolve the conflict",
+                        "file": merge_result.file_path,
+                        "reason": merge_result.error
+                        or "AI could not resolve the conflict",
                         "severity": "high",
                     }
                 )
@@ -1082,30 +1093,31 @@ def _resolve_git_conflicts_with_ai(
 
         elapsed = time.time() - start_time
 
-        for result in path_mapped_results:
-            if result.success:
-                target_path = project_dir / result.file_path
+        for merge_result in path_mapped_results:
+            if merge_result.success and merge_result.merged_content is not None:
+                target_path = project_dir / merge_result.file_path
                 target_path.parent.mkdir(parents=True, exist_ok=True)
-                target_path.write_text(result.merged_content, encoding="utf-8")
+                target_path.write_text(merge_result.merged_content, encoding="utf-8")
                 subprocess.run(
-                    ["git", "add", result.file_path],
+                    ["git", "add", merge_result.file_path],
                     cwd=project_dir,
                     capture_output=True,
                 )
-                resolved_files.append(result.file_path)
+                resolved_files.append(merge_result.file_path)
 
-                if result.was_auto_merged:
+                if merge_result.was_auto_merged:
                     auto_merged_count += 1
-                    print(success(f"    ✓ {result.file_path} (auto-merged)"))
+                    print(success(f"    ✓ {merge_result.file_path} (auto-merged)"))
                 else:
                     ai_merged_count += 1
-                    print(success(f"    ✓ {result.file_path} (AI merged)"))
+                    print(success(f"    ✓ {merge_result.file_path} (AI merged)"))
             else:
-                print(error(f"    ✗ {result.file_path}: {result.error}"))
+                print(error(f"    ✗ {merge_result.file_path}: {merge_result.error}"))
                 remaining_conflicts.append(
                     {
-                        "file": result.file_path,
-                        "reason": result.error or "AI could not merge path-mapped file",
+                        "file": merge_result.file_path,
+                        "reason": merge_result.error
+                        or "AI could not merge path-mapped file",
                         "severity": "high",
                     }
                 )
@@ -1549,7 +1561,10 @@ async def _run_parallel_merges(
     # Process results, converting exceptions to error results
     final_results: list[ParallelMergeResult] = []
     for i, result in enumerate(results):
-        if isinstance(result, Exception):
+        # BaseException, not Exception: `return_exceptions=True` also hands back
+        # CancelledError and KeyboardInterrupt, which the Exception check let
+        # through into a list typed as merge results.
+        if isinstance(result, BaseException):
             final_results.append(
                 ParallelMergeResult(
                     file_path=tasks[i].file_path,
