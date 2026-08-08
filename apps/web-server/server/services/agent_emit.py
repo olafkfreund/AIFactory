@@ -417,145 +417,179 @@ class EmitMixin:
                     )
 
             line = line_bytes.decode("utf-8", errors="replace").rstrip()
-
-            # Log stderr to server logs for debugging
-            if is_stderr and line:
-                logger.warning(f"[AgentService] Task {task_id} stderr: {line}")
-                # Also mirror stderr to a per-spec file so post-mortem
-                # debugging works even when the subprocess dies before
-                # writing its own task_logs.json (#146).
-                stderr_file = self._spec_stderr_logs.get(task_id)
-                if stderr_file is not None:
-                    try:
-                        with stderr_file.open("a", encoding="utf-8") as fh:
-                            fh.write(line + "\n")
-                    except OSError:
-                        pass
-
-            # Create log entry
-            log = TaskLog(
-                task_id=task_id,
-                content=line,
-                source="stderr" if is_stderr else "stdout",
-                level="error" if is_stderr else "info",
+            current_phase = await self._handle_output_line(
+                task_id,
+                line,
+                current_phase=current_phase,
+                is_stderr=is_stderr,
+                log_writer=log_writer,
+                spec_id=spec_id,
             )
-            await self._emit_log(log)
 
-            # Detect rate limit messages to trigger failover after exit
-            if self._is_rate_limit_line(line):
-                self._task_rate_limits[task_id] = True
-                logger.warning(
-                    f"[AgentService] Rate limit detected for task {task_id} (will attempt failover if enabled)"
-                )
+        return current_phase
 
-            # Write to task_logs.json for detailed phase logs
-            if log_writer and spec_id and not is_stderr:
-                log_writer.process_line(spec_id, current_phase, line)
+    async def _handle_output_line(  # noqa: PLR0913 - one line needs all its context
+        self,
+        task_id: str,
+        line: str,
+        *,
+        current_phase: TaskPhase,
+        is_stderr: bool = False,
+        log_writer: TaskLogWriter | None = None,
+        spec_id: str | None = None,
+    ) -> TaskPhase:
+        """Everything the control plane does with ONE line of agent output.
 
-            # Check for phase events (__EXEC_PHASE__: or [PHASE_EVENT])
-            event = self._parse_phase_event(line)
-            if event:
-                phase_str = event.get("phase", "")
-                phase_map = {
-                    "spec_creation": TaskPhase.SPEC_CREATION,
-                    "planning": TaskPhase.PLANNING,
-                    "coding": TaskPhase.CODING,
-                    "qa_review": TaskPhase.QA_REVIEW,
-                    "qa_fixing": TaskPhase.QA_FIXING,
-                    "complete": TaskPhase.COMPLETED,  # backend uses "complete"
-                    "completed": TaskPhase.COMPLETED,
-                    "failed": TaskPhase.FAILED,
-                }
-                old_phase = current_phase
-                if phase_str in phase_map:
-                    current_phase = phase_map[phase_str]
+        Lifted verbatim out of ``_process_output``'s loop (#1110) so the k8s-Job
+        build backend can drive the SAME handling from its streamed pod logs.
+        The in-pod path reads an ``asyncio.StreamReader``; the Job path receives
+        lines from ``KubeJobLogStreamer``. Only the transport differs — phase
+        detection, ``task_logs.json`` writes and progress emission must not, or
+        the two backends report a running build differently, which is what
+        #1110 is.
 
-                    # Track current phase for proper status on task completion
-                    self._task_current_phases[task_id] = current_phase
+        Returns the phase after this line.
+        """
+        import logging
 
-                    # Update log writer phase status
-                    if log_writer and spec_id:
-                        if old_phase != current_phase:
-                            log_writer.set_phase_status(spec_id, old_phase, "completed")
-                        # For COMPLETED/FAILED phases, don't set them as "active" - just mark previous complete
-                        if current_phase not in (TaskPhase.COMPLETED, TaskPhase.FAILED):
+        logger = logging.getLogger(__name__)
+
+        # Log stderr to server logs for debugging
+        if is_stderr and line:
+            logger.warning(f"[AgentService] Task {task_id} stderr: {line}")
+            # Also mirror stderr to a per-spec file so post-mortem
+            # debugging works even when the subprocess dies before
+            # writing its own task_logs.json (#146).
+            stderr_file = self._spec_stderr_logs.get(task_id)
+            if stderr_file is not None:
+                try:
+                    with stderr_file.open("a", encoding="utf-8") as fh:
+                        fh.write(line + "\n")
+                except OSError:
+                    pass
+
+        # Create log entry
+        log = TaskLog(
+            task_id=task_id,
+            content=line,
+            source="stderr" if is_stderr else "stdout",
+            level="error" if is_stderr else "info",
+        )
+        await self._emit_log(log)
+
+        # Detect rate limit messages to trigger failover after exit
+        if self._is_rate_limit_line(line):
+            self._task_rate_limits[task_id] = True
+            logger.warning(
+                f"[AgentService] Rate limit detected for task {task_id} (will attempt failover if enabled)"
+            )
+
+        # Write to task_logs.json for detailed phase logs
+        if log_writer and spec_id and not is_stderr:
+            log_writer.process_line(spec_id, current_phase, line)
+
+        # Check for phase events (__EXEC_PHASE__: or [PHASE_EVENT])
+        event = self._parse_phase_event(line)
+        if event:
+            phase_str = event.get("phase", "")
+            phase_map = {
+                "spec_creation": TaskPhase.SPEC_CREATION,
+                "planning": TaskPhase.PLANNING,
+                "coding": TaskPhase.CODING,
+                "qa_review": TaskPhase.QA_REVIEW,
+                "qa_fixing": TaskPhase.QA_FIXING,
+                "complete": TaskPhase.COMPLETED,  # backend uses "complete"
+                "completed": TaskPhase.COMPLETED,
+                "failed": TaskPhase.FAILED,
+            }
+            old_phase = current_phase
+            if phase_str in phase_map:
+                current_phase = phase_map[phase_str]
+
+                # Track current phase for proper status on task completion
+                self._task_current_phases[task_id] = current_phase
+
+                # Update log writer phase status
+                if log_writer and spec_id:
+                    if old_phase != current_phase:
+                        log_writer.set_phase_status(spec_id, old_phase, "completed")
+                    # For COMPLETED/FAILED phases, don't set them as "active" - just mark previous complete
+                    if current_phase not in (TaskPhase.COMPLETED, TaskPhase.FAILED):
+                        log_writer.set_phase_status(spec_id, current_phase, "active")
+                    # Ensure validation phase is properly marked completed when task completes
+                    if current_phase == TaskPhase.COMPLETED and old_phase in (
+                        TaskPhase.QA_REVIEW,
+                        TaskPhase.QA_FIXING,
+                    ):
+                        log_writer.set_phase_status(spec_id, old_phase, "completed")
+
+            # Always emit progress for phase events (even if phase didn't change)
+            progress = TaskProgress(
+                task_id=task_id,
+                phase=current_phase,
+                message=event.get("message", ""),
+                subtask=event.get("subtask"),
+                subtask_index=int(event["subtask_index"])
+                if "subtask_index" in event
+                else None,
+                subtask_total=int(event["subtask_total"])
+                if "subtask_total" in event
+                else None,
+                percentage=event.get("percentage"),  # Include percentage from event
+                data=event,
+            )
+            # Pass previous phase if it changed, so status event can be emitted
+            await self._emit_progress(
+                progress,
+                previous_phase=old_phase if old_phase != current_phase else None,
+            )
+
+        # Check for JSON progress data
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+                if "phase" in data or "status" in data:
+                    phase_str = data.get("phase", data.get("status", ""))
+                    if phase_str in [
+                        "coding",
+                        "planning",
+                        "qa_review",
+                        "qa_fixing",
+                    ]:
+                        old_phase = current_phase
+                        current_phase = TaskPhase(phase_str)
+
+                        # Track current phase for proper status on task completion
+                        self._task_current_phases[task_id] = current_phase
+
+                        # Update log writer phase status
+                        if log_writer and spec_id:
+                            if old_phase != current_phase:
+                                log_writer.set_phase_status(
+                                    spec_id, old_phase, "completed"
+                                )
                             log_writer.set_phase_status(
                                 spec_id, current_phase, "active"
                             )
-                        # Ensure validation phase is properly marked completed when task completes
-                        if current_phase == TaskPhase.COMPLETED and old_phase in (
-                            TaskPhase.QA_REVIEW,
-                            TaskPhase.QA_FIXING,
-                        ):
-                            log_writer.set_phase_status(spec_id, old_phase, "completed")
 
-                # Always emit progress for phase events (even if phase didn't change)
-                progress = TaskProgress(
-                    task_id=task_id,
-                    phase=current_phase,
-                    message=event.get("message", ""),
-                    subtask=event.get("subtask"),
-                    subtask_index=int(event["subtask_index"])
-                    if "subtask_index" in event
-                    else None,
-                    subtask_total=int(event["subtask_total"])
-                    if "subtask_total" in event
-                    else None,
-                    percentage=event.get("percentage"),  # Include percentage from event
-                    data=event,
-                )
-                # Pass previous phase if it changed, so status event can be emitted
-                await self._emit_progress(
-                    progress,
-                    previous_phase=old_phase if old_phase != current_phase else None,
-                )
-
-            # Check for JSON progress data
-            if line.startswith("{"):
-                try:
-                    data = json.loads(line)
-                    if "phase" in data or "status" in data:
-                        phase_str = data.get("phase", data.get("status", ""))
-                        if phase_str in [
-                            "coding",
-                            "planning",
-                            "qa_review",
-                            "qa_fixing",
-                        ]:
-                            old_phase = current_phase
-                            current_phase = TaskPhase(phase_str)
-
-                            # Track current phase for proper status on task completion
-                            self._task_current_phases[task_id] = current_phase
-
-                            # Update log writer phase status
-                            if log_writer and spec_id:
-                                if old_phase != current_phase:
-                                    log_writer.set_phase_status(
-                                        spec_id, old_phase, "completed"
-                                    )
-                                log_writer.set_phase_status(
-                                    spec_id, current_phase, "active"
-                                )
-
-                        progress = TaskProgress(
-                            task_id=task_id,
-                            phase=current_phase,
-                            message=data.get("message", ""),
-                            subtask=data.get("subtask"),
-                            subtask_index=data.get("subtask_index"),
-                            subtask_total=data.get("subtask_total"),
-                            percentage=data.get("percentage"),
-                            data=data,
-                        )
-                        # Pass previous phase if it changed, so status event can be emitted
-                        await self._emit_progress(
-                            progress,
-                            previous_phase=old_phase
-                            if old_phase != current_phase
-                            else None,
-                        )
-                except json.JSONDecodeError:
-                    pass
+                    progress = TaskProgress(
+                        task_id=task_id,
+                        phase=current_phase,
+                        message=data.get("message", ""),
+                        subtask=data.get("subtask"),
+                        subtask_index=data.get("subtask_index"),
+                        subtask_total=data.get("subtask_total"),
+                        percentage=data.get("percentage"),
+                        data=data,
+                    )
+                    # Pass previous phase if it changed, so status event can be emitted
+                    await self._emit_progress(
+                        progress,
+                        previous_phase=old_phase
+                        if old_phase != current_phase
+                        else None,
+                    )
+            except json.JSONDecodeError:
+                pass
 
         return current_phase
