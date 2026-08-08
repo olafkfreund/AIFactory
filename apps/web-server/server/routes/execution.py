@@ -9,6 +9,7 @@ import logging
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -35,6 +36,7 @@ from qa.correction import apply_correction  # noqa: E402 — needs sys.path abov
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     DRIFT_ABSENT,
     DRIFT_UNKNOWN,
+    BaselineDrift,
     baseline_drift_rejects,
     check_baseline_drift,
     ingest_trusted_plan,
@@ -1163,6 +1165,46 @@ async def create_and_run_task(
     }
 
 
+def _gate_baseline_drift(plan: dict[str, Any], project_path: Path) -> BaselineDrift:
+    """Reject a plan approved against a stale baseline; warn otherwise (#1109).
+
+    A free function rather than inline in ``create_from_trusted_plan`` so the
+    route keeps its branch budget — the handler is already at the strict-ruff
+    PLR0912 ceiling, and a supply-chain gate is not the thing to cram in.
+    """
+    drift = check_baseline_drift(plan, project_path)
+    if baseline_drift_rejects(drift):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — approved against a stale baseline",
+                "reasons": [drift.reason()],
+                "baseline_drift": drift.to_provenance(),
+            },
+        )
+    if drift.diverged or drift.status == DRIFT_UNKNOWN:
+        logging.getLogger(__name__).warning(
+            "[trusted-plan] baseline %s: %s", drift.status, drift.reason()
+        )
+    return drift
+
+
+def _stamp_baseline_drift(requirements: dict[str, Any], drift: BaselineDrift) -> None:
+    """Record the baseline verdict on the spec's provenance (#1109).
+
+    Written even when it did not reject: a build that ran against a drifted (or
+    unverifiable) baseline has to say so on its own record — "we proceeded" is a
+    decision, and an auditor should not have to reconstruct it from a log line.
+    A contract with no baseline (greenfield / v1) records nothing.
+    """
+    if drift.status == DRIFT_ABSENT:
+        return
+    existing = requirements.get("provenance")
+    prov: dict[str, object] = existing if isinstance(existing, dict) else {}
+    prov["baseline_drift"] = drift.to_provenance()
+    requirements["provenance"] = prov
+
+
 @router.post("/from-plan")
 async def create_from_trusted_plan(
     project_id: str,
@@ -1218,20 +1260,7 @@ async def create_from_trusted_plan(
     # against commit B in silence. Gated here, before allocation, for the same
     # reason as the verdict above (#1108): a rejected plan must not leave an
     # orphan spec dir or advance the counter.
-    drift = check_baseline_drift(request.plan, project_path)
-    if baseline_drift_rejects(drift):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "Plan rejected — approved against a stale baseline",
-                "reasons": [drift.reason()],
-                "baseline_drift": drift.to_provenance(),
-            },
-        )
-    if drift.diverged or drift.status == DRIFT_UNKNOWN:
-        logging.getLogger(__name__).warning(
-            "[trusted-plan] baseline %s: %s", drift.status, drift.reason()
-        )
+    drift = _gate_baseline_drift(request.plan, project_path)
 
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -1266,11 +1295,7 @@ async def create_from_trusted_plan(
     # that ran against a drifted (or unverifiable) baseline has to say so on its
     # own provenance — "we proceeded" is a decision, and an auditor reading this
     # spec afterwards should not have to reconstruct it from a log line.
-    if drift.status != DRIFT_ABSENT:
-        existing = requirements.get("provenance")
-        drift_prov: dict[str, object] = existing if isinstance(existing, dict) else {}
-        drift_prov["baseline_drift"] = drift.to_provenance()
-        requirements["provenance"] = drift_prov
+    _stamp_baseline_drift(requirements, drift)
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Install the plan. ingest re-runs the same gate — kept as the authoritative
