@@ -103,6 +103,7 @@ from .task_service import (  # noqa: F401
     map_backend_status_to_frontend,
     overlay_durable_status,
     project_repo,
+    reject_if_plan_unreadable,
     spec_to_task,
     sync_worktree_to_main_spec,
     task_to_dict,
@@ -414,7 +415,12 @@ async def update_task_status(
         )
 
     # Sync from worktree first to get latest progress
-    plan, plan_file = get_plan_with_worktree_sync(project_path, spec_id)
+    plan, plan_file, plan_error = get_plan_with_worktree_sync(project_path, spec_id)
+
+    # #1081: refuse BEFORE the guard and the write. The empty dict a failed read
+    # returns makes validate_done_status vacuous and turns the write below into
+    # a truncation of the whole plan.
+    reject_if_plan_unreadable(plan_file, plan_error)
 
     # Validate "done" status - ensure all subtasks are completed
     # Skip validation when force=True (e.g., after successful merge)
@@ -533,7 +539,11 @@ async def update_task(
     # Update status in implementation_plan.json
     if update.status:
         # Sync from worktree first to get latest progress
-        plan, plan_file = get_plan_with_worktree_sync(project_path, spec_id)
+        plan, plan_file, plan_error = get_plan_with_worktree_sync(project_path, spec_id)
+
+        # #1081: same refusal as update_task_status — this caller carried a
+        # byte-identical write.
+        reject_if_plan_unreadable(plan_file, plan_error)
 
         # Validate "done" status - ensure all subtasks are completed
         if update.status == "done":
