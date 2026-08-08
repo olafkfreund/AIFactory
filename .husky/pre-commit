@@ -124,6 +124,45 @@ if git diff --cached --name-only | grep -q "^apps/backend/.*\.py$"; then
       exit 1
     fi
 
+    # A pin is only a pin if the tool that RUNS is the tool that was pinned
+    # (#1162). resolve_tool takes whatever ruff is installed, so the three
+    # places this repo writes the version down (cq-ratchet.yml RUFF_VERSION,
+    # .pre-commit-config.yaml's ruff-pre-commit rev, tests/requirements-test.txt)
+    # said nothing about what this hook actually executed. Measured on a
+    # developer machine while #1162 was open: venv 0.15.14, PATH 0.15.17, CI
+    # 0.14.10 -- three ruffs, one of them CI's.
+    #
+    # That is not cosmetic here, because the block below does not merely CHECK
+    # formatting, it REWRITES staged files with this ruff and `git add`s the
+    # result. A formatter two minors off CI's lands a diff nobody intended and
+    # CI then rejects it, with the blame landing on the change rather than the
+    # toolchain (PFactory#452, same hook lineage).
+    #
+    # The pin is READ from the workflow rather than restated, so there is no
+    # fourth copy to forget; tests/test_ruff_pin_agreement.py runs this exact
+    # line against the real workflow so a reformat that breaks the match is
+    # caught by CI rather than by this hook going quiet.
+    RUFF_PIN=$(sed -n 's/^[[:space:]]*RUFF_VERSION:[[:space:]]*"\{0,1\}\([0-9][^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' .github/workflows/cq-ratchet.yml | head -1)
+    RUFF_HAVE=$("$RUFF" --version 2>/dev/null | sed -n 's/^ruff \([0-9][^ ]*\).*$/\1/p')
+
+    # A gate that cannot run must FAIL, never silently pass (#1084) -- an empty
+    # pin here means the sed stopped matching, which is the gate going quiet.
+    if [ -z "$RUFF_PIN" ]; then
+      echo "ERROR: could not read RUFF_VERSION from .github/workflows/cq-ratchet.yml."
+      echo "The hook cannot confirm it runs the same ruff as CI, so it will not guess."
+      exit 1
+    fi
+
+    if [ "$RUFF_HAVE" != "$RUFF_PIN" ]; then
+      echo "ERROR: this hook would run ruff ${RUFF_HAVE:-<unknown>} while CI pins $RUFF_PIN."
+      echo "Resolved: $RUFF"
+      echo "Formatting rules change between ruff minors, so the hook would rewrite"
+      echo "your staged files with a formatter CI then disagrees with."
+      echo "Fix: cd apps/backend && uv pip install 'ruff==$RUFF_PIN'"
+      echo "Deliberate one-off skip: AIFACTORY_SKIP_PYTHON_GATE=1 git commit ..."
+      exit 1
+    fi
+
     # Same gate as CI (.github/workflows/cq-ratchet.yml): the diff-scoped
     # per-file no-regression ratchet under the shared strict configs.
     # Pre-existing debt in a touched file is allowed; net-new violations fail.
