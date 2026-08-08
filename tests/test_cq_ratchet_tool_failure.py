@@ -92,6 +92,42 @@ def test_ruff_clean_file_still_counts_zero(stub) -> None:
     assert _ruff_count() == Counter()
 
 
+def test_ruff_output_that_is_not_json_exits_rather_than_counting_zero(stub) -> None:
+    """#1174: a parse that cannot happen is not a count of zero.
+
+    `--no-fix` is passed for exactly this case. With `fix = true` reachable in
+    the config, ruff writes the FIXED SOURCE to stdout and exits 0, so the
+    counter would be parsing Python as a finding list.
+    """
+    stub(_Res(0, stdout="import os\n\nx = 1\n"))
+    with pytest.raises(SystemExit) as exc:
+        _ruff_count()
+    assert exc.value.code == 2
+
+
+def test_ruff_unparseable_output_is_surfaced_for_diagnosis(stub, capsys) -> None:
+    stub(_Res(0, stdout="<!DOCTYPE html>", stderr="proxy returned an error page"))
+    with pytest.raises(SystemExit):
+        _ruff_count()
+    err = capsys.readouterr().err
+    assert "not the JSON finding list" in err
+    assert "<!DOCTYPE html>" in err
+
+
+def test_ruff_writing_nothing_at_all_exits_rather_than_counting_zero(stub) -> None:
+    """The other half of #1174, and the one require_tool_ran cannot reach.
+
+    Measured on the pinned ruff 0.14.10: a clean run under
+    `--output-format json` prints `[]`, never nothing, including for empty
+    stdin. Empty stdout on an exit-0 run is therefore ruff having produced no
+    report -- which the four sibling ratchets still read as `Counter()`.
+    """
+    stub(_Res(0, stdout="   \n"))
+    with pytest.raises(SystemExit) as exc:
+        _ruff_count()
+    assert exc.value.code == 2
+
+
 def test_ruff_violations_are_still_counted(stub) -> None:
     # Control: exit 1 is the ordinary "found something" path, not a failure.
     stub(_Res(1, stdout='[{"code": "S101"}, {"code": "PLR2004"}]'))

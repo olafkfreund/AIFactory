@@ -228,9 +228,42 @@ def _ruff_count(
     # it once cost five PRs (PFactory#455, TFactory#951). It now lives in the
     # drift-gated canonical, so the next correction reaches every consumer.
     require_tool_ran("ruff", res)
+    # ...and then: is what ruff WROTE a measurement (#1174)? require_tool_ran
+    # answers only "did ruff exit for its own reasons". Two ways a run that
+    # exited 0 or 1 still measured nothing, both ending the same way, because
+    # the honest verdict for both is "could not measure":
+    #
+    #   * empty stdout. Measured on the pinned ruff: a clean run under
+    #     --output-format json prints `[]`, never nothing -- including for empty
+    #     stdin. Nothing therefore means ruff wrote no report, and the
+    #     `return Counter()` that used to sit here is the same
+    #     nothing-reads-as-clean defect Factory#590 closed one exit code over.
+    #   * unparseable stdout. --no-fix above is passed for exactly this case:
+    #     with `fix = true` in the config ruff writes the FIXED SOURCE to stdout
+    #     and exits 0, and the parse would then be reading Python as findings.
+    #
+    # The four sibling ratchets guard only the second, bare, and still return
+    # Counter() for the first. Factory#648 lifts both into the drift-gated
+    # ratchet_helpers.py canonical beside require_tool_ran; delete this when it
+    # lands. It cannot be fixed there from here -- that file is byte-exact.
     if not res.stdout.strip():
-        return Counter()
-    return Counter(item["code"] for item in json.loads(res.stdout))
+        sys.stderr.write(
+            "ratchet: ruff exited 0 having written no report -- a clean run prints "
+            "`[]`, so this is not a measurement. A gate cannot report clean on a "
+            "count it never obtained.\n"
+        )
+        sys.stderr.write(res.stderr)
+        raise SystemExit(2)
+    try:
+        items = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        sys.stderr.write(
+            "ratchet: ruff wrote output that is not the JSON finding list "
+            "--output-format json promises; refusing to read it as zero violations.\n"
+        )
+        sys.stderr.write(res.stdout + res.stderr)
+        raise SystemExit(2) from None
+    return Counter(item["code"] for item in items)
 
 
 # --------------------------------------------------------------------------- #
