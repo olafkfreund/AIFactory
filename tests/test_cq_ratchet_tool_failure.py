@@ -117,10 +117,14 @@ def test_ruff_unparseable_output_is_surfaced_for_diagnosis(stub, capsys) -> None
 def test_ruff_writing_nothing_at_all_exits_rather_than_counting_zero(stub) -> None:
     """The other half of #1174, and the one require_tool_ran cannot reach.
 
-    Measured on the pinned ruff 0.14.10: a clean run under
-    `--output-format json` prints `[]`, never nothing, including for empty
-    stdin. Empty stdout on an exit-0 run is therefore ruff having produced no
-    report -- which the four sibling ratchets still read as `Counter()`.
+    Measured on the pinned ruff: a clean run under `--output-format json`
+    prints `[]`, never nothing, including for empty stdin. Empty stdout on an
+    exit-0 run is therefore ruff having produced no report.
+
+    The local guard this locked was deleted in Factory#648, which lifted both
+    halves into `ratchet_helpers.ruff_findings`. The assertion stays: it is now
+    the WIRING proof -- that this fork routes its parse through the canonical
+    rather than restating it -- which is the thing a byte-comparison cannot see.
     """
     stub(_Res(0, stdout="   \n"))
     with pytest.raises(SystemExit) as exc:

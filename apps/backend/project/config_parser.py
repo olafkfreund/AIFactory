@@ -7,20 +7,14 @@ Utilities for reading and parsing project configuration files
 """
 
 import json
-import sys
+import tomllib
 from pathlib import Path
 
-# tomllib is available in Python 3.11+, use tomli for older versions
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        raise ImportError(
-            "Python < 3.11 requires 'tomli' package for TOML parsing. "
-            "Install with: pip install tomli"
-        ) from None
+# The `sys.version_info >= (3, 11)` guard and its `tomli` fallback that used to
+# sit here are gone (#1211): `tomllib` has been stdlib since 3.11, the repo now
+# declares `target-version = "py311"` in ruff.toml, and the runtime image is
+# 3.12+. UP036's fix, applied by hand because ruff classifies it unsafe -- it
+# deletes a branch, and a branch deletion should be read by a person.
 
 
 class ConfigParser:

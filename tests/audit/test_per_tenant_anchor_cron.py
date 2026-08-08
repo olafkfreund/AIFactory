@@ -11,7 +11,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -263,7 +263,7 @@ class TestLatestTenantChainHead:
         result_mock.scalar_one_or_none.return_value = None
         db.execute.return_value = result_mock
 
-        before_utc = datetime(2026, 5, 30, 0, 0, 0, tzinfo=timezone.utc)
+        before_utc = datetime(2026, 5, 30, 0, 0, 0, tzinfo=UTC)
         head = await _latest_tenant_chain_head_before(db, ORG_A, before_utc)
 
         assert head == tenant_genesis(ORG_A), (

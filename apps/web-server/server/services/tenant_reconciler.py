@@ -45,7 +45,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -178,7 +178,7 @@ async def reconcile_org(
     the decision is still returned so callers can audit-log the
     intent regardless of write outcome.
     """
-    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    now = now or datetime.now(UTC).replace(tzinfo=None)
 
     state = await _load_or_create_state(db, org.id)
 

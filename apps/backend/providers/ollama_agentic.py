@@ -248,7 +248,7 @@ class OllamaAgenticProvider(OllamaHTTPMixin, BaseLLMProvider):
                     asyncio.to_thread(self._http_post, url, payload),
                     timeout=float(self._timeout),
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timeout_msg = (
                     f"[Ollama request timed out after {self._timeout}s "
                     f"on turn {turn + 1}]"

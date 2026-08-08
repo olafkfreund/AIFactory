@@ -10,7 +10,7 @@ Provides:
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt as _bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -97,7 +97,7 @@ class MessageResponse(BaseModel):
 def create_access_token(user: User) -> str:
     """Create a short-lived access token containing user claims."""
     settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(
+    expires = datetime.now(UTC) + timedelta(
         minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
     )
     payload = {
@@ -106,7 +106,7 @@ def create_access_token(user: User) -> str:
         "role": user.role,
         "type": "access",
         "exp": expires,
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
@@ -114,14 +114,12 @@ def create_access_token(user: User) -> str:
 def _create_refresh_token(user: User) -> str:
     """Create a long-lived refresh token containing only the user id."""
     settings = get_settings()
-    expires = datetime.now(timezone.utc) + timedelta(
-        days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS
-    )
+    expires = datetime.now(UTC) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": user.id,
         "type": "refresh",
         "exp": expires,
-        "iat": datetime.now(timezone.utc),
+        "iat": datetime.now(UTC),
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 

@@ -403,7 +403,7 @@ class TestIntegrationRoundtrip:
             try:
                 reader_proc.terminate()
                 await asyncio.wait_for(reader_proc.wait(), timeout=2)
-            except (ProcessLookupError, asyncio.TimeoutError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     reader_proc.kill()
                 except ProcessLookupError:

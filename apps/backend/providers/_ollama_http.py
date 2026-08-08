@@ -25,6 +25,17 @@ _BASE_URL_ENV: tuple[str, ...] = ("OLLAMA_BASE_URL", "OLLAMA_API_URL", "OLLAMA_H
 
 _API_KEY_ENV: tuple[str, ...] = ("OLLAMA_API_KEY",)
 
+#: Hosted Ollama, i.e. what `ollama-cloud` MEANS (#1213).
+DEFAULT_OLLAMA_CLOUD_BASE_URL: str = "https://ollama.com"
+
+# Its OWN variable, which is the whole point. `ollama` and `ollama-cloud` both
+# read `OLLAMA_BASE_URL` until #1213, so the self-hosted box and ollama.com
+# could not both be reachable in one deployment -- picking one meant editing
+# deployment env, and `ollama-cloud` was a gating label rather than a routing
+# decision. `OLLAMA_CLOUD_BASE_URL` was already declared as build-Job
+# passthrough in `services/build_backend.py` and read by nothing.
+_CLOUD_BASE_URL_ENV: tuple[str, ...] = ("OLLAMA_CLOUD_BASE_URL",)
+
 
 def _first_env(names: tuple[str, ...]) -> str | None:
     for name in names:
@@ -48,6 +59,28 @@ def resolve_ollama_base_url() -> str:
     ``openai-compatible:`` instead.
     """
     return (_first_env(_BASE_URL_ENV) or DEFAULT_OLLAMA_BASE_URL).rstrip("/")
+
+
+def resolve_ollama_cloud_base_url() -> str:
+    """The HOSTED Ollama endpoint, else ollama.com (#1213).
+
+    Separate from :func:`resolve_ollama_base_url` on purpose. Both Ollama
+    runtimes collapsed to the same canonical provider and so read the same
+    single ``OLLAMA_BASE_URL``, which meant the p510 self-hosted box and
+    ollama.com were mutually exclusive in one deployment (Factory#295 cells C3
+    and C4). Two variables is the entire fix: `ollama` keeps ``OLLAMA_BASE_URL``
+    and `ollama-cloud` gets this one, so a contract that names the cloud runtime
+    is a ROUTING decision rather than a label the dispatcher throws away.
+
+    Defaults to ollama.com rather than to localhost, because a runtime called
+    "cloud" falling back to a local box is the silent-wrong-endpoint shape #1099
+    closed for the other half. The credential stays ``OLLAMA_API_KEY``: it is
+    already the hosted-endpoint token, and ``_auth_headers`` only sends it over
+    HTTPS.
+    """
+    return (_first_env(_CLOUD_BASE_URL_ENV) or DEFAULT_OLLAMA_CLOUD_BASE_URL).rstrip(
+        "/"
+    )
 
 
 def resolve_ollama_api_key() -> str | None:

@@ -69,7 +69,7 @@ async def task_logs_websocket(websocket: WebSocket, task_id: str):
                     }
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat to keep connection alive
                 await websocket.send_json({"type": "heartbeat"})
 
@@ -135,7 +135,7 @@ async def all_logs_websocket(websocket: WebSocket):
                     }
                 )
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Periodically update subscriptions
                 current_time = asyncio.get_event_loop().time()
                 if current_time - last_task_check > 5.0:

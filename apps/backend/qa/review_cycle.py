@@ -53,7 +53,7 @@ import json
 import os
 import tempfile
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -99,7 +99,7 @@ _TERMINAL_STATES = {CycleState.APPROVED, CycleState.CHANGES_REQUESTED}
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class ReviewCycleError(Exception):
@@ -240,13 +240,13 @@ class ReviewCycle:
         """
         if self.state != CycleState.REQUESTED:
             return False
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         try:
             requested = datetime.fromisoformat(self.requested_at)
         except (TypeError, ValueError):
             return False
         if requested.tzinfo is None:
-            requested = requested.replace(tzinfo=timezone.utc)
+            requested = requested.replace(tzinfo=UTC)
         return (now - requested).total_seconds() >= timeout_seconds
 
     def redrive_window_elapsed(
@@ -258,14 +258,14 @@ class ReviewCycle:
         This is the "no double-nudge within a window" gate: a strike is only
         eligible once a full window has elapsed since the previous one.
         """
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         anchor_iso = self.last_redrive_at or self.requested_at
         try:
             anchor = datetime.fromisoformat(anchor_iso)
         except (TypeError, ValueError):
             return False
         if anchor.tzinfo is None:
-            anchor = anchor.replace(tzinfo=timezone.utc)
+            anchor = anchor.replace(tzinfo=UTC)
         return (now - anchor).total_seconds() >= window_seconds
 
 
@@ -462,7 +462,7 @@ def record_redrive(
             f"Re-drive for cycle {cycle_id} rejected: current cycle is {cycle.cycle_id}"
         )
     cycle.redrive_attempts += 1
-    cycle.last_redrive_at = (at or datetime.now(timezone.utc)).isoformat()
+    cycle.last_redrive_at = (at or datetime.now(UTC)).isoformat()
     _atomic_write_cycle(spec_dir, cycle)
     return cycle
 

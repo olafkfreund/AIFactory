@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -449,7 +449,7 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
                 spec_id = d.name
                 break
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     if spec_id is None:
         # Fetch the issue and create the spec
