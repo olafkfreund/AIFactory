@@ -26,7 +26,6 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from server.services.task_branch import resolve_task_branch
 
