@@ -148,13 +148,17 @@ class ProviderStrategy(abc.ABC):
             model_config: dict | None,
             conversation_history: list[dict] | None,
         ) -> str:
-            # Provenance, mirroring BaseLLMProvider: the session store and
-            # the UI keep what the user typed; only the wire is redacted.
-            self._outbound_prompt_raw = message
+            # Deliberately NOT mirroring BaseLLMProvider's
+            # _outbound_prompt_raw / _outbound_prompt_scrubbed attributes.
+            # Those adapters are constructed per call; these strategies are
+            # registry singletons shared by every concurrent chat, so
+            # per-request state on `self` would race between users. Nothing
+            # needs them either: InsightsService persists the raw message to
+            # the session before calling the provider, so "the UI keeps what
+            # the user typed, only the wire is redacted" already holds.
             outbound, history = scrub_insights_outbound(
                 message, conversation_history, owner=type(self).__name__
             )
-            self._outbound_prompt_scrubbed = outbound != message
             result: str = await send_message(
                 self,
                 project_path,
