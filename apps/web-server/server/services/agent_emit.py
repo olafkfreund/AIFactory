@@ -450,9 +450,7 @@ class EmitMixin:
 
         Returns the phase after this line.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
+        logger = _log
 
         # Log stderr to server logs for debugging
         if is_stderr and line:
