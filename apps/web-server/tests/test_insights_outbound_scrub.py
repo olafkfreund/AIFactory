@@ -20,7 +20,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -133,7 +133,7 @@ async def _send_via_openai_compat(base_url: str, *, history=HISTORY) -> str:
     provider = openai_compat_provider.OpenAICompatProvider(
         "lmstudio", base_url=base_url
     )
-    return await provider.send_message(
+    reply: str = await provider.send_message(
         project_path=Path(),
         project_id="proj-1",
         message=PROMPT,
@@ -141,6 +141,7 @@ async def _send_via_openai_compat(base_url: str, *, history=HISTORY) -> str:
         model_config=None,
         conversation_history=history,
     )
+    return reply
 
 
 async def test_http_wire_carries_no_pii_and_still_carries_the_question(
@@ -244,9 +245,9 @@ async def test_a_new_strategy_cannot_opt_out_of_the_scrub():
     ``send_message`` rather than each provider calling a helper. This is
     the assertion that makes "one new provider away from a bypass" false.
     """
-    seen: dict[str, object] = {}
+    seen: dict[str, Any] = {}
 
-    class BrandNewProvider(ProviderStrategy):
+    class BrandNewProvider(ProviderStrategy):  # type: ignore[misc]
         async def detect(self) -> ProviderInfo:
             return ProviderInfo(
                 provider="brand-new",

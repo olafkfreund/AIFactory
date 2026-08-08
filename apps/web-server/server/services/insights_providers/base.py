@@ -73,10 +73,10 @@ class ProviderInfo:
 
 def scrub_insights_outbound(
     message: str,
-    conversation_history: list[dict] | None,
+    conversation_history: list[dict[str, Any]] | None,
     *,
     owner: str,
-) -> tuple[str, list[dict] | None]:
+) -> tuple[str, list[dict[str, Any]] | None]:
     """Redact built-in PII from everything this call puts on the wire (#1132).
 
     Both arguments leave the process: the strategies append ``message`` to
@@ -110,7 +110,7 @@ def scrub_insights_outbound(
     if not conversation_history:
         return scrubbed, conversation_history
 
-    history = [
+    history: list[dict[str, Any]] = [
         {**turn, "content": scrub_outbound_prompt(turn["content"], owner=owner)}
         if isinstance(turn.get("content"), str) and turn["content"]
         else turn
@@ -145,8 +145,8 @@ class ProviderStrategy(abc.ABC):
             project_id: str,
             message: str,
             model: str | None,
-            model_config: dict | None,
-            conversation_history: list[dict] | None,
+            model_config: dict[str, Any] | None,
+            conversation_history: list[dict[str, Any]] | None,
         ) -> str:
             # Deliberately NOT mirroring BaseLLMProvider's
             # _outbound_prompt_raw / _outbound_prompt_scrubbed attributes.
