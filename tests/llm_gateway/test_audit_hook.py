@@ -541,7 +541,21 @@ def test_explicit_false_overrides_env(monkeypatch):
 def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
     """#320: outbound scrub defaults ON (env unset), and when the
     redactor cannot be loaded the provider fails CLOSED — it raises
-    instead of silently sending the raw prompt to the LLM provider."""
+    instead of silently sending the raw prompt to the LLM provider.
+
+    #1139: the "default ON" half enumerates all FOUR built-in classes on
+    the wire, not the two it originally checked. Which classes reach the
+    wire is decided by ``_build_outbound_redactor``'s pattern set, and a
+    pattern set is configuration — the input nobody thinks to mutate
+    (Factory#523). With only SSN and email asserted, narrowing the
+    outbound redactor to an SSN+email subset landed green while phone
+    numbers and Luhn-valid card numbers started reaching the third-party
+    LLM, the audit row still showing them redacted.
+
+    The four are enumerated rather than counted on purpose: a count of
+    "the built-in high-precision set" falls to the same silent scope loss
+    it is supposed to catch.
+    """
     monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
     monkeypatch.delenv("LITELLM_AUDIT_SCRUB_OUTBOUND", raising=False)
 
@@ -570,7 +584,12 @@ def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
             api_key="sk-test",
         )
         assert provider._scrub_outbound is True
-        await provider.query("SSN 123-45-6789 email bob@example.com")
+        # 4242424242424242 is Luhn-valid, so it exercises the CC path
+        # rather than the raw-digit-run rejection.
+        await provider.query(
+            "SSN 123-45-6789 email bob@example.com "
+            "phone 555-123-4567 card 4242424242424242"
+        )
         async for _ in provider.receive_response():
             pass
 
@@ -585,6 +604,10 @@ def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
     assert "[REDACTED_SSN]" in sent
     assert "bob@example.com" not in sent
     assert "[REDACTED_EMAIL]" in sent
+    assert "555-123-4567" not in sent
+    assert "[REDACTED_PHONE]" in sent
+    assert "4242424242424242" not in sent
+    assert "[REDACTED_CC]" in sent
 
     # 2) Fail CLOSED: redactor unavailable → RuntimeError, no HTTP call.
     captured.clear()
