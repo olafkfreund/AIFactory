@@ -65,7 +65,6 @@ from __future__ import annotations
 import argparse
 import atexit
 import fnmatch
-import json
 import os
 import re
 import shutil
@@ -84,6 +83,7 @@ from ratchet_helpers import (
     MYPY_TEST_RELAX,
     is_test_file,
     require_tool_ran,
+    ruff_findings,
     ruff_stdin_argv,
 )
 
@@ -213,7 +213,7 @@ def _ruff_count(
     # explicit binary (the pinned venv), so argv[0] is replaced. --no-fix is kept
     # from the previous invocation and matters MORE on stdin than it did on a
     # path: with `fix = true` ever set in the config, ruff writes the fixed
-    # source to stdout and the json parse below would read code as findings.
+    # source to stdout and `ruff_findings` below would read code as findings.
     argv = ruff_stdin_argv(config, repo_path)
     res = subprocess.run(  # noqa: S603
         [ruff, argv[1], "--no-fix", *argv[2:]],
@@ -222,48 +222,16 @@ def _ruff_count(
         check=False,
         input=Path(file_on_disk).read_text(),
     )
-    # The shared "did the tool actually run" rule (Factory#590). This used to be
-    # four lines restated here, and in the mypy counter below, and in both halves
-    # of the four sibling ratchets -- nine copies of one rule, which is why fixing
-    # it once cost five PRs (PFactory#455, TFactory#951). It now lives in the
-    # drift-gated canonical, so the next correction reaches every consumer.
-    require_tool_ran("ruff", res)
-    # ...and then: is what ruff WROTE a measurement (#1174)? require_tool_ran
-    # answers only "did ruff exit for its own reasons". Two ways a run that
-    # exited 0 or 1 still measured nothing, both ending the same way, because
-    # the honest verdict for both is "could not measure":
+    # The shared "is this run a measurement" rule, both halves. #1174 fixed the
+    # second half HERE because the canonical is byte-exact and cannot be edited
+    # from a service repo; Factory#648 lifted it into that canonical, so the
+    # local guard is deleted and this fork now asks one question once:
     #
-    #   * empty stdout. Measured on the pinned ruff: a clean run under
-    #     --output-format json prints `[]`, never nothing -- including for empty
-    #     stdin. Nothing therefore means ruff wrote no report, and the
-    #     `return Counter()` that used to sit here is the same
-    #     nothing-reads-as-clean defect Factory#590 closed one exit code over.
-    #   * unparseable stdout. --no-fix above is passed for exactly this case:
-    #     with `fix = true` in the config ruff writes the FIXED SOURCE to stdout
-    #     and exits 0, and the parse would then be reading Python as findings.
-    #
-    # The four sibling ratchets guard only the second, bare, and still return
-    # Counter() for the first. Factory#648 lifts both into the drift-gated
-    # ratchet_helpers.py canonical beside require_tool_ran; delete this when it
-    # lands. It cannot be fixed there from here -- that file is byte-exact.
-    if not res.stdout.strip():
-        sys.stderr.write(
-            "ratchet: ruff exited 0 having written no report -- a clean run prints "
-            "`[]`, so this is not a measurement. A gate cannot report clean on a "
-            "count it never obtained.\n"
-        )
-        sys.stderr.write(res.stderr)
-        raise SystemExit(2)
-    try:
-        items = json.loads(res.stdout)
-    except json.JSONDecodeError:
-        sys.stderr.write(
-            "ratchet: ruff wrote output that is not the JSON finding list "
-            "--output-format json promises; refusing to read it as zero violations.\n"
-        )
-        sys.stderr.write(res.stdout + res.stderr)
-        raise SystemExit(2) from None
-    return Counter(item["code"] for item in items)
+    #   * did ruff exit for its own reasons (Factory#590), and
+    #   * is what ruff WROTE a finding list (#1174, Factory#648) -- empty stdout
+    #     is not a clean run, the pinned ruff prints `[]`; unparseable stdout is
+    #     the `fix = true` case --no-fix above exists for.
+    return ruff_findings(res)
 
 
 # --------------------------------------------------------------------------- #
