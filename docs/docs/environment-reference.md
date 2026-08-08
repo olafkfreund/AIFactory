@@ -497,7 +497,7 @@ listed under [provider credentials](#non-claude-provider-credentials).
 ## Observability & tracing
 
 Read in `apps/web-server/server/observability/*`,
-`apps/backend/core/tracing_bootstrap.py`.
+`apps/backend/core/job_tracing.py`.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
