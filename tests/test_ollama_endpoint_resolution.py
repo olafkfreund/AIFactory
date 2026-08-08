@@ -52,9 +52,7 @@ def test_defaults_to_localhost_with_no_env() -> None:
     assert resolve_ollama_base_url() == DEFAULT_OLLAMA_BASE_URL
 
 
-@pytest.mark.parametrize(
-    "var", ["OLLAMA_BASE_URL", "OLLAMA_API_URL", "OLLAMA_HOST"]
-)
+@pytest.mark.parametrize("var", ["OLLAMA_BASE_URL", "OLLAMA_API_URL", "OLLAMA_HOST"])
 def test_every_documented_env_var_is_honoured(
     monkeypatch: pytest.MonkeyPatch, var: str
 ) -> None:
