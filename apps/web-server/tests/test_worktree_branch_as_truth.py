@@ -46,12 +46,17 @@ PROJECT_ID = "proj-1"
 
 def _git(args: list[str], cwd: Path) -> None:
     # S603/S607: fixed literals in a test fixture, no shell, no external input.
+    # Both suppressions sit on the lines they apply to -- S603 on the call, S607
+    # on the argv. They used to share one collapsed line, and the #1179 reflow
+    # split it and carried the S607 down to `text=True`, where it suppressed
+    # nothing and became a RUF100 of its own. A trailing noqa is positional, so
+    # a formatter that moves the line moves the suppression off its violation.
     subprocess.run(  # noqa: S603
-        ["git", *args],
+        ["git", *args],  # noqa: S607
         cwd=cwd,
         check=True,
         capture_output=True,
-        text=True,  # noqa: S607
+        text=True,
     )
 
 
