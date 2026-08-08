@@ -22,9 +22,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
 from providers._ollama_http import (  # noqa: E402
     DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_CLOUD_BASE_URL,
     OllamaHTTPMixin,
     resolve_ollama_api_key,
     resolve_ollama_base_url,
+    resolve_ollama_cloud_base_url,
+)
+from providers.factory import (  # noqa: E402
+    _resolve_canonical,
+    get_provider,
+    runtime_to_provider,
 )
 from providers.ollama_agentic import OllamaAgenticProvider  # noqa: E402
 
@@ -33,6 +40,7 @@ _ALL_ENV = (
     "OLLAMA_API_URL",
     "OLLAMA_HOST",
     "OLLAMA_API_KEY",
+    "OLLAMA_CLOUD_BASE_URL",
     "LITELLM_GATEWAY_URL",
 )
 
@@ -167,3 +175,90 @@ def test_the_token_is_not_in_the_provider_repr(
     provider = OllamaAgenticProvider(model="qwen3-coder:480b", working_dir=tmp_path)
 
     assert "sk-super-secret" not in repr(provider)
+
+
+# ---------------------------------------------------------------------------
+# ollama-cloud is a routing decision, not a label (#1213)
+# ---------------------------------------------------------------------------
+
+
+def test_cloud_runtime_has_its_own_canonical_provider() -> None:
+    """THE DEFECT. `_RUNTIME_TO_PROVIDER` mapped both runtimes to "ollama", so
+    by the time get_provider built anything, self-hosted and cloud were
+    indistinguishable and both read the same single OLLAMA_BASE_URL."""
+    assert runtime_to_provider("ollama") == "ollama"
+    assert runtime_to_provider("ollama-cloud") == "ollama-cloud"
+    assert _resolve_canonical("ollama-cloud") == "ollama-cloud"
+
+
+def test_cloud_defaults_to_ollama_com() -> None:
+    """A runtime called "cloud" must not fall back to a local box."""
+    assert resolve_ollama_cloud_base_url() == DEFAULT_OLLAMA_CLOUD_BASE_URL
+    assert DEFAULT_OLLAMA_CLOUD_BASE_URL == "https://ollama.com"
+
+
+def test_cloud_reads_its_own_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.example/")
+    assert resolve_ollama_cloud_base_url() == "https://ollama.example"
+
+
+def test_self_hosted_env_does_not_move_the_cloud_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The point of the split: both configured at once, neither shadowing the
+    other. Before #1213 the p510 box and ollama.com were mutually exclusive in
+    one deployment (Factory#295 C3 vs C4)."""
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://host.k3d.internal:11434")
+
+    assert resolve_ollama_base_url() == "http://host.k3d.internal:11434"
+    assert resolve_ollama_cloud_base_url() == "https://ollama.com"
+
+
+def test_both_endpoints_reachable_in_one_deployment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two runtimes, one process, two endpoints -- the whole of #1213."""
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://host.k3d.internal:11434")
+    monkeypatch.setenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.com")
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-test")
+
+    local = get_provider(
+        "ollama", phase="coding", model="qwen3:14b", working_dir=tmp_path
+    )
+    cloud = get_provider(
+        "ollama-cloud", phase="coding", model="qwen3-coder:480b", working_dir=tmp_path
+    )
+
+    assert local._base_url == "http://host.k3d.internal:11434"
+    assert cloud._base_url == "https://ollama.com"
+    # Same provider class, different destination -- no second provider module.
+    assert type(local) is type(cloud)
+    # And only the HTTPS one is handed the credential.
+    assert local._auth_headers() == {}
+    assert cloud._auth_headers() == {"Authorization": "Bearer sk-test"}
+
+
+def test_cloud_model_prefix_is_stripped(tmp_path: Path) -> None:
+    """`ollama-cloud:` does not start with `ollama:`, so the provider's own
+    strip cannot reach it and /api/chat would 400 on the prefix."""
+    cloud = get_provider(
+        "ollama-cloud",
+        phase="coding",
+        model="ollama-cloud:qwen3-coder:480b",
+        working_dir=tmp_path,
+    )
+    assert cloud._model == "qwen3-coder:480b"
+
+
+def test_explicit_base_url_still_wins_for_cloud(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OLLAMA_CLOUD_BASE_URL", "https://ollama.example")
+    cloud = get_provider(
+        "ollama-cloud",
+        phase="coding",
+        model="qwen3-coder:480b",
+        working_dir=tmp_path,
+        base_url="https://explicit.example",
+    )
+    assert cloud._base_url == "https://explicit.example"
