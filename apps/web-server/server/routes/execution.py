@@ -5,6 +5,7 @@ Handles starting, stopping, and monitoring task execution.
 """
 
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,10 @@ if str(_BACKEND_DIR) not in sys.path:
 
 from qa.correction import apply_correction  # noqa: E402 — needs sys.path above
 from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
+    DRIFT_ABSENT,
+    DRIFT_UNKNOWN,
+    baseline_drift_rejects,
+    check_baseline_drift,
     ingest_trusted_plan,
     verify_trusted_plan,
 )
@@ -1206,6 +1211,28 @@ async def create_from_trusted_plan(
             },
         )
 
+    # Baseline freshness (#1109). The signature answers "did anyone edit the
+    # instructions"; this answers "are the instructions still about this
+    # codebase". Both copies of the approved commit are inside the signed bytes,
+    # and nothing read them back — so a plan approved against commit A was built
+    # against commit B in silence. Gated here, before allocation, for the same
+    # reason as the verdict above (#1108): a rejected plan must not leave an
+    # orphan spec dir or advance the counter.
+    drift = check_baseline_drift(request.plan, project_path)
+    if baseline_drift_rejects(drift):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Plan rejected — approved against a stale baseline",
+                "reasons": [drift.reason()],
+                "baseline_drift": drift.to_provenance(),
+            },
+        )
+    if drift.diverged or drift.status == DRIFT_UNKNOWN:
+        logging.getLogger(__name__).warning(
+            "[trusted-plan] baseline %s: %s", drift.status, drift.reason()
+        )
+
     specs_dir = project_path / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
     spec_id = get_next_spec_id(project_path, title)
@@ -1235,6 +1262,15 @@ async def create_from_trusted_plan(
         prov = prov if isinstance(prov, dict) else {}
         prov.setdefault("issue_number", int(corr))
         requirements["provenance"] = prov
+    # #1109: record the baseline verdict even when it did not reject. A build
+    # that ran against a drifted (or unverifiable) baseline has to say so on its
+    # own provenance — "we proceeded" is a decision, and an auditor reading this
+    # spec afterwards should not have to reconstruct it from a log line.
+    if drift.status != DRIFT_ABSENT:
+        existing = requirements.get("provenance")
+        drift_prov: dict[str, object] = existing if isinstance(existing, dict) else {}
+        drift_prov["baseline_drift"] = drift.to_provenance()
+        requirements["provenance"] = drift_prov
     (spec_dir / "requirements.json").write_text(json.dumps(requirements, indent=2))
 
     # Install the plan. ingest re-runs the same gate — kept as the authoritative
