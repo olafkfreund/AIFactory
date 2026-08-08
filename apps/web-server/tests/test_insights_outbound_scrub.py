@@ -15,6 +15,7 @@ the raw-digit-run rejection (#1139). No third-party API is contacted.
 from __future__ import annotations
 
 import json
+import logging
 import stat
 import sys
 import threading
@@ -181,9 +182,16 @@ async def test_replayed_conversation_history_is_scrubbed_too(recording_endpoint)
     assert "[REDACTED_CC]" in history_turn
 
 
-async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch):
+async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch, caplog):
     """The Claude strategy's wire is subprocess argv, not an HTTP body.
-    Stand in a recording executable and read what it was handed."""
+    Stand in a recording executable and read what it was handed.
+
+    Also pins the log: argv is where this strategy puts the prompt, so no
+    log line may carry argv content. The old line sliced `cmd[:5]`, which
+    excluded the message only because it is appended last -- positional
+    safety that any argv reordering would have silently removed. CodeQL
+    flagged it as clear-text logging of sensitive data.
+    """
     argv_log = tmp_path / "argv.json"
     fake_cli = tmp_path / "claude"
     fake_cli.write_text(
@@ -203,14 +211,15 @@ async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch):
         lambda _self: (None, None, None),
     )
 
-    reply = await provider.send_message(
-        project_path=tmp_path,
-        project_id="proj-1",
-        message=PROMPT,
-        model="sonnet",
-        model_config=None,
-        conversation_history=None,
-    )
+    with caplog.at_level(logging.INFO, logger=claude_provider.__name__):
+        reply = await provider.send_message(
+            project_path=tmp_path,
+            project_id="proj-1",
+            message=PROMPT,
+            model="sonnet",
+            model_config=None,
+            conversation_history=None,
+        )
 
     wire = " ".join(json.loads(argv_log.read_text()))
     for value in PII_VALUES:
@@ -218,6 +227,14 @@ async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch):
     for marker in PII_MARKERS:
         assert marker in wire, f"{marker} never reached the CLI argv"
     assert reply == "Two charges timed out."
+
+    logged = caplog.text
+    for value in PII_VALUES:
+        assert value not in logged
+    # Not just the PII: no argv content at all, redacted or otherwise.
+    for marker in PII_MARKERS:
+        assert marker not in logged
+    assert "--output-format" not in logged
 
 
 async def test_the_assertions_observe_the_scrub_and_not_the_stand_in(
