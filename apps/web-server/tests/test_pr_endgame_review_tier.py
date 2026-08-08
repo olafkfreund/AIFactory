@@ -99,18 +99,30 @@ def test_corrupt_metadata_reads_as_none(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _endgame(spec_dir: Path, *, auto_merge: bool, monkeypatch) -> bool:
+async def _endgame(
+    spec_dir: Path, *, auto_merge: bool, monkeypatch: pytest.MonkeyPatch
+) -> bool:
     """Run the endgame far enough to capture the auto_merge it settled on."""
     captured: dict[str, bool] = {}
 
-    async def _fake_watch(**kwargs):
-        captured["auto_merge"] = kwargs["auto_merge"]
+    async def _fake_watch(**kwargs: object) -> dict[str, object]:
+        captured["auto_merge"] = bool(kwargs["auto_merge"])
         return {"merged": False, "reason": "stub"}
 
+    def _fake_create_pr(**kwargs: object) -> int:
+        assert kwargs["base"] == "main"
+        return 42
+
+    def _fake_request_review(owner: str, name: str, pr: int, **kwargs: object) -> bool:
+        return bool(owner and name and pr)
+
+    def _fake_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
+        return (spec_id, str(spec_dir))
+
     monkeypatch.setattr(pe, "watch_and_finish", _fake_watch)
-    monkeypatch.setattr(pe, "create_pr", lambda **kw: 42)
-    monkeypatch.setattr(pe, "request_copilot_review", lambda *a, **k: True)
-    monkeypatch.setattr(pe, "_pr_title_body", lambda *a, **k: ("t", "b"))
+    monkeypatch.setattr(pe, "create_pr", _fake_create_pr)
+    monkeypatch.setattr(pe, "request_copilot_review", _fake_request_review)
+    monkeypatch.setattr(pe, "_pr_title_body", _fake_title_body)
 
     await pe.run_pr_endgame(
         spec_dir=spec_dir,

@@ -26,6 +26,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from server.services.task_branch import resolve_task_branch
 
@@ -104,6 +105,25 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
+def read_task_metadata(spec_dir: Path | None) -> dict[str, Any]:
+    """A task's ``task_metadata.json`` as a dict, or ``{}``.
+
+    THE reader for that file in this module -- ``gather_pr_context`` used to
+    inline its own copy. One reader means one place where the path is built and
+    one place where a malformed file is tolerated.
+
+    Never raises: an unreadable or non-object file is indistinguishable from an
+    absent one to every caller here, and none of them may fail a build over it.
+    """
+    if spec_dir is None:
+        return {}
+    try:
+        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def read_review_tier(spec_dir: Path | None) -> str | None:
     """The RFC-0011 ``reviewTier`` a task was routed with, or None (#1158).
 
@@ -114,14 +134,21 @@ def read_review_tier(spec_dir: Path | None) -> str | None:
 
     None on any absence/unreadability, which the caller treats as "no opinion".
     """
-    if spec_dir is None:
-        return None
-    try:
-        meta = json.loads((Path(spec_dir) / "task_metadata.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    tier = meta.get("reviewTier") if isinstance(meta, dict) else None
+    tier = read_task_metadata(spec_dir).get("reviewTier")
     return tier if isinstance(tier, str) and tier.strip() else None
+
+
+# The only tier spellings that may ever appear in a log line. Anything else is
+# reported as the constant below rather than echoed, so a value crafted into
+# task_metadata.json cannot forge log entries (py/log-injection).
+_LOGGABLE_TIERS = frozenset({"auto", "async", "blocking", "low", "medium", "hard"})
+
+
+def _describe_tier(tier: str | None) -> str:
+    if tier is None:
+        return "none"
+    normalised = tier.strip().lower()
+    return normalised if normalised in _LOGGABLE_TIERS else "unrecognised"
 
 
 def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
@@ -768,12 +795,7 @@ def gather_pr_context(
     # spec whose requirements.json named the repo silently PR'd against main
     # even when the repo integrates via dev. It is also read BEFORE the branch
     # resolution below, which needs to know what this task's base actually is.
-    try:
-        meta = json.loads((spec_dir / "task_metadata.json").read_text())
-    except (OSError, ValueError):
-        meta = {}
-    if not isinstance(meta, dict):
-        meta = {}
+    meta = read_task_metadata(spec_dir)
     base = meta.get("base_branch") or meta.get("baseBranch") or "main"
 
     # On the kubejob path the build runs inside the k8s Job and pushes
@@ -903,11 +925,14 @@ async def run_pr_endgame(
     # endgame passes through this function, and `spec_dir` -- which is where
     # `task_metadata.json` lives -- is already a parameter.
     if auto_merge and not tier_allows_auto_merge(spec_dir):
+        # The tier is logged through a fixed vocabulary, never raw: it comes
+        # from a file on disk, and interpolating file content into a log line
+        # lets a crafted value forge log entries (py/log-injection).
         logger.info(
             "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
             "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
             spec_id,
-            read_review_tier(spec_dir),
+            _describe_tier(read_review_tier(spec_dir)),
         )
         auto_merge = False
 
