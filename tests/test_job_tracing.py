@@ -16,9 +16,11 @@ re-vendor, bump HUB_PIN_SHA.
 from __future__ import annotations
 
 import sys
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from opentelemetry.context import detach
 
 _BACKEND = Path(__file__).parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:
@@ -32,9 +34,26 @@ SAMPLE_TP = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 @pytest.fixture(autouse=True)
 def _reset_module_state():
-    """Each test starts with a fresh module guard."""
+    """Each test starts with a fresh module guard, and leaves none behind.
+
+    Clearing ``_attach_token`` is not enough: ``init_agent_tracing`` calls
+    ``opentelemetry.context.attach``, which mutates a process-global contextvar
+    that no amount of resetting THIS module undoes. A dispatched Job never has
+    to detach — it exits — but a pytest session does not exit, so the attached
+    span leaks into every later test in the run.
+
+    That is not hypothetical. Renaming this file from test_tracing_bootstrap.py
+    (Factory#638) moved it ahead of tests/test_tracing.py in collection order,
+    and four assertions there that there is no active span failed immediately.
+    The leak had been present since this file was written and was hidden purely
+    by alphabetical luck.
+    """
     _reset()
     yield
+    token = job_tracing._attach_token
+    if token is not None:
+        with suppress(Exception):
+            detach(token)
     _reset()
 
 
