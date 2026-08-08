@@ -34,7 +34,6 @@ from __future__ import annotations
 import base64
 import os
 
-
 _DEFAULT_KEY = "aifactory-root"
 _DEFAULT_MOUNT = "transit"
 
@@ -43,7 +42,7 @@ class VaultTransitBackend:
     """Wrap/unwrap data keys via Vault Transit ``encrypt``/``decrypt``."""
 
     @classmethod
-    def from_env(cls) -> "VaultTransitBackend":
+    def from_env(cls) -> VaultTransitBackend:
         addr = os.environ.get("VAULT_ADDR")
         if not addr:
             raise RuntimeError(

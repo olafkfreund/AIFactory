@@ -64,7 +64,9 @@ def test_two_tasks_on_one_spec_keep_both_sets_of_insights(tmp_path):
         (wt / "memory" / "session_insights").mkdir(parents=True)
 
     _insight(wt_a, "session_001.json", '"A learned the retry loop deadlocks"')
-    _insight(wt_b, "session_001.json".replace("001", "002"), '"B learned the cache is cold"')
+    _insight(
+        wt_b, "session_001.json".replace("001", "002"), '"B learned the cache is cold"'
+    )
 
     # A finishes first, then B. B's worktree has never seen A's file.
     assert sync_memory_to_source(wt_a, source)
@@ -95,7 +97,9 @@ def test_a_rewritten_file_still_wins(tmp_path):
     _insight(wt, "session_001.json", '"new"')
 
     assert sync_memory_to_source(wt, source)
-    assert (source / "memory" / "session_insights" / "session_001.json").read_text() == '"new"'
+    assert (
+        source / "memory" / "session_insights" / "session_001.json"
+    ).read_text() == '"new"'
 
 
 # ── the mirror must not reintroduce replace semantics ────────────────────────

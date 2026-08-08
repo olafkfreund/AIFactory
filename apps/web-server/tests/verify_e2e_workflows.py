@@ -6,14 +6,12 @@ and that the test suite covers realistic user scenarios.
 """
 
 import ast
-import json
 from pathlib import Path
-from typing import Dict, List, Set
 
 
-def analyze_test_file(file_path: Path) -> Dict:
+def analyze_test_file(file_path: Path) -> dict:
     """Analyze test file and extract workflow information."""
-    with open(file_path, "r") as f:
+    with open(file_path) as f:
         tree = ast.parse(f.read())
 
     workflows = []
@@ -58,7 +56,7 @@ def analyze_test_file(file_path: Path) -> Dict:
     }
 
 
-def extract_endpoints_used(workflows: List[Dict]) -> Set[str]:
+def extract_endpoints_used(workflows: list[dict]) -> set[str]:
     """Extract endpoint names mentioned in workflow tests."""
     endpoints = set()
 
@@ -127,7 +125,7 @@ def extract_endpoints_used(workflows: List[Dict]) -> Set[str]:
     return endpoints
 
 
-def generate_coverage_matrix(workflows: List[Dict]) -> Dict[str, List[str]]:
+def generate_coverage_matrix(workflows: list[dict]) -> dict[str, list[str]]:
     """Generate coverage matrix showing which workflows test which features."""
     coverage = {
         "profile_management": [],
@@ -187,14 +185,14 @@ def main():
     # Analyze test file
     analysis = analyze_test_file(test_file)
 
-    print(f"📊 Test Statistics:")
+    print("📊 Test Statistics:")
     print(f"  - Test Classes: {analysis['total_test_classes']}")
     print(f"  - Test Methods: {analysis['total_test_methods']}")
     print(f"  - Documented Workflows: {analysis['total_workflows']}")
     print()
 
     # Show workflows
-    print(f"📋 Workflows Tested:")
+    print("📋 Workflows Tested:")
     print()
     for workflow in analysis["workflows"]:
         print(f"  {workflow['class']}.{workflow['method']}")
@@ -204,7 +202,7 @@ def main():
 
     # Show coverage
     coverage = generate_coverage_matrix(analysis["workflows"])
-    print(f"🎯 Coverage by Category:")
+    print("🎯 Coverage by Category:")
     print()
     for category, tests in coverage.items():
         category_name = category.replace("_", " ").title()

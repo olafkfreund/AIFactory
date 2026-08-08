@@ -110,7 +110,6 @@ async def approve_plan(
 
     # Update implementation_plan.json status back to in_progress
     plan_file = spec_dir / "implementation_plan.json"
-    plan_updated = False
     if plan_file.exists():
         try:
             import logging
@@ -128,7 +127,6 @@ async def approve_plan(
             plan.pop("reviewReason", None)
 
             plan_file.write_text(json.dumps(plan, indent=2))
-            plan_updated = True
             logger.info(
                 "[ApprovePlan] Updated plan file - status: in_progress, planStatus: in_progress"
             )

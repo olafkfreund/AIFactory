@@ -14,8 +14,15 @@ name: cq-ratchet
 #     error COUNT increased vs the base branch (#647). Touched legacy files keep
 #     their existing type debt; net-new type errors fail. Same count-scoped
 #     no-regression contract as the ruff ratchet above.
-#   * ruff format --check runs over apps/backend and scripts/ (the tree is
-#     formatter-clean there as of cq-phase0 plus Factory#597).
+#   * ruff format --check runs over EVERY Python directory in the repo --
+#     apps/backend, apps/web-server, scripts/ and tests/ (#1179, #1205). It ran
+#     over apps/backend and scripts/ only until then, so tests/ was linted by
+#     ci.yml and never format-checked, and 26 files had drifted. A whole-tree
+#     format gate cannot grandfather anything, so the drift was swept in the
+#     same change. tests/test_ruff_scope_covers_the_tree.py compares this scope
+#     against `git ls-files '*.py'` so a new top-level Python directory cannot
+#     land outside it in silence -- which is exactly how apps/web-server sat
+#     outside ci.yml's `ruff check` from #903 to #1205.
 # Adopting issues: #647, #652.
 #
 # Intended to be BLOCKING under branch protection. The pre-existing lenient
@@ -34,7 +41,9 @@ name: cq-ratchet
 # and cannot grandfather anything, so the drift was swept in the same PR.
 #
 # The format-check job was also called "repo-wide" while running only over
-# apps/backend. It now says what it does.
+# apps/backend. It now says what it does -- and since #1179 what it does IS
+# every Python directory, so the name is a claim a test can check rather than
+# one that quietly narrows again.
 #
 # scripts/ratchet_helpers.py stays out, and needed no new config to do so: it is
 # already in ruff.toml's extend-exclude as the byte-exact hub canonical, and this
@@ -122,7 +131,7 @@ jobs:
             --paths 'apps/backend/*.py' 'apps/web-server/*.py' 'scripts/*.py'
 
   format-check:
-    name: ruff format --check (apps/backend + scripts)
+    name: ruff format --check (every Python directory)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -135,8 +144,19 @@ jobs:
       - name: Install pinned ruff
         run: pip install "ruff==${RUFF_VERSION}"
 
-      - name: Ruff format check (apps/backend + scripts)
-        run: ruff format --check apps/backend scripts
+      # apps/web-server and tests/ joined this list in #1179/#1205. `ruff check`
+      # covered tests/ and this did not, so a file could be linted and never
+      # format-checked and the tree drifted: 26 files would have been
+      # reformatted on dev (16 under apps/web-server, 10 under tests/), all
+      # reformatted in that PR. A whole-tree format gate cannot grandfather
+      # anything, which is why the drift had to be swept in the same change.
+      #
+      # These four ARE every Python directory in the repo, so the job name is
+      # now a claim that can be checked rather than a scope that quietly
+      # narrowed. Adding a fifth top-level Python directory means adding it
+      # here; tests/test_ruff_scope_covers_the_tree.py fails if one appears.
+      - name: Ruff format check (apps/backend, apps/web-server, scripts, tests)
+        run: ruff format --check apps/backend apps/web-server scripts tests
 
   config-drift:
     name: shared-baseline drift gate (blocking)

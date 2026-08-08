@@ -85,9 +85,7 @@ def test_uploads_are_tagged_with_role(role: str) -> None:
     # MinIO lifecycle rules filter by the `role=<role>` object tag; an untagged
     # upload matches nothing and evidence retention stays inert (Factory#329).
     store = a_s._fake_store()
-    ref = a_s.ArtifactRef(
-        service="aifactory", job_id="j", role=role, correlation_key=1
-    )
+    ref = a_s.ArtifactRef(service="aifactory", job_id="j", role=role, correlation_key=1)
     store.put_artifact(ref, b"payload")
     # The canonical fake records every put's kwargs (`calls`) rather than a
     # bucket/key -> tag dict; it carries strictly more, and it is what the hub

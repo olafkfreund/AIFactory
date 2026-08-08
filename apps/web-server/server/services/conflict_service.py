@@ -444,8 +444,9 @@ class ConflictService:
 
         try:
             # Use the backend's simple client with OAuth authentication
-            from core.simple_client import create_simple_client
             import asyncio
+
+            from core.simple_client import create_simple_client
 
             prompt = f"""You are a code merge expert. Merge the following three versions of a file.
 
@@ -566,8 +567,9 @@ TASK: Intelligently merge both sets of changes into the base.
 
         try:
             # Use the backend's simple client with OAuth authentication
-            from core.simple_client import create_simple_client
             import asyncio
+
+            from core.simple_client import create_simple_client
 
             # Count conflict blocks for context
             conflict_count = content.count("<<<<<<< ")

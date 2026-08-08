@@ -459,7 +459,6 @@ class InsightsService:
         Runs a lightweight ``claude --print`` call (no tool use,
         no streaming) to produce a JSON ``{title, description}`` object.
         """
-        import os
         import shutil
 
         session = self.get_current_session(project_path, project_id)

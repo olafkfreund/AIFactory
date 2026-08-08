@@ -404,7 +404,6 @@ async def scim_list_users(
     This matches Azure AD's sync pattern: it lists all active users
     during normal sync; listing inactive users is an explicit audit action.
     """
-    include_inactive = False
     scim_filter = None
 
     if filter:
@@ -420,7 +419,6 @@ async def scim_list_users(
     if scim_filter:
         if scim_filter.attribute == "active":
             # When filtering on active, respect the value directly.
-            include_inactive = not scim_filter.value
             stmt = stmt.where(User.is_active == scim_filter.value)
         elif scim_filter.attribute == "userName":
             stmt = stmt.where(User.email == str(scim_filter.value).lower())

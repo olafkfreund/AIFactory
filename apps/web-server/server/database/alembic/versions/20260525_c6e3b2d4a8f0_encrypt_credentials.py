@@ -32,9 +32,9 @@ Create Date: 2026-05-25
 
 from __future__ import annotations
 
-from pathlib import Path
 import sys
-from typing import Sequence, Union
+from pathlib import Path
+from typing import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -49,9 +49,9 @@ if str(_WEB_SERVER) not in sys.path:
 
 # revision identifiers, used by Alembic.
 revision: str = "c6e3b2d4a8f0"
-down_revision: Union[str, Sequence[str], None] = "a4c2e9f8b1d3"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "a4c2e9f8b1d3"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # Columns to migrate: (table, column, nullable).

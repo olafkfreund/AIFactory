@@ -304,7 +304,6 @@ async def _fetch_userinfo_from_idp(sub: str) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as http:
             disc = (await http.get(discovery_url)).json()
-            userinfo_url = disc["userinfo_endpoint"]
 
             # Client-credentials grant to get a service token. Most
             # IdPs (Keycloak, Okta, AzureAD) support this with an
@@ -334,7 +333,6 @@ async def _fetch_userinfo_from_idp(sub: str) -> dict | None:
                     tr.status_code,
                 )
                 return None
-            svc_token = tr.json()["access_token"]
 
             # Now hit userinfo. Without a per-user access token we
             # can't get THIS user's userinfo via the standard endpoint

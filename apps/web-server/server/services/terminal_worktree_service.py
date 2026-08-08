@@ -10,7 +10,6 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
 
 
 class TerminalWorktreeService:
@@ -39,10 +38,10 @@ class TerminalWorktreeService:
         self,
         name: str,
         terminal_id: str,
-        task_id: Optional[str],
+        task_id: str | None,
         create_git_branch: bool,
         base_branch: str,
-    ) -> Dict:
+    ) -> dict:
         """Create a new terminal worktree.
 
         Args:
@@ -116,7 +115,7 @@ class TerminalWorktreeService:
 
         return config
 
-    def list_worktrees(self) -> List[Dict]:
+    def list_worktrees(self) -> list[dict]:
         """List all terminal worktrees for this project.
 
         Returns:
@@ -200,7 +199,7 @@ class TerminalWorktreeService:
 
         return True
 
-    def get_worktree(self, name: str) -> Optional[Dict]:
+    def get_worktree(self, name: str) -> dict | None:
         """Get a specific worktree config by name.
 
         Args:
@@ -238,7 +237,7 @@ class TerminalWorktreeService:
                 "Worktree name must be lowercase alphanumeric with dashes/underscores only"
             )
 
-    def _load_config(self) -> Dict:
+    def _load_config(self) -> dict:
         """Load terminal-worktrees.json.
 
         Returns:
@@ -248,12 +247,12 @@ class TerminalWorktreeService:
             return {"version": "1.0", "worktrees": []}
 
         try:
-            with open(self.config_file, "r") as f:
+            with open(self.config_file) as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {"version": "1.0", "worktrees": []}
 
-    def _save_config(self, config: Dict):
+    def _save_config(self, config: dict):
         """Save terminal-worktrees.json.
 
         Args:
@@ -265,7 +264,7 @@ class TerminalWorktreeService:
         with open(self.config_file, "w") as f:
             json.dump(config, f, indent=2)
 
-    def _add_worktree_to_config(self, worktree_config: Dict):
+    def _add_worktree_to_config(self, worktree_config: dict):
         """Add a worktree to the config file.
 
         Args:
@@ -316,7 +315,7 @@ class TerminalWorktreeService:
             return False
 
     def _run_git_command(
-        self, cmd: List[str], check: bool = True
+        self, cmd: list[str], check: bool = True
     ) -> subprocess.CompletedProcess:
         """Run a git command in the project directory.
 

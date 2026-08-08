@@ -33,9 +33,6 @@ _log = logging.getLogger(__name__)
 _USAGE_EMIT_WINDOW_S = 15.0
 
 
-
-
-
 class WorktreeSyncMixin:
     """Worktree-to-main spec-dir file sync for AgentService."""
 
@@ -285,7 +282,9 @@ class WorktreeSyncMixin:
         except (OSError, shutil.Error) as e:
             # Never fatal: a build that produced working code must not fail
             # because its memory could not be pooled.
-            logger.warning(f"[AgentService] Failed to pool memory at project level: {e}")
+            logger.warning(
+                f"[AgentService] Failed to pool memory at project level: {e}"
+            )
 
         if synced_count > 0:
             logger.debug(

@@ -99,7 +99,11 @@ _REST_SKILLS: list[dict[str, Any]] = [
             "the plan has already been decided upstream, so the coder starts "
             "immediately."
         ),
-        "invocation": {"kind": "rest", "method": "POST", "path": "/api/tasks/from-plan"},
+        "invocation": {
+            "kind": "rest",
+            "method": "POST",
+            "path": "/api/tasks/from-plan",
+        },
         "tags": ["build", "rfc-0002", "trusted-plan"],
     },
 ]

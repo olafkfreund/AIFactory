@@ -94,7 +94,7 @@ class SpawnArgs:
         return asdict(self)
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "SpawnArgs":
+    def from_json(cls, data: dict[str, Any]) -> SpawnArgs:
         fields = {
             "project_path",
             "spec_id",

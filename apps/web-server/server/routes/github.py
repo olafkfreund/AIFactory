@@ -86,7 +86,6 @@ class CreateReleaseRequest(BaseModel):
 # ============================================
 
 
-
 def _persist_cli_token_to_project(project_id: str) -> bool:
     """Persist the gh CLI token to a project's .aifactory/.env file.
 

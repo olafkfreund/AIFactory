@@ -36,10 +36,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.models import AuditLog, EmailAccount, User

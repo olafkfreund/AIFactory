@@ -76,7 +76,9 @@ def test_only_one_place_writes_the_approval_status() -> None:
     its own response they drift. `_approved` is that one place.
     """
     src = (_WEB_SERVER / "server" / "services" / "approval.py").read_text()
-    assert src.count("write_status(") == 1, "the approval status has more than one writer"
+    assert src.count("write_status(") == 1, (
+        "the approval status has more than one writer"
+    )
     assert "def approved(" in src, "the shared approval helper is gone"
 
 

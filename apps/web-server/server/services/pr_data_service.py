@@ -473,13 +473,11 @@ class PRDataService:
         """
         # Read stored review to get the reviewed commit SHA
         last_reviewed_commit = None
-        posted_at = None
         review_file = _review_file_path(project_path, pr_number)
         if review_file.exists():
             try:
                 review_data = json.loads(review_file.read_text())
                 last_reviewed_commit = review_data.get("reviewed_commit_sha")
-                posted_at = review_data.get("posted_at")
             except (json.JSONDecodeError, OSError):
                 pass
 

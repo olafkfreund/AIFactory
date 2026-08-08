@@ -54,8 +54,20 @@ jobs:
           uv pip install -r ../web-server/requirements.txt
           uv pip install -r ../../tests/requirements-test.txt
 
+      # apps/web-server was missing here until #1205. The pytest steps were
+      # extended to cover it in #903 and the lint step never was, so the whole
+      # web-server tree -- routes, services, websockets and its co-located
+      # tests -- had never been ruff-checked by CI: 142 findings on dev, all
+      # fixed in that PR rather than grandfathered. Only the diff-scoped
+      # ratchet gated it, and a ratchet gates CHANGED files, which is exactly
+      # the coverage a bot commit or a --no-verify does not have.
+      #
+      # scripts/ is deliberately still absent: the root and strict ruff configs
+      # disagree about its import blocks (#1211) and each one's autofix is the
+      # other's violation. It is gated by the cq-ratchet --paths and by
+      # `ruff format --check`, and joins this list when #1211 lands.
       - name: Ruff lint
-        run: apps/backend/.venv/bin/ruff check apps/backend tests
+        run: apps/backend/.venv/bin/ruff check apps/backend apps/web-server tests
 
       # MinIO for the S3-workspaces integration tests (Epic #35 #40
       # half-B). Started as a regular ``docker run`` rather than a

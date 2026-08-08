@@ -8,7 +8,6 @@ Uses the same `claude --print` pattern as InsightsService.generate_task_from_cha
 import asyncio
 import json
 import logging
-import os
 import re
 import shutil
 from pathlib import Path

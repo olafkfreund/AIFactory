@@ -433,7 +433,9 @@ def test_custom_ca_bundle_is_trusted_by_pod(helm_available, chart_dir) -> None:
 
 
 @pytest.mark.helm
-def test_pdb_off_by_default_and_refuses_to_strand_a_node(helm_available, chart_dir) -> None:
+def test_pdb_off_by_default_and_refuses_to_strand_a_node(
+    helm_available, chart_dir
+) -> None:
     """Factory#550. The chart shipped `podDisruptionBudget.enabled: true` with
     `minAvailable: 1` against `replicaCount: 1`. That combination allows ZERO
     disruptions, so `kubectl drain` on the node hosting the pod never completes

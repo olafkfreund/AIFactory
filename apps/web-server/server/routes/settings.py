@@ -14,14 +14,14 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
     SecretStr,
     field_validator,
-    AliasChoices,
 )
 
 # --------------------------------------------------------------------------
@@ -619,11 +619,9 @@ async def get_api_token():
 async def regenerate_api_token():
     """Regenerate the API token."""
     import secrets
-    from pathlib import Path
 
     from ..paths import get_data_file
 
-    settings = get_settings()
     token_file = get_data_file(".token")
 
     # Generate new token
@@ -806,8 +804,8 @@ async def detect_local_llm_providers():
         if ok and out:
             lines = out.strip().splitlines()
             # First line is a header row
-            model_lines = [l for l in lines[1:] if l.strip()]
-            all_names = [l.split()[0] for l in model_lines if l.split()]
+            model_lines = [line for line in lines[1:] if line.strip()]
+            all_names = [line.split()[0] for line in model_lines if line.split()]
             # Filter out embedding/reranker models — only show chat LLMs
             _embed_kw = {"embed", "minilm", "bge", "gte", "e5", "rerank"}
             model_names = [
@@ -848,7 +846,7 @@ async def detect_local_llm_providers():
                 result["detected"] = True
             ok, out = await _run(["lms", "ls"])
             if ok and out:
-                lines = [l.strip() for l in out.splitlines() if l.strip()]
+                lines = [line.strip() for line in out.splitlines() if line.strip()]
                 result["models"] = lines
                 result["modelCount"] = len(lines)
         # Fallback: check for running process
@@ -1105,8 +1103,9 @@ async def pull_ollama_model(
 ):
     """Pull (download) an Ollama model."""
     try:
-        import httpx
         import json
+
+        import httpx
 
         # Stream the pull progress
         async with httpx.AsyncClient(timeout=300.0) as client:

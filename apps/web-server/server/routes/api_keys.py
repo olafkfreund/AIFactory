@@ -14,13 +14,12 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database import ApiKey, OrgMember
+from ..database import ApiKey, OrgMember, User
 from ..database.engine import get_db
 from .auth_routes import get_current_user
-from ..database import User
 
 logger = logging.getLogger(__name__)
 

@@ -58,6 +58,4 @@ def test_unknown_returns_none(monkeypatch):
 def test_no_cross_repo_false_match(monkeypatch):
     # aifactory-demo must not resolve to the tfactory project
     _patch(monkeypatch)
-    assert (
-        projects_mod.resolve_project_id("olafkfreund/TFactory") == "de08a1a1-uuid"
-    )
+    assert projects_mod.resolve_project_id("olafkfreund/TFactory") == "de08a1a1-uuid"

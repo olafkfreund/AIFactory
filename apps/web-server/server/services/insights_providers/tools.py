@@ -5,10 +5,7 @@ Provides read-only tools (read_file, list_directory, search_code) sandboxed
 to the project directory. Tools use OpenAI-compatible function-calling schema.
 """
 
-import json
 import logging
-import os
-import re
 import subprocess
 from pathlib import Path
 

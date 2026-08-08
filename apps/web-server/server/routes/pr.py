@@ -138,7 +138,10 @@ async def create_pr_from_task(
         base_branch=base_branch,
     )
     if not worktree_branch:
-        return {"success": False, "error": f"Could not determine task branch: {branch_error}"}
+        return {
+            "success": False,
+            "error": f"Could not determine task branch: {branch_error}",
+        }
 
     # Fetch latest base branch from remote
     try:

@@ -27,7 +27,6 @@ import string
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -231,7 +230,7 @@ class SkillCategory:
 
     name: str
     count: int
-    description: Optional[str] = None
+    description: str | None = None
 
 
 @dataclass
@@ -242,7 +241,7 @@ class SkillSummary:
     name: str  # filename stem (e.g. 'alpine-js')
     category: str  # parent directory name
     description: str  # first prose paragraph after the blockquote
-    source: Optional[str] = None  # extracted from "> Source:" line
+    source: str | None = None  # extracted from "> Source:" line
 
 
 @dataclass
@@ -507,7 +506,7 @@ class SkillsService:
         )
 
     @staticmethod
-    def _extract_metadata(content: str) -> tuple[str, Optional[str]]:
+    def _extract_metadata(content: str) -> tuple[str, str | None]:
         """
         Extract (description, source) from skill markdown content.
 
@@ -527,7 +526,7 @@ class SkillsService:
         after the ``---`` divider.  Falls back to an empty string if
         nothing suitable is found.
         """
-        source: Optional[str] = None
+        source: str | None = None
         description = ""
 
         # Extract source URL from the blockquote
@@ -580,7 +579,7 @@ class SkillsService:
     def search_skills(
         self,
         query: str,
-        category: Optional[str] = None,
+        category: str | None = None,
         limit: int = 50,
     ) -> list[SkillSummary]:
         """
@@ -621,12 +620,12 @@ class SkillsService:
         results.sort(key=lambda x: x[0], reverse=True)
         return [s for _, s in results[:limit]]
 
-    def get_skill(self, category: str, name: str) -> Optional[SkillSummary]:
+    def get_skill(self, category: str, name: str) -> SkillSummary | None:
         """Return skill summary for a specific category/name, or None."""
         entry = self._find_entry(category, name)
         return entry.summary if entry else None
 
-    def get_skill_content(self, category: str, name: str) -> Optional[str]:
+    def get_skill_content(self, category: str, name: str) -> str | None:
         """Return the full markdown content of a skill file, or None."""
         entry = self._find_entry(category, name)
         if entry is None:
@@ -637,7 +636,7 @@ class SkillsService:
             logger.warning("Failed to read skill file %s: %s", entry.file_path, exc)
             return None
 
-    def get_skill_detail(self, category: str, name: str) -> Optional[SkillDetail]:
+    def get_skill_detail(self, category: str, name: str) -> SkillDetail | None:
         """Return SkillDetail (summary + full content) for a skill, or None."""
         entry = self._find_entry(category, name)
         if entry is None:
@@ -761,14 +760,14 @@ class SkillsService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _find_entry(self, category: str, name: str) -> Optional[_IndexEntry]:
+    def _find_entry(self, category: str, name: str) -> _IndexEntry | None:
         """Locate an index entry by category and skill name."""
         for entry in self._index.get(category, []):
             if entry.summary.name == name:
                 return entry
         return None
 
-    def _get_candidates(self, category: Optional[str]) -> list[_IndexEntry]:
+    def _get_candidates(self, category: str | None) -> list[_IndexEntry]:
         """Return all index entries, optionally filtered to a category."""
         if category:
             return self._index.get(category, [])
@@ -809,7 +808,7 @@ class SkillsService:
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
-_skills_service: Optional[SkillsService] = None
+_skills_service: SkillsService | None = None
 
 
 def get_skills_service() -> SkillsService:

@@ -20,13 +20,13 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import delete, select
 
-from ..config import get_settings
-from ..database import EmailAccount
-from ..database.engine import async_session_factory
 from .._get_email_oauth_credentials import (
     get_email_oauth_credentials,
     get_google_oauth_credentials,
 )
+from ..config import get_settings
+from ..database import EmailAccount
+from ..database.engine import async_session_factory
 
 logger = logging.getLogger(__name__)
 

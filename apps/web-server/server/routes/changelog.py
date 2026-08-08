@@ -4,7 +4,6 @@ Changelog and Insights routes.
 Handles changelog generation and AI-powered insights chat.
 """
 
-import asyncio
 import base64
 import json
 import logging
@@ -305,7 +304,7 @@ async def save_changelog(
         package_json = project_path / "package.json"
         if package_json.exists():
             try:
-                with open(package_json, "r") as f:
+                with open(package_json) as f:
                     pkg = json.load(f)
                 pkg["version"] = request.version
                 with open(package_json, "w") as f:
