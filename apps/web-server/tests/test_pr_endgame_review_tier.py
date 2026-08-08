@@ -94,6 +94,42 @@ def test_corrupt_metadata_reads_as_none(tmp_path: Path) -> None:
     assert pe.read_review_tier(spec) is None
 
 
+def test_a_traversing_spec_dir_name_is_refused(tmp_path: Path) -> None:
+    """The spec dir's NAME carries the request-supplied spec_id. A Path join
+    collapses traversal silently, so it is validated before it is joined."""
+    outside = tmp_path / "task_metadata.json"
+    outside.write_text(json.dumps({"reviewTier": "auto"}))
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+
+    # ".." would resolve to tmp_path and read the file planted above.
+    assert pe.read_task_metadata(nested.parent / "..") == {}
+    assert pe.read_review_tier(nested.parent / "..") is None
+
+
+# ---------------------------------------------------------------------------
+# What reaches the log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("tier", "expected"),
+    [
+        (None, "none"),
+        ("auto", "auto"),
+        (" BLOCKING ", "blocking"),
+        ("nonsense", "unrecognised"),
+        ("auto\nFAKE 2026-01-01 INFO merged=true", "unrecognised"),
+        ("", "unrecognised"),
+    ],
+)
+def test_only_a_recognised_tier_reaches_the_log(tier: object, expected: str) -> None:
+    """reviewTier comes off disk, so interpolating it into a log record lets a
+    crafted value forge log entries. Anything not matching the allow-list is
+    reported as a constant instead of echoed."""
+    assert pe._describe_tier(tier) == expected  # type: ignore[arg-type]
+
+
 # ---------------------------------------------------------------------------
 # The gate, through run_pr_endgame -- the seam every caller passes through
 # ---------------------------------------------------------------------------

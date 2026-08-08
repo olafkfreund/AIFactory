@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from server.services.task_branch import resolve_task_branch
+from server.specpath import safe_spec_component
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +114,22 @@ def read_task_metadata(spec_dir: Path | None) -> dict[str, Any]:
     inline its own copy. One reader means one place where the path is built and
     one place where a malformed file is tolerated.
 
-    Never raises: an unreadable or non-object file is indistinguishable from an
-    absent one to every caller here, and none of them may fail a build over it.
+    The spec directory's own NAME is the untrusted part -- it carries the
+    request-supplied spec_id -- so it goes through ``safe_spec_component``
+    before the path is rebuilt from it. A ``Path`` join collapses traversal
+    silently, so the component must be validated BEFORE it is joined, and an
+    allow-list ``fullmatch`` is what makes that a barrier CodeQL recognises
+    rather than an ad-hoc containment check (see ``server.specpath``).
+
+    Never raises: an unreadable, non-object or badly-named spec dir is
+    indistinguishable from an absent one to every caller here, and none of them
+    may fail a build over it.
     """
     if spec_dir is None:
         return {}
     try:
-        meta = json.loads((spec_dir / "task_metadata.json").read_text())
+        safe_dir = spec_dir.parent / safe_spec_component(spec_dir.name, "spec_dir")
+        meta = json.loads((safe_dir / "task_metadata.json").read_text())
     except (OSError, ValueError):
         return {}
     return meta if isinstance(meta, dict) else {}
@@ -138,17 +149,24 @@ def read_review_tier(spec_dir: Path | None) -> str | None:
     return tier if isinstance(tier, str) and tier.strip() else None
 
 
-# The only tier spellings that may ever appear in a log line. Anything else is
-# reported as the constant below rather than echoed, so a value crafted into
-# task_metadata.json cannot forge log entries (py/log-injection).
-_LOGGABLE_TIERS = frozenset({"auto", "async", "blocking", "low", "medium", "hard"})
+# The only tier spellings that may ever reach a log line. A `fullmatch` against
+# a restrictive allow-list rather than a set membership test: the value comes
+# from a file on disk, and interpolating file content into a log record lets a
+# crafted value forge log entries (py/log-injection). The same note as in
+# `server.specpath` applies -- CodeQL recognises a restrictive fullmatch as a
+# sanitizer and does NOT recognise an ad-hoc containment check, so the set
+# version hardened the code without clearing the alert.
+_LOGGABLE_TIER_RE = re.compile(r"auto|async|blocking|low|medium|hard")
 
 
 def _describe_tier(tier: str | None) -> str:
+    """A tier rendered safe to log: itself if recognised, else a constant."""
     if tier is None:
         return "none"
     normalised = tier.strip().lower()
-    return normalised if normalised in _LOGGABLE_TIERS else "unrecognised"
+    if _LOGGABLE_TIER_RE.fullmatch(normalised):
+        return normalised
+    return "unrecognised"
 
 
 def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
