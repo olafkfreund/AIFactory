@@ -79,7 +79,7 @@ env:
   #
   # Why it has to move: this PR vendors apps/backend/core/job_tracing.py, which
   # does not exist at d7c7687b.
-  HUB_PIN_SHA: "ad73d71f4aa7c7ae8be2547ef4ee327866df16a7"
+  HUB_PIN_SHA: "9d5681c529e11065184c7cc82e3722ba65c0ac5e"
 
 jobs:
   drift:
