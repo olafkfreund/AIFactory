@@ -171,7 +171,9 @@ def tier_allows_auto_merge(spec_dir: Path | None) -> bool:
             "[pr-endgame] merge_policy unavailable; reviewTier=%s not applied", tier
         )
         return True
-    return tier_permits_auto_merge(tier)
+    # bool(): merge_policy is imported lazily from the backend package, so
+    # mypy --strict sees it as Any and the bare return leaks that out.
+    return bool(tier_permits_auto_merge(tier))
 
 
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine

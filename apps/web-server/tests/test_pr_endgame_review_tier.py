@@ -34,7 +34,7 @@ from server.services import pr_endgame as pe  # noqa: E402
 def _spec(tmp_path: Path, tier: object) -> Path:
     spec = tmp_path / "spec"
     spec.mkdir(parents=True, exist_ok=True)
-    meta: dict = {"model": "sonnet"}
+    meta: dict[str, object] = {"model": "sonnet"}
     if tier is not None:
         meta["reviewTier"] = tier
     (spec / "task_metadata.json").write_text(json.dumps(meta))
@@ -60,7 +60,7 @@ def test_medium_and_hard_tiers_forbid_auto_merge(tier: str) -> None:
 def test_absent_tier_leaves_the_caller_unchanged(tier: object) -> None:
     """Back-compat: a task with no reviewTier must behave exactly as before,
     the same rule the RFC-0013 deployment overlay uses for absent inputs."""
-    assert tier_permits_auto_merge(tier) is True  # type: ignore[arg-type]
+    assert tier_permits_auto_merge(tier) is True
 
 
 def test_unreadable_tier_is_not_a_licence_to_merge() -> None:
