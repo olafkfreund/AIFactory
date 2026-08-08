@@ -56,20 +56,45 @@ def _extract_base_image_digests() -> list[str]:
     return refs
 
 
+# A cold `docker buildx version` has to start the daemon's buildx plugin, which
+# on a loaded CI runner is not a 10-second operation (#1186). This probe only
+# decides whether to skip, so a generous ceiling costs nothing and a tight one
+# turned a skip into a red build.
+_BUILDX_PROBE_TIMEOUT_S = 60
+
+
 @pytest.mark.docker
+@pytest.mark.slow
 def test_multi_arch_buildable() -> None:
     """P0.6 — base images we pin support both linux/amd64 and linux/arm64.
 
     Proves multi-arch capability without cross-building. Fast (~2 s).
+
+    Marked ``slow`` as well as ``docker`` (#1186). It was the only test under
+    ``tests/docker/`` carrying just the one marker, so every ``-m "not slow"``
+    lane collected it — including the nested ``pytest tests/ -m "not slow and
+    not postgres"`` subprocess inside the postgres acceptance suite, which runs
+    on a job with no Buildx setup step at all. A Docker-dependent test was
+    gating a Postgres lane.
     """
     if shutil.which("docker") is None:
         pytest.skip("docker not available")
-    bx = subprocess.run(
-        ["docker", "buildx", "version"],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        bx = subprocess.run(
+            ["docker", "buildx", "version"],
+            capture_output=True,
+            text=True,
+            timeout=_BUILDX_PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # A probe that decides whether to skip must not be able to fail the
+        # suite. "The daemon did not answer" is the same fact as "buildx is not
+        # available": the test's own precondition was not met, so it cannot run
+        # — it has learned nothing about the Dockerfile either way.
+        pytest.skip(
+            f"docker buildx did not respond within {_BUILDX_PROBE_TIMEOUT_S}s "
+            "— treating as unavailable"
+        )
     if bx.returncode != 0:
         pytest.skip("docker buildx not installed")
 
