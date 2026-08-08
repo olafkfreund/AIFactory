@@ -85,10 +85,20 @@ async def apply_subtask_status_update(
                 f"Error: Subtask '{subtask_id}' not found in implementation plan"
             )
 
+        now = datetime.now(timezone.utc).isoformat()
         target_subtask["status"] = status
         if notes:
             target_subtask["notes"] = notes
-        target_subtask["updated_at"] = datetime.now(timezone.utc).isoformat()
+        target_subtask["updated_at"] = now
+
+        # #1195: stamp ``started_at`` with the SAME write that sets the status,
+        # because CFactory's live execution diagram reads it —
+        # ``taskFlow.nodeElapsedSeconds`` returns null without it, so every
+        # subtask's timer chip in the cockpit rendered empty on every build.
+        # Only on the first transition: a retried subtask keeps its original
+        # start, so the clock does not reset under the reviewer mid-build.
+        if status == "in_progress" and not target_subtask.get("started_at"):
+            target_subtask["started_at"] = now
 
         # The honesty gates (#851 test evidence, #1111 deliverable coverage,
         # #1113 pipeline evidence) live in agents.completion_gate because the

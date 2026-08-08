@@ -8,7 +8,7 @@ This extends the subtask model to include product-oriented story structure.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from .enums import SubtaskStatus
 from .verification import Verification
@@ -86,10 +86,10 @@ class Story:
     # Verification (same as Subtask)
     verification: Verification | None = None
 
-    # Tracking (same as Subtask)
+    # Tracking (same as Subtask) — aware-UTC ISO strings, and no session_id,
+    # for the reasons in Subtask's field comment (#1195).
     started_at: str | None = None
     completed_at: str | None = None
-    session_id: int | None = None
     critique_result: dict | None = None
 
     # Legacy compatibility fields
@@ -129,8 +129,6 @@ class Story:
             result["started_at"] = self.started_at
         if self.completed_at:
             result["completed_at"] = self.completed_at
-        if self.session_id is not None:
-            result["session_id"] = self.session_id
         if self.critique_result:
             result["critique_result"] = self.critique_result
 
@@ -168,7 +166,6 @@ class Story:
             verification=verification,
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
-            session_id=data.get("session_id"),
             critique_result=data.get("critique_result"),
             description=data.get("description"),  # Legacy compatibility
         )
@@ -219,7 +216,6 @@ class Story:
             else None,
             started_at=subtask_data.get("started_at"),
             completed_at=subtask_data.get("completed_at"),
-            session_id=subtask_data.get("session_id"),
             critique_result=subtask_data.get("critique_result"),
             description=description,  # Preserve original
         )
@@ -230,17 +226,21 @@ class Story:
 
     # Methods for compatibility with Subtask interface
 
-    def start(self, session_id: int):
-        """Mark story as in progress."""
+    def start(self) -> None:
+        """Mark story as in progress and stamp ``started_at`` (#1195).
+
+        Mirrors :meth:`Subtask.start` exactly — the wave engine duck-types
+        these two, so a Story that behaved differently would be silent drift.
+        """
         self.status = SubtaskStatus.IN_PROGRESS
-        self.started_at = datetime.now().isoformat()
-        self.session_id = session_id
+        if not self.started_at:
+            self.started_at = datetime.now(UTC).isoformat()
         self.completed_at = None
 
     def complete(self, output: str | None = None):
         """Mark story as done."""
         self.status = SubtaskStatus.COMPLETED
-        self.completed_at = datetime.now().isoformat()
+        self.completed_at = datetime.now(UTC).isoformat()
         # Note: Stories don't have actual_output field like subtasks
 
     def fail(self, reason: str | None = None):

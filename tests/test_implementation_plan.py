@@ -68,16 +68,29 @@ class TestChunk:
         """Chunk can be started."""
         chunk = Chunk(id="test", description="Test")
 
-        chunk.start(session_id=1)
+        chunk.start()
 
         assert chunk.status == ChunkStatus.IN_PROGRESS
+        # Aware UTC (#1195): the cockpit subtracts started_at from completed_at,
+        # so a naive local stamp here would skew the timer by the UTC offset.
         assert chunk.started_at is not None
-        assert chunk.session_id == 1
+        assert datetime.fromisoformat(chunk.started_at).tzinfo is not None
+
+    def test_chunk_start_is_idempotent_on_the_timestamp(self):
+        """A retried subtask keeps its ORIGINAL start, so the cockpit timer
+        does not reset mid-build (#1195)."""
+        chunk = Chunk(id="test", description="Test")
+        chunk.start()
+        first = chunk.started_at
+
+        chunk.start()
+
+        assert chunk.started_at == first
 
     def test_chunk_complete(self):
         """Chunk can be completed."""
         chunk = Chunk(id="test", description="Test")
-        chunk.start(session_id=1)
+        chunk.start()
 
         chunk.complete(output="Done successfully")
 
@@ -88,7 +101,7 @@ class TestChunk:
     def test_chunk_fail(self):
         """Chunk can be marked as failed."""
         chunk = Chunk(id="test", description="Test")
-        chunk.start(session_id=1)
+        chunk.start()
 
         chunk.fail(reason="Test error")
 

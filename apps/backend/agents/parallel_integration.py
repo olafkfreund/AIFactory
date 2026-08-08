@@ -55,7 +55,11 @@ from .parallel_runner import PhaseRunResult, SubtaskResult, run_parallel_phase
 from .session import run_session_guarded
 from .test_evidence import read_test_evidence, record_subtask_completed
 from .token_attribution import PromptSegments, TurnUsage, record_turn
-from .utils import record_subtask_completion, sync_plan_to_source
+from .utils import (
+    record_subtask_completion,
+    record_subtask_started,
+    sync_plan_to_source,
+)
 from .wave_log import WaveRecorder
 
 logger = logging.getLogger(__name__)
@@ -761,6 +765,12 @@ async def run_parallel_coding_phase(
             f"— {', '.join(ids)}"
         )
         recorder.record_wave(wave_num, ids)
+        # #1195: the wave path's start stamp. This hook is the parent-owned,
+        # single-threaded moment a wave begins (it runs before the gather and
+        # after the previous wave's completions landed), which is exactly what
+        # ``started_at`` means and the only place it can be written without
+        # racing the concurrent children.
+        record_subtask_started(ids, plan_path, source_spec_dir)
 
     result = await run_parallel_phase(
         phase.subtasks,
