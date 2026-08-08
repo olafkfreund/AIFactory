@@ -20,13 +20,24 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
 WEB_SERVER = Path(__file__).resolve().parents[1]
-if str(WEB_SERVER) not in sys.path:
-    sys.path.insert(0, str(WEB_SERVER))
+# ``core`` lives in apps/backend. The ABC under test puts it on sys.path
+# itself, but do it here too so the imports below can sit in sorted order
+# rather than depending on one import's side effect.
+BACKEND = WEB_SERVER.parent / "backend"
+for _root in (WEB_SERVER, BACKEND):
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
 
+from core import outbound_scrub  # noqa: E402
+from server.services.insights_providers import (  # noqa: E402
+    claude_provider,
+    openai_compat_provider,
+)
 from server.services.insights_providers.base import (  # noqa: E402
     ProviderInfo,
     ProviderStrategy,
@@ -74,12 +85,8 @@ def _silence_websocket_broadcasts(monkeypatch):
     async def _noop(*_args, **_kwargs):
         return None
 
-    for module in (
-        "server.services.insights_providers.openai_compat_provider",
-        "server.services.insights_providers.claude_provider",
-    ):
-        __import__(module)
-        monkeypatch.setattr(sys.modules[module], "broadcast_event", _noop)
+    for module in (openai_compat_provider, claude_provider):
+        monkeypatch.setattr(module, "broadcast_event", _noop)
 
 
 @pytest.fixture(autouse=True)
@@ -92,9 +99,9 @@ def _scrub_default_on(monkeypatch):
 class _Recorder(BaseHTTPRequestHandler):
     """Records the request body, then replays a minimal SSE completion."""
 
-    bodies: list[str] = []
+    bodies: ClassVar[list[str]] = []
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
         type(self).bodies.append(self.rfile.read(length).decode())
         self.send_response(200)
@@ -123,13 +130,11 @@ def recording_endpoint():
 
 
 async def _send_via_openai_compat(base_url: str, *, history=HISTORY) -> str:
-    from server.services.insights_providers.openai_compat_provider import (
-        OpenAICompatProvider,
+    provider = openai_compat_provider.OpenAICompatProvider(
+        "lmstudio", base_url=base_url
     )
-
-    provider = OpenAICompatProvider("lmstudio", base_url=base_url)
     return await provider.send_message(
-        project_path=Path("."),
+        project_path=Path(),
         project_id="proj-1",
         message=PROMPT,
         model="test-model",
@@ -178,8 +183,6 @@ async def test_replayed_conversation_history_is_scrubbed_too(recording_endpoint)
 async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch):
     """The Claude strategy's wire is subprocess argv, not an HTTP body.
     Stand in a recording executable and read what it was handed."""
-    import server.services.insights_providers.claude_provider as claude_mod
-
     argv_log = tmp_path / "argv.json"
     fake_cli = tmp_path / "claude"
     fake_cli.write_text(
@@ -191,10 +194,10 @@ async def test_claude_cli_argv_carries_no_pii(tmp_path, monkeypatch):
     )
     fake_cli.chmod(fake_cli.stat().st_mode | stat.S_IEXEC)
 
-    provider = claude_mod.ClaudeProvider()
+    provider = claude_provider.ClaudeProvider()
     provider._claude_path = str(fake_cli)
     monkeypatch.setattr(
-        claude_mod.ClaudeProvider,
+        claude_provider.ClaudeProvider,
         "_resolve_claude_token",
         lambda _self: (None, None, None),
     )
@@ -233,7 +236,7 @@ async def test_the_assertions_observe_the_scrub_and_not_the_stand_in(
         assert marker not in sent
 
 
-async def test_a_new_strategy_cannot_opt_out_of_the_scrub(recording_endpoint):
+async def test_a_new_strategy_cannot_opt_out_of_the_scrub():
     """The seam, not the call sites (#1132).
 
     A strategy written after this change -- one that never heard of the
@@ -252,13 +255,16 @@ async def test_a_new_strategy_cannot_opt_out_of_the_scrub(recording_endpoint):
                 icon="x",
             )
 
-        async def send_message(
+        # Signature is fixed by the ABC, hence the argument-count and
+        # unused-argument waivers: a strategy that narrowed it would not be a
+        # strategy.
+        async def send_message(  # noqa: PLR0913, PLR0917
             self,
-            project_path,
-            project_id,
+            project_path,  # noqa: ARG002
+            project_id,  # noqa: ARG002
             message,
-            model,
-            model_config,
+            model,  # noqa: ARG002
+            model_config,  # noqa: ARG002
             conversation_history,
         ) -> str:
             seen["message"] = message
@@ -266,7 +272,7 @@ async def test_a_new_strategy_cannot_opt_out_of_the_scrub(recording_endpoint):
             return "ok"
 
     await BrandNewProvider().send_message(
-        project_path=Path("."),
+        project_path=Path(),
         project_id="proj-1",
         message=PROMPT,
         model=None,
@@ -285,7 +291,6 @@ async def test_fails_closed_when_the_redactor_is_unavailable(
     """#320 contract: a scrub that cannot run must refuse to send, not
     fall through to the raw prompt. The recording endpoint must see
     nothing at all."""
-    import core.outbound_scrub as outbound_scrub
 
     def _boom() -> object:
         raise ImportError("redactor module not on PYTHONPATH")

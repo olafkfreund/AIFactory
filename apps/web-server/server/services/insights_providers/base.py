@@ -135,8 +135,11 @@ class ProviderStrategy(abc.ABC):
         if send_message is None or getattr(send_message, "__outbound_scrub__", False):
             return
 
+        # The wrapper must mirror the ABC's signature exactly so callers can
+        # pass these positionally or by keyword; the argument count is the
+        # contract's, not a choice made here.
         @functools.wraps(send_message)
-        async def _scrubbing_send_message(
+        async def _scrubbing_send_message(  # noqa: PLR0913, PLR0917
             self: Any,
             project_path: Path,
             project_id: str,
