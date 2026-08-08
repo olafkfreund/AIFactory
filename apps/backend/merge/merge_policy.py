@@ -39,6 +39,7 @@ __all__ = [
     "HOLD_BLOCKING",
     "decide_merge",
     "deployment_block_reasons",
+    "tier_permits_auto_merge",
 ]
 
 AUTO_MERGE = "auto-merge"
@@ -219,3 +220,28 @@ def decide_merge(
     ):
         return AUTO_MERGE
     return HOLD_ASYNC
+
+
+def tier_permits_auto_merge(tier: str | None) -> bool:
+    """Whether this tier may auto-merge AT ALL, ignoring the gate signals.
+
+    The tier's *ceiling*, not the decision. :func:`decide_merge` is the full
+    decision and additionally requires host CI, the TFactory verdict, the VAL
+    floor and CI parity before a ``low`` tier actually merges. This exists for
+    the caller that has the tier but genuinely cannot supply those signals --
+    ``pr_endgame`` knows the review verdict and nothing else -- so that it can
+    NARROW its own gate without fabricating greens it has not measured.
+
+    Use it to tighten an existing decision, never to widen one: True here means
+    only "the tier does not forbid it", and the caller's own gates still have
+    to pass.
+
+    Absent / blank tier => True, so a task carrying no ``reviewTier`` behaves
+    exactly as it did before -- the same back-compat rule the RFC-0013
+    deployment overlay uses for absent inputs. An UNRECOGNISED tier => False,
+    matching ``decide_merge``'s HOLD_BLOCKING for an unknown spelling: a tier
+    nobody can read is not a licence to merge (#1158).
+    """
+    if tier is None or not str(tier).strip():
+        return True
+    return _TIER_ALIASES.get(str(tier).strip().lower()) == "low"

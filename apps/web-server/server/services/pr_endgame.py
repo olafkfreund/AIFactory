@@ -104,6 +104,76 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
+def review_tier_of(meta: object) -> str | None:
+    """The RFC-0011 ``reviewTier`` from an already-read task_metadata (#1158).
+
+    Written by ``intake.build_execution_block`` (low -> auto, medium -> async,
+    hard -> blocking) and carried into ``task_metadata.json`` by
+    ``trusted_plan._EXECUTION_TO_METADATA``. Until now nothing read it back --
+    it was contract surface that read as implemented.
+
+    Takes the parsed metadata rather than a directory ON PURPOSE.
+    ``gather_pr_context`` already reads that file for ``base_branch``, so
+    threading the tier out of the same read means this feature opens no second
+    filesystem path built from a request-supplied spec id -- there is nothing
+    new for a traversal to get into.
+
+    None for anything that is not a non-blank string, which every caller treats
+    as "no opinion".
+    """
+    if not isinstance(meta, dict):
+        return None
+    tier = meta.get("reviewTier")
+    return tier if isinstance(tier, str) and tier.strip() else None
+
+
+# Maps a tier onto a LITERAL for the log line. reviewTier comes off disk, and
+# interpolating file content into a log record lets a crafted value forge log
+# entries (py/log-injection). Returning a constant from this table rather than
+# the input itself means nothing from the file ever reaches the log -- a
+# `fullmatch` guard would harden it but still return the tainted string, which
+# hardens the code without clearing the finding.
+_TIER_LOG_LABEL: dict[str, str] = {
+    "auto": "auto",
+    "async": "async",
+    "blocking": "blocking",
+    "low": "low",
+    "medium": "medium",
+    "hard": "hard",
+}
+
+
+def _describe_tier(tier: str | None) -> str:
+    """A constant describing the tier, safe to put in a log record."""
+    if tier is None:
+        return "none"
+    return _TIER_LOG_LABEL.get(tier.strip().lower(), "unrecognised")
+
+
+def tier_allows_auto_merge(tier: str | None) -> bool:
+    """Whether this task's review tier permits auto-merge at all (#1158).
+
+    Delegates the tier policy to ``merge.merge_policy`` -- the RFC-0011 routing
+    table lives there and must not be re-implemented here. Lazy import: the
+    backend package is on sys.path only at runtime (same pattern as
+    ``conflict_service``), and a missing backend must not break the endgame, so
+    an import failure degrades to "no opinion" rather than blocking a merge the
+    operator asked for.
+    """
+    if tier is None:
+        return True
+    try:
+        from merge.merge_policy import tier_permits_auto_merge  # noqa: PLC0415
+    except ImportError:  # pragma: no cover - backend always present in prod
+        logger.warning(
+            "[pr-endgame] merge_policy unavailable; reviewTier=%s not applied", tier
+        )
+        return True
+    # bool(): merge_policy is imported lazily from the backend package, so
+    # mypy --strict sees it as Any and the bare return leaks that out.
+    return bool(tier_permits_auto_merge(tier))
+
+
 # Which reviewer gates the merge. "aifactory" = AIFactory's own review engine
 # (Claude/Ollama — no Copilot credits, gated on the engine's verdict since GitHub
 # forbids self-approving the PR we opened). "copilot" = GitHub Copilot's review.
@@ -732,6 +802,8 @@ def gather_pr_context(
     if not isinstance(meta, dict):
         meta = {}
     base = meta.get("base_branch") or meta.get("baseBranch") or "main"
+    # RFC-0011 tier, out of the SAME read (#1158) — see review_tier_of.
+    review_tier = review_tier_of(meta)
 
     # On the kubejob path the build runs inside the k8s Job and pushes
     # aifactory/<spec_id>, while THIS control-plane worktree stays on the base
@@ -794,6 +866,7 @@ def gather_pr_context(
         "base": base,
         "repo": bare,
         "provider": provider,
+        "review_tier": review_tier,
     }
 
 
@@ -807,6 +880,7 @@ async def run_pr_endgame(
     repo: str,
     provider: str = "github",
     auto_merge: bool = False,
+    review_tier: str | None = None,
     reviewer: str = "aifactory",
     review_fn: Callable[[], ReviewState] | None = None,
     fix_fn: Callable[[list], bool] | None = None,
@@ -849,6 +923,29 @@ async def run_pr_endgame(
             "provider": provider,
             "repo": repo,
         }
+
+    # RFC-0011 per-tier merge policy (#1158). `AIFACTORY_AUTO_MERGE` stays the
+    # master switch; the tier may only ever make it STRICTER, never looser --
+    # the same "may only tighten" rule merge_policy applies to its deployment
+    # overlay. So a `factory:hard` task (reviewTier=blocking) cannot auto-merge
+    # even with the flag on, while `factory:low` (auto) is unaffected.
+    #
+    # The decision is made here rather than at the call site because every route
+    # into the endgame passes through this function. The tier is READ by
+    # `gather_pr_context` (which already parses task_metadata.json for the base
+    # branch) and passed in, so this feature adds no second filesystem path
+    # built from a request-supplied spec id.
+    if auto_merge and not tier_allows_auto_merge(review_tier):
+        # A CONSTANT, never the raw value: reviewTier comes off disk, and
+        # interpolating file content into a log record lets a crafted value
+        # forge log entries (py/log-injection).
+        logger.info(
+            "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
+            "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
+            spec_id,
+            _describe_tier(review_tier),
+        )
+        auto_merge = False
 
     parts = _split_repo(repo)
     if parts is None:

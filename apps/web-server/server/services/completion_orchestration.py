@@ -428,6 +428,10 @@ async def run_terminal_completion(
                             # `gh` against a repo that is not there.
                             provider=ctx.get("provider", "github"),
                             auto_merge=is_auto_merge_enabled(project_path),
+                            # RFC-0011 tier (#1158) — read by
+                            # gather_pr_context from the same
+                            # task_metadata.json it reads the base from.
+                            review_tier=ctx.get("review_tier"),
                             reviewer=_reviewer,
                             review_fn=_review_fn,
                             fix_fn=_fix_fn,
