@@ -11,17 +11,17 @@ import logging
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import AuditLog, OrgMember, User
 from ..database.engine import get_db
 from ..services.audit_export import stream_csv, stream_json
 from .auth_routes import get_current_user
-from .organizations import require_org_role, ROLE_LEVELS
+from .organizations import require_org_role
 
 logger = logging.getLogger(__name__)
 

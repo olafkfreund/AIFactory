@@ -89,7 +89,6 @@ async def get_worktree_merge_preview(
     projects_data = json.loads(projects_file.read_text())
 
     # Find the task across all projects
-    task_info = None
     project_path = None
 
     # Handle both dict format (id -> project) and list format
@@ -107,10 +106,8 @@ async def get_worktree_merge_preview(
         spec_dir = project_path / ".aifactory" / "specs" / task_id
 
         if spec_dir.exists():
-            # Found the task
-            impl_plan = spec_dir / "implementation_plan.json"
-            if impl_plan.exists():
-                task_info = json.loads(impl_plan.read_text())
+            # Found the task. The implementation plan was parsed here and the
+            # result never read; only the spec dir's existence is needed.
             break
     else:
         return {"success": False, "error": f"Task {task_id} not found"}
@@ -563,7 +560,9 @@ async def resolve_worktree_conflicts(
         if merge_result.returncode == 0:
             # Clean merge, no conflicts - commit it
             logger.info(f"Clean merge for {task_id}, committing")
-            commit_result = subprocess.run(
+            # Returncode not read; see the note on the other `git commit` call
+            # in this module and #1210.
+            subprocess.run(
                 ["git", "commit", "-m", f"Merge {worktree_branch} into current branch"],
                 cwd=project_path,
                 capture_output=True,
@@ -635,7 +634,11 @@ async def resolve_worktree_conflicts(
     if not conflicted_files:
         # No conflicts found - the merge may have already been resolved
         # Try to commit
-        commit_result = subprocess.run(
+        # The returncode is deliberately not read HERE, only because reading it
+        # would change what this endpoint returns -- today a failed commit is
+        # still reported as success. Tracked as a defect in #1210; this change
+        # is behaviour-preserving.
+        subprocess.run(
             ["git", "commit", "--no-edit"],
             cwd=project_path,
             capture_output=True,

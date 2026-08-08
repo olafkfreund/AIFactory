@@ -592,9 +592,7 @@ def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
     def _boom(self):
         raise ImportError("redactor module not on PYTHONPATH")
 
-    monkeypatch.setattr(
-        OpenAICompatibleProvider, "_build_outbound_redactor", _boom
-    )
+    monkeypatch.setattr(OpenAICompatibleProvider, "_build_outbound_redactor", _boom)
 
     async def _fail_closed():
         provider = OpenAICompatibleProvider(

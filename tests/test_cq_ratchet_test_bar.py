@@ -48,6 +48,7 @@ _REPO = Path(__file__).resolve().parents[1]
 _RUFF_CONFIG = str(_REPO / "standards" / "ruff.toml")
 _ASSERT_SOURCE = "def f(x):\n    assert x\n    return x\n"
 
+
 @pytest.fixture(autouse=True)
 def ruff_on_path() -> Iterator[None]:
     """Make bare ``ruff`` resolvable, the way the ratchet itself needs it.
@@ -156,4 +157,6 @@ def test_base_and_head_agree_for_every_shape(path: str) -> None:
     whatever the config says, and equality is the thing the ratchet's arithmetic
     depends on.
     """
-    assert _base(path) == _head(path), f"{path}: base and head judged by different rules"
+    assert _base(path) == _head(path), (
+        f"{path}: base and head judged by different rules"
+    )

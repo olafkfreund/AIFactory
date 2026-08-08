@@ -16,7 +16,10 @@ if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))
 
 from server.services import outbox  # noqa: E402
-from server.services.completion import build_completion_event, notify_completion  # noqa: E402
+from server.services.completion import (  # noqa: E402
+    build_completion_event,
+    notify_completion,
+)
 
 
 def _event(event_id="11111111-1111-4111-8111-111111111111", status="done"):

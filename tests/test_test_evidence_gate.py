@@ -150,7 +150,7 @@ def test_read_evidence_last_failed_reflects_only_latest(tmp_path):
 # legitimate shape must still complete.
 
 # Verbatim shape of C2's tests/test_vat_quote.py (issue #1111).
-_C2_HOLLOW = '''\
+_C2_HOLLOW = """\
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -165,10 +165,10 @@ client = TestClient(_app)
 
 def test_quote():
     assert client.post("/api/quote", json={"net": 100}).status_code == 200
-'''
+"""
 
 # The repo's own established convention, which C2 deliberately deviated from.
-_HONEST = '''\
+_HONEST = """\
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -178,7 +178,7 @@ client = TestClient(app)
 
 def test_quote():
     assert client.post("/api/quote", json={"net": 100}).status_code == 200
-'''
+"""
 
 _HTTP_PLAN = {
     "phases": [

@@ -77,7 +77,9 @@ def _dockerignore_negations() -> list[str]:
 
 
 def _deploy_paths_ignore() -> list[str]:
-    doc = yaml.safe_load((_REPO / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8"))
+    doc = yaml.safe_load(
+        (_REPO / ".github" / "workflows" / "deploy.yml").read_text(encoding="utf-8")
+    )
     # PyYAML parses the bare key `on:` as the boolean True.
     triggers = doc[True] if True in doc else doc["on"]
     return list((triggers.get("push") or {}).get("paths-ignore") or [])
@@ -91,7 +93,11 @@ def _sample_path_for(pattern: str) -> str:
     `*` becomes a name — because a representative example is enough to decide
     whether a `paths-ignore` entry swallows the whole class.
     """
-    return pattern.replace("**/", "apps/backend/prompts/").replace("**", "x").replace("*", "sample")
+    return (
+        pattern.replace("**/", "apps/backend/prompts/")
+        .replace("**", "x")
+        .replace("*", "sample")
+    )
 
 
 def test_paths_ignore_does_not_swallow_a_dockerignore_negation() -> None:
@@ -137,7 +143,9 @@ def test_the_prompts_this_service_actually_ships_would_trigger_a_deploy() -> Non
     ignores = _deploy_paths_ignore()
     for prompt in prompts:
         swallowed = [p for p in ignores if _github_glob_matches(prompt, p)]
-        assert not swallowed, f"{prompt} would not trigger a deploy (matched by {swallowed})"
+        assert not swallowed, (
+            f"{prompt} would not trigger a deploy (matched by {swallowed})"
+        )
 
 
 def test_root_markdown_and_docs_are_still_ignored() -> None:

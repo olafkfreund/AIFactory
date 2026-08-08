@@ -86,12 +86,10 @@ async def get_project_context(projectId: str = Path(...)):
         except Exception:
             pass
 
-    # Check if Graphiti/memory is configured
-    env_path = project_path / ".aifactory" / ".env"
-    memory_enabled = False
-    if env_path.exists():
-        env_content = env_path.read_text()
-        memory_enabled = "GRAPHITI_ENABLED=true" in env_content
+    # The project's own GRAPHITI_ENABLED flag was read here and discarded while
+    # the response below reports `memoryStatus.enabled: True` unconditionally.
+    # Removed rather than wired in: which of the two the field is supposed to
+    # mean is an API decision the portal consumes, tracked in #1210.
 
     # Collect recent memories from all specs
     memories = []

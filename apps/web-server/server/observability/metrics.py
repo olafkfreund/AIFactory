@@ -69,7 +69,7 @@ def install_metrics(
     # that validates the bearer first, then delegates to the
     # instrumentator's response generator.
     from fastapi.responses import Response
-    from prometheus_client import REGISTRY, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
     @app.get("/metrics", include_in_schema=False)
     async def _gated_metrics(request: Request) -> Response:

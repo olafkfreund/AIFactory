@@ -54,7 +54,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
@@ -806,7 +806,9 @@ async def saml_sls(
 
         # SDK validates the LogoutResponse signature + status.
         try:
-            redirect_url = auth.process_slo(
+            # Called for its VALIDATION, not its return: the redirect target is
+            # decided below from the local config, not from the IdP's response.
+            auth.process_slo(
                 keep_local_session=False,
                 request_id=None,
             )

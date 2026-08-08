@@ -6,9 +6,7 @@ Runs `codex exec --model <model> "<message>"` as a subprocess.
 
 import asyncio
 import logging
-import os
 import shlex
-import subprocess
 import time
 from pathlib import Path
 

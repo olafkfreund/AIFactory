@@ -45,7 +45,7 @@ class GcpKmsBackend:
     """Wrap/unwrap data keys via Cloud KMS symmetric Encrypt/Decrypt."""
 
     @classmethod
-    def from_env(cls) -> "GcpKmsBackend":
+    def from_env(cls) -> GcpKmsBackend:
         key_name = os.environ.get("GCP_KMS_KEY_NAME")
         if not key_name:
             raise RuntimeError(

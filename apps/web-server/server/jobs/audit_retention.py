@@ -31,7 +31,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.engine import async_session_factory

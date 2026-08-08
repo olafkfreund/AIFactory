@@ -47,7 +47,11 @@ PROJECT_ID = "proj-1"
 def _git(args: list[str], cwd: Path) -> None:
     # S603/S607: fixed literals in a test fixture, no shell, no external input.
     subprocess.run(  # noqa: S603
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True  # noqa: S607
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,  # noqa: S607
     )
 
 
@@ -187,9 +191,7 @@ def test_resolve_conflicts_merges_the_pushed_work(
     project = kubejob_shape["project"]
     projects_file = kubejob_shape["data_dir"] / "projects.json"
 
-    with patch.object(
-        worktree_merge, "get_projects_file", return_value=projects_file
-    ):
+    with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
         result = asyncio.run(
             worktree_merge.resolve_worktree_conflicts(
                 f"{PROJECT_ID}:{SPEC_ID}", _access={}

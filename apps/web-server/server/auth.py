@@ -45,7 +45,7 @@ import hmac
 import logging
 from functools import lru_cache
 
-from fastapi import HTTPException, Request, WebSocket, status
+from fastapi import Request, WebSocket, status
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse

@@ -29,7 +29,6 @@ skip without real credentials.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 
 @dataclass(frozen=True)

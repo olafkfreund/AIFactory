@@ -77,11 +77,7 @@ def _marker_path(project_path: Path, spec_id: str) -> Path:
     (#565) and the only one that actually cuts the flow.
     """
     return (
-        project_path
-        / ".aifactory"
-        / "specs"
-        / safe_spec_component(spec_id)
-        / _MARKER
+        project_path / ".aifactory" / "specs" / safe_spec_component(spec_id) / _MARKER
     )
 
 
@@ -216,14 +212,21 @@ def resolve_work_ref(
         return branch, f"origin/{branch}", None
     if branch in refs:
         return branch, branch, None
-    return None, None, (
-        f"branch {branch!r} was resolved but no ref for it is readable in the "
-        f"project repo, even after fetching origin"
+    return (
+        None,
+        None,
+        (
+            f"branch {branch!r} was resolved but no ref for it is readable in the "
+            f"project repo, even after fetching origin"
+        ),
     )
 
 
 def _discover(
-    project_path: Path, spec_id: str, base_branch: str, worktree_path: Path | None = None
+    project_path: Path,
+    spec_id: str,
+    base_branch: str,
+    worktree_path: Path | None = None,
 ) -> tuple[str | None, str | None]:
     """Find the branch from git refs when nothing else identified it.
 
@@ -236,7 +239,10 @@ def _discover(
     """
     roots = [r for r in (worktree_path, project_path) if r is not None and r.is_dir()]
     for root in roots:
-        for scope, refspec in (("local", "refs/heads"), ("origin", "refs/remotes/origin")):
+        for scope, refspec in (
+            ("local", "refs/heads"),
+            ("origin", "refs/remotes/origin"),
+        ):
             found = _matches(
                 _git(["for-each-ref", "--format=%(refname:short)", refspec], root),
                 spec_id,

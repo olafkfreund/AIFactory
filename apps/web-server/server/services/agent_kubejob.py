@@ -579,7 +579,9 @@ class KubejobMixin:
                         deadline_seconds,
                     )
                 except Exception:  # noqa: BLE001
-                    _log.exception("[AgentService] reap of abandoned task %s failed", task.id)
+                    _log.exception(
+                        "[AgentService] reap of abandoned task %s failed", task.id
+                    )
         return reaped
 
     async def _has_live_kubejob(self, task_id: str) -> bool:

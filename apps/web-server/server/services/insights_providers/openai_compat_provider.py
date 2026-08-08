@@ -5,7 +5,6 @@ Supports LM Studio, vLLM, LocalAI, Jan — any server exposing
 POST /v1/chat/completions with SSE streaming.
 """
 
-import asyncio
 import json
 import logging
 import time

@@ -10,52 +10,50 @@ import functools
 import json
 import logging
 import os
-import re
-import shutil
 import signal
 import sys
 import threading
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
-from ..websockets.events import (
-    emit_subtask_update,
-    emit_task_logs_stream,
-    emit_task_status,
-    emit_task_update,
-)
 from . import task_control
 from .agent_credential import CredentialMixin
-from .agent_emit import EmitMixin
+from .agent_emit import (
+    EmitMixin,
+    _dedup_signature,  # noqa: F401  (re-export)
+)
+from .agent_kubejob import KubejobMixin
 from .agent_queue import QueueMixin
 from .agent_skill_context import SkillContextMixin
 from .agent_spec_creation import SpecCreationMixin
 from .agent_worktree_sync import WorktreeSyncMixin
-from .agent_emit import _dedup_signature  # noqa: F401  (re-export)
-from .agent_kubejob import KubejobMixin
 
 # Module-level logger for the admission-control paths (RFC-0016 #668). The rest
 # of this (legacy) module still uses local ``import logging`` inside methods.
 _log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Tenant Isolation Mode — namespace routing (Epic #35 #36 PR-2)
+# Re-exports from the god-file decomposition. Every name below moved out of this
+# module and is imported back so existing callers are unchanged. isort sorts
+# this block, so a comment naming one module cannot sit above another's import;
+# each is annotated inline instead.
 # ---------------------------------------------------------------------------
-# Lives in services/tenant_target.py (god-file decomposition); re-exported so
-# existing callers are unchanged.
-from .tenant_target import TenantTarget, resolve_tenant_target  # noqa: E402,F401
+# Agent task runtime models (services/agent_task_models.py).
+from .agent_task_models import (  # noqa: E402,F401
+    QueuedTask,
+    TaskLog,
+    TaskProgress,
+)
 
+# TaskLogWriter (services/task_log_writer.py).
+from .task_log_writer import TaskLogWriter  # noqa: E402,F401
 
-# Task-phase model + phase/progress helpers live in services/task_phase.py
-# (decomposing the agent_service god-file). Re-exported so existing callers keep
-# working.
+# Task-phase model + phase/progress helpers (services/task_phase.py).
 from .task_phase import (  # noqa: E402,F401
     PHASE_RANGES,
     TaskPhase,
@@ -69,18 +67,9 @@ from .task_phase import (  # noqa: E402,F401
     sync_require_review_metadata,
 )
 
-
-# Agent task runtime models live in services/agent_task_models.py (god-file
-# decomposition); re-exported so existing callers are unchanged.
-from .agent_task_models import (  # noqa: E402,F401
-    QueuedTask,
-    TaskLog,
-    TaskProgress,
-)
-
-# TaskLogWriter lives in services/task_log_writer.py (god-file decomposition);
-# re-exported so existing callers are unchanged.
-from .task_log_writer import TaskLogWriter  # noqa: E402,F401
+# Tenant Isolation Mode — namespace routing, Epic #35 #36 PR-2
+# (services/tenant_target.py).
+from .tenant_target import TenantTarget, resolve_tenant_target  # noqa: E402,F401
 
 
 class AgentService(

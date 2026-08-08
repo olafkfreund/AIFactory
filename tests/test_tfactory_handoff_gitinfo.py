@@ -156,9 +156,7 @@ def test_diverged_remote_is_force_repaired_not_left_stale(tmp_path):
     import subprocess
 
     def g(cwd, *a):
-        return subprocess.run(
-            ["git", *a], cwd=str(cwd), capture_output=True, text=True
-        )
+        return subprocess.run(["git", *a], cwd=str(cwd), capture_output=True, text=True)
 
     origin = tmp_path / "origin.git"
     origin.mkdir()
@@ -206,9 +204,7 @@ def test_packed_path_pushes_build_ref_from_project_repo_not_clone_base(tmp_path)
     import subprocess
 
     def g(cwd, *a):
-        return subprocess.run(
-            ["git", *a], cwd=str(cwd), capture_output=True, text=True
-        )
+        return subprocess.run(["git", *a], cwd=str(cwd), capture_output=True, text=True)
 
     origin = tmp_path / "origin.git"
     origin.mkdir()
@@ -251,7 +247,9 @@ def test_packed_path_pushes_build_ref_from_project_repo_not_clone_base(tmp_path)
 
     assert branch == "aifactory/090-x"
     remote = g(proj, "ls-remote", str(origin), "aifactory/090-x").stdout.split()
-    assert remote and remote[0] == build_sha, "build branch not pushed from project repo"
+    assert remote and remote[0] == build_sha, (
+        "build branch not pushed from project repo"
+    )
 
 
 def test_worktree_on_real_build_branch_is_trusted(tmp_path):

@@ -85,7 +85,6 @@ _WORKER_PROGRESS_WINDOW_S = 10.0
 _progress_last_emit: dict[str, float] = {}
 
 
-
 def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
     """Pool a spec's memory into the PROJECT store, so it compounds (#1038).
 
@@ -129,6 +128,7 @@ def _pool_memory_at_project_level(spec_dir: str | os.PathLike[str]) -> bool:
     except (OSError, shutil.Error) as exc:
         logger.warning("[completion] could not pool memory: %s", exc)
         return False
+
 
 def _progress_window_s() -> float:
     """The throttle window in seconds (env-overridable, defaults to ~10s)."""

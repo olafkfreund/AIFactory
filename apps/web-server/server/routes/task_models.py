@@ -78,7 +78,7 @@ class TaskCreate(TaskBase):
     """Model for creating a new task."""
 
     project_id: str = Field(..., description="ID of the project this task belongs to")
-    metadata: Optional["TaskMetadataUpdate"] = Field(
+    metadata: TaskMetadataUpdate | None = Field(
         None, description="Optional task metadata"
     )
 

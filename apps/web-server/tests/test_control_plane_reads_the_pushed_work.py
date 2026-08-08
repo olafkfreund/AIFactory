@@ -124,7 +124,8 @@ def test_review_and_merge_see_the_pushed_files(kubejob_project: dict) -> None:
         "origin/aifactory/042-feature"
     )
     changed = {
-        path: status for status, path in manager.get_changed_files(kubejob_project["spec_id"])
+        path: status
+        for status, path in manager.get_changed_files(kubejob_project["spec_id"])
     }
     assert changed == {"feature.py": "A", "README.md": "M"}
 
@@ -185,7 +186,9 @@ def test_the_timeline_capture_reads_the_ref_not_the_filesystem(
     # Unfixed: the worktree read finds nothing.
     assert helper.get_changed_files_in_worktree(build_dir, target_branch="main") == []
 
-    changed = helper.get_changed_files_in_worktree(build_dir, target_branch="main", work_ref=ref)
+    changed = helper.get_changed_files_in_worktree(
+        build_dir, target_branch="main", work_ref=ref
+    )
     assert sorted(changed) == ["README.md", "feature.py"]
 
     # The filesystem still holds base content for README.md and no feature.py at

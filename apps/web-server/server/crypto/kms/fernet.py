@@ -43,7 +43,7 @@ class FernetBackend:
         self._aead = AESGCM(root_key)
 
     @classmethod
-    def from_env(cls) -> "FernetBackend":
+    def from_env(cls) -> FernetBackend:
         """Construct from the ``KMS_FERNET_KEY`` env var (URL-safe base64)."""
         raw = os.environ.get("KMS_FERNET_KEY") or os.environ.get("APP_KMS_FERNET_KEY")
         if not raw:

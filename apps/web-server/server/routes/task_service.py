@@ -1037,15 +1037,8 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             "failed": "failed",
         }
 
-        # Phase order for progress calculation
-        phase_order = ["planning", "plan_review", "coding", "validation", "qa_fixing"]
-        phase_weights = {
-            "planning": 10,
-            "plan_review": 5,
-            "coding": 60,
-            "validation": 15,
-            "qa_fixing": 10,
-        }  # % of total progress
+        # A weighted per-phase progress calculation was declared here and never
+        # written; the loop below reports the ACTIVE phase, not a weighted total.
 
         current_phase = "idle"
         current_phase_key = None
@@ -1074,7 +1067,10 @@ def get_execution_progress(spec_dir: Path, subtasks: list) -> dict | None:
             elif has_completed:
                 validation = phases.get("validation", {})
                 coding = phases.get("coding", {})
-                if validation.get("status") == "completed" or coding.get("status") == "completed":
+                if (
+                    validation.get("status") == "completed"
+                    or coding.get("status") == "completed"
+                ):
                     current_phase = "complete"
 
         # Calculate overall progress from subtasks
