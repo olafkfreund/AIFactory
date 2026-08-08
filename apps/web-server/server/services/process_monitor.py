@@ -65,7 +65,7 @@ async def monitor_process(
                 return_code = await asyncio.wait_for(proc.wait(), timeout=sync_interval)
                 # Process finished
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Process still running, sync files
                 if project_path and spec_id:
                     await service._sync_worktree_files(project_path, spec_id, task_id)

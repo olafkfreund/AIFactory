@@ -80,7 +80,7 @@ import asyncio
 import hashlib
 import logging
 import os
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from functools import lru_cache
 
 from sqlalchemy import select
@@ -566,14 +566,14 @@ async def _classifications_hash_before_for_org(
 def _utc_today() -> date:
     """Today as a UTC date. Centralised so the timezone discipline
     can be audited in one place."""
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
 
 
 def _day_end_utc(d: date) -> datetime:
     """The exclusive upper bound for rows in this anchor's window:
     00:00 UTC of the FOLLOWING day."""
     return datetime.combine(d + timedelta(days=1), time(0, 0, 0)).replace(
-        tzinfo=timezone.utc,
+        tzinfo=UTC,
     )
 
 

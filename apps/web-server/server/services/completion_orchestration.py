@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -113,7 +113,7 @@ async def run_terminal_completion(
         _completion_marker = spec_dir / ".terminal_completion_emitted"
         if not _completion_marker.exists():
             try:
-                _completion_marker.write_text(datetime.now(timezone.utc).isoformat())
+                _completion_marker.write_text(datetime.now(UTC).isoformat())
             except OSError:
                 pass
             try:
@@ -144,7 +144,7 @@ async def run_terminal_completion(
         _seffx_marker = spec_dir / ".terminal_side_effects_done"
         if not _seffx_marker.exists():
             try:
-                _seffx_marker.write_text(datetime.now(timezone.utc).isoformat())
+                _seffx_marker.write_text(datetime.now(UTC).isoformat())
             except OSError:
                 pass
 

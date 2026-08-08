@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -59,7 +59,7 @@ def _now() -> datetime:
     # use ``TIMESTAMP WITHOUT TIME ZONE`` + ``func.now()``); asyncpg rejects a
     # tz-aware value bound to a naive column. ISO strings in the ``admission``
     # JSON still carry the UTC instant.
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -67,7 +67,7 @@ def _iso(dt: datetime | None) -> str | None:
     # (the column value stays naive; this is just the JSON representation).
     if dt is None:
         return None
-    return dt.replace(tzinfo=timezone.utc).isoformat()
+    return dt.replace(tzinfo=UTC).isoformat()
 
 
 @dataclass

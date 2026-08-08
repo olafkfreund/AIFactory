@@ -28,7 +28,7 @@ import asyncio
 import os
 import secrets as _test_secrets
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -638,7 +638,7 @@ def test_acs_stamps_last_login_at(fresh_db, saml_enabled):
     _engine, SessionLocal = fresh_db
     user_id = asyncio.run(_seed_user(SessionLocal, "alice@corp.example.com"))
 
-    before = datetime.now(timezone.utc).replace(tzinfo=None)
+    before = datetime.now(UTC).replace(tzinfo=None)
     app = _make_app(fresh_db)
     with TestClient(app) as client:
         resp = _post_acs(client, relay_state=_mint_valid_relay_state())

@@ -46,7 +46,7 @@ import json
 import os
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -494,7 +494,7 @@ def record_turn(
             cost_usd=attribution.cost_usd,
             duration_ms=duration_ms,
         )
-        agg["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        agg["updatedAt"] = datetime.now(UTC).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
         return render_breakdown(agg)
     except OSError:

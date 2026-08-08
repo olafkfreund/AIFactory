@@ -257,7 +257,7 @@ class ChangelogService:
             try:
                 proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
             except Exception as e:
                 logger.error(f"Error stopping changelog generation: {e}")
