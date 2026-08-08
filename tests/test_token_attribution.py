@@ -168,12 +168,12 @@ def test_record_turn_persists_and_aggregates(tmp_path: Path):
         input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
     )
 
-    b1 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    b1 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5", duration_ms=900)
     assert b1["turns"] == 1
     assert usage_file_path(spec_dir).exists()
 
     # Second turn aggregates.
-    b2 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    b2 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5", duration_ms=900)
     assert b2["turns"] == 2
     # Totals doubled.
     assert b2["totalInputTokens"] == 2 * b1["totalInputTokens"]
@@ -199,7 +199,9 @@ def test_total_tokens_present_and_equals_input_plus_output(tmp_path: Path):
         input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
     )
 
-    rendered = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    rendered = record_turn(
+        spec_dir, seg, usage, model="claude-sonnet-4-5", duration_ms=900
+    )
 
     # Rendered breakdown exposes the sum.
     assert rendered["totalInputTokens"] == 1200
@@ -221,7 +223,9 @@ def test_total_tokens_present_and_equals_input_plus_output(tmp_path: Path):
     assert on_disk["totalTokens"] == 1250
 
     # Aggregation keeps the invariant across turns.
-    rendered2 = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    rendered2 = record_turn(
+        spec_dir, seg, usage, model="claude-sonnet-4-5", duration_ms=900
+    )
     on_disk2 = json.loads(usage_file_path(spec_dir).read_text())
     assert rendered2["totalTokens"] == 2 * 1250
     assert (
@@ -254,7 +258,12 @@ def test_record_turn_atomic_no_partial_file(tmp_path: Path):
     """A no-temp-file-left-behind check: only token_usage.json remains."""
     spec_dir = tmp_path / "003-atomic"
     spec_dir.mkdir()
-    record_turn(spec_dir, PromptSegments(user_prompt="hi"), TurnUsage(input_tokens=10))
+    record_turn(
+        spec_dir,
+        PromptSegments(user_prompt="hi"),
+        TurnUsage(input_tokens=10),
+        duration_ms=900,
+    )
     leftovers = [p.name for p in spec_dir.iterdir()]
     assert leftovers == ["token_usage.json"]
 
@@ -276,7 +285,9 @@ def test_serial_build_back_compat_scalar_unchanged(tmp_path: Path):
         input_tokens=200, output_tokens=50, cache_read_tokens=1000, cost_usd=0.5
     )
     # No worker_id passed → serial path → implicit "main" worker.
-    rendered = record_turn(spec_dir, seg, usage, model="claude-sonnet-4-5")
+    rendered = record_turn(
+        spec_dir, seg, usage, model="claude-sonnet-4-5", duration_ms=900
+    )
 
     # Scalar aggregate is exactly as it was before the per-worker change.
     assert rendered["turns"] == 1
@@ -373,9 +384,12 @@ def test_same_worker_accumulates_across_turns(tmp_path: Path):
             model="claude-sonnet-4-5",
             worker_id="sub-A",
             provider="claude",
+            duration_ms=750,
         )
     rec = json.loads(usage_file_path(spec_dir).read_text())["workers"]["sub-A"]
     assert rec["input_tokens"] == 200
     assert rec["output_tokens"] == 20
     assert rec["total_tokens"] == 220
     assert rec["cost_usd"] == pytest.approx(0.2)
+    # Wall-clock accumulates alongside the tokens (#1100).
+    assert rec["duration_ms"] == 1500

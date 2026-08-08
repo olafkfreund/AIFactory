@@ -206,6 +206,7 @@ def _record_one_turn(spec: Path) -> dict[str, Any]:
         TurnUsage(input_tokens=100, output_tokens=50, cost_usd=0.01),
         model="claude-sonnet-5",
         provider="claude",
+        duration_ms=900,
     )
     data: dict[str, Any] = json.loads((spec / "token_usage.json").read_text())
     return data["workers"]["main"]
