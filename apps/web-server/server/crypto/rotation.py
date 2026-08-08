@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
@@ -117,7 +117,7 @@ def rotate_root(
     # (same reason as in data_key_manager.py).
     from ..database.models import KmsDataKey
 
-    started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    started_at = datetime.now(UTC).replace(tzinfo=None)
     report = RotationReport(started_at=started_at, new_kms_key_id=new_kms_key_id)
 
     offset = 0
@@ -149,7 +149,7 @@ def rotate_root(
                     new_wrapped = new_backend.encrypt(plaintext)
                     row.wrapped_key = new_wrapped
                     row.kms_key_id = new_kms_key_id
-                    row.rotated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    row.rotated_at = datetime.now(UTC).replace(tzinfo=None)
                     session.add(row)
                     report.rotated_count += 1
                 except Exception as exc:
@@ -163,6 +163,6 @@ def rotate_root(
             session.commit()
             offset += len(batch)
 
-    report.finished_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    report.finished_at = datetime.now(UTC).replace(tzinfo=None)
     logger.info(report.summary())
     return report

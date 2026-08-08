@@ -10,7 +10,7 @@ Provides:
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -160,7 +160,7 @@ async def create_api_key(
     # Compute expiration if requested
     expires_at: datetime | None = None
     if body.expires_in_days is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=body.expires_in_days)
+        expires_at = datetime.now(UTC) + timedelta(days=body.expires_in_days)
 
     # Serialize scopes as comma-separated string for storage
     scopes_str: str | None = None

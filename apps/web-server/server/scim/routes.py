@@ -60,7 +60,7 @@ derived from it on every read — we do NOT store userName separately.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -120,7 +120,7 @@ def _scim_error(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _user_to_scim(user: User, request: Request) -> dict[str, Any]:

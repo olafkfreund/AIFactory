@@ -255,7 +255,7 @@ async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError as e:
+    except TimeoutError as e:
         try:
             proc.kill()
         except ProcessLookupError:

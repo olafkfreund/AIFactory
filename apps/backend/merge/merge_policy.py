@@ -6,7 +6,7 @@ achieved Verification Assurance Level vs the tier's floor — decide whether the
 may **auto-merge**, must **hold for async approval**, or must **hold for blocking
 approval**.
 
-This is intentionally NOT in ``merge/auto_merger.py`` (a deterministic
+This is intentionally NOT in ``merge/auto_merger/`` (a deterministic
 code-conflict merger). It carries no provider/IO coupling so the decision matrix
 is exhaustively unit-testable.
 

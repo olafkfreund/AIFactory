@@ -8,7 +8,7 @@ separate from automated task spec worktrees.
 import json
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -105,8 +105,7 @@ class TerminalWorktreeService:
             "branch": branch_name,
             "baseBranch": base_branch,
             "taskId": task_id,
-            "createdAt": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-            + "Z",
+            "createdAt": datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
             "terminalId": terminal_id,
         }
 

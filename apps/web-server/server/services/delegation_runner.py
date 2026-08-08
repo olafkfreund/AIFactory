@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +89,7 @@ async def run_delegation(
     if proc is not None:
         try:
             await asyncio.wait_for(proc.wait(), timeout=PLANNER_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 "[delegation_runner] planner timed out after %ds task=%s — "
                 "posting comment with whatever was written so far",
@@ -152,7 +152,7 @@ async def run_delegation(
     # ------------------------------------------------------------------
     # 5. Emit status + broadcast event.
     # ------------------------------------------------------------------
-    delegated_at = datetime.now(timezone.utc).isoformat()
+    delegated_at = datetime.now(UTC).isoformat()
     await emit_task_status(task_id, "delegated")
     await broadcast_event(
         "auto_fix:delegated",

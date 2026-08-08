@@ -64,11 +64,16 @@ aifactory/spec/
 
 ## Backward Compatibility
 
-The main `phases.py` file re-exports all public APIs, ensuring existing imports continue to work:
+This package's `__init__.py` re-exports all public APIs, so existing imports
+continue to work unchanged:
 
 ```python
 from spec.phases import PhaseExecutor, PhaseResult, MAX_RETRIES
 ```
+
+A `spec/phases.py` module claiming to serve that import used to sit beside this
+package. It never did: Python resolves the PACKAGE and ignores a same-named
+module beside it, so the file was unreachable. It was deleted in AIFactory#1218.
 
 ## Design Pattern
 

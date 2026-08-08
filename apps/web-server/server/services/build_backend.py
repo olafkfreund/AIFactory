@@ -264,6 +264,13 @@ _PASSTHROUGH_BUILD_ENV: tuple[str, ...] = (
     "GOOGLE_API_KEY",
     "OLLAMA_API_KEY",
     "OLLAMA_CLOUD_BASE_URL",
+    # #1213. `OLLAMA_CLOUD_BASE_URL` above was declared here and read by nothing
+    # until now; `OLLAMA_BASE_URL` was the reverse -- read by the provider since
+    # #1099 and never forwarded, so a Job-dispatched build routed to the
+    # `ollama` runtime fell back to the in-Job localhost default and found no
+    # server. Both runtimes need their own endpoint in the Job env or "both
+    # reachable in one deployment" is only true in the control plane.
+    "OLLAMA_BASE_URL",
     # RFC-0017 #190: the Job-side consumer (core/workspace_fetch.maybe_unpack_workspace)
     # reconstitutes /work from object storage via core/artifact_store, which reads this
     # S3_* namespace (NOT the chart's fsspec AIFACTORY_S3_* / AWS_* WorkspaceStore vars).

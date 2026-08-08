@@ -11,6 +11,29 @@
 # standard those carve-outs are a ratchet backlog (#652), never a permanent
 # loosening, and may only shrink over time (tighten-only).
 
+# The Python this repo TARGETS (#1211). Absent, ruff inferred a version old
+# enough to classify `tomllib` (stdlib since 3.11) as third-party, and the two
+# configs then wanted OPPOSITE things from the same import block:
+#
+#   $ ruff check --fix scripts            # this config
+#   -import tomllib
+#    from pathlib import Path
+#   +import tomllib
+#
+#   $ ruff check --config standards/ruff.toml scripts/cq_ratchet.py --select I
+#   scripts/cq_ratchet.py:63:1: I001 Import block is un-sorted or un-formatted
+#
+# Each config's autofix was the other config's violation. That is what kept
+# `scripts/` out of ci.yml's repo-wide `ruff check` -- it could not be added
+# while the two disagreed, so the directory that holds the ratchet itself was
+# lint-gated only by the diff-scoped ratchet.
+#
+# Matched to standards/ruff.toml deliberately. The Python version is not a
+# strictness knob: the strict config may be TIGHTER than the repo-wide one,
+# never a DIFFERENT SHAPE. Every carve-out below stays exactly as it was.
+
+target-version = "py311"
+
 # Vendored verification-core copies (Factory#158): byte-exact mirrors of the
 # Factory hub canonical (scripts/), governed by the byte-exact drift gate
 # (verification-core-drift workflow), NOT this repo's style bar. The repo-wide

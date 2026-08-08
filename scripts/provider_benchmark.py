@@ -43,7 +43,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 BACKEND = REPO / "apps" / "backend"
-PY = str((REPO / "apps" / "web-server" / ".venv" / "bin" / "python"))
+PY = str(REPO / "apps" / "web-server" / ".venv" / "bin" / "python")
 RESULTS = REPO / "scripts" / "benchmark_results.jsonl"
 
 # The fixed task every config builds (kept identical for a fair comparison).
