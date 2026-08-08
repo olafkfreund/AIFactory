@@ -34,7 +34,7 @@ migration job mode, customCABundle for TLS-intercepting proxies.
 | `resources` | CPU/memory requests + limits. |
 | `podSecurityContext` / `containerSecurityContext` | PSS-restricted defaults. |
 | `service` / `ingress` | Network exposure. |
-| `serviceAccount` / `rbac` | Pod identity. |
+| `serviceAccount` / `rbac` | Pod identity, and the namespace-scoped Role the RFC-0016 build lane needs (`rbac.jobSandbox.enabled`, on by default — see below). |
 | `networkPolicy` | Default-deny + 443 egress allowlist. |
 | `migrations` | Alembic Job mode (autoApply=false in prod). |
 | `postgres` | External (default) or bundled CNPG sub-chart. |
@@ -42,6 +42,28 @@ migration job mode, customCABundle for TLS-intercepting proxies.
 | `oidc` | OIDC SSO settings (Epic #26 P3). |
 | `kms` | At-rest encryption backend (Epic #26 P2). |
 | `global.customCABundle` | TLS-intercepting proxy support. |
+
+## RBAC for the build lane (`rbac.jobSandbox`)
+
+**User story.** As someone self-hosting AIFactory, I want `helm install` to give
+me a control plane that can actually run a build, rather than one that reaches
+the API server and is refused on every call.
+
+AIFactory does not run builds inside its own pod. Under RFC-0016 it creates a
+Kubernetes **Job per task** and streams that Job's pod logs back
+(`core/kube_sandbox.py`, `services/build_backend.py`,
+`services/build_log_stream.py`). That needs a Role bound to the pod's
+ServiceAccount, in the release namespace.
+
+| Value | Default | Behaviour |
+| --- | --- | --- |
+| `rbac.jobSandbox.enabled` | `true` | Renders a namespace-scoped `Role` + `RoleBinding` granting `jobs` (create/get/list/watch/delete), `pods` (get/list/watch) and `pods/log` (get) to the chart's ServiceAccount. Nothing cluster-wide; no `secrets`. |
+| `rbac.jobSandbox.enabled` | `false` | No Role is rendered. The control plane cannot create a build Job — use this only for an install that will never build (e.g. a read-only portal), and pair it with `serviceAccount.automountServiceAccountToken: false`. |
+| `rbac.create` | `false` | **Inert.** No template references it. It predates the build lane and is kept only so an existing values file does not break. Setting it to `true` renders nothing — `rbac.jobSandbox.enabled` is the switch you want. |
+
+This defaults ON, unlike TFactory's equivalent, because AIFactory has no
+non-Kubernetes build lane to fall back to: an install with it off cannot run a
+build at all.
 
 ## Requirements
 
