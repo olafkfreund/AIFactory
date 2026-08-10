@@ -78,7 +78,7 @@ build side owns the parts that touch data leaving the system.
 - **Output-side DLP scans agent-authored git output.** The input side had guards;
   the side where an agent writes a file containing something it should not was
   unguarded.
-- **Audit events now chain authentication failures, authorisation denials and
+- **Audit events now chain authentication failures, authorization denials and
   gate rejections.** Those are precisely the events an investigation needs and
   they were the ones not in the tamper-evident chain.
 - **Scoped service tokens run alongside the wildcard.** The fleet shared one
@@ -86,7 +86,7 @@ build side owns the parts that touch data leaving the system.
   fleet-wide access. Scoped tokens are step one; retiring the wildcard is the
   goal, and it is not done.
 - **Access-review evidence is pushed to a drop path** so the review has an
-  artefact rather than a recollection.
+  artifact rather than a recollection.
 
 The honest framing is that this is the beginning of that domain rather than the
 end of it. Several of these are step one of several, and the tracking issues say
@@ -120,5 +120,5 @@ something other than what was reviewed, a signature that proves origin but not
 freshness, a redaction that cleans the record but not the request.
 
 None of them were reported as bugs, because in each case the system said it was
-fine. They were found by reading the artefact instead of the status, which is now
+fine. They were found by reading the artifact instead of the status, which is now
 the standard the whole fleet is being held to.
