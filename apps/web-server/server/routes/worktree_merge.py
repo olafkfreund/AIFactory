@@ -39,7 +39,11 @@ from pydantic import BaseModel
 
 from server.services.approval import approved, merge_pull_request
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch, resolve_work_ref
+from server.services.task_branch import (
+    current_branch,
+    resolve_task_branch,
+    resolve_work_ref,
+)
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -2205,8 +2209,25 @@ async def discard_worktree(
         return {"success": False, "error": "No worktree found for this task"}
 
     try:
-        # Get the branch name before removing worktree
-        branch_name = f"aifactory/{spec_id}"
+        # #1082: DISCOVER the branch, do not spell it. This read
+        # `f"aifactory/{spec_id}"`, which is the one thing
+        # services/task_branch.py exists to stop -- the `aifactory/` convention
+        # is owned by core.worktree.get_branch_name, and a second copy of it
+        # here drifts silently. The failure was invisible: `git branch -D` runs
+        # with capture_output and its returncode is never checked, so a wrong
+        # name deleted nothing and still reported success.
+        base_branch = current_branch(project_path)
+        branch_name, branch_error = resolve_task_branch(
+            worktree_path=worktree_path,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base_branch,
+        )
+        # Unresolved means we could not identify the task's branch. Skip the
+        # delete rather than guess: this endpoint destroys, and deleting a
+        # branch nobody identified is worse than leaving one behind.
+        if branch_name == base_branch:
+            branch_name, branch_error = None, "resolved to the base branch"
 
         # Remove worktree using git command
         result = subprocess.run(
@@ -2229,19 +2250,43 @@ async def discard_worktree(
             text=True,
         )
 
-        # Delete the branch
-        subprocess.run(
-            ["git", "branch", "-D", branch_name],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-        )
+        # Delete the local branch, only if we identified one.
+        deleted_branch: str | None = None
+        if branch_name:
+            delete = subprocess.run(
+                ["git", "branch", "-D", branch_name],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # Report what git DID, not what we asked it to do. `git branch -D`
+            # fails when the branch is checked out in another worktree, and the
+            # previous version reported branchDeleted regardless -- the same
+            # unverified claim this endpoint was being fixed for.
+            if delete.returncode == 0:
+                deleted_branch = branch_name
+            else:
+                branch_error = (delete.stderr or "").strip() or "git branch -D failed"
 
         return {
             "success": True,
             "data": {
                 "discarded": True,
-                "message": f"Successfully discarded worktree for {spec_id}",
+                # Report the ARTEFACT, not just that the endpoint ran (#1082).
+                # "Successfully discarded" was returned whether or not a branch
+                # was found or deleted, so a caller could not tell a full
+                # discard from a worktree-only one.
+                "branchDeleted": deleted_branch,
+                "branchReason": branch_error if deleted_branch is None else None,
+                "message": (
+                    f"Successfully discarded worktree for {spec_id}"
+                    + (
+                        f" and branch {branch_name}"
+                        if branch_name
+                        else "; no task branch identified"
+                    )
+                ),
             },
         }
     except Exception as e:
