@@ -39,7 +39,11 @@ from pydantic import BaseModel
 
 from server.services.approval import approved, merge_pull_request
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch, resolve_work_ref
+from server.services.task_branch import (
+    current_branch,
+    resolve_task_branch,
+    resolve_work_ref,
+)
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -2212,15 +2216,7 @@ async def discard_worktree(
         # here drifts silently. The failure was invisible: `git branch -D` runs
         # with capture_output and its returncode is never checked, so a wrong
         # name deleted nothing and still reported success.
-        base_result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-        )
-        base_branch = (
-            base_result.stdout.strip() if base_result.returncode == 0 else "main"
-        )
+        base_branch = current_branch(project_path)
         branch_name, branch_error = resolve_task_branch(
             worktree_path=worktree_path,
             project_path=project_path,

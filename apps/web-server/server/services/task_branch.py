@@ -54,6 +54,18 @@ def _git(args: list[str], cwd: Path) -> list[str]:
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]
 
 
+def current_branch(project_path: Path, *, default: str = "main") -> str:
+    """Return the project checkout's current branch, for use as the base branch.
+
+    Lives here rather than in each caller: resolve_task_branch needs a base to
+    exclude, so every caller was running its own `git rev-parse` and each copy
+    carried its own blocking-subprocess and partial-path lint. One helper on
+    top of _git, which already justifies those once.
+    """
+    lines = _git(["rev-parse", "--abbrev-ref", "HEAD"], project_path)
+    return lines[0] if lines else default
+
+
 def _matches(refs: list[str], spec_id: str) -> list[str]:
     """Refs whose last path segment is exactly *spec_id*.
 
