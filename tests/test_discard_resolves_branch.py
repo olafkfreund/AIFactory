@@ -62,3 +62,35 @@ def test_discard_skips_the_delete_when_no_branch_was_identified():
     assert "if branch_name:" in body, (
         "the `git branch -D` call must be guarded on a resolved branch"
     )
+
+
+def test_discard_reports_the_delete_result_not_the_intent():
+    """`git branch -D` fails when the branch is checked out elsewhere.
+
+    Reporting `branchDeleted` from the resolved name rather than from git's exit
+    status is the exact unverified claim this endpoint was being fixed for.
+    """
+    body = _discard_handler_source()
+    assert "deleted_branch" in body, (
+        "the response must report git's result, not the intent"
+    )
+    assert "delete.returncode" in body, "`git branch -D` result must be checked"
+
+
+def test_current_branch_rejects_a_detached_head():
+    """`rev-parse --abbrev-ref HEAD` returns the literal "HEAD" when detached.
+
+    That is not a branch. Passing it on as the base makes the
+    `branch_name == base_branch` guard match nothing, so the real base becomes
+    eligible for deletion — the opposite of what the guard is for.
+    """
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "apps/web-server/server/services/task_branch.py"
+    ).read_text()
+    start = src.index("def current_branch")
+    body = src[start : src.index("\ndef ", start + 1)]
+    code = "\n".join(
+        line for line in body.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert '== "HEAD"' in code, "current_branch must treat a detached HEAD as no branch"

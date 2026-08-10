@@ -2251,13 +2251,23 @@ async def discard_worktree(
         )
 
         # Delete the local branch, only if we identified one.
+        deleted_branch: str | None = None
         if branch_name:
-            subprocess.run(
+            delete = subprocess.run(
                 ["git", "branch", "-D", branch_name],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
+                check=False,
             )
+            # Report what git DID, not what we asked it to do. `git branch -D`
+            # fails when the branch is checked out in another worktree, and the
+            # previous version reported branchDeleted regardless -- the same
+            # unverified claim this endpoint was being fixed for.
+            if delete.returncode == 0:
+                deleted_branch = branch_name
+            else:
+                branch_error = (delete.stderr or "").strip() or "git branch -D failed"
 
         return {
             "success": True,
@@ -2267,8 +2277,8 @@ async def discard_worktree(
                 # "Successfully discarded" was returned whether or not a branch
                 # was found or deleted, so a caller could not tell a full
                 # discard from a worktree-only one.
-                "branchDeleted": branch_name,
-                "branchReason": branch_error if branch_name is None else None,
+                "branchDeleted": deleted_branch,
+                "branchReason": branch_error if deleted_branch is None else None,
                 "message": (
                     f"Successfully discarded worktree for {spec_id}"
                     + (

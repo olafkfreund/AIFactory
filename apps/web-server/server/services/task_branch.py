@@ -63,7 +63,15 @@ def current_branch(project_path: Path, *, default: str = "main") -> str:
     top of _git, which already justifies those once.
     """
     lines = _git(["rev-parse", "--abbrev-ref", "HEAD"], project_path)
-    return lines[0] if lines else default
+    name = lines[0] if lines else ""
+    # A DETACHED HEAD makes this command succeed and return the literal "HEAD".
+    # That is not a branch, and passing it on is worse than useless: callers use
+    # the base branch to EXCLUDE it from destructive operations, so a base of
+    # "HEAD" silently matches nothing and the real base becomes eligible for
+    # deletion. Fall back rather than hand back a non-branch.
+    if not name or name == "HEAD":
+        return default
+    return name
 
 
 def _matches(refs: list[str], spec_id: str) -> list[str]:
