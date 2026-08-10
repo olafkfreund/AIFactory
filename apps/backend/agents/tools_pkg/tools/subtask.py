@@ -127,6 +127,15 @@ async def apply_subtask_status_update(
         with open(plan_file, "w") as f:
             json.dump(plan, f, indent=2)
 
+        # #1228: the serial path writes the plan HERE rather than through
+        # ``sync_plan_to_source``, so it needs the publish of its own — without
+        # it a serial build's DAG stays frozen even though the wave path's is
+        # live. Imported from agents.utils rather than re-spelling the push, so
+        # the two paths cannot drift.
+        from agents.utils import publish_plan  # noqa: PLC0415
+
+        publish_plan(spec_dir)
+
         if status == "completed":
             # Close this subtask's evidence window — AFTER the gate accepted it,
             # so a refusal leaves the runs for the retry to use (#1187).

@@ -69,7 +69,12 @@ async def _dispatch_and_stream(service: AgentService, project_path: Path, lines)
     captured: dict = {}
 
     class _FakeStreamer:
-        def __init__(self, *, log_sink, rmux_feed=None):
+        # ``**_rest`` so this double does not have to be edited every time the
+        # real streamer gains a constructor argument these tests do not care
+        # about (``plan_sync``, #1228). The double exists to capture the log
+        # sink; pinning the full signature here only ever fails for the wrong
+        # reason.
+        def __init__(self, *, log_sink, rmux_feed=None, **_rest):
             captured["sink"] = log_sink
 
         async def stream(self, **_kwargs):

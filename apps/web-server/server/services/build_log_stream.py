@@ -30,6 +30,14 @@ Design:
 * **Two sinks, mirror semantics.** rmux gets raw bytes with ``\\n`` → ``\\r\\n``
   (xterm needs CRLF, identical to ``_process_output``); the cockpit gets a
   decoded line via the injected ``log_sink`` coroutine.
+
+One thing here is NOT observability. The stream is also the control plane's
+clock for pulling the Job's ``implementation_plan.json`` while the build runs
+(``plan_sync``, #1228) — the file carrying per-subtask status, written inside
+the Job's ephemeral ``/work`` and previously pulled only at completion, which
+is why CFactory's execution DAG showed every node waiting for a whole build.
+It rides here because this is the one control-plane task whose lifetime is
+exactly the build's; it is throttled, and still best-effort.
 """
 
 from __future__ import annotations
@@ -56,6 +64,17 @@ RmuxFeed = Callable[[str, bytes], None]
 # job_name). Injectable so tests bypass the cluster; the default follows the
 # Job pod's logs via the k8s API.
 LineSource = Callable[[str, str], AsyncIterator[bytes]]
+
+# Pulls the Job's pushed ``implementation_plan.json`` onto the control plane
+# (#1228). Blocking object-store I/O, so it is run off the event loop.
+PlanSync = Callable[[], Any]
+
+# How often the plan is pulled while a build runs. The plan is small and the
+# pull is one object-store GET, but it rides a per-LINE hook — a busy build
+# emits thousands of lines a minute, so without a throttle this would be a GET
+# per line. Ten seconds is well under the cockpit's own poll cadence, so the DAG
+# is never more than one interval behind the Job.
+_PLAN_SYNC_INTERVAL_SECONDS = 10.0
 
 
 async def _default_line_source(namespace: str, job_name: str) -> AsyncIterator[bytes]:
@@ -145,10 +164,20 @@ class KubeJobLogStreamer:
         log_sink: LogLineSink,
         rmux_feed: RmuxFeed | None = None,
         line_source: LineSource | None = None,
+        plan_sync: PlanSync | None = None,
+        plan_sync_interval: float = _PLAN_SYNC_INTERVAL_SECONDS,
     ) -> None:
         self._log_sink = log_sink
         self._rmux_feed = rmux_feed
         self._line_source = line_source or _default_line_source
+        self._plan_sync = plan_sync
+        self._plan_sync_interval = plan_sync_interval
+        # ``None`` rather than 0.0, and the difference is not cosmetic: the
+        # clock below is ``time.monotonic()``, i.e. time since BOOT. A 0.0 seed
+        # reads as "already synced, at boot", so a Job pod scheduled within one
+        # interval of a node coming up would skip its first pull and show a
+        # fully-pending DAG for that whole interval. None means "never synced".
+        self._plan_synced_at: float | None = None
 
     async def stream(self, *, namespace: str, job_name: str, spec_id: str) -> int:
         """Pump the Job pod's logs into both sinks. Returns lines streamed.
@@ -211,3 +240,40 @@ class KubeJobLogStreamer:
             _log.debug(
                 "[build_log_stream] cockpit log sink raised (ignored)", exc_info=True
             )
+        await self._maybe_sync_plan()
+
+    async def _maybe_sync_plan(self) -> None:
+        """Pull the Job's advanced plan onto the control plane, throttled (#1228).
+
+        The third sink, and the only one that is not observability: per-subtask
+        ``status``/``started_at`` live in ``implementation_plan.json``, which on
+        the packed path is written inside the Job's ephemeral ``/work`` and
+        reached the control plane only at completion. CFactory's live execution
+        DAG reads those fields, so a running build rendered every node
+        ``waiting`` for its whole duration and flipped all of them to done in one
+        step at the end.
+
+        Nothing new is pushed or parsed: the Job already publishes the plan to
+        object storage and the control plane already pulls it — both just once,
+        at the end. This calls the existing pull on a timer while the build runs.
+
+        Uses ``monotonic`` so an NTP step cannot park the throttle in the future
+        and freeze the DAG for the rest of the build. Best-effort like the other
+        sinks: a store that is unreachable costs a live DAG, never the build.
+        """
+        if self._plan_sync is None:
+            return
+        now = asyncio.get_running_loop().time()
+        if (
+            self._plan_synced_at is not None
+            and now - self._plan_synced_at < self._plan_sync_interval
+        ):
+            return
+        # Stamp BEFORE awaiting, not after: _fan_out is re-entered while this
+        # sync is in flight, and a stamp afterwards would let every line racing
+        # the first sync start its own.
+        self._plan_synced_at = now
+        try:
+            await asyncio.to_thread(self._plan_sync)
+        except Exception:  # noqa: BLE001 - plan sync is best-effort
+            _log.debug("[build_log_stream] plan sync raised (ignored)", exc_info=True)

@@ -5,11 +5,13 @@ Utility Functions for Agent System
 Helper functions for git operations, plan management, and file syncing.
 """
 
+import asyncio
 import json
 import logging
 import shutil
 import subprocess
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from memory.paths import project_memory_dir, project_memory_dir_from_aifactory
@@ -171,6 +173,59 @@ def find_phase_for_subtask(plan: dict, subtask_id: str) -> dict | None:
     return None
 
 
+# Plan publishes run here when a loop is running (#1228). ONE worker, and that
+# is the point rather than a saving: pushes are serialised in submission order,
+# so a slow upload cannot land an OLDER plan on top of a newer one and leave the
+# cockpit's DAG reading backwards until the next transition. Threads are created
+# on first submit, so this costs nothing in a process that never publishes.
+_PUBLISH_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="plan-publish")
+
+
+def publish_plan(spec_dir: Path) -> None:
+    """Push this spec's plan to object storage mid-build, for the DAG (#1228).
+
+    ``maybe_push_plan`` already existed and was already called with exactly
+    these arguments — once, from ``cli/main.py`` after the build returns. That
+    is why CFactory's live execution diagram showed every node ``waiting`` for a
+    whole build and then flipped all of them to done in one step: per-subtask
+    ``status``/``started_at`` live in ``implementation_plan.json``, which on the
+    packed path is written inside the Job's ephemeral ``/work``. Calling the
+    same push on each transition is the whole fix; no new transport, no new
+    protocol, and the control plane's throttled pull
+    (``KubeJobLogStreamer._maybe_sync_plan``) is the other half.
+
+    A no-op off the packed path, where the spec dir is the control plane's own.
+    Best-effort and silent: this is progress reporting, and a build must never
+    fail because a status could not be published.
+
+    **Never blocks an event loop.** The push is object-store I/O — a PUT, and a
+    boto3 client construction per call — and the funnels this hangs off run
+    inside one: ``apply_subtask_status_update`` is a coroutine, and
+    ``sync_plan_to_source`` is called from the wave orchestrator's async
+    ``run_subtask``/``_reset_to_pending``. Blocking there stalls every
+    concurrent subtask agent in the wave, so with a loop running the push is
+    handed to a worker and NOT awaited: nothing downstream needs the upload's
+    result, and the final synchronous push in ``cli/main.py`` is what guarantees
+    the terminal plan lands regardless.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _publish_plan_now(spec_dir)  # no loop to protect — push inline
+    else:
+        loop.run_in_executor(_PUBLISH_POOL, _publish_plan_now, spec_dir)
+
+
+def _publish_plan_now(spec_dir: Path) -> None:
+    """The blocking half of :func:`publish_plan`. Never raises."""
+    try:
+        from core.workspace_fetch import maybe_push_plan  # noqa: PLC0415
+
+        maybe_push_plan(spec_dir, spec_dir.name)
+    except Exception:  # noqa: BLE001 - reporting must never fail a build
+        logger.debug("plan publish skipped (best-effort)", exc_info=True)
+
+
 def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     """
     Sync implementation_plan.json from worktree back to source spec directory.
@@ -186,6 +241,18 @@ def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     Returns:
         True if sync was performed, False if not needed or failed
     """
+    # #1228: publish ``spec_dir``'s copy, and do it before the worktree-mode
+    # early-returns below rather than after the copy.
+    #
+    # ``spec_dir`` is by construction the directory the caller just wrote, so it
+    # is the freshest copy in every mode — publishing the SOURCE would publish
+    # the pre-copy one in worktree mode. And it must run above the early-returns
+    # because those are precisely the non-worktree builds, which advance the
+    # plan just the same; on the packed path the whole Job filesystem — worktree
+    # AND source — is an ephemeral emptyDir, so reaching the source spec dir is
+    # not reaching the control plane.
+    publish_plan(spec_dir)
+
     # Skip if no source specified or same path (not in worktree mode)
     if not source_spec_dir:
         return False
