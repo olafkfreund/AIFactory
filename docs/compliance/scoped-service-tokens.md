@@ -80,10 +80,10 @@ a scope set nobody measured.
 
 | Edge | Caller | Endpoints called | Shape |
 |---|---|---|---|
-| PFactory -> AIFactory | `apps/web-server/server/routes/plan_pipeline.py` via `apps/backend/plan/emit/contract_emit.py` (PFactory) | `POST /api/tasks/from-plan` | one route, write |
-| AIFactory -> TFactory | `apps/backend/pfactory/tfactory_client.py` | `POST /api/specs/ingest`, `GET /api/specs/{project}/{spec}/pr` | one write, one read |
-| AIFactory intake -> PFactory | `apps/web-server/server/services/intake_poller.py` | `POST /api/plan/sessions/from-issue`, `POST /api/tasks/from-issue` | two writes |
-| CFactory cockpit -> all three | `apps/backend/cfactory/adapters/*.py` (CFactory) | `GET` on `/api/capabilities`, `/api/tasks`, `/api/tasks/{id}`, `/api/plan/sessions`, `/api/plan/sessions/{id}`, `/api/tfactory/tasks`, `/api/tfactory/tasks/{spec}`, `/api/tfactory/tasks/{spec}/test-plan.json` | **read-only** |
+| PFactory -> AIFactory | **PFactory repo:** `apps/web-server/server/routes/plan_pipeline.py` via `apps/backend/plan/emit/contract_emit.py`. Received here by `apps/web-server/server/routes/execution.py` | `POST /api/tasks/from-plan` | one route, write |
+| AIFactory -> TFactory | this repo: `apps/backend/pfactory/tfactory_client.py` | `POST /api/specs/ingest`, `GET /api/specs/{project}/{spec}/pr` | one write, one read |
+| AIFactory intake -> PFactory | this repo: `apps/web-server/server/services/intake_poller.py` | `POST /api/plan/sessions/from-issue`, `POST /api/tasks/from-issue` | two writes |
+| CFactory cockpit -> all three | **CFactory repo:** `apps/backend/cfactory/adapters/*.py` | `GET` on `/api/capabilities`, `/api/tasks`, `/api/tasks/{id}`, `/api/plan/sessions`, `/api/plan/sessions/{id}`, `/api/tfactory/tasks`, `/api/tfactory/tasks/{spec}`, `/api/tfactory/tasks/{spec}/test-plan.json` | **read-only** |
 
 Two things follow from the table:
 
