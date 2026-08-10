@@ -16,11 +16,18 @@ These tests pin both halves:
 
 import asyncio
 import sys
+import threading
+import time
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
-_WEB = Path(__file__).resolve().parents[1] / "apps" / "web-server"
+_ROOT = Path(__file__).resolve().parents[1]
+_BACKEND = _ROOT / "apps" / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+_WEB = _ROOT / "apps" / "web-server"
 if str(_WEB) not in sys.path:
     sys.path.insert(0, str(_WEB))
 
@@ -168,6 +175,76 @@ def test_serial_funnel_publishes_too() -> None:
         "apply_subtask_status_update writes implementation_plan.json itself; "
         "without a publish the serial path's transitions never leave the Job"
     )
+
+
+def test_publish_does_not_block_a_running_event_loop() -> None:
+    """The push is object-store I/O (a PUT plus a boto3 client construction) and
+    both funnels run inside a loop — ``apply_subtask_status_update`` is a
+    coroutine, and ``sync_plan_to_source`` is called from the wave
+    orchestrator's async ``run_subtask``. Blocking there stalls every concurrent
+    subtask agent in the wave."""
+    import time
+
+    from agents import utils
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _slow(_spec_dir):
+        started.set()
+        release.wait(5)
+
+    async def _drive() -> float:
+        t0 = time.monotonic()
+        utils.publish_plan(Path("/nowhere/spec-1"))
+        return time.monotonic() - t0
+
+    with mock.patch.object(utils, "_publish_plan_now", _slow):
+        elapsed = asyncio.run(_drive())
+        assert started.wait(5), "the push never ran"
+        release.set()
+
+    assert elapsed < 0.5, (
+        f"publish_plan blocked the event loop for {elapsed:.2f}s while the "
+        "upload ran; concurrent wave subtasks are stalled for that whole time"
+    )
+
+
+def test_publish_runs_inline_when_there_is_no_loop_to_protect() -> None:
+    """Off the loop — ``cli/main.py``'s terminal push — it must still happen,
+    and happen synchronously, or the final plan can be lost at exit."""
+    from agents import utils
+
+    seen: list[Path] = []
+    with mock.patch.object(utils, "_publish_plan_now", seen.append):
+        utils.publish_plan(Path("/nowhere/spec-1"))
+    assert seen == [Path("/nowhere/spec-1")]
+
+
+def test_publishes_are_serialised_so_a_slow_one_cannot_overwrite_a_newer() -> None:
+    """One worker, by design: out-of-order uploads would land an OLDER plan on
+    top of a newer one and leave the DAG reading backwards until the next
+    transition."""
+    from agents import utils
+
+    order: list[int] = []
+
+    def _record(spec_dir: Path) -> None:
+        n = int(spec_dir.name)
+        if n == 0:
+            time.sleep(0.15)  # the slow one goes FIRST
+        order.append(n)
+
+    async def _drive() -> None:
+        with mock.patch.object(utils, "_publish_plan_now", _record):
+            for i in range(4):
+                utils.publish_plan(Path(str(i)))
+            await asyncio.get_running_loop().run_in_executor(
+                utils._PUBLISH_POOL, lambda: None
+            )
+
+    asyncio.run(_drive())
+    assert order == [0, 1, 2, 3], f"pushes landed out of order: {order}"
 
 
 def test_serial_funnel_reuses_the_shared_publish() -> None:
