@@ -171,6 +171,31 @@ def find_phase_for_subtask(plan: dict, subtask_id: str) -> dict | None:
     return None
 
 
+def publish_plan(spec_dir: Path) -> None:
+    """Push this spec's plan to object storage mid-build, for the DAG (#1228).
+
+    ``maybe_push_plan`` already existed and was already called with exactly
+    these arguments — once, from ``cli/main.py`` after the build returns. That
+    is why CFactory's live execution diagram showed every node ``waiting`` for a
+    whole build and then flipped all of them to done in one step: per-subtask
+    ``status``/``started_at`` live in ``implementation_plan.json``, which on the
+    packed path is written inside the Job's ephemeral ``/work``. Calling the
+    same push on each transition is the whole fix; no new transport, no new
+    protocol, and the control plane's throttled pull
+    (``KubeJobLogStreamer._maybe_sync_plan``) is the other half.
+
+    A no-op off the packed path, where the spec dir is the control plane's own.
+    Best-effort and silent: this is progress reporting, and a build must never
+    fail because a status could not be published.
+    """
+    try:
+        from core.workspace_fetch import maybe_push_plan  # noqa: PLC0415
+
+        maybe_push_plan(spec_dir, spec_dir.name)
+    except Exception:  # noqa: BLE001 - reporting must never fail a build
+        logger.debug("plan publish skipped (best-effort)", exc_info=True)
+
+
 def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     """
     Sync implementation_plan.json from worktree back to source spec directory.
@@ -186,6 +211,18 @@ def sync_plan_to_source(spec_dir: Path, source_spec_dir: Path | None) -> bool:
     Returns:
         True if sync was performed, False if not needed or failed
     """
+    # #1228: publish ``spec_dir``'s copy, and do it before the worktree-mode
+    # early-returns below rather than after the copy.
+    #
+    # ``spec_dir`` is by construction the directory the caller just wrote, so it
+    # is the freshest copy in every mode — publishing the SOURCE would publish
+    # the pre-copy one in worktree mode. And it must run above the early-returns
+    # because those are precisely the non-worktree builds, which advance the
+    # plan just the same; on the packed path the whole Job filesystem — worktree
+    # AND source — is an ephemeral emptyDir, so reaching the source spec dir is
+    # not reaching the control plane.
+    publish_plan(spec_dir)
+
     # Skip if no source specified or same path (not in worktree mode)
     if not source_spec_dir:
         return False
