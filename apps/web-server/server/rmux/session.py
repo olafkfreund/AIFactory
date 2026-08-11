@@ -9,9 +9,19 @@ Maps an AIFactory ``spec_id`` to:
     an ``asyncio.Lock`` to serialise attach mode flips, and the
     currently-attached ``connection_id`` (or ``None`` when read-only).
 
-Module-level singleton.  ``agent_service`` calls ``create_for_task``
-when a task starts (only when ``AIFACTORY_RMUX_ENABLED=true``) and
+Module-level singleton.  ``agent_service`` goes through
+``rmux/integration.py``, which calls ``create_passive_for_task`` when a
+task starts (only when ``AIFACTORY_RMUX_ENABLED=true``) and
 ``reap_for_task`` when it ends.
+
+``create_for_task`` — the variant that spawns a real pane cwd'd into a
+path — has NO production caller; it is exercised only by
+``tests/rmux/test_session.py``. Production is passive because
+``agent_service`` already runs the agent under its own PTY and a real
+session would double-spawn it. Anything that revives the active path
+under the kubejob backend must resolve the work through
+``services/task_branch.py`` rather than a task worktree, which sits on
+the base branch (#1082).
 
 Threading model
 ---------------
