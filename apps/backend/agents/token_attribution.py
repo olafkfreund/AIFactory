@@ -42,6 +42,7 @@ On-disk contract (AIFactory-owned, shared with the web-server reader):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -510,12 +511,12 @@ def record_turn(
         # cockpit showed no cost accruing at all while a build ran. stdout IS
         # followed live, so mirror the aggregate onto it (throttled at the
         # source). Best-effort: never let cost reporting break attribution.
-        try:
+        # suppress(Exception): cost reporting must never be able to break
+        # attribution, and there is nothing useful to do with a failure here.
+        with contextlib.suppress(Exception):
             from core.phase_event import emit_usage  # noqa: PLC0415
 
             emit_usage(agg)
-        except Exception:  # noqa: BLE001 - reporting must not break the build
-            pass
         return render_breakdown(agg)
     except OSError:
         # Fall back to a single-turn render so callers still get data.

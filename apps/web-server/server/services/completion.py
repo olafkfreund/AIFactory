@@ -984,7 +984,7 @@ def emit_terminal_completion(
     return event
 
 
-def emit_usage_snapshot(
+def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the envelope
     spec_dir: Path,
     *,
     task_id: str,

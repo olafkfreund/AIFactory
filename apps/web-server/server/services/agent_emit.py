@@ -446,7 +446,11 @@ class EmitMixin:
             _log.debug("[AgentService] malformed __USAGE__ marker ignored")
             return False
         try:
-            from .completion import emit_usage_snapshot, usage_from_aggregate
+            # Deferred: completion imports back into this package.
+            from .completion import (  # noqa: PLC0415
+                emit_usage_snapshot,
+                usage_from_aggregate,
+            )
 
             usage = usage_from_aggregate(agg)
             if usage is None:
@@ -459,7 +463,7 @@ class EmitMixin:
             # (issue number, injection scan, tenant) all degrade to None, which
             # is correct for an in-flight snapshot: that metadata lands at
             # completion, and the usage block is what this event exists for.
-            from ..routes.projects import load_projects  # noqa: PLC0415
+            from ..routes.projects import load_projects  # noqa: PLC0415, TID252
 
             pdata = load_projects().get(project_id) or {}
             spec_dir = Path(pdata.get("path", "")) / ".aifactory" / "specs" / spec_id

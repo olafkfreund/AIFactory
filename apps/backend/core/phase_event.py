@@ -87,13 +87,15 @@ def emit_usage(aggregate: dict[str, Any], *, force: bool = False) -> bool:
     if not force and (now - _last_usage_emit) < _USAGE_EMIT_INTERVAL_S:
         return False
     try:
-        print(
+        print(  # noqa: T201 - stdout IS the transport for this protocol
             f"{USAGE_MARKER_PREFIX}{json.dumps(aggregate, default=str)}",
             flush=True,
         )
     except (OSError, UnicodeEncodeError, TypeError, ValueError) as e:
         if _DEBUG:
-            print(f"[phase_event] usage emit failed: {e}", file=sys.stderr, flush=True)
+            print(  # noqa: T201 - debug-only, matches emit_phase above
+                f"[phase_event] usage emit failed: {e}", file=sys.stderr, flush=True
+            )
         return False
     # Only a real emit advances the clock, so an early failure keeps retrying
     # cheaply rather than starting a 15s dead window.
