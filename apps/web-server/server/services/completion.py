@@ -39,6 +39,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .billing import classify_billing_mode
 
@@ -391,8 +392,8 @@ def read_usage(spec_dir: Path) -> dict | None:
 
 
 def usage_from_aggregate(
-    agg: dict | None, *, spec_dir: Path | None = None
-) -> dict | None:
+    agg: dict[str, Any] | None, *, spec_dir: Path | None = None
+) -> dict[str, Any] | None:
     """The RFC-0001 ``usage`` block from an already-loaded aggregate.
 
     Split out of :func:`read_usage` (#1249) so the live path and the file path
@@ -470,7 +471,7 @@ def build_completion_event(
     phase: str = "act",
     project_id: str | None = None,
     updated_at: str | None = None,
-    usage: dict | None = None,
+    usage: dict[str, Any] | None = None,
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
