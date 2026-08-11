@@ -32,6 +32,11 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
+# Mirrors ``core.phase_event.USAGE_MARKER_PREFIX`` (#1249). Spelled out rather
+# than imported because this package does not depend on the backend package —
+# the phase marker two functions down is duplicated for the same reason.
+_USAGE_MARKER = "__USAGE__:"
+
 
 def _dedup_signature(payload: dict) -> tuple:
     """Compute a structural signature of a task:update payload for deduplication.
@@ -428,6 +433,55 @@ class EmitMixin:
 
         return current_phase
 
+    async def _emit_live_usage(self, task_id: str, spec_id: str, line: str) -> bool:
+        """Turn one ``__USAGE__:`` line into a running-cost event (#1249).
+
+        Returns True if an event was emitted. Best-effort throughout: a
+        malformed marker, an unknown project or a failed emit must never affect
+        the build whose output produced it.
+        """
+        try:
+            agg = json.loads(line[len(_USAGE_MARKER) :])
+        except ValueError:
+            _log.debug("[AgentService] malformed __USAGE__ marker ignored")
+            return False
+        try:
+            # Deferred: completion imports back into this package.
+            from .completion import (  # noqa: PLC0415
+                emit_usage_snapshot,
+                usage_from_aggregate,
+            )
+
+            usage = usage_from_aggregate(agg)
+            if usage is None:
+                # No tokens yet — the block is additive, so emit nothing rather
+                # than a zero-cost event the cockpit would render as real.
+                return False
+            project_id = task_id.split(":", 1)[0] if ":" in task_id else ""
+            # Resolve the real spec dir the same way the kubejob reaper does.
+            # It may not exist yet under kubejob — the sibling reads it drives
+            # (issue number, injection scan, tenant) all degrade to None, which
+            # is correct for an in-flight snapshot: that metadata lands at
+            # completion, and the usage block is what this event exists for.
+            from ..routes.projects import load_projects  # noqa: PLC0415, TID252
+
+            pdata = load_projects().get(project_id) or {}
+            spec_dir = Path(pdata.get("path", "")) / ".aifactory" / "specs" / spec_id
+            return (
+                emit_usage_snapshot(
+                    spec_dir,
+                    task_id=task_id,
+                    project_id=project_id,
+                    spec_id=spec_id,
+                    status="running",
+                    usage=usage,
+                )
+                is not None
+            )
+        except Exception:  # noqa: BLE001 - live cost is best-effort
+            _log.debug("[AgentService] live usage emit failed", exc_info=True)
+            return False
+
     async def _handle_output_line(  # noqa: PLR0913 - one line needs all its context
         self,
         task_id: str,
@@ -485,6 +539,15 @@ class EmitMixin:
         # Write to task_logs.json for detailed phase logs
         if log_writer and spec_id and not is_stderr:
             log_writer.process_line(spec_id, current_phase, line)
+
+        # Live token usage (__USAGE__:) — #1249. Handled HERE, beside the phase
+        # marker, so both build backends report accruing cost identically: the
+        # in-pod path used to get it from the worktree-sync loop, which the
+        # kubejob path never runs, so cost only ever appeared at completion.
+        # Deliberately before the phase branch, which returns early on a match.
+        if spec_id and line.startswith(_USAGE_MARKER):
+            await self._emit_live_usage(task_id, spec_id, line)
+            return current_phase
 
         # Check for phase events (__EXEC_PHASE__: or [PHASE_EVENT])
         event = self._parse_phase_event(line)
