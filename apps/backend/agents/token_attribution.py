@@ -504,6 +504,18 @@ def record_turn(
         )
         agg["updatedAt"] = datetime.now(UTC).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
+        # #1249: the file above is the durable record, but under the kubejob
+        # backend it lives in the Job's ephemeral /work and reaches the control
+        # plane only when it is pushed back at the END of the build — so the
+        # cockpit showed no cost accruing at all while a build ran. stdout IS
+        # followed live, so mirror the aggregate onto it (throttled at the
+        # source). Best-effort: never let cost reporting break attribution.
+        try:
+            from core.phase_event import emit_usage  # noqa: PLC0415
+
+            emit_usage(agg)
+        except Exception:  # noqa: BLE001 - reporting must not break the build
+            pass
         return render_breakdown(agg)
     except OSError:
         # Fall back to a single-turn render so callers still get data.
