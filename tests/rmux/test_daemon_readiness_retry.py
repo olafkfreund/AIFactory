@@ -45,7 +45,7 @@ def _fake_run_once(script: list[str | None]):
     """
     calls: list[tuple[str, ...]] = []
 
-    async def _run_once(*args: str, **kwargs: object) -> str:
+    async def _run_once(*args: str, **_kwargs: object) -> str:
         calls.append(args)
         stderr = script[min(len(calls) - 1, len(script) - 1)]
         if stderr is None:
@@ -84,7 +84,7 @@ def test_the_command_is_retried_while_the_daemon_comes_up(tmp_path: Path) -> Non
     """Reset, reset, then success — the caller must see success."""
     w = _wrapper(tmp_path)
     run_once, calls = _fake_run_once([_RESET, _RESET, None])
-    w._run_once = run_once  # type: ignore[method-assign]
+    w._run_once = run_once
 
     assert asyncio.run(w._run("list-sessions", capture=True)) == "ok"
     assert len(calls) == 3, f"expected two retries then success, got {len(calls)} calls"
@@ -98,7 +98,7 @@ def test_the_retry_is_bounded_and_still_raises(tmp_path: Path) -> None:
     """
     w = _wrapper(tmp_path)
     run_once, calls = _fake_run_once([_RESET])
-    w._run_once = run_once  # type: ignore[method-assign]
+    w._run_once = run_once
     w._DAEMON_READY_TIMEOUT_S = 0.2
 
     with pytest.raises(RmuxDaemonError):
@@ -114,10 +114,10 @@ def test_a_real_error_is_not_retried(tmp_path: Path) -> None:
     """
     w = _wrapper(tmp_path)
 
-    async def _run_once(*args: str, **kwargs: object) -> str:
+    async def _run_once(*_args: str, **_kwargs: object) -> str:
         raise RmuxSessionError("can't find session: nope")
 
-    w._run_once = _run_once  # type: ignore[method-assign]
+    w._run_once = _run_once
 
     with pytest.raises(RmuxSessionError):
         asyncio.run(w._run("kill-session", capture=True))
@@ -131,7 +131,7 @@ def test_swallow_no_server_skips_the_retry(tmp_path: Path) -> None:
     """
     w = _wrapper(tmp_path)
     run_once, calls = _fake_run_once([None])
-    w._run_once = run_once  # type: ignore[method-assign]
+    w._run_once = run_once
 
     assert asyncio.run(w._run("list-sessions", swallow_no_server=True)) == "ok"
     assert len(calls) == 1
