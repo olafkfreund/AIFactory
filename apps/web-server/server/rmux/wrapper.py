@@ -274,6 +274,14 @@ class RmuxWrapper:
 
     # ----- internal helpers -------------------------------------------
 
+    #: How long to keep retrying a command that fails because the daemon is
+    #: still coming up (#1233), and how long to wait between attempts. Bounded
+    #: and short: this covers a daemon MID-STARTUP, which rmux completes in
+    #: milliseconds. A longer budget would turn "rmux is not installed
+    #: correctly" into a slow failure instead of a fast one.
+    _DAEMON_READY_TIMEOUT_S: float = 2.0
+    _DAEMON_READY_POLL_S: float = 0.05
+
     async def _run(
         self,
         *args: str,
@@ -281,7 +289,52 @@ class RmuxWrapper:
         swallow_no_server: bool = False,
         swallow_missing_session: bool = False,
     ) -> str:
-        """Run a single ``rmux -S SOCKET ARGS...`` invocation.
+        """Run ``rmux -S SOCKET ARGS...``, retrying while the daemon starts.
+
+        Bounded readiness retry, not a sleep (#1233). `new_session` starts the
+        daemon and returns as soon as rmux forks it; a command issued
+        immediately after can reach a socket that is BOUND but not yet serving,
+        and rmux answers "Connection reset by peer". That is not a failure of
+        the command — it is the daemon still coming up — so it is retried for
+        `_DAEMON_READY_TIMEOUT_S` before being believed.
+
+        Only the daemon-not-ready classes are retried. A missing session, a bad
+        argument or a genuinely absent binary fail immediately, because
+        retrying those just makes a real error slower.
+
+        Callers that pass ``swallow_no_server`` are asking to treat "no daemon"
+        as success, so they skip the retry entirely: waiting for a daemon the
+        caller has said it does not need would add two seconds to every probe.
+        """
+        if swallow_no_server:
+            return await self._run_once(
+                *args,
+                capture=capture,
+                swallow_no_server=True,
+                swallow_missing_session=swallow_missing_session,
+            )
+
+        deadline = asyncio.get_running_loop().time() + self._DAEMON_READY_TIMEOUT_S
+        while True:
+            try:
+                return await self._run_once(
+                    *args,
+                    capture=capture,
+                    swallow_missing_session=swallow_missing_session,
+                )
+            except RmuxDaemonError:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise
+                await asyncio.sleep(self._DAEMON_READY_POLL_S)
+
+    async def _run_once(
+        self,
+        *args: str,
+        capture: bool = False,
+        swallow_no_server: bool = False,
+        swallow_missing_session: bool = False,
+    ) -> str:
+        """One ``rmux -S SOCKET ARGS...`` invocation, no retry.
 
         Returns stdout as a string when ``capture=True``, else "".
         Classifies non-zero exits into the typed error hierarchy.
@@ -317,9 +370,19 @@ class RmuxWrapper:
         #   - "error connecting to <sock> (No such file or directory)"
         #     (the socket file itself is missing — same outcome from
         #     the caller's perspective; the daemon isn't there)
+        #   - "i/o error: Connection reset by peer (os error 104)" (#1233)
+        #     — the socket EXISTS and the daemon is mid-startup: it has
+        #     bound the path but is not serving yet, so the connect
+        #     succeeds and is then dropped. Same condition as the two
+        #     above from the caller's perspective, in a third spelling.
+        #     Missing it is what made the R0b round-trip flake: the
+        #     message fell through to a generic RmuxError and failed a
+        #     BLOCKING check for a cause unrelated to the PR.
         lower = stderr.lower()
-        no_daemon = "no server" in lower or (
-            "error connecting to" in lower and "no such file" in lower
+        no_daemon = (
+            "no server" in lower
+            or ("error connecting to" in lower and "no such file" in lower)
+            or "connection reset by peer" in lower
         )
         if no_daemon:
             if swallow_no_server:
