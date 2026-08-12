@@ -444,7 +444,7 @@ async def get_worktree_merge_preview(
     }
 
 
-def _nothing_to_commit(commit: subprocess.CompletedProcess) -> bool:
+def _nothing_to_commit(commit: subprocess.CompletedProcess[str]) -> bool:
     """Did ``git commit`` exit non-zero only because there was nothing to do?
 
     Both commit sites in this module have to tell that apart from a real

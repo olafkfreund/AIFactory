@@ -22,14 +22,25 @@ import asyncio
 import json
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server.routes import worktree_merge
 from server.services.http_verdict import REFUSED_STATUS
 
 
 def _git(args: list[str], cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    # Suppressed the same way test_task_branch.py does: a fixed argv of
+    # literals in a test. (Do not start this comment with the directive
+    # word itself — ruff reads a bare one as a blanket suppression, PGH004.)
+    subprocess.run(  # noqa: S603
+        ["git", *args],  # noqa: S607
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _init_repo(path: Path) -> None:
@@ -64,9 +75,7 @@ def _stage(tmp_path: Path) -> tuple[str, Path, Path]:
     return f"{project_id}:{spec_id}", project_path, projects_file
 
 
-def _run(task_id: str, projects_file: Path) -> dict:
-    from server.routes import worktree_merge
-
+def _run(task_id: str, projects_file: Path) -> dict[str, Any]:
     with patch.object(worktree_merge, "get_projects_file", return_value=projects_file):
         result = asyncio.run(
             worktree_merge.resolve_worktree_conflicts(task_id, _access={})
@@ -75,7 +84,8 @@ def _run(task_id: str, projects_file: Path) -> dict:
     # 200-wrapped dict. Unwrap so the assertions below read the same body.
     if isinstance(result, JSONResponse):
         assert result.status_code in (REFUSED_STATUS, 200)
-        return json.loads(bytes(result.body))
+        body: dict[str, Any] = json.loads(bytes(result.body))
+        return body
     assert isinstance(result, dict)
     return result
 
