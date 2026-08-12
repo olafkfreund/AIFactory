@@ -29,11 +29,13 @@ Same residual as #370/#323, recorded rather than implied.
 
 from __future__ import annotations
 
+import email.message
 import ipaddress
 import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import IO
 
 # Link-local carries the cloud metadata services (169.254.169.254 on AWS/Azure,
 # and GCP's metadata.google.internal resolves into the same /16). Reaching one
@@ -52,13 +54,13 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(  # noqa: PLR0913 - signature is urllib's, not ours
         self,
-        req,
-        fp,
-        code,
-        msg,  # noqa: ARG002 - part of the urllib override contract
-        headers,
-        newurl,
-    ):
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,  # noqa: ARG002 - part of the urllib override contract
+        headers: email.message.Message,
+        newurl: str,
+    ) -> urllib.request.Request | None:
         """Refuse the redirect instead of following it."""
         raise urllib.error.HTTPError(
             req.full_url, code, f"Redirect blocked (SSRF guard): {newurl}", headers, fp
