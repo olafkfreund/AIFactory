@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocs=self.webpackChunkdocs||[]).push([["3666"],{40600(e){e.exports=JSON.parse('{"metadata":{"permalink":"/blog/page/2","page":2,"postsPerPage":10,"totalPages":2,"totalCount":12,"previousPage":"/blog","blogDescription":"Notes on governed, auditable, self-hostable autonomous coding.","blogTitle":"AIFactory Blog"}}')}}]);

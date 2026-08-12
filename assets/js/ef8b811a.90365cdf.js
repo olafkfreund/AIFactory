@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocs=self.webpackChunkdocs||[]).push([["8416"],{56600(t){t.exports=JSON.parse('{"authors":[{"name":"Olaf Krasicki-Freund","title":"Creator of AIFactory","url":"https://github.com/olafkfreund","socials":{"github":"https://github.com/olafkfreund"},"imageURL":"https://github.com/olafkfreund.png","key":"olaf","page":null,"count":12}]}')}}]);

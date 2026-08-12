@@ -1,0 +1,1109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://aifactory.freundcloud.com/blog</id>
+    <title>AIFactory Blog</title>
+    <updated>2026-08-10T00:00:00.000Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://aifactory.freundcloud.com/blog"/>
+    <subtitle>Governed, auditable, self-hostable autonomous coding.</subtitle>
+    <icon>https://aifactory.freundcloud.com/img/favicon.ico</icon>
+    <rights>Copyright © 2026 AIFactory contributors.</rights>
+    <entry>
+        <title type="html"><![CDATA[The builder stopped reporting work it had not done]]></title>
+        <id>https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done</id>
+        <link href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done"/>
+        <updated>2026-08-10T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[Three weeks on the build side. A reaper that reported writes it never made, tasks that listed as running after their worker died, an Approve button that merged a local branch instead of the pull request, and memory that now pools at project level so it compounds across tasks. Plus the compliance work - PII scrubbed from outbound model calls by default, output-side DLP on agent-authored git output, and scoped service tokens beside the wildcard.]]></summary>
+        <content type="html"><![CDATA[<p>AIFactory takes a signed plan and builds it, each task inside its own throwaway
+Kubernetes Job. The last three weeks were less about new capability and more
+about a category of bug that is specific to autonomous systems: the builder
+reporting state that was true of its intention rather than of the world.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-reaper-that-reported-writes-it-never-made">The reaper that reported writes it never made<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#the-reaper-that-reported-writes-it-never-made" class="hash-link" aria-label="Direct link to The reaper that reported writes it never made" title="Direct link to The reaper that reported writes it never made" translate="no">​</a></h2>
+<p>The clearest example. Tasks whose worker process dies leave rows saying
+<code>in_progress</code> forever, so the board lists work that stopped hours ago. We built a
+reaper to detect and clear them.</p>
+<p>The reaper detected them correctly, logged what it was clearing, and did not
+write. The log line was emitted next to the update rather than after it, so every
+run reported a clean sweep and the rows were still there on the next pass. It had
+been running for days, saying the right thing, and changing nothing.</p>
+<p>Three fixes came out of that thread: detect orphaned tasks whose worker died,
+make the reaper actually write instead of reporting that it did, and sweep
+orphans on a schedule rather than only when someone looked. The middle one is the
+one worth remembering, because it is invisible in every way except by reading the
+rows afterwards.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="approve-merged-a-local-branch-not-the-pull-request">Approve merged a local branch, not the pull request<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#approve-merged-a-local-branch-not-the-pull-request" class="hash-link" aria-label="Direct link to Approve merged a local branch, not the pull request" title="Direct link to Approve merged a local branch, not the pull request" translate="no">​</a></h2>
+<p>The Approve action in the cockpit merged a local branch. On a normal task this
+produced the outcome you expected, so it survived review and use. On a task where
+the pull request had moved - a rebase, a review commit, a force push - Approve
+merged something that was no longer what the reviewer had read.</p>
+<p>Approve now merges the pull request. The distinction never mattered until it did,
+and when it does the failure is silent and the reviewer's approval is attached to
+a diff nobody merged.</p>
+<p>Related: automatic merge is now gated on the review tier, so a change that
+requires a higher level of review cannot auto-merge past it.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-signed-plan-is-not-a-fresh-plan">A signed plan is not a fresh plan<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#a-signed-plan-is-not-a-fresh-plan" class="hash-link" aria-label="Direct link to A signed plan is not a fresh plan" title="Direct link to A signed plan is not a fresh plan" translate="no">​</a></h2>
+<p>Trusted plans arrive signed, and the signature proves the plan came from the
+planner unaltered. It does not prove the plan is still applicable. A plan signed
+against a baseline that has since moved is authentic and stale, and building it
+produces a correct implementation of a superseded requirement.</p>
+<p>Signed plans are now gated on baseline freshness as well as signature. Both
+questions have to be answered, and only one of them was being asked.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="memory-that-compounds">Memory that compounds<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#memory-that-compounds" class="hash-link" aria-label="Direct link to Memory that compounds" title="Direct link to Memory that compounds" translate="no">​</a></h2>
+<p>Agent memory used to be per-task, which meant every task started from nothing and
+learned the same things again. Memory now pools at the <strong>project</strong> level, so what
+one task discovers about a codebase is available to the next one.</p>
+<p>This is the first phase of a longer piece of work and it is deliberately modest:
+pooling is easy to describe and easy to get wrong, and the failure mode - one
+task's wrong conclusion contaminating every later task - is worse than no memory
+at all. Promotion gates come next.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-compliance-work">The compliance work<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#the-compliance-work" class="hash-link" aria-label="Direct link to The compliance work" title="Direct link to The compliance work" translate="no">​</a></h2>
+<p>A substantial block of this period went into the compliance program, and the
+build side owns the parts that touch data leaving the system.</p>
+<ul>
+<li class=""><strong>PII is scrubbed from outbound model calls by default.</strong> Redaction used to be
+opt-in and applied only to the audit row, which meant the audit trail was clean
+and the provider still received the data. Default-on, on the outbound path, is
+the only version of that control that does anything.</li>
+<li class=""><strong>Output-side DLP scans agent-authored git output.</strong> The input side had guards;
+the side where an agent writes a file containing something it should not was
+unguarded.</li>
+<li class=""><strong>Audit events now chain authentication failures, authorization denials and
+gate rejections.</strong> Those are precisely the events an investigation needs and
+they were the ones not in the tamper-evident chain.</li>
+<li class=""><strong>Scoped service tokens run alongside the wildcard.</strong> The fleet shared one
+token that could do everything, so any single service being compromised meant
+fleet-wide access. Scoped tokens are step one; retiring the wildcard is the
+goal, and it is not done.</li>
+<li class=""><strong>Access-review evidence is pushed to a drop path</strong> so the review has an
+artifact rather than a recollection.</li>
+</ul>
+<p>The honest framing is that this is the beginning of that domain rather than the
+end of it. Several of these are step one of several, and the tracking issues say
+so.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="tracing-from-inside-the-job">Tracing from inside the Job<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#tracing-from-inside-the-job" class="hash-link" aria-label="Direct link to Tracing from inside the Job" title="Direct link to Tracing from inside the Job" translate="no">​</a></h2>
+<p>The build runs in a Job, which is a separate process that knows nothing about the
+run that dispatched it. The build Job now emits telemetry from inside itself with
+the run's trace context carried across that boundary, so a build is work in the
+trace rather than a gap between two spans.</p>
+<p>The startup probe needed bounding at the same time. Waiting on the collector
+before reporting ready turns an observability dependency into an availability
+dependency, which is the wrong trade for a feature whose entire purpose is to
+tell you what is happening.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="permissions-the-build-lane-actually-needs">Permissions the build lane actually needs<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#permissions-the-build-lane-actually-needs" class="hash-link" aria-label="Direct link to Permissions the build lane actually needs" title="Direct link to Permissions the build lane actually needs" translate="no">​</a></h2>
+<p>A smaller fix with a general lesson: the chart granted the service account a role
+that did not match what the build lane actually used. It worked, because
+something else in the chain was permissive enough to cover the gap. Granting the
+role the lane needs - and no more - is both the security position and the only
+way the failure becomes legible when it happens.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-this-adds-up-to">What this adds up to<a href="https://aifactory.freundcloud.com/blog/the-builder-stopped-reporting-work-it-had-not-done#what-this-adds-up-to" class="hash-link" aria-label="Direct link to What this adds up to" title="Direct link to What this adds up to" translate="no">​</a></h2>
+<p>Every item above is a variation on one question: does the report match what
+happened? A reaper that logs a write it did not make, an Approve that merges
+something other than what was reviewed, a signature that proves origin but not
+freshness, a redaction that cleans the record but not the request.</p>
+<p>None of them were reported as bugs, because in each case the system said it was
+fine. They were found by reading the artifact instead of the status, which is now
+the standard the whole fleet is being held to.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="reliability" term="reliability"/>
+        <category label="compliance" term="compliance"/>
+        <category label="kubernetes" term="kubernetes"/>
+        <category label="autonomous" term="autonomous"/>
+        <category label="observability" term="observability"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Cheaper, faster, safer builds: four changes under the hood]]></title>
+        <id>https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds</id>
+        <link href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds"/>
+        <updated>2026-07-23T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[The last few weeks of AIFactory work were not about new surface area. They were about the build getting cheaper, starting faster, remembering more, and running behind a real boundary. Here is what changed and why it matters.]]></summary>
+        <content type="html"><![CDATA[<p>The last few weeks of AIFactory work were not about new features you click. They
+were about the build itself getting cheaper to run, faster to start, better at
+remembering what it already learned, and safer to let loose on a repo. Four
+changes, each small on its own, add up to a build node you can actually afford
+to run at scale.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="every-stage-no-longer-pays-frontier-prices">Every stage no longer pays frontier prices<a href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds#every-stage-no-longer-pays-frontier-prices" class="hash-link" aria-label="Direct link to Every stage no longer pays frontier prices" title="Direct link to Every stage no longer pays frontier prices" translate="no">​</a></h2>
+<p>The obvious way to run a multi-stage agent pipeline is to point every stage at
+your best model. It works, and the bill is brutal. Planning, coding, review, and
+QA do not all need the same horsepower.</p>
+<p>Per-stage cost-aware routing (RFC-0014) sends each stage to an appropriately
+sized model tier — <code>small</code>, <code>mid</code>, or <code>frontier</code> — instead of paying frontier
+prices everywhere. The safety catch is that the RFC-0011 difficulty tier is
+applied as a capability floor: a task graded hard can never be routed below the
+model it actually needs, no matter what the tier map says. Every worker in the
+completion event is stamped with the tier it ran at, so the routing decision
+shows up in the cockpit rather than being taken on faith.</p>
+<p>Measured on three identical tasks, the model mix cut cost from 6.48 to 2.91 USD
+— a 55 percent reduction — at essentially the same token volume. The saving is
+the model mix, not less work.</p>
+<p>Non-default runtimes (codex, ollama, agent swarms) stay gated behind an operator
+allowlist, <code>AIFACTORY_RUNTIMES</code>. Claude is always on; the fan-out runtimes that
+multiply spend have to be named explicitly. You opt into cost, you never trip
+into it.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-build-stops-waiting-on-npm">The build stops waiting on npm<a href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds#the-build-stops-waiting-on-npm" class="hash-link" aria-label="Direct link to The build stops waiting on npm" title="Direct link to The build stops waiting on npm" translate="no">​</a></h2>
+<p>The control plane used to npm-install the provider coder CLIs — claude-code,
+codex, gemini — into a scratch volume at pod boot. On a slow or hung npm
+registry that could run eight minutes and stall the whole rollout, stranding
+every in-flight spec behind a package download.</p>
+<p>Those CLIs are now baked into the runtime image at build time, pinned, already
+on PATH (#791). The control-plane boot never touches npm. A registry having a
+bad day is no longer your rollout having a bad day.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-code-graph-remembers">The code graph remembers<a href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds#the-code-graph-remembers" class="hash-link" aria-label="Direct link to The code graph remembers" title="Direct link to The code graph remembers" translate="no">​</a></h2>
+<p>AIFactory can hand the coder a Tree-sitter graph of the repository so it
+navigates the code instead of grepping blind. Building that graph per task and
+throwing it away with the Job was pure waste — the same repository at the same
+commit produces the same graph every time.</p>
+<p>It is now cached in MinIO, keyed by repo and commit
+(<code>graphify/{repo_slug}/{sha}/graph.json</code>, #804). An exact hit skips the rebuild;
+a miss builds it once and uploads best-effort. Cache errors are always swallowed
+and never fail a build — a caching layer that can break your build is worse than
+no cache. It stays opt-in behind <code>AIFACTORY_GRAPHIFY_ENABLED</code>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-real-boundary-around-agent-bash">A real boundary around agent bash<a href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds#a-real-boundary-around-agent-bash" class="hash-link" aria-label="Direct link to A real boundary around agent bash" title="Direct link to A real boundary around agent bash" translate="no">​</a></h2>
+<p>The agent runs bash under a soft command allowlist. An allowlist is a policy,
+not a wall. #363 adds the wall: an OS-level bubblewrap sandbox that binds the
+task worktree read-write and mounts everything else read-only, so an agent
+cannot write outside its worktree or read a host secret even if it wanted to.</p>
+<p>It runs unprivileged in-pod, k3d included, and is enabled by default in the
+Helm chart. Where bwrap cannot run it degrades to a clean passthrough rather
+than failing the build. The two sandbox-escape tests we used to skip — write
+outside the worktree, read a host secret — are now live assertions that run in
+CI and inside the cluster, proving the boundary rejects both.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-theme">The theme<a href="https://aifactory.freundcloud.com/blog/cheaper-faster-safer-builds#the-theme" class="hash-link" aria-label="Direct link to The theme" title="Direct link to The theme" translate="no">​</a></h2>
+<p>None of these are demo-day features. They are the difference between a pipeline
+that works once and a build node you can run every day without watching the
+bill, the clock, or the blast radius. That is the part of the problem that does
+not commoditize, and it is where we keep spending the effort.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="devops" term="devops"/>
+        <category label="multi-provider" term="multi-provider"/>
+        <category label="self-hosted" term="self-hosted"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[A coder that cannot fake a green test]]></title>
+        <id>https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test</id>
+        <link href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test"/>
+        <updated>2026-07-19T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[A live end-to-end run on 2026-07-19 drove a plain GitHub issue through plan, build, test, and verdict with no humans in the loop. AIFactory builds every task inside its own throwaway Kubernetes Job and cannot record a passing test unless a real runner actually ran. This is the build side of that run, including the moment the pipeline refused to certify a build with a failing test.]]></summary>
+        <content type="html"><![CDATA[<p>Most autonomous coders are trusted on their word. They report a green test suite
+and you believe them, because there is no cheap way to check. AIFactory is built
+so that word costs nothing and the evidence costs everything: a passing test
+checkbox is impossible unless a real test runner actually executed. On
+2026-07-19 we drove a plain GitHub issue through the whole pipeline, plan to
+verdict, with no humans in the loop, and this is the build side of that run.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="job-native-build">Job-native build<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#job-native-build" class="hash-link" aria-label="Direct link to Job-native build" title="Direct link to Job-native build" translate="no">​</a></h2>
+<p>AIFactory does not code in a long-lived worker. Every task builds inside its own
+throwaway Kubernetes Job. The Job is created for the task, refreshed to the
+current tip of the target repository's main branch, does its work, opens its own
+pull request, and is then gone. Nothing carries over between tasks except the
+commit and the PR, which is exactly what you want: no accumulated state, no
+drift, no shared workspace where one build can quietly poison the next.</p>
+<p>The featured task was small on purpose, because a small task makes the machinery
+legible. The fleet took an issue asking for a <code>clamp(value, low, high)</code> helper on
+a demo repository, planned it, built it in an ephemeral Job, and opened
+aifactory-demo pull request #387 by itself. A human filed the issue. Everything
+after that was the factory.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-test-evidence-gate">The test-evidence gate<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#the-test-evidence-gate" class="hash-link" aria-label="Direct link to The test-evidence gate" title="Direct link to The test-evidence gate" translate="no">​</a></h2>
+<p>Here is the part that matters. Inside the Job, the coder can mark a subtask's
+tests as passing only if a real test command actually ran and produced that
+result. The gate is tamper-evident: the green checkbox is bound to observed
+execution, not to the agent's claim. If no runner ran, there is no pass to
+record. An autonomous coder's most tempting shortcut, declaring victory it did
+not earn, is simply not reachable from inside the build.</p>
+<p>That sounds abstract until it bites, so here is the moment it bit.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="tests-that-refuse-to-lie">Tests that refuse to lie<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#tests-that-refuse-to-lie" class="hash-link" aria-label="Direct link to Tests that refuse to lie" title="Direct link to Tests that refuse to lie" translate="no">​</a></h2>
+<p>Minutes before the clean <code>clamp</code> run, the same pipeline built a <code>slugify</code>
+helper. It compiled, it looked right, and it would have sailed through a coder
+that grades its own homework. It failed one of twelve test verdicts on a unicode
+edge case. The verification gate did not average that away or wave it through. It
+capped the build at VAL-0, the floor, and auto-filed a handback to fix the
+defect. It refused to certify a build with a failing test.</p>
+<p>That is the capability, not a malfunction. A pipeline that can be honest about
+<code>clamp</code> passing is only worth trusting if it is equally willing to be honest
+about <code>slugify</code> failing. The same machinery produced both verdicts on the same
+day, and the disappointing one is the one that proves the point.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="live-agent-terminals">Live agent terminals<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#live-agent-terminals" class="hash-link" aria-label="Direct link to Live agent terminals" title="Direct link to Live agent terminals" translate="no">​</a></h2>
+<p>While a Job runs, its agent streams its terminal into the portal and the cockpit
+in real time. You watch the coder read the repository, write the change, and run
+the tests as it happens, and with parallel work you watch several agents on one
+board at once. There is no separate "what did it do" report to reconstruct after
+the fact, because the doing is the record.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-the-build-sits-in-the-run">Where the build sits in the run<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#where-the-build-sits-in-the-run" class="hash-link" aria-label="Direct link to Where the build sits in the run" title="Direct link to Where the build sits in the run" translate="no">​</a></h2>
+<p>The build is one stage of the PARR pipeline: PFactory plans against the actual
+codebase, AIFactory builds and opens the PR, TFactory generates and runs the
+tests in a per-task sandbox and assigns a Verification Assurance Level, and the
+verdict threads back onto the PR. For the <code>clamp</code> run the verdict was
+VAL-1, five of five acceptance criteria met, nine tests generated and kept, none
+rejected, a mutation probe killed, confidence 0.96, stable across three runs. The
+higher assurance levels reported not_run, correctly, because a pure function has
+no API, integration, or browser lane to exercise. An untested dimension is
+reported as a gap, never dressed up as a pass.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-rough-edge-we-are-not-hiding">The rough edge we are not hiding<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#the-rough-edge-we-are-not-hiding" class="hash-link" aria-label="Direct link to The rough edge we are not hiding" title="Direct link to The rough edge we are not hiding" translate="no">​</a></h2>
+<p>The same run surfaced one real gap. The verify verdict is computed correctly, but
+its automatic post back onto the pull request is currently gated by a fix we have
+tracked as an open issue. We would rather name that than let a clean-looking
+walkthrough imply the last mile is done. The factory found the final rough edge
+in its own feature and said so, which is the same discipline as the <code>slugify</code>
+handback pointed at ourselves.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-this-proves">What this proves<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#what-this-proves" class="hash-link" aria-label="Direct link to What this proves" title="Direct link to What this proves" translate="no">​</a></h2>
+<p>That an autonomous coder can be built so its optimistic failure mode is closed by
+construction. A build that cannot fake a green test cannot drift into confident
+wrongness, because the one move that would let it, claiming a pass it did not
+run, is not available. Every task in its own disposable Job, refreshed to current
+main, opening its own PR, with evidence bound to execution: that is a coder you
+can leave alone, because when it is wrong it is the first to tell you.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="watch-it-run">Watch it run<a href="https://aifactory.freundcloud.com/blog/a-coder-that-cannot-fake-a-green-test#watch-it-run" class="hash-link" aria-label="Direct link to Watch it run" title="Direct link to Watch it run" translate="no">​</a></h2>
+<p>One continuous walkthrough of all four live portals with this run's own data:</p>
+<video controls="" preload="metadata" src="/video/factory-walkthrough.mp4" style="width:100%;max-width:960px;border-radius:8px"></video>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="reliability" term="reliability"/>
+        <category label="testing" term="testing"/>
+        <category label="kubernetes" term="kubernetes"/>
+        <category label="autonomous" term="autonomous"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[The week we stopped failing silently]]></title>
+        <id>https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently</id>
+        <link href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently"/>
+        <updated>2026-07-13T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[A July 2026 cycle recap. An external SWE-bench baseline showed that almost half of AIFactory's failures were not wrong answers but empty patches — silent no-ops. We root-caused and fixed the dominant cause three ways, killed a second latent no-op, then shipped per-stage cost-aware model routing and measured a real 55 percent cost cut. This is the honest version, including a measurement that looked like a success and was actually a bug.]]></summary>
+        <content type="html"><![CDATA[<p>The most dangerous way for an autonomous coder to fail is quietly. A wrong patch
+gets caught by tests. A patch that never gets written looks, from a distance, a
+lot like a build that is still thinking. This cycle we put a number on that
+distance and then closed it.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-number-that-started-it">The number that started it<a href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently#the-number-that-started-it" class="hash-link" aria-label="Direct link to The number that started it" title="Direct link to The number that started it" translate="no">​</a></h2>
+<p>The Factory hub ran our first external benchmark: 50 real SWE-bench Verified
+tasks, driven through the live pipeline and scored by the official harness, not
+by us. AIFactory resolved 38 percent overall. But the informative slice was the
+failure breakdown. When AIFactory produced a scorable patch, it was correct about
+79 percent of the time. The problem was that 22 of 50 runs produced no patch at
+all. Nearly half of our failures were empty. Silent.</p>
+<p>You cannot fix what you cannot see, so first we made it visible, and then we
+went and found the cause.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="three-defenses-against-the-empty-patch">Three defenses against the empty patch<a href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently#three-defenses-against-the-empty-patch" class="hash-link" aria-label="Direct link to Three defenses against the empty patch" title="Direct link to Three defenses against the empty patch" translate="no">​</a></h2>
+<p>Two independent investigations converged on the same seam: the coding session
+could stall on startup. Entering the agent client spawns the local CLI and its
+MCP tool servers, two of which are fetched over the network at connect time. On a
+cold or network-restricted runner that fetch could hang, no first model call ever
+happened, and with no timeout anywhere on the path the session burned in silence
+straight to the Kubernetes job deadline. Zero tokens, zero output, one empty
+patch.</p>
+<p>We fixed it in depth rather than in one place:</p>
+<ul>
+<li class="">A connect and first-token watchdog. If entering the session does not complete
+within a bounded window, it now fails fast into the existing retry path instead
+of hanging for an hour. A silent stall becomes a loud, recoverable error.</li>
+<li class="">Pre-baking the MCP tool servers into the runner image, so the network fetch
+that caused the stall does not happen at run time at all.</li>
+<li class="">Bounding the rate-limit wait below the build deadline, so no single wait can
+consume the whole build.</li>
+</ul>
+<p>While we were there we found a second, quieter no-op: a plan whose subtasks
+omitted a status field would select nothing, and the coder would exit reporting
+that there was nothing to do. That was a one-line divergence between two loaders,
+and it was writing zero code on real plans. Fixed, with a regression test.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="then-we-made-it-cheaper-and-caught-ourselves-doing-it-wrong">Then we made it cheaper, and caught ourselves doing it wrong<a href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently#then-we-made-it-cheaper-and-caught-ourselves-doing-it-wrong" class="hash-link" aria-label="Direct link to Then we made it cheaper, and caught ourselves doing it wrong" title="Direct link to Then we made it cheaper, and caught ourselves doing it wrong" translate="no">​</a></h2>
+<p>The same benchmark gave our cost-aware routing work something to prove against.
+The idea of RFC-0014 is simple: not every stage needs the most expensive model.
+Planning benefits from a frontier model; bulk coding often does not. So we route
+per stage.</p>
+<p>The honest part is what happened when we first measured it. We ran the same tasks
+with routing off and on, and got identical cost. That looked like the feature did
+nothing. It turned out routing genuinely did nothing, because the difficulty tier
+was writing a fixed model into the task metadata that silently outranked the
+router. That is a real bug, and the measurement is what exposed it. We fixed the
+precedence so routing is consulted before the static tier model, added a
+capability floor so a hard task can never be routed below the model it needs, and
+re-measured.</p>
+<p>The second measurement was clean. On three identical tasks, routing on took
+planning to a frontier model and coding to a cheap one, and cost dropped from
+6.48 to 2.91 US dollars, a 55 percent reduction, at essentially the same token
+volume. The saving is the model mix, not less work, and every worker in the
+completion event is now stamped with the tier it ran at, so you can see it in the
+cockpit rather than take it on faith.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-this-proves">What this proves<a href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently#what-this-proves" class="hash-link" aria-label="Direct link to What this proves" title="Direct link to What this proves" translate="no">​</a></h2>
+<p>That we treat reliability as a measurable property, not a vibe. The empty-patch
+rate was the dominant gap in a public benchmark, we found the mechanism, and we
+defended against it in the image, in the session, and in the retry policy.</p>
+<p>That we would rather ship a fix we can defend than a number we cannot. The
+routing story only counts because we were willing to notice that our first result
+was wrong and say so.</p>
+<p>And that honesty scales: a benchmark that looked like a bad day was the best
+thing that happened to the coder all cycle.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-is-next">What is next<a href="https://aifactory.freundcloud.com/blog/the-week-we-stopped-failing-silently#what-is-next" class="hash-link" aria-label="Direct link to What is next" title="Direct link to What is next" translate="no">​</a></h2>
+<p>Turn the routing measurement into a standing matrix instead of a one-off, and get
+the scored-resolve confirmation now that the benchmark patches are clean of
+scaffolding noise. Bring the second coder runtime, Codex, to the same bar as
+Claude; this cycle it learned to report its own failures out loud instead of
+exiting quietly, which is the prerequisite for trusting it at all. The gaps we
+have not closed are written down in public issues, which is the only kind of
+roadmap worth having.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="reliability" term="reliability"/>
+        <category label="cost" term="cost"/>
+        <category label="benchmarks" term="benchmarks"/>
+        <category label="multi-provider" term="multi-provider"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Building on the latest models — with Copilot joining the coders]]></title>
+        <id>https://aifactory.freundcloud.com/blog/build-on-the-latest-models</id>
+        <link href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models"/>
+        <updated>2026-07-07T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[AIFactory now defaults to Claude Opus 4.8, adds GitHub Copilot as a coding runtime, and joins the fleet-wide unified shell. A one-page showcase is ready to download.]]></summary>
+        <content type="html"><![CDATA[<p>AIFactory builds software autonomously: it takes a plan, writes the code in an
+isolated git worktree, and opens a pull request. This round of work moved it onto
+the current models, added a third coding runtime, and connected it to the rest of
+the family.</p>
+<!-- -->
+<p><img decoding="async" loading="lazy" alt="AIFactory build workspace" src="https://aifactory.freundcloud.com/assets/images/build-workspace-85da51401f173cc55b00905736d8c8dd.png" width="1600" height="1000" class="img_ev3q"></p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="on-the-latest-models">On the latest models<a href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models#on-the-latest-models" class="hash-link" aria-label="Direct link to On the latest models" title="Direct link to On the latest models" translate="no">​</a></h2>
+<p>The default coder is now <strong>Claude Opus 4.8</strong>, Anthropic's current flagship. Claude
+<strong>Sonnet 5</strong> and the current OpenAI Codex, Google Gemini, and GitHub Copilot models
+are all selectable per stage. We refreshed the whole model catalogue in one pass —
+and fixed a stale price entry that had been over-stating Opus cost three-fold.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="three-coding-runtimes">Three coding runtimes<a href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models#three-coding-runtimes" class="hash-link" aria-label="Direct link to Three coding runtimes" title="Direct link to Three coding runtimes" translate="no">​</a></h2>
+<p>Claude, OpenAI Codex, and <strong>GitHub Copilot</strong> now all run as first-class coding
+backends behind one task contract. The Copilot CLI is baked into the build image
+and wired as a selectable runtime; turning it fully on is one operator sign-in
+away.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="part-of-one-product">Part of one product<a href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models#part-of-one-product" class="hash-link" aria-label="Direct link to Part of one product" title="Direct link to Part of one product" translate="no">​</a></h2>
+<p>AIFactory also joined the fleet-wide unified shell:</p>
+<ul>
+<li class=""><strong>A portal switcher</strong> moves you between Plan, Build, Test, and Cockpit.</li>
+<li class=""><strong>A global command palette</strong> — Cmd-K — searches every portal's work at once.</li>
+<li class=""><strong>A fleet "needs you" badge</strong> shows how many tasks are waiting on a human.</li>
+<li class=""><strong>Silent single sign-on</strong> carries you in from any sibling portal.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="download-the-showcase">Download the showcase<a href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models#download-the-showcase" class="hash-link" aria-label="Direct link to Download the showcase" title="Direct link to Download the showcase" translate="no">​</a></h2>
+<p><strong><a href="https://aifactory.freundcloud.com/assets/files/aifactory-showcase-5e028dc8ae8efc568430d55464d740b5.pdf" target="_blank" class="">AIFactory — one-page showcase (PDF)</a></strong></p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-path-forward">The path forward<a href="https://aifactory.freundcloud.com/blog/build-on-the-latest-models#the-path-forward" class="hash-link" aria-label="Direct link to The path forward" title="Direct link to The path forward" translate="no">​</a></h2>
+<p>Next: bring the GitHub Copilot runtime fully live, sharpen acceptance-criteria
+fidelity, and keep the build stage able to ship any language to any target.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="models" term="models"/>
+        <category label="claude" term="claude"/>
+        <category label="copilot" term="copilot"/>
+        <category label="unified-shell" term="unified-shell"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[The build that runs anywhere: cutting the last node-pin]]></title>
+        <id>https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere</id>
+        <link href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere"/>
+        <updated>2026-06-23T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[A packed AIFactory build still nailed itself to one node through the Nix store. Baking the store into a -nix build image, behind a dispatcher gate, removed the last node affinity. Here is the exact mechanism, and an honest line on what is proven versus what waits on a second node.]]></summary>
+        <content type="html"><![CDATA[<p>When a build can only run on one node, you do not have a cluster — you have one
+machine with extra steps. This is the story of removing the last thing that pinned
+an AIFactory build to a single node, why it took three small changes instead of
+one, and exactly where the honest line sits between "shipped" and "proven."</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="two-jobs-one-store">Two Jobs, one store<a href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere#two-jobs-one-store" class="hash-link" aria-label="Direct link to Two Jobs, one store" title="Direct link to Two Jobs, one store" translate="no">​</a></h2>
+<p>When <code>AIFACTORY_BUILD_BACKEND=kubejob</code>, the coder loop (<code>run.py</code>) runs as its own
+Kubernetes Job instead of an in-pod subprocess. That is the control/execution split
+RFC-0016 and RFC-0017 have been building toward: the web-server pod stays small and
+long-lived, and the heavy per-task work goes into a short-lived Job the scheduler
+can place wherever there is room.</p>
+<p>"Wherever there is room" is the whole point — and it is exactly what a mounted
+volume takes away. A Kubernetes pod that mounts an RWO <code>local-path</code> PersistentVolumeClaim
+inherits that volume's node affinity, because a <code>local-path</code> PV is physically a
+directory on one node. Mount one, and the scheduler has no decision left to make.</p>
+<p>A build Job touched two such volumes:</p>
+<ul>
+<li class=""><strong><code>/work</code></strong> — the task's git checkout, which the coder writes to.</li>
+<li class=""><strong><code>/nix</code></strong> — the toolchain cache. Even though <code>run.py</code> itself is not wrapped in
+<code>nix develop</code>, the coder runs its inline verification gates through it, against a
+per-task <code>flake.nix</code> generated from the contract's environment manifest. So the
+build Job needs a populated <code>/nix/store</code> just as much as a gate Job does.</li>
+</ul>
+<p><a class="" href="https://aifactory.freundcloud.com/concepts/workspace-storage">Workspace pack/unpack</a> already solved the first:
+the producer packs the populated <code>/work</code> to object storage and the Job unpacks it
+into a writable <code>emptyDir</code>, so there is no workspace PVC to pin to. But the build
+stayed pinned anyway — through <code>/nix</code>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-the-store-was-a-volume-in-the-first-place">Why the store was a volume in the first place<a href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere#why-the-store-was-a-volume-in-the-first-place" class="hash-link" aria-label="Direct link to Why the store was a volume in the first place" title="Direct link to Why the store was a volume in the first place" translate="no">​</a></h2>
+<p>The fast way to give a build a warm <code>/nix/store</code> is to share one: an RWX-ish warm
+cache PVC so repeat builds do not re-realise the same toolchain closure from
+<code>cache.nixos.org</code> every time. Warm, fast — and node-pinned, because that cache was an
+RWO <code>local-path</code> PVC living on the control-plane node. Every packed build Job that
+co-mounted it got dragged straight back to that node, no matter what the scheduler
+would have preferred.</p>
+<p>That was the last wire.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="make-the-store-a-layer-not-a-mount">Make the store a layer, not a mount<a href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere#make-the-store-a-layer-not-a-mount" class="hash-link" aria-label="Direct link to Make the store a layer, not a mount" title="Direct link to Make the store a layer, not a mount" translate="no">​</a></h2>
+<p>A <code>/nix/store</code> does not have to arrive as a volume. It can arrive as an image layer.
+The change landed as three small, independently reversible pieces:</p>
+<ol>
+<li class="">
+<p><strong>A dispatcher gate.</strong> <code>AIFACTORY_PACKED_NIX_IN_IMAGE</code>, on the packed path only,
+drops the Nix-store PVC from the build Job manifest. Off: nothing changes. On: the
+Job carries no Nix-store volume.</p>
+</li>
+<li class="">
+<p><strong>A <code>-nix</code> build image.</strong> The ordinary AIFactory runtime image plus a baked
+<code>/nix/store</code> (the Dockerfile's <code>build-runtime</code> stage). It is published on demand by
+its own workflow — deliberately <em>not</em> part of the per-commit deploy, because baking a
+multi-gigabyte store onto every push would tax CD for an image most commits do not
+change.</p>
+</li>
+<li class="">
+<p><strong>The image override.</strong> <code>AIFACTORY_BUILD_IMAGE</code> points the build Job — and only the
+build Job — at that <code>-nix</code> tag. The resolution order is
+<code>AIFACTORY_BUILD_IMAGE</code> &gt; <code>AIFACTORY_IMAGE</code> &gt; built-in default, so the control plane
+and the gate Jobs keep running their normal images; the override is surgical.</p>
+</li>
+</ol>
+<p>With <code>AIFACTORY_PACK_WORKSPACE=true</code>, <code>AIFACTORY_PACKED_NIX_IN_IMAGE=true</code>, and
+<code>AIFACTORY_BUILD_IMAGE</code> on a <code>-nix</code> tag, a packed build Job mounts no workspace PVC and
+no Nix-store PVC. It carries no node affinity. The scheduler is free to place it
+anywhere.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="a-note-on-the-default">A note on the default<a href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere#a-note-on-the-default" class="hash-link" aria-label="Direct link to A note on the default" title="Direct link to A note on the default" translate="no">​</a></h2>
+<p>It is worth being exact, because it is the kind of thing that is easy to overstate.
+The shipped <em>code</em> default for <code>AIFACTORY_BUILD_BACKEND</code> is still <code>subprocess</code> — the
+in-pod path — kept deliberately as the safe fallback. Job-native execution is the
+<em>deployment</em> default: gitops sets <code>kubejob</code> on the reference cluster. A fresh install
+with no flags runs in-pod until an operator opts in. "Live" here means the reference
+deployment, not a default baked into the binary.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-honest-line">The honest line<a href="https://aifactory.freundcloud.com/blog/the-build-that-runs-anywhere#the-honest-line" class="hash-link" aria-label="Direct link to The honest line" title="Direct link to The honest line" translate="no">​</a></h2>
+<p>Shipped and wired into the reference deployment: the gate, the <code>-nix</code> image, the
+override. The chain is verified at every layer that does not need new hardware — the
+image is published and resolvable, the manifest the dispatcher emits for a packed build
+has no Nix-store volume, and the toolchain resolves from the baked store. The build Job
+is node-agnostic by construction.</p>
+<p>Not yet proven: an actual landing on a <em>different</em> node. The live cluster is single-node
+today, so there is no second node for the scheduler to place a build on. "No node
+affinity in the manifest" is a strong structural guarantee, but it is not the same as
+watching a packed build run on node B while node A is cordoned. That demonstration waits
+on one thing — a second node — and on no more code. When the node exists, the proof is a
+five-minute exercise.</p>
+<p>We would rather ship the mechanism, mark the line precisely, and show the landing when
+the hardware is real. The wire is cut.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="devops" term="devops"/>
+        <category label="kubernetes" term="kubernetes"/>
+        <category label="nix" term="nix"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Concurrency, durable job-state, and the road to Job-native execution]]></title>
+        <id>https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution</id>
+        <link href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution"/>
+        <updated>2026-06-21T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[A week recap (2026-06-15 to 06-21). AIFactory went from a single in-pod instance to a concurrency-capable control plane — durable Postgres job-state, admission control, KEDA autoscaling and Nix-per-task — then landed the mechanisms for fully Job-native execution. The build/verify default flips are converging but are not live yet; this post is honest about exactly where the line is.]]></summary>
+        <content type="html"><![CDATA[<p>This was a concurrency week. AIFactory started it as a single-instance app that
+ran one build at a time inside its own pod, and ended it with a control plane
+that can run many builds at once across replicas, plus the plumbing for moving
+the heavy work out of the web-server pod entirely and into per-task Kubernetes
+Jobs. The last part is not finished — and the honest version of that is the most
+useful thing in this post, so it gets its own section near the end.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="rfc-0016-from-one-instance-to-many">RFC-0016: from one instance to many<a href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution#rfc-0016-from-one-instance-to-many" class="hash-link" aria-label="Direct link to RFC-0016: from one instance to many" title="Direct link to RFC-0016: from one instance to many" translate="no">​</a></h2>
+<p>The single-instance constraint was the real ceiling. One build at a time meant
+the throughput of the whole factory was the throughput of one pod. RFC-0016 took
+that apart in a few load-bearing pieces.</p>
+<p><strong>Durable Postgres job-state (#668).</strong> The admission cap, the FIFO queue and the
+running set used to live in process memory. That's fine for one replica and
+fatal for several — two replicas with two private in-memory queues will both
+think they're under the cap and both admit, and the cap means nothing. So the
+job-state moved into Postgres: <code>queued</code> / <code>running</code> rows in a shared table, with
+a per-service advisory lock so the admission decision is serialized across every
+replica. Crucially this is opt-in by configuration — the durable store only
+activates when a real shared <code>DATABASE_URL</code> is set, so a laptop running SQLite
+behaves exactly as before.</p>
+<p><strong>Admission control + queue (#668).</strong> On top of the durable state sits the
+actual policy: a concurrency cap with a FIFO queue in front of it. Submit more
+work than the cap allows and the overflow queues instead of either failing or
+overwhelming the cluster. This is what makes "many builds at once" a bounded,
+predictable thing rather than a thundering herd.</p>
+<p><strong>KEDA autoscaling.</strong> With state shared and admission bounded, the replica count
+can follow the queue. KEDA scales the web-server deployment on queue depth — we
+proved a 1→3 scale-out under load earlier in the rollout — so capacity tracks
+demand instead of being pinned at one.</p>
+<p><strong>Nix-per-task substrate (#197, #674).</strong> The execution environment got leaner
+and more reproducible at the same time. The Nix gate Jobs now mount a warm
+<code>/nix-store</code> PVC so they don't re-fetch the world on every run, and the coder
+image was shrunk to a thin control plane (#674) by dropping the baked-in
+language toolchains — those come from the per-task Nix environment the
+planner/coder declare in the contract, not from a fat image that has to contain
+every language anyone might ever need.</p>
+<p>The theme across all of it is the same one we keep coming back to: make the
+shared thing authoritative (Postgres), make the policy explicit (admission +
+queue), and keep the single-instance path untouched for anyone who isn't running
+the concurrent topology.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="rfc-0017-the-mechanisms-for-job-native-multi-replica-execution">RFC-0017: the mechanisms for Job-native, multi-replica execution<a href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution#rfc-0017-the-mechanisms-for-job-native-multi-replica-execution" class="hash-link" aria-label="Direct link to RFC-0017: the mechanisms for Job-native, multi-replica execution" title="Direct link to RFC-0017: the mechanisms for Job-native, multi-replica execution" translate="no">​</a></h2>
+<p>RFC-0016 made the control plane concurrency-capable. RFC-0017 is about the two
+things you need before the heavy work can actually leave the web-server pod and
+run as its own Kubernetes Job, in a world where there's more than one web-server
+replica.</p>
+<p><strong>Redis-backed rmux transport (#684 / #681).</strong> The live console (rmux) used to
+assume the build was a subprocess of the same pod the browser's websocket landed
+on. With multiple replicas that assumption breaks: your websocket can hit
+replica B while the build runs on replica A, and you'd see nothing. #681 moves
+the rmux transport onto Redis, so the live stream is decoupled from which replica
+you're connected to. Any replica can serve any session's console.</p>
+<p><strong>Job-native log streaming (#683 / #680).</strong> The other half: when the build runs
+as a Job instead of an in-pod subprocess, the logs have to come from the Job, not
+from a child process the web-server owns. #680 adds a Job-native log streamer
+that tails the Job's output into the same two sinks the in-pod path already feeds
+— so the portal's Logs tab and the persisted log look identical whether the build
+ran in-pod or as a Job. That symmetry is deliberate: it's what lets the backend
+be swapped underneath without the UI or the stored artifacts noticing.</p>
+<p>There was also a concurrency-safety fix worth naming: shared base-repo git
+mutations are now serialized across builds (#669), and a Claude token pool feeds
+concurrent builds (#670) so parallel runs don't contend over a single
+credential.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="round-5-getting-the-build-jobs-credentials-and-workspace-right">Round 5: getting the build Job's credentials and workspace right<a href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution#round-5-getting-the-build-jobs-credentials-and-workspace-right" class="hash-link" aria-label="Direct link to Round 5: getting the build Job's credentials and workspace right" title="Direct link to Round 5: getting the build Job's credentials and workspace right" translate="no">​</a></h2>
+<p>A Job that runs the coder loop needs three things the in-pod subprocess got for
+free: the right image, a populated workspace, and credentials. This week's round
+of fixes worked through exactly those, in order, as each one surfaced the next:</p>
+<ul>
+<li class="">The build Job must use the <strong>python-capable AIFactory image</strong>, not the thin Nix
+gate image (#685) — the gate image can't run <code>run.py</code>.</li>
+<li class="">It must invoke <code>run.py</code> by its <strong>absolute path inside the image</strong> (#686), not as
+a bare <code>run.py</code> resolved against <code>/work</code>.</li>
+<li class="">Its <strong>worktree must be populated</strong> (git checkout + spec) before dispatch (#687),
+because the Job doesn't inherit the web-server's already-prepared workspace.</li>
+<li class="">And it must have the <strong>build environment injected</strong> — the Claude OAuth token and
+the SDK env (#688) — or the agent inside the Job can't authenticate.</li>
+</ul>
+<p>Each of these was a real, specific failure caught by actually running the path,
+not a hypothetical. That's the nature of moving execution across a process
+boundary: everything the in-pod path took for granted has to be made explicit.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-the-line-actually-is-the-default-flips-are-not-live">Where the line actually is: the default flips are NOT live<a href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution#where-the-line-actually-is-the-default-flips-are-not-live" class="hash-link" aria-label="Direct link to Where the line actually is: the default flips are NOT live" title="Direct link to Where the line actually is: the default flips are NOT live" translate="no">​</a></h2>
+<p>Here's the honest part. The mechanisms above are merged. The <strong>default execution
+backend is still in-pod</strong>, and the <strong>verify path still runs on its safe in-pod
+defaults</strong>. The Job-native build/verify default flips (#671, #466) are
+<em>converging</em>, not shipped.</p>
+<p>In code, <code>AIFACTORY_BUILD_BACKEND</code> defaults to <code>subprocess</code> — today's in-pod
+behaviour, unchanged. <code>kubejob</code> is opt-in. The module that selects the backend
+describes the flip as "READY", and that's accurate: the plumbing exists and the
+log-stream symmetry that was the last blocker is in place. But READY is not DONE.
+Flipping the default is gated on validation we haven't passed yet — the most
+recent build-Job bug is that <code>/work</code> in the Job has no <code>.git</code>, and the verify
+path still needs to be re-validated end-to-end before it can run Job-native by
+default.</p>
+<p>So if you're reading this and wondering whether your builds are running as
+Kubernetes Jobs right now: they are not, unless you've explicitly set
+<code>AIFACTORY_BUILD_BACKEND=kubejob</code>. The default is the in-pod subprocess, and it
+stays that way until the Job path has earned the flip by passing on real work.
+We'd rather ship the mechanism behind a default-off flag and converge through
+real bugs than flip the default and have it fail under you.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-shape-of-next-week">The shape of next week<a href="https://aifactory.freundcloud.com/blog/concurrency-and-the-road-to-job-native-execution#the-shape-of-next-week" class="hash-link" aria-label="Direct link to The shape of next week" title="Direct link to The shape of next week" translate="no">​</a></h2>
+<p>The work that's left is the validation, not the mechanism: populate the Job
+worktree's <code>.git</code> so the build path is green end-to-end, re-validate the verify
+path under the Job backend, and only then flip the defaults — one at a time,
+behind the same evidence bar everything else clears. The control plane is ready
+for concurrency. The execution layer is one honest validation pass away from
+following it out of the pod.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="devops" term="devops"/>
+        <category label="concurrency" term="concurrency"/>
+        <category label="kubernetes" term="kubernetes"/>
+        <category label="multi-provider" term="multi-provider"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Per-worker observability: who spent the tokens, and the security pass that came with it]]></title>
+        <id>https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening</id>
+        <link href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening"/>
+        <updated>2026-06-13T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[AIFactory already ran independent subtasks in parallel across multiple providers. The gap was that the cost and timing came back as one aggregate number — you couldn't see which worker, provider or model spent what. This session closes that gap with per-worker token attribution, OpenTelemetry metrics, live per-worker events, and an observe-only budget alert — plus an Actions security pass and a god-file decomposition that landed alongside it.]]></summary>
+        <content type="html"><![CDATA[<p>A few weeks ago we taught the build executor to run independent subtasks in
+parallel, across multiple LLM providers at once. That work was about throughput,
+and it worked. But it left a blind spot: when a build finished, the cost and the timing came back as a single
+aggregate. Total tokens. Total dollars. Total wall-clock. Useful, but it couldn't
+answer the question you actually ask after a parallel run: <em>which</em> worker spent
+that money, on <em>which</em> provider, in <em>which</em> model, and where did the time go?</p>
+<p>This session was about closing that gap. The headline is per-worker
+observability. The theme is that all of it is <strong>additive</strong> — the parallel build
+spine didn't change, we just put instruments on it. The same session also carried
+a GitHub Actions security pass and a god-file decomposition, because they were
+sitting in the same backlog and they unblock the work above.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-shape-of-the-problem">The shape of the problem<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#the-shape-of-the-problem" class="hash-link" aria-label="Direct link to The shape of the problem" title="Direct link to The shape of the problem" translate="no">​</a></h2>
+<p>The executor already fans subtasks out to a pool of workers, each potentially on a
+different provider/model. What it reported back was a scalar: one <code>usage</code> object
+summing everything. That's the right number for a budget line, but it's the wrong
+granularity for an operator. If a build cost more than you expected, "the build
+cost $4.10" doesn't tell you that one worker on an expensive model did 70% of the
+spend while three cheap workers idled. You need the per-worker breakdown to make
+that call.</p>
+<p>So the work was a chain of small, individually-shippable changes, each behind the
+required backend CI gate, each preserving the existing aggregate so nothing
+downstream broke.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="per-worker-token-attribution-566">Per-worker token attribution (#566)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#per-worker-token-attribution-566" class="hash-link" aria-label="Direct link to Per-worker token attribution (#566)" title="Direct link to Per-worker token attribution (#566)" translate="no">​</a></h2>
+<p>The first change records per-worker token, cost and duration in
+<code>token_usage.json</code>. The file gains a <code>workers</code> map — one entry per worker, keyed
+so you can see input/output tokens, USD cost and duration for each — while the
+<strong>scalar aggregate is preserved exactly as it was</strong>. Anything that read the old
+top-level number keeps working; anything new can read the map.</p>
+<p>On the wire, the build completion event grows to <strong>v1.3</strong> with an additive
+<code>usage</code> block:</p>
+<ul>
+<li class=""><code>usage.workers[]</code> — the per-worker rows.</li>
+<li class=""><code>usage.by_provider</code> — the same spend rolled up per provider.</li>
+<li class=""><code>usage.by_model</code> — and per model.</li>
+</ul>
+<p>"Additive" is the important word. Older consumers see a completion event that
+still has everything they expect; newer consumers get the breakdown. No field was
+removed or repurposed.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="opentelemetry-metrics-emitted-from-the-web-server-567">OpenTelemetry metrics, emitted from the web-server (#567)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#opentelemetry-metrics-emitted-from-the-web-server-567" class="hash-link" aria-label="Direct link to OpenTelemetry metrics, emitted from the web-server (#567)" title="Direct link to OpenTelemetry metrics, emitted from the web-server (#567)" translate="no">​</a></h2>
+<p>Attribution in a JSON file is good for the portal panels. For an operator running
+Grafana or Datadog, you want metrics. So #567 emits four OpenTelemetry
+instruments:</p>
+<ul>
+<li class=""><code>gen_ai.input_tokens</code></li>
+<li class=""><code>gen_ai.output_tokens</code></li>
+<li class=""><code>gen_ai.cost_usd</code></li>
+<li class=""><code>worker.duration_ms</code></li>
+</ul>
+<p>Each is tagged <code>{provider, model, phase}</code>. Two deliberate decisions here are worth
+calling out, because they're the kind of thing that bites you later if you get
+them wrong.</p>
+<p><strong>The metrics are emitted from the web-server, not the agent.</strong> AIFactory's agent
+subprocesses deliberately don't export telemetry — they inherit the parent trace
+<em>context</em> (so the trace ID is consistent) but they don't run their own exporter.
+That's a long-standing design choice: the agent stays a clean subprocess, and the
+web-server, which already owns the OTel SDK lifecycle, is the single place that
+talks to the collector. Per-worker metrics fit that model — the web-server already
+receives the completion data, so it's the natural emission point.</p>
+<p><strong>Cardinality is bounded.</strong> The tag set is <code>{provider, model, phase}</code> and nothing
+else — in particular, <strong>never <code>task_id</code></strong>. Per-task labels are exactly how you blow
+up a time-series database: unbounded label cardinality turns a metric into a
+log. Provider, model and phase are small, closed sets, so these series stay cheap
+no matter how many builds you run.</p>
+<p>And, consistent with the rest of the tracing stack, the whole thing is a <strong>no-op
+when OTel is disabled</strong> — instruments build in memory and drop at export when
+there's no collector configured. This change also fixed the completion-event
+<code>traceparent</code> so it links to the real active span rather than a detached context,
+so the metrics and the trace line up in your backend.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="live-per-worker-events-568-570">Live per-worker events (#568, #570)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#live-per-worker-events-568-570" class="hash-link" aria-label="Direct link to Live per-worker events (#568, #570)" title="Direct link to Live per-worker events (#568, #570)" translate="no">​</a></h2>
+<p>Attribution after the fact is half the story. While a build is running you want to
+watch workers finish. #568 emits a live <code>phase: "worker"</code> sub-event as each worker
+completes — so the portal (and any event consumer) sees workers retiring in real
+time instead of waiting for the final roll-up.</p>
+<p>#570 adds the other half: throttled <code>phase: "worker_progress"</code> heartbeats, emitted
+roughly every 10 seconds, so a long-running worker visibly ticks rather than
+sitting silent between start and finish. The throttle keeps the event stream from
+turning into a firehose on a big fan-out.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="an-observe-only-budget-alert-569">An observe-only budget alert (#569)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#an-observe-only-budget-alert-569" class="hash-link" aria-label="Direct link to An observe-only budget alert (#569)" title="Direct link to An observe-only budget alert (#569)" translate="no">​</a></h2>
+<p>The last observability piece is a soft budget alert. The completion <code>usage</code> block
+gains a <code>budget</code> sub-object — <code>{limit, spent, exceeded}</code> — and a <code>budget.exceeded</code>
+OTel counter fires when spend crosses the configured limit.</p>
+<p>The critical design decision: <strong>this is observe-only and never aborts a build.</strong>
+It is an alert, not a circuit breaker. A build that runs over budget still finishes
+and still hands off; you just get told. Hard-stopping a half-finished build on a
+budget threshold would trade a known, bounded cost overrun for an unknown amount of
+wasted work and a broken pipeline — a bad trade. If a hard cap is ever wanted,
+it'll be a separate, explicit opt-in, not a side effect of the alert.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-security-pass-that-came-with-it-557-for-issues-553--554">The security pass that came with it (#557, for issues #553 / #554)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#the-security-pass-that-came-with-it-557-for-issues-553--554" class="hash-link" aria-label="Direct link to The security pass that came with it (#557, for issues #553 / #554)" title="Direct link to The security pass that came with it (#557, for issues #553 / #554)" translate="no">​</a></h2>
+<p>Two CI hardening changes landed in the same session.</p>
+<p>The first fixed a <strong>GitHub Actions script-injection</strong>. An untrusted issue title was
+being interpolated directly into a shell step — the classic Actions injection
+vector. The fix moves untrusted values into <code>env:</code> bindings so they're passed as
+data, never expanded as shell.</p>
+<p>The second hardened <code>copilot-pr-review.yml</code>. It had been trusting any actor whose
+name ended in <code>[bot]</code> — the <strong>CVE-2025-66032 pattern</strong>, where a <code>[bot]</code> suffix is
+trivially spoofable and grants a workflow elevated trust it shouldn't. That suffix
+check was replaced with a proper <code>author_association</code> membership gate, and we
+removed <code>--allow-all-tools</code> from a path that runs over untrusted PR content — you
+don't hand an unrestricted tool surface to something an outsider can influence.</p>
+<p>Alongside the security fixes, CI gained a frontend <code>vitest</code> job and a <code>mypy</code> job,
+with broadened triggers. Both start <strong>non-blocking</strong> — they run and report, but
+they don't gate merges yet. That's intentional: turn the lights on, see the real
+failure rate, then promote to required once the signal is clean. Flipping a brand
+new check straight to "required" is how you wedge the whole team behind a flaky
+gate on day one.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="god-file-decomposition-556">God-file decomposition (#556)<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#god-file-decomposition-556" class="hash-link" aria-label="Direct link to God-file decomposition (#556)" title="Direct link to God-file decomposition (#556)" translate="no">​</a></h2>
+<p>Finally, the unglamorous but load-bearing work: <code>routes/tasks.py</code> had grown to
+<strong>5,346 lines</strong>. This session pulled it down to roughly 4,000 by extracting
+cohesive sub-routers — worktree tools (#559), plan-approval (#560), PR-creation
+(#563), and inbox (#565).</p>
+<p>Two constraints made this safe to ship without a held breath: every extracted
+route keeps a <strong>backward-compatible re-export</strong> from the old module, and the routes
+themselves are <strong>byte-identical</strong> — same paths, same handlers, just living in a
+file that's the right size to read. No behavior change, no route moved, nothing
+for a client to notice. It just makes the next person who has to touch task routing
+able to find the thing they're looking for.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-it-all-fits-together">Why it all fits together<a href="https://aifactory.freundcloud.com/blog/per-worker-observability-and-hardening#why-it-all-fits-together" class="hash-link" aria-label="Direct link to Why it all fits together" title="Direct link to Why it all fits together" translate="no">​</a></h2>
+<p>The connective tissue across these changes is restraint. The parallel build
+already existed and was correct — so the observability work is purely additive and
+spine-preserving, never a rewrite. Metrics come from the web-server because that's
+where the telemetry lifecycle already lives and the agent is deliberately kept
+export-free. Cardinality is bounded on purpose. The budget watches but doesn't
+intervene. The new CI checks report before they block. The god-file split moves
+zero behavior. And every one of these merged behind the same required backend gate
+(<code>ruff</code> + <code>pytest</code>), so the safety net was up the whole time.</p>
+<p>The result: after a parallel multi-provider build, you can now answer "who spent
+the tokens" — per worker, per provider, per model — in the portal, in your metrics
+backend, and live as it happens.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="devops" term="devops"/>
+        <category label="multi-provider" term="multi-provider"/>
+        <category label="observability" term="observability"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Proof over promises: putting AIFactory on a benchmark]]></title>
+        <id>https://aifactory.freundcloud.com/blog/proof-over-promises</id>
+        <link href="https://aifactory.freundcloud.com/blog/proof-over-promises"/>
+        <updated>2026-06-12T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[We stopped and reviewed AIFactory against its own goals and against Devin, Factory.ai and the cloud agents. The verdict — the pipeline works, but we'd published zero numbers. So we started measuring. Here's the honest progress report, including the four bugs the first run found in our own harness.]]></summary>
+        <content type="html"><![CDATA[<p>This week I did something uncomfortable: I stopped shipping features and reviewed
+AIFactory honestly — against its own goals, and against the 2026 field of
+autonomous coding tools. Not the demo-day version. The version you'd give an
+investor who's going to check.</p>
+<p>The short verdict: the pipeline works, end to end, and on the axis that actually
+matters in 2026 — governance and verification — it's ahead of the pack. But we
+had <strong>published zero numbers</strong>. We built the part of the problem that doesn't
+commoditize and then never measured it. This post is what we found and what
+we're doing about it.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-aifactory-actually-stands">Where AIFactory actually stands<a href="https://aifactory.freundcloud.com/blog/proof-over-promises#where-aifactory-actually-stands" class="hash-link" aria-label="Direct link to Where AIFactory actually stands" title="Direct link to Where AIFactory actually stands" translate="no">​</a></h2>
+<p>AIFactory is the build leg of a four-service suite: plan, build, verify, observe.
+The build leg itself is in good shape and I'll claim it plainly:</p>
+<ul>
+<li class=""><strong>The planner → coder → QA loop is production-grade.</strong> Eight providers behind
+one abstraction (Claude, Codex, Gemini, Ollama and more), parallel build waves
+in isolated git worktrees, act-loop guardrails that stop an agent looping on a
+failing edit, and a mutation ledger that checkpoints before every change. The
+backend carries 313 test files and a near-zero TODO density in the core paths.</li>
+<li class=""><strong>The loop is closed.</strong> A signed plan comes in, code goes out, the change gets
+deployed to real cloud infrastructure, the tests run against the <em>live</em>
+endpoint, and a reviewed PR can auto-merge on a green verification. That's not
+a roadmap sentence — it ran on real AWS App Runner, with teardown, last week.</li>
+</ul>
+<p>So what's wrong? Nothing in the capability column. The gap is <strong>evidence</strong>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-market-moved-toward-us">The market moved toward us<a href="https://aifactory.freundcloud.com/blog/proof-over-promises#the-market-moved-toward-us" class="hash-link" aria-label="Direct link to The market moved toward us" title="Direct link to The market moved toward us" translate="no">​</a></h2>
+<p>The 2026 landscape made the bet clearer, not muddier. Code generation is
+commoditizing fast — the benchmark wars between Droid, Devin, OpenHands and the
+lab CLIs are a race we deliberately aren't running. Meanwhile the industry's own
+surveys say the quiet part out loud: most organizations can <em>monitor</em> their
+agents but can't <em>stop</em> them, only a minority of developers trust agent output,
+and the EU AI Act's high-risk obligations — logging, human oversight, audit
+trails — land on <strong>2 August 2026</strong>.</p>
+<p>The bottleneck everyone now names is verification, trust, and auditability. That
+is precisely what AIFactory and its sibling services were built for. On that
+axis nobody in the comparison set has the full set we do: a pre-code governance
+gate, an independent verification leg that tests the deployed service, real
+deploy-then-verify, an HMAC-anchored audit chain, and a cockpit that can pause
+the fleet. And because we <em>wrap</em> coding agents instead of competing with them,
+someone else topping a coding benchmark isn't a threat — it's a candidate
+provider.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="where-were-honestly-behind">Where we're honestly behind<a href="https://aifactory.freundcloud.com/blog/proof-over-promises#where-were-honestly-behind" class="hash-link" aria-label="Direct link to Where we're honestly behind" title="Direct link to Where we're honestly behind" translate="no">​</a></h2>
+<p>Three places, and none of them are unwritten code:</p>
+<ol>
+<li class=""><strong>Proof.</strong> Competitors market benchmark numbers relentlessly. We built a full
+PARR benchmark harness — four scenarios across multiple providers — and had
+never run it. Our strongest evidence was sitting on a shelf.</li>
+<li class=""><strong>Customers.</strong> Zero design partners yet; the pricing page is illustrative.</li>
+<li class=""><strong>One security item.</strong> Agents still run with an effectively bypassable
+command allowlist rather than a real OS sandbox. Ten of eleven findings from
+our own security audit are closed; this is the eleventh, and you cannot sell
+"trust by construction" while it's open.</li>
+</ol>
+<p>All of this is now tracked in one program epic — <em>Make it great: prove, harden,
+and sell the PARR spine</em> — ordered deliberately: prove first (it's days of work
+and the highest leverage), then close the one trust blocker, then adversarially
+validate the loops we just shipped, then sell with the artifacts the first three
+phases produce.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="first-contact-the-benchmark-found-four-bugs--in-our-own-harness">First contact: the benchmark found four bugs — in our own harness<a href="https://aifactory.freundcloud.com/blog/proof-over-promises#first-contact-the-benchmark-found-four-bugs--in-our-own-harness" class="hash-link" aria-label="Direct link to First contact: the benchmark found four bugs — in our own harness" title="Direct link to First contact: the benchmark found four bugs — in our own harness" translate="no">​</a></h2>
+<p>Here's the part I like, because it's the kind of honesty this project trades on.</p>
+<p>The very first time I pointed the benchmark at our <strong>deployed</strong> fleet, it failed
+in seven seconds — and every failure was a cross-service seam bug, the exact
+class of problem that unit tests per repo never catch:</p>
+<ul>
+<li class=""><strong>Cloudflare blocked the bot.</strong> The harness's default Python user-agent got a
+<code>403</code> from the managed challenge in front of the live services. Fix: send a
+real browser user-agent.</li>
+<li class=""><strong>A transient <code>500</code>.</strong> One factory cold-started mid-request. Fix: retry <code>5xx</code>
+with backoff instead of failing the run.</li>
+<li class=""><strong>A <code>409</code> on re-run.</strong> The deployed factories register repos under derived
+names, so blindly creating the project conflicted every second run. Fix: reuse
+the existing project by URL or name.</li>
+<li class=""><strong>Endpoint drift.</strong> The verify leg moved to a new ingest contract in a recent
+release and the harness still spoke the old one. Fix: speak the current API and
+let the planner auto-run on ingest.</li>
+</ul>
+<p>None of those were caught locally because locally there's no Cloudflare, no cold
+start, no months-old registered project, and no version skew between services.
+The lesson is blunt: our unit-test posture is excellent and our risk profile is
+<em>cross-service</em>. So alongside the benchmark, we're adding a nightly end-to-end
+run that exercises every seam and fails loudly — so boundary bugs get caught by
+a gate instead of by a user.</p>
+<p>The harness is fixed, the run is back in flight against the live fleet, and the
+numbers — time-to-verified-PR, token cost, handback cycles, pass rate, per
+provider — go into a public results table as they land. The point was never a
+vanity score. It's to be able to answer the only question that matters to a
+regulated team: <em>can you prove it?</em></p>
+<p>We spent a year building the part of autonomous coding that doesn't commoditize.
+The review says it works. Now we prove it in the open — numbers, warts, and all.</p>
+<p>AIFactory is open source and self-hostable. If governed, auditable autonomous
+coding with no vendor lock-in is the problem you have too, the code's on
+<a href="https://github.com/olafkfreund/AIFactory" target="_blank" rel="noopener noreferrer" class="">GitHub</a>.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="devops" term="devops"/>
+        <category label="multi-provider" term="multi-provider"/>
+        <category label="self-hosted" term="self-hosted"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[AIFactory 3.4: watch the build, message the agent, and a token-saving solo mode]]></title>
+        <id>https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode</id>
+        <link href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode"/>
+        <updated>2026-06-02T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[AIFactory 3.4 adds per-task observability panels, inter-agent messaging with @agent/#task mentions, a single-agent solo mode for small jobs, and an Antigravity CLI provider — plus a round of provider and worktree fixes.]]></summary>
+        <content type="html"><![CDATA[<p>The 3.4 line is about <strong>seeing and steering</strong> a build while it runs — and trimming the overhead when a job is small. Here's what landed.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="see-where-the-build-is-going-observability-panels">See where the build is going: observability panels<a href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode#see-where-the-build-is-going-observability-panels" class="hash-link" aria-label="Direct link to See where the build is going: observability panels" title="Direct link to See where the build is going: observability panels" translate="no">​</a></h2>
+<p>Every task now has an <strong>Observability</strong> tab with three live panels:</p>
+<ul>
+<li class=""><strong>Token usage</strong> — total tokens vs the context window, total cost, and a per-category breakdown (system prompt / user messages / tool outputs / thinking). An over-large system prompt or a runaway tool-output category is now obvious at a glance, and attribution survives a context compaction instead of resetting.</li>
+<li class=""><strong>Resource usage</strong> — live CPU and memory for the agent's own process, polled every few seconds. This is how you tell a working build from a hung one without tailing logs.</li>
+<li class=""><strong>Send to agent</strong> — a box to drop a message straight into the agent's inbox.</li>
+</ul>
+<p>See <a class="" href="https://aifactory.freundcloud.com/concepts/observability-panels">Task observability panels</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="steer-it-agent-messaging--mentions">Steer it: agent messaging &amp; mentions<a href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode#steer-it-agent-messaging--mentions" class="hash-link" aria-label="Direct link to Steer it: agent messaging &amp; mentions" title="Direct link to Steer it: agent messaging &amp; mentions" translate="no">​</a></h2>
+<p>Builds are mostly sequential (plan → code → QA → fix), but some coordination has to happen <em>mid-run</em>. 3.4 adds a file-backed <strong>inbox</strong> with <strong>between-turn delivery</strong>: messages are picked up at the next turn boundary (atomic writes, read-back-verified), so you — or another agent — can nudge a running build without restarting the session.</p>
+<p>Message text is parsed for <strong><code>@agent</code></strong> and <strong><code>#task</code></strong> mentions, with the boring-but-important details handled: mentions inside inline code are ignored, and <code>someone@example.com</code> is never mistaken for a mention. See <a class="" href="https://aifactory.freundcloud.com/concepts/agent-messaging">Agent messaging &amp; mentions</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="trim-the-overhead-solo-mode">Trim the overhead: solo mode<a href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode#trim-the-overhead-solo-mode" class="hash-link" aria-label="Direct link to Trim the overhead: solo mode" title="Direct link to Trim the overhead: solo mode" translate="no">​</a></h2>
+<p>For a one-line fix or a throwaway script, the full four-session pipeline is overkill. <strong>Solo mode</strong> collapses it to a single self-directed agent that writes its own plan and works it in the same loop — far fewer tokens and sessions. It's <strong>opt-in</strong> (env var, per-task flag, or global config) and off by default, because there's no independent QA pass; keep the full pipeline for anything you'd want reviewed. See <a class="" href="https://aifactory.freundcloud.com/concepts/solo-mode">Solo mode</a>.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="providers">Providers<a href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode#providers" class="hash-link" aria-label="Direct link to Providers" title="Direct link to Providers" translate="no">​</a></h2>
+<ul>
+<li class=""><strong>Antigravity CLI</strong> — the Gemini provider, renamed, with <strong>portal-driven install/update</strong> (Settings → CLI Tools) so you can pull a new version without leaving the UI. The isolated worktree is trusted automatically so the CLI can edit files.</li>
+<li class=""><strong>OpenCode CLI</strong> — a community/self-host runtime, with an automatic workaround for the sandbox model-catalogue problem. See the <a class="" href="https://aifactory.freundcloud.com/concepts/multi-provider">multi-provider</a> page for the tier note and caveats.</li>
+<li class="">Plus fixes: Codex builds on ChatGPT-account logins (account-default model, no forced <code>--model</code>), and openai-compatible Bedrock/Azure/Vertex routing through the LiteLLM gateway.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="fixes-worth-calling-out">Fixes worth calling out<a href="https://aifactory.freundcloud.com/blog/aifactory-3-4-observability-messaging-solo-mode#fixes-worth-calling-out" class="hash-link" aria-label="Direct link to Fixes worth calling out" title="Direct link to Fixes worth calling out" translate="no">​</a></h2>
+<ul>
+<li class=""><strong>Worktree <code>core.bare</code> self-heal</strong> — a stray <code>core.bare=true</code> on the primary checkout used to break every git operation; the worktree manager now heals it on init and guards each call.</li>
+<li class=""><strong>Project-context reconciliation</strong> — the kanban board, sidebar, and project dropdown no longer drift apart on load (the dropdown could previously get stuck on the wrong project).</li>
+<li class=""><strong>Honest build state</strong> — all-failed builds now surface as <em>failed</em> instead of being quietly labelled "human review".</li>
+</ul>
+<p>Container images ship for <code>linux/amd64</code>; native <code>linux/arm64</code> images are being restored on a dedicated runner.</p>
+<p>— As always: provider-agnostic, self-hostable, and the code is right there to read.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="release" term="release"/>
+        <category label="observability" term="observability"/>
+        <category label="agents" term="agents"/>
+        <category label="providers" term="providers"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[We ran the same build through every LLM — what won, what broke, and where local models stand]]></title>
+        <id>https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider</id>
+        <link href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider"/>
+        <updated>2026-05-31T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[AIFactory is provider-agnostic, so we put it to the test — the identical coding task through Claude, Codex, Gemini, GitHub Copilot, and local Ollama, with independently-verified tests. Here are the real results, the bugs we fixed along the way, and an honest take on local vs cloud.]]></summary>
+        <content type="html"><![CDATA[<p>AIFactory claims to be provider-agnostic: the same build task should run on Claude, Codex,
+Gemini, GitHub Copilot, or a local Ollama model. A claim like that is worth nothing until you
+test it — so we did, with the <em>same</em> task, on <em>every</em> provider, and we re-ran the tests
+ourselves rather than trusting the agent's word.</p>
+<p>The short version: <strong>every managed provider produced a working, tested feature</strong> — and the
+process surfaced (and fixed) four real bugs. Local models are a different story, and that story
+is the interesting one.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-test">The test<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#the-test" class="hash-link" aria-label="Direct link to The test" title="Direct link to The test" translate="no">​</a></h2>
+<p>One small but non-trivial, uniformly testable feature, added to the same FastAPI demo repo by
+every provider:</p>
+<blockquote>
+<p>A <code>tictactoe</code> module (3×3 board, win/draw detection, invalid-move handling), exposed via a
+<code>POST /tictactoe/move</code> endpoint, plus a pytest suite covering a win, a draw, and a rejected move.</p>
+</blockquote>
+<p>Python + pytest on purpose: "result = working" is <strong>objectively verifiable</strong> by running the
+tests, and the bar is identical for everyone. Each provider got the same prompt, ran in its own
+isolated git worktree, and stopped at the human-review gate. Then we re-ran <code>pytest</code> on each
+branch in a clean virtualenv — these are not self-reported numbers.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-results">The results<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#the-results" class="hash-link" aria-label="Direct link to The results" title="Direct link to The results" translate="no">​</a></h2>
+<table><thead><tr><th>Provider</th><th>Model</th><th>Time</th><th>Tests (independent <code>pytest</code>)</th></tr></thead><tbody><tr><td><strong>Codex</strong></td><td><code>gpt-5.3-codex</code></td><td><strong>4m 56s</strong></td><td>✅ 7 / 7 pass</td></tr><tr><td><strong>Claude</strong></td><td><code>claude-sonnet-4-6</code></td><td>9m 29s</td><td>✅ 9 / 9 pass</td></tr><tr><td><strong>Gemini</strong></td><td><code>gemini-3.1-pro-preview</code></td><td>19m 37s</td><td>✅ 16 / 16 pass</td></tr><tr><td><strong>Copilot</strong></td><td><code>copilot:claude-sonnet-4.5</code></td><td>~25m</td><td>✅ 4 / 4 pass</td></tr><tr><td>Ollama (local)</td><td><code>qwen2.5-coder:14b</code></td><td>~3m</td><td>⚠️ partial — code, not a finished feature</td></tr></tbody></table>
+<ul>
+<li class=""><strong>Fastest working build: Codex.</strong> Roughly twice as fast as the rest, with passing tests.</li>
+<li class=""><strong>Cleanest first pass: Claude.</strong> Followed the spec exactly, 9/9 on the first run, no fixes.</li>
+<li class=""><strong>Most thorough: Gemini.</strong> Wrote the largest suite, including idiomatic async API tests.</li>
+<li class=""><strong>Most convenient: Copilot.</strong> Runs on an existing GitHub Copilot subscription, no extra key —
+it's a router over Claude/GPT-5 backends. Also the slowest.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-four-bugs-the-benchmark-found-and-we-fixed">The four bugs the benchmark found (and we fixed)<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#the-four-bugs-the-benchmark-found-and-we-fixed" class="hash-link" aria-label="Direct link to The four bugs the benchmark found (and we fixed)" title="Direct link to The four bugs the benchmark found (and we fixed)" translate="no">​</a></h2>
+<p>Running every provider through the <em>same</em> pipeline is a great way to find provider bugs:</p>
+<ol>
+<li class=""><strong>Codex wrote nothing</strong> on the first run. Root cause: the agentic provider drained only
+stdout while the Codex MCP server filled its stderr pipe buffer and blocked. Fixed by draining
+stderr concurrently. The after-fix run is the fastest in the table.</li>
+<li class=""><strong>Gemini's code was correct but its tests "failed".</strong> It wrote idiomatic async tests, but the
+repo had no <code>pytest-asyncio</code> configured. Fixed by configuring async test support — 8/10 became
+16/16 on a fresh run.</li>
+<li class=""><strong>Copilot wasn't supported at all</strong> — so we added a provider for it.</li>
+<li class=""><strong>Ollama wrote nothing</strong> — the most interesting one. More below.</li>
+</ol>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="ollama-what-works-what-needs-doing">Ollama: what works, what needs doing<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#ollama-what-works-what-needs-doing" class="hash-link" aria-label="Direct link to Ollama: what works, what needs doing" title="Direct link to Ollama: what works, what needs doing" translate="no">​</a></h2>
+<p>Local coding is fundamentally harder than a cloud chat. It isn't autocomplete — the model has to
+drive a multi-step <em>agentic loop</em>: read files, call tools, write code, react to results. That
+asks a lot of a model.</p>
+<p><strong>What we fixed.</strong> Small local models (qwen, llama) frequently describe a tool call as text — a
+JSON blob in the message body — instead of using the native tool-call field, and they tend to
+loop on reading without ever writing. AIFactory now parses those text-emitted tool calls and
+nudges the model to write once it has read enough. With that fix, <code>qwen2.5-coder:14b</code> went from
+<strong>writing zero files</strong> to <strong>writing real code</strong>. (We ported the fix from our sister project,
+<a href="https://github.com/olafkfreund/TFactory" target="_blank" rel="noopener noreferrer" class="">TFactory</a>, which had already solved it.)</p>
+<p><strong>What still needs doing.</strong> A 14B model now <em>starts</em> the job but usually can't <em>finish</em> a full
+multi-file feature — in our run it produced a partial module and stopped after the first subtask.
+That's not an AIFactory limit; it's a model-capacity limit.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="which-ollama-models-and-what-hardware">Which Ollama models, and what hardware<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#which-ollama-models-and-what-hardware" class="hash-link" aria-label="Direct link to Which Ollama models, and what hardware" title="Direct link to Which Ollama models, and what hardware" translate="no">​</a></h3>
+<table><thead><tr><th>Model class</th><th>What to expect on a real multi-file task</th></tr></thead><tbody><tr><td>≤ 7B</td><td>Not recommended — rarely sustains the tool-calling loop.</td></tr><tr><td>14B (<code>qwen2.5-coder:14b</code>)</td><td>Produces real code; good for single-file edits and smoke tests; usually won't finish a whole feature.</td></tr><tr><td><strong>27–32B</strong> (<code>qwen3-coder</code>, <code>qwen2.5-coder:32b</code>, <code>deepseek-coder-v2</code>)</td><td>The realistic floor for completing full tasks locally.</td></tr><tr><td>70B+</td><td>Best local quality, needs serious hardware.</td></tr></tbody></table>
+<p>Rough hardware guide (4-bit quantized, 32K context):</p>
+<table><thead><tr><th>Model size</th><th>VRAM (approx)</th><th>Example GPU</th></tr></thead><tbody><tr><td>14B</td><td>~10–12 GB</td><td>RTX 4070/4080</td></tr><tr><td>27–32B</td><td>~24–32 GB</td><td>RTX 3090/4090 (24 GB) or better</td></tr><tr><td>70B</td><td>~48 GB+</td><td>A6000 / dual-24 GB / data-center</td></tr></tbody></table>
+<p>One hard-won tip: run Ollama on a <strong>dedicated GPU box</strong>, not your daily-driver desktop. While
+testing, a 27B model pinned the GPU hard enough to take down a desktop session. Keep VRAM
+headroom for the context window.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-the-cloud-models-are-still-king">Why the cloud models are still king<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#why-the-cloud-models-are-still-king" class="hash-link" aria-label="Direct link to Why the cloud models are still king" title="Direct link to Why the cloud models are still king" translate="no">​</a></h2>
+<p>If you want one honest sentence: <strong>for almost any real task today, a managed/cloud model is the
+right default, and local models are the special case</strong> — not the other way around.</p>
+<ul>
+<li class=""><strong>Capability.</strong> The frontier cloud models are far larger than anything you'll run on a single
+GPU. They sustain the agentic loop, follow multi-file instructions, and write passing tests on
+the first try. Three of four managed providers did exactly that here; the local 14B couldn't.</li>
+<li class=""><strong>Speed.</strong> Codex finished in under five minutes. A capable <em>local</em> model that can actually
+finish the task (27B+) runs several times slower on consumer hardware.</li>
+<li class=""><strong>Cost, in context.</strong> Cloud runs of a task this size cost on the order of a few cents. "Free"
+local coding costs $0 in API fees but needs a real GPU and your patience — and below ~27B it
+often can't finish at all.</li>
+</ul>
+<p><strong>So when is local the right call?</strong> When you <em>can't</em> send code to a third party — air-gapped,
+regulated, or privacy-mandated environments. (That's the whole reason AIFactory is self-hostable;
+see <a class="" href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank">Why we can't use Cursor at a bank</a>.) In that case:
+use a <strong>27B+ coder model on a 24 GB+ GPU</strong>, expect to review more, and lean on AIFactory's
+human-review gate. For everyone else, pick a managed provider and move fast — AIFactory lets you
+switch with a single model string, and even mix them per phase.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="see-it--run-it-yourself">See it / run it yourself<a href="https://aifactory.freundcloud.com/blog/we-tested-every-llm-provider#see-it--run-it-yourself" class="hash-link" aria-label="Direct link to See it / run it yourself" title="Direct link to See it / run it yourself" translate="no">​</a></h2>
+<ul>
+<li class="">The full, independently-verified results: <strong><a class="" href="https://aifactory.freundcloud.com/showcase/benchmark-results">Provider Benchmark</a></strong>.</li>
+<li class="">Every provider run is reproducible with <code>scripts/benchmark-provider.mjs</code> in the repo — re-run
+<code>pytest</code> on each branch and check our numbers.</li>
+</ul>
+<p>Provider-agnostic isn't a marketing line if you can prove it. Now you can.</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="benchmark" term="benchmark"/>
+        <category label="ollama" term="ollama"/>
+        <category label="local-llm" term="local-llm"/>
+        <category label="providers" term="providers"/>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[Why we can't use Cursor at a bank — and what I built instead]]></title>
+        <id>https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank</id>
+        <link href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank"/>
+        <updated>2026-05-30T00:00:00.000Z</updated>
+        <summary type="html"><![CDATA[AI can write code. For regulated teams the blocker isn't capability — it's trust and provenance. Here's the case for governed, self-hostable, auditable autonomous coding.]]></summary>
+        <content type="html"><![CDATA[<p>A friend who works at a bank told me their security team had just banned every cloud AI coding
+tool. Not because they're luddites — these are sharp engineers who'd love the productivity. They
+banned them because they can't send proprietary source code to a third party, and they can't
+explain to an auditor where a given line of code came from. They wanted AI's help. They weren't
+allowed to have it.</p>
+<p>I kept hearing versions of this. The more I looked, the more I realized it isn't a niche complaint
+— it's the unspoken default for a huge slice of the industry. So I built something for it, open
+-sourced it, and this post is about why.</p>
+<!-- -->
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-problem-isnt-capability-its-trust">The problem isn't capability. It's trust.<a href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank#the-problem-isnt-capability-its-trust" class="hash-link" aria-label="Direct link to The problem isn't capability. It's trust." title="Direct link to The problem isn't capability. It's trust." translate="no">​</a></h2>
+<p>We're past the point of arguing whether AI can write code. It can. The interesting question has
+moved: <em>can you trust what it produced, and can you prove where it came from?</em></p>
+<p>The data says no, and it's getting worse:</p>
+<ul>
+<li class=""><strong>96% of developers don't fully trust AI-generated code</strong> — yet only <strong>48% actually verify it</strong>
+(Sonar, 2026). That gap is where bugs and vulnerabilities live.</li>
+<li class="">For <strong>38% of teams, reviewing AI-written code now takes <em>more</em> effort</strong> than reviewing a human's.
+We automated the writing and quietly moved the cost to review.</li>
+<li class=""><strong>~74% of organizations can't provide security provenance</strong> for AI-generated code. When the
+auditor asks "where did this come from and who approved it?", there's no answer.</li>
+<li class="">Depending on the study, <strong>40–62% of AI-generated code contains vulnerabilities or design flaws.</strong></li>
+</ul>
+<p>For a solo dev on a side project, fine. For a regulated team, that's a wall.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-the-cloud-tools-structurally-cant-fix-this">Why the cloud tools structurally can't fix this<a href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank#why-the-cloud-tools-structurally-cant-fix-this" class="hash-link" aria-label="Direct link to Why the cloud tools structurally can't fix this" title="Direct link to Why the cloud tools structurally can't fix this" translate="no">​</a></h2>
+<p>It's tempting to think the SaaS vendors will just add an "enterprise mode" and the problem goes
+away. But the issues are structural, not cosmetic:</p>
+<ul>
+<li class=""><strong>Data residency.</strong> The tool's value comes from ingesting your repo. If your compliance regime
+says source can't leave the perimeter, "enterprise SSO" doesn't help — the architecture is wrong.</li>
+<li class=""><strong>No air-gap.</strong> Many regulated environments are network-isolated. A tool that phones home to a
+hosted model service can't run there at all.</li>
+<li class=""><strong>Opaque actions.</strong> Most agents hand you a diff, not a defensible record of <em>what they did, in
+what order, and what you approved.</em></li>
+<li class=""><strong>Lock-in.</strong> Betting your whole dev workflow on one vendor's model and pricing is its own risk.</li>
+</ul>
+<p>You can't bolt provenance and air-gap onto an architecture designed around "send us your code."</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="the-thesis-autonomy-and-governance-arent-opposites">The thesis: autonomy and governance aren't opposites<a href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank#the-thesis-autonomy-and-governance-arent-opposites" class="hash-link" aria-label="Direct link to The thesis: autonomy and governance aren't opposites" title="Direct link to The thesis: autonomy and governance aren't opposites" translate="no">​</a></h2>
+<p>Here's the conviction the whole project rests on: <strong>you can have an agent that ships code <em>and</em> a
+trail you can defend.</strong> Those aren't in tension — you just have to design for both from the start.</p>
+<p>Concretely, that means:</p>
+<ul>
+<li class=""><strong>Spec-first.</strong> Every run begins with a written spec and acceptance criteria — intent you can read
+and edit before anything happens.</li>
+<li class=""><strong>Review-gated.</strong> You approve the plan before code is written, and the diff before it merges. A QA
+agent checks the result against the spec.</li>
+<li class=""><strong>Isolated.</strong> Each task runs in its own git worktree. Nothing touches your working tree until you
+decide to merge.</li>
+<li class=""><strong>Provenance by default.</strong> Every action is journaled in a hash-chained audit log. The spec, the
+plan, and the QA report all live on disk and in version control.</li>
+<li class=""><strong>Self-hosted.</strong> It runs in <em>your</em> perimeter — your Kubernetes cluster, or just docker-compose on
+a laptop — against <em>your</em> choice of model, including a fully local one.</li>
+</ul>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-i-built">What I built<a href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank#what-i-built" class="hash-link" aria-label="Direct link to What I built" title="Direct link to What I built" translate="no">​</a></h2>
+<p>That's <a href="https://github.com/olafkfreund/AIFactory" target="_blank" rel="noopener noreferrer" class="">AIFactory</a>. It turns a task into shipping code
+through a pipeline you watch and verify: <strong>spec → plan → code → QA</strong>, with human-review gates at
+each step. You bring your own model — Claude, OpenAI, Gemini, Codex, or a local Ollama /
+OpenAI-compatible endpoint — and you own the infrastructure it runs on. Every task lands in a
+hash-chained audit log, so afterwards you can show exactly what happened and who approved it.</p>
+<p>It's open source (MIT) and I build it solo, full-time. There's a separate enterprise edition for
+organizations that need multi-tenant isolation, SAML/SCIM, and signed audit evidence — that's what
+funds the open core — but the core pipeline is free, and it's the part most people need.</p>
+<h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="if-this-is-your-problem-too">If this is your problem too<a href="https://aifactory.freundcloud.com/blog/why-we-cant-use-cursor-at-a-bank#if-this-is-your-problem-too" class="hash-link" aria-label="Direct link to If this is your problem too" title="Direct link to If this is your problem too" translate="no">​</a></h2>
+<p>If you're somewhere that wants AI's productivity but can't use the cloud tools — or you just don't
+want to merge code you can't account for — I'd genuinely like to hear what would make this usable
+for you. The repo is here: <strong><a href="https://github.com/olafkfreund/AIFactory" target="_blank" rel="noopener noreferrer" class="">github.com/olafkfreund/AIFactory</a></strong>.
+Open an issue, or tell me where it falls short.</p>
+<p>Autonomy you can't defend isn't worth much in the places that matter most. I think we can do better
+than "trust the diff."</p>]]></content>
+        <author>
+            <name>Olaf Krasicki-Freund</name>
+            <uri>https://github.com/olafkfreund</uri>
+        </author>
+        <category label="ai-coding" term="ai-coding"/>
+        <category label="self-hosted" term="self-hosted"/>
+        <category label="compliance" term="compliance"/>
+        <category label="governance" term="governance"/>
+    </entry>
+</feed>
