@@ -444,6 +444,23 @@ async def get_worktree_merge_preview(
     }
 
 
+def _branch_suffix(
+    deleted: str | None, identified: str | None, reason: str | None
+) -> str:
+    """Describe the branch leg of a discard so the prose matches the fields.
+
+    Three distinct outcomes, and only the first is a deletion: the branch was
+    deleted, a branch was identified but `git branch -D` refused it, or no task
+    branch was found at all. Collapsing the middle case into the first is what
+    made the message contradict ``branchDeleted``/``branchReason`` (#1082).
+    """
+    if deleted:
+        return f" and branch {deleted}"
+    if identified:
+        return f"; branch {identified} was NOT deleted ({reason or 'unknown error'})"
+    return "; no task branch identified"
+
+
 def _nothing_to_commit(commit: subprocess.CompletedProcess[str]) -> bool:
     """Did ``git commit`` exit non-zero only because there was nothing to do?
 
@@ -2354,13 +2371,13 @@ async def discard_worktree(
                 # discard from a worktree-only one.
                 "branchDeleted": deleted_branch,
                 "branchReason": branch_error if deleted_branch is None else None,
+                # The prose must agree with the structured fields above. It used
+                # to say "and branch X" whenever a branch was IDENTIFIED, so a
+                # failed `git branch -D` produced a message claiming the branch
+                # was gone next to branchDeleted=null saying it wasn't (#1082).
                 "message": (
                     f"Successfully discarded worktree for {spec_id}"
-                    + (
-                        f" and branch {branch_name}"
-                        if branch_name
-                        else "; no task branch identified"
-                    )
+                    + _branch_suffix(deleted_branch, branch_name, branch_error)
                 ),
             },
         }

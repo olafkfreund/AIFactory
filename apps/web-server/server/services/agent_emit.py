@@ -466,7 +466,14 @@ class EmitMixin:
             from ..routes.projects import load_projects  # noqa: PLC0415, TID252
 
             pdata = load_projects().get(project_id) or {}
-            spec_dir = Path(pdata.get("path", "")) / ".aifactory" / "specs" / spec_id
+            project_path = str(pdata.get("path") or "").strip()
+            if not project_path:
+                # An unknown project id yields "", and Path("")/... is a RELATIVE
+                # path -- so the snapshot would be written against the server's
+                # cwd, silently, under a plausible-looking .aifactory/ tree. No
+                # snapshot is better than one filed in the wrong place (#431).
+                return False
+            spec_dir = Path(project_path) / ".aifactory" / "specs" / spec_id
             return (
                 emit_usage_snapshot(
                     spec_dir,

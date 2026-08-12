@@ -70,7 +70,12 @@ USAGE_MARKER_PREFIX = "__USAGE__:"
 # a cockpit needs to redraw a cost tile. Throttle per process; the control plane
 # is a consumer of whatever arrives, so the rate limit belongs here at the source.
 _USAGE_EMIT_INTERVAL_S = 15.0
-_last_usage_emit: float = 0.0
+# Seeded so the FIRST emit is always allowed. The clock is time.monotonic(),
+# whose zero is an arbitrary point (boot, on Linux) -- not "long ago". Seeding
+# 0.0 meant that in a process starting within 15s of boot, `now - 0.0` is under
+# the interval and the opening usage marker was thrown away. That is exactly the
+# build whose cost tile a cockpit is waiting on.
+_last_usage_emit: float = float("-inf")
 
 
 def emit_usage(aggregate: dict[str, Any], *, force: bool = False) -> bool:
