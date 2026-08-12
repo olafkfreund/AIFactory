@@ -49,12 +49,25 @@ def get_graphiti_memory(spec_dir: Path, project_dir: Path | None = None):
         return None
 
     try:
-        from graphiti_memory import GraphitiMemory
+        from integrations.graphiti.memory import GraphitiMemory
 
         if project_dir is None:
             project_dir = spec_dir.parent.parent
         return GraphitiMemory(spec_dir, project_dir)
     except ImportError:
+        # LOUD (#1032). We only reach this line when Graphiti is CONFIGURED ON —
+        # `is_graphiti_memory_enabled()` returned True above — so an ImportError
+        # here means an operator asked for the graph store and did not get it.
+        # This used to `return None` in silence, and that silence is the whole
+        # reason the store sat unreachable for months: every caller degraded to
+        # the flat-file path and nothing anywhere said so.
+        #
+        # exception() rather than error(): the traceback names the missing
+        # module, which is the one fact needed to fix it.
+        logger.exception(
+            "Graphiti is enabled but its import failed — falling back to "
+            "flat-file memory. The graph store is NOT recording anything."
+        )
         return None
 
 

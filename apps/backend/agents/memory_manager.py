@@ -114,7 +114,7 @@ async def get_graphiti_context(
         return None
 
     try:
-        from graphiti_memory import GraphitiMemory
+        from integrations.graphiti.memory import GraphitiMemory
 
         # Create memory manager
         memory = GraphitiMemory(spec_dir, project_dir)
@@ -230,9 +230,17 @@ async def get_graphiti_context(
         return "\n".join(sections)
 
     except ImportError:
-        logger.debug("Graphiti packages not installed")
+        # LOUD (#1032). Reached only when Graphiti is configured ON — the
+        # `is_graphiti_enabled()` guard above returns early otherwise — so this
+        # is an operator who asked for the graph store and did not get it.
+        # `logger.debug` made that indistinguishable from "not configured",
+        # which is how the broken import survived unnoticed.
+        logger.exception(
+            "Graphiti is enabled but its import failed — no context will be "
+            "retrieved from the graph store"
+        )
         if is_debug_enabled():
-            debug_warning("memory", "Graphiti packages not installed")
+            debug_warning("memory", "Graphiti enabled but import failed")
         return None
     except Exception as e:
         logger.warning(f"Failed to get Graphiti context: {e}")
@@ -322,7 +330,7 @@ async def save_session_memory(
             debug("memory", "Attempting PRIMARY storage: Graphiti")
 
         try:
-            from graphiti_memory import GraphitiMemory
+            from integrations.graphiti.memory import GraphitiMemory
 
             memory = GraphitiMemory(spec_dir, project_dir)
 
@@ -383,9 +391,18 @@ async def save_session_memory(
                     )
 
         except ImportError as e:
-            logger.debug("Graphiti packages not installed, falling back to file-based")
+            # LOUD (#1032), same reason as the retrieval path above: this branch
+            # is inside `if graphiti_enabled:`, so the store was asked for. The
+            # file-based fallback still runs — losing the write would be worse
+            # than losing the graph — but it is no longer silent about it.
+            logger.exception(
+                "Graphiti is enabled but its import failed — falling back to "
+                "file-based memory. Nothing is reaching the graph store."
+            )
             if is_debug_enabled():
-                debug_warning("memory", "Graphiti packages not installed", error=str(e))
+                debug_warning(
+                    "memory", "Graphiti enabled but import failed", error=str(e)
+                )
         except Exception as e:
             logger.warning(f"Graphiti save failed: {e}, falling back to file-based")
             if is_debug_enabled():
