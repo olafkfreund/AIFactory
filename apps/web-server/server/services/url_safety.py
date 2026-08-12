@@ -50,7 +50,16 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse 30x. A public URL that redirects to 169.254.169.254 defeats any
     check made before the request was sent (#323 H6)."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+    def redirect_request(  # noqa: PLR0913 - signature is urllib's, not ours
+        self,
+        req,
+        fp,
+        code,
+        msg,  # noqa: ARG002 - part of the urllib override contract
+        headers,
+        newurl,
+    ):
+        """Refuse the redirect instead of following it."""
         raise urllib.error.HTTPError(
             req.full_url, code, f"Redirect blocked (SSRF guard): {newurl}", headers, fp
         )

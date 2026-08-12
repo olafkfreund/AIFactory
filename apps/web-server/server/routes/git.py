@@ -10,6 +10,11 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from server.services.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
+
 router = APIRouter()
 
 
@@ -716,11 +721,6 @@ async def check_mcp_health(server: McpServerConfig):
     """Check health of an MCP server."""
     if server.type == "http" and server.url:
         import urllib.request
-
-        from ..services.url_safety import (
-            assert_safe_outbound_url,
-            build_no_redirect_opener,
-        )
 
         # This endpoint takes a URL *and arbitrary headers* from the request body
         # and fetches them server-side, which is a textbook SSRF primitive: the
