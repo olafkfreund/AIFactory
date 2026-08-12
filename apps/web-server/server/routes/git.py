@@ -717,12 +717,37 @@ async def check_mcp_health(server: McpServerConfig):
     if server.type == "http" and server.url:
         import urllib.request
 
+        from ..services.url_safety import (
+            assert_safe_outbound_url,
+            build_no_redirect_opener,
+        )
+
+        # This endpoint takes a URL *and arbitrary headers* from the request body
+        # and fetches them server-side, which is a textbook SSRF primitive: the
+        # response status is reflected back, so it doubles as a port scanner.
+        # allow_private=True because an MCP server legitimately lives on
+        # localhost or a cluster-internal address -- that is the normal case, not
+        # the attack. What is blocked is the part with no legitimate use: non
+        # http(s) schemes, the cloud metadata range, and redirects away from the
+        # host that was just validated.
+        try:
+            assert_safe_outbound_url(server.url, allow_private=True)
+        except ValueError as exc:
+            return {
+                "success": True,
+                "data": {
+                    "serverId": server.id,
+                    "status": "unhealthy",
+                    "message": f"refused to probe this URL: {exc}",
+                },
+            }
+
         try:
             req = urllib.request.Request(server.url, method="HEAD")
             if server.headers:
                 for key, value in server.headers.items():
                     req.add_header(key, value)
-            urllib.request.urlopen(req, timeout=5)
+            build_no_redirect_opener().open(req, timeout=5)
             return {
                 "success": True,
                 "data": {
