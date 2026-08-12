@@ -444,6 +444,37 @@ async def get_worktree_merge_preview(
     }
 
 
+def _nothing_to_commit(commit: subprocess.CompletedProcess[str]) -> bool:
+    """Did ``git commit`` exit non-zero only because there was nothing to do?
+
+    Both commit sites in this module have to tell that apart from a real
+    failure, and getting it wrong in either direction is a bug (#1210): reading
+    every non-zero exit as success hides a refused commit, and reading every
+    non-zero exit as failure turns the ordinary case red — ``git commit`` exits
+    1 with nothing staged, which is a perfectly normal outcome on both paths
+    here, because the merge may already have been committed.
+
+    Keyed on what git SAYS rather than the exit code alone, and defined once so
+    the two callers cannot drift into disagreeing about it.
+
+    Three wordings, because git uses a different one depending on what is in the
+    tree, and the third was found the hard way — the guard test for the
+    over-correction failed on `nothing added to commit but untracked files
+    present`, which is what git reports when the only thing left is untracked
+    files. Missing a spelling here does not fail safe: it reports a perfectly
+    good merge as a failed one.
+    """
+    output = f"{commit.stdout}\n{commit.stderr}".lower()
+    return any(
+        phrase in output
+        for phrase in (
+            "nothing to commit",
+            "no changes added to commit",
+            "nothing added to commit",
+        )
+    )
+
+
 @router.post("/{task_id}/worktree/resolve-conflicts")
 async def resolve_worktree_conflicts(
     task_id: str,
@@ -562,16 +593,33 @@ async def resolve_worktree_conflicts(
         )
 
         if merge_result.returncode == 0:
-            # Clean merge, no conflicts - commit it
+            # Clean merge, no conflicts - commit it.
             logger.info(f"Clean merge for {task_id}, committing")
-            # Returncode not read; see the note on the other `git commit` call
-            # in this module and #1210.
-            subprocess.run(
+            # READ THE RESULT (#1210). This used to discard it, so a commit
+            # refused by a hook — or blocked by a stale index.lock — was reported
+            # as "Clean merge - no conflicts" with the merge left uncommitted in
+            # the index. The caller had no way to tell the difference.
+            commit = subprocess.run(
                 ["git", "commit", "-m", f"Merge {worktree_branch} into current branch"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
             )
+            if commit.returncode != 0 and not _nothing_to_commit(commit):
+                detail = (commit.stderr or commit.stdout or "").strip()
+                logger.error(
+                    "git commit failed after a clean merge of %s (rc=%s): %s",
+                    worktree_branch,
+                    commit.returncode,
+                    detail,
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        "the merge applied cleanly but the commit failed, so it is "
+                        f"NOT committed: {detail}"
+                    ),
+                }
             return {
                 "success": True,
                 "data": {
@@ -636,24 +684,51 @@ async def resolve_worktree_conflicts(
             pass
 
     if not conflicted_files:
-        # No conflicts found - the merge may have already been resolved
-        # Try to commit
-        # The returncode is deliberately not read HERE, only because reading it
-        # would change what this endpoint returns -- today a failed commit is
-        # still reported as success. Tracked as a defect in #1210; this change
-        # is behaviour-preserving.
-        subprocess.run(
+        # No conflicts found - the merge may have already been resolved. Try to
+        # commit, and READ THE RESULT (#1210): this used to discard it and report
+        # success whatever happened, so a hook rejection or a stale index.lock
+        # reached the caller as `success: true` with the merge uncommitted.
+        commit = subprocess.run(
             ["git", "commit", "--no-edit"],
             cwd=project_path,
             capture_output=True,
             text=True,
         )
+        # A non-zero exit is NOT automatically a failure here, and treating it as
+        # one would swap this bug for its mirror image. `git commit` exits 1 when
+        # there is nothing to commit, which is the EXPECTED state on this path:
+        # we got here because no conflicted files were found, so the merge was
+        # very often already committed by git itself. Reporting that as an error
+        # would turn the ordinary success case red.
+        #
+        # So the benign case is recognised by what git says, not by the exit
+        # code alone, and everything else is reported.
+        if commit.returncode != 0 and not _nothing_to_commit(commit):
+            detail = (commit.stderr or commit.stdout or "").strip()
+            logger.error(
+                "git commit --no-edit failed after a clean merge (rc=%s): %s",
+                commit.returncode,
+                detail,
+            )
+            return {
+                "success": False,
+                "error": (
+                    "merge had no conflicts but the commit failed, so the merge is "
+                    f"NOT committed: {detail}"
+                ),
+            }
         return {
             "success": True,
             "data": {
                 "resolved": [],
                 "remaining": [],
-                "stats": {"message": "No conflicted files found"},
+                "stats": {
+                    "message": (
+                        "No conflicted files found"
+                        if commit.returncode == 0
+                        else "No conflicted files found; nothing left to commit"
+                    )
+                },
             },
         }
 
