@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.services.http_verdict import honest_status
 from server.specpath import safe_spec_component
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
@@ -773,6 +774,15 @@ async def remove_project(
 
 
 @router.post("/{project_id}/initialize")
+# #1126, the rest of the Factory#460 class. This handler's `except` returns
+# `{"success": False, ...}` inside an HTTP 200, so a client judging the call on
+# its status line — the normal thing to do — reads a failed initialisation as a
+# success. The decorator translates that body to 409 and leaves the JSON
+# byte-identical, so anything already reading `success` is unaffected.
+#
+# Only this handler in this module: it is the module's single `success: False`
+# return site. The others raise HTTPException already.
+@honest_status
 async def initialize_project(
     project_id: str,
     _access: dict = Depends(require_project_access("member")),
