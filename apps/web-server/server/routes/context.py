@@ -10,6 +10,8 @@ from pathlib import Path as FilePath
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
+from server.services.pr_endgame import is_graphiti_enabled
+
 router = APIRouter()
 
 
@@ -86,10 +88,23 @@ async def get_project_context(projectId: str = Path(...)):
         except Exception:
             pass
 
-    # The project's own GRAPHITI_ENABLED flag was read here and discarded while
-    # the response below reports `memoryStatus.enabled: True` unconditionally.
-    # Removed rather than wired in: which of the two the field is supposed to
-    # mean is an API decision the portal consumes, tracked in #1210.
+    # #1210: the project's own GRAPHITI_ENABLED, which used to be computed here
+    # and thrown away while the response reported `enabled: True` for every
+    # project regardless of its config.
+    #
+    # WIRED IN rather than deleted, of the two options the issue offered. The
+    # portal reads `available` / `graphitiAvailable` and never `enabled`, so
+    # deleting the field would also have been safe -- but it is in the published
+    # OpenAPI and in the TS interface, and removing a field from a response is a
+    # contract break for consumers this repo cannot see (the Electron surface,
+    # MCP, anything external). Wiring costs the same and turns a field that lies
+    # into one that is true; if it is later judged dead, deleting it is a
+    # separate decision made from an honest baseline rather than from a constant.
+    #
+    # `_flag` is the existing resolver: per-project setting wins, else the
+    # deployment env var, both default OFF. A project that has not enabled
+    # Graphiti now reads `false`, which is the whole point.
+    memory_enabled = is_graphiti_enabled(project_path)
 
     # Collect recent memories from all specs
     memories = []
@@ -138,7 +153,7 @@ async def get_project_context(projectId: str = Path(...)):
         "data": {
             "projectIndex": project_index,
             "memoryStatus": {
-                "enabled": True,
+                "enabled": memory_enabled,
                 "available": memory_count > 0 or graphiti_available,
                 "sessionInsightsCount": memory_count,
                 "graphitiAvailable": graphiti_available,

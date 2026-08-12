@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
 
@@ -365,7 +367,18 @@ class KubejobMixin:
             )
 
         rmux_feed = self._kubejob_rmux_feed()
-        streamer = KubeJobLogStreamer(log_sink=_cockpit_sink, rmux_feed=rmux_feed)
+        streamer = KubeJobLogStreamer(
+            log_sink=_cockpit_sink,
+            rmux_feed=rmux_feed,
+            # #1228: the same gap #1110 closed for phase progress, for the file
+            # that carries per-subtask state. The Job advances subtask
+            # status/started_at in the plan inside its /work emptyDir; the
+            # control plane pulled that copy only at completion, so CFactory's
+            # execution DAG showed every node waiting for the whole build.
+            # Pull it on the stream's own clock instead — the push and the pull
+            # both already exist, they were just each called once.
+            plan_sync=self._kubejob_plan_sync(project_path, spec_id),
+        )
 
         async def _run_stream() -> None:
             try:
@@ -406,6 +419,30 @@ class KubejobMixin:
         self._task_current_phases.setdefault(task_id, TaskPhase.PLANNING)
         self._task_log_writers[task_id] = (writer, writer)
         return writer
+
+    @staticmethod
+    def _kubejob_plan_sync(project_path: Path, spec_id: str) -> PlanSync | None:
+        """Return the throttled plan pull for this build's log stream (#1228).
+
+        ``None`` off the packed path — ``maybe_fetch_plan`` is a no-op there
+        (``/work`` is the co-mounted data PVC, so the Job writes the control
+        plane's own copy in place and there is nothing to pull), and returning
+        None keeps the streamer from paying for a call that can never do
+        anything.
+        """
+        # Read the env var NAME from workspace_fetch rather than spelling it
+        # here, so the packed-path test cannot drift away from the one the pull
+        # itself applies.
+        from core.workspace_fetch import (  # noqa: PLC0415
+            WORKSPACE_URI_ENV,
+            maybe_fetch_plan,
+        )
+
+        if not os.environ.get(WORKSPACE_URI_ENV, "").strip():
+            return None
+
+        spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        return lambda: maybe_fetch_plan(spec_dir, spec_id)
 
     async def _kubejob_worker_ref(self, task_id: str) -> tuple[str, str] | None:
         """Read (namespace, job_name) from the build's durable worker_ref (#680).

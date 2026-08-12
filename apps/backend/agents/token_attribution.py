@@ -42,6 +42,7 @@ On-disk contract (AIFactory-owned, shared with the web-server reader):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -504,6 +505,18 @@ def record_turn(
         )
         agg["updatedAt"] = datetime.now(UTC).isoformat()
         _atomic_write_json(usage_file_path(spec_dir), agg)
+        # #1249: the file above is the durable record, but under the kubejob
+        # backend it lives in the Job's ephemeral /work and reaches the control
+        # plane only when it is pushed back at the END of the build — so the
+        # cockpit showed no cost accruing at all while a build ran. stdout IS
+        # followed live, so mirror the aggregate onto it (throttled at the
+        # source). Best-effort: never let cost reporting break attribution.
+        # suppress(Exception): cost reporting must never be able to break
+        # attribution, and there is nothing useful to do with a failure here.
+        with contextlib.suppress(Exception):
+            from core.phase_event import emit_usage  # noqa: PLC0415
+
+            emit_usage(agg)
         return render_breakdown(agg)
     except OSError:
         # Fall back to a single-turn render so callers still get data.

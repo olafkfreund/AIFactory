@@ -2,8 +2,15 @@
 
 Keeps the integration footprint in ``agent_service.py`` minimal — one
 import, three callsites (create, stop-reap, monitor-reap) — and
-centralises the ``AIFACTORY_RMUX_ENABLED`` flag check + the worktree
-path convention.
+centralises the ``AIFACTORY_RMUX_ENABLED`` flag check.
+
+This shim resolves no paths. Production runs rmux in PASSIVE mode
+(``create_passive_for_task``), which takes a ``spec_id`` and a FIFO and
+never cwds anywhere, so there is nothing here for the #1082 class of bug
+to get wrong. If a future change makes rmux open a real pane for a task,
+it must resolve the work through ``services/task_branch.py`` — under the
+kubejob backend the task worktree sits on the BASE branch, so a pane
+opened there shows a clean tree and none of the task's work.
 
 When the flag is unset or false:
   - ``create_if_enabled`` returns ``None`` and does nothing
@@ -45,16 +52,6 @@ def is_enabled() -> bool:
         return bool(get_settings().RMUX_ENABLED)
     except Exception:
         return False
-
-
-def _worktree_path(project_path: Path | str, spec_id: str) -> Path:
-    """The convention the agent uses for per-task worktrees.
-
-    Mirrors ``apps/backend/cli/worktree.py`` — kept here as a local
-    constant rather than imported so this shim doesn't take a new
-    cross-package dependency.
-    """
-    return Path(project_path) / ".aifactory" / "worktrees" / "tasks" / spec_id
 
 
 async def create_if_enabled(

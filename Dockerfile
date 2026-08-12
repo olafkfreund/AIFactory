@@ -37,7 +37,7 @@
 # surface. The runtime stage stays on Chainguard, where it does matter.
 # Digest bumps land via Dependabot PRs (.github/dependabot.yml).
 
-FROM docker.io/node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS frontend-build
+FROM docker.io/node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
 
 USER root
 WORKDIR /build
@@ -188,8 +188,20 @@ RUN mkdir -p /home/nonroot/.npm-global \
 # Bake the provider coder CLIs into the image so the control-plane boot never
 # npm-installs them (mirrors TFactory #791: the install-clis init container hung
 # 8+ min on a slow registry and stalled the rollout). .npm-global/bin is already
-# on PATH (copilot is already baked below the same way). Versions pinned here
-# (Dependabot tracks the Dockerfile).
+# on PATH (copilot is already baked below the same way). Versions pinned here.
+#
+# The pins are watched by the hub `agent-CLI freshness` job
+# (Factory/scripts/check_cli_freshness.py --open-bump-pr), which proposes bumps
+# as `chore/agent-cli-pins` across all three service repos at once and never
+# merges them, plus factory-gitops/.github/workflows/cli-canary.yml, which
+# asserts every repo pins all three CLIs identically and that each pin installs
+# and launches.
+#
+# NOT Dependabot, whatever an earlier version of this comment claimed
+# (factory-gitops#206). Dependabot's Dockerfile parser reads `FROM` lines only —
+# no package-ecosystem parses shell arguments inside a RUN layer, so it cannot
+# see the `@version` on the npm install below and never could. It does cover the
+# `FROM` lines in this file, and nothing else in it.
 #
 # `install.cjs` is NOT redundant with the npm postinstall (Factory#383). The
 # postinstall downloads the 275 MB platform-native binary correctly, but leaves

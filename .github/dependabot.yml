@@ -46,3 +46,23 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5
+    # A Node MAJOR is an LTS decision, not a dependency bump, and Dependabot
+    # cannot tell an LTS line from a Current one. It raised #1166 to move this
+    # image from node:24 to node:25 -- an odd-numbered line that never becomes
+    # LTS and had ALREADY reached end of life on 2026-06-01, per
+    # nodejs/Release/schedule.json:
+    #
+    #   v24  start 2025-05-06  LTS 2025-10-28  EOL 2028-04-30
+    #   v25  start 2025-10-15  (Current only)  EOL 2026-06-01
+    #   v26  start 2026-05-05  LTS 2026-10-28  EOL 2029-04-30
+    #
+    # So the "upgrade" was a move onto an unsupported runtime, and it would have
+    # left this the only repo in the fleet on one (PFactory/TFactory/CFactory
+    # build on 26, this repo on 24 -- all supported).
+    #
+    # Digest and minor bumps stay on: those are the ones that rot in only one
+    # direction. Majors are chosen deliberately against the release schedule.
+    # v24 -> v26 is the next move here, when this repo is ready for it.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

@@ -71,10 +71,40 @@ is untouched.
 ### Phase 2 — Mint and distribute per-sibling scoped service keys
 
 For each M2M edge, mint a dedicated `acw_` service key whose scopes cover only
-what that edge needs (e.g. the PFactory->AIFactory edge gets the scopes to
-create/plan projects, not to administer orgs). Store each in the caller's own
-secret, distinct from the shared wildcard. Callers keep sending the wildcard as
-well, so nothing breaks.
+what that edge needs. Store each in the caller's own secret, distinct from the
+shared wildcard. Callers keep sending the wildcard as well, so nothing breaks.
+
+**The edges, enumerated from the callers rather than guessed (2026-08-10).** Each
+row is what that caller actually requests; a scope set wider than this column is
+a scope set nobody measured.
+
+| Edge | Caller | Endpoints called | Shape |
+|---|---|---|---|
+| PFactory -> AIFactory | **PFactory repo:** `apps/web-server/server/routes/plan_pipeline.py` via `apps/backend/plan/emit/contract_emit.py`. Received here by `apps/web-server/server/routes/execution.py` | `POST /api/tasks/from-plan` | one route, write |
+| AIFactory -> TFactory | this repo: `apps/backend/pfactory/tfactory_client.py` | `POST /api/specs/ingest`, `GET /api/specs/{project}/{spec}/pr` | one write, one read |
+| AIFactory intake -> PFactory | this repo: `apps/web-server/server/services/intake_poller.py` | `POST /api/plan/sessions/from-issue`, `POST /api/tasks/from-issue` | two writes |
+| CFactory cockpit -> all three | **CFactory repo:** `apps/backend/cfactory/adapters/*.py` | `GET` on `/api/capabilities`, `/api/tasks`, `/api/tasks/{id}`, `/api/plan/sessions`, `/api/plan/sessions/{id}`, `/api/tfactory/tasks`, `/api/tfactory/tasks/{spec}`, `/api/tfactory/tasks/{spec}/test-plan.json` | **read-only** |
+
+Two things follow from the table:
+
+- **Do the cockpit first.** It is the largest blast-radius reduction available —
+  today it holds a credential granting blanket `is_service` across the fleet, and
+  every path it calls is a GET. A read-only key there removes most of the risk in
+  one credential, and it is the safest to reverse because nothing it does mutates.
+- **The pipeline edges are narrow.** One or two write endpoints each; the
+  PFactory -> AIFactory scope set is a single route. These do not need a scope
+  taxonomy, they need four keys with obvious contents.
+
+**`PFACTORY_AIFACTORY_API_TOKEN` already exists** and is read ahead of the
+wildcard in `plan_pipeline.py`, so that edge needs a secret value and no code
+change at all.
+
+**A second wildcard is in scope (Factory#312).** `CFACTORY_MCP_SECRET` is
+CFactory's own legacy full-scope bearer, live in production, with its scoped
+replacement (`CFACTORY_API_KEYS`) already running beside it at lower precedence —
+the same shape as the problem this document describes. It carries write reach:
+the MCP surface creates cards and dispatches work into the factory. Retiring
+`APP_API_TOKEN` alone leaves half the blast radius in place.
 
 - Rollback: revoke the new key (`is_active = false`); callers still hold the
   wildcard.

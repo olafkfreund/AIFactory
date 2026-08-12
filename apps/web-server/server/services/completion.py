@@ -39,6 +39,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .billing import classify_billing_mode
 
@@ -387,6 +388,22 @@ def read_usage(spec_dir: Path) -> dict | None:
         agg = json.loads((spec_dir / "token_usage.json").read_text())
     except (OSError, ValueError):
         return None
+    return usage_from_aggregate(agg, spec_dir=spec_dir)
+
+
+def usage_from_aggregate(
+    agg: dict[str, Any] | None, *, spec_dir: Path | None = None
+) -> dict[str, Any] | None:
+    """The RFC-0001 ``usage`` block from an already-loaded aggregate.
+
+    Split out of :func:`read_usage` (#1249) so the live path and the file path
+    map the SAME way. Under the kubejob backend ``token_usage.json`` is written
+    inside the Job's ephemeral ``/work`` and only pushed back at the END, so
+    there is no file to read while the build runs; the live snapshot arrives as
+    a ``__USAGE__`` marker on the log stream instead and is mapped here. Two
+    copies of this mapping is how one of them goes stale — the same argument
+    #1229 makes for phase parsing.
+    """
     if not isinstance(agg, dict):
         return None
     in_tok = int(agg.get("totalInputTokens", 0) or 0)
@@ -415,7 +432,16 @@ def read_usage(spec_dir: Path) -> dict | None:
     # block comparing the rolled-up aggregate spend (block["cost_usd"]) against
     # it. Omitted entirely when no budget is set (back-compat). NEVER aborts the
     # build — this is purely a warning surface on the terminal event.
-    budget = _budget_block(block["cost_usd"], _read_budget_usd(spec_dir))
+    #
+    # spec_dir is optional (#1249): the live path maps a marker payload with no
+    # spec dir in hand. No spec dir means no task_metadata.json to read, so the
+    # budget block is omitted exactly as it is when no budget was set — which is
+    # the documented back-compat behaviour, not a new silent gap.
+    budget = (
+        _budget_block(block["cost_usd"], _read_budget_usd(spec_dir))
+        if spec_dir is not None
+        else None
+    )
     if budget is not None:
         block["budget"] = budget
     return block
@@ -445,7 +471,7 @@ def build_completion_event(
     phase: str = "act",
     project_id: str | None = None,
     updated_at: str | None = None,
-    usage: dict | None = None,
+    usage: dict[str, Any] | None = None,
     event_id: str | None = None,
     traceparent: str | None = None,
     tracestate: str | None = None,
@@ -959,13 +985,14 @@ def emit_terminal_completion(
     return event
 
 
-def emit_usage_snapshot(
+def emit_usage_snapshot(  # noqa: PLR0913 - event fields, all required by the envelope
     spec_dir: Path,
     *,
     task_id: str,
     project_id: str,
     spec_id: str,
     status: str,
+    usage: dict | None = None,
 ) -> dict | None:
     """Emit a NON-terminal, usage-bearing event so the cockpit reflects RUNNING
     cost even when a task pauses for human review (or otherwise stops without a
@@ -980,7 +1007,11 @@ def emit_usage_snapshot(
     it. Best-effort: returns the event, or ``None`` when there is nothing to
     report (no usage yet) — never raises.
     """
-    usage = read_usage(spec_dir)
+    # ``usage`` supplied → a LIVE snapshot off the log stream, where the spec dir
+    # holds no token_usage.json yet (#1249). Falling back to the file when it is
+    # absent would silently emit nothing, which is the bug being fixed.
+    if usage is None:
+        usage = read_usage(spec_dir)
     if usage is None:
         return None
     try:

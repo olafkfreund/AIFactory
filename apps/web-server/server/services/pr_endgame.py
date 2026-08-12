@@ -104,6 +104,17 @@ def is_auto_merge_enabled(project_path: Path | None = None) -> bool:
     return _flag("AIFACTORY_AUTO_MERGE", project_path)
 
 
+def is_graphiti_enabled(project_path: Path | None = None) -> bool:
+    """Is Graphiti memory on FOR THIS PROJECT? (#1210)
+
+    Lives beside the other two flag readers rather than in the route, so the
+    Settings-UI value and the deployment default are resolved by the same rule
+    everywhere. `routes/context.py` reported `memoryStatus.enabled: True` for
+    every project while computing this and discarding it.
+    """
+    return _flag("GRAPHITI_ENABLED", project_path)
+
+
 def review_tier_of(meta: object) -> str | None:
     """The RFC-0011 ``reviewTier`` from an already-read task_metadata (#1158).
 

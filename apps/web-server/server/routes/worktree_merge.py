@@ -39,7 +39,11 @@ from pydantic import BaseModel
 
 from server.services.approval import approved, merge_pull_request
 from server.services.http_verdict import honest_status
-from server.services.task_branch import resolve_task_branch, resolve_work_ref
+from server.services.task_branch import (
+    current_branch,
+    resolve_task_branch,
+    resolve_work_ref,
+)
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
@@ -440,6 +444,54 @@ async def get_worktree_merge_preview(
     }
 
 
+def _branch_suffix(
+    deleted: str | None, identified: str | None, reason: str | None
+) -> str:
+    """Describe the branch leg of a discard so the prose matches the fields.
+
+    Three distinct outcomes, and only the first is a deletion: the branch was
+    deleted, a branch was identified but `git branch -D` refused it, or no task
+    branch was found at all. Collapsing the middle case into the first is what
+    made the message contradict ``branchDeleted``/``branchReason`` (#1082).
+    """
+    if deleted:
+        return f" and branch {deleted}"
+    if identified:
+        return f"; branch {identified} was NOT deleted ({reason or 'unknown error'})"
+    return "; no task branch identified"
+
+
+def _nothing_to_commit(commit: subprocess.CompletedProcess[str]) -> bool:
+    """Did ``git commit`` exit non-zero only because there was nothing to do?
+
+    Both commit sites in this module have to tell that apart from a real
+    failure, and getting it wrong in either direction is a bug (#1210): reading
+    every non-zero exit as success hides a refused commit, and reading every
+    non-zero exit as failure turns the ordinary case red — ``git commit`` exits
+    1 with nothing staged, which is a perfectly normal outcome on both paths
+    here, because the merge may already have been committed.
+
+    Keyed on what git SAYS rather than the exit code alone, and defined once so
+    the two callers cannot drift into disagreeing about it.
+
+    Three wordings, because git uses a different one depending on what is in the
+    tree, and the third was found the hard way — the guard test for the
+    over-correction failed on `nothing added to commit but untracked files
+    present`, which is what git reports when the only thing left is untracked
+    files. Missing a spelling here does not fail safe: it reports a perfectly
+    good merge as a failed one.
+    """
+    output = f"{commit.stdout}\n{commit.stderr}".lower()
+    return any(
+        phrase in output
+        for phrase in (
+            "nothing to commit",
+            "no changes added to commit",
+            "nothing added to commit",
+        )
+    )
+
+
 @router.post("/{task_id}/worktree/resolve-conflicts")
 async def resolve_worktree_conflicts(
     task_id: str,
@@ -558,16 +610,33 @@ async def resolve_worktree_conflicts(
         )
 
         if merge_result.returncode == 0:
-            # Clean merge, no conflicts - commit it
+            # Clean merge, no conflicts - commit it.
             logger.info(f"Clean merge for {task_id}, committing")
-            # Returncode not read; see the note on the other `git commit` call
-            # in this module and #1210.
-            subprocess.run(
+            # READ THE RESULT (#1210). This used to discard it, so a commit
+            # refused by a hook — or blocked by a stale index.lock — was reported
+            # as "Clean merge - no conflicts" with the merge left uncommitted in
+            # the index. The caller had no way to tell the difference.
+            commit = subprocess.run(
                 ["git", "commit", "-m", f"Merge {worktree_branch} into current branch"],
                 cwd=project_path,
                 capture_output=True,
                 text=True,
             )
+            if commit.returncode != 0 and not _nothing_to_commit(commit):
+                detail = (commit.stderr or commit.stdout or "").strip()
+                logger.error(
+                    "git commit failed after a clean merge of %s (rc=%s): %s",
+                    worktree_branch,
+                    commit.returncode,
+                    detail,
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        "the merge applied cleanly but the commit failed, so it is "
+                        f"NOT committed: {detail}"
+                    ),
+                }
             return {
                 "success": True,
                 "data": {
@@ -632,24 +701,51 @@ async def resolve_worktree_conflicts(
             pass
 
     if not conflicted_files:
-        # No conflicts found - the merge may have already been resolved
-        # Try to commit
-        # The returncode is deliberately not read HERE, only because reading it
-        # would change what this endpoint returns -- today a failed commit is
-        # still reported as success. Tracked as a defect in #1210; this change
-        # is behaviour-preserving.
-        subprocess.run(
+        # No conflicts found - the merge may have already been resolved. Try to
+        # commit, and READ THE RESULT (#1210): this used to discard it and report
+        # success whatever happened, so a hook rejection or a stale index.lock
+        # reached the caller as `success: true` with the merge uncommitted.
+        commit = subprocess.run(
             ["git", "commit", "--no-edit"],
             cwd=project_path,
             capture_output=True,
             text=True,
         )
+        # A non-zero exit is NOT automatically a failure here, and treating it as
+        # one would swap this bug for its mirror image. `git commit` exits 1 when
+        # there is nothing to commit, which is the EXPECTED state on this path:
+        # we got here because no conflicted files were found, so the merge was
+        # very often already committed by git itself. Reporting that as an error
+        # would turn the ordinary success case red.
+        #
+        # So the benign case is recognised by what git says, not by the exit
+        # code alone, and everything else is reported.
+        if commit.returncode != 0 and not _nothing_to_commit(commit):
+            detail = (commit.stderr or commit.stdout or "").strip()
+            logger.error(
+                "git commit --no-edit failed after a clean merge (rc=%s): %s",
+                commit.returncode,
+                detail,
+            )
+            return {
+                "success": False,
+                "error": (
+                    "merge had no conflicts but the commit failed, so the merge is "
+                    f"NOT committed: {detail}"
+                ),
+            }
         return {
             "success": True,
             "data": {
                 "resolved": [],
                 "remaining": [],
-                "stats": {"message": "No conflicted files found"},
+                "stats": {
+                    "message": (
+                        "No conflicted files found"
+                        if commit.returncode == 0
+                        else "No conflicted files found; nothing left to commit"
+                    )
+                },
             },
         }
 
@@ -2205,8 +2301,25 @@ async def discard_worktree(
         return {"success": False, "error": "No worktree found for this task"}
 
     try:
-        # Get the branch name before removing worktree
-        branch_name = f"aifactory/{spec_id}"
+        # #1082: DISCOVER the branch, do not spell it. This read
+        # `f"aifactory/{spec_id}"`, which is the one thing
+        # services/task_branch.py exists to stop -- the `aifactory/` convention
+        # is owned by core.worktree.get_branch_name, and a second copy of it
+        # here drifts silently. The failure was invisible: `git branch -D` runs
+        # with capture_output and its returncode is never checked, so a wrong
+        # name deleted nothing and still reported success.
+        base_branch = current_branch(project_path)
+        branch_name, branch_error = resolve_task_branch(
+            worktree_path=worktree_path,
+            project_path=project_path,
+            spec_id=spec_id,
+            base_branch=base_branch,
+        )
+        # Unresolved means we could not identify the task's branch. Skip the
+        # delete rather than guess: this endpoint destroys, and deleting a
+        # branch nobody identified is worse than leaving one behind.
+        if branch_name == base_branch:
+            branch_name, branch_error = None, "resolved to the base branch"
 
         # Remove worktree using git command
         result = subprocess.run(
@@ -2229,19 +2342,43 @@ async def discard_worktree(
             text=True,
         )
 
-        # Delete the branch
-        subprocess.run(
-            ["git", "branch", "-D", branch_name],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-        )
+        # Delete the local branch, only if we identified one.
+        deleted_branch: str | None = None
+        if branch_name:
+            delete = subprocess.run(
+                ["git", "branch", "-D", branch_name],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            # Report what git DID, not what we asked it to do. `git branch -D`
+            # fails when the branch is checked out in another worktree, and the
+            # previous version reported branchDeleted regardless -- the same
+            # unverified claim this endpoint was being fixed for.
+            if delete.returncode == 0:
+                deleted_branch = branch_name
+            else:
+                branch_error = (delete.stderr or "").strip() or "git branch -D failed"
 
         return {
             "success": True,
             "data": {
                 "discarded": True,
-                "message": f"Successfully discarded worktree for {spec_id}",
+                # Report the ARTEFACT, not just that the endpoint ran (#1082).
+                # "Successfully discarded" was returned whether or not a branch
+                # was found or deleted, so a caller could not tell a full
+                # discard from a worktree-only one.
+                "branchDeleted": deleted_branch,
+                "branchReason": branch_error if deleted_branch is None else None,
+                # The prose must agree with the structured fields above. It used
+                # to say "and branch X" whenever a branch was IDENTIFIED, so a
+                # failed `git branch -D` produced a message claiming the branch
+                # was gone next to branchDeleted=null saying it wasn't (#1082).
+                "message": (
+                    f"Successfully discarded worktree for {spec_id}"
+                    + _branch_suffix(deleted_branch, branch_name, branch_error)
+                ),
             },
         }
     except Exception as e:

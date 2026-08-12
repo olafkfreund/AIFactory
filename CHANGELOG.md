@@ -2,6 +2,41 @@
 
 ### Changed
 
+- **The reaper writes, instead of reporting that it did.** The orphan sweep
+  detected dead-worker tasks correctly, logged what it was clearing, and did not
+  write - the log line sat next to the update rather than after it, so every run
+  reported a clean sweep and the rows survived. It had been running for days,
+  saying the right thing and changing nothing. Paired with detecting orphaned
+  tasks whose worker died, and sweeping them on a schedule rather than only when
+  someone looked (#1001).
+- **Approve merges the pull request, not a local branch.** On an ordinary task
+  both produced the same outcome, so it survived review and use. Where the pull
+  request had moved - a rebase, a review commit, a force push - Approve merged
+  something that was no longer what the reviewer had read.
+- **Auto-merge is gated on `reviewTier` (#1158),** so a change requiring a higher
+  review level cannot merge past it.
+- **A signed plan is gated on baseline freshness, not just signature.** The
+  signature proves the plan came from the planner unaltered; it says nothing
+  about whether the plan is still applicable. A plan signed against a baseline
+  that has moved is authentic and stale, and building it faithfully implements a
+  superseded requirement.
+- **Agent memory pools at PROJECT level so it compounds (RFC-0021 Phase 0).**
+  Per-task memory meant every task relearned the same things. Deliberately modest
+  for now: the failure mode of pooling - one task's wrong conclusion contaminating
+  every later task - is worse than no memory, so promotion gates come next.
+- **Output-side DLP scans agent-authored git output (#323),** and
+  **authentication failures, authorisation denials and gate rejections are
+  chained into the tamper-evident audit log (#313).** The input side already had
+  guards; the side where an agent writes a file containing something it should
+  not, and the events an investigation actually needs, were the gaps.
+- **`ollama-cloud` is a routing decision, not a label (#1213).** It was being
+  routed at localhost regardless of the configured endpoint.
+- **`target-version` is declared in the root ruff.toml, and `scripts/` is gated
+  (#1211).**
+- **Seven modules Python could never load were deleted,** and per-worker duration
+  is measured rather than defaulted to 0.
+
+
 - **Outbound PII scrubbing is ON by default and fails closed (#320).** The pre-send scrub added in v1.2 was opt-in via `LITELLM_AUDIT_SCRUB_OUTBOUND=true`, so out of the box the redactor only cleaned the stored audit row and the prompt reached the LLM provider with the PII still in it. That variable is now a kill-switch instead: unset means ON, and only `false`/`0`/`no`/`off` restores audit-row-only redaction. Only the built-in high-precision set is scrubbed outbound — hyphenated SSN, email, US phone, Luhn-validated credit cards — and operator `extraRedactionPatterns` stay audit-scoped, because this is a code factory and a broad pattern applied to a prompt full of identifiers would corrupt the code it is asked to write. Both fail-open paths are closed: a redactor that cannot be imported or constructed, and (the likelier one) a redactor that builds fine but whose redaction pass raises. The second was a real leak — with the built-in patterns forced to fail, the provider completed the HTTP call and the payload carried the SSN and email verbatim, because `PiiRedactor.redact()` logs a WARNING and returns the input unchanged. That contract is right for the audit row and wrong on the wire, so `redact_outbound()` now runs it strict and the provider refuses to send rather than sending unredacted. **Operator note:** a genuinely broken redactor now errors LLM calls instead of leaking; the kill-switch is the escape hatch. Scope is the text-only `openai-compatible` provider; the agentic and other adapters are tracked in #1128.
 
 ### Fixed

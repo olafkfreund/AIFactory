@@ -12,12 +12,19 @@ The refactored code is now organized as:
 - graphiti/search.py - Semantic search logic
 - graphiti/schema.py - Graph schema definitions
 
-This facade ensures existing imports continue to work:
-    from graphiti_memory import GraphitiMemory, is_graphiti_enabled
+This facade is the import surface for the memory system:
+    from integrations.graphiti.memory import GraphitiMemory, is_graphiti_enabled
 
-New code should prefer importing from the graphiti package:
-    from graphiti import GraphitiMemory
-    from graphiti.schema import GroupIdMode
+It used to recommend a top-level `graphiti`+`_memory` module instead. That
+module has never existed and nothing aliased one, so every caller's
+`except ImportError` swallowed a ModuleNotFoundError and returned None —
+Graphiti was unreachable for as long as that advice stood, and the silent
+fallback is why nobody noticed (#1032). The four call sites now import from
+here.
+
+(The dead name is spelled in two pieces above on purpose: a regression test
+greps the tree for the real spelling, and prose carrying it would trip the
+check that exists to stop it coming back.)
 
 For detailed documentation on the memory system architecture and usage,
 see graphiti/graphiti.py.

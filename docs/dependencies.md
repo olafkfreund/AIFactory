@@ -142,7 +142,7 @@ AIFactory pins **17** backend, **36** web-server, and **47** frontend runtime de
 | `eslint-plugin-react-refresh` | `^0.4.26` |
 | `globals` | `^15.15.0` |
 | `jsdom` | `^27.4.0` |
-| `postcss` | `^8.5.6` |
+| `postcss` | `^8.5.23` |
 | `prettier` | `^3.8.4` |
 | `tailwindcss` | `^4.1.17` |
 | `tsx` | `^4.20.0` |
