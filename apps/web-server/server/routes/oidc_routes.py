@@ -285,6 +285,15 @@ class RefreshResponse(BaseModel):
     access_token: str = Field(repr=False)
 
 
+# Result of a per-user IdP revocation check (#366).
+#   "valid"     — the user is still enabled; mint a new access token.
+#   "revoked"   — the IdP rejected the refresh-token grant (invalid_grant);
+#                 the user was disabled / the token revoked → kill the session.
+#   "idp_error" — the IdP was unreachable or returned a non-revocation error;
+#                 DON'T revoke (avoid locking users out on a transient outage).
+IdpValidation = str  # one of: "valid" | "revoked" | "idp_error"
+
+
 async def _validate_against_idp(idp_refresh_token: str | None) -> IdpValidation:
     """Real per-user revocation check via an IdP refresh-token grant (#366).
 
