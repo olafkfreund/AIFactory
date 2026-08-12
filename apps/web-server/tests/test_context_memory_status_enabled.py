@@ -45,7 +45,8 @@ def _memory_status(tmp_path: Path, project_path: Path) -> dict[str, Any]:
     # file rather than stubbing the loader keeps the production read path.
     with patch.object(projects, "get_projects_file", return_value=projects_file):
         result = asyncio.run(context.get_project_context("p1"))
-    return result["data"]["memoryStatus"]
+    status: dict[str, Any] = result["data"]["memoryStatus"]
+    return status
 
 
 def test_a_project_with_graphiti_off_reports_enabled_false(tmp_path: Path) -> None:
