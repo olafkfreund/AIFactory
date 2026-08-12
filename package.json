@@ -47,5 +47,9 @@
   ],
   "devDependencies": {
     "jsdom": "^27.4.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.26",
+    "dompurify": "^3.4.13"
   }
 }
