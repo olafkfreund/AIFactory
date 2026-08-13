@@ -1,6 +1,5 @@
 """P2.1 — EncryptedString TypeDecorator (AES-256-GCM via Fernet backend)."""
 
-
 import pytest
 from cryptography.exceptions import InvalidTag
 

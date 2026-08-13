@@ -5,7 +5,6 @@ AttributeError when target_audience is not a dict.
 """
 
 
-
 def test_target_audience_validation_logic():
     """Test the type validation logic directly without importing the module.
 

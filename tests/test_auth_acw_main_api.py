@@ -25,7 +25,6 @@ def _app() -> FastAPI:
 
     @app.get("/api/whoami")
     async def whoami(request_state_user=None):
-
         return {"ok": True}
 
     return app
