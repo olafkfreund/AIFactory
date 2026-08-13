@@ -6,12 +6,14 @@ for multiple environment variables, AIFactory profiles, Claude Code CLI
 credentials, and SDK environment variable passthrough for custom API endpoints.
 """
 
+import importlib
 import json
 import os
 import platform
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 # Priority order for auth token resolution.
 # NOTE: By DEFAULT we do NOT fall back to ANTHROPIC_API_KEY — AIFactory targets
@@ -257,13 +259,37 @@ def _get_token_from_windows_credential_files() -> str | None:
         return None
 
 
+def unseal_profiles(data: dict[str, Any]) -> dict[str, Any]:
+    """Decrypt the sealed OAuth tokens in a claude-profiles.json payload (#1276).
+
+    ``server.crypto`` lives in the web-server package, which apps/backend runs
+    alongside in the deployed image. A store written before #1276 holds
+    plaintext and passes through untouched.
+
+    Resolved by name rather than imported: a plain import of ``server.*`` from
+    apps/backend is un-gateable here -- at module scope mypy --strict reports
+    import-not-found, and inside the function ruff reports PLC0415.
+
+    If the web-server package is genuinely absent the payload is returned as
+    read; a sealed value is then an ``enc.v1:``-prefixed string that no Claude
+    endpoint accepts, so auth fails visibly instead of silently succeeding with
+    the wrong identity.
+    """
+    try:
+        module = importlib.import_module("server.crypto.secret_field")
+    except ImportError:  # pragma: no cover - web-server package not importable
+        return data
+    unsealed: dict[str, Any] = module.unseal_profiles(data)
+    return unsealed
+
+
 def _get_token_from_aifactory_profiles() -> str | None:
     """Read token from AIFactory profiles storage (~/.aifactory/claude-profiles.json)."""
     path = Path.home() / ".aifactory" / "claude-profiles.json"
     if not path.exists():
         return None
     try:
-        data = json.loads(path.read_text())
+        data = unseal_profiles(json.loads(path.read_text()))
         active_id = data.get("activeProfileId")
         for profile in data.get("profiles", []):
             if profile.get("id") == active_id and profile.get("oauthToken"):
