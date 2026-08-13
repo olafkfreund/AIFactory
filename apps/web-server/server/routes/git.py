@@ -17,6 +17,7 @@ from server.services.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
 )
+from server.specpath import browse_roots, within_roots
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,24 @@ router = APIRouter()
 # ============================================
 # Git Routes
 # ============================================
+
+
+def _confined(path: str) -> str:
+    """Confine a request-supplied ``path`` to the browsable roots, else 403.
+
+    Applied at each route that takes a whole path from the request (#1278).
+    Deliberately NOT applied inside ``run_git_command``, which looks like the
+    tempting single choke point: several of its callers pass a server-built
+    path — notably the self-update route, which runs git against AIFactory's
+    own source directory. That directory is legitimately outside the browse
+    roots, so a guard there would break self-update while adding nothing; the
+    boundary is where the path arrives from the client, not where it is used.
+
+    ``browse_roots`` rather than the registered-projects tier because
+    ``/init`` and the status probes run during add-project, before the
+    directory is registered.
+    """
+    return str(within_roots(path, browse_roots(), "browsable directories"))
 
 
 def run_git_command(args: list[str], cwd: str) -> dict:
@@ -47,6 +66,7 @@ def run_git_command(args: list[str], cwd: str) -> dict:
 @router.get("/branches")
 async def get_git_branches(path: str = Query(...)):
     """Get all branches for a repository."""
+    path = _confined(path)
     result = run_git_command(["branch", "--format=%(refname:short)"], path)
     if result["success"]:
         branches = [b.strip() for b in result["output"].split("\n") if b.strip()]
@@ -57,6 +77,7 @@ async def get_git_branches(path: str = Query(...)):
 @router.get("/current-branch")
 async def get_current_git_branch(path: str = Query(...)):
     """Get current branch name."""
+    path = _confined(path)
     result = run_git_command(["branch", "--show-current"], path)
     if result["success"]:
         return {"success": True, "data": result["output"]}
@@ -66,6 +87,7 @@ async def get_current_git_branch(path: str = Query(...)):
 @router.get("/main-branch")
 async def detect_main_branch(path: str = Query(...)):
     """Detect the main branch (main or master)."""
+    path = _confined(path)
     # Check for main first
     result = run_git_command(["rev-parse", "--verify", "main"], path)
     if result["success"]:
@@ -82,6 +104,7 @@ async def detect_main_branch(path: str = Query(...)):
 @router.get("/status")
 async def check_git_status(path: str = Query(...)):
     """Check git status for a repository."""
+    path = _confined(path)
     # Check if it's a git repo
     git_dir = Path(path) / ".git"
     if not git_dir.exists():
@@ -115,7 +138,9 @@ class InitGitRequest(BaseModel):
 @router.post("/init")
 async def initialize_git(request: InitGitRequest):
     """Initialize a new git repository with an initial commit (if needed)."""
-    path = request.path
+    # The one that writes. Unconfined, this created a `.gitignore` at any path
+    # the server process could reach (#1278).
+    path = _confined(request.path)
     git_dir = Path(path) / ".git"
 
     # Check if already a git repo

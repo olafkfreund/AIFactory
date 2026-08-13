@@ -10,7 +10,6 @@ Handles file operations for the Monaco editor:
 
 import logging
 import mimetypes
-import os
 import re
 import subprocess
 import urllib.parse
@@ -27,7 +26,7 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
-from server.specpath import contained_path
+from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..auth import _try_decode_jwt
 from ..config import get_settings
@@ -207,7 +206,7 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
     # Join, resolve and confine in one step. Joining and resolving OUTSIDE the
     # containment check is what makes `../../etc/passwd` interesting: the
     # resolved-but-unchecked path is a live value for as long as it exists.
-    return _within_roots(
+    return within_roots(
         project_path / relative_path, [project_path], "project directory"
     )
 
@@ -217,58 +216,17 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
 # --------------------------------------------------------------------------
 
 
-def _registered_project_roots() -> list[Path]:
-    """Resolved paths of every registered project — the only roots whose file
-    *content* may be read/served (closes arbitrary host read, audit C1)."""
-    from .projects import load_projects
-
-    roots: list[Path] = []
-    for p in load_projects().values():
-        try:
-            roots.append(Path(p["path"]).resolve())
-        except (OSError, KeyError, TypeError):
-            pass
-    return roots
+# ``_registered_project_roots`` / ``_browse_roots`` used to live here. They
+# moved to ``server.specpath`` (#1278) because the add-project, git, terminal
+# and worktree routes need the same tiers, and a second copy of a root set is
+# a second thing to forget to update. Imported above under their public names.
 
 
-def _browse_roots() -> list[Path]:
-    """Roots that may be *listed* for the add-project browser: registered
-    projects + the user's home + any APP_FILE_BROWSE_ROOTS (os.pathsep list).
-    Looser than read roots (names only, no content), but still blocks system
-    dirs like /etc, /root, /var."""
-    roots = _registered_project_roots()
-    try:
-        roots.append(Path.home().resolve())
-    except (OSError, RuntimeError):
-        pass
-    for extra in os.environ.get("APP_FILE_BROWSE_ROOTS", "").split(os.pathsep):
-        extra = extra.strip()
-        if extra:
-            try:
-                roots.append(Path(extra).resolve())
-            except OSError:
-                pass
-    return roots
-
-
-def _within_roots(candidate: object, roots: list[Path], what: str) -> Path:
-    """Resolved ``candidate`` if it is inside one of ``roots``, else 403.
-
-    Thin HTTP wrapper over ``server.specpath.contained_path`` -- the shared
-    barrier. It RETURNS the confined path rather than asserting and leaving the
-    caller holding the unconfined one, which was the previous shape. That is
-    not cosmetic: an assert-and-discard helper leaves the raw request value
-    live in the caller, so neither a reader nor the analyser can tell the
-    checked path from the unchecked one. Taking the raw value in and handing
-    the confined one back makes the containment impossible to use wrongly.
-    """
-    try:
-        return contained_path(candidate, roots, what)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Access denied: path is outside the {what}",
-        )
+# ``_within_roots`` moved to ``server.specpath.within_roots`` alongside the root
+# tiers (#1278) so the git, terminal and worktree routes raise the same 403 with
+# the same wording. Call sites below call it directly rather than through a
+# module-level alias: an alias is one more indirection for the taint analysis to
+# see through, and the barrier registration is the whole point of the helper.
 
 
 # --------------------------------------------------------------------------
@@ -305,7 +263,7 @@ async def discover_projects(
     Returns folders that look like projects (have .git, package.json, etc).
     """
     # Containment (#320): only scan within browsable roots — no system dirs.
-    base = _within_roots(base_path, _browse_roots(), "browsable directories")
+    base = within_roots(base_path, browse_roots(), "browsable directories")
 
     if not base.exists():
         return {
@@ -390,7 +348,7 @@ async def list_directory_direct(
     """List contents of a directory by absolute path."""
     # Containment (#320): only browsable roots (registered projects + home +
     # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
-    full_path = _within_roots(path, _browse_roots(), "browsable directories")
+    full_path = within_roots(path, browse_roots(), "browsable directories")
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -443,8 +401,8 @@ async def read_file_direct(
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
-    full_path = _within_roots(
-        path, _registered_project_roots(), "registered project directories"
+    full_path = within_roots(
+        path, registered_project_roots(), "registered project directories"
     )
 
     if not full_path.exists():
@@ -531,12 +489,12 @@ async def serve_project_file(
         raise HTTPException(status_code=401, detail="Authentication required")
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
-    root_path = _within_roots(
-        root, _registered_project_roots(), "registered project directories"
+    root_path = within_roots(
+        root, registered_project_roots(), "registered project directories"
     )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    file_path = _within_roots(path, [root_path], "project root")
+    file_path = within_roots(path, [root_path], "project root")
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")

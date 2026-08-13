@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.error_ref import client_error
 from server.services.http_verdict import honest_status
-from server.specpath import safe_spec_component
+from server.specpath import browse_roots, safe_spec_component, within_roots
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
@@ -495,8 +495,15 @@ async def scan_for_projects(request: ScanProjectsRequest):
         HTTPException: 400 if path doesn't exist or isn't a directory
     """
     try:
-        # Validate and resolve base path
-        base = Path(request.basePath).expanduser().resolve()
+        # Confine, then check existence (#1278). The old order asked "is it
+        # there" and never asked "is it allowed", so this endpoint would happily
+        # walk /etc or /root five levels deep and report every directory in it.
+        base = within_roots(
+            request.basePath,
+            browse_roots(),
+            "browsable directories",
+            expand_user=True,
+        )
 
         if not base.exists():
             raise HTTPException(
@@ -641,7 +648,17 @@ async def add_project(
     else:
         # Local mode — register the existing directory.
         assert project.path is not None  # model_validator guarantees this
-        project_path = Path(project.path).expanduser()
+        # Confine BEFORE the mkdir below, not after (#1278). This is the write
+        # that makes projects.json a trust boundary: every downstream consumer
+        # reads a path back out of the registry and uses it unchecked, so the
+        # registry is only as trustworthy as this one line. Unconfined, the
+        # route would `mkdir -p` and register any directory the server process
+        # can reach — /etc/cron.d, ~/.ssh, /var/lib/anything.
+        # `browse_roots`, not `registered_project_roots`: the whole point of
+        # adding a project is that it is not registered yet.
+        project_path = within_roots(
+            project.path, browse_roots(), "browsable directories", expand_user=True
+        )
 
         if not project_path.exists():
             try:
@@ -741,13 +758,19 @@ async def update_project(
     # Update fields
     project_data = projects[project_id]
     if project.path:
-        project_path = Path(project.path)
+        # The second registry write (#1278). Repointing an existing project is
+        # the same trust decision as registering a new one, so it takes the
+        # same tier — otherwise the containment on `add_project` is a formality
+        # you get around with a PUT.
+        project_path = within_roots(
+            project.path, browse_roots(), "browsable directories", expand_user=True
+        )
         if not project_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Path does not exist: {project.path}",
             )
-        project_data["path"] = str(project_path.resolve())
+        project_data["path"] = str(project_path)
 
     if project.name:
         project_data["name"] = project.name
