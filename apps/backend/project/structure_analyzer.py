@@ -57,7 +57,7 @@ class StructureAnalyzer:
             self.custom_scripts.npm_scripts = list(pkg["scripts"].keys())
 
             # Add commands to run these scripts
-            for script in self.custom_scripts.npm_scripts:
+            if self.custom_scripts.npm_scripts:
                 self.script_commands.add("npm")
                 self.script_commands.add("yarn")
                 self.script_commands.add("pnpm")

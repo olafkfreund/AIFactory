@@ -13,8 +13,6 @@ import json
 import logging
 from pathlib import Path
 
-_log = logging.getLogger(__name__)
-
 
 class SkillContextMixin:
     """Writes skill_context.md from a task's selected skills (for AgentService)."""
@@ -28,7 +26,6 @@ class SkillContextMixin:
 
         If no skills are selected, removes any existing skill_context.md.
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 

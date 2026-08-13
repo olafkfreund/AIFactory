@@ -37,7 +37,6 @@ async def get_task_logs(
     Returns phase-based logs from task_logs.json if available,
     checking both main spec dir and worktree.
     """
-    import logging
 
     logger = logging.getLogger(__name__)
 

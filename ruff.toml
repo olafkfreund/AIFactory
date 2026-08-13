@@ -176,7 +176,6 @@ ignore = [
 "apps/backend/runners/github/test_rate_limiter.py" = ["F841"]
 "apps/backend/services/orchestrator.py" = ["F841"]
 "apps/backend/spec/pipeline/orchestrator.py" = ["F841"]
-"apps/backend/ui/statusline.py" = ["F841"]
 
 # --- SDK-ban exemptions (TID251) -------------------------------------------
 # Adapter / transport / agent-bearing trees that LEGITIMATELY use the SDK.

@@ -435,7 +435,6 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
                         return
             except WebSocketDisconnect:
                 return
-            return
         try:
             while True:
                 msg = await websocket.receive()

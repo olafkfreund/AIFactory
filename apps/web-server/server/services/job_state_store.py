@@ -22,15 +22,12 @@ store is never constructed in that mode (see ``store_enabled``).
 
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
-
-_log = logging.getLogger(__name__)
 
 SERVICE = "aifactory"
 KIND = "build"

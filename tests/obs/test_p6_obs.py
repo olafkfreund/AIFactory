@@ -247,7 +247,6 @@ def _grafana_dashboard_missing() -> bool:
 )
 def test_grafana_dashboard_json_is_valid() -> None:
     """guides/observability/grafana-aifactory.json parses + has required panels."""
-    import json
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[2]

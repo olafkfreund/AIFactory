@@ -84,7 +84,7 @@ def run_async(coro):
         Result of the coroutine or a Future if already in event loop
     """
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # Already in an event loop - create a task
         return asyncio.ensure_future(coro)
     except RuntimeError:

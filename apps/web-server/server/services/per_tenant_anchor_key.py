@@ -47,11 +47,6 @@ from ..services.audit_anchor import generate_new_key
 
 logger = logging.getLogger(__name__)
 
-# Feature flag — checked at call-site; callers should guard before calling.
-_PER_TENANT_ENABLED = (
-    os.environ.get("AUDIT_ANCHOR_PER_TENANT", "false").lower() == "true"
-)
-
 # Vault path pattern. Flat (not nested) per design open-question #1 resolution.
 _VAULT_KEY_PATH_TMPL = "aifactory/orgs/{org_uuid}/anchor-key-wrapped"
 _VAULT_META_PATH_TMPL = "aifactory/orgs/{org_uuid}/anchor-key-metadata"

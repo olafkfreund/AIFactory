@@ -66,7 +66,6 @@ def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
 # ---------------------------------------------------------------------------
 
 _TRUTHY = {"1", "true", "yes", "on"}
-_FALSY = {"0", "false", "no", "off"}
 
 
 def _project_env(project_path: Path | None, key: str) -> str | None:

@@ -80,7 +80,7 @@ async def test_llm_connection(config: "GraphitiConfig") -> tuple[bool, str]:
     from .factory import create_llm_client
 
     try:
-        llm_client = create_llm_client(config)
+        create_llm_client(config)
         # Most clients don't have a ping method, so just verify creation succeeded
         return (
             True,

@@ -384,7 +384,6 @@ def validate_merged_syntax(
 
                 # Fall back to npx if not found
                 if not esbuild_cmd:
-                    esbuild_cmd = "npx"
                     args = ["npx", "esbuild", tmp_path, "--log-level=error"]
                 else:
                     args = [esbuild_cmd, tmp_path, "--log-level=error"]

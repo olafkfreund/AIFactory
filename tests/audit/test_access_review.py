@@ -304,12 +304,6 @@ def test_oidc_callback_stamps_last_login_at(fresh_db, monkeypatch):
             await db.commit()
             return user.id
 
-        async with SessionLocal() as db:
-            from sqlalchemy import select
-
-            result = await db.execute(select(User).where(User.id == user.id))
-            return result.scalar_one()
-
     user_id = _run(_go())
 
     # Re-fetch to confirm it persisted.

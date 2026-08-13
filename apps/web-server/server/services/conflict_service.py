@@ -446,7 +446,6 @@ class ConflictService:
 
         try:
             # Use the backend's simple client with OAuth authentication
-            import asyncio
 
             from core.simple_client import create_simple_client
 
@@ -569,7 +568,6 @@ TASK: Intelligently merge both sets of changes into the base.
 
         try:
             # Use the backend's simple client with OAuth authentication
-            import asyncio
 
             from core.simple_client import create_simple_client
 

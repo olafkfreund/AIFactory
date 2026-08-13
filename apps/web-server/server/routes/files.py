@@ -1062,7 +1062,6 @@ async def clear_insights_session(projectId: str):
         raise
     except Exception as e:
         # Log error and return 500
-        import logging
 
         logging.getLogger(__name__).error(
             f"Failed to clear files insights session: {e}", exc_info=True

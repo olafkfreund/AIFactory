@@ -212,8 +212,6 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
         # Only sync if worktree has more progress (more completed subtasks)
         if worktree_completed > main_completed:
-            import logging
-
             logger = logging.getLogger(__name__)
             logger.info(
                 "[WorktreeSync] Syncing plan for %s: worktree has %s completed vs main %s",
@@ -230,8 +228,6 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
         return False
     except (json.JSONDecodeError, OSError) as e:
-        import logging
-
         logging.getLogger(__name__).warning(
             f"[WorktreeSync] Failed to sync {spec_id}: {e}"
         )

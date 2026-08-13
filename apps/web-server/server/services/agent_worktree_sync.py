@@ -59,7 +59,6 @@ class WorktreeSyncMixin:
         """
         # Use task_id for tracking if provided, otherwise fall back to spec_id for backwards compatibility
         tracking_key = task_id or spec_id
-        import logging
 
         logger = logging.getLogger(__name__)
 

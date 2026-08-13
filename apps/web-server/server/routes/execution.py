@@ -265,7 +265,6 @@ async def start_task(
     The task must already exist (have a spec directory).
     This will run the planner, coder, and QA agents.
     """
-    import logging
 
     logger = logging.getLogger(__name__)
     logger.info(
@@ -383,7 +382,6 @@ async def start_task(
     # Fix 3: Check if a VALID implementation_plan.json exists - if not, run spec creation first
     # This handles the case where projects.py created the spec directory but spec_runner.py hasn't run yet
     # A valid plan MUST have "phases" array - minimal plans with just {"status": "..."} are invalid
-    import logging
 
     logger = logging.getLogger(__name__)
     implementation_plan = spec_dir / "implementation_plan.json"
@@ -398,8 +396,6 @@ async def start_task(
     plan_is_valid = False
     if implementation_plan.exists():
         try:
-            import json
-
             plan_data = json.loads(implementation_plan.read_text())
             # Valid plan must have "phases" key (even if empty array)
             plan_is_valid = "phases" in plan_data and isinstance(
@@ -421,7 +417,6 @@ async def start_task(
 
     if not implementation_plan.exists() or not plan_is_valid:
         # Need to run spec creation first - read title/description from requirements.json
-        import json
         from datetime import datetime
 
         logger.info(
@@ -578,7 +573,6 @@ async def start_task(
 
     # Sync runtime options to task_metadata.json for backend to read
     # This ensures model/thinking/baseBranch overrides are available to run.py
-    import json
 
     task_metadata_file = spec_dir / "task_metadata.json"
     task_metadata = {}
@@ -1042,7 +1036,6 @@ async def recover_task(
             )
         except Exception as e:
             # If auto-restart fails, still return success for recovery
-            import logging
 
             logging.getLogger(__name__).warning(
                 "Auto-restart failed for %s: %s", sanitize_log(task_id), sanitize_log(e)
@@ -1452,7 +1445,6 @@ async def dispatch_task_to_copilot(
     ``copilot_dispatch`` block is written into ``task_metadata.json``.
     """
     import asyncio
-    import logging
 
     from ..services.copilot_dispatch_service import (
         CopilotDispatchService,

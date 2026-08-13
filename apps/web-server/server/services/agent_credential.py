@@ -63,7 +63,6 @@ class CredentialMixin:
         Returns:
             Tuple of (token, profile_id, profile_name) or (None, None, None) if no token found
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -279,7 +278,6 @@ class CredentialMixin:
         Returns:
             True if both settings are enabled
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -373,7 +371,6 @@ class CredentialMixin:
             profile_name: Name for logging
             reason: Why the switch occurred (e.g., "rate_limit", "reactive_failover")
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -455,7 +452,6 @@ class CredentialMixin:
         Returns:
             New subprocess or None if retry not possible
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -537,7 +533,6 @@ class CredentialMixin:
         Returns:
             New subprocess or None if retry not possible
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
