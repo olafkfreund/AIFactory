@@ -17,9 +17,88 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class _ScriptStyleStripper(HTMLParser):
+    """Drop ``<script>``/``<style>`` elements, body included.
+
+    A regex cannot do this safely (CodeQL py/bad-tag-filter): ``<script...>``
+    with a ``>`` inside an attribute, ``</script >`` with trailing space, and an
+    unterminated ``<script>`` all slip past a ``<script>.*?</script>`` pattern
+    and carry hidden instructions straight into the model prompt. The stdlib
+    parser switches to CDATA mode on those tags and gets all three right.
+
+    Everything outside the stripped elements is re-emitted; start tags keep
+    their exact source text, end tags are rebuilt lower-cased. That is fine for
+    this call site (issue/PR prose on its way into a prompt), not for round-
+    tripping HTML.
+    """
+
+    STRIP_TAGS = frozenset({"script", "style"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self._parts: list[str] = []
+        self._depth = 0
+        self.removed = 0
+
+    def _emit(self, text: str) -> None:
+        if self._depth == 0:
+            self._parts.append(text)
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        if tag in self.STRIP_TAGS:
+            if self._depth == 0:
+                self.removed += 1
+            self._depth += 1
+            return
+        self._emit(self.get_starttag_text() or "")
+
+    def handle_startendtag(self, tag: str, attrs: Any) -> None:
+        if tag in self.STRIP_TAGS:
+            self.removed += 1
+            return
+        self._emit(self.get_starttag_text() or "")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self.STRIP_TAGS:
+            if self._depth:
+                self._depth -= 1
+            return
+        self._emit(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        self._emit(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self._emit(f"&{name};")
+
+    def handle_charref(self, name: str) -> None:
+        self._emit(f"&#{name};")
+
+    def handle_comment(self, data: str) -> None:
+        self._emit(f"<!--{data}-->")
+
+    def handle_decl(self, decl: str) -> None:
+        self._emit(f"<!{decl}>")
+
+    def handle_pi(self, data: str) -> None:
+        self._emit(f"<?{data}>")
+
+    def unknown_decl(self, data: str) -> None:
+        self._emit(f"<![{data}]>")
+
+    @classmethod
+    def strip(cls, content: str) -> tuple[str, int]:
+        """Return ``(content_without_script_or_style, elements_removed)``."""
+        parser = cls()
+        parser.feed(content)
+        parser.close()
+        return "".join(parser._parts), parser.removed
 
 
 # Content length limits
@@ -74,8 +153,8 @@ class ContentSanitizer:
 
     # Patterns for dangerous content
     HTML_COMMENT_PATTERN = re.compile(r"<!--[\s\S]*?-->", re.MULTILINE)
-    SCRIPT_TAG_PATTERN = re.compile(r"<script[\s\S]*?</script>", re.IGNORECASE)
-    STYLE_TAG_PATTERN = re.compile(r"<style[\s\S]*?</style>", re.IGNORECASE)
+    # script/style removal is done by _ScriptStyleStripper, not a regex -- see
+    # its docstring for the bypasses a regex tag filter cannot cover.
 
     # Patterns that look like prompt injection attempts
     INJECTION_PATTERNS = [
@@ -181,17 +260,10 @@ class ContentSanitizer:
                     f"Removed {len(html_comments)} HTML comments from {content_type}"
                 )
 
-        # Step 2: Remove script/style tags
-        script_tags = self.SCRIPT_TAG_PATTERN.findall(content)
-        if script_tags:
-            content = self.SCRIPT_TAG_PATTERN.sub("", content)
-            removed_items.append(f"{len(script_tags)} script tags")
-            was_modified = True
-
-        style_tags = self.STYLE_TAG_PATTERN.findall(content)
-        if style_tags:
-            content = self.STYLE_TAG_PATTERN.sub("", content)
-            removed_items.append(f"{len(style_tags)} style tags")
+        # Step 2: Remove script/style elements
+        content, stripped = _ScriptStyleStripper.strip(content)
+        if stripped:
+            removed_items.append(f"{stripped} script/style tags")
             was_modified = True
 
         # Step 3: Detect potential injection patterns (warn only, don't remove)

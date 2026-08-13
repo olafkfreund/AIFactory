@@ -14,7 +14,10 @@ const TOKEN = fs.readFileSync(path.join(os.homedir(), '.aifactory', '.token'), '
 const MODEL = process.env.DEMO_MODEL || 'sonnet';
 const PROVIDER = process.env.DEMO_PROVIDER || 'claude';
 const DEADLINE_MIN = +(process.env.DEMO_DEADLINE_MIN || 25);
-const OUT = process.env.OUT || '/tmp/aifactory-bench';
+// A fixed /tmp path lets any local user pre-create it as a symlink and redirect
+// (or read) the result file — CodeQL js/insecure-temporary-file. mkdtempSync is
+// the atomic, 0700, unpredictable equivalent. Set OUT to pick your own dir.
+const OUT = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'aifactory-bench-'));
 const REPO = '/tmp/aifactory-demo';
 fs.mkdirSync(OUT, { recursive: true });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);

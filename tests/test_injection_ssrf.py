@@ -137,3 +137,60 @@ async def test_git_diff_rejects_option_injection_base(project):
     with pytest.raises(HTTPException) as exc:
         await get_git_diff(project_id="p", path="", base="--output=/tmp/x")
     assert exc.value.status_code == 400
+
+
+# ── py/regex-injection: the search query is a literal, not a pattern ────────
+
+
+@pytest.fixture(params=["ripgrep", "python-fallback"])
+def search_engine(request, monkeypatch):
+    """Run each query through BOTH search paths.
+
+    The pure-Python fallback is the one that actually runs in the shipped image
+    (ripgrep is not installed there) and is where a caller-supplied regex used
+    to be compiled, so it must be exercised even on dev boxes that have rg.
+    """
+    if request.param == "python-fallback":
+
+        def _no_rg(*args, **kwargs):
+            raise FileNotFoundError("rg")
+
+        monkeypatch.setattr("server.routes.files.subprocess.run", _no_rg)
+    return request.param
+
+
+async def _search(project, query):
+    return await search_files(
+        project_id="p", query=query, path="", file_pattern="*", max_results=10
+    )
+
+
+async def test_search_treats_regex_metacharacters_literally(project, search_engine):
+    (project / "a.txt").write_text("plain a.b line\nliteral a+b line\n")
+    # As a regex, "a.b" would also match "a+b"; as a literal it must not.
+    res = await _search(project, "a.b")
+    assert [r.content for r in res.results] == ["plain a.b line"]
+    assert res.results[0].match == "a.b"
+
+
+async def test_search_matches_a_literal_bracket_expression(project, search_engine):
+    # `[abc]` is a valid regex (matches "a"), so the old code returned every
+    # line containing an 'a'. As a literal it matches only the literal text.
+    (project / "a.txt").write_text("has an a\nhas [abc] verbatim\n")
+    res = await _search(project, "[abc]")
+    assert [r.content for r in res.results] == ["has [abc] verbatim"]
+
+
+async def test_search_does_not_hang_on_a_redos_pattern(project, search_engine):
+    # `(a+)+$` against a long non-matching line is exponential in `re`. As a
+    # literal it is a plain substring scan and returns immediately.
+    (project / "a.txt").write_text("a" * 4000 + "b\n")
+    res = await _search(project, "(a+)+$")
+    assert res.results == []
+
+
+async def test_search_survives_an_invalid_regex(project, search_engine):
+    # `re.compile("*(")` raises re.error -> a 500. A literal search cannot.
+    (project / "a.txt").write_text("nothing here\n")
+    res = await _search(project, "*(")
+    assert res.results == []
