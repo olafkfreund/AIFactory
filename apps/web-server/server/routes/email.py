@@ -25,8 +25,7 @@ from .._get_email_oauth_credentials import (
     get_google_oauth_credentials,
 )
 from ..config import get_settings
-from ..database import EmailAccount
-from ..database import engine as _db_engine
+from ..database import EmailAccount, engine
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +118,7 @@ async def list_email_accounts(request: Request):
     """List the user's connected email accounts (tokens not exposed)."""
     user_id = _get_user_id(request)
 
-    async with _db_engine.async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(EmailAccount.user_id == user_id)
         )
@@ -141,7 +140,7 @@ async def disconnect_email_account(account_id: str, request: Request):
     """Disconnect (delete) an email account."""
     user_id = _get_user_id(request)
 
-    async with _db_engine.async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(
                 EmailAccount.id == account_id,
@@ -186,7 +185,7 @@ async def send_test_email(account_id: str, request: Request):
     """Send a test email to verify the connection works."""
     user_id = _get_user_id(request)
 
-    async with _db_engine.async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(
                 EmailAccount.id == account_id,
@@ -393,7 +392,7 @@ async def outlook_oauth_callback(
 
     # Upsert EmailAccount
     try:
-        async with _db_engine.async_session_factory() as session:
+        async with engine.async_session_factory() as session:
             result = await session.execute(
                 select(EmailAccount).where(
                     EmailAccount.user_id == user_id,
@@ -614,7 +613,7 @@ async def gmail_oauth_callback(
 
     # Upsert EmailAccount
     try:
-        async with _db_engine.async_session_factory() as session:
+        async with engine.async_session_factory() as session:
             result = await session.execute(
                 select(EmailAccount).where(
                     EmailAccount.user_id == user_id,
