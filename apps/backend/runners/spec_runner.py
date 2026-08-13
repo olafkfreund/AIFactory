@@ -58,11 +58,11 @@ if sys.platform == "win32":
         _stream = getattr(sys, _stream_name)
         # Method 1: Try reconfigure (works for TTY)
         if hasattr(_stream, "reconfigure"):
-            try:
+            # Best-effort: a non-reconfigurable stream falls through to the
+            # TextIOWrapper path below, same as the Method 2 suppress.
+            with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
                 _stream.reconfigure(encoding="utf-8", errors="replace")
                 continue
-            except (AttributeError, io.UnsupportedOperation, OSError):
-                pass
         # Method 2: Wrap with TextIOWrapper for piped output. Best-effort:
         # if this also fails, the stream is left with its default encoding.
         with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):

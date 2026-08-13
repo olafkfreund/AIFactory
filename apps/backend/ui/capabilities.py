@@ -34,11 +34,11 @@ def configure_safe_encoding() -> None:
     for stream_name in ("stdout", "stderr"):
         stream = getattr(sys, stream_name)
         if hasattr(stream, "reconfigure"):
-            try:
+            # Best-effort: a non-reconfigurable stream falls through to the
+            # TextIOWrapper path below, same as the Method 2 suppress.
+            with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
                 stream.reconfigure(encoding="utf-8", errors="replace")
                 continue
-            except (AttributeError, io.UnsupportedOperation, OSError):
-                pass
 
         # Method 2: Wrap with TextIOWrapper for piped output
         # This is needed when stdout/stderr are pipes (e.g., from Electron).

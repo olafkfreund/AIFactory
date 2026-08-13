@@ -221,7 +221,9 @@ def _detect_cli_version(cli: str) -> str | None:
                     return part
             return raw
     except (subprocess.SubprocessError, OSError) as e:
-        logger.debug(f"version command failed for {cli}: {e}")
+        logger.debug(
+            f"version command failed for {sanitize_log(cli)}: {sanitize_log(e)}"
+        )
     return None
 
 

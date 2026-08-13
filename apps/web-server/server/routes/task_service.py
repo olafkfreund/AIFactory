@@ -234,7 +234,7 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
         return False
     except (json.JSONDecodeError, OSError) as e:
         logging.getLogger(__name__).warning(
-            f"[WorktreeSync] Failed to sync {spec_id}: {e}"
+            f"[WorktreeSync] Failed to sync {sanitize_log(spec_id)}: {sanitize_log(e)}"
         )
         return False
 

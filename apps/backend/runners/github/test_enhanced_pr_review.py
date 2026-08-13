@@ -11,6 +11,7 @@ These tests validate:
 6. Summary generation
 """
 
+import contextlib
 import json
 import sys
 from dataclasses import asdict
@@ -452,12 +453,12 @@ def test_json_parsing_robustness():
 
     def parse_json_array(text):
         """Simulate the JSON parsing from AI response."""
-        try:
+        # Mirrors the production parser: malformed AI output yields no
+        # findings rather than an exception.
+        with contextlib.suppress(json.JSONDecodeError, ValueError):
             json_match = re.search(r"```json\s*(\[.*?\])\s*```", text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group(1))
-        except (json.JSONDecodeError, ValueError):
-            pass
         return []
 
     # Test valid JSON

@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -1217,8 +1218,8 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                 logger.warning(
                     "get_issue_comments: Azure DevOps threads fallback also "
                     "failed for issue %s: %s",
-                    issueNumber,
-                    exc,
+                    sanitize_log(issueNumber),
+                    sanitize_log(exc),
                 )
     else:
         # GitHub api-based fallback
@@ -1242,8 +1243,8 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
         except Exception as exc:
             logger.warning(
                 "get_issue_comments: failed to fetch comments for issue %s: %s",
-                issueNumber,
-                exc,
+                sanitize_log(issueNumber),
+                sanitize_log(exc),
             )
 
     return comments
@@ -1650,8 +1651,8 @@ async def investigate_github_issue(
                 except json.JSONDecodeError as exc:
                     logger.warning(
                         "get_project_github_issue: could not parse comments for issue %s: %s",
-                        issueNumber,
-                        exc,
+                        sanitize_log(issueNumber),
+                        sanitize_log(exc),
                     )
 
         # Filter comments if specific IDs were selected

@@ -232,8 +232,8 @@ class EmitMixin:
 
             logging.getLogger(__name__).warning(
                 "[workspace_store] snapshot hook failed for task=%s phase=%s",
-                task_id,
-                phase,
+                sanitize_log(task_id),
+                sanitize_log(phase),
                 exc_info=True,
             )
 
