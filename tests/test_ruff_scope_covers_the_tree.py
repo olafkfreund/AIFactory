@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -36,6 +37,39 @@ _WORKFLOWS = _REPO / ".github" / "workflows"
 # autofix is the other's violation (#1211). Delete this exemption when #1211
 # lands -- an exemption that outlives its issue is a permanent hole.
 _LINT_EXEMPT = {"scripts"}
+
+
+def _formatter_excluded_roots() -> set[str]:
+    """Top-level dirs the ROOT ruff config excludes wholesale.
+
+    Vendored byte-exact mirrors of the Factory hub (`security-lint/`,
+    `apps/backend/factory_common/`, ...) are excluded in `ruff.toml` because
+    the hub formats at line-length 100 and this repo's formatter defaults to
+    88: running the local formatter over them breaks byte-exactness and the
+    next re-vendor, which is precisely what their drift gates exist to stop.
+
+    Demanding those dirs be in the format scope would be demanding the two
+    gates contradict each other, and the one that would lose is the drift gate
+    -- because a formatter is happy to "fix" its complaint, silently.
+
+    DERIVED, not a second hardcoded list. `_LINT_EXEMPT` above is hand-written
+    and carries a "delete when #1211 lands" note precisely because a
+    written-down scope nobody re-derives is the defect this whole file is
+    about; adding another one would repeat it. This reads the exclusion that
+    is already load-bearing, so a vendored dir is exempt here exactly while
+    ruff really skips it.
+
+    Only a WHOLE root counts. `scripts/ratchet_helpers.py` is one excluded
+    FILE; treating it as an excluded `scripts` would hand back the hole
+    #1179 closed.
+    """
+    config = tomllib.loads((_REPO / "ruff.toml").read_text(encoding="utf-8"))
+    roots: set[str] = set()
+    for entry in config.get("extend-exclude", []):
+        trimmed = entry.rstrip("/")
+        if "/" not in trimmed and (_REPO / trimmed).is_dir():
+            roots.add(trimmed)
+    return roots
 
 
 def _tracked_python_roots() -> set[str]:
@@ -82,7 +116,7 @@ def _scope_of(workflow: str, command: str) -> set[str]:
 
 def test_ruff_format_check_covers_every_python_directory() -> None:
     scope = _scope_of("cq-ratchet.yml", "ruff format --check")
-    missing = _tracked_python_roots() - scope
+    missing = _tracked_python_roots() - scope - _formatter_excluded_roots()
     assert not missing, (
         f"these directories hold Python and are not format-checked: {sorted(missing)}. "
         "A whole-tree format gate cannot grandfather anything, so widen the scope "
@@ -92,7 +126,7 @@ def test_ruff_format_check_covers_every_python_directory() -> None:
 
 def test_ruff_check_covers_every_python_directory() -> None:
     scope = _scope_of("ci.yml", "ruff check")
-    missing = _tracked_python_roots() - scope - _LINT_EXEMPT
+    missing = _tracked_python_roots() - scope - _LINT_EXEMPT - _formatter_excluded_roots()
     assert not missing, (
         f"these directories hold Python and are not linted by CI: {sorted(missing)}. "
         "The diff-scoped ratchet only gates CHANGED files, which is not the same "
@@ -111,7 +145,9 @@ def test_the_format_job_name_matches_the_scope_it_runs() -> None:
     name = match.group(1)
     claims_everything = "every Python" in name or "repo-wide" in name or "whole" in name
     covers_everything = not (
-        _tracked_python_roots() - _scope_of("cq-ratchet.yml", "ruff format --check")
+        _tracked_python_roots()
+        - _scope_of("cq-ratchet.yml", "ruff format --check")
+        - _formatter_excluded_roots()
     )
     assert claims_everything == covers_everything, (
         f"the format-check job is named {name!r}, which does not match what it "
