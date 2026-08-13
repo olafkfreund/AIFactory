@@ -91,7 +91,7 @@ def client() -> TestClient:
     ],
 )
 def test_an_outbound_failure_tells_the_caller_nothing_internal(
-    client: TestClient, method: str, path: str, body: dict | None
+    client: TestClient, method: str, path: str, body: dict[str, object] | None
 ) -> None:
     """Every route that reaches the network, failing the way it fails in prod.
 
@@ -117,7 +117,7 @@ def test_an_outbound_failure_tells_the_caller_nothing_internal(
     ],
 )
 def test_a_store_failure_tells_the_caller_nothing_internal(
-    client: TestClient, method: str, path: str, body: dict | None
+    client: TestClient, method: str, path: str, body: dict[str, object] | None
 ) -> None:
     """The profile routes, with the JSON store on disk unreadable."""
     with (
