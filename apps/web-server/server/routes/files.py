@@ -187,7 +187,9 @@ def is_binary_file(path: Path) -> bool:
 
 def resolve_path(project_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a project, with security checks."""
-    from .projects import load_projects  # Local import to avoid circular dependency
+    from server.project_registry import (
+        load_projects,  # Local import to avoid circular dependency
+    )
 
     projects = load_projects()
 
@@ -963,7 +965,7 @@ insights_router = APIRouter()
 def _get_project_path(project_id: str) -> Path:
     """Get project path from project ID (delegates to the canonical resolver)."""
     # Import here to avoid circular import.
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     return resolve_project_path(project_id)
 

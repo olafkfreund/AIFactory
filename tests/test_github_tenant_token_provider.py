@@ -79,7 +79,7 @@ def test_configured_token_reaches_the_provider(call_site):
     _GitHubProvider, HttpGitHubProvider = _providers()
 
     with patch(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         return_value=_project(gitToken=TENANT_TOKEN),
     ):
         provider = call_site()
@@ -101,7 +101,7 @@ def test_ambient_gh_cli_cannot_substitute_for_a_configured_token(call_site):
     GitHubProvider, _HttpGitHubProvider = _providers()
 
     with patch(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         return_value=_project(gitToken=TENANT_TOKEN),
     ):
         provider = call_site()
@@ -122,7 +122,7 @@ def test_unconfigured_project_still_falls_through_to_ambient_auth(call_site):
     """No token configured -> gh CLI, unchanged. Deliberate, not an oversight."""
     GitHubProvider, HttpGitHubProvider = _providers()
 
-    with patch("server.routes.projects.load_projects", return_value=_project()):
+    with patch("server.project_registry.load_projects", return_value=_project()):
         provider = call_site()
 
     assert isinstance(provider, GitHubProvider)
@@ -154,7 +154,7 @@ def test_sibling_branches_keep_their_own_token_field(
     cls = getattr(importlib.import_module(module), cls_name)
 
     with patch(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         return_value=_project(
             gitProvider=provider_name,
             gitToken=TENANT_TOKEN,

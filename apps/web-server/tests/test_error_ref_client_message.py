@@ -39,7 +39,7 @@ RESOLVER_TEXT = "SENTINEL-resolver-detail-Name-or-service-not-known"
 async def test_a_rejected_field_still_returns_its_own_message() -> None:
     """The passthrough exists for this. It must survive the mechanism change."""
     with patch(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         # Never touched: the validator rejects the ref before git is spawned.
         return_value={"p1": {"path": "/nonexistent/project"}},
     ):

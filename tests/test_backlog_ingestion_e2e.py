@@ -66,7 +66,7 @@ def _setup(tmp_path, monkeypatch, *, issues, settings=None):
         "p": {"path": str(project), "settings": settings or {"gitProvider": "github"}}
     }
 
-    import server.routes.projects as projects_mod
+    import server.project_registry as projects_mod
     import server.services.agent_service as agent_mod
     import server.websockets.events as events_mod
 

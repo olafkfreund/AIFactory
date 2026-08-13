@@ -38,7 +38,7 @@ def project(tmp_path, monkeypatch):
     (proj / ".git").mkdir()
     (proj / ".git" / "config").write_text("[core]\n")
     monkeypatch.setattr(
-        "server.routes.projects.load_projects", lambda: {"p": {"path": str(proj)}}
+        "server.project_registry.load_projects", lambda: {"p": {"path": str(proj)}}
     )
     return proj
 

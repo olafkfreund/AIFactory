@@ -1053,7 +1053,7 @@ class AgentService(
                 )
         if not _rc_enabled:
             try:
-                from ..routes.projects import load_projects
+                from server.project_registry import load_projects
 
                 _rc_projs = load_projects()
                 _rc_pid = task_id.split(":", 1)[0]

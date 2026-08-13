@@ -105,7 +105,7 @@ def registry(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(
-        "server.routes.projects.get_projects_file", lambda: projects_file
+        "server.project_registry.get_projects_file", lambda: projects_file
     )
     return type(
         "Registry",

@@ -30,8 +30,9 @@ from server.specpath import safe_spec_component
 logger = logging.getLogger(__name__)
 
 
+from server.project_registry import load_projects, resolve_project_path
+
 from ..services import task_control
-from .projects import load_projects, resolve_project_path
 from .task_models import (
     Subtask,
     SubtaskVerification,

@@ -107,7 +107,7 @@ def db_factory():
 def patch_projects(monkeypatch):
     # Project p1 is owned by org-1 (alice's org).
     monkeypatch.setattr(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         lambda: {"p1": {"org_id": "org-1", "name": "p1"}},
     )
 

@@ -142,7 +142,7 @@ def project(tmp_path, monkeypatch):
     proj = tmp_path / "proj"
     (proj / ".git").mkdir(parents=True)
     monkeypatch.setattr(
-        "server.routes.projects.load_projects", lambda: {"p": {"path": str(proj)}}
+        "server.project_registry.load_projects", lambda: {"p": {"path": str(proj)}}
     )
     return proj
 

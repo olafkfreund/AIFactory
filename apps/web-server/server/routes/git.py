@@ -1141,7 +1141,7 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     """
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 
@@ -1287,7 +1287,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
 
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 
@@ -1484,7 +1484,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
 
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 

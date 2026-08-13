@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_TENANT = "default"
 TENANT_HEADER = "X-Tenant-Id"
 
+# The deployment-wide default org (#319). Defined here rather than in
+# ``database.engine`` because ``project_registry.save_projects`` stamps it onto
+# unowned registry entries, and the registry must not depend on the database
+# layer -- ``engine._backfill_project_orgs`` calls INTO the registry, so the
+# reverse edge would be an import cycle. ``database.engine`` re-exports the name
+# so every existing ``from ..database.engine import DEFAULT_ORG_ID`` still works.
+DEFAULT_ORG_ID = "default"
+
 
 def multi_tenant_enabled() -> bool:
     """Whether per-request tenant scoping is on (``AIFACTORY_MULTI_TENANT``)."""

@@ -41,6 +41,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from server.error_ref import client_error
+from server.project_registry import get_projects_file
 from server.services.approval import approved, merge_pull_request
 from server.services.http_verdict import honest_status
 from server.services.task_branch import (
@@ -52,7 +53,6 @@ from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
 from .project_authz import require_task_access
-from .projects import get_projects_file
 
 logger = logging.getLogger(__name__)
 

@@ -311,7 +311,7 @@ async def test_start_auto_fix_delegation_branch_assigns_copilot(tmp_path: Path):
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.auto_fix_service._provider_for", return_value=mock_provider
         ),
@@ -363,7 +363,7 @@ async def test_start_auto_fix_default_branch_when_delegation_off(tmp_path: Path)
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.auto_fix_service._provider_for", return_value=mock_provider
         ),
@@ -420,7 +420,7 @@ async def test_start_auto_fix_delegation_skipped_for_ado_provider(
     mock_agent_service.start_task_execution = AsyncMock(return_value=None)
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.auto_fix_service._provider_for", return_value=mock_provider
         ),

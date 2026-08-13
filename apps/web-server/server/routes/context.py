@@ -76,7 +76,7 @@ async def get_project_context(projectId: str = Path(...)):
     """Get project context including index and memories."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -173,7 +173,7 @@ async def get_project_context(projectId: str = Path(...)):
 @project_router.post("/context/refresh")
 async def refresh_project_index(projectId: str = Path(...)):
     """Refresh/regenerate project index."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -227,7 +227,7 @@ async def refresh_project_index(projectId: str = Path(...)):
 async def get_memory_status(projectId: str = Path(...)):
     """Get memory system status for project."""
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -266,7 +266,7 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     """Search project memories."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -327,7 +327,7 @@ async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)
     """Get recent memories for project."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -404,7 +404,7 @@ def _extract_memory_summary(data: dict) -> str:
 @project_router.get("/env")
 async def get_project_env(projectId: str = Path(...)):
     """Get project environment configuration."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -549,7 +549,7 @@ async def update_project_env(
     Only updates fields that are provided (partial updates supported).
     Sets secure file permissions (0o600) to protect sensitive tokens.
     """
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     # Validate project exists
     projects = load_projects()
@@ -691,7 +691,7 @@ async def update_project_env(
 
         # Also update settings in projects.json
         try:
-            from .projects import save_projects
+            from server.project_registry import save_projects
 
             if "settings" not in projects[projectId]:
                 projects[projectId]["settings"] = {}
@@ -778,7 +778,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
     """
     try:
         # Import load_projects to validate project exists
-        from .projects import load_projects
+        from server.project_registry import load_projects
 
         projects = load_projects()
         if projectId not in projects:

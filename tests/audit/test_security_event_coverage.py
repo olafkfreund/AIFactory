@@ -91,7 +91,7 @@ def test_authz_denial_writes_chained_audit(fresh_db, monkeypatch) -> None:
     # 403 authz.denied. Stub load_projects so no real project store is needed.
     project_authz_projects = {"proj-1": {"id": "proj-1", "org_id": "org-x"}}
 
-    import server.routes.projects as projects_mod
+    import server.project_registry as projects_mod
 
     monkeypatch.setattr(projects_mod, "load_projects", lambda: project_authz_projects)
 
