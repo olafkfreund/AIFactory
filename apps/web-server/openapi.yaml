@@ -6996,9 +6996,9 @@ paths:
         required: true
         schema:
           type: string
-          description: Search query (regex supported)
+          description: Search query (literal, case-insensitive)
           title: Query
-        description: Search query (regex supported)
+        description: Search query (literal, case-insensitive)
       - name: path
         in: query
         required: false

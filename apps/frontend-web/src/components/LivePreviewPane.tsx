@@ -4,8 +4,30 @@ import { Button } from './ui/button';
 import { cn } from '../lib/utils';
 
 const STORAGE_KEY = 'mission-control:preview-url';
-const DEFAULT_URL = 'http://localhost:3000';
+// Trailing slash on purpose: toSafeUrl returns URL.href, which always carries
+// one, and the port-preset highlight compares against that normalized form.
+const DEFAULT_URL = 'http://localhost:3000/';
 const PORT_PRESETS = [3000, 5173, 8080, 4173, 8000];
+
+/**
+ * Clamp a preview URL to http(s) before it reaches the iframe `src` or
+ * window.open (CodeQL js/xss-through-dom).
+ *
+ * The URL is persisted to localStorage and read back unvalidated on mount, so a
+ * `javascript:` or `data:` value written by anything else same-origin would run
+ * in this document's origin the next time the pane rendered — and the iframe
+ * carries allow-scripts + allow-same-origin, so the sandbox is no barrier.
+ * Anything that is not http/https falls back to the default.
+ */
+export function toSafeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return DEFAULT_URL;
+    return parsed.href;
+  } catch {
+    return DEFAULT_URL;
+  }
+}
 
 /**
  * LivePreviewPane — renders a running app inside an iframe so the operator can
@@ -18,7 +40,7 @@ const PORT_PRESETS = [3000, 5173, 8080, 4173, 8000];
 export function LivePreviewPane() {
   const [url, setUrl] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) || DEFAULT_URL;
+      return toSafeUrl(localStorage.getItem(STORAGE_KEY) || DEFAULT_URL);
     } catch {
       return DEFAULT_URL;
     }
@@ -39,9 +61,9 @@ export function LivePreviewPane() {
   const navigate = (next: string) => {
     const trimmed = next.trim();
     if (!trimmed) return;
-    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
-    setDraft(withScheme);
-    setUrl(withScheme);
+    const safe = toSafeUrl(/^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`);
+    setDraft(safe);
+    setUrl(safe);
     setLoaded(false);
     setReloadKey((k) => k + 1);
   };
@@ -88,7 +110,7 @@ export function LivePreviewPane() {
       <div className="flex items-center gap-1 border-b border-border px-2 py-1">
         <span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">Ports</span>
         {PORT_PRESETS.map((port) => {
-          const active = url === `http://localhost:${port}`;
+          const active = url === toSafeUrl(`http://localhost:${port}`);
           return (
             <button
               key={port}

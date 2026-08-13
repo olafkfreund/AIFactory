@@ -791,7 +791,7 @@ async def delete_file(
 async def search_files(
     project_id: str,
     _access: dict = Depends(require_project_access("viewer")),
-    query: str = Query(..., description="Search query (regex supported)"),
+    query: str = Query(..., description="Search query (literal, case-insensitive)"),
     path: str = Query("", description="Directory to search in"),
     file_pattern: str = Query("*", description="File glob pattern"),
     max_results: int = Query(100, description="Maximum results to return"),
@@ -801,12 +801,19 @@ async def search_files(
 
     # Security (#323 H5): reject argument injection (a leading '-' turns the
     # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
-    # query length to limit ReDoS on the regex fallback.
+    # query length.
     #
     # The checks are the same ones this endpoint has always made; they now run
     # through the shared helpers in services/argv_safety.py so every value that
     # reaches the argv below is asserted by a named validator rather than by an
     # ad-hoc condition (#1267).
+    #
+    # Separately, the query is matched LITERALLY, not as a regex (CodeQL
+    # py/regex-injection). ripgrep's engine is linear-time, but the Python
+    # fallback below is the path that actually runs in the shipped image (rg is
+    # not installed there), and `re` backtracks: a caller-supplied `(a+)+$`
+    # would hang the worker. Both paths use fixed-string, case-insensitive
+    # matching so they agree.
     try:
         query = assert_not_option(query, "query")
         file_pattern = assert_not_option(file_pattern, "file_pattern")
@@ -837,6 +844,8 @@ async def search_files(
         cmd = [
             "rg",
             "--json",
+            "--fixed-strings",
+            "--ignore-case",
             "--max-count",
             str(max_results),
             "--glob",
@@ -874,7 +883,7 @@ async def search_files(
 
     except (FileNotFoundError, subprocess.TimeoutExpired):
         # Fallback to Python search
-        pattern = re.compile(query, re.IGNORECASE)
+        needle = query.lower()
         for file_path in full_path.rglob(file_pattern):
             if len(results) >= max_results:
                 truncated = True
@@ -886,15 +895,15 @@ async def search_files(
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 for i, line in enumerate(content.split("\n"), 1):
-                    match = pattern.search(line)
-                    if match:
+                    column = line.lower().find(needle)
+                    if column >= 0:
                         results.append(
                             SearchResult(
                                 path=str(file_path.relative_to(full_path)),
                                 line=i,
-                                column=match.start(),
+                                column=column,
                                 content=line.rstrip(),
-                                match=match.group(),
+                                match=line[column : column + len(query)],
                             )
                         )
                         if len(results) >= max_results:
