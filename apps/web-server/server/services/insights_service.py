@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from ..websockets.events import broadcast_event
 from .insights_providers import get_provider
 
@@ -192,7 +194,9 @@ class InsightsService:
             self._sessions[session_id] = session
             return session
         except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Failed to load session {session_id}: {e}")
+            logger.warning(
+                f"Failed to load session {sanitize_log(session_id)}: {sanitize_log(e)}"
+            )
             return None
 
     def get_current_session(
@@ -399,7 +403,9 @@ class InsightsService:
                 self._save_session(project_path, session)
 
         except asyncio.CancelledError:
-            logger.info(f"[InsightsService] Chat cancelled for project {project_id}")
+            logger.info(
+                f"[InsightsService] Chat cancelled for project {sanitize_log(project_id)}"
+            )
             # Finalize partial content if any
             await broadcast_event(
                 "insights:chunk",
@@ -443,7 +449,7 @@ class InsightsService:
         if task and not task.done():
             task.cancel()
             logger.info(
-                f"[InsightsService] Cancelled running task for project {project_id}"
+                f"[InsightsService] Cancelled running task for project {sanitize_log(project_id)}"
             )
             return True
         return False

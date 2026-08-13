@@ -17,6 +17,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TENANT = "default"
@@ -80,4 +82,6 @@ def stamp_spec_tenant(spec_dir: Path, tenant: str) -> None:
         meta["tenant_id"] = tenant or DEFAULT_TENANT
         tm_file.write_text(json.dumps(meta, indent=2))
     except (OSError, ValueError):
-        logger.debug("tenant stamp skipped for %s (best-effort)", spec_dir)
+        logger.debug(
+            "tenant stamp skipped for %s (best-effort)", sanitize_log(spec_dir)
+        )

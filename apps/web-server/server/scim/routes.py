@@ -63,6 +63,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -533,7 +534,11 @@ async def scim_patch_user(
     try:
         _apply_user_patch(user, body)
     except Exception as exc:
-        logger.warning("SCIM PATCH user %s: apply error: %s", user_id, exc)
+        logger.warning(
+            "SCIM PATCH user %s: apply error: %s",
+            sanitize_log(user_id),
+            sanitize_log(exc),
+        )
         return _scim_error(400, "Could not apply PATCH operations", "invalidSyntax")
 
     await db.commit()

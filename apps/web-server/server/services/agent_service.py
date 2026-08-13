@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 from ..utils.subprocess_env import make_subprocess_env
 from . import task_control
@@ -306,13 +308,16 @@ class AgentService(
         except Exception:  # noqa: BLE001 - status read is best-effort
             _log.debug(
                 "[AgentService] could not read control status for %s on exit",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         try:
             await self._store().mark_terminal(task_id, lifecycle, error=error)
         except Exception:  # noqa: BLE001 - never break the exit/drain path
-            _log.exception("[AgentService] could not free durable slot for %s", task_id)
+            _log.exception(
+                "[AgentService] could not free durable slot for %s",
+                sanitize_log(task_id),
+            )
         # Running-cost: a build that paused at review still spent real tokens, but
         # emit_terminal_completion only fires on terminal states (done/failed/
         # stuck), so a review-paused build's usage never reaches the cockpit. Emit
@@ -334,7 +339,7 @@ class AgentService(
             except Exception:  # noqa: BLE001 - usage reporting is best-effort
                 _log.debug(
                     "[AgentService] usage snapshot emit failed for %s",
-                    task_id,
+                    sanitize_log(task_id),
                     exc_info=True,
                 )
 
@@ -363,9 +368,14 @@ class AgentService(
             project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
         )
         logger.info(
-            f"[AgentService._update_plan_status] CALLED for spec_id={spec_id}, status={status}, task_id={task_id}"
+            "[AgentService._update_plan_status] CALLED for spec_id=%s, status=%s, task_id=%s",
+            sanitize_log(spec_id),
+            sanitize_log(status),
+            sanitize_log(task_id),
         )
-        logger.info(f"[AgentService._update_plan_status] plan_file path: {plan_file}")
+        logger.info(
+            f"[AgentService._update_plan_status] plan_file path: {sanitize_log(plan_file)}"
+        )
         logger.info(
             f"[AgentService._update_plan_status] plan_file exists: {plan_file.exists()}"
         )
@@ -394,7 +404,8 @@ class AgentService(
             control_status = task_control.read_control(spec_dir).get("status")
             if control_status == "done" or plan.get("status") == "done":
                 logger.info(
-                    f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {spec_id}"
+                    "[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for %s",
+                    sanitize_log(spec_id),
                 )
                 return
 
@@ -402,7 +413,8 @@ class AgentService(
             # A valid plan should have phases and subtasks from spec creation
             if "phases" not in plan or not plan.get("phases"):
                 logger.error(
-                    f"[AgentService] Invalid or minimal implementation plan detected for {spec_id}"
+                    "[AgentService] Invalid or minimal implementation plan detected for %s",
+                    sanitize_log(spec_id),
                 )
                 if emit_events:
                     await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
@@ -442,7 +454,9 @@ class AgentService(
                 updated_by="web_server",
             )
             logger.info(
-                f"[AgentService] Updated plan status to '{plan['status']}' for {spec_id}"
+                "[AgentService] Updated plan status to '%s' for %s",
+                sanitize_log(plan["status"]),
+                sanitize_log(spec_id),
             )
 
             # Emit the RFC-0001 completion event on a terminal build phase so the
@@ -572,7 +586,8 @@ class AgentService(
                     )
                 except Exception:
                     logger.error(
-                        f"[AgentService] Failed to emit fallback task:status for {task_id}"
+                        "[AgentService] Failed to emit fallback task:status for %s",
+                        sanitize_log(task_id),
                     )
 
     def _read_parallel_opts(
@@ -715,11 +730,11 @@ class AgentService(
                 )
             )
             _log.info(
-                "[AgentService] At concurrency cap (%d running, cap=%d) — "
-                "queued task %s (position %d)",
+                "[AgentService] At concurrency cap (%s running, cap=%s) — "
+                "queued task %s (position %s)",
                 len(self.running_tasks),
-                cap,
-                task_id,
+                sanitize_log(cap),
+                sanitize_log(task_id),
                 len(self._task_queue),
             )
 
@@ -870,11 +885,13 @@ class AgentService(
                 cmd.append("--force")  # Bypass approval check for headless execution
                 if force:
                     logger.info(
-                        f"[AgentService] Using --force for {task_id} (plan manually approved)"
+                        "[AgentService] Using --force for %s (plan manually approved)",
+                        sanitize_log(task_id),
                     )
             else:
                 logger.info(
-                    f"[AgentService] Human review before coding enabled for task {task_id} - not using --force"
+                    "[AgentService] Human review before coding enabled for task %s - not using --force",
+                    sanitize_log(task_id),
                 )
 
         if base_branch:
@@ -883,13 +900,16 @@ class AgentService(
         # Skip QA for quick mode (simple tasks) - coder_quick.md validates inline.
         # Shared with the kubejob manifest builder so the two paths cannot drift (#916).
         if _append_quick_mode_flag(cmd, mode):
-            logger.info(f"[AgentService] Skipping QA for quick mode task {task_id}")
+            logger.info(
+                f"[AgentService] Skipping QA for quick mode task {sanitize_log(task_id)}"
+            )
 
         # Stop after planning for Copilot delegation flow (#94)
         if stop_after_planning:
             cmd.append("--stop-after-planning")
             logger.info(
-                f"[AgentService] Stop-after-planning for {task_id} (Copilot delegation)"
+                "[AgentService] Stop-after-planning for %s (Copilot delegation)",
+                sanitize_log(task_id),
             )
 
         # Parallel subtask execution (#376): run independent subtasks in
@@ -897,8 +917,8 @@ class AgentService(
         # API but silently dropped here.
         if _append_parallel_flags(cmd, parallel, workers):
             logger.info(
-                f"[AgentService] Parallel execution enabled for {task_id} "
-                f"(workers={workers or 'default'})"
+                f"[AgentService] Parallel execution enabled for {sanitize_log(task_id)} "
+                f"(workers={sanitize_log(workers or 'default')})"
             )
 
         # Set environment — scrub ANTHROPIC_API_KEY so spawned subprocesses
@@ -914,7 +934,9 @@ class AgentService(
         # Quick Mode: Use simplified prompts (~70% fewer tokens)
         if mode == "quick":
             env["QUICK_MODE"] = "true"
-            logger.info(f"[AgentService] Quick Mode enabled for task {task_id}")
+            logger.info(
+                f"[AgentService] Quick Mode enabled for task {sanitize_log(task_id)}"
+            )
 
         # Load backend .env file for graphiti and other settings
         backend_env_file = self.backend_path / ".env"
@@ -982,9 +1004,11 @@ class AgentService(
 
         exec_model_display = self._task_profiles.get(task_id, {}).get("model", "sonnet")
         logger.info(
-            f"[AgentService] [Model: {exec_model_display}] Starting task execution for {task_id}"
+            "[AgentService] [Model: %s] Starting task execution for %s",
+            sanitize_log(exec_model_display),
+            sanitize_log(task_id),
         )
-        logger.info(f"[AgentService] Command: {' '.join(cmd)}")
+        logger.info(f"[AgentService] Command: {sanitize_log(' '.join(cmd))}")
 
         # Claude Code Remote Control (Issue #50 / native --remote-control flag).
         # When enabled per-task, the spawned `claude` registers a session with
@@ -1040,8 +1064,8 @@ class AgentService(
                 "Scrubbed CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_AUTH_TOKEN — "
                 "agent will fall back to ~/.claude/.credentials.json "
                 "(must be a full-scope token from `claude auth login`).",
-                task_id,
-                _rc_session_name,
+                sanitize_log(task_id),
+                sanitize_log(_rc_session_name),
             )
 
         # E2E test mode (Epic #44 R4): when AIFACTORY_TEST_AGENT_CMD is
@@ -1059,8 +1083,8 @@ class AgentService(
             logger.warning(
                 "[AgentService] AIFACTORY_TEST_AGENT_CMD active — replacing "
                 "agent command with %r (task_id=%s). MUST NOT be set in prod.",
-                cmd,
-                task_id,
+                sanitize_log(cmd),
+                sanitize_log(task_id),
             )
 
         # Start subprocess with a pseudo-TTY to prevent "Stream closed" errors
@@ -1186,7 +1210,7 @@ class AgentService(
             # belt-and-suspenders guard so a wrapper bug here cannot
             # take down task execution.
             logger.warning(
-                f"[AgentService] rmux create hook raised (ignored); spec_id={spec_id}"
+                f"[AgentService] rmux create hook raised (ignored); spec_id={sanitize_log(spec_id)}"
             )
 
         return proc
@@ -1229,14 +1253,14 @@ class AgentService(
                 try:
                     if await self._store().remove_queued(task_id):
                         logger.info(
-                            f"[AgentService] Removed queued task {task_id} "
+                            f"[AgentService] Removed queued task {sanitize_log(task_id)} "
                             "from durable admission queue"
                         )
                         return True
                 except Exception:  # noqa: BLE001 - never break stop on a store hiccup
                     logger.warning(
                         "[AgentService] durable remove_queued failed for %s",
-                        task_id,
+                        sanitize_log(task_id),
                         exc_info=True,
                     )
             if any(q.task_id == task_id for q in self._task_queue):
@@ -1245,7 +1269,8 @@ class AgentService(
                         q for q in self._task_queue if q.task_id != task_id
                     )
                 logger.info(
-                    f"[AgentService] Removed queued task {task_id} from admission queue"
+                    "[AgentService] Removed queued task %s from admission queue",
+                    sanitize_log(task_id),
                 )
                 return True
             # RFC-0016 #671: a build may run as a k8s Job (no in-pod process to
@@ -1254,7 +1279,8 @@ class AgentService(
                 if await self._stop_kubejob_build(task_id):
                     return True
             logger.info(
-                f"[AgentService] Task {task_id} not in running_tasks (already stopped or never started)"
+                "[AgentService] Task %s not in running_tasks (already stopped or never started)",
+                sanitize_log(task_id),
             )
             return False
 
@@ -1287,7 +1313,7 @@ class AgentService(
             main_log_writer.set_phase_status(spec_id, actual_phase, "failed")
             del self._task_log_writers[task_id]
             logger.debug(
-                f"[AgentService] Finalized task logs for stopped task {task_id}"
+                f"[AgentService] Finalized task logs for stopped task {sanitize_log(task_id)}"
             )
 
         # Persist failed status to implementation_plan.json
@@ -1307,7 +1333,8 @@ class AgentService(
             await _rmux_reap(_reap_spec_id)
         except Exception:
             logger.warning(
-                f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={_reap_spec_id}"
+                "[AgentService] rmux reap hook raised in stop_task (ignored); spec_id=%s",
+                sanitize_log(_reap_spec_id),
             )
 
         # Use pop with default to handle race condition where _monitor_process
@@ -1336,7 +1363,7 @@ class AgentService(
             except Exception:  # noqa: BLE001
                 logger.warning(
                     "[AgentService] could not free durable slot on stop for %s",
-                    task_id,
+                    sanitize_log(task_id),
                     exc_info=True,
                 )
 

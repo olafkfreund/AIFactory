@@ -34,6 +34,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
+from factory_common.logsafe import sanitize_log
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import AuditLog
@@ -251,8 +252,8 @@ async def log_audit_event_bg(
     except Exception:
         logger.warning(
             "Failed to write background audit log entry: action=%s resource_type=%s resource_id=%s",
-            action,
-            resource_type,
-            resource_id,
+            sanitize_log(action),
+            sanitize_log(resource_type),
+            sanitize_log(resource_id),
             exc_info=True,
         )

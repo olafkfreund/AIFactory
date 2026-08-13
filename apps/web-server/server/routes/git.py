@@ -2,18 +2,23 @@
 Git, Ollama, MCP, and utility routes.
 """
 
+import logging
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from server.error_ref import client_error
 from server.services.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -33,7 +38,10 @@ def run_git_command(args: list[str], cwd: str) -> dict:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "run git command failed", e),
+        }
 
 
 @router.get("/branches")
@@ -302,10 +310,25 @@ async def pull_ollama_model(request: PullModelRequest):
         else:
             return {"success": False, "error": f"Pull failed: {status}"}
 
+    except ValueError as e:
+        # The outbound-URL guard's own refusal. Deliberately surfaced verbatim
+        # rather than behind a reference id: it is developer-written text that
+        # quotes only the URL the CALLER just sent, so it discloses nothing
+        # internal, and telling someone *why* their Ollama URL was rejected is
+        # the whole point of the guard. Narrow on purpose -- everything else
+        # still goes through client_error below.
+        logger.warning("refused an Ollama pull: %s", sanitize_log(e))
+        return {"success": False, "error": str(e)}
     except urllib.error.URLError as e:
-        return {"success": False, "error": f"Failed to connect to Ollama: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to connect to Ollama", e),
+        }
     except Exception as e:
-        return {"success": False, "error": f"Failed to pull model: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to pull model", e),
+        }
 
 
 # ============================================
@@ -461,7 +484,10 @@ async def install_claude_code():
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "fnm installation timed out (60s)"}
         except Exception as e:
-            return {"success": False, "error": f"Failed at step 'Install fnm': {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed at step 'Install fnm'", e),
+            }
 
         # 3b: Install Node.js LTS via fnm
         try:
@@ -476,7 +502,10 @@ async def install_claude_code():
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "Node.js installation timed out (120s)"}
         except Exception as e:
-            return {"success": False, "error": f"Failed at step 'Install Node.js': {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed at step 'Install Node.js'", e),
+            }
 
         # 3c: Set fnm default so login shells pick it up
         try:
@@ -496,7 +525,9 @@ async def install_claude_code():
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Node.js installed but verification failed: {e}",
+                "error": client_error(
+                    logger, "Node.js installed but verification failed", e
+                ),
             }
 
     # Step 4: Install Claude Code CLI
@@ -516,7 +547,10 @@ async def install_claude_code():
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "npm install timed out (180s)"}
     except Exception as e:
-        return {"success": False, "error": f"Failed at step 'Install Claude Code': {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed at step 'Install Claude Code'", e),
+        }
 
     # Step 5: Verify installation
     version_str = "unknown"
@@ -532,7 +566,9 @@ async def install_claude_code():
     except Exception as e:
         return {
             "success": False,
-            "error": f"Installation completed but verification failed: {e}",
+            "error": client_error(
+                logger, "Installation completed but verification failed", e
+            ),
         }
 
     return {
@@ -752,7 +788,7 @@ async def check_mcp_health(server: McpServerConfig):
                 "data": {
                     "serverId": server.id,
                     "status": "unhealthy",
-                    "message": f"refused to probe this URL: {exc}",
+                    "message": client_error(logger, "refused to probe this URL", exc),
                 },
             }
 
@@ -776,7 +812,7 @@ async def check_mcp_health(server: McpServerConfig):
                 "data": {
                     "serverId": server.id,
                     "status": "unhealthy",
-                    "message": str(e),
+                    "message": client_error(logger, "check mcp health failed", e),
                 },
             }
 
@@ -1021,7 +1057,7 @@ async def download_source_update():
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to update Magestic AI source: {str(e)}",
+            "error": client_error(logger, "Failed to update Magestic AI source", e),
         }
 
 
@@ -1282,7 +1318,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to create worktree directory: {str(e)}",
+            "error": client_error(logger, "Failed to create worktree directory", e),
         }
 
     # Build git worktree add command
@@ -1375,7 +1411,10 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "run gh command failed", e),
+        }
 
 
 @releases_router.post("")
@@ -1451,4 +1490,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to create GitHub release: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to create GitHub release", e),
+        }

@@ -5,6 +5,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.specpath import safe_spec_component
 
@@ -38,6 +40,8 @@ from ..tenancy import (
 )
 from . import changelog, context, files, git, github
 from .project_authz import require_project_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -584,7 +588,7 @@ async def scan_for_projects(request: ScanProjectsRequest):
         # Handle unexpected errors
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to scan for projects: {str(e)}",
+            detail=client_error(logger, "Failed to scan for projects", e),
         )
 
 
@@ -630,7 +634,7 @@ async def add_project(
         except GitOperationError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Clone failed: {e}",
+                detail=client_error(logger, "Clone failed", e),
             )
         project_path = cloned_path.resolve()
         created_directory = True
@@ -646,7 +650,7 @@ async def add_project(
             except OSError as e:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Cannot create directory: {project.path} ({e})",
+                    detail=client_error(logger, "Cannot create directory:  ()", e),
                 )
 
         if not project_path.is_dir():
@@ -815,7 +819,10 @@ async def initialize_project(
         # Return nested format expected by frontend
         return {"success": True, "data": {"success": True}}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "initialize project failed", e),
+        }
 
 
 @router.get("/{project_id}/version")
@@ -1020,7 +1027,8 @@ async def update_project_settings(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update project settings: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update project settings", e),
         )
 
 
@@ -1172,7 +1180,10 @@ async def list_project_worktrees(
 
         return {"worktrees": enriched_worktrees}
     except Exception as e:
-        return {"worktrees": [], "error": str(e)}
+        return {
+            "worktrees": [],
+            "error": client_error(logger, "list project worktrees failed", e),
+        }
 
 
 @router.get("/{project_id}/tasks")

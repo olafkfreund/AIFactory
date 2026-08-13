@@ -28,6 +28,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,10 +93,10 @@ async def run_delegation(
             await asyncio.wait_for(proc.wait(), timeout=PLANNER_TIMEOUT_SECONDS)
         except TimeoutError:
             logger.warning(
-                "[delegation_runner] planner timed out after %ds task=%s — "
+                "[delegation_runner] planner timed out after %ss task=%s — "
                 "posting comment with whatever was written so far",
-                PLANNER_TIMEOUT_SECONDS,
-                task_id,
+                sanitize_log(PLANNER_TIMEOUT_SECONDS),
+                sanitize_log(task_id),
             )
             try:
                 proc.kill()
@@ -119,9 +121,9 @@ async def run_delegation(
         if existing is not None:
             logger.info(
                 "[delegation_runner] enrichment comment already exists on "
-                "issue=%d (id=%s) — skipping re-post",
-                issue_number,
-                existing,
+                "issue=%s (id=%s) — skipping re-post",
+                sanitize_log(issue_number),
+                sanitize_log(existing),
             )
             skipped_dup = True
         else:
@@ -129,10 +131,10 @@ async def run_delegation(
             posted = True
     except Exception as e:
         logger.warning(
-            "[delegation_runner] comment post failed project=%s issue=%d err=%s",
-            project_id,
-            issue_number,
-            e,
+            "[delegation_runner] comment post failed project=%s issue=%s err=%s",
+            sanitize_log(project_id),
+            sanitize_log(issue_number),
+            sanitize_log(e),
         )
 
     # ------------------------------------------------------------------
@@ -146,7 +148,7 @@ async def run_delegation(
         logger.warning(
             "[delegation_runner] provider does not support assign_to_user; "
             "skipping Copilot assignment (project=%s)",
-            project_id,
+            sanitize_log(project_id),
         )
 
     # ------------------------------------------------------------------
@@ -192,9 +194,9 @@ async def _existing_enrichment_comment(provider: Any, issue_number: int) -> int 
         )
     except Exception as e:
         logger.debug(
-            "[delegation_runner] could not list comments on issue=%d: %s",
-            issue_number,
-            e,
+            "[delegation_runner] could not list comments on issue=%s: %s",
+            sanitize_log(issue_number),
+            sanitize_log(e),
         )
         return None
     if not isinstance(comments, list):

@@ -30,13 +30,16 @@ handlers ``merge_worktree`` / ``get_worktree_diff`` historically lived in
 """
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.error_ref import client_error
 from server.services.approval import approved, merge_pull_request
 from server.services.http_verdict import honest_status
 from server.services.task_branch import (
@@ -49,6 +52,8 @@ from server.specpath import safe_spec_component
 from ..paths import get_data_dir
 from .project_authz import require_task_access
 from .projects import get_projects_file
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -595,12 +600,14 @@ async def resolve_worktree_conflicts(
     merge_head = project_path / ".git" / "MERGE_HEAD"
     if merge_head.exists():
         logger.info(
-            f"Merge already in progress for {task_id}, resolving existing conflicts"
+            f"Merge already in progress for {sanitize_log(task_id)}, resolving existing conflicts"
         )
     else:
         # Start the git merge (allow conflicts)
         logger.info(
-            f"Starting git merge of {worktree_branch} into current branch for task {task_id}"
+            "Starting git merge of %s into current branch for task %s",
+            sanitize_log(worktree_branch),
+            sanitize_log(task_id),
         )
         merge_result = subprocess.run(
             ["git", "merge", work_ref, "--no-commit", "--no-ff"],
@@ -611,7 +618,7 @@ async def resolve_worktree_conflicts(
 
         if merge_result.returncode == 0:
             # Clean merge, no conflicts - commit it.
-            logger.info(f"Clean merge for {task_id}, committing")
+            logger.info(f"Clean merge for {sanitize_log(task_id)}, committing")
             # READ THE RESULT (#1210). This used to discard it, so a commit
             # refused by a hook — or blocked by a stale index.lock — was reported
             # as "Clean merge - no conflicts" with the merge left uncommitted in
@@ -653,7 +660,9 @@ async def resolve_worktree_conflicts(
                 "error": f"Git merge failed: {merge_result.stderr.strip()}",
             }
         else:
-            logger.info(f"Merge has conflicts for {task_id}, resolving with AI")
+            logger.info(
+                f"Merge has conflicts for {sanitize_log(task_id)}, resolving with AI"
+            )
 
     if not options.useAI:
         return {
@@ -826,7 +835,14 @@ async def resolve_worktree_conflicts(
 
         except Exception as e:
             logger.error(f"Failed to resolve {file_path}: {e}")
-            failed_files.append({"file": file_path, "error": str(e)})
+            failed_files.append(
+                {
+                    "file": file_path,
+                    "error": client_error(
+                        logger, "resolve worktree conflicts failed", e
+                    ),
+                }
+            )
 
     if failed_files:
         return {
@@ -905,7 +921,7 @@ async def resolve_uncommitted_conflicts(
     except ValueError:
         return {"success": False, "error": "Invalid task ID format"}
 
-    logger.info(f"Resolving uncommitted conflicts for task {task_id}")
+    logger.info(f"Resolving uncommitted conflicts for task {sanitize_log(task_id)}")
 
     # Find the task's project
     projects_data_dir = get_data_dir()
@@ -1059,7 +1075,10 @@ async def resolve_uncommitted_conflicts(
                     "error": f"Failed to stash changes: {result.stderr or result.stdout}",
                 }
     except subprocess.CalledProcessError as e:
-        return {"success": False, "error": f"Failed to stash changes: {e.stderr}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to stash changes", e),
+        }
 
     resolved_files = []
     failed_files = []
@@ -1145,7 +1164,14 @@ async def resolve_uncommitted_conflicts(
 
             except Exception as e:
                 logger.error(f"Failed to resolve {file_path}: {e}")
-                failed_files.append({"file": file_path, "error": str(e)})
+                failed_files.append(
+                    {
+                        "file": file_path,
+                        "error": client_error(
+                            logger, "resolve uncommitted conflicts failed", e
+                        ),
+                    }
+                )
 
     finally:
         # Drop the stash only if we created one
@@ -1205,7 +1231,7 @@ async def resolve_git_merge_conflicts(
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Resolving git merge conflicts for task {task_id}")
+    logger.info(f"Resolving git merge conflicts for task {sanitize_log(task_id)}")
 
     # Barrier BEFORE task_id reaches any path expression (#1056). This route
     # uses task_id WHOLE rather than splitting it, so the structural regression
@@ -1263,7 +1289,9 @@ async def resolve_git_merge_conflicts(
         logger.info(f"Found merge in progress in main project: {project_path}")
     elif merge_head_worktree and (merge_head_worktree / "MERGE_HEAD").exists():
         work_path = worktree_path
-        logger.info(f"Found merge in progress in worktree: {worktree_path}")
+        logger.info(
+            f"Found merge in progress in worktree: {sanitize_log(worktree_path)}"
+        )
     else:
         # No merge in progress - check if there are files with conflict markers anyway
         # This can happen if the merge state was cleared but files still have markers
@@ -1339,7 +1367,7 @@ async def resolve_git_merge_conflicts(
         try:
             full_path = work_path / file_path
             if not full_path.exists():
-                logger.warning(f"Conflicted file not found: {full_path}")
+                logger.warning(f"Conflicted file not found: {sanitize_log(full_path)}")
                 failed_files.append({"file": file_path, "error": "File not found"})
                 continue
 
@@ -1382,7 +1410,7 @@ async def resolve_git_merge_conflicts(
 
                 # Write resolved content
                 full_path.write_text(resolved_content)
-                logger.info(f"Wrote resolved content to {full_path}")
+                logger.info(f"Wrote resolved content to {sanitize_log(full_path)}")
 
                 # Stage the file
                 result = subprocess.run(
@@ -1409,7 +1437,14 @@ async def resolve_git_merge_conflicts(
 
         except Exception as e:
             logger.error(f"Failed to resolve {file_path}: {e}")
-            failed_files.append({"file": file_path, "error": str(e)})
+            failed_files.append(
+                {
+                    "file": file_path,
+                    "error": client_error(
+                        logger, "resolve git merge conflicts failed", e
+                    ),
+                }
+            )
 
     if failed_files:
         return {
@@ -1455,8 +1490,7 @@ async def resolve_git_merge_conflicts(
             commit_result = f"Commit failed: {result.stderr}"
             logger.warning(f"Failed to auto-commit merge: {result.stderr}")
     except Exception as e:
-        commit_result = f"Commit error: {e!s}"
-        logger.error(f"Error during auto-commit: {e}")
+        commit_result = client_error(logger, "Commit error", e)
 
     return {
         "success": True,
@@ -1508,7 +1542,7 @@ async def abort_worktree_merge(
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info(f"Aborting merge for task {task_id}")
+    logger.info(f"Aborting merge for task {sanitize_log(task_id)}")
 
     # Parse task_id to get spec_id
     # task_id could be "project_id:spec_id" or just "spec_id"
@@ -1572,7 +1606,9 @@ async def abort_worktree_merge(
                 )
                 if result.returncode == 0:
                     aborted_locations.append("worktree")
-                    logger.info(f"Aborted merge in worktree: {worktree_path}")
+                    logger.info(
+                        f"Aborted merge in worktree: {sanitize_log(worktree_path)}"
+                    )
                 else:
                     logger.warning(
                         f"Failed to abort merge in worktree: {result.stderr}"
@@ -1581,8 +1617,9 @@ async def abort_worktree_merge(
         except subprocess.TimeoutExpired:
             errors.append("Worktree: git merge --abort timed out")
         except Exception as e:
-            logger.error(f"Error aborting merge in worktree: {e}")
-            errors.append(f"Worktree: {e!s}")
+            errors.append(
+                f"Worktree: {client_error(logger, 'could not abort the merge', e)}"
+            )
 
     # Try to abort merge in main project
     if project_path and project_path.exists():
@@ -1613,8 +1650,9 @@ async def abort_worktree_merge(
         except subprocess.TimeoutExpired:
             errors.append("Main project: git merge --abort timed out")
         except Exception as e:
-            logger.error(f"Error aborting merge in main project: {e}")
-            errors.append(f"Main project: {e!s}")
+            errors.append(
+                f"Main project: {client_error(logger, 'could not abort the merge', e)}"
+            )
 
     if aborted_locations:
         return {
@@ -1826,7 +1864,7 @@ async def merge_worktree(
             }
         return {
             "success": False,
-            "error": f"Merge failed: {e.stderr or e.stdout}",
+            "error": client_error(logger, "Merge failed", e),
             "output": e.stdout + e.stderr,
         }
 
@@ -2394,4 +2432,7 @@ async def discard_worktree(
             },
         }
     except Exception as e:
-        return {"success": False, "error": f"Failed to discard worktree: {e!s}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to discard worktree", e),
+        }

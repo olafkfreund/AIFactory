@@ -39,6 +39,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 # Dedicated control-plane file name. Lives alongside implementation_plan.json
@@ -83,8 +85,8 @@ def read_control(spec_dir: Path) -> dict[str, Any]:
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(
                 "[task_control] Failed to read %s, falling back to legacy: %s",
-                cfile,
-                e,
+                sanitize_log(cfile),
+                sanitize_log(e),
             )
 
     # Backward-compat read-time migration from implementation_plan.json.

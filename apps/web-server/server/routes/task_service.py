@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -215,8 +216,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
             logger = logging.getLogger(__name__)
             logger.info(
-                f"[WorktreeSync] Syncing plan for {spec_id}: "
-                f"worktree has {worktree_completed} completed vs main {main_completed}"
+                "[WorktreeSync] Syncing plan for %s: worktree has %s completed vs main %s",
+                sanitize_log(spec_id),
+                sanitize_log(worktree_completed),
+                sanitize_log(main_completed),
             )
             # Issue #259: control-plane state lives in task_control.json, NOT in
             # the agent-written plan. Strip status/reviewReason from the worktree

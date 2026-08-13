@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..crypto.secret_field import unseal, unseal_profiles  # noqa: TID252
 
 _log = logging.getLogger(__name__)
@@ -218,7 +220,7 @@ class CredentialMixin:
         except Exception:  # noqa: BLE001
             _log.debug(
                 "[AgentService] token pool release raised for %s (ignored)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         self._task_profiles.pop(task_id, None)
@@ -470,7 +472,9 @@ class CredentialMixin:
             new_cmd.extend(["--model", "sonnet"])
 
         logger.info(
-            f"[AgentService] [Model: sonnet] Fallback triggered for {task_id} (original: {failed_model})"
+            "[AgentService] [Model: sonnet] Fallback triggered for %s (original: %s)",
+            sanitize_log(task_id),
+            sanitize_log(failed_model),
         )
 
         # Emit WebSocket event for model fallback

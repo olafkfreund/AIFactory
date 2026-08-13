@@ -11,9 +11,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from server.error_ref import client_error
 from server.specpath import safe_spec_component
 
 from ..services import task_control
@@ -42,6 +44,8 @@ from trusted_plan import (  # noqa: E402 — needs sys.path above (#390)
     ingest_trusted_plan,
     verify_trusted_plan,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -264,7 +268,9 @@ async def start_task(
     import logging
 
     logger = logging.getLogger(__name__)
-    logger.info(f"[StartTask] ===== START ENDPOINT CALLED ===== task_id: {task_id}")
+    logger.info(
+        f"[StartTask] ===== START ENDPOINT CALLED ===== task_id: {sanitize_log(task_id)}"
+    )
 
     # Parse task ID
     if ":" not in task_id:
@@ -353,9 +359,9 @@ async def start_task(
                     f"reason={transport.get('reason')}\n"
                 )
                 logger.info(
-                    f"[StartTask] {task_id} routed to TFactory "
-                    f"(coder not started); transport sent={transport.get('sent')} "
-                    f"reason={transport.get('reason')}"
+                    f"[StartTask] {sanitize_log(task_id)} routed to TFactory "
+                    f"(coder not started); transport sent={sanitize_log(transport.get('sent'))} "
+                    f"reason={sanitize_log(transport.get('reason'))}"
                 )
                 return {
                     "success": True,
@@ -368,7 +374,11 @@ async def start_task(
                     ),
                 }
     except (json.JSONDecodeError, OSError, ImportError) as e:
-        logger.warning(f"[StartTask] PFactory routing check failed for {task_id}: {e}")
+        logger.warning(
+            "[StartTask] PFactory routing check failed for %s: %s",
+            sanitize_log(task_id),
+            sanitize_log(e),
+        )
 
     # Fix 3: Check if a VALID implementation_plan.json exists - if not, run spec creation first
     # This handles the case where projects.py created the spec directory but spec_runner.py hasn't run yet
@@ -378,7 +388,7 @@ async def start_task(
     logger = logging.getLogger(__name__)
     implementation_plan = spec_dir / "implementation_plan.json"
     logger.info(
-        f"[StartTask] Checking for implementation_plan.json at {implementation_plan}"
+        f"[StartTask] Checking for implementation_plan.json at {sanitize_log(implementation_plan)}"
     )
     logger.info(
         f"[StartTask] implementation_plan.json exists: {implementation_plan.exists()}"
@@ -415,7 +425,8 @@ async def start_task(
         from datetime import datetime
 
         logger.info(
-            f"[StartTask] No valid implementation plan found, will run spec creation for {task_id}"
+            "[StartTask] No valid implementation plan found, will run spec creation for %s",
+            sanitize_log(task_id),
         )
         requirements_file = spec_dir / "requirements.json"
         if not requirements_file.exists():
@@ -445,7 +456,8 @@ async def start_task(
         # === FAST PATH: Simple tasks skip spec creation entirely ===
         if complexity == "simple":
             logger.info(
-                f"[StartTask] Simple task fast path: generating spec + plan programmatically for {task_id}"
+                "[StartTask] Simple task fast path: generating spec + plan programmatically for %s",
+                sanitize_log(task_id),
             )
 
             # 1. Generate minimal spec.md
@@ -542,11 +554,13 @@ async def start_task(
                     plan["phase"] = "spec_creation"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
                     logger.info(
-                        f"[StartTask] Persisted status=in_progress (spec creation) to {implementation_plan}"
+                        "[StartTask] Persisted status=in_progress (spec creation) to %s",
+                        sanitize_log(implementation_plan),
                     )
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
-                        f"[StartTask] Failed to persist spec creation status: {e}"
+                        "[StartTask] Failed to persist spec creation status: %s",
+                        sanitize_log(e),
                     )
 
                 # Emit status to show spec creation in progress
@@ -559,7 +573,7 @@ async def start_task(
             except Exception as e:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to start spec creation: {str(e)}",
+                    detail=client_error(logger, "Failed to start spec creation", e),
                 )
 
     # Sync runtime options to task_metadata.json for backend to read
@@ -617,7 +631,8 @@ async def start_task(
         effective_workers = task_metadata.get("workers")
     if effective_parallel:
         logger.info(
-            f"[StartTask] Parallel execution requested (workers={effective_workers or 'default'})"
+            "[StartTask] Parallel execution requested (workers=%s)",
+            sanitize_log(effective_workers or "default"),
         )
 
     agent_service = get_agent_service()
@@ -631,7 +646,8 @@ async def start_task(
             if review_data.get("approved", False):
                 force_execution = True
                 logger.info(
-                    f"[StartTask] Plan was manually approved for {task_id}, using --force"
+                    "[StartTask] Plan was manually approved for %s, using --force",
+                    sanitize_log(task_id),
                 )
         except (json.JSONDecodeError, OSError):
             pass
@@ -640,7 +656,8 @@ async def start_task(
         if force_execution:
             # Plan was approved — clean up stale spec creation process before starting execution
             logger.info(
-                f"[StartTask] Cleaning up stale spec creation process for approved task {task_id}"
+                "[StartTask] Cleaning up stale spec creation process for approved task %s",
+                sanitize_log(task_id),
             )
             try:
                 await agent_service.stop_task(task_id)
@@ -673,7 +690,8 @@ async def start_task(
                     plan["reviewReason"] = "plan_review"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
                     logger.info(
-                        f"[StartTask] Plan requires approval for {task_id}, set human_review"
+                        "[StartTask] Plan requires approval for %s, set human_review",
+                        sanitize_log(task_id),
                     )
                 # Issue #259: control-plane state is authoritative in the
                 # agent-immutable store.
@@ -685,7 +703,8 @@ async def start_task(
                 )
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(
-                    f"[StartTask] Failed to persist human_review status: {e}"
+                    "[StartTask] Failed to persist human_review status: %s",
+                    sanitize_log(e),
                 )
 
             await emit_task_status(task_id, "human_review", "plan_review")
@@ -731,10 +750,12 @@ async def start_task(
                 provider=provider,
             )
         except Exception as e:
-            logger.exception(f"[StartTask] Delegation failed for {task_id}")
+            logger.exception(
+                f"[StartTask] Delegation failed for {sanitize_log(task_id)}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Delegation failed: {e}",
+                detail=client_error(logger, "Delegation failed", e),
             )
         return {
             "success": True,
@@ -750,7 +771,7 @@ async def start_task(
         logger.warning(
             "[StartTask] Task %s has enableDelegation=true but no githubIssueNumber "
             "in metadata — falling through to local execution",
-            task_id,
+            sanitize_log(task_id),
         )
 
     try:
@@ -769,7 +790,7 @@ async def start_task(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start task: {str(e)}",
+            detail=client_error(logger, "Failed to start task", e),
         )
 
     # RFC-0016 #668: a None return means the build was admitted to the
@@ -792,7 +813,7 @@ async def start_task(
             plan["status"] = "in_progress"
             implementation_plan.write_text(json.dumps(plan, indent=2))
             logger.info(
-                f"[StartTask] Persisted status=in_progress to {implementation_plan}"
+                f"[StartTask] Persisted status=in_progress to {sanitize_log(implementation_plan)}"
             )
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(f"[StartTask] Failed to persist status: {e}")
@@ -1024,9 +1045,9 @@ async def recover_task(
             import logging
 
             logging.getLogger(__name__).warning(
-                f"Auto-restart failed for {task_id}: {e}"
+                "Auto-restart failed for %s: %s", sanitize_log(task_id), sanitize_log(e)
             )
-            auto_restart_error = str(e)
+            auto_restart_error = client_error(logger, "Auto-restart failed", e)
 
     # Emit status change via WebSocket (single final status to avoid UI flicker)
     await emit_task_status(task_id, reset_status)
@@ -1155,7 +1176,7 @@ async def create_and_run_task(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start task creation: {str(e)}",
+            detail=client_error(logger, "Failed to start task creation", e),
         )
 
     return {
@@ -1374,7 +1395,7 @@ async def create_from_trusted_plan(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start build from trusted plan: {str(e)}",
+            detail=client_error(logger, "Failed to start build from trusted plan", e),
         )
 
     return {
@@ -1444,7 +1465,8 @@ async def dispatch_task_to_copilot(
     if not is_dispatch_enabled():
         if request.fallback_to_local:
             logger.info(
-                "[copilot-dispatch] disabled — fallback signal for task %s", task_id
+                "[copilot-dispatch] disabled — fallback signal for task %s",
+                sanitize_log(task_id),
             )
             return {
                 "task_id": task_id,
@@ -1466,17 +1488,21 @@ async def dispatch_task_to_copilot(
             service.dispatch, request.repo_full_name, request.issue_number
         )
     except RuntimeError as exc:
-        logger.warning("[copilot-dispatch] dispatch failed task=%s: %s", task_id, exc)
+        logger.warning(
+            "[copilot-dispatch] dispatch failed task=%s: %s",
+            sanitize_log(task_id),
+            sanitize_log(exc),
+        )
         if request.fallback_to_local:
             return {
                 "task_id": task_id,
                 "dispatched": False,
-                "reason": str(exc),
+                "reason": client_error(logger, "dispatch task to copilot failed", exc),
                 "fallback": True,
             }
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
+            detail=client_error(logger, "dispatch task to copilot failed", exc),
         ) from exc
 
     # Persist dispatch metadata.

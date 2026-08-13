@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -100,7 +101,9 @@ async def check_new_issues(projectId: str) -> dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.exception("[auto_fix] check_new_issues failed project=%s", projectId)
+        logger.exception(
+            "[auto_fix] check_new_issues failed project=%s", sanitize_log(projectId)
+        )
         raise HTTPException(status_code=500, detail=f"check failed: {e}")
     return result
 
@@ -114,8 +117,8 @@ async def start_auto_fix_one(projectId: str, issueNumber: int) -> dict[str, Any]
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.exception(
-            "[auto_fix] start_auto_fix failed project=%s issue=%d",
-            projectId,
-            issueNumber,
+            "[auto_fix] start_auto_fix failed project=%s issue=%s",
+            sanitize_log(projectId),
+            sanitize_log(issueNumber),
         )
         raise HTTPException(status_code=500, detail=f"start failed: {e}")

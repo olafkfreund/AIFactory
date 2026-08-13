@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..auth import WebSocketAuthError, authenticate_websocket
@@ -291,13 +292,17 @@ async def emit_subtask_update(
     logger = logging.getLogger(__name__)
     if previous_status:
         logger.info(
-            f"[WebSocket] Emitting task:subtask-update - taskId: {task_id}, "
-            f"subtaskId: {subtask_id}, status: {previous_status} -> {status}"
+            "[WebSocket] Emitting task:subtask-update - taskId: %s, "
+            "subtaskId: %s, status: %s -> %s",
+            sanitize_log(task_id),
+            sanitize_log(subtask_id),
+            sanitize_log(previous_status),
+            sanitize_log(status),
         )
     else:
         logger.info(
-            f"[WebSocket] Emitting task:subtask-update - taskId: {task_id}, "
-            f"subtaskId: {subtask_id}, status: {status}"
+            f"[WebSocket] Emitting task:subtask-update - taskId: {sanitize_log(task_id)}, "
+            f"subtaskId: {sanitize_log(subtask_id)}, status: {sanitize_log(status)}"
         )
     await broadcast_event(
         "task:subtask-update",

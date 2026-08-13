@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from factory_common.logsafe import sanitize_log
+
 from .wrapper import RmuxError, RmuxWrapper
 
 logger = logging.getLogger(__name__)
@@ -213,8 +215,8 @@ class SessionRegistry:
             self._states[spec_id] = state
             logger.info(
                 "rmux passive session created: spec_id=%s fifo=%s",
-                spec_id,
-                fifo_path,
+                sanitize_log(spec_id),
+                sanitize_log(fifo_path),
             )
         # Mirror into the shared Redis panes index OUTSIDE the registry lock
         # (#681) — best-effort, no-op when Redis is off.
@@ -282,7 +284,7 @@ class SessionRegistry:
         except Exception:  # noqa: BLE001 - Redis fan-out is best-effort
             logger.debug(
                 "[rmux] redis pane publish scheduling failed for %s",
-                spec_id,
+                sanitize_log(spec_id),
                 exc_info=True,
             )
 
@@ -316,7 +318,9 @@ class SessionRegistry:
             await redis_transport.unregister_pane(spec_id)
         except Exception:  # noqa: BLE001 - index mirror is best-effort
             logger.debug(
-                "[rmux] redis unregister_pane failed for %s", spec_id, exc_info=True
+                "[rmux] redis unregister_pane failed for %s",
+                sanitize_log(spec_id),
+                exc_info=True,
             )
 
     async def reap_for_task(self, spec_id: str) -> None:
@@ -369,8 +373,8 @@ class SessionRegistry:
 
         logger.info(
             "rmux session reaped: spec_id=%s session=%s",
-            spec_id,
-            state.session_name,
+            sanitize_log(spec_id),
+            sanitize_log(state.session_name),
         )
 
     # ------------------------------------------------------------------

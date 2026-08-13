@@ -15,13 +15,17 @@ helpers from ``tasks.py`` -- which is why this cluster is the lowest-risk slice
 of the god-file to lift out first.
 """
 
+import logging
 import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from server.error_ref import client_error
 from server.services.argv_safety import assert_not_option
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -81,7 +85,10 @@ def resolve_launch_dir(worktree_path: str) -> tuple[str, dict[str, object] | Non
             raise ValueError(f"Path does not exist: {worktree_path}")
         return assert_not_option(str(resolved), "worktreePath"), None
     except ValueError as exc:
-        return "", {"success": False, "error": str(exc)}
+        return "", {
+            "success": False,
+            "error": client_error(logger, "resolve launch dir failed", exc),
+        }
 
 
 def get_ide_command(ide: str, path: str) -> list[str]:
@@ -272,7 +279,10 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
             "error": f"IDE command not found. Make sure '{ide}' is installed and in your PATH.",
         }
     except Exception as e:
-        return {"success": False, "error": f"Failed to open IDE: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to open IDE", e),
+        }
 
 
 @router.post("/worktree/open-in-terminal")
@@ -307,7 +317,10 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
             "error": f"Terminal command not found. Make sure '{terminal}' is installed and in your PATH.",
         }
     except Exception as e:
-        return {"success": False, "error": f"Failed to open terminal: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to open terminal", e),
+        }
 
 
 @router.post("/worktree/detect-tools")

@@ -23,8 +23,11 @@ import threading
 import time
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
+
+from server.error_ref import client_error
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -901,12 +904,14 @@ def install_or_update_cli(cli: str):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to check Node.js: {e}",
+            "error": client_error(logger, "Failed to check Node.js", e),
         }
 
     # Step 2: Install/update via npm (scoped to the install dir for Antigravity)
     try:
-        logger.info(f"[{cli}] Running npm install -g {package}...")
+        logger.info(
+            f"[{sanitize_log(cli)}] Running npm install -g {sanitize_log(package)}..."
+        )
         install_result = _npm_install_cli(cli, package)
 
         if install_result.returncode != 0:
@@ -923,7 +928,7 @@ def install_or_update_cli(cli: str):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Installation failed: {e}",
+            "error": client_error(logger, "Installation failed", e),
         }
 
     # Step 3: Verify installation
@@ -935,7 +940,9 @@ def install_or_update_cli(cli: str):
         }
 
     action = "updated" if was_update else "installed"
-    logger.info(f"[{cli}] Successfully {action}: {new_version}")
+    logger.info(
+        f"[{sanitize_log(cli)}] Successfully {sanitize_log(action)}: {sanitize_log(new_version)}"
+    )
 
     return {
         "success": True,

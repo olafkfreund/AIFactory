@@ -42,6 +42,8 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -186,17 +188,17 @@ class WorkspaceStore:
             with fs.open(manifest_key, "w") as fh:
                 fh.write(json.dumps(manifest, indent=2))
             logger.info(
-                "workspace_store.upload_project: snapshotted %s (%d files, %d bytes) to %s",
-                local_path,
-                file_count,
-                total_bytes,
-                key_root,
+                "workspace_store.upload_project: snapshotted %s (%s files, %s bytes) to %s",
+                sanitize_log(local_path),
+                sanitize_log(file_count),
+                sanitize_log(total_bytes),
+                sanitize_log(key_root),
             )
         except Exception:
             logger.warning(
                 "workspace_store.upload_project: failed for org=%s project=%s",
-                org_id,
-                project_id,
+                sanitize_log(org_id),
+                sanitize_log(project_id),
                 exc_info=True,
             )
 

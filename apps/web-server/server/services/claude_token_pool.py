@@ -43,6 +43,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from ..crypto.secret_field import unseal_profiles  # noqa: TID252
 
 logger = logging.getLogger(__name__)
@@ -152,12 +154,12 @@ class ClaudeTokenPool:
             self._checked_out[task_id] = chosen.cred.profile_id
             logger.info(
                 "[ClaudeTokenPool] checked out profile %s (%s) for task %s "
-                "(pool size=%d, in_use=%d)",
-                chosen.cred.profile_id,
-                chosen.cred.profile_name,
-                task_id,
+                "(pool size=%s, in_use=%s)",
+                sanitize_log(chosen.cred.profile_id),
+                sanitize_log(chosen.cred.profile_name),
+                sanitize_log(task_id),
                 len(self._entries),
-                chosen.in_use,
+                sanitize_log(chosen.in_use),
             )
             return chosen.cred
 
@@ -171,10 +173,10 @@ class ClaudeTokenPool:
             if entry is not None and entry.in_use > 0:
                 entry.in_use -= 1
                 logger.debug(
-                    "[ClaudeTokenPool] released profile %s for task %s (in_use=%d)",
-                    profile_id,
-                    task_id,
-                    entry.in_use,
+                    "[ClaudeTokenPool] released profile %s for task %s (in_use=%s)",
+                    sanitize_log(profile_id),
+                    sanitize_log(task_id),
+                    sanitize_log(entry.in_use),
                 )
 
 

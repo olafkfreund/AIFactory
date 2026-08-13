@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..websockets.events import emit_task_status
 from . import task_control
 
@@ -50,7 +52,9 @@ class QueueMixin:
             )
         except OSError as e:
             _log.warning(
-                "[AgentService] could not persist queued status for %s: %s", task_id, e
+                "[AgentService] could not persist queued status for %s: %s",
+                sanitize_log(task_id),
+                sanitize_log(e),
             )
         try:
             await emit_task_status(task_id, "queued")

@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from server.error_ref import client_error
 from server.routes.projects import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs, spec_to_task
 
@@ -155,7 +156,9 @@ def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
             # that says it acted and did not is the exact defect it exists to
             # find.
             logger.exception("could not reap %s", item.task_id)
-            failures.append(f"{item.task_id}: {exc}")
+            failures.append(
+                f"{item.task_id}: {client_error(logger, 'could not mark the task cancelled', exc)}"
+            )
             continue
         reaped.append(item.task_id)
 

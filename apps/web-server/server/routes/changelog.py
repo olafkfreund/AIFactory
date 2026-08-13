@@ -10,9 +10,11 @@ import logging
 import re
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 
+from server.error_ref import client_error
 from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
@@ -172,7 +174,13 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
                     }
                 )
             except Exception as e:
-                specs.append({"taskId": task_id, "content": None, "error": str(e)})
+                specs.append(
+                    {
+                        "taskId": task_id,
+                        "content": None,
+                        "error": client_error(logger, "load task specs failed", e),
+                    }
+                )
         else:
             # Try finding by glob pattern for numeric prefix
             matching = list(specs_dir.glob(f"{task_id}*/spec.md"))
@@ -187,7 +195,13 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
                         }
                     )
                 except Exception as e:
-                    specs.append({"taskId": task_id, "content": None, "error": str(e)})
+                    specs.append(
+                        {
+                            "taskId": task_id,
+                            "content": None,
+                            "error": client_error(logger, "load task specs failed", e),
+                        }
+                    )
             else:
                 specs.append(
                     {"taskId": task_id, "content": None, "error": "Spec not found"}
@@ -254,7 +268,10 @@ async def generate_changelog(
             project_id=projectId, project_path=project_path, request=request_dict
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail=client_error(logger, "generate changelog failed", exc),
+        ) from exc
 
     if not success:
         return {"success": False, "error": "Failed to start generation"}
@@ -367,7 +384,10 @@ async def save_changelog(
             },
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "save changelog failed", e),
+        }
 
 
 @router.get("")
@@ -406,7 +426,13 @@ async def read_existing_changelog(projectId: str = Path(...)):
             "data": {"exists": True, "content": content, "lastVersion": last_version},
         }
     except Exception as e:
-        return {"success": True, "data": {"exists": True, "error": str(e)}}
+        return {
+            "success": True,
+            "data": {
+                "exists": True,
+                "error": client_error(logger, "read existing changelog failed", e),
+            },
+        }
 
 
 @router.post("/suggest-version")
@@ -534,7 +560,10 @@ async def get_changelog_branches(projectId: str = Path(...)):
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get changelog branches failed", e),
+        }
 
 
 @router.get("/tags")
@@ -602,7 +631,10 @@ async def get_changelog_tags(projectId: str = Path(...)):
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get changelog tags failed", e),
+        }
 
 
 @router.post("/commits-preview")
@@ -708,7 +740,10 @@ async def get_commits_preview(
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get commits preview failed", e),
+        }
 
 
 @router.post("/images")
@@ -774,7 +809,9 @@ async def save_changelog_image(
         except Exception as decode_error:
             return {
                 "success": False,
-                "error": f"Failed to decode base64 image data: {str(decode_error)}",
+                "error": client_error(
+                    logger, "Failed to decode base64 image data", decode_error
+                ),
             }
 
         # Validate decoded data is not empty
@@ -803,7 +840,10 @@ async def save_changelog_image(
     except HTTPException:
         raise
     except Exception as e:
-        return {"success": False, "error": f"Failed to save image: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to save image", e),
+        }
 
 
 # ============================================
@@ -971,10 +1011,11 @@ async def clear_insights_session(projectId: str = Path(...)):
         import logging
 
         logging.getLogger(__name__).error(
-            f"Failed to clear insights session: {e}", exc_info=True
+            "Failed to clear insights session: %s", sanitize_log(e), exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail=f"Failed to clear insights session: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to clear insights session", e),
         )
 
 
@@ -995,7 +1036,10 @@ async def create_task_from_insights(
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"create_task_from_insights failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "create task from insights failed", e),
+        }
 
 
 @insights_router.post("/generate-task")
@@ -1015,7 +1059,10 @@ async def generate_task_from_chat(
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"generate_task_from_chat failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "generate task from chat failed", e),
+        }
 
 
 @insights_router.get("/sessions")

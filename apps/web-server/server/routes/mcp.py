@@ -12,11 +12,16 @@ servers run.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
+
+from server.error_ref import client_error, error_reference
+
+logger = logging.getLogger(__name__)
 
 # Add the backend dir to sys.path so the catalog + credential modules
 # resolve. Mirrors the pattern used by auto_fix.py et al.
@@ -55,7 +60,10 @@ def _describe_creds_status(provider: str) -> dict[str, Any]:
             "source": status.source,
         }
     except ImportError as exc:
-        return {"available": False, "source": f"framework-unavailable:{exc}"}
+        # `source` is rendered in the UI, so the import error (which names module
+        # paths on disk) must not travel with it -- CWE-209, same as `error`.
+        error_reference(logger, "MCP credential framework unavailable", exc)
+        return {"available": False, "source": "framework-unavailable"}
 
 
 def _describe_marker_status(
@@ -116,7 +124,7 @@ async def get_mcp_status(project_id: str) -> dict[str, Any]:
     except ImportError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"MCP framework unavailable: {exc}",
+            detail=client_error(logger, "MCP framework unavailable", exc),
         )
 
     if project_path.exists():

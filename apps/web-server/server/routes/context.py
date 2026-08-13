@@ -4,13 +4,17 @@ Context and Memory routes.
 Handles project context, memory infrastructure, and Graphiti integration.
 """
 
+import logging
 import subprocess
 from pathlib import Path as FilePath
 
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
+from server.error_ref import client_error
 from server.services.pr_endgame import is_graphiti_enabled
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -211,7 +215,10 @@ async def refresh_project_index(projectId: str = Path(...)):
 
         return {"success": True, "data": index}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "refresh project index failed", e),
+        }
 
 
 @project_router.get("/memory/status")
@@ -731,7 +738,10 @@ async def update_project_env(
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to update environment: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to update environment", e),
+        }
 
 
 @project_router.get("/claude-auth")
@@ -826,7 +836,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to check Claude setup status: {str(e)}",
+            "error": client_error(logger, "Failed to check Claude setup status", e),
         }
 
 
