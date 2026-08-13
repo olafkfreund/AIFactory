@@ -8,7 +8,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import sys
 from contextlib import redirect_stdout, suppress
 
 import pytest

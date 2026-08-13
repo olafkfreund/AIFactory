@@ -18,7 +18,6 @@ these tests run without any network access or installed CLIs.
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -1331,7 +1330,6 @@ class TestOllamaProviderVerifyConnection:
 
     def test_verify_connection_success(self):
         """_verify_connection succeeds when server returns 200."""
-        import contextlib
 
         provider = OllamaProvider(base_url="http://localhost:11434")
 

@@ -50,7 +50,6 @@ def test_codex_error_json_in_content_raises_runtime_error(monkeypatch):
     provider must raise RuntimeError so the coder loop reports an actual error
     and does not silently exhaust retries.  (#286)
     """
-    from providers import codex_agentic
     from providers.codex_agentic import CodexAgenticProvider
 
     _ERROR_RESPONSE = {

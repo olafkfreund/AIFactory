@@ -8,7 +8,6 @@ the PR; tests gate structure + drill executability.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 from pathlib import Path
 

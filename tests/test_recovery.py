@@ -14,13 +14,12 @@ import json
 import shutil
 import sys
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from recovery import FailureType, RecoveryAction, RecoveryManager
+from recovery import FailureType, RecoveryManager
 
 
 def setup_test_environment():

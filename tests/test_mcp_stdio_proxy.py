@@ -23,10 +23,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
-import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 _WEB_SERVER = Path(__file__).parent.parent / "apps" / "web-server"
@@ -243,7 +241,6 @@ def test_audit_helper_passes_right_fields_for_authenticated_key(monkeypatch):
     # via sys.modules — `import server.mcp_stdio.router` ensures
     # it's loaded.
     import sys
-    from unittest.mock import AsyncMock
 
     import server.mcp_stdio.router  # noqa: F401  (load into sys.modules)
 

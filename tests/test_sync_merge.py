@@ -7,13 +7,6 @@ Tests the subtask status regression prevention in worktree-to-main sync.
 This tests the merge logic extracted from agent_service._sync_worktree_files().
 """
 
-import json
-import shutil
-import tempfile
-from pathlib import Path
-
-import pytest
-
 
 def merge_implementation_plan(main_plan: dict, worktree_plan: dict) -> dict:
     """

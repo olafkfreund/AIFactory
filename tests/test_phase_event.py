@@ -12,11 +12,7 @@ Tests the phase_event.py module including:
 
 import json
 import sys
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))

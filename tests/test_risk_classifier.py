@@ -20,16 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
 from risk_classifier import (
-    AssessmentFlags,
-    ComplexityAnalysis,
-    InfrastructureAnalysis,
-    IntegrationAnalysis,
-    KnowledgeAnalysis,
-    RiskAnalysis,
-    RiskAssessment,
     RiskClassifier,
-    ScopeAnalysis,
-    ValidationRecommendations,
     get_validation_requirements,
     load_risk_assessment,
 )

@@ -189,7 +189,6 @@ def test_html_generation():
         print("\n✗ Jinja2 not installed")
         return False
 
-    import shutil
     import tempfile
 
     # Create a temp spec directory

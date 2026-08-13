@@ -9,7 +9,6 @@ integration coverage lives in test_workspace_store_integration.py
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 

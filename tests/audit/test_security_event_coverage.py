@@ -20,6 +20,7 @@ def _run(coro):
 def test_auth_failure_writes_chained_audit(fresh_db, monkeypatch) -> None:
     """A rejected credential (the 401 path in auth.py) writes a hash-chained
     ``auth.failure`` row via the now-chained background writer."""
+    from server.database import engine as db_engine
     from server.database.models import AuditLog
     from server.services import audit_service
     from server.services.audit_chain import GENESIS, row_as_mapping, verify_chain
@@ -27,8 +28,11 @@ def test_auth_failure_writes_chained_audit(fresh_db, monkeypatch) -> None:
 
     _engine, SessionLocal = fresh_db
     # log_audit_event_bg opens its own session via async_session_factory;
-    # point it at the in-memory test DB.
-    monkeypatch.setattr(audit_service, "async_session_factory", SessionLocal)
+    # point it at the in-memory test DB. audit_service reads
+    # db_engine.async_session_factory live (Factory#import-of-mutable-attribute
+    # fix), so the patch target is the defining module, not a frozen
+    # import-time copy in the consumer.
+    monkeypatch.setattr(db_engine, "async_session_factory", SessionLocal)
 
     class _Req:
         class _Client:

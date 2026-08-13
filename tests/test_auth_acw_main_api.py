@@ -9,7 +9,6 @@ shared acw_ authenticator.
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
 
 import pytest
 from fastapi import FastAPI
@@ -26,8 +25,6 @@ def _app() -> FastAPI:
 
     @app.get("/api/whoami")
     async def whoami(request_state_user=None):
-        from fastapi import Request  # local import to read state
-
         return {"ok": True}
 
     return app

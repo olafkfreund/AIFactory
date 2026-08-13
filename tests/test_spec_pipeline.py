@@ -13,9 +13,8 @@ Tests the spec/pipeline.py module functionality including:
 import json
 import sys
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

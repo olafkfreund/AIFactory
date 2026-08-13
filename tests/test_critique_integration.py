@@ -8,14 +8,13 @@ Verifies that:
 3. Complete workflow integration functions properly
 """
 
-import json
 import sys
 from pathlib import Path
 
 # Add aifactory directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 
-from implementation_plan import Chunk, ChunkStatus, Verification, VerificationType
+from implementation_plan import Chunk, ChunkStatus
 from spec.critique import (
     CritiqueResult,
     format_critique_summary,

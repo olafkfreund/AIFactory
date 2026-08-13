@@ -13,7 +13,6 @@ import asyncio
 
 import pytest
 from agents.parallel_runner import (
-    PhaseRunResult,
     SubtaskResult,
     is_phase_parallel_eligible,
     run_parallel_phase,

@@ -21,8 +21,6 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_SERVER = REPO_ROOT / "apps" / "web-server"
 if str(WEB_SERVER) not in sys.path:

@@ -400,7 +400,6 @@ async def get_worktree_merge_preview(
 
     except Exception as e:
         # Log but don't fail - semantic detection is optional enhancement
-        import logging
 
         logging.getLogger(__name__).warning(f"Semantic conflict detection failed: {e}")
 
@@ -528,7 +527,6 @@ async def resolve_worktree_conflicts(
     3. If conflicts arise, uses AI to resolve each conflicted file
     4. Stages resolved files and commits the merge
     """
-    import logging
 
     logger = logging.getLogger(__name__)
 
@@ -935,7 +933,6 @@ async def resolve_uncommitted_conflicts(
     4. Writes merged content to working directory
     5. Drops the stash after successful merge
     """
-    import logging
 
     logger = logging.getLogger(__name__)
 
@@ -1273,7 +1270,6 @@ async def resolve_git_merge_conflicts(
     4. Write resolved content and stage the file
     5. Return success (user can then commit the merge)
     """
-    import logging
 
     logger = logging.getLogger(__name__)
     logger.info(f"Resolving git merge conflicts for task {sanitize_log(task_id)}")
@@ -1591,7 +1587,6 @@ async def abort_worktree_merge(
     unmerged/conflicted state. It runs `git merge --abort` in both the
     worktree and the main project to ensure a clean state.
     """
-    import logging
 
     logger = logging.getLogger(__name__)
     logger.info(f"Aborting merge for task {sanitize_log(task_id)}")
@@ -1733,7 +1728,6 @@ async def merge_worktree(
     """
     Merge the worktree branch into the base branch.
     """
-    import logging
     import subprocess
 
     # This handler uses ``logger`` (e.g. when clearing internal merge-blocking

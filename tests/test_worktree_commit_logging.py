@@ -16,7 +16,6 @@ This test drives the failure branch and asserts it returns False WITHOUT raising
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 

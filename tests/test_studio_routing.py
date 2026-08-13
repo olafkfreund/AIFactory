@@ -4,11 +4,8 @@ Unit tests for studio: model prefix routing and Google AI Studio native
 OpenAI-compatible integration.
 """
 
-import os
 import sys
 from pathlib import Path
-
-import pytest
 
 # Make apps/backend importable
 _BACKEND_DIR = Path(__file__).resolve().parent.parent / "apps" / "backend"
