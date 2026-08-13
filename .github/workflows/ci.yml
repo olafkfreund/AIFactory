@@ -807,7 +807,7 @@ jobs:
           "${HOME}/.local/bin/trivy" --version
 
       - name: Install Syft (for P0.9 SBOM generation)
-        uses: anchore/sbom-action/download-syft@v0.17.8
+        uses: anchore/sbom-action/download-syft@55dc4ee22412511ee8c3142cbea40418e6cec693  # v0.17.8
 
       - name: Set up Python
         uses: actions/setup-python@v5
