@@ -172,11 +172,38 @@ def test_commits_preview_bounds_count(monkeypatch, tmp_path):
 
 
 def test_launcher_is_never_taken_from_the_request_body():
-    """`customPath` was arbitrary program execution; the field is gone."""
+    """`customPath` was arbitrary program execution; it is refused, not ignored.
+
+    Dropping the field would let pydantic discard it silently, and the server
+    would launch a different program than the caller asked for while reporting
+    success. The field is kept so the request can fail loudly (#1267).
+    """
+    from fastapi import HTTPException
     from server.routes import worktree_tools
 
-    assert "customPath" not in worktree_tools.OpenInIDERequest.model_fields
-    assert "customPath" not in worktree_tools.OpenInTerminalRequest.model_fields
+    for model, handler, kwargs in (
+        (
+            worktree_tools.OpenInIDERequest,
+            worktree_tools.open_worktree_in_ide,
+            {"ide": "vscode"},
+        ),
+        (
+            worktree_tools.OpenInTerminalRequest,
+            worktree_tools.open_worktree_in_terminal,
+            {"terminal": "kitty"},
+        ),
+    ):
+        assert "customPath" in model.model_fields
+        request = model(worktreePath="/tmp", customPath="/bin/sh", **kwargs)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(handler(request))
+        assert exc.value.status_code == 400
+        assert "customPath" in exc.value.detail
+        assert "#1267" in exc.value.detail
+
+        # Absent or empty is the normal case and must not 400.
+        worktree_tools.reject_custom_path(None)
+        worktree_tools.reject_custom_path("")
 
 
 def test_no_terminal_command_embeds_the_path_in_a_shell_fragment(tmp_path):

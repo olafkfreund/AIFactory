@@ -277,9 +277,7 @@ export interface AppSettings {
   language?: SupportedLanguage;
   // Developer tools preferences
   preferredIDE?: SupportedIDE;
-  customIDEPath?: string;      // For 'custom' IDE
   preferredTerminal?: SupportedTerminal;
-  customTerminalPath?: string; // For 'custom' terminal
   // BMad Method session segmentation (per-story sessions with minimal context)
   bmadSessionSegmentation?: boolean;
   // Solo mode — single-agent focused execution, no parallel sub-agents

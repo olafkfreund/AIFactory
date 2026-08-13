@@ -12368,6 +12368,14 @@ components:
         ide:
           type: string
           title: Ide
+        customPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
       type: object
       required:
       - worktreePath
@@ -12382,6 +12390,14 @@ components:
         terminal:
           type: string
           title: Terminal
+        customPath:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
       type: object
       required:
       - worktreePath

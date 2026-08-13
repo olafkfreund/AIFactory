@@ -18,8 +18,8 @@ of the god-file to lift out first.
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from server.services.argv_safety import assert_not_option
 
@@ -31,11 +31,25 @@ router = APIRouter()
 # ============================================
 
 
+CUSTOM_PATH_DISABLED = (
+    "customPath is no longer accepted: it let the request body choose the "
+    "program the server executes, outside the agent sandbox, for any token "
+    "holder. Use the `ide`/`terminal` name instead. See issue #1267 for the "
+    "operator-side allowlist that would replace it."
+)
+
+
 class OpenInIDERequest(BaseModel):
     """Request body for opening a path in IDE."""
 
     worktreePath: str
     ide: str
+    # Kept in the model ONLY so a client that still sends it gets a 400 that
+    # says why. Dropping the field instead would make pydantic discard it and
+    # the server would launch a different program than the caller asked for,
+    # reporting success -- a silent substitution is a worse bug than the
+    # refusal (#1267).
+    customPath: str | None = Field(default=None, description=CUSTOM_PATH_DISABLED)
 
 
 class OpenInTerminalRequest(BaseModel):
@@ -43,6 +57,13 @@ class OpenInTerminalRequest(BaseModel):
 
     worktreePath: str
     terminal: str
+    customPath: str | None = Field(default=None, description=CUSTOM_PATH_DISABLED)
+
+
+def reject_custom_path(custom_path: str | None) -> None:
+    """Raise 400 if the caller tried to name its own launcher binary."""
+    if custom_path:
+        raise HTTPException(status_code=400, detail=CUSTOM_PATH_DISABLED)
 
 
 def resolve_launch_dir(worktree_path: str) -> tuple[str, dict[str, object] | None]:
@@ -225,6 +246,7 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
     Open a worktree path in the specified IDE.
     Used by the web UI to launch external IDE applications.
     """
+    reject_custom_path(request.customPath)
     ide = request.ide
 
     worktree_path, error = resolve_launch_dir(request.worktreePath)
@@ -259,6 +281,7 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
     Open a worktree path in the specified terminal emulator.
     Used by the web UI to launch external terminal applications.
     """
+    reject_custom_path(request.customPath)
     terminal = request.terminal
 
     worktree_path, error = resolve_launch_dir(request.worktreePath)
