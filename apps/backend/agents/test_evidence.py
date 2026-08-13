@@ -103,7 +103,7 @@ import re
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,11 @@ def _sanitize_log(value: object) -> str:
     """
     from factory_common.logsafe import sanitize_log  # noqa: PLC0415 - see above
 
-    return sanitize_log(value)
+    # cast because the deferred import leaves mypy unable to resolve the symbol
+    # from this module's path, so it infers Any and --strict rejects returning
+    # it. sanitize_log is annotated `-> str` at its definition; the cast records
+    # that fact rather than widening the contract.
+    return cast("str", sanitize_log(value))
 
 
 _EVIDENCE_REL = ".aifactory/test_evidence.jsonl"
