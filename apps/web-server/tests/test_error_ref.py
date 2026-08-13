@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from server.error_ref import client_error, error_reference
+from server.error_ref import InputRejected, client_error, error_reference
 from server.routes import terminal
 from server.services import gh
 
@@ -88,6 +88,23 @@ def test_the_detail_is_recoverable_from_the_log_under_that_id(
     # Support has to be able to answer "what actually happened".
     assert CREDENTIALS_FILE in logs.text
     assert INTERNAL_HOST in logs.text
+
+
+def test_a_rejected_field_is_still_told_to_the_caller(logs: _Capture) -> None:
+    """The fix must not swallow validation errors.
+
+    "Invalid baseBranch: must be a plain git ref" is developer-written and names
+    only the field the caller sent. Hiding it behind a reference id turns a
+    fixable 400 into a support ticket, and a test in tests/test_argv_safety.py
+    caught exactly that regression.
+    """
+    message = client_error(
+        logs.logger, "get commits preview failed", InputRejected("Invalid baseBranch")
+    )
+
+    assert message == "Invalid baseBranch"
+    assert REF.search(message) is None
+    assert logs.text == "", "a rejected field is the validator working, not an incident"
 
 
 def test_two_failures_get_different_ids(logs: _Capture) -> None:

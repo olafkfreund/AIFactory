@@ -36,7 +36,24 @@ import secrets
 
 from factory_common.logsafe import sanitize_log
 
-__all__ = ["client_error", "error_reference"]
+__all__ = ["InputRejected", "client_error", "error_reference"]
+
+
+class InputRejected(ValueError):
+    """A validation failure whose message is DELIBERATELY safe to hand back.
+
+    The distinction CWE-209 actually cares about is not "exception or not", it
+    is *who wrote the text*. "Invalid baseBranch: must be a plain git ref" is
+    developer-written and quotes only the field the caller just sent, so hiding
+    it behind a correlation id turns a fixable 400 into a support ticket. A
+    ``FileNotFoundError`` from the stdlib is the opposite: nobody chose its
+    wording and it names a path on our disk.
+
+    So validators raise this, :func:`client_error` passes its message through
+    verbatim, and everything else still gets a reference id. Subclasses
+    ``ValueError`` so existing ``except ValueError`` handlers keep working.
+    """
+
 
 #: 12 hex characters: short enough to read down a phone line, wide enough that
 #: two failures in the same second do not collide.
@@ -79,4 +96,9 @@ def client_error(logger: logging.Logger, context: str, exc: BaseException | str)
     The one-liner every ``except`` handler in this server should be reaching for
     instead of ``str(e)``.
     """
+    if isinstance(exc, InputRejected):
+        # See InputRejected: developer-written text about the caller's own
+        # input. Surfaced verbatim, and not worth a log record either -- a
+        # rejected field is the validator working, not an incident.
+        return str(exc)
     return f"{context} (reference {error_reference(logger, context, exc)})"
