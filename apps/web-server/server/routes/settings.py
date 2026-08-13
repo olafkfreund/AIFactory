@@ -24,6 +24,13 @@ from pydantic import (
     field_validator,
 )
 
+from server.crypto.secret_field import (
+    seal,
+    seal_fields,
+    seal_profiles,
+    unseal_fields,
+    unseal_profiles,
+)
 from server.services.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
@@ -486,41 +493,56 @@ def get_settings_file() -> Path:
 
 
 def _read_json_store(name: str, default: Any) -> Any:
-    """Read <name> from PROJECTS_DATA_DIR, returning default if missing/corrupt."""
+    """Read <name> from PROJECTS_DATA_DIR, returning default if missing/corrupt.
+
+    Credential fields are unsealed on the way out (#1276). A store written
+    before encryption landed holds plaintext; ``unseal_profiles`` passes those
+    through untouched and the next write re-seals them.
+    """
     store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
     if store_file.exists():
         try:
-            return json.loads(store_file.read_text())
+            data = json.loads(store_file.read_text())
         except json.JSONDecodeError:
-            pass
+            return default
+        return unseal_profiles(data)
     return default
 
 
 def _write_json_store(name: str, data: Any) -> None:
-    """Write data as pretty JSON to <name> in PROJECTS_DATA_DIR with 0o600 perms."""
+    """Write data as pretty JSON to <name> in PROJECTS_DATA_DIR with 0o600 perms.
+
+    Credential fields are sealed on the way in (#1276), so the file on the PVC
+    never contains a usable token. A no-op for stores with no ``profiles`` key.
+    """
     store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
     store_file.parent.mkdir(parents=True, exist_ok=True)
-    store_file.write_text(json.dumps(data, indent=2))
+    store_file.write_text(json.dumps(seal_profiles(data), indent=2))
     store_file.chmod(0o600)
 
 
 def load_app_settings() -> AppSettings:
-    """Load application settings from disk."""
+    """Load application settings from disk (credential fields unsealed, #1276)."""
     settings_file = get_settings_file()
     if settings_file.exists():
         try:
             data = json.loads(settings_file.read_text())
-            return AppSettings(**data)
+            return AppSettings(**unseal_fields(data))
         except (json.JSONDecodeError, TypeError):
             pass
     return AppSettings()
 
 
 def save_app_settings(settings: AppSettings) -> None:
-    """Save application settings to disk."""
-    settings_file = get_settings_file()
-    settings_file.parent.mkdir(parents=True, exist_ok=True)
-    settings_file.write_text(settings.model_dump_json(indent=2))
+    """Save application settings to disk.
+
+    settings.json carries globalClaudeOAuthToken / provider API keys / email
+    OAuth client secrets. Before #1276 it was the one store here that wrote
+    plaintext with no chmod at all (umask default, typically 0644) — it now
+    seals those fields and goes through _write_json_store for the 0600.
+    """
+    data = seal_fields(json.loads(settings.model_dump_json()))
+    _write_json_store("settings.json", data)
     _mirror_to_global_config(settings)
 
 
@@ -1278,7 +1300,9 @@ def load_profiles() -> dict:
                 data["profiles"] = [
                     normalize_profile_fields(p) for p in data["profiles"]
                 ]
-            return data
+            # Unseal after normalization so the legacy "token" field is already
+            # renamed to "oauthToken" (#1276).
+            return unseal_profiles(data)
         except json.JSONDecodeError:
             pass
     return {"profiles": [], "activeProfileId": None}
@@ -2724,7 +2748,9 @@ async def import_claude_credentials():
     new_profile = {
         "id": profile_id,
         "name": "Claude Code (Imported)",
-        "oauthToken": token,
+        # Sealed at rest (#1276); this route writes the legacy data dir
+        # directly, so it cannot go through _write_json_store.
+        "oauthToken": seal(token),
         "isDefault": len(profiles_data["profiles"]) == 0,
         "createdAt": datetime.now().isoformat(),
     }

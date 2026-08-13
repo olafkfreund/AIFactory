@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..crypto.secret_field import unseal, unseal_profiles  # noqa: TID252
+
 _log = logging.getLogger(__name__)
 
 
@@ -84,7 +86,9 @@ class CredentialMixin:
 
         if profiles_file.exists():
             try:
-                data = json.loads(profiles_file.read_text())
+                # Unsealed on read (#1276); a legacy plaintext store passes
+                # through unchanged.
+                data = unseal_profiles(json.loads(profiles_file.read_text()))
                 profiles = data.get("profiles", [])
                 active_id = data.get("activeProfileId")
 
@@ -395,7 +399,9 @@ class CredentialMixin:
             token = None
             for profile in data.get("profiles", []):
                 if profile.get("id") == profile_id:
-                    token = profile.get("oauthToken") or profile.get("token")
+                    # This block round-trips the raw file (only activeProfileId
+                    # changes), so the token is still sealed here (#1276).
+                    token = unseal(profile.get("oauthToken") or profile.get("token"))
                     break
 
             if token:

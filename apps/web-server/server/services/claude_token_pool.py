@@ -43,6 +43,8 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..crypto.secret_field import unseal_profiles  # noqa: TID252
+
 logger = logging.getLogger(__name__)
 
 _POOL_ENV_VAR = "CLAUDE_CODE_OAUTH_TOKEN_POOL"
@@ -209,7 +211,9 @@ def _discover_credentials(
 
     if profiles_file is not None:
         try:
-            data = json.loads(profiles_file.read_text())
+            # Unsealed on read (#1276); a legacy plaintext store passes
+            # through unchanged.
+            data = unseal_profiles(json.loads(profiles_file.read_text()))
             profiles = data.get("profiles", [])
             creds: list[Credential] = []
             seen_tokens: set[str] = set()
