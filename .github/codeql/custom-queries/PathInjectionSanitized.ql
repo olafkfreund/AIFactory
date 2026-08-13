@@ -63,13 +63,17 @@ import PathInjectionFlow::PathGraph
  * because VALIDATION.md says to, and it clears exactly nothing: the barrier
  * matches 93 nodes, and the alert count is 119 with it and 119 without it.
  *
- * The reason is worth recording, because the arithmetic in #1278 says
- * otherwise. Those sinks are each reached by ~14 sources, of which the
- * registry lookup is one; the others are `spec_id` and `task_id` route
- * parameters that never touch the registry. Removing one source from a sink
- * that has thirteen more does not clear the sink. The "~42 alerts clear in one
- * edit" estimate came from counting sinks per SOURCE, which counts each sink
- * once per source that reaches it.
+ * Measured a SECOND time on the post-#1306 tree (`dev` @ 87787b45), because
+ * "the registry is confined now" is the obvious reason to expect a different
+ * answer. Same answer: 172 barrier nodes matched, 103 sinks with it and 103
+ * without, and the two result CSVs byte-identical.
+ *
+ * The reason is NOT the one first recorded here ("each sink is reached by ~14
+ * sources"). That was true of the base tree and is not true now: the 103
+ * residual flows have a median of ONE source per sink. The barrier clears
+ * nothing for a plainer reason -- all 22 remaining sources are `task_id`,
+ * `spec_id` and `title` route parameters, and the project registry is not on
+ * any of the 103 flow paths. There is nothing there to cut.
  *
  * So it stays out. A barrier that clears nothing is not free: it is another
  * claim in this file that a future reader has to re-verify.

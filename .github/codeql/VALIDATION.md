@@ -216,6 +216,65 @@ expression built from the request value and CodeQL reports it — correctly —
 one line before the check that constrains it. That is why `contained_path`
 grew an `expand_user` flag instead.
 
+### Re-measured on the POST-#1306 tree, and refused again (2026-08-13, #1278)
+
+The rows above were taken on the base tree, before the `within_roots`
+confinement landed. The obvious objection is that they no longer apply: #1306
+made the registry a real trust boundary, so the registry-lookup barrier is now
+*truthful*, and truthfulness was the stated reason for the earlier refusal.
+The barrier was therefore registered a second time and re-measured against
+`dev` @ 87787b45. CodeQL 2.25.6, database over `apps/web-server`, sinks
+deduplicated by location:
+
+| tree | query | sinks |
+|---|---|---|
+| `dev` @ 87787b45 | stock `py/path-injection` | 416 |
+| `dev`, `within_roots` deleted from `projects.py` | stock `py/path-injection` | 408 |
+| `dev` @ 87787b45 | pack as shipped | 103 |
+| `dev` @ 87787b45 | pack + registry-lookup barrier | **103** |
+| `dev` @ 87787b45 | pack + registry barrier, barrier nodes matched | 172 |
+| `dev`, `within_roots` deleted from `projects.py` | pack as shipped | 106 |
+
+The two CSVs for rows 3 and 4 are **byte-identical**. 172 barrier nodes match
+and not one alert moves.
+
+The reason recorded above — "each sink is reached by ~14 sources" — is no
+longer the reason, and saying so matters, because a reader who checks it will
+find it false and may conclude the refusal was too. After #1306 the residual is
+103 flows over 99 distinct sinks: the median sink is reached by **one** source.
+The barrier clears nothing for a simpler reason. The 103 residual flows come
+from 22 sources, and every one of them is a `task_id`, `spec_id` or `title`
+route parameter — the largest single source is `task_id` at
+`mcp_stdio/router.py:304` with 41 flows. **The project registry is not on any
+of the 103 paths.** There is nothing there for the barrier to cut. Registering
+it would put a claim in the query that no alert depends on.
+
+Rule 4.13's discriminating check, run on the sanitizer itself: deleting the
+`within_roots` calls from `projects.py` (add-project, update-project, scan)
+moves stock 416 -> 408 and the pack 103 -> 106. Stock goes *down* by 8 because
+the deleted call sites are themselves path expressions stock reports; it does
+not collapse toward 103, so the pack is not a branch deletion in disguise. The
+pack going 103 -> 106 is `within_roots` being credited for exactly the three
+sites deleted — real work, correctly attributed, and confined to those three.
+
+One correction to the trust-boundary claim itself, found while enumerating the
+writers. Three code paths write `path` into `projects.json`:
+`add_project` local mode (`projects.py:659`) and `update_project`
+(`projects.py:765`) both confine through `within_roots(browse_roots())`;
+`add_project` **clone mode** (`projects.py:646`) does not — it registers
+`clone_or_update(...).resolve()`, whose directory name is
+`slug_from_git_url(git_url)`, and that slug permits `.` so a `gitUrl` of
+`https://host/..` slugs to `..` and registers the PARENT of the workspace root.
+The other three `save_projects()` callers (`database/engine.py:331`,
+`services/auto_fix_service.py:96,121`, `routes/context.py:731`) write
+`org_id`, `settings` and `updated_at` and never `path`. `browse_roots()` also
+includes every already-registered project, so a registered root authorises its
+own subtree for the next registration — which is fine for the add flow (the
+path being confined is not yet registered) but means the root set only ever
+grows. None of this changes the barrier verdict, since the registry reaches
+none of the 103, but "the registry can only hold confined paths" is 2/3 true,
+not true.
+
 ## If you add a barrier to the codebase
 
 Register it here and re-measure. The residual after this pack was 64 sources,
