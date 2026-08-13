@@ -21,3 +21,15 @@ queries:
 query-filters:
   - exclude:
       id: py/path-injection
+  # Same trade, second rule family. py/full-ssrf and py/partial-ssrf have no
+  # notion of a validator: the guard in services/url_safety.py resolves the
+  # host, refuses the metadata range and non-http(s) schemes, and blocks
+  # redirects, yet the alert stayed open after it landed because stock CodeQL
+  # cannot see it. These two are excluded ONLY because
+  # custom-queries/{Full,Partial}SsrfSanitized.ql re-ask the identical question
+  # with that guard registered as a barrier -- same sources, same sinks, same
+  # severity. Delete the replacements and you must delete these lines too.
+  - exclude:
+      id: py/full-ssrf
+  - exclude:
+      id: py/partial-ssrf
