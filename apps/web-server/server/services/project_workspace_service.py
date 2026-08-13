@@ -36,6 +36,9 @@ from urllib.parse import urlparse
 
 from factory_common.logsafe import sanitize_log
 
+from server.error_ref import InputRejectedError
+from server.specpath import safe_spec_component
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE_ROOT = Path.home() / ".aifactory" / "workspaces"
@@ -65,7 +68,15 @@ def slug_from_git_url(git_url: str) -> str:
     ``https://github.com/olaf/AIFactory.git`` → ``olaf-AIFactory``
     ``https://gitlab.com/group/sub/repo`` → ``group-sub-repo``
 
-    The slug is used as the directory name under ``workspace_root()``.
+    The slug is used as the directory name under ``workspace_root()``, so it
+    is a path COMPONENT built from request input and goes through the same
+    barrier every other such component in this server uses. It rejects rather
+    than rewrites (#1313): a gitUrl whose path is ``..`` is either an attack or
+    a typo, and quietly cloning it into a directory the caller never named
+    registers a project under a name they did not ask for.
+
+    Raises:
+        InputRejectedError: the URL path yields no usable directory name.
     """
     # SCP-style ("git@host:owner/repo.git") — split on the colon, drop the host.
     if git_url.startswith("git@") and ":" in git_url:
@@ -77,8 +88,20 @@ def slug_from_git_url(git_url: str) -> str:
     if path.endswith(".git"):
         path = path[:-4]
     # Replace any non-alnum/hyphen char with hyphen; collapse repeats.
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", path).strip("-")
-    return slug or "workspace"
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", path).strip("-") or "workspace"
+    # `.` is inside the character class above, so `..` survives the
+    # substitution intact and `workspace_root() / slug` climbs OUT of the
+    # workspace root. `safe_spec_component` is the repo's existing barrier for
+    # exactly this ("is this string safe to join onto a trusted root") and
+    # already treats "." and ".." as reserved — reused rather than re-derived.
+    try:
+        return safe_spec_component(slug, "gitUrl")
+    except ValueError:
+        # `from None`: the ValueError quotes the rejected value, and the
+        # message below is the one the caller sees.
+        raise InputRejectedError(
+            "Invalid gitUrl: its path is not a usable workspace directory name"
+        ) from None
 
 
 def _inject_credential(git_url: str, username: str, token: str) -> str:

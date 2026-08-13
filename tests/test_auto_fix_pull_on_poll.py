@@ -164,6 +164,11 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
         path.mkdir(exist_ok=True)
         return path
 
+    # The route confines the cloned path to the workspace root (#1313), so the
+    # fake clone has to land somewhere a real clone could. This test is about
+    # `clonedFrom` persistence, not about where clones go.
+    monkeypatch.setenv("PROJECT_WORKSPACE_ROOT", str(tmp_path))
+
     monkeypatch.setattr("server.routes.projects.load_projects", fake_load_projects)
     monkeypatch.setattr("server.routes.projects.save_projects", fake_save_projects)
     monkeypatch.setattr(

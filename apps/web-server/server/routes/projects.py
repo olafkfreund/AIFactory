@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.error_ref import client_error
+from server.error_ref import InputRejectedError, client_error
 from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, safe_spec_component, within_roots
 
@@ -621,9 +621,11 @@ async def add_project(
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
-        from ..services.project_workspace_service import (
+        # Absolute, not `..services`: TID252, and the ratchet counts it per name.
+        from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
+            workspace_root,
         )
 
         # Stored credential lookup (#82 PR-C). When the caller passes
@@ -638,12 +640,23 @@ async def add_project(
                 branch=project.branch,
                 credential=credential,
             )
-        except GitOperationError as e:
+        except (GitOperationError, InputRejectedError) as e:
+            # InputRejectedError: the gitUrl's path is not a usable workspace
+            # directory name (#1313). Its message is developer-written, so
+            # `client_error` hands it back verbatim instead of a reference id.
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=client_error(logger, "Clone failed", e),
             )
-        project_path = cloned_path.resolve()
+        # The third registry `path` writer, confined like the other two (#1313).
+        # The root is the WORKSPACE root, not `browse_roots()`: a clone that
+        # landed anywhere else is a bug in the clone service, whatever else the
+        # host happens to allow browsing. Stricter than the local-mode tier on
+        # purpose — it also means a clone-mode entry can never widen
+        # `browse_roots()` beyond the one directory the operator configured.
+        project_path = within_roots(
+            cloned_path, [workspace_root()], "project workspace root"
+        )
         created_directory = True
     else:
         # Local mode — register the existing directory.
