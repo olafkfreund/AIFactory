@@ -17,6 +17,7 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -767,15 +768,15 @@ class PRContextGatherer:
 
         # Check for package.json (Node.js)
         if (self.project_dir / "package.json").exists():
-            try:
+            # An unparseable package.json costs the review prompt its
+            # workspace list; it is not a reason to fail context gathering.
+            with contextlib.suppress(json.JSONDecodeError, KeyError):
                 with open(self.project_dir / "package.json") as f:
                     pkg_data = json.load(f)
                     if "workspaces" in pkg_data:
                         structure_info.append(
                             f"**Workspaces**: {', '.join(pkg_data['workspaces'])}"
                         )
-            except (json.JSONDecodeError, KeyError):
-                pass
 
         # Check for Python project structure
         if (self.project_dir / "pyproject.toml").exists():
