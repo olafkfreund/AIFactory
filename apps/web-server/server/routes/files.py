@@ -27,10 +27,10 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
+from server.specpath import contained_path
 
 from ..auth import _try_decode_jwt
 from ..config import get_settings
-from ..specpath import contained_path
 from .project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
