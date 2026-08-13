@@ -28,6 +28,7 @@ cut over once verified).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -322,8 +323,8 @@ async def relay_loop(
             await asyncio.to_thread(deliver_due_once, path=path)
         except Exception:  # noqa: BLE001 — never let the relay die
             logger.exception("outbox relay tick failed (best-effort)")
-        try:
+        # Normal poll cadence: the timeout firing just means it's time for
+        # the next tick, not an error.
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        except TimeoutError:
-            pass
     logger.info("completion outbox relay stopped")

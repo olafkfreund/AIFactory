@@ -143,7 +143,7 @@ async def events_websocket(websocket: WebSocket):
                     break
 
     except WebSocketDisconnect:
-        pass
+        logger.debug("Events WebSocket client disconnected")
     except Exception:  # noqa: BLE001 - log the unexpected drop, then clean up in finally
         logger.warning("Events WebSocket closed unexpectedly", exc_info=True)
     finally:

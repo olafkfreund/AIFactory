@@ -31,6 +31,7 @@ might be using for other work.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -133,19 +134,15 @@ class _ReplicaSim:
     async def stop(self) -> None:
         if self._sub_task is not None:
             self._sub_task.cancel()
-            try:
+            # ponytail: cancellation teardown, exception here is expected noise
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._sub_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        try:
+        # ponytail: best-effort close in test teardown
+        with contextlib.suppress(Exception):
             await self._publisher.close()
-        except Exception:
-            pass
         if self._sub_client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await self._sub_client.close()
-            except Exception:
-                pass
 
     async def _subscribe_loop(self) -> None:
         pubsub = self._sub_client.pubsub()

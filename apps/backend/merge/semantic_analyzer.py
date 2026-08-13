@@ -13,6 +13,7 @@ When tree-sitter is not available, falls back to regex-based heuristics.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -69,28 +70,24 @@ except ImportError:
 # Try to import language bindings
 LANGUAGES_AVAILABLE: dict[str, Any] = {}
 if TREE_SITTER_AVAILABLE:
-    try:
+    # ponytail: each language binding is an optional extra -- absence just
+    # means that extension falls back to the regex analyzer below
+    with contextlib.suppress(ImportError):
         import tree_sitter_python as tspython
 
         LANGUAGES_AVAILABLE[".py"] = tspython.language()
-    except ImportError:
-        pass
 
-    try:
+    with contextlib.suppress(ImportError):
         import tree_sitter_javascript as tsjs
 
         LANGUAGES_AVAILABLE[".js"] = tsjs.language()
         LANGUAGES_AVAILABLE[".jsx"] = tsjs.language()
-    except ImportError:
-        pass
 
-    try:
+    with contextlib.suppress(ImportError):
         import tree_sitter_typescript as tsts
 
         LANGUAGES_AVAILABLE[".ts"] = tsts.language_typescript()
         LANGUAGES_AVAILABLE[".tsx"] = tsts.language_tsx()
-    except ImportError:
-        pass
 
 # Import our modular components
 from .semantic_analysis.comparison import compare_elements

@@ -124,7 +124,11 @@ def is_solo_mode_enabled_for_spec(spec_dir: Path) -> bool:
                     )
                     return enabled
         except (json.JSONDecodeError, OSError):
-            pass
+            logger.warning(
+                "[Solo Mode] failed to read %s, falling back to global setting",
+                metadata_file,
+                exc_info=True,
+            )
 
     # Fall back to the global setting.
     return _global_solo_mode()

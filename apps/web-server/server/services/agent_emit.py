@@ -524,8 +524,12 @@ class EmitMixin:
                 try:
                     with stderr_file.open("a", encoding="utf-8") as fh:
                         fh.write(line + "\n")
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning(
+                        "[AgentService] Task %s: could not mirror stderr to file: %s",
+                        sanitize_log(task_id),
+                        exc,
+                    )
 
         # Create log entry
         log = TaskLog(
@@ -658,7 +662,13 @@ class EmitMixin:
                         if old_phase != current_phase
                         else None,
                     )
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                # Line starts with '{' but isn't complete/valid JSON (e.g. a
+                # truncated write) — not a real error, just not progress data.
+                _log.debug(
+                    "[AgentService] Task %s: line starting '{' was not valid JSON: %s",
+                    sanitize_log(task_id),
+                    exc,
+                )
 
         return current_phase

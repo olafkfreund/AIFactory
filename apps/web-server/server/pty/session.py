@@ -6,6 +6,7 @@ to via WebSocket for bidirectional I/O.
 """
 
 import asyncio
+import contextlib
 import os
 import signal
 from collections.abc import Callable
@@ -133,11 +134,11 @@ class PTYSession:
 
         self._closed = True
 
-        try:
+        # Best-effort: the process may already have exited between the
+        # isalive() check and terminate().
+        with contextlib.suppress(Exception):
             if self._pty.isalive():
                 self._pty.terminate(force=True)
-        except Exception:
-            pass
 
         self._pty = None
 
@@ -146,10 +147,9 @@ class PTYSession:
         if self._pty is None or self._closed:
             return
 
-        try:
+        # Best-effort: the process may already have exited.
+        with contextlib.suppress(Exception):
             self._pty.kill(sig)
-        except Exception:
-            pass
 
     def interrupt(self) -> None:
         """Send Ctrl+C (SIGINT) to the PTY."""

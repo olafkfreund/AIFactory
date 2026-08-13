@@ -28,6 +28,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -305,10 +306,9 @@ class CodexAgenticProvider(BaseLLMProvider):
                 self._proc.terminate()
                 await asyncio.wait_for(self._proc.wait(), timeout=5.0)
             except (TimeoutError, ProcessLookupError):
-                try:
+                # Process may have already exited between the timeout and kill.
+                with contextlib.suppress(ProcessLookupError):
                     self._proc.kill()
-                except ProcessLookupError:
-                    pass
             finally:
                 self._proc = None
                 logger.debug("CodexAgenticProvider: MCP server stopped")

@@ -11,6 +11,7 @@ and are imported here.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -111,10 +112,10 @@ def _sample_process_resources(pid: int) -> dict:
 
         # Gather parent + children once so we can sum CPU and RSS.
         procs = [proc]
-        try:
+        # ponytail: child enumeration races the process tree; a vanished/
+        # inaccessible child just isn't counted.
+        with contextlib.suppress(psutil.NoSuchProcess, psutil.AccessDenied):
             procs.extend(proc.children(recursive=True))
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
 
         # Prime CPU counters, then sample over a short interval. Priming on
         # the parent is enough for it; children are primed implicitly by the

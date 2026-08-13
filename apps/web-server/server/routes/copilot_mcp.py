@@ -195,8 +195,12 @@ async def _resolve_task(
                 if meta_file.exists():
                     try:
                         meta = json.loads(meta_file.read_text())
-                    except (json.JSONDecodeError, OSError):
-                        pass
+                    except (json.JSONDecodeError, OSError) as exc:
+                        logger.debug(
+                            "copilot_mcp: could not read %s: %s",
+                            sanitize_log(str(meta_file)),
+                            sanitize_log(str(exc)),
+                        )
                 return spec_dir, meta
 
     return None, None

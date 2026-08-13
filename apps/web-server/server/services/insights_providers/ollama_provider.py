@@ -99,8 +99,8 @@ class OllamaProvider(ProviderStrategy):
                             info.models.append(ProviderModel(id=name, label=name))
                     if info.models:
                         info.available = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[OllamaProvider] CLI fallback detection failed: {e}")
 
         return info
 

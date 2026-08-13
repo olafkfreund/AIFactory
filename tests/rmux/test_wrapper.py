@@ -15,6 +15,7 @@ Two layers:
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -232,16 +233,13 @@ def integration_wrapper(tmp_path):
     import asyncio
 
     async def _cleanup():
-        try:
+        with contextlib.suppress(RmuxError):
             for name in await wrapper.list_sessions():
                 await wrapper.kill_session(name, ignore_missing=True)
-        except RmuxError:
-            pass
 
-    try:
+    # Best-effort teardown — never raise from a fixture cleanup.
+    with contextlib.suppress(Exception):
         asyncio.run(_cleanup())
-    except Exception:
-        pass
 
 
 @pytest.mark.rmux
@@ -403,7 +401,5 @@ class TestIntegrationRoundtrip:
                 reader_proc.terminate()
                 await asyncio.wait_for(reader_proc.wait(), timeout=2)
             except (TimeoutError, ProcessLookupError):
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     reader_proc.kill()
-                except ProcessLookupError:
-                    pass

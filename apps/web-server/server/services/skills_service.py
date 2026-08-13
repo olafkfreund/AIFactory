@@ -19,6 +19,7 @@ arbitrary reduce code.  JSON loads inert data; we reconstruct the dataclasses
 explicitly.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -343,12 +344,12 @@ class SkillsService:
     def _get_dir_mtime(self) -> float:
         """Get the newest mtime across the skills base dir and its category subdirs."""
         newest = os.path.getmtime(self._base_path)
-        try:
+        # Best-effort: a subdir removed mid-scan just means we fall back to
+        # the base dir's mtime.
+        with contextlib.suppress(OSError):
             for entry in os.scandir(self._base_path):
                 if entry.is_dir():
                     newest = max(newest, entry.stat().st_mtime)
-        except OSError:
-            pass
         return newest
 
     def _load_cache(self) -> bool:
@@ -411,8 +412,10 @@ class SkillsService:
                 json.dump(data, f)
             try:
                 self._cache_path.chmod(0o600)
-            except OSError:
-                pass
+            except OSError as e:
+                logger.warning(
+                    "Failed to restrict skills cache permissions to 0600: %s", e
+                )
             logger.info("Skills cache saved to %s", self._cache_path)
         except Exception as exc:
             logger.warning("Failed to save skills cache: %s", exc)

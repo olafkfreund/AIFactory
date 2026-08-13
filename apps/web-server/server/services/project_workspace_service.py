@@ -28,6 +28,7 @@ PR-C.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -118,6 +119,59 @@ def _inject_credential(git_url: str, username: str, token: str) -> str:
         return git_url
     rest = git_url[len("https://") :]
     return f"https://{username}:{token}@{rest}"
+
+
+async def _restore_sanitized_origin_best_effort(
+    *, git_url: str, workspace: Path, timeout_seconds: float
+) -> None:
+    """Best-effort strip of an injected credential, for a failure path where
+    another exception is already in flight. Logs but never raises -- the
+    caller needs to see the ORIGINAL failure, not a cleanup error."""
+    try:
+        await _run_git(
+            ["remote", "set-url", "origin", git_url],
+            cwd=workspace,
+            timeout=timeout_seconds,
+        )
+    except GitOperationError as exc:
+        logger.error(
+            "[workspace] failed to restore sanitized origin URL for "
+            "%s after a failed pull; the credentialed URL may still "
+            "be persisted in .git/config: %s",
+            sanitize_log(workspace),
+            sanitize_log(exc),
+        )
+
+
+async def _strip_credential_or_raise(
+    *, git_url: str, workspace: Path, timeout_seconds: float, after: str
+) -> None:
+    """Strip an injected credential from origin after a SUCCESSFUL git op.
+
+    This is a security property, not a best-effort cleanup step: if the
+    strip fails we must fail closed rather than hand back a workspace with
+    the credential sitting in ``.git/config`` indefinitely. Self-heals on
+    retry -- see the callers' docs for why.
+    """
+    try:
+        await _run_git(
+            ["remote", "set-url", "origin", git_url],
+            cwd=workspace,
+            timeout=timeout_seconds,
+        )
+    except GitOperationError as exc:
+        logger.error(
+            "[workspace] credential left in %s/.git/config: failed to "
+            "strip credential from origin after %s: %s",
+            sanitize_log(workspace),
+            sanitize_log(after),
+            sanitize_log(exc),
+        )
+        raise GitOperationError(
+            f"{after} {workspace} but could not strip the credential from "
+            "origin afterwards -- refusing to hand back a workspace with "
+            "a credential persisted in .git/config"
+        ) from exc
 
 
 async def clone_or_update(
@@ -217,18 +271,37 @@ async def clone_or_update(
                     sanitize_log(workspace),
                     sanitize_log(target),
                 )
-        finally:
+        except Exception:
+            # The fetch/checkout/pull sequence itself failed. Best-effort
+            # restore the sanitized origin so the credential doesn't linger
+            # any longer than it has to, but don't mask the real failure
+            # behind a cleanup error -- there's already an exception in
+            # flight and the caller needs to see *that* one.
             if credential is not None:
-                # Restore origin to the sanitized URL so credentials
-                # don't leak via ``git config``.
-                try:
-                    await _run_git(
-                        ["remote", "set-url", "origin", git_url],
-                        cwd=workspace,
-                        timeout=timeout_seconds,
-                    )
-                except GitOperationError:
-                    pass
+                await _restore_sanitized_origin_best_effort(
+                    git_url=git_url,
+                    workspace=workspace,
+                    timeout_seconds=timeout_seconds,
+                )
+            raise
+        else:
+            if credential is not None:
+                # SELF-HEALING, not just loud: this is the pull path, and
+                # the top of this branch (`if credential is not None`)
+                # unconditionally re-injects the credentialed `fetch_url`
+                # into origin on every call regardless of what's there now.
+                # So the NEXT call for this workspace re-attempts this same
+                # strip -- the credential doesn't sit behind a green result
+                # forever, it keeps failing loud until a strip finally
+                # succeeds. A fresh clone that fails here also self-heals:
+                # the workspace now has a `.git` dir, so the next call
+                # takes THIS pull path rather than re-cloning.
+                await _strip_credential_or_raise(
+                    git_url=git_url,
+                    workspace=workspace,
+                    timeout_seconds=timeout_seconds,
+                    after="pulled",
+                )
         logger.info("[workspace] pulled latest into %s", sanitize_log(workspace))
         return workspace
 
@@ -241,16 +314,19 @@ async def clone_or_update(
     cmd.extend(["--", fetch_url, str(workspace)])
     await _run_git(cmd, cwd=workspace.parent, timeout=timeout_seconds)
     if credential is not None:
-        # Strip the credential from origin so it isn't persisted in
-        # the workspace's ``.git/config``.
-        try:
-            await _run_git(
-                ["remote", "set-url", "origin", git_url],
-                cwd=workspace,
-                timeout=timeout_seconds,
-            )
-        except GitOperationError:
-            pass
+        # Strip the credential from origin so it isn't persisted in the
+        # workspace's ``.git/config``. The clone already succeeded, so a
+        # failure here must fail closed -- logging and returning "success"
+        # would hand back a workspace with a live credential sitting on
+        # disk indefinitely. Self-heals too: the workspace now has a
+        # ``.git`` dir, so a retry takes the pull path above, which
+        # re-attempts this same strip.
+        await _strip_credential_or_raise(
+            git_url=git_url,
+            workspace=workspace,
+            timeout_seconds=timeout_seconds,
+            after="cloned",
+        )
     logger.info(
         "[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace)
     )
@@ -287,10 +363,10 @@ async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError as e:
-        try:
+        # ponytail: the process may have already exited between the timeout
+        # firing and kill() running -- nothing to do either way
+        with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        except ProcessLookupError:
-            pass
         raise GitOperationError(
             f"git {' '.join(args)} timed out after {timeout}s"
         ) from e

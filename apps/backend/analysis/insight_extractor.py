@@ -456,8 +456,8 @@ def parse_insights(response_text: str) -> dict | None:
             try:
                 insights = json.loads(json_substring)
                 logger.debug("Extracted JSON using brace-matching fallback")
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                logger.debug("Brace-matching fallback also failed to parse: %s", exc)
 
     # If parsing still failed, log and return None
     if insights is None:

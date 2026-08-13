@@ -39,6 +39,7 @@ options           top-level (temperature,…)    nested "options" key
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -443,10 +444,10 @@ class OpenAICompatibleAgenticProvider(OpenAICompatibleHeadersMixin, BaseLLMProvi
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             error_body = ""
-            try:
+            # Best-effort: the HTTPError itself is handled below regardless
+            # of whether we can also recover its body for the log line.
+            with contextlib.suppress(Exception):
                 error_body = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                pass
             # Non-reasoning models (e.g. Ollama qwen2.5-coder) 400 when sent
             # `reasoning_effort` ("... does not support thinking"). That knob is
             # only meant for thinking models (gemma4/gpt-oss); drop it, remember

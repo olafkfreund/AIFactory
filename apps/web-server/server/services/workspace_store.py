@@ -35,6 +35,7 @@ pattern.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -184,7 +185,11 @@ class WorkspaceStore:
             try:
                 fs.makedirs(key_root, exist_ok=True)
             except Exception:
-                pass
+                logger.warning(
+                    "fs.makedirs(%s) failed, proceeding anyway",
+                    sanitize_log(key_root),
+                    exc_info=True,
+                )
             with fs.open(manifest_key, "w") as fh:
                 fh.write(json.dumps(manifest, indent=2))
             logger.info(
@@ -308,10 +313,10 @@ class WorkspaceStore:
                 project_id,
                 exc_info=True,
             )
-            try:
+            # ignore_errors=True already swallows failures inside rmtree itself;
+            # this only guards a non-OSError bug in shutil's own bookkeeping.
+            with contextlib.suppress(Exception):
                 shutil.rmtree(local_path, ignore_errors=True)
-            except Exception:
-                pass
             return False
 
     # -------------------------------------------------------------------

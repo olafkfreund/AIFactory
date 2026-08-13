@@ -505,8 +505,12 @@ async def start_task(
             if task_metadata_file.exists():
                 try:
                     task_metadata = json.loads(task_metadata_file.read_text())
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError) as e:
+                    logger.warning(
+                        "[StartTask] Failed to read existing task_metadata.json, "
+                        "starting from empty: %s",
+                        sanitize_log(e),
+                    )
             task_metadata["complexity"] = "simple"
             task_metadata["mode"] = "quick"
             task_metadata["isAutoProfile"] = True
@@ -579,8 +583,12 @@ async def start_task(
     if task_metadata_file.exists():
         try:
             task_metadata = json.loads(task_metadata_file.read_text())
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "[StartTask] Failed to read existing task_metadata.json, "
+                "starting from empty: %s",
+                sanitize_log(e),
+            )
 
     # Apply runtime overrides
     if request.model:
@@ -643,8 +651,13 @@ async def start_task(
                     "[StartTask] Plan was manually approved for %s, using --force",
                     sanitize_log(task_id),
                 )
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "[StartTask] Failed to read review_state.json for %s, "
+                "treating as not approved: %s",
+                sanitize_log(task_id),
+                sanitize_log(e),
+            )
 
     if agent_service.is_running(task_id):
         if force_execution:
@@ -673,8 +686,13 @@ async def start_task(
             try:
                 tm = json.loads(task_metadata_file.read_text())
                 require_review = tm.get("requireReviewBeforeCoding", False)
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(
+                    "[StartTask] Failed to read task_metadata.json for %s, "
+                    "defaulting requireReviewBeforeCoding=False: %s",
+                    sanitize_log(task_id),
+                    sanitize_log(e),
+                )
 
         if require_review:
             try:
@@ -875,8 +893,12 @@ async def handoff_to_tfactory(
     result = await send_handoff(payload)
     try:
         (spec_dir / "tfactory_handoff.json").write_text(json.dumps(result, indent=2))
-    except OSError:
-        pass
+    except OSError as e:
+        logger.warning(
+            "[SendToTFactory] Failed to persist tfactory_handoff.json for %s: %s",
+            sanitize_log(task_id),
+            sanitize_log(e),
+        )
     return {
         **result,
         "tfactory_spec_id": payload.get("spec_id"),
@@ -972,8 +994,12 @@ async def recover_task(
             proc = agent_service.running_tasks[task_id]
             proc.terminate()
             await proc.wait()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "[RecoverTask] Failed to terminate stale process for %s: %s",
+                sanitize_log(task_id),
+                sanitize_log(e),
+            )
         # Only delete if still present (might have been cleaned up by monitor)
         if task_id in agent_service.running_tasks:
             del agent_service.running_tasks[task_id]
@@ -987,8 +1013,13 @@ async def recover_task(
     if plan_file.exists():
         try:
             plan = json.loads(plan_file.read_text())
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "[RecoverTask] Failed to read implementation_plan.json for %s, "
+                "starting from empty: %s",
+                sanitize_log(task_id),
+                sanitize_log(e),
+            )
 
     # Reset status from request body or default to backlog
     reset_status = request.targetStatus or "backlog"
@@ -1343,8 +1374,13 @@ async def create_from_trusted_plan(
             prov.setdefault("issue_number", int(corr))
             reqs["provenance"] = prov
             req_file.write_text(json.dumps(reqs, indent=2))
-        except (OSError, json.JSONDecodeError, ValueError):
-            pass
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                "[InstallPlan] Failed to re-stamp issue_number provenance "
+                "on requirements.json for %s: %s",
+                sanitize_log(spec_id),
+                sanitize_log(e),
+            )
 
     # Multi-tenancy (#925): record the creating tenant (no-op unless enabled).
     # After ingest_trusted_plan, which merges the execution profile into
@@ -1537,7 +1573,11 @@ def _patch_task_metadata(path: Path, updates: dict) -> None:
     if path.exists():
         try:
             existing = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Failed to read existing %s, starting from empty: %s",
+                sanitize_log(path),
+                sanitize_log(e),
+            )
     existing.update(updates)
     path.write_text(json.dumps(existing, indent=2))

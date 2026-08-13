@@ -6,6 +6,7 @@ Streams responses via WebSocket and persists sessions to disk.
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -36,15 +37,13 @@ def _parse_task_json(raw: str) -> dict:
     cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
 
     # Attempt 1: direct parse
-    try:
+    with contextlib.suppress(json.JSONDecodeError):
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
             return {
                 "title": str(parsed.get("title", "")).strip(),
                 "description": str(parsed.get("description", "")).strip(),
             }
-    except json.JSONDecodeError:
-        pass
 
     # Attempt 2: brace-matching — find first { … }
     start = cleaned.find("{")
@@ -526,8 +525,12 @@ class InsightsService:
                 logger.info(
                     f"[InsightsService] generate_task using profile: {profile_name}"
                 )
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - fall through, subprocess env may already have a token
+            logger.debug(
+                "[InsightsService] OAuth token resolution failed, "
+                "proceeding without it: %s",
+                sanitize_log(str(e)),
+            )
 
         logger.info(
             f"[InsightsService] Generating task via claude --print (model={model_value})"

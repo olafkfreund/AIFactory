@@ -36,6 +36,7 @@ CLI invocation shape::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -211,10 +212,10 @@ class AntigravityAgenticProvider(BaseLLMProvider):
 
         except TimeoutError:
             if proc is not None:
-                try:
+                # ponytail: process may have already exited between the
+                # timeout firing and kill() running -- nothing to do either way
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
             raise TimeoutError(
                 f"Antigravity CLI (yolo) timed out after {self._timeout}s."
             )

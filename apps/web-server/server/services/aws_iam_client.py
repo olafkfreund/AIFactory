@@ -24,6 +24,7 @@ by the daily cron job in PR-3).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -227,18 +228,15 @@ class AwsIamClient:
         iam = self._iam_client()
 
         def _delete() -> None:
-            # Inline policy must be deleted before the role.
-            try:
+            # Inline policy must be deleted before the role. Idempotent: already
+            # gone is success, not failure.
+            with contextlib.suppress(iam.exceptions.NoSuchEntityException):
                 iam.delete_role_policy(
                     RoleName=role_name,
                     PolicyName=policy_name,
                 )
-            except iam.exceptions.NoSuchEntityException:
-                pass
-            try:
+            with contextlib.suppress(iam.exceptions.NoSuchEntityException):
                 iam.delete_role(RoleName=role_name)
-            except iam.exceptions.NoSuchEntityException:
-                pass
 
         try:
             await asyncio.to_thread(_delete)

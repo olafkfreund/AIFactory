@@ -6,6 +6,7 @@ and PTY processes on the server.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 
@@ -94,7 +95,9 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
 
                     # Check if it's a JSON control message
                     if text.startswith("{"):
-                        try:
+                        # Not valid JSON -> falls through and is written to
+                        # the PTY as regular text input below.
+                        with contextlib.suppress(json.JSONDecodeError):
                             data = json.loads(text)
                             msg_type = data.get("type")
 
@@ -118,9 +121,6 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
                             elif msg_type == "interrupt":
                                 session.interrupt()
                                 continue
-
-                        except json.JSONDecodeError:
-                            pass
 
                     # Regular text input - write to PTY
                     session.write(text)
@@ -149,10 +149,8 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
     finally:
         # Cancel reader task
         reader_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await reader_task
-        except asyncio.CancelledError:
-            pass
 
         # Check if terminal exited
         if not session.is_alive():

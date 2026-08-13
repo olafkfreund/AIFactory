@@ -181,8 +181,11 @@ class PhaseExecutor:
                 with open(hints_file) as f:
                     hints_data = json.load(f)
                     graph_hints = hints_data.get("hints_by_type", {})
-            except (OSError, json.JSONDecodeError):
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                print_status(
+                    f"Could not read graph hints, continuing without them: {exc}",
+                    "warning",
+                )
 
         # Write context file
         context_data = {

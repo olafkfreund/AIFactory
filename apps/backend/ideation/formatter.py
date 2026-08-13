@@ -45,8 +45,11 @@ class IdeationFormatter:
                     print_status(
                         f"Preserving {len(existing_ideas)} existing ideas", "info"
                     )
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                print_status(
+                    f"Could not parse existing {ideation_file.name} ({exc}); starting fresh",
+                    "warning",
+                )
 
         # Collect new ideas from the enabled types
         new_ideas = []
@@ -61,8 +64,11 @@ class IdeationFormatter:
                         ideas = data.get(ideation_type, [])
                         new_ideas.extend(ideas)
                         output_files.append(str(type_file))
-                except (json.JSONDecodeError, KeyError):
-                    pass
+                except (json.JSONDecodeError, KeyError) as exc:
+                    print_status(
+                        f"Skipping {type_file.name}, could not parse ({exc})",
+                        "warning",
+                    )
 
         # In append mode, filter out ideas from types we're regenerating
         # (to avoid duplicates) and keep ideas from other types
@@ -141,6 +147,9 @@ class IdeationFormatter:
             try:
                 with open(context_file) as f:
                     context_data = json.load(f)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                print_status(
+                    f"Could not parse {context_file.name} ({exc}); using empty context",
+                    "warning",
+                )
         return context_data

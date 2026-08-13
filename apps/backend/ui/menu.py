@@ -5,6 +5,7 @@ Interactive Menu
 Interactive selection menus with keyboard navigation.
 """
 
+import contextlib
 import sys
 from dataclasses import dataclass
 
@@ -239,11 +240,10 @@ def _fallback_menu(
         if choice == "q" and allow_quit:
             return None
 
-        try:
+        with contextlib.suppress(ValueError):
+            # non-numeric input falls through to the "invalid choice" message below
             idx = int(choice) - 1
             if 0 <= idx < len(options) and not options[idx].disabled:
                 return options[idx].key
-        except ValueError:
-            pass
 
         print("Invalid choice, please try again.")

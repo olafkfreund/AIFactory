@@ -8,7 +8,7 @@ from __future__ import annotations
 import io
 import json
 import os
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, suppress
 
 import pytest
 
@@ -120,10 +120,8 @@ def test_metrics_exposes_prometheus_format(fresh_obs_app) -> None:
     # Reset any prior metrics so this test is hermetic.
     collectors = list(REGISTRY._collector_to_names.keys())  # type: ignore[attr-defined]
     for c in collectors:
-        try:
+        with suppress(KeyError):
             REGISTRY.unregister(c)
-        except KeyError:
-            pass
 
     # Make sure METRICS_SCRAPE_TOKEN isn't lingering from a prior test.
     os.environ.pop("METRICS_SCRAPE_TOKEN", None)
@@ -156,10 +154,8 @@ def test_handler_label_uses_route_template(fresh_obs_app) -> None:
     # Hermetic registry.
     collectors = list(REGISTRY._collector_to_names.keys())  # type: ignore[attr-defined]
     for c in collectors:
-        try:
+        with suppress(KeyError):
             REGISTRY.unregister(c)
-        except KeyError:
-            pass
     os.environ.pop("METRICS_SCRAPE_TOKEN", None)
 
     from server.observability import install_metrics
@@ -193,10 +189,8 @@ def test_metrics_requires_token_when_configured(fresh_obs_app) -> None:
     # Hermetic.
     collectors = list(REGISTRY._collector_to_names.keys())  # type: ignore[attr-defined]
     for c in collectors:
-        try:
+        with suppress(KeyError):
             REGISTRY.unregister(c)
-        except KeyError:
-            pass
 
     os.environ["METRICS_SCRAPE_TOKEN"] = "secret-scrape-token-zzz"
 

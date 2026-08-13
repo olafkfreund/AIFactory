@@ -62,6 +62,7 @@ Response::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fnmatch
 import json
 import logging
@@ -453,10 +454,10 @@ class OpenAICompatibleProvider(OpenAICompatibleHeadersMixin, BaseLLMProvider):  
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             error_body = ""
-            try:
+            # ponytail: best-effort enrichment of the error message below --
+            # if the error response body itself can't be read, report without it
+            with contextlib.suppress(OSError, ValueError):
                 error_body = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                pass
             raise RuntimeError(
                 f"OpenAI-compatible API HTTP error {exc.code}: {exc.reason}. "
                 f"Response body: {error_body}"

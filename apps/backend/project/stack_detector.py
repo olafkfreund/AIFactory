@@ -6,6 +6,7 @@ Detects programming languages, package managers, databases,
 infrastructure tools, and cloud providers from project files.
 """
 
+import contextlib
 from pathlib import Path
 
 from .config_parser import ConfigParser
@@ -247,14 +248,13 @@ class StackDetector:
             for yaml_file in self.parser.glob_files(
                 "**/*.yaml"
             ) + self.parser.glob_files("**/*.yml"):
-                try:
-                    with open(yaml_file) as f:
-                        content = f.read()
-                        if "apiVersion:" in content and "kind:" in content:
-                            self.stack.infrastructure.append("kubernetes")
-                            break
-                except OSError:
-                    pass
+                # ponytail: best-effort detection heuristic, an unreadable
+                # candidate file just isn't evidence of a k8s stack.
+                with contextlib.suppress(OSError), open(yaml_file) as f:
+                    content = f.read()
+                    if "apiVersion:" in content and "kind:" in content:
+                        self.stack.infrastructure.append("kubernetes")
+                        break
 
         # Helm
         if self.parser.file_exists("Chart.yaml", "charts/"):

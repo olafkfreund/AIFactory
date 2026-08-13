@@ -57,8 +57,8 @@ class ClaudeProvider(ProviderStrategy):
             if result.returncode == 0 and result.stdout.strip():
                 self._claude_path = result.stdout.strip()
                 return self._claude_path
-        except (subprocess.SubprocessError, OSError):
-            pass
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.debug("ClaudeProvider: 'which claude' probe failed: %s", exc)
 
         home = Path.home()
         for candidate in [
@@ -113,8 +113,12 @@ class ClaudeProvider(ProviderStrategy):
                         profile.get("id"),
                         profile.get("name", "Default Profile"),
                     )
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning(
+                    "ClaudeProvider: could not read claude-profiles.json (%s), "
+                    "falling back to static token file",
+                    exc,
+                )
 
         token_file = Path.home() / ".claude" / "oauth_token"
         if token_file.exists():
@@ -330,8 +334,11 @@ class ClaudeProvider(ProviderStrategy):
                                 )
 
                         continue
-                    except json.JSONDecodeError:
-                        pass
+                    except json.JSONDecodeError as exc:
+                        logger.debug(
+                            "ClaudeProvider: non-JSON stream line, treating as plain text: %s",
+                            exc,
+                        )
 
                 accumulated_content += line + "\n"
                 await broadcast_event(

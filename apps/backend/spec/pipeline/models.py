@@ -7,6 +7,7 @@ Data structures, helper functions, and utilities for the spec creation pipeline.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 from datetime import datetime, timedelta
@@ -79,8 +80,10 @@ def cleanup_orphaned_pending_folders(specs_dir: Path) -> None:
     for folder in orphaned:
         try:
             shutil.rmtree(folder)
-        except OSError:
-            pass
+        except OSError as exc:
+            print_status(
+                f"Could not remove orphaned spec folder {folder}: {exc}", "warning"
+            )
 
 
 def create_spec_dir(specs_dir: Path, lock: SpecNumberLock | None = None) -> Path:
@@ -106,11 +109,10 @@ def create_spec_dir(specs_dir: Path, lock: SpecNumberLock | None = None) -> Path
             # Find the HIGHEST folder number
             numbers = []
             for folder in existing:
-                try:
-                    num = int(folder.name[:3])
-                    numbers.append(num)
-                except ValueError:
-                    pass
+                # ponytail: glob already restricts to a 3-digit prefix; a
+                # ValueError means a stray non-numeric folder -- skip it
+                with contextlib.suppress(ValueError):
+                    numbers.append(int(folder.name[:3]))
             next_num = max(numbers) + 1 if numbers else 1
         else:
             next_num = 1

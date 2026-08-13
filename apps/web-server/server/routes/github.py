@@ -5,6 +5,7 @@ Handles GitHub OAuth, repository management, issues, PRs, and releases.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -377,6 +378,7 @@ def install_github_cli():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
+            check=False,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -394,8 +396,8 @@ def install_github_cli():
                     "steps_completed": ["already-installed"],
                 },
             }
-    except Exception:
-        pass
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("gh --version probe failed, proceeding to install: %s", exc)
 
     # Step 2: Install gh using the official apt repository method
     # This works in the Docker container (Ubuntu-based)
@@ -422,6 +424,7 @@ def install_github_cli():
 
         result = subprocess.run(
             ["bash", "-c", install_script],
+            check=False,
             capture_output=True,
             text=True,
             timeout=120,
@@ -562,10 +565,8 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
             "success": False,
             "error": "Authentication timed out after 5 minutes.",
         }
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             proc.kill()
-        except Exception:
-            pass
     except Exception as e:
         _gh_auth_status = {
             "complete": True,
@@ -580,8 +581,10 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
         from ..websockets.events import broadcast_event
 
         await broadcast_event("github:auth-complete", _gh_auth_status)
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "gh auth: failed to broadcast github:auth-complete over WebSocket: %s", exc
+        )
 
 
 @router.post("/auth/start")
@@ -602,10 +605,8 @@ async def start_github_auth():
 
     # Kill any existing auth process
     if _gh_auth_proc is not None:
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             _gh_auth_proc.kill()
-        except Exception:
-            pass
         _gh_auth_proc = None
 
     _gh_auth_status = None
@@ -1212,8 +1213,13 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                                 "updated_at": c.get("lastContentUpdatedDate", ""),
                             }
                         )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "get_issue_comments: Azure DevOps threads fallback also "
+                    "failed for issue %s: %s",
+                    issueNumber,
+                    exc,
+                )
     else:
         # GitHub api-based fallback
         try:
@@ -1233,8 +1239,12 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                         "updated_at": c.get("updated_at", ""),
                     }
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "get_issue_comments: failed to fetch comments for issue %s: %s",
+                issueNumber,
+                exc,
+            )
 
     return comments
 
@@ -1377,8 +1387,11 @@ async def check_project_github_connection(projectId: str):
     if count_result["success"]:
         try:
             issue_count = int(count_result["output"])
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug(
+                "get_project_github_repositories: could not parse issue count: %s",
+                exc,
+            )
 
     return {
         "success": True,
@@ -1634,8 +1647,12 @@ async def investigate_github_issue(
                 try:
                     comments_data = json.loads(comments_result["output"])
                     all_comments = comments_data.get("comments", [])
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "get_project_github_issue: could not parse comments for issue %s: %s",
+                        issueNumber,
+                        exc,
+                    )
 
         # Filter comments if specific IDs were selected
         selected_comments = []
@@ -1783,8 +1800,8 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
             if d.is_dir() and d.name[:3].isdigit():
                 try:
                     next_num = max(next_num, int(d.name[:3]) + 1)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("skipping non-numeric spec dir %s: %s", d.name, exc)
 
         title_slug = (issue_data.get("title", "untitled") or "untitled").lower()
         title_slug = title_slug.replace(" ", "-")[:40]

@@ -19,6 +19,8 @@ refactor.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 
@@ -33,10 +35,10 @@ def real_app(monkeypatch):
     from prometheus_client import REGISTRY
 
     for c in list(REGISTRY._collector_to_names.keys()):  # type: ignore[attr-defined]
-        try:
+        # ponytail: another collector may have already unregistered this one
+        # via a shared name -- nothing left to do either way
+        with contextlib.suppress(KeyError):
             REGISTRY.unregister(c)
-        except KeyError:
-            pass
 
     # Disable auth so /metrics doesn't accidentally require a token in
     # the test path. The METRICS_SCRAPE_TOKEN is read by install_metrics

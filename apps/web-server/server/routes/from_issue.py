@@ -23,6 +23,7 @@ deps (the agent SDK) are imported lazily so the module stays unit-testable.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -259,10 +260,8 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
         tm = {}
     if isinstance(tm, dict):
         tm[key] = value
-        try:
+        with contextlib.suppress(OSError):
             tm_file.write_text(json.dumps(tm, indent=2))
-        except OSError:
-            pass
 
 
 @router.post("/from-issue")

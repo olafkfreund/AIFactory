@@ -195,8 +195,13 @@ async def watch_for_copilot_pr(
                 pr_url = await asyncio.to_thread(
                     service.get_pr_url, repo_full_name, pr_number
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "[copilot-dispatch] could not fetch PR url for task=%s pr=%s: %s",
+                    sanitize_log(task_id),
+                    sanitize_log(pr_number),
+                    sanitize_log(exc),
+                )
 
             logger.info(
                 "[copilot-dispatch] PR #%s found for task %s issue #%s",

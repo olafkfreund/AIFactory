@@ -8,6 +8,7 @@ Detects terminal capabilities for:
 - Interactive input support
 """
 
+import contextlib
 import io
 import os
 import sys
@@ -40,8 +41,9 @@ def configure_safe_encoding() -> None:
                 pass
 
         # Method 2: Wrap with TextIOWrapper for piped output
-        # This is needed when stdout/stderr are pipes (e.g., from Electron)
-        try:
+        # This is needed when stdout/stderr are pipes (e.g., from Electron).
+        # Best-effort: if this also fails, the stream keeps its default encoding.
+        with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
             if hasattr(stream, "buffer"):
                 new_stream = io.TextIOWrapper(
                     stream.buffer,
@@ -50,8 +52,6 @@ def configure_safe_encoding() -> None:
                     line_buffering=True,
                 )
                 setattr(sys, stream_name, new_stream)
-        except (AttributeError, io.UnsupportedOperation, OSError):
-            pass
 
 
 # Configure safe encoding on module import
