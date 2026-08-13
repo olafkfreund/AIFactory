@@ -222,3 +222,67 @@ Register it here and re-measure. The residual after this pack was 64 sources,
 mostly FastAPI request params (`project_id`, `title`, request models) reaching
 path expressions with no named guard at all. The natural next step is a named
 choke point for `project_id`, the way TFactory added `trusted_project_root`.
+
+## py/stack-trace-exposure: measured, and deliberately NOT forked (2026-08-13)
+
+There are 122 open `py/stack-trace-exposure` alerts on `dev` (733a08ff). 17 of
+them sit in `routes/settings.py` on handlers that #1308 already routed through
+`error_ref.client_error`, which reads like the same module-boundary blindness
+that justified the path-injection, command-injection and SSRF forks. **It is
+not.** A `-sanitized` twin was built and measured before anything was excluded,
+and the measurement says do not ship it.
+
+CodeQL 2.25.6, database over `apps/web-server`, distinct sinks:
+
+| tree | stock | with a `client_error` barrier |
+|---|---|---|
+| `dev` 733a08ff as shipped | 122 | 18 |
+| same tree, `client_error` mutated to drop the `InputRejectedError` branch | 18 | — |
+| same tree, `client_error` mutated to `return str(exc)` unconditionally | 122 | — |
+
+Read the middle row first. Deleting the passthrough branch from the *source*
+drops stock from 122 to 18, and those 18 sinks are **byte-identical** to the 18
+the barrier query leaves behind. The barrier and the branch deletion are the
+same operation as far as the analysis is concerned: everything the barrier
+clears is the passthrough branch, and nothing else.
+
+The SARIF path steps say the same thing directly. Every one of the 104 cleared
+flows runs
+
+    routes/x.py  except ... as e     (source)
+    routes/x.py  client_error(logger, "...", e)
+    error_ref.py exc                 (line 93, the parameter)
+    error_ref.py str()               (line 103, the InputRejectedError branch)
+    routes/x.py  client_error()      (the returned value)
+    routes/x.py  Dict                (the response body, sink)
+
+and **zero** flows run through line 104, the
+`f"{context} (reference {...})"` branch. Stock CodeQL follows `client_error`
+across the module boundary perfectly well; it already models the reference-id
+path as clean, because `error_reference` returns `secrets.token_hex` and no
+taint survives it. There is no false positive here to fork away.
+
+So the alerts are not noise from a blind analyser. They are the analyser
+correctly reporting the one branch that hands a caught exception's own text
+back to the caller verbatim. Registering `client_error` as a barrier would
+suppress precisely the branch that is not sanitising, and only that branch —
+the maximally dishonest barrier available, and worse than leaving all 122 open.
+
+That branch is still believed correct: `InputRejectedError` is raised only from
+`services/url_safety.py` and `services/argv_safety.py`, every message is
+developer-written and quotes only the caller's own input, and the one place a
+stdlib exception could have leaked in (`socket.gaierror` in `url_safety.py`)
+deliberately raises a plain `ValueError` so it takes the reference-id path.
+But "believed correct by convention at four raise sites" is not a property a
+dataflow barrier can assert, and CodeQL is right to keep asking.
+
+The residual 18 (17 in `routes/github.py`, 1 in `routes/git.py`) are real and
+untouched by any of this — `github.py` returns service `result` dicts that
+carry raw error text, and `git.py:346` is a hand-rolled copy of the same
+passthrough. They are the positive control for the query: it still reports
+them, so its silence on the other 104 was the barrier and not blindness.
+
+**Do not exclude `py/stack-trace-exposure`.** If the volume has to come down,
+it comes down in code — stop moving developer-written text inside an exception
+object, and carry the safe sentence as a plain string the handler owns — not by
+asking the query a narrower question.
