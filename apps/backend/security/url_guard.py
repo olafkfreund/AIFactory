@@ -39,11 +39,17 @@ then the SDK re-resolves at fetch time (TOCTOU). Unchanged by this refactor;
 closing it needs IP-pinning at the transport layer, which the SDK's WebFetch
 tool does not expose. Residual on #370.
 
-Note on redirects: the canonical module also ships
-``build_no_redirect_opener()``, but this call site cannot use it — the SDK
-performs the fetch, not us, and it follows 30x itself. So a public URL that
-redirects to metadata is still reachable through ``WebFetch``. That gap
-predates this change and is NOT closed by it; it is on #1269.
+Note on redirects — CLOSED in #1269, and worth reading because the fix is not
+in this file. This hook could never close it: it validates a URL and then
+something else fetches, and that something else followed 30x. The answer was to
+stop being the second party — ``WebFetch`` is no longer granted to the agent,
+and ``mcp__aifactory__web_fetch`` does the fetching in-process through
+``fetch_following_safe_redirects``, which re-checks every hop.
+
+The hook still runs, and still matters: it is what refuses the FIRST url, it
+covers ``WebSearch``, and it is what fails closed if ``WebFetch`` is ever
+granted again by an edit to ``core/client.py``. Defence in depth, not
+redundancy.
 """
 
 from __future__ import annotations
@@ -58,11 +64,18 @@ if str(_WEB_SERVER) not in sys.path:
     # site-packages would be a way to shadow somebody else's module.
     sys.path.append(str(_WEB_SERVER))
 
-from server.services.url_safety import assert_safe_outbound_url  # noqa: E402
+from server.services.url_safety import (  # noqa: E402
+    assert_safe_outbound_url,
+    fetch_following_safe_redirects,
+)
 
 # The historical name, kept so `hooks.py` and #370's tests read unchanged. Same
 # strict posture (public addresses only) and same `ValueError` as the copy it
 # replaces.
 assert_url_not_ssrf = assert_safe_outbound_url
 
-__all__ = ["assert_safe_outbound_url", "assert_url_not_ssrf"]
+__all__ = [
+    "assert_safe_outbound_url",
+    "assert_url_not_ssrf",
+    "fetch_following_safe_redirects",
+]
