@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+### Fixed
+
+- **Choosing a cloud KMS backend no longer produces a pod that writes
+  credentials in plaintext.** `charts/aifactory/values.yaml` advertised five
+  `kms.backend` values but only `fernet` was given anything usable at the pod:
+  `aws_kms` and `gcp_kms` read a ConfigMap entry that defaulted to `""`, and
+  `vault_transit` and `azure_kv` got nothing at all - no `VAULT_ADDR`,
+  no `VAULT_TOKEN`, no `AZURE_KEYVAULT_URL`. Since #1276 routed the JSON
+  credential stores through the same KMS, and `secret_field.seal()` degrades to
+  writing plaintext rather than failing a profile save, `--set
+  kms.backend=vault_transit` meant OAuth tokens went back on disk in the clear
+  while the operator believed they were encrypted, with only a log line saying
+  otherwise. Two fixes, because the chart alone cannot see an empty Secret or an
+  unreachable KMS: `helm template` now fails when a selected backend has no key
+  configured (the same trap `otel.enabled` uses), and the app refuses to start
+  when a *selected* backend cannot be constructed. The unconfigured default is
+  untouched - no backend chosen still degrades with its one-time warning, which
+  is honest, because nothing was ever provisioned. A KMS that breaks *after*
+  boot fails the individual write instead of crash-looping the pod. (#1290)
+
 ### Changed
 
 - **The secret scanner stops printing the secrets it finds.** `mask_secret`
