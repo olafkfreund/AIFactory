@@ -82,6 +82,14 @@ extend-exclude = [
     # Reformatting it under this config's default 88 would break that gate on
     # the next re-vendor, which is exactly what the gate exists to prevent.
     "apps/backend/runners/github/",
+    # Factory#726: the whole-repo security-sink lint engine, vendored byte-exact
+    # from the hub (shared/factory-seclint/) and kept identical by
+    # security-lint.yml's drift step. Same reason as every entry above -- the hub
+    # formats at 100, this config's formatter defaults to 88, and letting it
+    # touch the copy would break the drift step on whitespace. Note the shape of
+    # that failure: the formatter would happily "fix" its own complaint, and the
+    # gate that lost would be the byte-exact one.
+    "security-lint/",
 ]
 
 [lint]
