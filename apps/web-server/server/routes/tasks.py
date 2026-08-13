@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
@@ -42,7 +43,6 @@ from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
-from .projects import load_projects
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,

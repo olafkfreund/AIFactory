@@ -105,7 +105,7 @@ def _req(user):
 # project p1 belongs to org-1 (alice's org).
 def _patch_projects(monkeypatch):
     monkeypatch.setattr(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         lambda: {"p1": {"org_id": "org-1", "name": "p1"}},
     )
 

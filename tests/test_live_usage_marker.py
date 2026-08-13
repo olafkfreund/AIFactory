@@ -117,7 +117,7 @@ async def test_handler_turns_a_marker_into_a_running_cost_event(monkeypatch):
         "server.services.completion.emit_usage_snapshot", fake_emit, raising=True
     )
     monkeypatch.setattr(
-        "server.routes.projects.load_projects", lambda: {"p1": {"path": "/tmp/x"}}
+        "server.project_registry.load_projects", lambda: {"p1": {"path": "/tmp/x"}}
     )
 
     mixin = EmitMixin()

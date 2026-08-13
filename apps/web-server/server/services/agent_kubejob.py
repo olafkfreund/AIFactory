@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from factory_common.logsafe import sanitize_log
 
-from server.routes.projects import resolve_project_path
+from server.project_registry import resolve_project_path
 from server.services import review_redrive_service
 
 from .build_log_stream import PlanSync
@@ -122,7 +122,8 @@ class KubejobMixin:
         build (RFC-0008). The board still surfaces it for human review via the
         durable ``done`` overlay; the PR endgame stays off unless enabled.
         """
-        from ..routes.projects import resolve_project_path
+        from server.project_registry import resolve_project_path
+
         from .completion_orchestration import run_terminal_completion
 
         project_id, _, spec_id = job_id.partition(":")
@@ -671,7 +672,8 @@ class KubejobMixin:
         Best-effort; never raises. Returns the reaped task ids."""
         from datetime import UTC, datetime
 
-        from ..routes.projects import load_projects
+        from server.project_registry import load_projects
+
         from ..routes.task_service import get_spec_dirs, spec_to_task
 
         reaped: list[str] = []

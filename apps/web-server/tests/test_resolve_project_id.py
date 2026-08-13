@@ -14,7 +14,7 @@ _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
-from server.routes import projects as projects_mod  # noqa: E402
+from server import project_registry as projects_mod  # noqa: E402
 
 _FIXTURE = {
     "5d78d4b9-uuid": {

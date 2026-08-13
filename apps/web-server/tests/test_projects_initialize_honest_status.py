@@ -24,6 +24,7 @@ from typing import Any
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server import project_registry
 from server.routes import projects
 from server.services.http_verdict import REFUSED_STATUS
 
@@ -35,7 +36,9 @@ def _projects_file(tmp_path: Path, project_path: Path) -> Path:
 
 
 def _run(projects_file: Path) -> Any:
-    with patch.object(projects, "get_projects_file", return_value=projects_file):
+    # `get_projects_file` lives in `server.project_registry` since #1317; the
+    # loader resolves it there, so that is the module the patch has to land on.
+    with patch.object(project_registry, "get_projects_file", return_value=projects_file):
         return asyncio.run(projects.initialize_project("p1", _access={}))
 
 

@@ -11,6 +11,16 @@ from pathlib import Path
 from agents.utils import load_implementation_plan
 from progress import is_build_complete
 
+# Configuration
+#
+# Defined here rather than in ``qa.loop`` (#1317). ``criteria`` is the bottom of
+# the qa package -- ``loop``, ``report``, ``fixer`` and ``reviewer`` all import
+# from it -- so a constant living in ``loop`` forced ``criteria`` and ``report``
+# to reach back UP with function-local ``from .loop import MAX_QA_ITERATIONS``
+# imports, which is what made the whole package one import cycle. ``loop``
+# re-exports it, so ``from qa.loop import MAX_QA_ITERATIONS`` still works.
+MAX_QA_ITERATIONS = 10
+
 # =============================================================================
 # IMPLEMENTATION PLAN I/O
 # =============================================================================
@@ -104,8 +114,6 @@ def should_run_fixes(spec_dir: Path) -> bool:
     - QA has rejected the build
     - Max iterations not reached
     """
-    from .loop import MAX_QA_ITERATIONS
-
     if not is_qa_rejected(spec_dir):
         return False
 

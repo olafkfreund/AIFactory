@@ -24,11 +24,11 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
 from ..services import task_control
 from .project_authz import require_task_access
-from .projects import load_projects
 
 router = APIRouter()
 

@@ -108,9 +108,11 @@ def contained_path(
 # now needed by every layer that accepts a whole path from a request: the
 # add-project flow, the git routes, terminal cwd, worktree launch.
 #
-# The ``load_projects`` import is deliberately function-local. This module is a
-# leaf and must stay one; a module-level import back into ``routes`` would put
-# a cycle on the boot path.
+# The ``load_projects`` import is deliberately function-local. It used to be a
+# cycle break -- the registry lived in ``routes.projects``, which imports THIS
+# module -- and since #1317 it is purely about late binding: resolving the name
+# at call time is what lets a test point ``server.project_registry.load_projects``
+# at a fixture registry and have these roots follow.
 
 
 def within_roots(
@@ -150,9 +152,11 @@ def registered_project_roots() -> list[Path]:
     The strict tier. Used where the request operates on a project that already
     exists -- reading file content, launching a terminal, opening a worktree.
     """
-    # Function-local: routes.projects imports this module, so a module-level
-    # import here is a cycle. Deliberate, not an oversight.
-    from server.routes.projects import load_projects  # noqa: PLC0415 - see above
+    # Function-local so the loader is resolved at CALL time, which is what lets
+    # a test point `server.project_registry.load_projects` at a fixture registry.
+    # No longer a cycle (the registry moved below this module in #1317) -- the
+    # deferral is now purely about that late binding.
+    from server.project_registry import load_projects  # noqa: PLC0415 - see above
 
     roots: list[Path] = []
     for p in load_projects().values():

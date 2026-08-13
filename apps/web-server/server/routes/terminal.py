@@ -15,12 +15,12 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from server.error_ref import client_error
+from server.project_registry import get_projects_file, load_projects
 from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..config import get_settings
 from ..pty.manager import get_pty_manager
 from ..services.terminal_worktree_service import TerminalWorktreeService
-from .projects import get_projects_file, load_projects
 
 logger = logging.getLogger(__name__)
 

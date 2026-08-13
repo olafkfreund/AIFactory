@@ -15,7 +15,7 @@ import asyncio
 import subprocess
 
 import pytest
-from server.routes import projects as projects_mod
+from server import project_registry as projects_mod
 from server.routes.git import CreateWorktreeRequest, create_worktree
 
 

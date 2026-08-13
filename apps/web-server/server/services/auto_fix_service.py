@@ -61,7 +61,7 @@ DEFAULT_AUTO_FIX_CONFIG: dict[str, Any] = {
 
 def get_config(project_id: str) -> dict[str, Any] | None:
     """Return the project's AutoFixConfig, or None if the project doesn't exist."""
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -79,7 +79,7 @@ def get_config(project_id: str) -> dict[str, Any] | None:
 
 def save_config(project_id: str, config: dict[str, Any]) -> bool:
     """Persist the config into projects.json under settings.autoFix."""
-    from ..routes.projects import load_projects, save_projects
+    from server.project_registry import load_projects, save_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -100,7 +100,7 @@ def save_config(project_id: str, config: dict[str, Any]) -> bool:
 
 def get_queue(project_id: str) -> list[dict[str, Any]]:
     """Return the auto-fix queue (list of ``AutoFixQueueItem``)."""
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -111,7 +111,7 @@ def get_queue(project_id: str) -> list[dict[str, Any]]:
 
 def _set_queue(project_id: str, queue: list[dict[str, Any]]) -> None:
     """Replace the queue in projects.json."""
-    from ..routes.projects import load_projects, save_projects
+    from server.project_registry import load_projects, save_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -202,7 +202,7 @@ def _provider_for(project_id: str):
     Reuses the same selection logic the existing routes use.  Raises
     ``ValueError`` if the project doesn't exist.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -344,7 +344,7 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     Returns ``IssueData``-shaped dicts.  Side-effect-free (does NOT
     create specs or start agents — the caller decides).
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -438,7 +438,8 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     phase, post the enriched plan as an issue comment, assign Copilot,
     and stop. The local coder/QA pipeline does not run for delegated tasks.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
+
     from ..services.agent_service import get_agent_service
     from ..websockets.events import broadcast_event
 
@@ -578,7 +579,7 @@ async def _pull_clone_if_any(project_id: str) -> None:
     No-op for local-path projects (the common laptop case) and on git
     errors — a stale clone is better than a poll cycle that aborts.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     proj = projects.get(project_id) or {}

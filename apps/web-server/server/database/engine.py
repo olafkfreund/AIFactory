@@ -213,7 +213,12 @@ async def init_db() -> None:
 
 # Stable ids for the deployment-wide service identity + default org (#319).
 DEFAULT_USER_ID = "default"
-DEFAULT_ORG_ID = "default"
+
+# Re-exported, not defined here: ``project_registry`` needs it and must stay
+# below the database layer (``_backfill_project_orgs`` below imports the
+# registry). Every existing ``from ..database.engine import DEFAULT_ORG_ID``
+# importer is unaffected.
+from ..tenancy import DEFAULT_ORG_ID  # noqa: E402 - deliberate mid-file re-export
 
 
 async def seed_tenant_defaults(disable_auth: bool) -> None:
@@ -318,7 +323,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
 def _backfill_project_orgs() -> None:
     """Assign ``org_id=default`` to any registered project that lacks one."""
     try:
-        from ..routes.projects import load_projects, save_projects
+        from server.project_registry import load_projects, save_projects
     except Exception:
         return
     projects = load_projects()

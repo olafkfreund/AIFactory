@@ -132,7 +132,9 @@ async def authorize_project_for_user(
         check_project_access(user, None, None, minimum_role)
         return None
 
-    from .projects import load_projects  # lazy: avoid projects↔authz cycle
+    from server.project_registry import (
+        load_projects,  # lazy: avoid projects↔authz cycle
+    )
 
     project = load_projects().get(project_id) if project_id else None
     org_id = project.get("org_id") if project else None

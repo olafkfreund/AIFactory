@@ -203,7 +203,7 @@ class EmitMixin:
             project_id = task_id.split(":", 1)[0]
 
             # Resolve the project record + its local path.
-            from ..routes.projects import load_projects
+            from server.project_registry import load_projects
 
             projects = load_projects()
             proj = projects.get(project_id)
@@ -461,7 +461,7 @@ class EmitMixin:
             # (issue number, injection scan, tenant) all degrade to None, which
             # is correct for an in-flight snapshot: that metadata lands at
             # completion, and the usage block is what this event exists for.
-            from ..routes.projects import load_projects  # noqa: PLC0415, TID252
+            from server.project_registry import load_projects  # noqa: PLC0415
 
             pdata = load_projects().get(project_id) or {}
             project_path = str(pdata.get("path") or "").strip()

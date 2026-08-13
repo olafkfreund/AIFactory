@@ -13,8 +13,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
+from server import project_registry as projects_mod  # noqa: E402
 from server.database.engine import DEFAULT_ORG_ID  # noqa: E402
-from server.routes import projects as projects_mod  # noqa: E402
 
 
 def _point_registry_at(tmp_path: Path, monkeypatch) -> None:

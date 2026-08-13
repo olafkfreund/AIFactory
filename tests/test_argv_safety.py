@@ -112,7 +112,7 @@ def _commits_preview(monkeypatch, tmp_path, options, mode):
 
     monkeypatch.setattr("subprocess.run", _fake_run)
     monkeypatch.setattr(
-        "server.routes.projects.load_projects",
+        "server.project_registry.load_projects",
         lambda: {"p1": {"path": str(tmp_path)}},
     )
 
