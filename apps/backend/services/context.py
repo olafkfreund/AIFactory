@@ -147,13 +147,12 @@ class ServiceContextGenerator:
         # Node.js
         package_json = service_path / "package.json"
         if package_json.exists():
-            with contextlib.suppress(OSError, json.JSONDecodeError):
-                with open(package_json) as f:
-                    pkg = json.load(f)
-                    deps = list(pkg.get("dependencies", {}).keys())[:15]
-                    context.dependencies.extend(
-                        [d for d in deps if d not in context.dependencies]
-                    )
+            with contextlib.suppress(OSError, json.JSONDecodeError), open(package_json) as f:
+                pkg = json.load(f)
+                deps = list(pkg.get("dependencies", {}).keys())[:15]
+                context.dependencies.extend(
+                    [d for d in deps if d not in context.dependencies]
+                )
 
     def _discover_api_patterns(self, service_path: Path, context: ServiceContext):
         """Discover API patterns (routes, endpoints)."""
@@ -183,13 +182,12 @@ class ServiceContextGenerator:
         # From package.json scripts
         package_json = service_path / "package.json"
         if package_json.exists():
-            with contextlib.suppress(OSError, json.JSONDecodeError):
-                with open(package_json) as f:
-                    pkg = json.load(f)
-                    scripts = pkg.get("scripts", {})
-                    for name in ["dev", "start", "build", "test", "lint"]:
-                        if name in scripts:
-                            context.common_commands[name] = f"npm run {name}"
+            with contextlib.suppress(OSError, json.JSONDecodeError), open(package_json) as f:
+                pkg = json.load(f)
+                scripts = pkg.get("scripts", {})
+                for name in ["dev", "start", "build", "test", "lint"]:
+                    if name in scripts:
+                        context.common_commands[name] = f"npm run {name}"
 
         # From Makefile
         makefile = service_path / "Makefile"
@@ -216,9 +214,7 @@ class ServiceContextGenerator:
             context.common_commands.setdefault("dev", "uvicorn main:app --reload")
         elif context.framework == "django":
             context.common_commands.setdefault("dev", "python manage.py runserver")
-        elif context.framework in ("next", "nextjs"):
-            context.common_commands.setdefault("dev", "npm run dev")
-        elif context.framework in ("react", "vite"):
+        elif context.framework in ("next", "nextjs") or context.framework in ("react", "vite"):
             context.common_commands.setdefault("dev", "npm run dev")
 
     def _discover_environment_vars(self, service_path: Path, context: ServiceContext):

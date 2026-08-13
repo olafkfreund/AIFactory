@@ -339,21 +339,19 @@ def load_task_metadata(spec_dir: Path) -> TaskMetadataConfig | None:
     if metadata_path.exists():
         # ponytail: corrupt/unreadable task_metadata.json falls through to the
         # requirements.json fallback below.
-        with contextlib.suppress(json.JSONDecodeError, OSError):
-            with open(metadata_path) as f:
-                return json.load(f)
+        with contextlib.suppress(json.JSONDecodeError, OSError), open(metadata_path) as f:
+            return json.load(f)
 
     # Fallback: check requirements.json["metadata"]
     requirements_path = spec_dir / "requirements.json"
     if requirements_path.exists():
         # ponytail: corrupt/unreadable requirements.json just means no metadata found
-        with contextlib.suppress(json.JSONDecodeError, OSError):
-            with open(requirements_path) as f:
-                requirements = json.load(f)
-                if "metadata" in requirements and isinstance(
-                    requirements["metadata"], dict
-                ):
-                    return requirements["metadata"]
+        with contextlib.suppress(json.JSONDecodeError, OSError), open(requirements_path) as f:
+            requirements = json.load(f)
+            if "metadata" in requirements and isinstance(
+                requirements["metadata"], dict
+            ):
+                return requirements["metadata"]
 
     return None
 

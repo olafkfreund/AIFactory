@@ -527,7 +527,9 @@ class InsightsService:
                 )
         except Exception as e:  # noqa: BLE001 - fall through, subprocess env may already have a token
             logger.debug(
-                f"[InsightsService] OAuth token resolution failed, proceeding without it: {sanitize_log(str(e))}"
+                "[InsightsService] OAuth token resolution failed, "
+                "proceeding without it: %s",
+                sanitize_log(str(e)),
             )
 
         logger.info(

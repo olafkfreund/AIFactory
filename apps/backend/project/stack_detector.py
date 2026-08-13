@@ -250,12 +250,11 @@ class StackDetector:
             ) + self.parser.glob_files("**/*.yml"):
                 # ponytail: best-effort detection heuristic, an unreadable
                 # candidate file just isn't evidence of a k8s stack.
-                with contextlib.suppress(OSError):
-                    with open(yaml_file) as f:
-                        content = f.read()
-                        if "apiVersion:" in content and "kind:" in content:
-                            self.stack.infrastructure.append("kubernetes")
-                            break
+                with contextlib.suppress(OSError), open(yaml_file) as f:
+                    content = f.read()
+                    if "apiVersion:" in content and "kind:" in content:
+                        self.stack.infrastructure.append("kubernetes")
+                        break
 
         # Helm
         if self.parser.file_exists("Chart.yaml", "charts/"):

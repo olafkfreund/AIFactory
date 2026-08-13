@@ -9,10 +9,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
-from factory_common.logsafe import sanitize_log
 from server.error_ref import client_error
 from server.services.url_safety import (
     assert_safe_outbound_url,
@@ -52,7 +52,7 @@ def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
         result = subprocess.run(
-            ["git"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["git"] + args, check=False, capture_output=True, text=True, cwd=cwd, timeout=30
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -374,7 +374,7 @@ async def check_claude_code_version():
         with contextlib.suppress(Exception):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
-                capture_output=True,
+                check=False, capture_output=True,
                 text=True,
                 timeout=5,
             )
@@ -385,7 +385,7 @@ async def check_claude_code_version():
         with contextlib.suppress(Exception):
             result = subprocess.run(
                 [claude_path, "--version"],
-                capture_output=True,
+                check=False, capture_output=True,
                 text=True,
                 timeout=5,
             )
@@ -439,7 +439,7 @@ async def install_claude_code():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
-            capture_output=True,
+            check=False, capture_output=True,
             text=True,
             timeout=timeout,
         )
@@ -483,7 +483,7 @@ async def install_claude_code():
                     "-c",
                     "curl -fsSL https://fnm.vercel.app/install | bash",
                 ],
-                capture_output=True,
+                check=False, capture_output=True,
                 text=True,
                 timeout=60,
             )
@@ -760,7 +760,7 @@ def _check_npm_package_installed(package: str) -> bool:
     try:
         result = subprocess.run(
             ["npm", "list", "-g", "--depth=0", package],
-            capture_output=True,
+            check=False, capture_output=True,
             text=True,
             timeout=8,
         )
@@ -1413,7 +1413,7 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     """
     try:
         result = subprocess.run(
-            ["gh"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["gh"] + args, check=False, capture_output=True, text=True, cwd=cwd, timeout=30
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}

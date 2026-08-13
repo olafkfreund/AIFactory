@@ -53,47 +53,44 @@ class ProjectAnalyzer:
         if project_index_path.exists():
             # Optional context: a malformed or unexpectedly-shaped index just
             # means we skip tech-stack enrichment, not a failure.
-            with contextlib.suppress(json.JSONDecodeError, KeyError):
-                with open(project_index_path) as f:
-                    index = json.load(f)
-                    # Extract tech stack from services
-                    for service_name, service_info in index.get("services", {}).items():
-                        if service_info.get("language"):
-                            context["tech_stack"].append(service_info["language"])
-                        if service_info.get("framework"):
-                            context["tech_stack"].append(service_info["framework"])
-                    context["tech_stack"] = list(set(context["tech_stack"]))
+            with contextlib.suppress(json.JSONDecodeError, KeyError), open(project_index_path) as f:
+                index = json.load(f)
+                # Extract tech stack from services
+                for _service_name, service_info in index.get("services", {}).items():
+                    if service_info.get("language"):
+                        context["tech_stack"].append(service_info["language"])
+                    if service_info.get("framework"):
+                        context["tech_stack"].append(service_info["framework"])
+                context["tech_stack"] = list(set(context["tech_stack"]))
 
         # Get roadmap context if enabled
         if self.include_roadmap:
             roadmap_path = self.project_dir / ".aifactory" / "roadmap" / "roadmap.json"
             if roadmap_path.exists():
-                with contextlib.suppress(json.JSONDecodeError, KeyError):
-                    with open(roadmap_path) as f:
-                        roadmap = json.load(f)
-                        # Extract planned features
-                        for feature in roadmap.get("features", []):
-                            context["planned_features"].append(feature.get("title", ""))
-                        # Get target audience
-                        audience = roadmap.get("target_audience", {})
-                        context["target_audience"] = audience.get("primary")
+                with contextlib.suppress(json.JSONDecodeError, KeyError), open(roadmap_path) as f:
+                    roadmap = json.load(f)
+                    # Extract planned features
+                    for feature in roadmap.get("features", []):
+                        context["planned_features"].append(feature.get("title", ""))
+                    # Get target audience
+                    audience = roadmap.get("target_audience", {})
+                    context["target_audience"] = audience.get("primary")
 
             # Also check discovery for audience
             discovery_path = (
                 self.project_dir / ".aifactory" / "roadmap" / "roadmap_discovery.json"
             )
             if discovery_path.exists() and not context["target_audience"]:
-                with contextlib.suppress(json.JSONDecodeError, KeyError):
-                    with open(discovery_path) as f:
-                        discovery = json.load(f)
-                        audience = discovery.get("target_audience", {})
-                        context["target_audience"] = audience.get("primary_persona")
+                with contextlib.suppress(json.JSONDecodeError, KeyError), open(discovery_path) as f:
+                    discovery = json.load(f)
+                    audience = discovery.get("target_audience", {})
+                    context["target_audience"] = audience.get("primary_persona")
 
-                        # Also get existing features
-                        current_state = discovery.get("current_state", {})
-                        context["existing_features"] = current_state.get(
-                            "existing_features", []
-                        )
+                    # Also get existing features
+                    current_state = discovery.get("current_state", {})
+                    context["existing_features"] = current_state.get(
+                        "existing_features", []
+                    )
 
         # Get kanban context if enabled
         if self.include_kanban:

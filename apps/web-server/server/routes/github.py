@@ -379,7 +379,7 @@ def install_github_cli():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
-            capture_output=True,
+            check=False, capture_output=True,
             text=True,
             timeout=timeout,
         )
@@ -424,7 +424,7 @@ def install_github_cli():
 
         result = subprocess.run(
             ["bash", "-c", install_script],
-            capture_output=True,
+            check=False, capture_output=True,
             text=True,
             timeout=120,
         )
@@ -1215,7 +1215,8 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                         )
             except Exception as exc:
                 logger.warning(
-                    "get_issue_comments: Azure DevOps threads fallback also failed for issue %s: %s",
+                    "get_issue_comments: Azure DevOps threads fallback also "
+                    "failed for issue %s: %s",
                     issueNumber,
                     exc,
                 )
@@ -1387,7 +1388,10 @@ async def check_project_github_connection(projectId: str):
         try:
             issue_count = int(count_result["output"])
         except (ValueError, TypeError) as exc:
-            logger.debug("get_project_github_repositories: could not parse issue count: %s", exc)
+            logger.debug(
+                "get_project_github_repositories: could not parse issue count: %s",
+                exc,
+            )
 
     return {
         "success": True,

@@ -8,7 +8,7 @@ Main entry point for the web server that provides:
 """
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -36,6 +36,7 @@ from .routes import (
     auth_routes,
     auto_fix,
     capabilities,
+    cli_accounts as cli_accounts_routes,
     context,
     copilot_mcp,
     email,
@@ -45,27 +46,28 @@ from .routes import (
     git,
     git_credentials,
     github,
+    llm_endpoints as llm_endpoints_routes,
+    login_discovery as login_discovery_routes,
+    logs as logs_routes,
     mcp,
     notifications,
     organizations,
     projects,
     search,
+    settings as settings_routes,
     skills,
     stale,
     tasks,
     terminal,
     well_known,
 )
-from .routes import cli_accounts as cli_accounts_routes
-from .routes import llm_endpoints as llm_endpoints_routes
-from .routes import login_discovery as login_discovery_routes
-from .routes import logs as logs_routes
-from .routes import settings as settings_routes
 from .services.skills_service import init_skills_service
-from .websockets import events as events_ws
-from .websockets import logs as logs_ws
-from .websockets import progress as progress_ws
-from .websockets import terminal as terminal_ws
+from .websockets import (
+    events as events_ws,
+    logs as logs_ws,
+    progress as progress_ws,
+    terminal as terminal_ws,
+)
 
 # v3.0.2 — logging is configured INSIDE create_app() (was at module
 # level until v3.0.1). Module-level setup_logging() was an import-
@@ -280,11 +282,9 @@ def _read_app_version() -> str:
     import re
     from pathlib import Path
 
-    import contextlib
-
     backend_init = Path(__file__).resolve().parents[2] / "backend" / "__init__.py"
     # ponytail: version file missing/unreadable just falls back to unknown
-    with contextlib.suppress(OSError):
+    with suppress(OSError):
         content = backend_init.read_text(encoding="utf-8")
         match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
         if match:

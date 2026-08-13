@@ -310,7 +310,7 @@ class ServiceOrchestrator:
 
             proc = subprocess.run(
                 cmd,
-                cwd=self.project_dir,
+                check=False, cwd=self.project_dir,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -382,12 +382,16 @@ class ServiceOrchestrator:
             if docker_cmd:
                 subprocess.run(
                     docker_cmd + ["down"],
-                    cwd=self.project_dir,
+                    check=False, cwd=self.project_dir,
                     capture_output=True,
                     timeout=60,
                 )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            logger.warning("orchestrator: docker-compose down failed, containers may still be running: %s", exc)
+            logger.warning(
+                "orchestrator: docker-compose down failed, containers may "
+                "still be running: %s",
+                exc,
+            )
 
     def _stop_local_services(self) -> None:
         """Stop local services."""
@@ -407,7 +411,7 @@ class ServiceOrchestrator:
         try:
             proc = subprocess.run(
                 ["docker", "compose", "version"],
-                capture_output=True,
+                check=False, capture_output=True,
                 timeout=5,
             )
             if proc.returncode == 0:
@@ -419,7 +423,7 @@ class ServiceOrchestrator:
         try:
             proc = subprocess.run(
                 ["docker-compose", "version"],
-                capture_output=True,
+                check=False, capture_output=True,
                 timeout=5,
             )
             if proc.returncode == 0:

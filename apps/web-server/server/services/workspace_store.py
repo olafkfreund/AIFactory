@@ -35,10 +35,10 @@ pattern.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
-import contextlib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -185,7 +185,11 @@ class WorkspaceStore:
             try:
                 fs.makedirs(key_root, exist_ok=True)
             except Exception:
-                logger.warning("fs.makedirs(%s) failed, proceeding anyway", sanitize_log(key_root), exc_info=True)
+                logger.warning(
+                    "fs.makedirs(%s) failed, proceeding anyway",
+                    sanitize_log(key_root),
+                    exc_info=True,
+                )
             with fs.open(manifest_key, "w") as fh:
                 fh.write(json.dumps(manifest, indent=2))
             logger.info(

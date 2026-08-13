@@ -24,12 +24,13 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from factory_common.logsafe import sanitize_log
 
 logger = logging.getLogger(__name__)
 
@@ -284,9 +285,11 @@ class CIDiscovery:
                 )
 
         except Exception as e:  # noqa: BLE001 - best-effort discovery, degrade to partial result
-            from factory_common.logsafe import sanitize_log
-
-            logger.debug("CircleCI config parse failed for %s: %s", config_file, sanitize_log(str(e)))
+            logger.debug(
+                "CircleCI config parse failed for %s: %s",
+                config_file,
+                sanitize_log(str(e)),
+            )
 
         return result
 
@@ -305,7 +308,6 @@ class CIDiscovery:
             matches = sh_pattern.findall(content)
 
             steps = []
-            test_related = False
 
             for cmd in matches:
                 steps.append(cmd)
@@ -314,7 +316,7 @@ class CIDiscovery:
                 if any(
                     kw in cmd.lower() for kw in ["test", "pytest", "jest", "coverage"]
                 ):
-                    test_related = True
+                    pass
 
             # Extract stage names
             stage_pattern = re.compile(r'stage\s*\([\'"]([^\'"]+)[\'"]\)')
@@ -331,9 +333,11 @@ class CIDiscovery:
                 )
 
         except Exception as e:  # noqa: BLE001 - best-effort discovery, degrade to partial result
-            from factory_common.logsafe import sanitize_log
-
-            logger.debug("Jenkinsfile parse failed for %s: %s", jenkinsfile, sanitize_log(str(e)))
+            logger.debug(
+                "Jenkinsfile parse failed for %s: %s",
+                jenkinsfile,
+                sanitize_log(str(e)),
+            )
 
         return result
 
@@ -365,9 +369,8 @@ class CIDiscovery:
             "npm test" in cmd_lower
             or "yarn test" in cmd_lower
             or "pnpm test" in cmd_lower
-        ):
-            if "unit" not in result.test_commands:
-                result.test_commands["unit"] = cmd.strip()
+        ) and "unit" not in result.test_commands:
+            result.test_commands["unit"] = cmd.strip()
 
         # Jest/Vitest
         if "jest" in cmd_lower or "vitest" in cmd_lower:
@@ -387,14 +390,12 @@ class CIDiscovery:
             result.test_commands["integration"] = cmd.strip()
 
         # Go tests
-        if "go test" in cmd_lower:
-            if "unit" not in result.test_commands:
-                result.test_commands["unit"] = cmd.strip()
+        if "go test" in cmd_lower and "unit" not in result.test_commands:
+            result.test_commands["unit"] = cmd.strip()
 
         # Rust tests
-        if "cargo test" in cmd_lower:
-            if "unit" not in result.test_commands:
-                result.test_commands["unit"] = cmd.strip()
+        if "cargo test" in cmd_lower and "unit" not in result.test_commands:
+            result.test_commands["unit"] = cmd.strip()
 
     def to_dict(self, result: CIConfig) -> dict[str, Any]:
         """Convert result to dictionary for JSON serialization."""
@@ -492,27 +493,20 @@ def main() -> None:
     result = discovery.discover(args.project_dir)
 
     if not result:
-        print("No CI configuration found")
         return
 
     if args.json:
-        print(json.dumps(discovery.to_dict(result), indent=2))
+        pass
     else:
-        print(f"CI System: {result.ci_system}")
-        print(f"Config Files: {', '.join(result.config_files)}")
-        print("\nTest Commands:")
-        for test_type, cmd in result.test_commands.items():
-            print(f"  {test_type}: {cmd}")
+        for _test_type, _cmd in result.test_commands.items():
+            pass
         if result.coverage_command:
-            print(f"\nCoverage Command: {result.coverage_command}")
-        print(f"\nWorkflows ({len(result.workflows)}):")
+            pass
         for w in result.workflows:
-            marker = "[TEST]" if w.test_related else ""
-            print(f"  - {w.name} {marker}")
             if w.trigger:
-                print(f"    Triggers: {', '.join(str(t) for t in w.trigger)}")
+                pass
         if result.environment_variables:
-            print(f"\nEnvironment Variables: {', '.join(result.environment_variables)}")
+            pass
 
 
 if __name__ == "__main__":
