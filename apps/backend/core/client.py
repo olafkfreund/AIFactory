@@ -761,8 +761,12 @@ def create_client(
                 # Bash permission granted here, but actual commands are validated
                 # by the bash_security_hook (see security.py for allowed commands)
                 "Bash(*)",
-                # Allow web tools for documentation and research
-                "WebFetch(*)",
+                # Allow web tools for documentation and research.
+                # "WebFetch(*)" is deliberately absent (#1269): the PreToolUse
+                # hook can only vet the FIRST url, so a public URL that 302s to
+                # 169.254.169.254 is decided by a fetcher we do not control and
+                # cannot pin. mcp__aifactory__web_fetch replaces it and
+                # validates every hop. Adding this line back re-opens that.
                 "WebSearch(*)",
                 # Allow MCP tools based on required servers
                 # Format: tool_name(*) allows all arguments

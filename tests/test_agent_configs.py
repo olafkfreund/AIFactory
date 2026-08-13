@@ -122,12 +122,21 @@ class TestGetAgentConfig:
 class TestGetRequiredMcpServers:
     """Tests for get_required_mcp_servers() function."""
 
-    def test_spec_gatherer_has_no_mcp_servers(self):
-        """spec_gatherer should not require any MCP servers."""
+    def test_spec_gatherer_requires_only_the_in_process_aifactory_server(self):
+        """spec_gatherer requires no EXTERNAL MCP servers.
+
+        It asserted ``== []`` until #1269. That is no longer true and should
+        not be: the built-in WebFetch was revoked, and its guarded replacement
+        ``mcp__aifactory__web_fetch`` lives on the aifactory server, so every
+        web-capable phase now pulls that server in. The point the original test
+        was making -- this phase starts no subprocesses -- still holds, because
+        the aifactory server is in-process (``create_sdk_mcp_server``). So the
+        assertion is narrowed to what actually mattered rather than deleted.
+        """
         from agents.tools_pkg.models import get_required_mcp_servers
 
         servers = get_required_mcp_servers("spec_gatherer")
-        assert servers == []
+        assert servers == ["aifactory"]
 
     def test_spec_researcher_has_context7(self):
         """spec_researcher should require context7 for docs lookup."""
@@ -303,3 +312,26 @@ class TestGetAllAgentTypes:
         assert isinstance(types, list)
         assert types == sorted(types)
         assert len(types) > 10  # Should have many agent types
+
+
+def test_every_web_capable_phase_can_actually_fetch():
+    """#1269 invariant: WEB_TOOLS without the aifactory server is a dead tool.
+
+    ``web_fetch`` replaced the built-in WebFetch and lives on the in-process
+    aifactory MCP server, so a phase granted WEB_TOOLS but not that server
+    would advertise a tool that is not running -- it would simply lose the
+    ability to fetch the web, quietly, and no existing test would notice.
+
+    This is asserted rather than derived in ``get_required_mcp_servers`` on
+    purpose: the configs stay readable data, and the invariant is enforced
+    somewhere it can be read as a rule.
+    """
+    from agents.tools_pkg.models import AGENT_CONFIGS, TOOL_WEB_FETCH
+
+    missing = [
+        name
+        for name, config in AGENT_CONFIGS.items()
+        if TOOL_WEB_FETCH in config.get("tools", [])
+        and "aifactory" not in config.get("mcp_servers", [])
+    ]
+    assert not missing, f"web-capable phases with no aifactory server: {missing}"

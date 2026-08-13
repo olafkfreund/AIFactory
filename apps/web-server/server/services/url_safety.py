@@ -120,3 +120,65 @@ def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
             raise ValueError(f"refusing to fetch non-public address {ip} (SSRF)")
 
     return url
+
+
+# A redirect chain long enough to be a real site is short. Five is more than
+# http -> https -> www -> canonical -> trailing-slash, which is the longest
+# legitimate chain anyone has produced an example of.
+MAX_REDIRECT_HOPS = 5
+
+
+def fetch_following_safe_redirects(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 15,
+    allow_private: bool = False,
+    max_hops: int = MAX_REDIRECT_HOPS,
+) -> tuple[str, int, bytes]:
+    """Fetch ``request``, following redirects only to URLs that pass the guard.
+
+    Returns ``(final_url, status, body)``. Raises ``ValueError`` if any hop --
+    including the first -- fails :func:`assert_safe_outbound_url`.
+
+    This exists because refusing redirects outright is the right answer only
+    when *we* are the one fetching and can simply not follow. Redirects are
+    ordinary on the public web (http->https, apex->www, shortened links), so a
+    tool that refuses them is a tool that does not work. Following them without
+    re-checking is the #1269 hole: the dangerous URL is the one nobody
+    validated because nobody saw it.
+
+    So every hop is validated before it is requested, using the same guard and
+    the same posture as the first. ``Location`` is resolved against the URL it
+    came from, because a relative ``Location`` is legal and ``urljoin`` is what
+    decides where it actually points.
+
+    Residual, stated rather than implied: the guard resolves a hostname and the
+    socket resolves it again, so a hostile DNS server can answer differently the
+    second time (DNS rebinding, #370). Closing that needs IP-pinning at the
+    socket layer. It is the same residual every caller of this module carries,
+    and it is NOT the redirect hole -- redirects are closed here.
+    """
+    opener = build_no_redirect_opener()
+    for _ in range(max_hops + 1):
+        assert_safe_outbound_url(url, allow_private=allow_private)
+        # A fresh Request per hop. Reusing one and rewriting the url keeps the
+        # previous host's Host header, which is its own small vulnerability.
+        # S310 asks us to audit the scheme before opening a URL. The
+        # assert_safe_outbound_url above IS that audit, and it is the strictest
+        # one in the repo: http(s) only, enforced on this exact string, one
+        # statement earlier, with no branch in between.
+        hop = urllib.request.Request(  # noqa: S310
+            url, headers=headers or {}, method="GET"
+        )
+        try:
+            with opener.open(hop, timeout=timeout) as resp:
+                return url, resp.getcode(), resp.read()
+        except urllib.error.HTTPError as exc:
+            location = exc.headers.get("Location") if exc.headers else None
+            if not (exc.code in (301, 302, 303, 307, 308) and location):
+                raise
+            # _NoRedirect turned the 30x into this HTTPError, which is how the
+            # hop is handed back to us unfollowed. Resolve and re-validate.
+            url = urllib.parse.urljoin(url, location)
+    raise ValueError(f"too many redirects (>{max_hops})")
