@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..services.argv_safety import assert_not_option
+from server.services.argv_safety import assert_not_option
 
 router = APIRouter()
 

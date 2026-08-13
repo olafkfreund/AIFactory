@@ -13,11 +13,12 @@ from pathlib import Path as FilePath
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 
-from ..services.argv_safety import (
+from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
     bounded_count,
 )
+
 from ..services.insights_service import get_insights_service
 
 logger = logging.getLogger(__name__)

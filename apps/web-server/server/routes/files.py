@@ -22,13 +22,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from ..auth import _try_decode_jwt
-from ..config import get_settings
-from ..services.argv_safety import (
+from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
     bounded_count,
 )
+
+from ..auth import _try_decode_jwt
+from ..config import get_settings
 from .project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
