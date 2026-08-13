@@ -22,6 +22,19 @@ from server.specpath import safe_spec_component
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
+# The projects.json registry helpers moved to the leaf module
+# ``server/project_store.py`` (#1302) so that services, the database layer and
+# other route modules can reach them without importing this routing module.
+# Re-exported here so existing ``from ..routes.projects import load_projects``
+# callers keep working.
+from ..project_store import (  # noqa: F401
+    get_projects_file,
+    load_projects,
+    resolve_project_id,
+    resolve_project_path,
+    save_projects,
+)
+
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
 # --------------------------------------------------------------------------
@@ -30,7 +43,6 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 MemoryBackendType = Literal["graphiti", "file"]
 
 
-from ..config import get_settings
 from ..tenancy import (
     DEFAULT_TENANT,
     multi_tenant_enabled,
@@ -246,79 +258,6 @@ class Project(ProjectBase):
 # --------------------------------------------------------------------------
 # Helper Functions
 # --------------------------------------------------------------------------
-
-
-def get_projects_file() -> Path:
-    """Get path to the projects data file."""
-    settings = get_settings()
-    return Path(settings.PROJECTS_DATA_DIR) / "projects.json"
-
-
-def load_projects() -> dict[str, dict]:
-    """Load projects from disk."""
-    projects_file = get_projects_file()
-    if projects_file.exists():
-        return json.loads(projects_file.read_text())
-    return {}
-
-
-def resolve_project_path(project_id: str) -> Path:
-    """Resolve a project id to its filesystem path, or raise 404.
-
-    Single source of truth for the ``load_projects() -> 404 -> Path(...)`` idiom
-    that several route modules each re-implemented. The 404 detail is kept
-    identical to those copies so callers behave exactly as before.
-    """
-    projects = load_projects()
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
-    return Path(projects[project_id]["path"])
-
-
-def resolve_project_id(project_id: str) -> str | None:
-    """Map a UUID, a project ``name``, or an ``owner/repo`` slug to the canonical
-    project id — or ``None`` if nothing matches.
-
-    External callers (notably PFactory's plan->AIFactory handoff, #321) address a
-    project by the repo they planned against, not AIFactory's internal UUID. The
-    project registry is keyed by UUID with ``name`` (repo) and ``path``
-    (``…/owner-repo``), so match a non-UUID id against those. Exact-UUID first so
-    the common path is unchanged.
-    """
-    projects = load_projects()
-    if project_id in projects:
-        return project_id
-    repo = project_id.rsplit("/", 1)[-1]  # owner/repo -> repo
-    path_suffix = project_id.replace("/", "-")  # owner/repo -> owner-repo
-    for pid, meta in projects.items():
-        name = meta.get("name", "")
-        path = str(meta.get("path", ""))
-        if name in (project_id, repo) or path.endswith(
-            ("/" + path_suffix, "-" + path_suffix)
-        ):
-            return pid
-    return None
-
-
-def save_projects(projects: dict[str, dict]) -> None:
-    """Save projects to disk.
-
-    Stamps ``org_id=DEFAULT_ORG_ID`` on any entry that lacks one so that
-    programmatically-registered projects (cross-factory handoff, build
-    dispatch, the agent ``project_create`` tool) are immediately visible in
-    the org-scoped portal — not just after the next startup backfill
-    (``database.engine._backfill_project_orgs``). The portal create path sets
-    ``org_id`` explicitly before saving, so this never overrides a real value;
-    it only defaults the unowned case (single-tenant deployments own the
-    "default" org). An unowned project would otherwise be admin-only / hidden
-    (see ``project_authz`` — ``org_id is None`` → 403).
-    """
-    for proj in projects.values():
-        if isinstance(proj, dict) and not proj.get("org_id"):
-            proj["org_id"] = DEFAULT_ORG_ID
-    projects_file = get_projects_file()
-    projects_file.parent.mkdir(parents=True, exist_ok=True)
-    projects_file.write_text(json.dumps(projects, indent=2))
 
 
 def analyze_project(path: str) -> dict:

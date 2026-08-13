@@ -25,6 +25,11 @@ from .task_models import (
     Task,
 )
 
+# These helpers are OWNED by task_service; tasks.py only re-exports them. Going
+# to the owner keeps this sub-router below tasks.py in the import graph, so the
+# imports no longer have to be deferred into the request handlers (#1302).
+from .task_service import _resolve_task, spec_to_task
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -35,9 +40,6 @@ async def generate_clarifications(
 ):
     """Generate clarification questions for a task using an LLM."""
     from ..services.clarification_service import generate_clarification_questions
-
-    # Lazy import to avoid a circular import (tasks.py mounts this sub-router).
-    from .tasks import _resolve_task
 
     project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
 
@@ -66,9 +68,6 @@ async def submit_clarification_answers(
     _access: dict = Depends(require_task_access("member")),
 ):
     """Submit answers to clarification questions and append them to the task."""
-    # Lazy import to avoid a circular import (tasks.py mounts this sub-router).
-    from .tasks import _resolve_task, spec_to_task
-
     project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
 
     if not request.answers:

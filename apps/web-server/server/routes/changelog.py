@@ -149,7 +149,7 @@ async def get_changelog_done_tasks(
 @router.post("/specs")
 async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest = ...):
     """Load spec details for tasks."""
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -215,8 +215,8 @@ async def generate_changelog(
     projectId: str = Path(...), request: ChangelogGenerateRequest = ...
 ):
     """Generate changelog using AI."""
+    from ..project_store import load_projects
     from ..services.changelog_service import get_changelog_service
-    from .projects import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -284,7 +284,7 @@ async def save_changelog(
     projectId: str = Path(...), request: ChangelogSaveRequest = ...
 ):
     """Save generated changelog and update project version files."""
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -405,7 +405,7 @@ async def read_existing_changelog(projectId: str = Path(...)):
     - ## 1.2.3 - Simple semver
     - ## v1.2.3 or ## [v1.2.3] - With 'v' prefix
     """
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -473,7 +473,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
     """
     import subprocess
 
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -574,7 +574,7 @@ async def get_changelog_tags(projectId: str = Path(...)):
     """
     import subprocess
 
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -644,7 +644,7 @@ async def get_commits_preview(
     """Get preview of commits for changelog."""
     import subprocess
 
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -763,7 +763,7 @@ async def save_changelog_image(
     Returns:
         Success response with the relative path to the saved image
     """
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     try:
         # Validate project exists
@@ -856,7 +856,7 @@ insights_router = APIRouter()
 def _get_project_path(project_id: str) -> FilePath:
     """Get project path from project ID (delegates to the canonical resolver)."""
     # Import here to avoid circular import.
-    from .projects import resolve_project_path
+    from ..project_store import resolve_project_path
 
     return resolve_project_path(project_id)
 

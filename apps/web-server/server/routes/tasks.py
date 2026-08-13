@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
+from ..project_store import load_projects
 from ..services import task_control
 from ..tenancy import (
     multi_tenant_enabled,
@@ -41,7 +42,6 @@ from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
-from .projects import load_projects
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,

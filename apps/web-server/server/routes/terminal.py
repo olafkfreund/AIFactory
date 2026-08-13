@@ -17,9 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from server.error_ref import client_error
 
 from ..config import get_settings
+from ..project_store import get_projects_file, load_projects
 from ..pty.manager import get_pty_manager
 from ..services.terminal_worktree_service import TerminalWorktreeService
-from .projects import get_projects_file, load_projects
 
 logger = logging.getLogger(__name__)
 

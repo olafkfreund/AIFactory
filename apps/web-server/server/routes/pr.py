@@ -31,8 +31,8 @@ from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
 
+from ..project_store import get_projects_file
 from .project_authz import require_task_access
-from .projects import get_projects_file
 
 logger = logging.getLogger(__name__)
 

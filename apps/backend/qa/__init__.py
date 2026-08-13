@@ -29,7 +29,6 @@ from .criteria import (
     is_qa_approved,
     is_qa_rejected,
     load_implementation_plan,
-    print_qa_status,
     save_implementation_plan,
     should_run_fixes,
     should_run_qa,
@@ -56,6 +55,7 @@ from .report import (
     get_recurring_issue_summary,
     has_recurring_issues,
     is_no_test_project,
+    print_qa_status,
     record_iteration,
 )
 

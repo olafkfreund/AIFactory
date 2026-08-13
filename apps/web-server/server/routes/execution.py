@@ -18,13 +18,13 @@ from pydantic import BaseModel, Field
 from server.error_ref import client_error
 from server.specpath import safe_spec_component
 
+from ..project_store import load_projects, resolve_project_id
 from ..services import task_control
 from ..services.agent_service import get_agent_service
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 from ..websockets.events import emit_task_status
 from .from_issue import _intake_auto_handoff_enabled, _set_task_metadata_flag
 from .project_authz import require_project_access, require_task_access
-from .projects import load_projects, resolve_project_id
 from .tasks import _resolve_task, get_next_spec_id, sync_worktree_to_main_spec
 
 # Add the backend dir to sys.path so backend seams (e.g. qa.correction) resolve.

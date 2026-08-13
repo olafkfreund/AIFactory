@@ -212,8 +212,10 @@ async def init_db() -> None:
 
 
 # Stable ids for the deployment-wide service identity + default org (#319).
-DEFAULT_USER_ID = "default"
-DEFAULT_ORG_ID = "default"
+# Defined in the leaf module ``server.constants`` so ``server.project_store``
+# can share them without importing this module (#1302); re-exported here
+# because callers have always spelled it ``from ...database.engine import ...``.
+from ..constants import DEFAULT_ORG_ID, DEFAULT_USER_ID  # noqa: E402,F401
 
 
 async def seed_tenant_defaults(disable_auth: bool) -> None:
@@ -318,7 +320,7 @@ async def seed_tenant_defaults(disable_auth: bool) -> None:
 def _backfill_project_orgs() -> None:
     """Assign ``org_id=default`` to any registered project that lacks one."""
     try:
-        from ..routes.projects import load_projects, save_projects
+        from ..project_store import load_projects, save_projects
     except Exception:
         return
     projects = load_projects()

@@ -26,6 +26,11 @@ from task_logger import (
     get_task_logger,
 )
 
+# Configuration
+# MAX_QA_ITERATIONS now lives in the leaf module ``qa.constants`` so that
+# criteria/report can read it without importing this module (#1302). Re-exported
+# here because callers have always spelled it ``from qa.loop import ...``.
+from .constants import MAX_QA_ITERATIONS  # noqa: F401
 from .criteria import (
     get_qa_iteration_count,
     get_qa_signoff_status,
@@ -34,6 +39,7 @@ from .criteria import (
 from .fixer import run_qa_fixer_session
 from .providers import get_qa_llm_provider
 from .report import (
+    RECURRING_ISSUE_THRESHOLD,
     create_manual_test_plan,
     escalate_to_human,
     get_iteration_history,
@@ -49,8 +55,6 @@ from .review_cycle import (
 )
 from .reviewer import run_qa_agent_session
 
-# Configuration
-MAX_QA_ITERATIONS = 10
 MAX_CONSECUTIVE_ERRORS = 3  # Stop after 3 consecutive errors without progress
 
 
@@ -494,8 +498,6 @@ async def run_qa_validation_loop(
             )
 
             if has_recurring:
-                from .report import RECURRING_ISSUE_THRESHOLD
-
                 debug_error(
                     "qa_loop",
                     "Recurring issues detected - escalating to human",

@@ -15,7 +15,9 @@ import asyncio
 import subprocess
 
 import pytest
-from server.routes import projects as projects_mod
+# Registry helpers live in the leaf server/project_store.py (#1302); patch the
+# owner so the patch reaches routes/git.py, which imports from the owner.
+from server import project_store as projects_mod
 from server.routes.git import CreateWorktreeRequest, create_worktree
 
 

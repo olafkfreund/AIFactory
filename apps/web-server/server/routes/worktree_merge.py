@@ -50,8 +50,8 @@ from server.services.task_branch import (
 from server.specpath import safe_spec_component
 
 from ..paths import get_data_dir
+from ..project_store import get_projects_file
 from .project_authz import require_task_access
-from .projects import get_projects_file
 
 logger = logging.getLogger(__name__)
 

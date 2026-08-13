@@ -24,6 +24,7 @@ from typing import Any
 from unittest.mock import patch
 
 from fastapi.responses import JSONResponse
+from server import project_store
 from server.routes import projects
 from server.services.http_verdict import REFUSED_STATUS
 
@@ -35,7 +36,9 @@ def _projects_file(tmp_path: Path, project_path: Path) -> Path:
 
 
 def _run(projects_file: Path) -> Any:
-    with patch.object(projects, "get_projects_file", return_value=projects_file):
+    # Patch the owner (server/project_store.py, #1302), not the routes module
+    # that merely re-exports it.
+    with patch.object(project_store, "get_projects_file", return_value=projects_file):
         return asyncio.run(projects.initialize_project("p1", _access={}))
 
 

@@ -19,6 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .project_authz import require_task_access
 
+# These helpers are OWNED by task_service; tasks.py only re-exports them. Going
+# to the owner keeps this sub-router below tasks.py in the import graph, so the
+# imports no longer have to be deferred into the request handlers (#1302).
+from .task_service import _resolve_task, get_worktree_spec_dir
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -39,9 +44,6 @@ async def get_task_token_usage(
     breakdown when no session has run yet — never 404 on a valid task, so the
     UI can render a stable empty state.
     """
-    # Lazy import to avoid a circular import (tasks.py mounts this sub-router).
-    from .tasks import _resolve_task, get_worktree_spec_dir
-
     project_id, spec_id, project_path, spec_dir = _resolve_task(task_id)
 
     # Prefer the main spec dir (synced from worktree). Fall back to the live
@@ -183,9 +185,6 @@ async def get_task_resource_usage(
         to the not-running shape rather than raising.
     """
     # 404 only for an unknown task (bad format / missing project / missing spec).
-    # Lazy import to avoid a circular import (tasks.py mounts this sub-router).
-    from .tasks import _resolve_task
-
     _resolve_task(task_id)
 
     from ..services.agent_service import get_agent_service

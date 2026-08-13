@@ -20,8 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from server.specpath import safe_spec_component
 
+from ..project_store import load_projects
 from .project_authz import require_task_access
-from .projects import load_projects
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

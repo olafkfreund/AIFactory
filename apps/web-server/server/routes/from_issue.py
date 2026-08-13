@@ -389,7 +389,7 @@ async def create_from_issue(
 
 def _resolve_project_path(project_id: str) -> Path | None:
     """Resolve a project id to its filesystem path (lazy import of projects)."""
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if project_id not in projects:

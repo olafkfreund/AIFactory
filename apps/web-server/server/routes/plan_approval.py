@@ -25,9 +25,9 @@ from pydantic import BaseModel, Field
 
 from server.specpath import safe_spec_component
 
+from ..project_store import load_projects
 from ..services import task_control
 from .project_authz import require_task_access
-from .projects import load_projects
 
 router = APIRouter()
 

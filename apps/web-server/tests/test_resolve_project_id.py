@@ -14,7 +14,10 @@ _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
-from server.routes import projects as projects_mod  # noqa: E402
+# The registry helpers live in the leaf module server/project_store.py (#1302).
+# Patch them at their OWNER, not at routes.projects (which only re-exports
+# them) — otherwise the patch misses every caller that imports the owner.
+from server import project_store as projects_mod  # noqa: E402
 
 _FIXTURE = {
     "5d78d4b9-uuid": {

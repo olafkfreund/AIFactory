@@ -97,7 +97,7 @@ def _persist_cli_token_to_project(project_id: str) -> bool:
     GITHUB_TOKEN in the project env file with secure 0o600 permissions.
     Returns True on success.
     """
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     token_result = run_gh_command(["auth", "token"])
     if not token_result["success"] or not token_result["output"]:
@@ -870,7 +870,7 @@ project_router = APIRouter()
 
 def _resolve_project_path(projectId: str) -> FilePath | None:
     """Resolve a project ID to its filesystem path."""
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -941,7 +941,7 @@ def _get_repo_full_name(project_path: str) -> str:
 
 def _use_provider_api(projectId: str) -> bool:
     """Check if the project is configured to use a custom GitProvider REST API."""
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -983,7 +983,7 @@ def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
 
     from repo_ref import parse_repo_ref
 
-    from .projects import load_projects
+    from ..project_store import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -1560,7 +1560,7 @@ async def investigate_github_issue(
     """Investigate an issue using AI (supports GitHub, GitLab, Azure DevOps)."""
     try:
         # Load projects and validate project exists
-        from .projects import load_projects
+        from ..project_store import load_projects
 
         projects = load_projects()
         if projectId not in projects:
