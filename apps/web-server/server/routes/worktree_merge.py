@@ -33,6 +33,7 @@ import json
 import logging
 import shutil
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
@@ -347,9 +348,23 @@ async def get_worktree_merge_preview(
                             f for f in uncommitted_conflicting_files if f not in ignored
                         ]
                     except Exception:
-                        pass
+                        # Filtering is best-effort and fails toward MORE files
+                        # flagged as conflicting, not fewer — safe direction.
+                        logger.warning(
+                            "git check-ignore failed while filtering uncommitted "
+                            "conflicts in %s",
+                            sanitize_log(project_path),
+                            exc_info=True,
+                        )
     except subprocess.CalledProcessError:
-        pass  # Non-fatal - continue without uncommitted detection
+        # Non-fatal - continue without uncommitted detection, but this is a
+        # preview so log: a swallowed failure here can silently hide a real
+        # uncommitted-vs-task conflict from the merge preview.
+        logger.warning(
+            "uncommitted-conflict detection failed for %s",
+            sanitize_log(project_path),
+            exc_info=True,
+        )
 
     # Run semantic conflict detection using backend merge system
     semantic_conflicts = []
@@ -688,8 +703,14 @@ async def resolve_worktree_conflicts(
         )
         if result.returncode == 0 and result.stdout.strip():
             conflicted_files = [f for f in result.stdout.strip().split("\n") if f]
-    except subprocess.CalledProcessError:
-        pass
+    except OSError:
+        # subprocess.run() above has no check=True, so it never raises
+        # CalledProcessError — the real failure mode is git itself missing.
+        # An empty conflicted_files here reads as "no conflicts" below and
+        # can lead to committing an unresolved merge, so log it.
+        logger.warning(
+            "git diff --diff-filter=U failed for %s", sanitize_log(project_path), exc_info=True
+        )
 
     # Fallback: check git status for unmerged files
     if not conflicted_files:
@@ -706,8 +727,12 @@ async def resolve_worktree_conflicts(
                         file_path = line[3:].strip()
                         if file_path:
                             conflicted_files.append(file_path)
-        except subprocess.CalledProcessError:
-            pass
+        except OSError:
+            logger.warning(
+                "git status --porcelain failed for %s",
+                sanitize_log(project_path),
+                exc_info=True,
+            )
 
     if not conflicted_files:
         # No conflicts found - the merge may have already been resolved. Try to
@@ -1098,7 +1123,16 @@ async def resolve_uncommitted_conflicts(
                     if result.returncode == 0:
                         base_content = result.stdout
                 except Exception:
-                    pass
+                    # Falls through to an empty base_content, which the AI
+                    # three-way merge below reads as "no base version" — log
+                    # so a genuine git failure isn't indistinguishable from
+                    # that.
+                    logger.warning(
+                        "failed to read base version of %s from %s",
+                        sanitize_log(file_path),
+                        sanitize_log(base_branch),
+                        exc_info=True,
+                    )
 
                 # Get local version (uncommitted changes)
                 # If we stashed, get from stash; otherwise read from working directory
@@ -1119,7 +1153,11 @@ async def resolve_uncommitted_conflicts(
                         if working_file.exists():
                             local_content = working_file.read_text()
                 except Exception:
-                    pass
+                    logger.warning(
+                        "failed to read local version of %s",
+                        sanitize_log(file_path),
+                        exc_info=True,
+                    )
 
                 # Get task branch version
                 task_content = ""
@@ -1133,7 +1171,12 @@ async def resolve_uncommitted_conflicts(
                     if result.returncode == 0:
                         task_content = result.stdout
                 except Exception:
-                    pass
+                    logger.warning(
+                        "failed to read task version of %s from %s",
+                        sanitize_log(file_path),
+                        sanitize_log(spec_branch),
+                        exc_info=True,
+                    )
 
                 # Use AI to merge the three versions
                 from ..services.conflict_service import get_conflict_service
@@ -1342,8 +1385,13 @@ async def resolve_git_merge_conflicts(
                         file_path = line[3:].strip()
                         if file_path:
                             conflicted_files.append(file_path)
-        except subprocess.CalledProcessError:
-            pass
+        except OSError:
+            # subprocess.run() above has no check=True, so it never raises
+            # CalledProcessError. An empty conflicted_files here reports
+            # success below, so a real git failure must be visible.
+            logger.warning(
+                "git status --porcelain failed for %s", sanitize_log(work_path), exc_info=True
+            )
 
     if not conflicted_files:
         return {
@@ -1779,11 +1827,12 @@ async def merge_worktree(
     for fname in _INTERNAL_MERGE_BLOCKERS:
         blocker = project_path / fname
         if blocker.exists():
-            try:
+            # Best-effort cleanup: a stale/racing blocker file is not fatal to
+            # the merge that follows, so a failed unlink is deliberately
+            # ignored rather than aborting the merge.
+            with suppress(OSError):
                 blocker.unlink()
                 logger.info(f"Removed merge-blocking file: {fname}")
-            except OSError:
-                pass
 
     # #1076: merge the PULL REQUEST, not a local branch, when one exists.
     #
@@ -2031,7 +2080,15 @@ async def get_worktree_status(
             if del_match:
                 deletions = int(del_match.group(1))
     except subprocess.CalledProcessError:
-        pass
+        # Stats-only: a failure here reports 0 files/insertions/deletions,
+        # which can look identical to "no changes" — log so it's not silent.
+        logger.warning(
+            "git diff --stat failed for %s...%s in %s",
+            sanitize_log(base_branch),
+            sanitize_log(work_ref),
+            sanitize_log(project_path),
+            exc_info=True,
+        )
 
     return {
         "success": True,
@@ -2179,7 +2236,18 @@ async def get_worktree_diff(
                         }
                     )
     except subprocess.CalledProcessError:
-        pass
+        # THE review surface (#1082): a silently-empty `files` here is the
+        # exact "reviewer approves nothing" failure mode already patched
+        # once for this endpoint, so a git failure must be logged, not just
+        # absorbed. The new-file fallback below only covers untracked files,
+        # not this diff, so it does not fully compensate.
+        logger.warning(
+            "git diff --numstat failed for %s...%s in %s",
+            sanitize_log(base_branch),
+            sanitize_log(work_ref),
+            sanitize_log(project_path),
+            exc_info=True,
+        )
 
     # Get file statuses (A/M/D/R)
     try:
@@ -2213,7 +2281,15 @@ async def get_worktree_diff(
             if f["path"] in status_map:
                 f["status"] = status_map[f["path"]]
     except subprocess.CalledProcessError:
-        pass
+        # Non-fatal: files[] keeps its default "modified" status. Log so a
+        # git failure isn't indistinguishable from "nothing was renamed".
+        logger.warning(
+            "git diff --name-status failed for %s...%s in %s",
+            sanitize_log(base_branch),
+            sanitize_log(work_ref),
+            sanitize_log(project_path),
+            exc_info=True,
+        )
 
     # Filter out internal aifactory files and agent artifacts (not relevant for user review)
     INTERNAL_FILES = {".aifactory-security.json", ".aifactory-status"}

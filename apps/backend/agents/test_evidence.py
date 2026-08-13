@@ -97,12 +97,17 @@ within a week and then there is no gate at all:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from factory_common.logsafe import sanitize_log
+
+logger = logging.getLogger(__name__)
 
 _EVIDENCE_REL = ".aifactory/test_evidence.jsonl"
 
@@ -246,7 +251,12 @@ def _append(spec_dir: Path | str, entry: dict[str, Any]) -> None:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
     except OSError:
-        pass
+        # Best-effort by design (never block the coder on a filesystem hiccup)
+        # but silent — the gate degrades safely because a missing entry reads
+        # as "no evidence" (fail-closed), so log for diagnosability only.
+        logger.warning(
+            "test evidence append failed for %s", sanitize_log(spec_dir), exc_info=True
+        )
 
 
 def record_test_run(spec_dir: Path | str, command: str, output: Any) -> None:
@@ -296,7 +306,12 @@ def read_test_evidence(
             if line:
                 entries.append(json.loads(line))
     except (OSError, ValueError):
-        pass
+        # Missing/corrupt ledger reads as "no evidence" — the gate below
+        # fails closed (blocks) on that, which is the safe direction, so we
+        # only need to log for diagnosability, not change the outcome.
+        logger.warning(
+            "test evidence read failed for %s", sanitize_log(spec_dir), exc_info=True
+        )
 
     start = 0
     for i, entry in enumerate(entries):

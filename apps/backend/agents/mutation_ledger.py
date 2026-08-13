@@ -23,11 +23,16 @@ rollback can still delete them. Best-effort: a git hiccup never breaks the run.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from factory_common.logsafe import sanitize_log
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "MUTATING_TOOLS",
@@ -159,7 +164,14 @@ class MutationLedger:
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
         except OSError:
-            pass
+            # verify_turn()/claimed_targets() read this file back from disk,
+            # not from self.entries, so a silent write failure here can make
+            # a real mutation mismatch look clean (Hermes false-success class).
+            logger.warning(
+                "mutation ledger append failed for %s",
+                sanitize_log(self.path),
+                exc_info=True,
+            )
         return entry
 
     def read(self) -> list[dict]:
@@ -213,5 +225,9 @@ def verify_turn(spec_dir: Path, repo: Path) -> dict:
             json.dumps(out, indent=2)
         )
     except OSError:
-        pass
+        logger.warning(
+            "mutation_verify.json write failed for %s",
+            sanitize_log(spec_dir),
+            exc_info=True,
+        )
     return out
