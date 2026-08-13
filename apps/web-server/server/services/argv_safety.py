@@ -66,7 +66,7 @@ def bounded_count(value: object, maximum: int, field: str = "count") -> int:
     Returning an ``int`` means no caller-supplied string reaches argv at all.
     """
     try:
-        count = int(value)  # type: ignore[call-overload]
+        count = int(str(value))
     except (TypeError, ValueError):
         raise ValueError(f"Invalid {field}: must be an integer") from None
     if count < 1 or count > maximum:

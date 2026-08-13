@@ -45,7 +45,7 @@ class OpenInTerminalRequest(BaseModel):
     terminal: str
 
 
-def resolve_launch_dir(worktree_path: str) -> tuple[str, dict | None]:
+def resolve_launch_dir(worktree_path: str) -> tuple[str, dict[str, object] | None]:
     """Return (canonical directory, error) for a launch target.
 
     Resolving first means the string that reaches argv is an absolute path, so
