@@ -5,7 +5,6 @@ Handles CRUD operations for tasks (specs) within projects.
 """
 
 import json
-import logging
 import re
 import shutil
 from datetime import datetime
@@ -31,23 +30,16 @@ from ..tenancy import (
 # ``include_router`` below. The names are re-exported here so existing imports
 # (``from ..routes.tasks import CreatePRFromTaskOptions, create_pr_from_task``,
 # used by ``mcp_stdio/router.py``) keep working.
-from .inbox import (
+from .inbox import (  # noqa: F401
     InboxEnqueueResponse,
     InboxMessage,
     InboxMessageCreate,
     enqueue_inbox_message,
     list_inbox_messages,
 )
-from .inbox import (
-    router as inbox_router,
-)
-from .pr import (  # noqa: F401
-    CreatePRFromTaskOptions,
-    create_pr_from_task,
-)
-from .pr import (
-    router as pr_router,
-)
+from .inbox import router as inbox_router
+from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
+from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
 from .projects import load_projects
 from .worktree_tools import (
@@ -59,9 +51,7 @@ from .worktree_tools import (
     open_worktree_in_ide,
     open_worktree_in_terminal,
 )
-from .worktree_tools import (
-    router as worktree_tools_router,
-)
+from .worktree_tools import router as worktree_tools_router
 
 router = APIRouter()
 
@@ -247,7 +237,7 @@ async def get_task(
 @router.post("", response_model=Task, status_code=status.HTTP_201_CREATED)
 async def create_task(
     task: TaskCreate,
-    request: Request = None,
+    request: Request = None,  # noqa: RUF013 — FastAPI injects; None lets direct callers omit
 ):
     """Create a new task (spec) in a project."""
     projects = load_projects()
@@ -584,11 +574,7 @@ async def update_task(
             try:
                 requirements = json.loads(requirements_file.read_text())
             except json.JSONDecodeError:
-                logging.getLogger(__name__).warning(
-                    "failed to parse %s, starting from empty requirements",
-                    requirements_file,
-                    exc_info=True,
-                )
+                pass
 
         if update.title:
             requirements["title"] = update.title
@@ -619,11 +605,7 @@ async def update_task(
                 try:
                     task_metadata = json.loads(task_metadata_file.read_text())
                 except json.JSONDecodeError:
-                    logging.getLogger(__name__).warning(
-                        "failed to parse %s, starting from empty task metadata",
-                        task_metadata_file,
-                        exc_info=True,
-                    )
+                    pass
 
             # Update model-related fields that phase_config.py expects
             # Also include selectedSkills so agent_service.py can inject skill context
@@ -711,9 +693,7 @@ from .plan_approval import (  # noqa: E402,F401
     approve_plan,
     reject_plan,
 )
-from .plan_approval import (
-    router as plan_approval_router,
-)
+from .plan_approval import router as plan_approval_router
 
 # ============================================
 # Worktree Merge Routes
@@ -750,9 +730,7 @@ from .worktree_merge import (  # noqa: E402,F401
     resolve_uncommitted_conflicts,
     resolve_worktree_conflicts,
 )
-from .worktree_merge import (
-    router as worktree_merge_router,
-)
+from .worktree_merge import router as worktree_merge_router
 
 router.include_router(worktree_merge_router)
 
@@ -760,12 +738,8 @@ router.include_router(worktree_merge_router)
 # so the public /api/tasks/{task_id}/logs paths are unchanged. get_task_logs is
 # re-exported so existing callers (mcp_stdio/router.py, projects.py) that import
 # it from ..routes.tasks keep working.
-from .tasks_logs import (
-    get_task_logs,  # noqa: F401
-)
-from .tasks_logs import (
-    router as tasks_logs_router,
-)
+from .tasks_logs import get_task_logs  # noqa: E402,F401
+from .tasks_logs import router as tasks_logs_router  # noqa: E402
 
 router.include_router(tasks_logs_router)
 
