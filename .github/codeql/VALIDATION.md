@@ -286,3 +286,64 @@ them, so its silence on the other 104 was the barrier and not blindness.
 it comes down in code — stop moving developer-written text inside an exception
 object, and carry the safe sentence as a plain string the handler owns — not by
 asking the query a narrower question.
+
+### That fix was then made, and measured: 122 -> 0 (2026-08-13)
+
+No query, no barrier, no exclusion — `codeql-config.yml` and
+`custom-queries/` are byte-unchanged by that change. CodeQL 2.25.6, database
+over `apps/web-server`, stock `Security/CWE-209/StackTraceExposure.ql`,
+sinks deduplicated by location:
+
+| tree | sinks |
+|---|---|
+| `dev` @ 652f1a54 | 122 |
+| + `client_message` on `InputRejectedError` alone | 18 |
+| + the seven remaining leaks fixed | **0** |
+
+Read the middle row as the result of the mechanism change and nothing else.
+`InputRejectedError` now takes its safe sentence at construction and keeps it
+in `self.client_message`; `client_error` returns that attribute instead of
+`str(exc)`. 122 -> 18, and those 18 are **byte-identical** to the sink list the
+branch-deletion mutation left behind — so the change did exactly what deleting
+the passthrough did, without deleting the passthrough. Newly reported: 0.
+
+Why that is a real distinction and not laundering, stated because the next
+reader will (rightly) suspect it is: `BaseException.__str__` renders `args`,
+which every exception in the process populates, so `str(exc)` forwards text of
+unknown authorship. `client_message` has exactly one writer, the constructor,
+reachable only from the eight `raise InputRejectedError(...)` sites in
+`services/argv_safety.py` and `services/url_safety.py`. CodeQL's model draws
+the same line for a stated reason rather than by accident:
+`StackTraceExposureQuery.qll` declares **one** attribute flow step, for
+`__traceback__`, precisely because a caught exception's other attributes are
+application-owned data rather than stack-trace information.
+
+What the mechanism does NOT establish is that a raise site chose its wording
+wisely — `InputRejectedError(f"...{inner}")` would launder `inner`'s text
+straight through. That residual is held by
+`apps/web-server/tests/test_error_ref_client_message.py`, which asserts the
+**response body** on both sides: a rejected field still returns
+`"Invalid baseBranch: must be a plain git ref"` verbatim, and a resolver
+failure still returns a reference id. Mutation-checked — rewriting
+`url_safety.py`'s `socket.gaierror` branch to
+`raise InputRejectedError(f"cannot resolve host {host!r}: {exc}")` turns
+`test_a_resolver_failure_takes_the_reference_id_path` red on the body.
+
+The 18 -> 0 row is ordinary code fixes to the leaks the previous measurement
+identified as real, all of them one root cause per group:
+`services/pr_data_service.py` returns dicts that `routes/github.py` hands back
+to the caller unchanged, so `_run_gh`'s `str(e)` plus four `OSError`
+interpolations (whose text names absolute paths on our disk) accounted for all
+17 `github.py` sinks; `routes/git.py:346` was a hand-rolled copy of the
+passthrough that also caught the plain `ValueError` carrying the *resolver's*
+text, and was deleted so the existing `client_error` handler below it takes
+the case.
+
+The query's positive control is the middle row itself: after the mechanism
+change it still reported those 18, so its silence on the other 104 was the
+mechanism and not blindness.
+
+Still not fixed, and out of scope here: `_run_gh` returns
+`result.stderr.strip()` verbatim on a non-zero exit. That is subprocess output
+rather than an exception, so CodeQL does not model it — but `gh`'s stderr is
+not obviously caller-safe either, and it is the next thing to look at.
