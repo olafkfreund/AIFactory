@@ -227,14 +227,41 @@ def worktree_terminal_cmd(terminal: str, path: str) -> list[str]:
     return get_terminal_command(terminal, path)
 
 
-def test_resolve_launch_dir_rejects_non_directories(tmp_path):
+def test_resolve_launch_dir_rejects_non_directories(tmp_path, monkeypatch):
+    """A path that IS a directory resolves; one that is not is refused.
+
+    #1278 added containment, so a bare ``tmp_path`` is now outside every
+    registered project root and refused before the is_dir() check ever runs.
+    That is the containment working, not a regression — but it meant this test
+    stopped exercising its own subject, since both assertions then failed for
+    the same reason and the "is it a directory" half was never reached.
+
+    So the roots are stubbed to include tmp_path. Two entries, not one: with a
+    single root, "confines to the registered set" and "confines to the first
+    root" are the same observation.
+    """
+    from server.routes import worktree_tools
     from server.routes.worktree_tools import resolve_launch_dir
+
+    other = tmp_path.parent / "other-root"
+    other.mkdir(exist_ok=True)
+    monkeypatch.setattr(
+        worktree_tools,
+        "registered_project_roots",
+        lambda: [other.resolve(), tmp_path.resolve()],
+    )
 
     ok, err = resolve_launch_dir(str(tmp_path))
     assert err is None and ok == str(tmp_path.resolve())
 
+    # Inside a registered root, but not a directory -> still refused, which is
+    # what this test is named for.
     missing, err = resolve_launch_dir(str(tmp_path / "nope"))
     assert err is not None and missing == ""
+
+    # And containment itself still holds for a path outside every root.
+    outside, err = resolve_launch_dir("/etc")
+    assert err is not None and outside == ""
 
 
 def test_worktree_name_pattern_rejects_leading_dash():

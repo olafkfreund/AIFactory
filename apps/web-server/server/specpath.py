@@ -12,6 +12,7 @@ path, and services keep their own barrier for the paths they build directly.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from collections.abc import Iterable
@@ -128,15 +129,19 @@ def within_roots(
     framework dependency at import time -- it is also imported by plain
     services and by tests that never build an app.
     """
-    from fastapi import HTTPException, status
+    from fastapi import HTTPException, status  # noqa: PLC0415 - see docstring
 
     try:
         return contained_path(candidate, roots, what, expand_user)
     except ValueError:
+        # `from None`, not `from err`: the ValueError carries the rejected path,
+        # and chaining it would put that path into the traceback a client can
+        # see. The 403 wording is deliberately identical for every rejection so
+        # the response cannot be used to probe which paths exist.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Access denied: path is outside the {what}",
-        )
+        ) from None
 
 
 def registered_project_roots() -> list[Path]:
@@ -145,14 +150,16 @@ def registered_project_roots() -> list[Path]:
     The strict tier. Used where the request operates on a project that already
     exists -- reading file content, launching a terminal, opening a worktree.
     """
-    from server.routes.projects import load_projects
+    # Function-local: routes.projects imports this module, so a module-level
+    # import here is a cycle. Deliberate, not an oversight.
+    from server.routes.projects import load_projects  # noqa: PLC0415 - see above
 
     roots: list[Path] = []
     for p in load_projects().values():
-        try:
+        # A malformed registry entry drops out of the root set rather than
+        # taking the request down; a path that cannot resolve is not a root.
+        with contextlib.suppress(OSError, KeyError, TypeError):
             roots.append(Path(p["path"]).resolve())
-        except (OSError, KeyError, TypeError):
-            pass
     return roots
 
 
@@ -176,15 +183,15 @@ def browse_roots() -> list[Path]:
     between what the UI can produce and what the API will accept.
     """
     roots = registered_project_roots()
-    try:
+    # No resolvable $HOME (a container with no passwd entry) simply means one
+    # fewer root, never an error to the caller.
+    with contextlib.suppress(OSError, RuntimeError):
         roots.append(Path.home().resolve())
-    except (OSError, RuntimeError):
-        pass
-    for extra in os.environ.get("APP_FILE_BROWSE_ROOTS", "").split(os.pathsep):
-        extra = extra.strip()
+    for raw_extra in os.environ.get("APP_FILE_BROWSE_ROOTS", "").split(os.pathsep):
+        extra = raw_extra.strip()
         if extra:
-            try:
+            # An operator-configured root that does not resolve is skipped, not
+            # fatal: a typo in the env var must not stop the server starting.
+            with contextlib.suppress(OSError):
                 roots.append(Path(extra).resolve())
-            except OSError:
-                pass
     return roots
