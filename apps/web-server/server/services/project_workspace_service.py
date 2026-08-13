@@ -34,6 +34,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WORKSPACE_ROOT = Path.home() / ".aifactory" / "workspaces"
@@ -189,8 +191,8 @@ async def clone_or_update(
                 logger.warning(
                     "[workspace] ff-only pull failed for %s; hard-reset to %s "
                     "and cleaned untracked files",
-                    workspace,
-                    target,
+                    sanitize_log(workspace),
+                    sanitize_log(target),
                 )
         finally:
             if credential is not None:
@@ -204,7 +206,7 @@ async def clone_or_update(
                     )
                 except GitOperationError:
                     pass
-        logger.info("[workspace] pulled latest into %s", workspace)
+        logger.info("[workspace] pulled latest into %s", sanitize_log(workspace))
         return workspace
 
     # Fresh clone. The `--` separates options from positional args so a
@@ -226,7 +228,9 @@ async def clone_or_update(
             )
         except GitOperationError:
             pass
-    logger.info("[workspace] cloned %s → %s", git_url, workspace)
+    logger.info(
+        "[workspace] cloned %s → %s", sanitize_log(git_url), sanitize_log(workspace)
+    )
     return workspace
 
 
@@ -237,7 +241,11 @@ class GitOperationError(RuntimeError):
 async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
     """Run ``git <args>`` with a timeout. Returns stdout on success."""
     cmd = ["git", *args]
-    logger.debug("[workspace] running: git %s (cwd=%s)", " ".join(args), cwd)
+    logger.debug(
+        "[workspace] running: git %s (cwd=%s)",
+        sanitize_log(" ".join(args)),
+        sanitize_log(cwd),
+    )
     # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.

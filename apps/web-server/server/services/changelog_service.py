@@ -13,6 +13,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 from ..websockets.events import broadcast_event
 from .argv_safety import assert_safe_git_ref
@@ -105,7 +107,7 @@ class ChangelogService:
         """Start changelog generation for a project."""
         if self.is_running(project_id):
             logger.warning(
-                f"Changelog generation already running for project {project_id}"
+                f"Changelog generation already running for project {sanitize_log(project_id)}"
             )
             return False
 
@@ -198,7 +200,9 @@ class ChangelogService:
         if request.get("customInstructions"):
             cmd.extend(["--custom-instructions", request["customInstructions"]])
 
-        logger.info(f"Starting changelog generation for {project_id}: {' '.join(cmd)}")
+        logger.info(
+            f"Starting changelog generation for {sanitize_log(project_id)}: {sanitize_log(' '.join(cmd))}"
+        )
 
         # Set up environment with PYTHONPATH pointing to backend.
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
@@ -301,7 +305,9 @@ class ChangelogService:
                     line = line_bytes.decode("utf-8", errors="replace").rstrip()
                     if line:
                         stderr_lines.append(line)
-                        logger.error(f"[{project_id}] STDERR: {line}")
+                        logger.error(
+                            f"[{sanitize_log(project_id)}] STDERR: {sanitize_log(line)}"
+                        )
 
             # Start stderr reader in background
             stderr_task = asyncio.create_task(read_stderr())
@@ -309,7 +315,7 @@ class ChangelogService:
             # Read stdout line by line
             async for line_bytes in proc.stdout:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                logger.debug(f"[{project_id}] {line}")
+                logger.debug(f"[{sanitize_log(project_id)}] {sanitize_log(line)}")
 
                 # Detect phase changes
                 phase = self._detect_phase(line)
@@ -338,7 +344,9 @@ class ChangelogService:
                 await self._emit_error(project_id, error_msg)
 
         except asyncio.CancelledError:
-            logger.info(f"Changelog generation cancelled for {project_id}")
+            logger.info(
+                f"Changelog generation cancelled for {sanitize_log(project_id)}"
+            )
             raise
         except Exception as e:
             logger.error(f"Error processing changelog output: {e}", exc_info=True)
@@ -358,7 +366,9 @@ class ChangelogService:
     ):
         """Emit progress event via WebSocket."""
         progress = PHASE_PROGRESS.get(phase, 0)
-        logger.info(f"[{project_id}] Phase: {phase.value} ({progress}%) - {message}")
+        logger.info(
+            f"[{sanitize_log(project_id)}] Phase: {sanitize_log(phase.value)} ({sanitize_log(progress)}%) - {sanitize_log(message)}"
+        )
 
         await broadcast_event(
             "changelog:progress",
@@ -383,7 +393,7 @@ class ChangelogService:
                     f"Generated changelog file not found at {changelog_path}"
                 )
 
-            logger.info(f"[{project_id}] Changelog generation complete")
+            logger.info(f"[{sanitize_log(project_id)}] Changelog generation complete")
 
             await broadcast_event(
                 "changelog:complete",
@@ -404,7 +414,7 @@ class ChangelogService:
 
     async def _emit_error(self, project_id: str, error: str):
         """Emit error event."""
-        logger.error(f"[{project_id}] Error: {error}")
+        logger.error(f"[{sanitize_log(project_id)}] Error: {sanitize_log(error)}")
 
         await broadcast_event(
             "changelog:error",

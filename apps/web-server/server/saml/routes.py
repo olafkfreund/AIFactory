@@ -57,6 +57,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from jose import JWTError, jwt
@@ -310,8 +311,8 @@ async def saml_login(request: Request, idp: str | None = None):
 
     logger.info(
         "SAML login initiated (idp=%s, return_to=%s)",
-        target_idp,
-        return_to,
+        sanitize_log(target_idp),
+        sanitize_log(return_to),
     )
     return RedirectResponse(url=sso_url, status_code=status.HTTP_302_FOUND)
 

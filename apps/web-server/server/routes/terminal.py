@@ -6,6 +6,7 @@ WebSocket I/O is handled in websockets/terminal.py.
 """
 
 import json
+import logging
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -13,10 +14,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from server.error_ref import client_error
+
 from ..config import get_settings
 from ..pty.manager import get_pty_manager
 from ..services.terminal_worktree_service import TerminalWorktreeService
 from .projects import get_projects_file, load_projects
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -194,7 +199,7 @@ async def create_terminal(request: CreateTerminalRequest):
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
+            detail=client_error(logger, "create terminal failed", e),
         )
 
     return TerminalInfo(**session.to_dict())
@@ -303,9 +308,13 @@ async def clear_terminal_sessions(project: str | None = None):
                     session_file.unlink()
                     cleared_count += 1
                 except Exception as e:
-                    errors.append(f"Failed to remove {session_file.name}: {str(e)}")
+                    errors.append(
+                        client_error(logger, "Failed to remove a session file", e)
+                    )
         except Exception as e:
-            errors.append(f"Failed to process {sessions_dir}: {str(e)}")
+            errors.append(
+                client_error(logger, "Failed to process a session directory", e)
+            )
 
     result = {
         "success": True,
@@ -348,7 +357,10 @@ async def list_terminal_worktrees(project: str = Query(...)):
         worktrees = service.list_worktrees()
         return {"success": True, "data": worktrees}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "list terminal worktrees failed", e),
+        }
 
 
 @router.post("/worktrees", response_model=TerminalWorktreeResult)
@@ -375,13 +387,23 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest):
         )
     except ValueError as e:
         # Validation errors (invalid name, already exists, etc.)
-        return TerminalWorktreeResult(success=False, error=str(e))
+        return TerminalWorktreeResult(
+            success=False,
+            error=client_error(logger, "create terminal worktree failed", e),
+        )
     except subprocess.CalledProcessError as e:
         # Git command errors
-        error_msg = f"Git error: {e.stderr if e.stderr else str(e)}"
+        error_msg = (
+            f"Git error: {e.stderr}"
+            if e.stderr
+            else client_error(logger, "Git error", e)
+        )
         return TerminalWorktreeResult(success=False, error=error_msg)
     except Exception as e:
-        return TerminalWorktreeResult(success=False, error=str(e))
+        return TerminalWorktreeResult(
+            success=False,
+            error=client_error(logger, "create terminal worktree failed", e),
+        )
 
 
 @router.delete("/worktrees/{name}")
@@ -403,12 +425,22 @@ async def remove_terminal_worktree(
         success = service.remove_worktree(name, deleteBranch)
         return {"success": success}
     except ValueError as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "remove terminal worktree failed", e),
+        }
     except subprocess.CalledProcessError as e:
-        error_msg = f"Git error: {e.stderr if e.stderr else str(e)}"
+        error_msg = (
+            f"Git error: {e.stderr}"
+            if e.stderr
+            else client_error(logger, "Git error", e)
+        )
         return {"success": False, "error": error_msg}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "remove terminal worktree failed", e),
+        }
 
 
 @router.get("/sessions/{date}")
@@ -567,7 +599,7 @@ async def save_terminal_buffer(terminal_id: str, request: dict):
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save terminal buffer: {str(e)}",
+            detail=client_error(logger, "Failed to save terminal buffer", e),
         )
 
 

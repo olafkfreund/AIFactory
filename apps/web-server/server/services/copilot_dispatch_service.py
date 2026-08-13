@@ -25,6 +25,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 # GitHub's hard limit on a Copilot cloud-agent session is 59 minutes.
@@ -180,7 +182,11 @@ async def watch_for_copilot_pr(
                 service.find_copilot_pr, repo_full_name, issue_number
             )
         except Exception as exc:
-            logger.warning("[copilot-dispatch] watch error task=%s: %s", task_id, exc)
+            logger.warning(
+                "[copilot-dispatch] watch error task=%s: %s",
+                sanitize_log(task_id),
+                sanitize_log(exc),
+            )
             continue
 
         if pr_number is not None:
@@ -193,10 +199,10 @@ async def watch_for_copilot_pr(
                 pass
 
             logger.info(
-                "[copilot-dispatch] PR #%d found for task %s issue #%d",
-                pr_number,
-                task_id,
-                issue_number,
+                "[copilot-dispatch] PR #%s found for task %s issue #%s",
+                sanitize_log(pr_number),
+                sanitize_log(task_id),
+                sanitize_log(issue_number),
             )
             _update_task_metadata(
                 task_metadata_path,
@@ -213,10 +219,10 @@ async def watch_for_copilot_pr(
 
     # Deadline reached — no PR found.
     logger.warning(
-        "[copilot-dispatch] no Copilot PR after %d minutes for task=%s issue=#%d — marking failed",
-        _MAX_POLL_MINUTES,
-        task_id,
-        issue_number,
+        "[copilot-dispatch] no Copilot PR after %s minutes for task=%s issue=#%s — marking failed",
+        sanitize_log(_MAX_POLL_MINUTES),
+        sanitize_log(task_id),
+        sanitize_log(issue_number),
     )
     if on_timeout is not None:
         try:
@@ -238,5 +244,7 @@ def _update_task_metadata(path: Path, updates: dict) -> None:
         path.write_text(json.dumps(meta, indent=2))
     except Exception as exc:
         logger.warning(
-            "[copilot-dispatch] metadata update failed path=%s err=%s", path, exc
+            "[copilot-dispatch] metadata update failed path=%s err=%s",
+            sanitize_log(path),
+            sanitize_log(exc),
         )

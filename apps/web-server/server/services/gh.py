@@ -9,8 +9,13 @@ routes/github re-exports this name, so existing importers are unchanged.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from typing import Any
+
+from server.error_ref import client_error
+
+logger = logging.getLogger(__name__)
 
 
 def run_gh_command(args: list[str], cwd: str | None = None) -> dict[str, Any]:
@@ -42,4 +47,7 @@ def run_gh_command(args: list[str], cwd: str | None = None) -> dict[str, Any]:
         # Narrowed from a bare `except Exception`. Anything subprocess raises
         # that is not already handled above is an OSError; a broader catch here
         # would swallow programming errors as if the CLI had failed.
-        return {"success": False, "error": str(exc)}
+        return {
+            "success": False,
+            "error": client_error(logger, "run gh command failed", exc),
+        }

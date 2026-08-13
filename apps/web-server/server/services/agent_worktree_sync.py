@@ -14,6 +14,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from server.specpath import safe_spec_component as _safe_spec_component
 
 from ..websockets.events import emit_subtask_update
@@ -131,7 +133,9 @@ class WorktreeSyncMixin:
                     _, plan_error = read_plan(src)
                     if plan_error is not None:
                         _log.error(
-                            "[AgentService] refusing to sync %s: %s", src, plan_error
+                            "[AgentService] refusing to sync %s: %s",
+                            sanitize_log(src),
+                            sanitize_log(plan_error),
                         )
                         continue
                 try:

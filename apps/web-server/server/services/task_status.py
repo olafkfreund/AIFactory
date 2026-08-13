@@ -17,6 +17,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from server.services import task_control
 
 logger = logging.getLogger(__name__)
@@ -45,22 +47,24 @@ def read_plan(plan_file: Path) -> tuple[dict[str, Any], str | None]:
         plan = json.loads(plan_file.read_text())
     except json.JSONDecodeError as exc:
         logger.error(
-            "%s is not valid JSON at line %d column %d (char %d): %s",
-            plan_file,
-            exc.lineno,
-            exc.colno,
-            exc.pos,
-            exc.msg,
+            "%s is not valid JSON at line %s column %s (char %s): %s",
+            sanitize_log(plan_file),
+            sanitize_log(exc.lineno),
+            sanitize_log(exc.colno),
+            sanitize_log(exc.pos),
+            sanitize_log(exc.msg),
         )
         return {}, f"invalid JSON at line {exc.lineno} column {exc.colno}: {exc.msg}"
     except (OSError, ValueError) as exc:  # unreadable file / undecodable bytes
-        logger.error("%s could not be read: %s", plan_file, exc)
+        logger.error(
+            "%s could not be read: %s", sanitize_log(plan_file), sanitize_log(exc)
+        )
         return {}, f"could not be read: {exc}"
 
     if not isinstance(plan, dict):
         # Valid JSON, but not a plan. Same fault class: every caller indexes it
         # as a mapping, so a list/scalar is just as unusable as a parse error.
-        logger.error("%s is valid JSON but not an object", plan_file)
+        logger.error("%s is valid JSON but not an object", sanitize_log(plan_file))
         return {}, f"expected a JSON object, got {type(plan).__name__}"
     return plan, None
 

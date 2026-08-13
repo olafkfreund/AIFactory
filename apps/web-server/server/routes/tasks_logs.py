@@ -16,6 +16,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from server.specpath import safe_spec_component
@@ -40,7 +41,7 @@ async def get_task_logs(
 
     logger = logging.getLogger(__name__)
 
-    logger.info(f"[GetTaskLogs] Called with task_id: {task_id}")
+    logger.info(f"[GetTaskLogs] Called with task_id: {sanitize_log(task_id)}")
 
     if ":" not in task_id:
         raise HTTPException(
@@ -59,12 +60,14 @@ async def get_task_logs(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid task ID format",
         ) from None
-    logger.info(f"[GetTaskLogs] project_id={project_id}, spec_id={spec_id}")
+    logger.info(
+        f"[GetTaskLogs] project_id={sanitize_log(project_id)}, spec_id={sanitize_log(spec_id)}"
+    )
 
     projects = load_projects()
 
     if project_id not in projects:
-        logger.error(f"[GetTaskLogs] Project not found: {project_id}")
+        logger.error(f"[GetTaskLogs] Project not found: {sanitize_log(project_id)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
@@ -85,8 +88,10 @@ async def get_task_logs(
         / spec_id
     )
 
-    logger.info(f"[GetTaskLogs] Checking spec_dir: {spec_dir}")
-    logger.info(f"[GetTaskLogs] Checking worktree_spec_dir: {worktree_spec_dir}")
+    logger.info(f"[GetTaskLogs] Checking spec_dir: {sanitize_log(spec_dir)}")
+    logger.info(
+        f"[GetTaskLogs] Checking worktree_spec_dir: {sanitize_log(worktree_spec_dir)}"
+    )
 
     # Check for task_logs.json (phase-based logs) - prefer worktree if exists
     task_logs_file = None

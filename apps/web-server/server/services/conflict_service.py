@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -123,7 +125,7 @@ class ConflictService:
         Returns:
             Dictionary with conflict analysis results
         """
-        logger.info(f"Detecting conflicts for task {task_id}")
+        logger.info(f"Detecting conflicts for task {sanitize_log(task_id)}")
 
         try:
             # Run in thread pool to avoid blocking

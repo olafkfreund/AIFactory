@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..utils.subprocess_env import make_subprocess_env
 from .agent_task_models import TaskProgress
 from .task_phase import TaskPhase
@@ -84,7 +86,7 @@ class SpecCreationMixin:
                     if metadata.get("requireReviewBeforeCoding", False):
                         should_auto_approve = False
                         logger.info(
-                            f"[AgentService] Task {task_id} requires manual review - NOT auto-approving spec"
+                            f"[AgentService] Task {sanitize_log(task_id)} requires manual review - NOT auto-approving spec"
                         )
                     # Read spec phase model from auto profile config
                     if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
@@ -113,12 +115,12 @@ class SpecCreationMixin:
                     if is_governed_requirements(requirements):
                         should_auto_approve = True
                         logger.info(
-                            f"[AgentService] Task {task_id} is a governed PFactory "
+                            f"[AgentService] Task {sanitize_log(task_id)} is a governed PFactory "
                             "spec — auto-approving (skipping plan-review gate)"
                         )
                 except (json.JSONDecodeError, OSError, ImportError) as e:
                     logger.warning(
-                        f"[AgentService] PFactory governance check failed for {task_id}: {e}"
+                        f"[AgentService] PFactory governance check failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
                     )
 
         # Build command
@@ -135,11 +137,11 @@ class SpecCreationMixin:
         if spec_phase_model:
             cmd.extend(["--model", spec_phase_model])
             logger.info(
-                f"[AgentService] [Model: {spec_phase_model}] Starting spec creation for {task_id}"
+                f"[AgentService] [Model: {sanitize_log(spec_phase_model)}] Starting spec creation for {sanitize_log(task_id)}"
             )
         else:
             logger.info(
-                f"[AgentService] [Model: sonnet] Starting spec creation for {task_id} (default)"
+                f"[AgentService] [Model: sonnet] Starting spec creation for {sanitize_log(task_id)} (default)"
             )
 
         # Fix 1: Only auto-approve if task doesn't require manual review
@@ -167,7 +169,7 @@ class SpecCreationMixin:
         if complexity == "simple":
             env["QUICK_MODE"] = "true"
             logger.info(
-                f"[AgentService] Quick Mode enabled for spec creation task {task_id}"
+                f"[AgentService] Quick Mode enabled for spec creation task {sanitize_log(task_id)}"
             )
 
         # Load backend .env file for graphiti and other settings
@@ -301,7 +303,7 @@ class SpecCreationMixin:
             await _rmux_create(spec_id, project_path, " ".join(cmd))
         except Exception:
             logger.warning(
-                f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={spec_id}"
+                f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={sanitize_log(spec_id)}"
             )
 
         return proc

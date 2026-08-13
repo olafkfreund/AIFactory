@@ -17,6 +17,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..websockets.events import emit_task_status, emit_task_update
 from .agent_task_models import TaskLog, TaskProgress
 from .task_log_writer import TaskLogWriter
@@ -144,7 +146,10 @@ class EmitMixin:
         _logger = logging.getLogger(__name__)
         sig = _dedup_signature(payload)
         if not force and self._last_emitted_task_update.get(task_id) == sig:
-            _logger.debug("[AgentService] dedup-suppressed task:update for %s", task_id)
+            _logger.debug(
+                "[AgentService] dedup-suppressed task:update for %s",
+                sanitize_log(task_id),
+            )
             return
         self._last_emitted_task_update[task_id] = sig
         await emit_task_update(task_id, payload)
@@ -515,7 +520,9 @@ class EmitMixin:
 
         # Log stderr to server logs for debugging
         if is_stderr and line:
-            logger.warning(f"[AgentService] Task {task_id} stderr: {line}")
+            logger.warning(
+                f"[AgentService] Task {sanitize_log(task_id)} stderr: {sanitize_log(line)}"
+            )
             # Also mirror stderr to a per-spec file so post-mortem
             # debugging works even when the subprocess dies before
             # writing its own task_logs.json (#146).
@@ -540,7 +547,7 @@ class EmitMixin:
         if self._is_rate_limit_line(line):
             self._task_rate_limits[task_id] = True
             logger.warning(
-                f"[AgentService] Rate limit detected for task {task_id} (will attempt failover if enabled)"
+                f"[AgentService] Rate limit detected for task {sanitize_log(task_id)} (will attempt failover if enabled)"
             )
 
         # Write to task_logs.json for detailed phase logs

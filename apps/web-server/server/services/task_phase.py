@@ -14,6 +14,8 @@ import logging
 from enum import Enum
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 _log = logging.getLogger(__name__)
 
 
@@ -101,7 +103,9 @@ def sync_require_review_metadata(spec_dir: Path) -> bool:
             return bool(task_metadata.get("requireReviewBeforeCoding", False))
         except (json.JSONDecodeError, OSError) as e:
             _log.warning(
-                "[AgentService] Could not sync metadata for %s: %s", spec_dir, e
+                "[AgentService] Could not sync metadata for %s: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(e),
             )
             return False
 

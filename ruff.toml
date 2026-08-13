@@ -76,6 +76,11 @@ extend-exclude = [
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.
     "apps/backend/factory_common/",
+    # The second vendored copy of the same hub canonical, at the same .hub-sha.
+    # apps/web-server is the sys.path root for `server.*`, so it cannot import
+    # the apps/backend copy; see apps/web-server/factory_common/README.md.
+    # Excluded for exactly the same reason as the copy above.
+    "apps/web-server/factory_common/",
     # Same reason, same deal: the vendored factory-github provider layer is a
     # byte-exact mirror of the hub canonical (formatted at the fleet
     # line-length 100) and is kept identical by factory-github-drift.yml.

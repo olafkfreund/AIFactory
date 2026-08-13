@@ -155,7 +155,9 @@ def sweep(*, hours: float, dry_run: bool) -> dict[str, Any]:
             # that says it acted and did not is the exact defect it exists to
             # find.
             logger.exception("could not reap %s", item.task_id)
-            failures.append(f"{item.task_id}: {exc}")
+            failures.append(
+                f"{item.task_id}: {client_error(logger, 'could not mark the task cancelled', exc)}"
+            )
             continue
         reaped.append(item.task_id)
 

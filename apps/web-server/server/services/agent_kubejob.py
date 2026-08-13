@@ -16,6 +16,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -209,15 +211,15 @@ class KubejobMixin:
             }
             _log.info(
                 "[AgentService] kubejob build %s using Claude profile %s (%s)",
-                task_id,
-                profile_name,
-                profile_id,
+                sanitize_log(task_id),
+                sanitize_log(profile_name),
+                sanitize_log(profile_id),
             )
         else:
             _log.warning(
                 "[AgentService] no Claude OAuth token available for kubejob "
                 "build %s — run.py will fail with 'No OAuth token found'",
-                task_id,
+                sanitize_log(task_id),
             )
         try:
             await self._build_backend().dispatch(
@@ -349,7 +351,7 @@ class KubejobMixin:
             _log.debug(
                 "[AgentService] rmux create for kubejob build raised (ignored); "
                 "spec_id=%s",
-                spec_id,
+                sanitize_log(spec_id),
                 exc_info=True,
             )
 
@@ -412,7 +414,7 @@ class KubejobMixin:
             _log.warning(
                 "[AgentService] could not open task_logs.json for %s; the build "
                 "will run but report no live progress",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return None
@@ -455,7 +457,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - store read failure → skip streaming
             _log.debug(
                 "[AgentService] worker_ref read failed for %s (no log stream)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return None
@@ -502,7 +504,7 @@ class KubejobMixin:
             _log.debug(
                 "[AgentService] rmux reap for kubejob build raised (ignored); "
                 "spec_id=%s",
-                spec_id,
+                sanitize_log(spec_id),
                 exc_info=True,
             )
 
@@ -708,7 +710,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001
             _log.warning(
                 "[AgentService] could not read state to stop kubejob %s",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return False
@@ -725,7 +727,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - delete is best-effort; row mark below frees the slot
             _log.warning(
                 "[AgentService] could not delete k8s Job for %s (ignored)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         try:
@@ -735,12 +737,12 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001
             _log.warning(
                 "[AgentService] could not free durable slot on kubejob stop %s",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         # #671 OAuth-env: return the pooled credential checked out at dispatch.
         self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._drain_queue()
-        _log.info("[AgentService] Stopped k8s-Job build %s", task_id)
+        _log.info("[AgentService] Stopped k8s-Job build %s", sanitize_log(task_id))
         return True

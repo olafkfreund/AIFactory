@@ -20,17 +20,21 @@ compatibility (``mcp_stdio/router.py`` imports them from ``..routes.tasks``).
 """
 
 import json
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from server.error_ref import client_error
 from server.services.http_verdict import honest_status
 from server.services.task_branch import resolve_task_branch
 from server.specpath import safe_spec_component
 
 from .project_authz import require_task_access
 from .projects import get_projects_file
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -253,7 +257,10 @@ async def create_pr_from_task(
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Push timed out"}
     except Exception as e:
-        return {"success": False, "error": f"Failed to push branch: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to push branch", e),
+        }
 
     # Load task title/description for PR defaults
     pr_title = options.title
@@ -328,7 +335,10 @@ async def create_pr_from_task(
                 "error": f"Provider {provider_type_value!r} does not support PR creation yet",
             }
         except Exception as exc:
-            return {"success": False, "error": f"Failed to create PR: {exc}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed to create PR", exc),
+            }
 
     # Create the PR using gh CLI (GitHub-only path)
     head_ref = worktree_branch

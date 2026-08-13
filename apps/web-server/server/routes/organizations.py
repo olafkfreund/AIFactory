@@ -16,6 +16,7 @@ Provides:
 import logging
 from datetime import datetime
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
@@ -437,7 +438,9 @@ async def update_organization(
     )
     member_count = count_result.scalar() or 0
 
-    logger.info(f"Organization updated: {org.slug} (id={org.id})")
+    logger.info(
+        f"Organization updated: {sanitize_log(org.slug)} (id={sanitize_log(org.id)})"
+    )
 
     return OrgResponse(
         id=org.id,
@@ -568,8 +571,8 @@ async def invite_member(
     await db.refresh(new_member)
 
     logger.info(
-        f"User {target_user.email} invited to org {org_id} "
-        f"with role '{body.role}' by {current_user.id}"
+        f"User {sanitize_log(target_user.email)} invited to org {sanitize_log(org_id)} "
+        f"with role '{sanitize_log(body.role)}' by {sanitize_log(current_user.id)}"
     )
 
     return OrgMemberResponse(
@@ -708,8 +711,8 @@ async def update_member_role(
     target_user = user_result.scalar_one_or_none()
 
     logger.info(
-        f"Member {user_id} role changed from '{old_role}' to '{body.role}' "
-        f"in org {org_id} by {current_user.id}"
+        f"Member {sanitize_log(user_id)} role changed from '{sanitize_log(old_role)}' to '{sanitize_log(body.role)}' "
+        f"in org {sanitize_log(org_id)} by {sanitize_log(current_user.id)}"
     )
 
     return OrgMemberResponse(
@@ -800,6 +803,8 @@ async def remove_member(
     await db.commit()
 
     action = "left" if is_self_remove else "removed from"
-    logger.info(f"User {user_id} {action} org {org_id} by {current_user.id}")
+    logger.info(
+        f"User {sanitize_log(user_id)} {sanitize_log(action)} org {sanitize_log(org_id)} by {sanitize_log(current_user.id)}"
+    )
 
     return None

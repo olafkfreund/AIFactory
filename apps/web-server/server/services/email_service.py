@@ -23,6 +23,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import httpx
+from factory_common.logsafe import sanitize_log
 from sqlalchemy import select, update
 
 from ..database import EmailAccount
@@ -78,9 +79,9 @@ class EmailService:
                 if sent:
                     logger.info(
                         "Email sent to %s via %s: %s",
-                        account.email_address,
-                        account.provider,
-                        subject,
+                        sanitize_log(account.email_address),
+                        sanitize_log(account.provider),
+                        sanitize_log(subject),
                     )
                     return True
             except Exception:
