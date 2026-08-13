@@ -9,6 +9,8 @@ So the permissive posture keeps only the guards that cost no legitimate use.
 from __future__ import annotations
 
 import ipaddress
+import urllib.error
+from email.message import Message
 from unittest.mock import patch
 
 import pytest
@@ -233,3 +235,53 @@ def test_llm_endpoint_probe_still_refuses_the_metadata_address() -> None:
     assert result.ok is False
     assert "link-local/metadata" in (result.error or "")
     opener.assert_not_called()
+
+
+def test_a_failed_probe_does_not_say_why_it_failed() -> None:
+    """#1268 follow-up: close the error-text half of the port-scan oracle.
+
+    With allow_private=True an authenticated caller can point this route at the
+    server's private network. If the response distinguished "connection
+    refused" (closed) from "no route to host" (filtered) from a timeout
+    (dropped), it would map that network one address at a time.
+
+    Asserts the responses are IDENTICAL to each other rather than checking for
+    a particular sentence. The wording is free to change; the property that
+    matters is that these three cannot be told apart, and a test written
+    against the string would keep passing if someone re-split the branches and
+    gave each its own literal.
+    """
+    reasons = [
+        urllib.error.URLError(OSError(111, "Connection refused")),
+        urllib.error.URLError(OSError(113, "No route to host")),
+        TimeoutError("timed out"),
+    ]
+    errors = set()
+    for exc in reasons:
+        with patch.object(llm_endpoints, "build_no_redirect_opener") as opener:
+            opener.return_value.open.side_effect = exc
+            result = llm_endpoints._probe_models("http://10.0.0.5:11434", None, None)
+        assert result.ok is False
+        errors.add(result.error)
+
+    assert len(errors) == 1, f"the failure reason leaks through: {errors}"
+    # Pop OUTSIDE the assert (py/side-effect-in-assert): `python -O` strips
+    # assert statements, so a mutation inside one silently stops happening.
+    # Harmless as the last line of this test, but the shape is the defect.
+    only_error = errors.pop()
+    assert "refused" not in only_error.lower()
+
+
+def test_a_real_http_status_from_the_endpoint_is_still_reported() -> None:
+    """The deliberate exception: the REMOTE server's own status line.
+
+    The caller asked us to fetch that URL and is entitled to what it answered.
+    Kept as a test so the next CWE-209 sweep sees it is a decision, not a miss.
+    """
+    with patch.object(llm_endpoints, "build_no_redirect_opener") as opener:
+        opener.return_value.open.side_effect = urllib.error.HTTPError(
+            "http://10.0.0.5:11434/v1/models", 401, "Unauthorized", Message(), None
+        )
+        result = llm_endpoints._probe_models("http://10.0.0.5:11434", None, None)
+    assert result.status_code == 401
+    assert "401" in (result.error or "")
