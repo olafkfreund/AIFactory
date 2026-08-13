@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from server.error_ref import InputRejected, client_error, error_reference
+from server.error_ref import InputRejectedError, client_error, error_reference
 from server.routes import terminal
 from server.services import gh
 
@@ -99,7 +99,9 @@ def test_a_rejected_field_is_still_told_to_the_caller(logs: _Capture) -> None:
     caught exactly that regression.
     """
     message = client_error(
-        logs.logger, "get commits preview failed", InputRejected("Invalid baseBranch")
+        logs.logger,
+        "get commits preview failed",
+        InputRejectedError("Invalid baseBranch"),
     )
 
     assert message == "Invalid baseBranch"

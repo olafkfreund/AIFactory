@@ -8,7 +8,7 @@ program as an option rather than an operand. That is not cosmetic --
 write, which is exactly what ``routes/changelog.py`` was exposed to before
 these helpers existed.
 
-Rejections are raised as ``server.error_ref.InputRejected`` -- developer-written
+Rejections are raised as ``server.error_ref.InputRejectedError`` -- developer-written
 text about the caller's own input, which ``client_error`` is allowed to hand
 back verbatim instead of hiding behind a correlation id. It subclasses
 ``ValueError``, so every existing ``except ValueError`` handler is unchanged.
@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 
-from server.error_ref import InputRejected
+from server.error_ref import InputRejectedError
 
 # A git ref must start with an alphanumeric, so it can never be parsed as an
 # option, and may then use only characters git itself accepts in a ref name.
@@ -42,7 +42,7 @@ _GIT_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@/+^~{}-]{0,254}")
 
 
 def assert_safe_git_ref(ref: str, field: str = "ref") -> str:
-    """Return ``ref`` if it is a plausible git ref, else raise ``InputRejected``.
+    """Return ``ref`` if it is a plausible git ref, else raise ``InputRejectedError``.
 
     Allowlist, not denylist. The load-bearing rule is the first character:
     a ref that cannot begin with ``-`` cannot be parsed by git as an option.
@@ -50,7 +50,7 @@ def assert_safe_git_ref(ref: str, field: str = "ref") -> str:
     embedded separator lets one field rewrite the range it lands in.
     """
     if not isinstance(ref, str) or not _GIT_REF.fullmatch(ref) or ".." in ref:
-        raise InputRejected(f"Invalid {field}: must be a plain git ref")
+        raise InputRejectedError(f"Invalid {field}: must be a plain git ref")
     return ref
 
 
@@ -63,7 +63,7 @@ def assert_not_option(value: str, field: str = "value") -> str:
     it here turns a 500 into a 400.
     """
     if not isinstance(value, str) or value.startswith("-") or "\x00" in value:
-        raise InputRejected(f"Invalid {field}: must not start with '-'")
+        raise InputRejectedError(f"Invalid {field}: must not start with '-'")
     return value
 
 
@@ -75,7 +75,7 @@ def bounded_count(value: object, maximum: int, field: str = "count") -> int:
     try:
         count = int(str(value))
     except (TypeError, ValueError):
-        raise InputRejected(f"Invalid {field}: must be an integer") from None
+        raise InputRejectedError(f"Invalid {field}: must be an integer") from None
     if count < 1 or count > maximum:
-        raise InputRejected(f"Invalid {field}: must be between 1 and {maximum}")
+        raise InputRejectedError(f"Invalid {field}: must be between 1 and {maximum}")
     return count

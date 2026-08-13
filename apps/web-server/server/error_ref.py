@@ -36,10 +36,10 @@ import secrets
 
 from factory_common.logsafe import sanitize_log
 
-__all__ = ["InputRejected", "client_error", "error_reference"]
+__all__ = ["InputRejectedError", "client_error", "error_reference"]
 
 
-class InputRejected(ValueError):
+class InputRejectedError(ValueError):
     """A validation failure whose message is DELIBERATELY safe to hand back.
 
     The distinction CWE-209 actually cares about is not "exception or not", it
@@ -96,8 +96,8 @@ def client_error(logger: logging.Logger, context: str, exc: BaseException | str)
     The one-liner every ``except`` handler in this server should be reaching for
     instead of ``str(e)``.
     """
-    if isinstance(exc, InputRejected):
-        # See InputRejected: developer-written text about the caller's own
+    if isinstance(exc, InputRejectedError):
+        # See InputRejectedError: developer-written text about the caller's own
         # input. Surfaced verbatim, and not worth a log record either -- a
         # rejected field is the validator working, not an incident.
         return str(exc)
