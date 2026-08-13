@@ -10,16 +10,13 @@ Covers:
 
 from __future__ import annotations
 
-import hashlib
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from server.jobs.audit_anchor_cron import (
-    _classifications_hash_before_for_org,
     _latest_tenant_chain_head_before,
-    _select_isolated_org_ids,
     emit_tenant_anchor_for_day,
 )
 from server.services.audit_chain import tenant_genesis
@@ -256,7 +253,6 @@ class TestLatestTenantChainHead:
     @pytest.mark.asyncio
     async def test_genesis_when_no_rows(self) -> None:
         """Returns the per-tenant genesis sentinel when no rows exist for the org."""
-        from datetime import timedelta
 
         db = AsyncMock()
         result_mock = MagicMock()

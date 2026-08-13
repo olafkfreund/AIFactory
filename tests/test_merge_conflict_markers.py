@@ -14,7 +14,6 @@ Covers:
 - Full integration flow
 """
 
-import pytest
 from merge.prompts import (
     build_conflict_only_prompt,
     extract_conflict_resolutions,

@@ -424,7 +424,6 @@ async def install_claude_code():
 
     All commands use `bash -l -c` so login profile PATH changes are visible.
     """
-    import logging
 
     log = logging.getLogger(__name__)
 

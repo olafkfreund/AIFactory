@@ -5,12 +5,10 @@ Tests for GitHub PR Review System
 Tests the PR review orchestrator and follow-up review functionality.
 """
 
-import json
 import sys
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -22,7 +20,7 @@ if str(_github_dir) not in sys.path:
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
-from bot_detection import BotDetectionState, BotDetector
+from bot_detection import BotDetector
 from models import (
     FollowupReviewContext,
     MergeVerdict,

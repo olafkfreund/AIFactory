@@ -22,7 +22,7 @@ we don't want this layer's tests to depend on the DB hash-chain code.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI

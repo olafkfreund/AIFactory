@@ -51,7 +51,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..auth import WebSocketAuthError, authenticate_websocket
-from ..database.engine import async_session_factory, get_db
+from ..database import engine as _db_engine
+from ..database.engine import get_db
 from ..routes.project_authz import (
     _auth_disabled,
     authorize_project_for_user,
@@ -379,7 +380,7 @@ async def agent_console_ws(websocket: WebSocket, spec_id: str):
             return
 
     authz_state = state if state is not None else _remote_authz_state(spec_id, remote)
-    async with async_session_factory() as db:
+    async with _db_engine.async_session_factory() as db:
         try:
             await _authorize_console(user, authz_state, db, minimum_role="viewer")
         except HTTPException:

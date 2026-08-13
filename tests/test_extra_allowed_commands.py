@@ -9,8 +9,6 @@ the per-project profile file.
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "backend"))
 
 from project.models import SecurityProfile  # noqa: E402

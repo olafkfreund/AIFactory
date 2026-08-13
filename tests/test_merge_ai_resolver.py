@@ -15,7 +15,6 @@ Covers:
 
 from datetime import datetime
 
-import pytest
 from merge import (
     ChangeType,
     ConflictRegion,

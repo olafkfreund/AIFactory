@@ -38,7 +38,6 @@ if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
 from qa.review_cycle import (  # noqa: E402
-    CycleState,
     load_cycle,
     record_started,
     request_review,

@@ -34,11 +34,8 @@ from pydantic_models import (
     # Orchestrator review models
     OrchestratorFinding,
     OrchestratorReviewResponse,
-    QualityFinding,
-    # Initial review models
     QuickScanResult,
     SecurityFinding,
-    StructuralIssue,
 )
 
 

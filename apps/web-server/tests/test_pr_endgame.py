@@ -13,8 +13,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 _WS = Path(__file__).resolve().parents[1]
 if str(_WS) not in sys.path:
     sys.path.insert(0, str(_WS))

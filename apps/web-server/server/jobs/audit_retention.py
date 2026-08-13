@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..database.engine import async_session_factory
+from ..database import engine as _db_engine
 from ..database.models import AuditLog
 
 logger = logging.getLogger(__name__)
@@ -76,10 +76,10 @@ async def run_retention(db: AsyncSession, *, as_of: datetime | None = None) -> d
 
 
 async def _main() -> int:
-    if async_session_factory is None:
+    if _db_engine.async_session_factory is None:
         print("DATABASE_URL not configured", flush=True)
         return 2
-    async with async_session_factory() as session:
+    async with _db_engine.async_session_factory() as session:
         summary = await run_retention(session)
     print(summary, flush=True)
     return 0

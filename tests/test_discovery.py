@@ -24,7 +24,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 from test_discovery import (
     TestDiscovery,
     TestDiscoveryResult,
-    TestFramework,
     discover_tests,
     get_test_command,
     get_test_frameworks,

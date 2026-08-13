@@ -16,7 +16,6 @@ the Claude SDK which is not available in the test environment.
 import json
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 

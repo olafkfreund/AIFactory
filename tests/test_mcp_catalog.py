@@ -15,7 +15,6 @@ Two layers:
 
 from __future__ import annotations
 
-import pytest
 from agents.tools_pkg import mcp_catalog
 from agents.tools_pkg.models import _map_mcp_server_name, get_required_mcp_servers
 from core.mcp_credentials import CredentialStatus

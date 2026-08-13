@@ -12,8 +12,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:

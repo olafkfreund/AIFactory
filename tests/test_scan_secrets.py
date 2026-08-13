@@ -12,13 +12,8 @@ Tests the scan_secrets.py module functionality including:
 
 from pathlib import Path
 
-import pytest
 from scan_secrets import (
-    ALL_PATTERNS,
-    BINARY_EXTENSIONS,
-    DEFAULT_IGNORE_PATTERNS,
     SecretMatch,
-    get_staged_files,
     is_false_positive,
     load_secretsignore,
     print_results,
@@ -387,7 +382,6 @@ class TestIntegration:
 
     def test_end_to_end_scan(self, temp_git_repo: Path, stage_files):
         """Full scan workflow with staged files."""
-        import subprocess
 
         # Create files with potential secrets
         stage_files(

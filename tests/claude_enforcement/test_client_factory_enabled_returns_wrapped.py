@@ -22,9 +22,7 @@ def test_enabled_with_org_id_wraps(monkeypatch):
     monkeypatch.setenv("AIFACTORY_CLAUDE_ENFORCEMENT_ENABLED", "true")
     monkeypatch.delenv("LITELLM_GATEWAY_URL", raising=False)
     from core.enforcement import (
-        ClaudeEnforcementContext,
         _EnforcedClaudeSDKClient,
-        _NoBudgetProvider,
         build_enforcement_context,
         wrap_client_if_enforced,
     )

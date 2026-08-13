@@ -19,13 +19,9 @@ Helm-level tests (secret mount + env var rendering) live in
 
 from __future__ import annotations
 
-import os
-
-import pytest
 from agents.tools_pkg import mcp_catalog
 from agents.tools_pkg.mcp_catalog import (
     _GCP_MCP_DEFAULT_ENDPOINT,
-    MCPCatalogEntry,
     _get_gcp_mcp_endpoint,
 )
 from agents.tools_pkg.models import get_required_mcp_servers

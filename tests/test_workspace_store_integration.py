@@ -47,7 +47,6 @@ if str(_WEB_SERVER) not in sys.path:
 
 
 from server.services.workspace_store import (
-    MANIFEST_FILENAME,
     WorkspaceStore,
 )
 
@@ -207,7 +206,6 @@ async def test_partial_upload_simulation_against_live_minio(
     confirm download treats it as missing and doesn't pollute the
     local dir. Defends the partial-upload-detection contract against
     real S3 listing behavior (eventual consistency edge cases)."""
-    import fsspec
 
     org_id = "live-test"
     project_id = _unique_project_id()

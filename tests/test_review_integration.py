@@ -13,10 +13,7 @@ Integration tests for complete review workflows:
 import json
 from pathlib import Path
 
-import pytest
 from review import REVIEW_STATE_FILE, ReviewState
-
-from tests.review_fixtures import complete_spec_dir, review_spec_dir
 
 
 class TestFullReviewFlow:

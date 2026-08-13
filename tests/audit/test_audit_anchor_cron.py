@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
