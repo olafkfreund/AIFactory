@@ -96,7 +96,7 @@ def enforce_kms_safety() -> None:
         return
     try:
         get_backend()
-    except Exception as exc:  # noqa: BLE001 — every backend raises its own type
+    except Exception as exc:  # every backend raises its own error type; re-raised
         raise SystemExit(
             f"Refusing to start: APP_KMS_BACKEND={configured_backend_name()!r} "
             f"was selected but the backend could not be constructed ({exc}). "

@@ -111,7 +111,7 @@ def seal(value: str | None) -> str | None:
         return value
     try:
         blob = get_backend().encrypt(value.encode("utf-8"))
-    except Exception:  # noqa: BLE001 - every backend raises its own type
+    except Exception:
         # Broad on purpose: each KMS backend raises its own errors (RuntimeError
         # for a missing key, botocore/hvac/azure/google client errors for the
         # cloud ones). Saving a profile must not 500 because no key was ever
