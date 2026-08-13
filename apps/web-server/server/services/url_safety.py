@@ -72,8 +72,15 @@ def build_no_redirect_opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(_NoRedirect)
 
 
-def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> None:
+def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
     """Raise ``ValueError`` if ``url`` is unsafe to fetch server-side.
+
+    Returns ``url`` unchanged, so a call site can wrap the value on its way into
+    the request rather than checking one string and then fetching another. That
+    is not decoration: the checked-then-ignored variant is the failure mode this
+    module exists to stop, and it is also the shape static analysis can see --
+    the barrier in ``.github/codeql/custom-queries/SsrfSanitized.ql`` is
+    registered on this call, so only the value that flows OUT of it is cleared.
 
     See the module docstring for what each posture does and does not promise.
     """
@@ -111,3 +118,5 @@ def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> None:
             or ip.is_unspecified
         ):
             raise ValueError(f"refusing to fetch non-public address {ip} (SSRF)")
+
+    return url

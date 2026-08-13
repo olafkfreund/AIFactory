@@ -162,14 +162,31 @@ async def initialize_git(request: InitGitRequest):
 
 ollama_router = APIRouter()
 
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+
+def safe_ollama_base_url(base_url: str | None) -> str:
+    """Validate a caller-supplied Ollama base URL and return it.
+
+    Every route below takes ``baseUrl`` straight off the request and fetches it
+    server-side, which is an SSRF primitive whatever the endpoint is nominally
+    for. ``allow_private=True`` because a self-hosted Ollama on localhost or a
+    cluster-internal address is the normal deployment, not the attack -- the
+    fleet runs its local models exactly that way, so the strict posture would
+    break the product. What is still refused is the part with no legitimate
+    Ollama behind it: non-http(s) schemes and the cloud metadata range.
+
+    Raises ``ValueError``; each call site is already inside the try/except that
+    turns a failed probe into an empty/false result.
+    """
+    return assert_safe_outbound_url(base_url or DEFAULT_OLLAMA_URL, allow_private=True)
+
 
 def check_ollama_running(base_url: str | None = None) -> bool:
     """Check if Ollama server is running."""
-    import urllib.request
-
-    url = base_url or "http://localhost:11434"
     try:
-        urllib.request.urlopen(f"{url}/api/tags", timeout=5)
+        url = safe_ollama_base_url(base_url)
+        build_no_redirect_opener().open(f"{url}/api/tags", timeout=5)
         return True
     except Exception:
         return False
@@ -205,11 +222,10 @@ async def install_ollama():
 async def list_ollama_models(baseUrl: str | None = Query(None)):
     """List available Ollama models."""
     import json
-    import urllib.request
 
-    url = baseUrl or "http://localhost:11434"
     try:
-        response = urllib.request.urlopen(f"{url}/api/tags", timeout=10)
+        url = safe_ollama_base_url(baseUrl)
+        response = build_no_redirect_opener().open(f"{url}/api/tags", timeout=10)
         data = json.loads(response.read().decode())
         models = [m["name"] for m in data.get("models", [])]
         return {"success": True, "data": models}
@@ -221,14 +237,12 @@ async def list_ollama_models(baseUrl: str | None = Query(None)):
 async def list_ollama_embedding_models(baseUrl: str | None = Query(None)):
     """List Ollama embedding models with installation status."""
     import json
-    import urllib.request
-
-    url = baseUrl or "http://localhost:11434"
 
     # Get installed models from Ollama
     installed_models = set()
     try:
-        response = urllib.request.urlopen(f"{url}/api/tags", timeout=10)
+        url = safe_ollama_base_url(baseUrl)
+        response = build_no_redirect_opener().open(f"{url}/api/tags", timeout=10)
         data = json.loads(response.read().decode())
         for m in data.get("models", []):
             name = m.get("name", "")
@@ -262,10 +276,10 @@ async def pull_ollama_model(request: PullModelRequest):
     import json
     import urllib.request
 
-    url = request.baseUrl or "http://localhost:11434"
     model_name = request.modelName
 
     try:
+        url = safe_ollama_base_url(request.baseUrl)
         # Use Ollama's pull API
         req_data = json.dumps({"name": model_name, "stream": False}).encode()
         req = urllib.request.Request(
@@ -275,7 +289,7 @@ async def pull_ollama_model(request: PullModelRequest):
             method="POST",
         )
         # This is a blocking call - for large models consider background task
-        response = urllib.request.urlopen(req, timeout=600)  # 10 min timeout
+        response = build_no_redirect_opener().open(req, timeout=600)  # 10 min timeout
         result = json.loads(response.read().decode())
 
         # Check if pull was successful
@@ -731,7 +745,7 @@ async def check_mcp_health(server: McpServerConfig):
         # http(s) schemes, the cloud metadata range, and redirects away from the
         # host that was just validated.
         try:
-            assert_safe_outbound_url(server.url, allow_private=True)
+            safe_url = assert_safe_outbound_url(server.url, allow_private=True)
         except ValueError as exc:
             return {
                 "success": True,
@@ -743,7 +757,7 @@ async def check_mcp_health(server: McpServerConfig):
             }
 
         try:
-            req = urllib.request.Request(server.url, method="HEAD")
+            req = urllib.request.Request(safe_url, method="HEAD")
             if server.headers:
                 for key, value in server.headers.items():
                     req.add_header(key, value)
