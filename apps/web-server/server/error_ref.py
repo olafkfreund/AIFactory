@@ -49,10 +49,43 @@ class InputRejectedError(ValueError):
     ``FileNotFoundError`` from the stdlib is the opposite: nobody chose its
     wording and it names a path on our disk.
 
-    So validators raise this, :func:`client_error` passes its message through
+    So validators raise this, :func:`client_error` hands its message back
     verbatim, and everything else still gets a reference id. Subclasses
     ``ValueError`` so existing ``except ValueError`` handlers keep working.
+
+    The safe sentence is carried in :attr:`client_message`, a plain string this
+    class was *given* at construction -- **not** read back out of the exception
+    with ``str(exc)``. That distinction is the whole point of the attribute, and
+    it is not cosmetic:
+
+    ``BaseException.__str__`` renders ``args``, and ``args`` is populated by
+    every exception in the process -- the stdlib's, a third-party library's, the
+    runtime's. A handler that forwards ``str(exc)`` is therefore forwarding text
+    of unknown authorship, and neither a reader nor a static analyser can tell
+    which kind it got; that is exactly what CWE-209 is about, and it is why 104
+    ``py/stack-trace-exposure`` alerts pointed at the old ``return str(exc)``
+    line. ``client_message`` has exactly one writer: the constructor below,
+    reached only from the eight ``raise InputRejectedError(...)`` sites in
+    ``services/argv_safety.py`` and ``services/url_safety.py``. Nothing in the
+    stdlib sets it, so nothing in the stdlib can reach the response through it.
+
+    CodeQL agrees, and for a stated reason rather than by luck:
+    ``StackTraceExposureQuery.qll`` adds exactly one attribute flow step, for
+    ``__traceback__``, because a caught exception's *other* attributes are
+    application-owned data rather than stack-trace information. See
+    ``.github/codeql/VALIDATION.md``.
+
+    What this does NOT establish is that a raise site chose its wording wisely.
+    ``InputRejectedError(f"failed: {inner}")`` would launder ``inner``'s text
+    straight through, and no mechanism here can stop that -- the eight messages
+    are held honest by review and by ``tests/test_error_ref_client_message.py``,
+    which asserts the response body of a resolver failure still carries a
+    reference id rather than the resolver's text.
     """
+
+    def __init__(self, client_message: str) -> None:
+        super().__init__(client_message)
+        self.client_message = client_message
 
 
 #: 12 hex characters: short enough to read down a phone line, wide enough that
@@ -100,5 +133,9 @@ def client_error(logger: logging.Logger, context: str, exc: BaseException | str)
         # See InputRejectedError: developer-written text about the caller's own
         # input. Surfaced verbatim, and not worth a log record either -- a
         # rejected field is the validator working, not an incident.
-        return str(exc)
+        #
+        # Read the attribute, never `str(exc)`. Same characters today; utterly
+        # different provenance. Only this repo's validators can write
+        # client_message, whereas str() renders whatever wrote args.
+        return exc.client_message
     return f"{context} (reference {error_reference(logger, context, exc)})"

@@ -8,7 +8,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
@@ -335,15 +334,6 @@ async def pull_ollama_model(request: PullModelRequest):
         else:
             return {"success": False, "error": f"Pull failed: {status}"}
 
-    except ValueError as e:
-        # The outbound-URL guard's own refusal. Deliberately surfaced verbatim
-        # rather than behind a reference id: it is developer-written text that
-        # quotes only the URL the CALLER just sent, so it discloses nothing
-        # internal, and telling someone *why* their Ollama URL was rejected is
-        # the whole point of the guard. Narrow on purpose -- everything else
-        # still goes through client_error below.
-        logger.warning("refused an Ollama pull: %s", sanitize_log(e))
-        return {"success": False, "error": str(e)}
     except urllib.error.URLError as e:
         return {
             "success": False,
