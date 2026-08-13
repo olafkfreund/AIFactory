@@ -145,7 +145,16 @@ def get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
     """Get the worktree spec directory if it exists.
 
     Worktree layout: .aifactory/worktrees/tasks/{spec_id}/.aifactory/specs/{spec_id}/
+
+    Barriers its own argument rather than trusting callers to have done it.
+    Every caller today does, but "every caller today" is the assumption that
+    produced #1056 in the first place, and this helper is one join away from a
+    filesystem read.
     """
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return None
     worktree_spec_dir = (
         project_path
         / ".aifactory"
@@ -166,6 +175,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
     Returns True if sync was performed, False otherwise.
     """
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return False
     main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
 

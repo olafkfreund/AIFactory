@@ -108,6 +108,39 @@ def test_bare_task_id_branches_are_also_barriered() -> None:
     assert text.count("spec_id = safe_spec_component(spec_id)") >= bare
 
 
+def test_every_spec_path_join_in_a_route_is_barriered() -> None:
+    """The split-based check above is not enough, and that cost us two routes.
+
+    ``worktree_merge.resolve_git_merge_conflicts`` used ``task_id`` WHOLE
+    instead of splitting it, so the split regex never saw it and it joined an
+    unvalidated request value onto the specs path -- then read and WROTE files
+    under it. ``get_worktree_diff`` had the barrier, but inside the ``if ":" in
+    task_id`` branch only, so the bare-id branch walked straight past it.
+
+    This test keys off the join rather than the parse: any route that puts a
+    bare ``task_id``/``spec_id`` into a path must have called the barrier
+    earlier in the same function, whichever way it got there.
+    """
+    join_re = re.compile(
+        r'/ "specs" / (?:task_id|spec_id)\b|/ "tasks" / (?:task_id|spec_id)\b'
+    )
+    def_re = re.compile(r"^(?:async )?def ", re.M)
+    offenders: list[str] = []
+    for module in sorted(_ROUTES.glob("*.py")):
+        text = module.read_text()
+        starts = [m.start() for m in def_re.finditer(text)]
+        for match in join_re.finditer(text):
+            # Everything from the top of the enclosing function to the join.
+            enclosing = max((s for s in starts if s < match.start()), default=0)
+            if "safe_spec_component" not in text[enclosing : match.start()]:
+                line = text[: match.start()].count("\n") + 1
+                offenders.append(f"{module.name}:{line}")
+    assert not offenders, (
+        "spec path join with no safe_spec_component earlier in the same "
+        "function at: " + ", ".join(offenders)
+    )
+
+
 # --------------------------------------------------------------------------
 # contained_path: the whole-path half of the same story
 # --------------------------------------------------------------------------
