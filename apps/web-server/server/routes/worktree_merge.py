@@ -1207,6 +1207,15 @@ async def resolve_git_merge_conflicts(
     logger = logging.getLogger(__name__)
     logger.info(f"Resolving git merge conflicts for task {task_id}")
 
+    # Barrier BEFORE task_id reaches any path expression (#1056). This route
+    # uses task_id WHOLE rather than splitting it, so the structural regression
+    # test -- which keys off the `task_id.split(":")` shape -- never saw it, and
+    # it went unbarriered while its eight siblings in this module were fixed.
+    try:
+        task_id = safe_spec_component(task_id, "task_id")
+    except ValueError:
+        return {"success": False, "error": "Invalid task ID format"}
+
     # Find the task's project
     projects_data_dir = get_data_dir()
     projects_file = projects_data_dir / "projects.json"
@@ -2014,14 +2023,17 @@ async def get_worktree_diff(
     # Parse task_id to get project_id and spec_id
     if ":" in task_id:
         project_id, spec_id = task_id.split(":", 1)
-        # Barrier BEFORE spec_id reaches any path expression (#1056).
-        try:
-            spec_id = safe_spec_component(spec_id)
-        except ValueError:
-            return {"success": False, "error": "Invalid task ID format"}
     else:
         spec_id = task_id
         project_id = None
+
+    # Barrier AFTER the if/else, so it covers BOTH branches (#1056). It used to
+    # sit inside the split branch only, which left the bare-id branch feeding
+    # an unvalidated request value straight into the specs path below.
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return {"success": False, "error": "Invalid task ID format"}
 
     # Find project path
     projects_data_dir = get_data_dir()

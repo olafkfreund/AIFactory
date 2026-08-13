@@ -37,6 +37,18 @@ import PathInjectionFlow::PathGraph
  * `os.path.basename` strips directory parts outright, which is the same
  * guarantee by a different route.
  *
+ * `contained_path` (server/specpath.py) is the same idea for a whole PATH
+ * rather than one component: it resolves the candidate and returns it only if
+ * the RESOLVED form is inside one of the roots it was given, raising
+ * otherwise. That constrains which path is reached, which is the property a
+ * barrier has to establish. The resolve happens inside the helper on purpose,
+ * so there is no window in which a resolved-but-unchecked path exists in the
+ * caller for flow to escape through.
+ *
+ * Deliberately NOT registered, and worth naming because they are the tempting
+ * wrong answers: `exists()`, `is_file()`, `is_dir()`. They report whether a
+ * path is THERE, never whether it is ALLOWED. `/etc/passwd` exists.
+ *
  * Deliberately NOT registered: `Path.resolve()`. Resolving does not confine a
  * path, it only canonicalises one, and `Path("/srv") / "../../etc"` resolves
  * happily to `/etc`. Treating it as a barrier would silence the exact bug
@@ -47,7 +59,7 @@ class SpecPathSanitizer extends PathInjection::Sanitizer {
     this = API::moduleImport("os").getMember("path").getMember("basename").getACall()
     or
     exists(DataFlow::CallCfgNode call, string name |
-      name in ["safe_spec_component", "_safe_spec_component"] and
+      name in ["safe_spec_component", "_safe_spec_component", "contained_path"] and
       (
         call.getFunction().asExpr().(Name).getId() = name or
         call.getFunction().asExpr().(Attribute).getName() = name
@@ -59,7 +71,7 @@ class SpecPathSanitizer extends PathInjection::Sanitizer {
     // regex probe INSIDE safe_spec_component re-report the very flow the
     // barrier exists to clear -- the helper would indict itself.
     exists(Function f |
-      f.getName() in ["safe_spec_component", "_safe_spec_component"] and
+      f.getName() in ["safe_spec_component", "_safe_spec_component", "contained_path"] and
       this.(DataFlow::ParameterNode).getParameter() = f.getArg(0)
     )
   }
