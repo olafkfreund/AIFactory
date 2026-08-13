@@ -559,7 +559,10 @@ def test_sls_idp_init_with_redirect_url(fresh_db, saml_slo_enabled):
             follow_redirects=False,
         )
     assert resp.status_code == 302
-    assert "idp.example.com" in resp.headers["location"]
+    # Exact, not a substring: a substring match passes for any URL that merely
+    # contains the IdP host (https://evil.example/?next=idp.example.com), so it
+    # would not catch us redirecting somewhere other than the SDK's own URL.
+    assert resp.headers["location"] == "https://idp.example.com/slo/response"
 
 
 def test_sls_idp_init_with_html_form(fresh_db, saml_slo_enabled):
