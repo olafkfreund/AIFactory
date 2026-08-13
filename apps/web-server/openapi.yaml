@@ -12368,11 +12368,6 @@ components:
         ide:
           type: string
           title: Ide
-        customPath:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Custompath
       type: object
       required:
       - worktreePath
@@ -12387,11 +12382,6 @@ components:
         terminal:
           type: string
           title: Terminal
-        customPath:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Custompath
       type: object
       required:
       - worktreePath

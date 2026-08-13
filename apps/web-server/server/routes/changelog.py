@@ -13,6 +13,11 @@ from pathlib import Path as FilePath
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 
+from ..services.argv_safety import (
+    assert_not_option,
+    assert_safe_git_ref,
+    bounded_count,
+)
 from ..services.insights_service import get_insights_service
 
 logger = logging.getLogger(__name__)
@@ -241,10 +246,14 @@ async def generate_changelog(
             "compareBranchRef": request.branchDiff.compareBranchRef,
         }
 
-    # Start generation in background
-    success = await service.start_generation(
-        project_id=projectId, project_path=project_path, request=request_dict
-    )
+    # Start generation in background. A rejected ref is a bad request, not a
+    # server error, so translate rather than letting it become a 500 (#1263).
+    try:
+        success = await service.start_generation(
+            project_id=projectId, project_path=project_path, request=request_dict
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not success:
         return {"success": False, "error": "Failed to start generation"}
@@ -618,13 +627,21 @@ async def get_commits_preview(
         # to safely handle commit messages containing pipes or special characters
         cmd = ["git", "log", "--format=%x00%H%x1f%s%x1f%an%x1f%ae%x1f%aI"]
 
+        # Security: every value below is caller-supplied and lands in a `git
+        # log` argv. Without the assertions a ref of `--output=/path` is not a
+        # bad ref, it is an arbitrary file write, because `git log` accepts
+        # `--output=<file>` wherever it appears. assert_safe_git_ref forbids a
+        # leading '-' (and an embedded '..', which would rewrite the ranges
+        # assembled below).
         if mode == "branch-diff":
             # Compare two branches - use ref (git-resolvable) if provided, fall back to name
-            base_branch = options.get("baseBranchRef") or options.get(
-                "baseBranch", "main"
+            base_branch = assert_safe_git_ref(
+                options.get("baseBranchRef") or options.get("baseBranch", "main"),
+                "baseBranch",
             )
-            compare_branch = options.get("compareBranchRef") or options.get(
-                "compareBranch", "HEAD"
+            compare_branch = assert_safe_git_ref(
+                options.get("compareBranchRef") or options.get("compareBranch", "HEAD"),
+                "compareBranch",
             )
             cmd.append(f"{base_branch}..{compare_branch}")
         else:
@@ -632,21 +649,24 @@ async def get_commits_preview(
             history_type = options.get("type", "last-n")
 
             if history_type == "last-n":
-                count = options.get("count", 20)
+                count = bounded_count(options.get("count", 20), 10000, "count")
                 cmd.extend(["-n", str(count)])
             elif history_type == "since-date":
                 since_date = options.get("sinceDate")
                 if since_date:
-                    cmd.extend(["--since", since_date])
+                    cmd.extend(["--since", assert_not_option(since_date, "sinceDate")])
             elif history_type == "since-version":
                 from_tag = options.get("fromTag")
                 if from_tag:
-                    cmd.append(f"{from_tag}..HEAD")
+                    cmd.append(f"{assert_safe_git_ref(from_tag, 'fromTag')}..HEAD")
             elif history_type == "tag-range":
                 from_tag = options.get("fromTag")
                 to_tag = options.get("toTag", "HEAD")
                 if from_tag:
-                    cmd.append(f"{from_tag}..{to_tag}")
+                    cmd.append(
+                        f"{assert_safe_git_ref(from_tag, 'fromTag')}"
+                        f"..{assert_safe_git_ref(to_tag, 'toTag')}"
+                    )
 
             # Optionally exclude merge commits
             if not options.get("includeMergeCommits", True):

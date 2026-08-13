@@ -11,11 +11,15 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .argv_safety import assert_not_option, assert_safe_git_ref
+
 
 class TerminalWorktreeService:
     """Service for managing terminal worktrees."""
 
-    WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9-_]+$")
+    # Leading character must be alphanumeric: `[a-z0-9-_]+` also matched
+    # "-force", and the name reaches a git argv as a path component (#1263).
+    WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
     MAX_NAME_LENGTH = 100
 
     def __init__(self, project_path: str):
@@ -27,9 +31,14 @@ class TerminalWorktreeService:
         Raises:
             ValueError: If project_path is not a valid directory
         """
-        self.project_path = Path(project_path).resolve()
-        if not self.project_path.is_dir():
+        resolved = Path(project_path).resolve()
+        if not resolved.is_dir():
             raise ValueError(f"Project path does not exist: {project_path}")
+        # The project path is joined into the worktree paths that this service
+        # passes to `git worktree add/remove` as positional operands, so assert
+        # at that boundary rather than relying on resolve() having produced
+        # something absolute (#1263).
+        self.project_path = Path(assert_not_option(str(resolved), "projectPath"))
 
         self.worktrees_dir = self.project_path / ".aifactory" / "worktrees" / "terminal"
         self.config_file = self.project_path / ".aifactory" / "terminal-worktrees.json"
@@ -58,8 +67,8 @@ class TerminalWorktreeService:
             ValueError: If name is invalid or already exists
             subprocess.CalledProcessError: If git command fails
         """
-        # Validate name
-        self._validate_name(name)
+        # Validate name (use the returned value, not the argument)
+        name = self._validate_name(name)
 
         # Check if worktree already exists
         existing = self.get_worktree(name)
@@ -77,6 +86,14 @@ class TerminalWorktreeService:
             raise ValueError("Project is not a git repository")
 
         # Check if base branch exists
+        #
+        # Security: base_branch is caller-supplied and lands in the `git
+        # worktree add` argv below, where git parses options in any position --
+        # so an unasserted ref is option injection, not just a bad ref. The
+        # existence check is not a substitute: it runs against
+        # refs/heads/<base>, which is prefixed and therefore always safe, while
+        # the argv use is not (#1263).
+        base_branch = assert_safe_git_ref(base_branch, "baseBranch")
         if create_git_branch and not self._branch_exists(base_branch):
             raise ValueError(f"Base branch '{base_branch}' does not exist")
 
@@ -177,7 +194,13 @@ class TerminalWorktreeService:
             # Delete branch if requested
             if delete_branch and branch:
                 try:
-                    self._run_git_command(["git", "branch", "-D", branch])
+                    # `branch` is read back out of terminal-worktrees.json, so
+                    # its safety rests on whatever last wrote that file rather
+                    # than on the check that created it. Assert at the argv
+                    # boundary instead (#1263).
+                    self._run_git_command(
+                        ["git", "branch", "-D", assert_safe_git_ref(branch, "branch")]
+                    )
                 except subprocess.CalledProcessError:
                     pass  # Ignore if branch deletion fails
 
@@ -214,11 +237,20 @@ class TerminalWorktreeService:
                 return wt
         return None
 
-    def _validate_name(self, name: str):
-        """Validate worktree name.
+    def _validate_name(self, name: str) -> str:
+        """Validate worktree name and return it.
+
+        The name becomes a path component under ``.aifactory/worktrees`` and a
+        ``terminal/<name>`` branch, both of which reach a git argv. The pattern
+        requires a leading alphanumeric, so a validated name can never be read
+        as an option, and forbids separators, so it cannot escape its parent
+        directory.
 
         Args:
             name: Worktree name to validate
+
+        Returns:
+            The validated name, so callers use the checked value
 
         Raises:
             ValueError: If name is invalid
@@ -235,6 +267,8 @@ class TerminalWorktreeService:
             raise ValueError(
                 "Worktree name must be lowercase alphanumeric with dashes/underscores only"
             )
+
+        return name
 
     def _load_config(self) -> dict:
         """Load terminal-worktrees.json.

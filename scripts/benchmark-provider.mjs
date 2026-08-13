@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const API = process.env.AIFACTORY_API_URL || 'http://localhost:3101';
 const PID = process.env.AIFACTORY_PROJECT_ID || 'f7ac8d99-b913-4c6f-afce-f8376e29c98c';
@@ -76,9 +76,13 @@ async function api(p, method = 'GET', body) {
   const doneN = subs.filter(s => ['completed', 'done'].includes((s.status || '').toLowerCase())).length;
   let diffstat = '';
   try {
-    diffstat = execSync(
-      `git -C ${REPO} diff --stat main..aifactory/${specId} -- src tests 2>/dev/null`,
-      { encoding: 'utf8' }).trim();
+    // execFileSync, not execSync: specId comes back from the API, and in a
+    // shell string it is a command, not an argument. No shell also means no
+    // `2>/dev/null`, so stderr is simply not captured.
+    diffstat = execFileSync(
+      'git',
+      ['-C', REPO, 'diff', '--stat', `main..aifactory/${specId}`, '--', 'src', 'tests'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {}
   const result = {
     provider: PROVIDER,
