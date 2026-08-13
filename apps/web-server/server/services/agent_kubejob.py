@@ -16,6 +16,9 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from server.routes.projects import resolve_project_path
+from server.services import review_redrive_service
+
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
 from .task_phase import TaskPhase
@@ -571,9 +574,6 @@ class KubejobMixin:
         if not spec_id:
             return
         try:
-            from ..routes.projects import resolve_project_path  # noqa: PLC0415
-            from . import review_redrive_service  # noqa: PLC0415
-
             project_path = resolve_project_path(project_id)
         except Exception:  # noqa: BLE001 - unknown/unresolvable project
             return

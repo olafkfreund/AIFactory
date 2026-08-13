@@ -79,8 +79,12 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     data["requested_at"] = _aged(-(TIMEOUT + 1))
     cycle_path.write_text(json.dumps(data))
 
+    # agent_kubejob imports resolve_project_path at module level (`from
+    # server.routes.projects import resolve_project_path`), so the name bound
+    # in ITS namespace is what must be patched — patching the source module's
+    # attribute would not reach the copy already bound there.
     monkeypatch.setattr(
-        "server.routes.projects.resolve_project_path",
+        "server.services.agent_kubejob.resolve_project_path",
         lambda pid: project_path if pid == "p1" else (_ for _ in ()).throw(KeyError()),
     )
     return project_path, main_spec, worktree_spec
@@ -104,7 +108,7 @@ async def test_review_redrive_reaches_kubejob_build(
     project: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_path, main_spec, worktree_spec = project
+    _project_path, main_spec, worktree_spec = project
     service = await _make_service(monkeypatch)
 
     # THE regression: before #1249's fix, reconcile_kubejob_builds never calls
@@ -134,7 +138,7 @@ async def test_review_redrive_noop_when_backend_not_kubejob(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Sanity: with the kubejob backend OFF, reconcile is a no-op (unrelated path)."""
-    project_path, main_spec, worktree_spec = project
+    _project_path, main_spec, _worktree_spec = project
     monkeypatch.delenv("AIFACTORY_BUILD_BACKEND", raising=False)
     service = AgentService()
     service._store_enabled = True
