@@ -216,7 +216,10 @@ def validate_git_commit(command_string: str) -> ValidationResult:
                     if matches:
                         return _format_secret_error(matches)
             except ImportError:
-                pass
+                logger.warning(
+                    "scan_secrets unavailable (heredoc commit path) — "
+                    "committing WITHOUT secret scanning"
+                )
             return True, ""
         return False, "Could not parse git command"
 
@@ -239,6 +242,7 @@ def validate_git_commit(command_string: str) -> ValidationResult:
         from scan_secrets import get_staged_files, scan_files
     except ImportError:
         # Scanner not available, allow commit (don't break the build)
+        logger.warning("scan_secrets unavailable — committing WITHOUT secret scanning")
         return True, ""
 
     # Get staged files and scan them

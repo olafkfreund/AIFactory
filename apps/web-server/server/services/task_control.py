@@ -31,6 +31,7 @@ imported from both route handlers and the agent service.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -92,7 +93,7 @@ def read_control(spec_dir: Path) -> dict[str, Any]:
     # Backward-compat read-time migration from implementation_plan.json.
     legacy = spec_dir / "implementation_plan.json"
     if legacy.exists():
-        try:
+        with contextlib.suppress(json.JSONDecodeError, OSError):
             plan = json.loads(legacy.read_text())
             if isinstance(plan, dict):
                 migrated: dict[str, Any] = {}
@@ -102,8 +103,6 @@ def read_control(spec_dir: Path) -> dict[str, Any]:
                 if migrated:
                     migrated["_migratedFromPlan"] = True
                     return migrated
-        except (json.JSONDecodeError, OSError):
-            pass
 
     return {}
 
@@ -187,8 +186,6 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise

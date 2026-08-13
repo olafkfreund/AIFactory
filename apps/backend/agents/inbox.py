@@ -20,6 +20,7 @@ The shared contract is the file format, not the Python module.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -105,10 +106,10 @@ def _write_atomic(inbox_path: Path, messages: list[dict[str, Any]]) -> None:
             os.fsync(f.fileno())
         os.replace(tmp_path, inbox_path)
     except Exception:
-        try:
+        # Best-effort temp-file cleanup on the failure path; the real error
+        # is re-raised regardless of whether the unlink succeeds.
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 

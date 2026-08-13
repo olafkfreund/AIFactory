@@ -52,6 +52,7 @@ Reliability properties
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -256,10 +257,8 @@ def _write_messages_atomic(inbox_path: Path, messages: list[dict[str, Any]]) -> 
             os.fsync(f.fileno())
         os.replace(tmp_path, inbox_path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
