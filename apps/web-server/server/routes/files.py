@@ -30,6 +30,7 @@ from server.services.argv_safety import (
 
 from ..auth import _try_decode_jwt
 from ..config import get_settings
+from ..specpath import contained_path
 from .project_authz import require_project_access
 
 logger = logging.getLogger(__name__)
@@ -203,19 +204,12 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
     if not relative_path or relative_path == ".":
         return project_path
 
-    # Resolve the full path
-    full_path = (project_path / relative_path).resolve()
-
-    # Security check: ensure path is within project
-    try:
-        full_path.relative_to(project_path)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: path outside project directory",
-        )
-
-    return full_path
+    # Join, resolve and confine in one step. Joining and resolving OUTSIDE the
+    # containment check is what makes `../../etc/passwd` interesting: the
+    # resolved-but-unchecked path is a live value for as long as it exists.
+    return _within_roots(
+        project_path / relative_path, [project_path], "project directory"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -257,16 +251,24 @@ def _browse_roots() -> list[Path]:
     return roots
 
 
-def _assert_within_roots(resolved: Path, roots: list[Path], what: str) -> None:
-    """403 unless ``resolved`` is inside one of ``roots``. Prevents path
-    traversal / arbitrary host access on the absolute-path routes."""
-    for root in roots:
-        if resolved == root or root in resolved.parents:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Access denied: path is outside the {what}",
-    )
+def _within_roots(candidate: object, roots: list[Path], what: str) -> Path:
+    """Resolved ``candidate`` if it is inside one of ``roots``, else 403.
+
+    Thin HTTP wrapper over ``server.specpath.contained_path`` -- the shared
+    barrier. It RETURNS the confined path rather than asserting and leaving the
+    caller holding the unconfined one, which was the previous shape. That is
+    not cosmetic: an assert-and-discard helper leaves the raw request value
+    live in the caller, so neither a reader nor the analyser can tell the
+    checked path from the unchecked one. Taking the raw value in and handing
+    the confined one back makes the containment impossible to use wrongly.
+    """
+    try:
+        return contained_path(candidate, roots, what)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Access denied: path is outside the {what}",
+        )
 
 
 # --------------------------------------------------------------------------
@@ -302,9 +304,8 @@ async def discover_projects(
     Discover potential project folders in a directory.
     Returns folders that look like projects (have .git, package.json, etc).
     """
-    base = Path(base_path).resolve()
     # Containment (#320): only scan within browsable roots — no system dirs.
-    _assert_within_roots(base, _browse_roots(), "browsable directories")
+    base = _within_roots(base_path, _browse_roots(), "browsable directories")
 
     if not base.exists():
         return {
@@ -389,8 +390,7 @@ async def list_directory_direct(
     """List contents of a directory by absolute path."""
     # Containment (#320): only browsable roots (registered projects + home +
     # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
-    full_path = Path(path).resolve()
-    _assert_within_roots(full_path, _browse_roots(), "browsable directories")
+    full_path = _within_roots(path, _browse_roots(), "browsable directories")
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -443,9 +443,8 @@ async def read_file_direct(
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
-    full_path = Path(path).resolve()
-    _assert_within_roots(
-        full_path, _registered_project_roots(), "registered project directories"
+    full_path = _within_roots(
+        path, _registered_project_roots(), "registered project directories"
     )
 
     if not full_path.exists():
@@ -530,22 +529,14 @@ async def serve_project_file(
     # Authenticate: check token from query param or Authorization header
     if not _validate_serve_token(request, token):
         raise HTTPException(status_code=401, detail="Authentication required")
-    file_path = Path(path).resolve()
-    root_path = Path(root).resolve()
-
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
-    _assert_within_roots(
-        root_path, _registered_project_roots(), "registered project directories"
+    root_path = _within_roots(
+        root, _registered_project_roots(), "registered project directories"
     )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    try:
-        file_path.relative_to(root_path)
-    except ValueError:
-        raise HTTPException(
-            status_code=403, detail="Access denied: path outside project root"
-        )
+    file_path = _within_roots(path, [root_path], "project root")
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")

@@ -21,7 +21,7 @@ _WEB_SERVER = Path(__file__).resolve().parents[1]
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
 
-from server.specpath import safe_spec_component  # noqa: E402
+from server.specpath import contained_path, safe_spec_component  # noqa: E402
 
 _ROUTES = _WEB_SERVER / "server" / "routes"
 
@@ -106,3 +106,70 @@ def test_bare_task_id_branches_are_also_barriered() -> None:
     bare = text.count("            spec_id = task_id\n")
     assert bare > 0, "shape changed; update this test rather than deleting it"
     assert text.count("spec_id = safe_spec_component(spec_id)") >= bare
+
+
+# --------------------------------------------------------------------------
+# contained_path: the whole-path half of the same story
+# --------------------------------------------------------------------------
+
+
+def test_contained_path_accepts_paths_inside_a_root(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    assert contained_path(root / "src", [root], "project") == (root / "src").resolve()
+    # The root itself is inside the root.
+    assert contained_path(root, [root], "project") == root.resolve()
+
+
+def test_contained_path_rejects_traversal_out_of_the_root(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    for hostile in ("../../etc/passwd", "..", "/etc/passwd", "src/../../.."):
+        with pytest.raises(ValueError):
+            contained_path(root / hostile, [root], "project")
+
+
+def test_contained_path_rejects_a_symlink_that_escapes(tmp_path: Path) -> None:
+    """Resolve-then-check, not check-then-resolve.
+
+    A helper that tested the unresolved string would pass this: the literal
+    path is inside the root. Only the resolved form shows the escape, which is
+    why the resolve lives inside the helper.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "escape").symlink_to(outside)
+    with pytest.raises(ValueError):
+        contained_path(root / "escape", [root], "project")
+
+
+def test_contained_path_does_not_treat_a_sibling_prefix_as_containment(
+    tmp_path: Path,
+) -> None:
+    """``/srv/proj-evil`` is not inside ``/srv/proj``.
+
+    A ``str.startswith`` implementation gets this wrong. The parents-based test
+    does not, and this test is what stops someone "simplifying" it back.
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    sibling = tmp_path / "proj-evil"
+    sibling.mkdir()
+    with pytest.raises(ValueError):
+        contained_path(sibling, [root], "project")
+
+
+def test_contained_path_is_not_satisfied_by_mere_existence(tmp_path: Path) -> None:
+    """The barrier registered in CodeQL must constrain WHICH path is reached.
+
+    ``/etc/passwd`` exists and is readable; an existence check would clear it.
+    If this ever passes, the barrier in PathInjectionSanitized.ql has become a
+    lie and every alert it clears is unproven.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    assert Path("/etc/passwd").exists()
+    with pytest.raises(ValueError):
+        contained_path("/etc/passwd", [root], "project")
