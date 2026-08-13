@@ -77,7 +77,39 @@ jobs:
           set -euo pipefail
           canonical="factory-hub/shared/factory-common/factory_common"
           vendored="aifactory/apps/backend/factory_common"
-          for f in __init__.py http.py secrets.py; do
+          expected="__init__.py http.py secrets.py"
+
+          # The file list below is hand-maintained, and this repo is where that
+          # cost showed up: the hub gained logsafe.py (the CWE-117 sanitizer) and
+          # later url_safety.py, and a list naming three files cannot notice a
+          # fourth. Re-vendoring without editing the list would leave the new
+          # module vendored but UNGATED -- green gate, unguarded copy, which is
+          # the exact false-green this gate exists to prevent.
+          #
+          # So the list is checked against BOTH trees before any diff runs. A
+          # module present in either tree that the list does not name fails here,
+          # loudly, instead of being skipped in silence.
+          #
+          # This is green today and is meant to fail later: the pin currently
+          # holds a hub commit whose canonical is exactly these three files. The
+          # moment .hub-sha is bumped to adopt logsafe.py, this check fires and
+          # forces `expected` to be updated in the same change. That turns step 4
+          # of #1291 from something a human has to remember into something CI
+          # refuses to skip.
+          want="$(printf '%s\n' ${expected} | sort | tr '\n' ' ')"
+          for tree in "${vendored}" "${canonical}"; do
+            found="$(cd "${tree}" && ls -1 ./*.py | sed 's|^\./||' | sort | tr '\n' ' ')"
+            if [ "${found}" != "${want}" ]; then
+              echo "FILE LIST STALE for ${tree}"
+              echo "  gate checks: ${want}"
+              echo "  tree holds : ${found}"
+              echo "Add the module to \`expected\` in this workflow AND vendor it, or remove it from both."
+              echo "Re-vendor the WHOLE canonical directory rather than a remembered file list (#1291)."
+              exit 1
+            fi
+          done
+
+          for f in ${expected}; do
             if ! diff "$vendored/$f" "$canonical/$f"; then
               echo "DRIFT: $vendored/$f diverged from the hub canonical ($canonical/$f)."
               echo "Re-vendor from the hub and bump apps/backend/factory_common/.hub-sha,"
