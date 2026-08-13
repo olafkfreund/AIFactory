@@ -126,7 +126,9 @@ def test_ruff_format_check_covers_every_python_directory() -> None:
 
 def test_ruff_check_covers_every_python_directory() -> None:
     scope = _scope_of("ci.yml", "ruff check")
-    missing = _tracked_python_roots() - scope - _LINT_EXEMPT - _formatter_excluded_roots()
+    missing = (
+        _tracked_python_roots() - scope - _LINT_EXEMPT - _formatter_excluded_roots()
+    )
     assert not missing, (
         f"these directories hold Python and are not linted by CI: {sorted(missing)}. "
         "The diff-scoped ratchet only gates CHANGED files, which is not the same "
