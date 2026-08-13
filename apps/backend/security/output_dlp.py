@@ -26,7 +26,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from .scan_secrets import SecretMatch, mask_secret, scan_content
+from .scan_secrets import SecretMatch, redacted_fingerprint, scan_content
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +62,17 @@ class DLPResult:
         return self.has_hit and self.mode == "block"
 
     def summary(self) -> str:
-        """Masked, safe-to-log/surface one-line description of the matches."""
+        """Redacted, safe-to-log/surface one-line description of the matches.
+
+        This line is emitted at WARNING by the DLP filter itself, so it lands in
+        every log sink the deployment ships to. It carries the pattern name and
+        ``file:line`` for triage and a non-reversible fingerprint of the match --
+        never a prefix of it, which is what the previous ``mask_secret(..., 12)``
+        wrote here.
+        """
         return "; ".join(
             f"{m.pattern_name}@{m.file_path}:{m.line_number} "
-            f"({mask_secret(m.matched_text, 12)})"
+            f"({redacted_fingerprint(m.matched_text)})"
             for m in self.matched
         )
 

@@ -92,7 +92,7 @@ def validate_git(command_string: str) -> ValidationResult:
 def _format_secret_error(matches: list) -> ValidationResult:
     """Format secret scan matches into an actionable error message."""
     try:
-        from scan_secrets import mask_secret
+        from scan_secrets import redacted_fingerprint
     except ImportError:
         return False, "Secrets detected in staged files"
 
@@ -112,9 +112,9 @@ def _format_secret_error(matches: list) -> ValidationResult:
     for file_path, file_matches in files_with_secrets.items():
         error_lines.append(f"File: {file_path}")
         for match in file_matches:
-            masked = mask_secret(match.matched_text, 12)
+            fingerprint = redacted_fingerprint(match.matched_text)
             error_lines.append(f"  Line {match.line_number}: {match.pattern_name}")
-            error_lines.append(f"    Found: {masked}")
+            error_lines.append(f"    Found: {fingerprint}")
         error_lines.append("")
 
     error_lines.extend(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import commit_message
 import pytest
 from agents.tools_pkg.tools import task_control
@@ -31,8 +33,32 @@ def test_dirty_text_detected_but_warn_does_not_block(
     result = scan_outbound(DIRTY_COMMIT, "commit-message:001")
     assert result.has_hit is True
     assert result.blocked is False
-    # The audit summary is masked — the raw secret must never appear in it.
+    # The audit summary is redacted — the raw secret must never appear in it.
     assert AKIA_FIXTURE not in result.summary()
+
+
+def test_warning_log_carries_no_span_of_the_credential(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Assert on the log line the SIEM actually receives, window by window.
+
+    ``AKIA_FIXTURE not in result.summary()`` above is too weak on its own: the
+    summary used ``mask_secret(m.matched_text, 12)``, so the first twelve
+    characters of the key were written to a WARNING while a whole-value
+    assertion stayed green. Checking every 6-character window is what fails
+    when someone reintroduces a prefix.
+    """
+    monkeypatch.setenv(DLP_ENV, "warn")
+    with caplog.at_level(logging.WARNING):
+        scan_outbound(DIRTY_COMMIT, "commit-message:003")
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    # The line must still be emitted and still be triageable.
+    assert "Output DLP" in logged
+    assert "commit-message:003" in logged
+    for i in range(len(AKIA_FIXTURE) - 5):
+        window = AKIA_FIXTURE[i : i + 6]
+        assert window not in logged, f"leaked {window!r} to the log sink"
 
 
 def test_dirty_text_blocks_in_block_mode(monkeypatch: pytest.MonkeyPatch) -> None:
