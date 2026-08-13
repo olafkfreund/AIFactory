@@ -73,13 +73,22 @@ def test_branch_accepts_normal():
 # go through `_probe_models` instead: it is the wiring, not the helper, that
 # these were really pinning, and a helper test would have stayed green if the
 # route had stopped calling it.
+#
+# The private-address cases moved OUT of this list in #1268, when the route was
+# deliberately switched to the permissive posture: the module exists to test
+# user-defined OpenAI-compatible servers and its docstring names LM Studio and
+# vLLM, both of which live on localhost, so the strict posture refused two of
+# the three targets it advertises. They are now pinned as REACHABLE by
+# test_ssrf_allows_the_self_hosted_targets_this_route_advertises below, rather
+# than deleted -- a parametrize entry that quietly disappears is how a posture
+# change stops being reviewable.
+#
+# What stays here is what BOTH postures refuse, which is what bounds the
+# permissive one: the cloud metadata addresses and non-http(s) schemes.
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1/v1/models",
         "http://169.254.169.254/latest/meta-data/",  # cloud metadata
-        "http://localhost:8000/",
-        "http://10.0.0.5/",
         "http://[fd00:ec2::254]/",  # IPv6 instance metadata (unique-local)
         "file:///etc/passwd",  # bad scheme
     ],
@@ -90,6 +99,31 @@ def test_ssrf_blocks_unsafe(url):
     assert result.ok is False
     # Refused before the socket, not after a failed connection.
     opened.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:1234",  # LM Studio
+        "http://localhost:8000",  # vLLM
+        "http://10.0.0.5",  # a self-hosted server on the LAN
+    ],
+)
+def test_ssrf_allows_the_self_hosted_targets_this_route_advertises(url):
+    """#1268: the permissive posture, pinned as behaviour rather than assumed.
+
+    Asserts the transport was reached, not that no error came back -- "returns
+    an error" is also what a refused URL produces, so only "was it dialled"
+    tells the two apart.
+    """
+    with patch("urllib.request.OpenerDirector.open") as opened:
+        resp = opened.return_value.__enter__.return_value
+        resp.getcode.return_value = 200
+        resp.read.return_value = b'{"data": [{"id": "qwen3-coder"}]}'
+        result = _probe_models(url, api_key=None, headers=None)
+    opened.assert_called_once()
+    assert opened.call_args.args[0].full_url == f"{url}/v1/models"
+    assert result.ok is True
 
 
 def test_ssrf_allows_public(monkeypatch):

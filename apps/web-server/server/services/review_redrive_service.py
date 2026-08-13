@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import shutil
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -40,6 +41,8 @@ from ..config import get_settings
 from . import inbox_service, task_control
 
 logger = logging.getLogger(__name__)
+
+_CYCLE_FILE = "qa_review_cycle.json"
 
 # Lazily-loaded backend leaf modules (pure stdlib, no SDK).
 _review_redrive_mod: ModuleType | None = None
@@ -119,6 +122,36 @@ def _worktree_spec_dir(project_path: Path, spec_id: str) -> Path:
     )
 
 
+def _sync_cycle_file_from_worktree(main_spec: Path, worktree_spec: Path) -> None:
+    """Copy the build's live cycle file into the main spec dir if newer (#1249).
+
+    ``qa_review_cycle.json`` is authored by the running build into its
+    WORKTREE spec dir. On the subprocess backend the generic worktree-sync
+    loop (``_sync_worktree_files``) copies the whole spec dir to main every
+    tick, so this file already lands there. Under
+    ``AIFACTORY_BUILD_BACKEND=kubejob`` that loop never runs at all (#1249) —
+    across a live cluster the file existed in zero main spec dirs and seven
+    worktree ones. Rather than reanimate the generic per-tick copy of every
+    file, sync just the one file this authority reads, mirroring the targeted
+    single-artifact sync already used for the plan/usage/task-logs (#1228,
+    #852). Best-effort: a copy failure just means the guard below no-ops.
+    """
+    src = worktree_spec / _CYCLE_FILE
+    if not src.is_file():
+        return
+    dst = main_spec / _CYCLE_FILE
+    try:
+        if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
+            return
+        main_spec.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    except OSError:
+        logger.debug(
+            "[review_redrive] cycle-file sync from worktree failed (best-effort)",
+            exc_info=True,
+        )
+
+
 def check_review_obligation(
     project_path: Path,
     spec_id: str,
@@ -139,10 +172,13 @@ def check_review_obligation(
         return None
 
     main_spec = _main_spec_dir(project_path, spec_id)
+    worktree_spec = _worktree_spec_dir(project_path, spec_id)
+    # #1249: pull the worktree's live cycle file in before the guard below
+    # checks main — see _sync_cycle_file_from_worktree for why this is needed.
+    _sync_cycle_file_from_worktree(main_spec, worktree_spec)
     # No cycle file yet → nothing to drive; cheap early-out avoids module work.
     if not (main_spec / "qa_review_cycle.json").exists():
         return None
-    worktree_spec = _worktree_spec_dir(project_path, spec_id)
 
     kwargs: dict[str, Any] = {
         "enqueue": inbox_service.enqueue,

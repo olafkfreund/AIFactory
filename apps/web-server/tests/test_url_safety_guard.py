@@ -12,7 +12,7 @@ import ipaddress
 from unittest.mock import patch
 
 import pytest
-from server.routes import git, settings
+from server.routes import git, llm_endpoints, settings
 from server.services.url_safety import assert_safe_outbound_url
 
 # 169.254.169.254 is the cloud metadata address. Both postures must refuse it;
@@ -190,4 +190,46 @@ async def test_api_profile_probes_use_the_strict_posture() -> None:
         discover = await settings.discover_api_models(request)
     assert "non-public" in test["error"]
     assert "non-public" in discover["error"]
+    opener.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# llm-endpoints /test: the PERMISSIVE posture, decided in #1268.
+#
+# The module's own docstring advertises LM Studio and vLLM, which live on
+# localhost. Under the strict posture two of its three advertised targets were
+# unreachable. These two tests are the pair that keeps the decision honest: the
+# self-hosted case must reach the transport, and the metadata address must
+# still not, in the same posture.
+# ---------------------------------------------------------------------------
+
+LM_STUDIO = "http://127.0.0.1:1234"
+
+
+def test_llm_endpoint_probe_reaches_a_self_hosted_server() -> None:
+    """#1268: LM Studio on localhost must get as far as the network.
+
+    Asserts the transport was CONSTRUCTED and dialled with the right URL, not
+    merely that no error came back: "returns an error" is also what an
+    unguarded route does when it cannot connect, so only "was it dialled"
+    separates a permitted URL from a refused one.
+    """
+    with patch.object(llm_endpoints, "build_no_redirect_opener") as opener:
+        resp = opener.return_value.open.return_value.__enter__.return_value
+        resp.getcode.return_value = 200
+        resp.read.return_value = b'{"data": [{"id": "qwen3-coder"}]}'
+        result = llm_endpoints._probe_models(LM_STUDIO, None, None)
+    opener.return_value.open.assert_called_once()
+    request = opener.return_value.open.call_args.args[0]
+    assert request.full_url == f"{LM_STUDIO}/v1/models"
+    assert result.ok is True
+    assert result.models == ["qwen3-coder"]
+
+
+def test_llm_endpoint_probe_still_refuses_the_metadata_address() -> None:
+    """The bound on the permissive posture: same route, same posture."""
+    with patch.object(llm_endpoints, "build_no_redirect_opener") as opener:
+        result = llm_endpoints._probe_models(METADATA_BASE, None, None)
+    assert result.ok is False
+    assert "link-local/metadata" in (result.error or "")
     opener.assert_not_called()

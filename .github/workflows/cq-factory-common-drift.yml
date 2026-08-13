@@ -56,15 +56,28 @@ name: factory_common drift
 on:
   pull_request:
     branches: [dev, main, "feat/**", "release/**"]
-    paths:
-      - "apps/backend/factory_common/**"
-      - "apps/web-server/factory_common/**"
-      - ".github/workflows/cq-factory-common-drift.yml"
+    # NO paths: FILTER, deliberately (Factory#525), matching the sibling gates
+    # in TFactory and CFactory which carry none either.
+    #
+    # This filter has already cost us once. #1300 added a second vendored copy
+    # under apps/web-server/factory_common/ on a branch that forked before the
+    # filter learned that path, so the gate did not run on the pull request that
+    # introduced the copy. It was not red. It was ABSENT -- and absence has no
+    # colour, so nothing in a green check list draws the eye to it. The copy was
+    # reviewed as gated while no gate had looked at it.
+    #
+    # A filter switches the gate off for exactly the pull request that touches
+    # none of the listed paths, which includes every PR that adds a copy
+    # somewhere nobody has listed yet -- the case the discovery glob below exists
+    # for. Discovery fixes the forgettable ROW; only removing the filter fixes
+    # the forgettable TRIGGER.
+    #
+    # The gate is a tarball fetch and a handful of diffs; it runs in about ten
+    # seconds. Running it on every PR costs nothing worth measuring and removes a
+    # whole class of "the check did not run", which on a green PR page is
+    # indistinguishable from "the check passed" (Factory#471).
   push:
     branches: [dev, main]
-    paths:
-      - "apps/backend/factory_common/**"
-      - "apps/web-server/factory_common/**"
 
 permissions:
   contents: read
@@ -81,7 +94,7 @@ jobs:
     name: vendored factory_common matches the hub canonical
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Every vendored copy matches its pinned canonical, at one shared pin
         run: |
