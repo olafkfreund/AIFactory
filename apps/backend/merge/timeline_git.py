@@ -169,7 +169,9 @@ class TimelineGitHelper:
                 )
 
         except OSError:
-            logger.warning("failed to gather git commit info for %s", commit_hash, exc_info=True)
+            logger.warning(
+                "failed to gather git commit info for %s", commit_hash, exc_info=True
+            )
 
         return info
 
@@ -313,7 +315,9 @@ class TimelineGitHelper:
                     return upstream.split("/", 1)[1]
                 return upstream
         except OSError:
-            logger.warning("failed to detect upstream branch for %s", worktree_path, exc_info=True)
+            logger.warning(
+                "failed to detect upstream branch for %s", worktree_path, exc_info=True
+            )
 
         # Try common branch names and find which one has a valid merge-base
         for branch in ["main", "master", "develop"]:

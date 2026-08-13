@@ -36,7 +36,6 @@ from .routes import (
     auth_routes,
     auto_fix,
     capabilities,
-    cli_accounts as cli_accounts_routes,
     context,
     copilot_mcp,
     email,
@@ -46,26 +45,43 @@ from .routes import (
     git,
     git_credentials,
     github,
-    llm_endpoints as llm_endpoints_routes,
-    login_discovery as login_discovery_routes,
-    logs as logs_routes,
     mcp,
     notifications,
     organizations,
     projects,
     search,
-    settings as settings_routes,
     skills,
     stale,
     tasks,
     terminal,
     well_known,
 )
+from .routes import (
+    cli_accounts as cli_accounts_routes,
+)
+from .routes import (
+    llm_endpoints as llm_endpoints_routes,
+)
+from .routes import (
+    login_discovery as login_discovery_routes,
+)
+from .routes import (
+    logs as logs_routes,
+)
+from .routes import (
+    settings as settings_routes,
+)
 from .services.skills_service import init_skills_service
 from .websockets import (
     events as events_ws,
+)
+from .websockets import (
     logs as logs_ws,
+)
+from .websockets import (
     progress as progress_ws,
+)
+from .websockets import (
     terminal as terminal_ws,
 )
 

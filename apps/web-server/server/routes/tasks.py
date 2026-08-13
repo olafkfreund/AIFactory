@@ -37,11 +37,15 @@ from .inbox import (
     InboxMessageCreate,
     enqueue_inbox_message,
     list_inbox_messages,
+)
+from .inbox import (
     router as inbox_router,
 )
 from .pr import (  # noqa: F401
     CreatePRFromTaskOptions,
     create_pr_from_task,
+)
+from .pr import (
     router as pr_router,
 )
 from .project_authz import accessible_org_ids, require_task_access
@@ -54,6 +58,8 @@ from .worktree_tools import (
     get_terminal_command,
     open_worktree_in_ide,
     open_worktree_in_terminal,
+)
+from .worktree_tools import (
     router as worktree_tools_router,
 )
 
@@ -704,6 +710,8 @@ from .plan_approval import (  # noqa: E402,F401
     RejectPlanRequest,
     approve_plan,
     reject_plan,
+)
+from .plan_approval import (
     router as plan_approval_router,
 )
 
@@ -741,6 +749,8 @@ from .worktree_merge import (  # noqa: E402,F401
     resolve_git_merge_conflicts,
     resolve_uncommitted_conflicts,
     resolve_worktree_conflicts,
+)
+from .worktree_merge import (
     router as worktree_merge_router,
 )
 
@@ -752,6 +762,8 @@ router.include_router(worktree_merge_router)
 # it from ..routes.tasks keep working.
 from .tasks_logs import (
     get_task_logs,  # noqa: F401
+)
+from .tasks_logs import (
     router as tasks_logs_router,
 )
 

@@ -279,7 +279,9 @@ async def clone_or_update(
             # flight and the caller needs to see *that* one.
             if credential is not None:
                 await _restore_sanitized_origin_best_effort(
-                    git_url=git_url, workspace=workspace, timeout_seconds=timeout_seconds
+                    git_url=git_url,
+                    workspace=workspace,
+                    timeout_seconds=timeout_seconds,
                 )
             raise
         else:

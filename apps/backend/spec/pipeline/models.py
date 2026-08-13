@@ -81,7 +81,9 @@ def cleanup_orphaned_pending_folders(specs_dir: Path) -> None:
         try:
             shutil.rmtree(folder)
         except OSError as exc:
-            print_status(f"Could not remove orphaned spec folder {folder}: {exc}", "warning")
+            print_status(
+                f"Could not remove orphaned spec folder {folder}: {exc}", "warning"
+            )
 
 
 def create_spec_dir(specs_dir: Path, lock: SpecNumberLock | None = None) -> Path:

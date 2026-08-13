@@ -202,7 +202,9 @@ def create_memory_tools(
                         content[-1000:] if len(content) > 1000 else content
                     )
             except OSError:
-                logger.warning("failed to read gotchas file %s", gotchas_file, exc_info=True)
+                logger.warning(
+                    "failed to read gotchas file %s", gotchas_file, exc_info=True
+                )
 
         # Load patterns
         patterns_file = memory_dir / "patterns.md"
@@ -215,7 +217,9 @@ def create_memory_tools(
                         content[-1000:] if len(content) > 1000 else content
                     )
             except OSError:
-                logger.warning("failed to read patterns file %s", patterns_file, exc_info=True)
+                logger.warning(
+                    "failed to read patterns file %s", patterns_file, exc_info=True
+                )
 
         if not result_parts:
             return {

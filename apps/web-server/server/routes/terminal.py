@@ -311,7 +311,9 @@ async def clear_terminal_sessions(project: str | None = None):
                     if sessions_dir.exists():
                         dirs_to_clear.append(sessions_dir)
             except (json.JSONDecodeError, KeyError):
-                logger.warning("failed to parse projects data for session cleanup", exc_info=True)
+                logger.warning(
+                    "failed to parse projects data for session cleanup", exc_info=True
+                )
 
     # Clear session files from each directory
     for sessions_dir in dirs_to_clear:

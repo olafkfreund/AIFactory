@@ -353,7 +353,9 @@ class ModificationTracker:
             # `subprocess.run` above has no check=True, so it never raises
             # CalledProcessError; the reachable failure is the git binary
             # itself being missing/unexecutable.
-            logger.warning("Could not determine upstream branch for %s: %s", repo_path, exc)
+            logger.warning(
+                "Could not determine upstream branch for %s: %s", repo_path, exc
+            )
 
         # Try common branch names and find which one has a valid merge-base
         for branch in ["main", "master", "develop"]:

@@ -175,7 +175,9 @@ async def create_pr_from_task(
             and "No local changes" not in stash_result.stdout
         )
     except (subprocess.SubprocessError, OSError) as exc:
-        logger.warning("git stash before rebase failed, proceeding without stash: %s", exc)
+        logger.warning(
+            "git stash before rebase failed, proceeding without stash: %s", exc
+        )
 
     # Rebase onto latest base branch to minimize conflicts (best-effort)
     rebase_failed = False
@@ -282,7 +284,8 @@ async def create_pr_from_task(
                     )
             except (json.JSONDecodeError, KeyError) as exc:
                 logger.warning(
-                    "Could not read requirements.json for PR title/body defaults: %s", exc
+                    "Could not read requirements.json for PR title/body defaults: %s",
+                    exc,
                 )
 
         if not pr_title:

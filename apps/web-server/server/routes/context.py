@@ -185,7 +185,8 @@ async def refresh_project_index(projectId: str = Path(...)):
     try:
         result = subprocess.run(
             ["git", "ls-files"],
-            check=False, cwd=project_path,
+            check=False,
+            cwd=project_path,
             capture_output=True,
             text=True,
             timeout=30,
@@ -518,7 +519,11 @@ async def get_project_env(projectId: str = Path(...)):
     # Also check for Claude auth via keychain
     try:
         result = subprocess.run(
-            ["claude", "--version"], check=False, capture_output=True, text=True, timeout=5
+            ["claude", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             config["claudeAuthStatus"] = "authenticated"
@@ -782,7 +787,11 @@ async def invoke_claude_setup(projectId: str = Path(...)):
         # Check if Claude CLI is installed
         try:
             version_result = subprocess.run(
-                ["claude", "--version"], check=False, capture_output=True, text=True, timeout=5
+                ["claude", "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             cli_installed = version_result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -807,7 +816,11 @@ async def invoke_claude_setup(projectId: str = Path(...)):
             # The 'claude' command without arguments will fail if not authenticated
             # We use --version as a proxy for checking if basic auth works
             auth_check = subprocess.run(
-                ["claude", "--version"], check=False, capture_output=True, text=True, timeout=5
+                ["claude", "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
 
             # If we got here and returncode is 0, Claude CLI is working

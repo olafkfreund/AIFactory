@@ -160,7 +160,6 @@ def handle_batch_status_command(project_dir: str) -> bool:
             "unknown": "❓",
         }.get(status, "❓")
 
-
     return True
 
 

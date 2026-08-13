@@ -140,7 +140,9 @@ Output your findings to competitor_analysis.json.
                 )
 
         except json.JSONDecodeError as exc:
-            print_status(f"competitor_analysis.json is not valid JSON: {exc}", "warning")
+            print_status(
+                f"competitor_analysis.json is not valid JSON: {exc}", "warning"
+            )
 
         return None
 

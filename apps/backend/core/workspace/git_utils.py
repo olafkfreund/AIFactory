@@ -188,7 +188,9 @@ def get_merge_base(project_dir: Path, ref1: str, ref2: str) -> str | None:
         if result.returncode == 0:
             return result.stdout.strip()
     except OSError as exc:
-        logger.debug("get_merge_base: git invocation failed for %s: %s", project_dir, exc)
+        logger.debug(
+            "get_merge_base: git invocation failed for %s: %s", project_dir, exc
+        )
     return None
 
 

@@ -379,7 +379,8 @@ def install_github_cli():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
-            check=False, capture_output=True,
+            check=False,
+            capture_output=True,
             text=True,
             timeout=timeout,
         )
@@ -424,7 +425,8 @@ def install_github_cli():
 
         result = subprocess.run(
             ["bash", "-c", install_script],
-            check=False, capture_output=True,
+            check=False,
+            capture_output=True,
             text=True,
             timeout=120,
         )

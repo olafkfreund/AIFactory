@@ -211,7 +211,9 @@ class AgentService(
             if isinstance(prov, dict) and prov.get("issue_number") is not None:
                 return str(prov["issue_number"])
         except (OSError, ValueError):
-            _log.debug("failed to read provenance issue number for %s", spec_id, exc_info=True)
+            _log.debug(
+                "failed to read provenance issue number for %s", spec_id, exc_info=True
+            )
         return None
 
     @property
@@ -607,7 +609,9 @@ class AgentService(
                 meta = json.loads(meta_file.read_text())
                 return meta.get("parallel"), meta.get("workers")
         except (OSError, ValueError):
-            _log.debug("failed to read task_metadata.json for %s", spec_id, exc_info=True)
+            _log.debug(
+                "failed to read task_metadata.json for %s", spec_id, exc_info=True
+            )
         return None, None
 
     def _concurrency_cap(self) -> int:

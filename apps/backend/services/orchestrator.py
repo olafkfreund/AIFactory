@@ -310,7 +310,8 @@ class ServiceOrchestrator:
 
             proc = subprocess.run(
                 cmd,
-                check=False, cwd=self.project_dir,
+                check=False,
+                cwd=self.project_dir,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -382,7 +383,8 @@ class ServiceOrchestrator:
             if docker_cmd:
                 subprocess.run(
                     docker_cmd + ["down"],
-                    check=False, cwd=self.project_dir,
+                    check=False,
+                    cwd=self.project_dir,
                     capture_output=True,
                     timeout=60,
                 )
@@ -400,7 +402,9 @@ class ServiceOrchestrator:
                 proc.terminate()
                 proc.wait(timeout=10)
             except (OSError, subprocess.TimeoutExpired):
-                logger.warning("orchestrator: %s did not terminate cleanly, killing", name)
+                logger.warning(
+                    "orchestrator: %s did not terminate cleanly, killing", name
+                )
                 with contextlib.suppress(OSError, ProcessLookupError):
                     proc.kill()
         self._processes.clear()
@@ -411,7 +415,8 @@ class ServiceOrchestrator:
         try:
             proc = subprocess.run(
                 ["docker", "compose", "version"],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
                 timeout=5,
             )
             if proc.returncode == 0:
@@ -423,7 +428,8 @@ class ServiceOrchestrator:
         try:
             proc = subprocess.run(
                 ["docker-compose", "version"],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
                 timeout=5,
             )
             if proc.returncode == 0:

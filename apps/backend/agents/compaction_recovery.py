@@ -55,7 +55,11 @@ def _load_json(path: Path) -> dict[str, Any]:
             if isinstance(data, dict):
                 return data
     except (json.JSONDecodeError, OSError) as exc:
-        logger.debug("compaction_recovery: could not read %s (%s), using empty context", path, exc)
+        logger.debug(
+            "compaction_recovery: could not read %s (%s), using empty context",
+            path,
+            exc,
+        )
     return {}
 
 

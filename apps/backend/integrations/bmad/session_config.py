@@ -78,7 +78,10 @@ def enable_session_segmentation(spec_dir: Path | None = None) -> None:
         if spec_config.exists():
             # Malformed existing file: start from an empty config rather
             # than fail the enable call.
-            with contextlib.suppress(json.JSONDecodeError, OSError), open(spec_config) as f:
+            with (
+                contextlib.suppress(json.JSONDecodeError, OSError),
+                open(spec_config) as f,
+            ):
                 config = json.load(f)
 
         config["session_segmentation"] = True
@@ -95,7 +98,10 @@ def enable_session_segmentation(spec_dir: Path | None = None) -> None:
         if config_file.exists():
             # Malformed existing file: start from an empty config rather
             # than fail the enable call.
-            with contextlib.suppress(json.JSONDecodeError, OSError), open(config_file) as f:
+            with (
+                contextlib.suppress(json.JSONDecodeError, OSError),
+                open(config_file) as f,
+            ):
                 config = json.load(f)
 
         if "bmad" not in config:
@@ -118,7 +124,10 @@ def disable_session_segmentation(spec_dir: Path | None = None) -> None:
         if spec_config.exists():
             # A malformed spec-level file leaves the (already-off-by-default)
             # setting alone rather than failing the disable call.
-            with contextlib.suppress(json.JSONDecodeError, OSError), open(spec_config) as f:
+            with (
+                contextlib.suppress(json.JSONDecodeError, OSError),
+                open(spec_config) as f,
+            ):
                 config = json.load(f)
                 config["session_segmentation"] = False
                 with open(spec_config, "w") as wf:
@@ -129,7 +138,10 @@ def disable_session_segmentation(spec_dir: Path | None = None) -> None:
         if config_file.exists():
             # A malformed global config file leaves the (already-off-by-default)
             # setting alone rather than failing the disable call.
-            with contextlib.suppress(json.JSONDecodeError, OSError), open(config_file) as f:
+            with (
+                contextlib.suppress(json.JSONDecodeError, OSError),
+                open(config_file) as f,
+            ):
                 config = json.load(f)
                 if "bmad" in config:
                     config["bmad"]["session_segmentation"] = False

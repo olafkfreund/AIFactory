@@ -52,7 +52,12 @@ def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
         result = subprocess.run(
-            ["git"] + args, check=False, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["git"] + args,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -374,7 +379,8 @@ async def check_claude_code_version():
         with contextlib.suppress(Exception):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
                 text=True,
                 timeout=5,
             )
@@ -385,7 +391,8 @@ async def check_claude_code_version():
         with contextlib.suppress(Exception):
             result = subprocess.run(
                 [claude_path, "--version"],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
                 text=True,
                 timeout=5,
             )
@@ -439,7 +446,8 @@ async def install_claude_code():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
-            check=False, capture_output=True,
+            check=False,
+            capture_output=True,
             text=True,
             timeout=timeout,
         )
@@ -483,7 +491,8 @@ async def install_claude_code():
                     "-c",
                     "curl -fsSL https://fnm.vercel.app/install | bash",
                 ],
-                check=False, capture_output=True,
+                check=False,
+                capture_output=True,
                 text=True,
                 timeout=60,
             )
@@ -760,7 +769,8 @@ def _check_npm_package_installed(package: str) -> bool:
     try:
         result = subprocess.run(
             ["npm", "list", "-g", "--depth=0", package],
-            check=False, capture_output=True,
+            check=False,
+            capture_output=True,
             text=True,
             timeout=8,
         )
@@ -1413,7 +1423,12 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     """
     try:
         result = subprocess.run(
-            ["gh"] + args, check=False, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["gh"] + args,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}

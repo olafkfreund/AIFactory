@@ -122,7 +122,9 @@ class Portal:
             if isinstance(data, dict) and data.get("tasks"):
                 return data["tasks"]
         except Exception as exc:
-            sys.stderr.write(f"/api/tasks/running unavailable ({exc}); scanning projects\n")
+            sys.stderr.write(
+                f"/api/tasks/running unavailable ({exc}); scanning projects\n"
+            )
         return self._scan_projects()
 
     def _scan_projects(self) -> list[str]:
