@@ -81,7 +81,7 @@ jobs:
     name: vendored factory_common matches the hub canonical
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Every vendored copy matches its pinned canonical, at one shared pin
         run: |
