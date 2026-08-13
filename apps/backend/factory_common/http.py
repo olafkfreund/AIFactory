@@ -139,8 +139,32 @@ class HttpClient:
     timeout: int = 30
     max_attempts: int = 3
     backoff_seconds: float = 5.0
+    # Follow 3xx? Default True preserves existing behaviour for callers that
+    # want it (sync_labels.py talks to GitHub, which legitimately redirects a
+    # renamed repo). Set False when probing an API: a service behind an OIDC
+    # proxy answers an unauthenticated API call with a 302 to the identity
+    # provider, and FOLLOWING that turns "you are not authenticated" into the
+    # login page's 200. The PARR seam probe recorded exactly that as
+    # `cfactory:cockpit-api -> 200` while never reaching CFactory at all.
+    follow_redirects: bool = True
     # Indirection so tests can stub sleeping without real delay.
     _sleep: Callable[[float], None] = field(default=_default_sleep, repr=False)
+
+    def _no_redirect_opener(self) -> urllib.request.OpenerDirector:
+        """Opener that surfaces a 3xx instead of following it.
+
+        Returning None from ``redirect_request`` makes urllib raise the 3xx as
+        an HTTPError, which :meth:`request` already reports verbatim -- so the
+        caller sees `302`, not the status of whatever page it landed on.
+        """
+
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            # Signature is urllib's, not ours; returning None is the
+            # documented way to refuse a redirect.
+            def redirect_request(self, *_args: object, **_kw: object) -> None:
+                return None
+
+        return urllib.request.build_opener(_NoRedirect)
 
     def _url(self, path: str) -> str:
         if not self.base_url:
@@ -182,7 +206,15 @@ class HttpClient:
         last_error = "unreachable"
         for attempt in range(self.max_attempts):
             try:
-                with urllib.request.urlopen(req, timeout=effective_timeout) as resp:  # noqa: S310
+                # Default path stays urlopen: it is the seam existing tests
+                # stub, and following redirects is urllib's own behaviour, so
+                # not-following is the only case that needs a custom opener.
+                _open = (
+                    urllib.request.urlopen
+                    if self.follow_redirects
+                    else self._no_redirect_opener().open
+                )
+                with _open(req, timeout=effective_timeout) as resp:
                     return HttpResponse(resp.status, _parse_body(resp.read().decode()))
             except urllib.error.HTTPError as exc:
                 if exc.code >= _SERVER_ERROR_FLOOR and attempt < self.max_attempts - 1:
