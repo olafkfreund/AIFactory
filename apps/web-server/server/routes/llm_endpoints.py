@@ -44,6 +44,16 @@ router = APIRouter(prefix="/api/llm-endpoints", tags=["LLM Endpoints"])
 # Mask everything but the last 4 chars when returning an api_key to the UI
 _API_KEY_TAIL_LEN = 4
 
+# The single did-not-connect answer. Deliberately says nothing about WHY, so a
+# caller cannot tell a closed port from a filtered one from a dropped packet --
+# see the long comment in _probe_models. Worded to still be actionable for the
+# person configuring the endpoint, since "check the server is running and the
+# address is right" is the useful advice in every one of those cases anyway.
+_PROBE_UNREACHABLE = (
+    "Could not reach this endpoint. Check that the server is running and that "
+    "the base URL is correct."
+)
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -152,9 +162,11 @@ def _probe_models(
     #
     # RESIDUAL, recorded rather than implied: with allow_private=True an
     # authenticated caller can reach the server's private network through this
-    # route, and can infer what is listening there from the timing and error
-    # differences between "connection refused", "not JSON", and a real answer.
-    # What bounds it is what BOTH postures still refuse -- the cloud metadata
+    # route, and can infer what is listening there from timing differences.
+    # The ERROR-TEXT half of that oracle is closed below: every did-not-connect
+    # outcome returns one literal, so "refused" and "no route to host" and
+    # "timed out" are indistinguishable to the caller. Timing is not closed.
+    # What bounds it further is what BOTH postures still refuse -- the cloud metadata
     # addresses, non-http(s) schemes, and redirects (build_no_redirect_opener,
     # below) -- so the highest-value targets stay closed. DNS rebinding is open
     # in both postures; see the url_safety module docstring.
@@ -177,18 +189,42 @@ def _probe_models(
             status_code = resp.getcode()
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
+        # KEPT verbatim, and not an oversight for the next person sweeping
+        # CWE-209 through this file: this is the REMOTE endpoint's own status
+        # line. The caller asked us to fetch that URL and is entitled to what it
+        # answered; it is not our internals. It also cannot be an existence
+        # oracle beyond what the next branch already concedes -- an HTTP status
+        # only exists because something served it.
         return EndpointTestResponse(
             ok=False,
             status_code=exc.code,
             error=f"HTTP {exc.code} {exc.reason}",
         )
-    except urllib.error.URLError as exc:
-        return EndpointTestResponse(
-            ok=False,
-            error=f"Connection failed: {exc.reason}",
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        return EndpointTestResponse(ok=False, error=f"Unexpected error: {exc}")
+    except Exception as exc:
+        # ONE string for every did-not-connect outcome (#1268 follow-up).
+        #
+        # These used to be two branches returning "Connection failed: {reason}"
+        # and "Unexpected error: {exc}". Distinguishing them is the port scan:
+        # "connection refused" means closed, "no route to host" means filtered,
+        # a timeout means dropped, and each answer maps one private address at a
+        # time. That was a minor leak while the guard refused private addresses
+        # outright; #1268 switched this route to allow_private=True because LM
+        # Studio and vLLM are the point of the module, and THAT is what made
+        # these strings load-bearing rather than cosmetic.
+        #
+        # So the two branches are collapsed rather than given two literals --
+        # two literals leak the same oracle more quietly. The distinguishing
+        # detail goes to the log, where the operator can read it and the caller
+        # cannot. One bare `except Exception` rather than URLError plus a
+        # defensive catch-all, because the two must be indistinguishable from
+        # outside and two branches returning the same literal is an invitation
+        # to make them differ again.
+        #
+        # NOT closed by this: timing still differs between a refused connection
+        # and a dropped packet, which is why the residual above says "timing
+        # and error differences" and this narrows only the second half.
+        logger.info("LLM endpoint probe did not connect: %r", exc)
+        return EndpointTestResponse(ok=False, error=_PROBE_UNREACHABLE)
 
     try:
         data = json.loads(raw)
