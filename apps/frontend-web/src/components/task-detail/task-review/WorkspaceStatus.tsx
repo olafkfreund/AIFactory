@@ -173,8 +173,7 @@ export function WorkspaceStatus({
     try {
       await window.API.worktreeOpenInIDE(
         worktreeStatus.worktreePath,
-        preferredIDE,
-        settings.customIDEPath
+        preferredIDE
       );
     } catch (err) {
       console.error('Failed to open in IDE:', err);
@@ -200,8 +199,7 @@ export function WorkspaceStatus({
     try {
       await window.API.worktreeOpenInTerminal(
         worktreeStatus.worktreePath,
-        preferredTerminal,
-        settings.customTerminalPath
+        preferredTerminal
       );
     } catch (err) {
       console.error('Failed to open in terminal:', err);

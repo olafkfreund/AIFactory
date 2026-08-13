@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..websockets.events import broadcast_event
+from .argv_safety import assert_safe_git_ref
 
 
 class ChangelogPhase(str, Enum):
@@ -152,10 +153,25 @@ class ChangelogService:
                 cmd.extend(["--git-history-count", str(git_history["count"])])
             if git_history.get("sinceDate"):
                 cmd.extend(["--git-history-since-date", git_history["sinceDate"]])
+            # These refs are option VALUES here, which argparse consumes safely,
+            # but changelog_runner.py then joins them into a `git log` argv as
+            # `<from>..<to>`. Assert on this side of the process boundary: it is
+            # the only caller of that runner, and a second copy of the validator
+            # in apps/backend would be a copy to drift (#1267).
             if git_history.get("fromTag"):
-                cmd.extend(["--git-history-from-tag", git_history["fromTag"]])
+                cmd.extend(
+                    [
+                        "--git-history-from-tag",
+                        assert_safe_git_ref(git_history["fromTag"], "fromTag"),
+                    ]
+                )
             if git_history.get("toTag"):
-                cmd.extend(["--git-history-to-tag", git_history["toTag"]])
+                cmd.extend(
+                    [
+                        "--git-history-to-tag",
+                        assert_safe_git_ref(git_history["toTag"], "toTag"),
+                    ]
+                )
             if git_history.get("includeMergeCommits"):
                 cmd.append("--include-merge-commits")
 
@@ -169,8 +185,10 @@ class ChangelogService:
             compare = branch_diff.get("compareBranchRef") or branch_diff.get(
                 "compareBranch", "HEAD"
             )
-            cmd.extend(["--base-branch", base])
-            cmd.extend(["--compare-branch", compare])
+            cmd.extend(["--base-branch", assert_safe_git_ref(base, "baseBranch")])
+            cmd.extend(
+                ["--compare-branch", assert_safe_git_ref(compare, "compareBranch")]
+            )
 
         # Add emoji level if present
         if request.get("emojiLevel") and request["emojiLevel"] != "none":

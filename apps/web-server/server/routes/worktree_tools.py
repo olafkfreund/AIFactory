@@ -18,8 +18,10 @@ of the god-file to lift out first.
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from server.services.argv_safety import assert_not_option
 
 router = APIRouter()
 
@@ -29,12 +31,25 @@ router = APIRouter()
 # ============================================
 
 
+CUSTOM_PATH_DISABLED = (
+    "customPath is no longer accepted: it let the request body choose the "
+    "program the server executes, outside the agent sandbox, for any token "
+    "holder. Use the `ide`/`terminal` name instead. See issue #1267 for the "
+    "operator-side allowlist that would replace it."
+)
+
+
 class OpenInIDERequest(BaseModel):
     """Request body for opening a path in IDE."""
 
     worktreePath: str
     ide: str
-    customPath: str | None = None
+    # Kept in the model ONLY so a client that still sends it gets a 400 that
+    # says why. Dropping the field instead would make pydantic discard it and
+    # the server would launch a different program than the caller asked for,
+    # reporting success -- a silent substitution is a worse bug than the
+    # refusal (#1267).
+    customPath: str | None = Field(default=None, description=CUSTOM_PATH_DISABLED)
 
 
 class OpenInTerminalRequest(BaseModel):
@@ -42,18 +57,45 @@ class OpenInTerminalRequest(BaseModel):
 
     worktreePath: str
     terminal: str
-    customPath: str | None = None
+    customPath: str | None = Field(default=None, description=CUSTOM_PATH_DISABLED)
 
 
-def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list[str]:
-    """Get the command to open a path in the specified IDE."""
+def reject_custom_path(custom_path: str | None) -> None:
+    """Raise 400 if the caller tried to name its own launcher binary."""
+    if custom_path:
+        raise HTTPException(status_code=400, detail=CUSTOM_PATH_DISABLED)
+
+
+def resolve_launch_dir(worktree_path: str) -> tuple[str, dict[str, object] | None]:
+    """Return (canonical directory, error) for a launch target.
+
+    Resolving first means the string that reaches argv is an absolute path, so
+    it cannot be read as an option, and the assertion states that rather than
+    leaving it implied. Requiring a *directory* (not merely an existing path)
+    is what makes ``cwd=`` a valid substitute for the ``cd <path>`` fragments
+    this module used to build.
+    """
+    try:
+        resolved = Path(worktree_path).resolve()
+        if not resolved.is_dir():
+            raise ValueError(f"Path does not exist: {worktree_path}")
+        return assert_not_option(str(resolved), "worktreePath"), None
+    except ValueError as exc:
+        return "", {"success": False, "error": str(exc)}
+
+
+def get_ide_command(ide: str, path: str) -> list[str]:
+    """Get the command to open a path in the specified IDE.
+
+    The program is always chosen from the table below, never from the request.
+    A caller-supplied launcher path (the old ``customPath``) is remote code
+    execution: the server runs whatever binary the body names, outside the
+    agent sandbox, for any token holder. Validating that string cannot fix it,
+    because the caller still picks the program (#1267).
+    """
     import platform
 
     system = platform.system()
-
-    # Use custom path if provided
-    if custom_path:
-        return [custom_path, path]
 
     # IDE command mappings
     ide_commands = {
@@ -130,22 +172,18 @@ def get_ide_command(ide: str, path: str, custom_path: str | None = None) -> list
     return ide_commands.get(ide, ["code", path])  # Default to VS Code
 
 
-def get_terminal_command(
-    terminal: str, path: str, custom_path: str | None = None
-) -> list[str]:
-    """Get the command to open a terminal at the specified path."""
+def get_terminal_command(terminal: str, path: str) -> list[str]:
+    """Get the command to open a terminal at the specified path.
+
+    As with ``get_ide_command``, the program comes from the table, never from
+    the request body (#1267). Terminals that used to be handed a ``cd <path>``
+    shell fragment are now launched with no path argument at all -- the caller
+    passes ``cwd=path`` to ``Popen``, which starts the shell in that directory
+    without any string ever being interpreted by a shell.
+    """
     import platform
 
     system = platform.system()
-
-    # Use custom path if provided
-    if custom_path:
-        if system == "Darwin":
-            return ["open", "-a", custom_path, path]
-        elif system == "Windows":
-            return [custom_path, "/d", path]
-        else:
-            return [custom_path, f"--working-directory={path}"]
 
     # Terminal command mappings by platform
     if system == "Darwin":  # macOS
@@ -163,12 +201,13 @@ def get_terminal_command(
         }
     elif system == "Windows":
         terminal_commands = {
-            "system": ["cmd", "/c", "start", "cmd", "/k", f"cd /d {path}"],
+            # cwd= handles the directory; no `cd <path>` fragment to quote.
+            "system": ["cmd", "/c", "start", "cmd"],
             "wt": ["wt", "-d", path],
             "windows-terminal": ["wt", "-d", path],
-            "cmd": ["cmd", "/c", "start", "cmd", "/k", f"cd /d {path}"],
-            "powershell": ["powershell", "-NoExit", "-Command", f"cd '{path}'"],
-            "pwsh": ["pwsh", "-NoExit", "-Command", f"cd '{path}'"],
+            "cmd": ["cmd", "/c", "start", "cmd"],
+            "powershell": ["powershell", "-NoExit"],
+            "pwsh": ["pwsh", "-NoExit"],
             "hyper": ["hyper", path],
             "alacritty": ["alacritty", "--working-directory", path],
             "wezterm": ["wezterm", "start", "--cwd", path],
@@ -178,7 +217,9 @@ def get_terminal_command(
         }
     else:  # Linux and others
         terminal_commands = {
-            "system": ["x-terminal-emulator", "-e", f"cd {path} && $SHELL"],
+            # `-e "cd <path> && $SHELL"` was a shell string built from request
+            # data; cwd= does the same job with nothing to inject into.
+            "system": ["x-terminal-emulator"],
             "gnome-terminal": ["gnome-terminal", f"--working-directory={path}"],
             "konsole": ["konsole", f"--workdir={path}"],
             "xfce4-terminal": ["xfce4-terminal", f"--working-directory={path}"],
@@ -188,7 +229,7 @@ def get_terminal_command(
             "alacritty": ["alacritty", "--working-directory", path],
             "wezterm": ["wezterm", "start", "--cwd", path],
             "hyper": ["hyper", path],
-            "xterm": ["xterm", "-e", f"cd {path} && $SHELL"],
+            "xterm": ["xterm"],
             "urxvt": ["urxvt", "-cd", path],
             "st": ["st", "-d", path],
             "foot": ["foot", f"--working-directory={path}"],
@@ -205,20 +246,20 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
     Open a worktree path in the specified IDE.
     Used by the web UI to launch external IDE applications.
     """
-    worktree_path = request.worktreePath
+    reject_custom_path(request.customPath)
     ide = request.ide
-    custom_path = request.customPath
 
-    # Validate the path exists
-    if not Path(worktree_path).exists():
-        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
+    worktree_path, error = resolve_launch_dir(request.worktreePath)
+    if error:
+        return error
 
     try:
-        cmd = get_ide_command(ide, worktree_path, custom_path)
+        cmd = get_ide_command(ide, worktree_path)
 
         # Launch the IDE (don't wait for it to finish)
         subprocess.Popen(
             cmd,
+            cwd=worktree_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -240,20 +281,20 @@ async def open_worktree_in_terminal(request: OpenInTerminalRequest):
     Open a worktree path in the specified terminal emulator.
     Used by the web UI to launch external terminal applications.
     """
-    worktree_path = request.worktreePath
+    reject_custom_path(request.customPath)
     terminal = request.terminal
-    custom_path = request.customPath
 
-    # Validate the path exists
-    if not Path(worktree_path).exists():
-        return {"success": False, "error": f"Path does not exist: {worktree_path}"}
+    worktree_path, error = resolve_launch_dir(request.worktreePath)
+    if error:
+        return error
 
     try:
-        cmd = get_terminal_command(terminal, worktree_path, custom_path)
+        cmd = get_terminal_command(terminal, worktree_path)
 
         # Launch the terminal (don't wait for it to finish)
         subprocess.Popen(
             cmd,
+            cwd=worktree_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,

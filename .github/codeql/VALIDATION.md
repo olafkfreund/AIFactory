@@ -1,9 +1,10 @@
 # Validating the custom barrier packs
 
-`custom-queries/PathInjectionSanitized.ql` re-emits `py/path-injection`, and
+`custom-queries/PathInjectionSanitized.ql` re-emits `py/path-injection`,
+`CommandInjectionSanitized.ql` re-emits `py/command-line-injection`, and
 `{Full,Partial}SsrfSanitized.ql` re-emit `py/full-ssrf` and `py/partial-ssrf`,
 each with this repo's barriers registered; `codeql-config.yml` excludes the
-three stock rules in their favour.
+four stock rules in their favour.
 
 **Never change the barrier list without re-measuring.** A sanitizer pack that
 is not measured fails silently in both directions: too narrow and it suppresses
@@ -141,6 +142,34 @@ still counts as a barrier.
 **Not** registered: `Path.resolve()`. Resolving canonicalises, it does not
 confine — `Path("/srv") / "../../etc"` resolves happily to `/etc`. Registering
 it would silence the exact bug #1056 was about.
+
+## Baseline recorded 2026-08-13 (#1267, command injection)
+
+CodeQL 2.25.6, database over `apps/web-server`, `py/command-line-injection`:
+
+| tree | stock | with pack |
+|---|---|---|
+| before the fixes | 6 sinks | 6 sinks |
+| after the fixes | 6 sinks | 0 sinks |
+
+Both rows matter, and the first one is the more important of the two. Running
+the sanitizer-aware query against the UNFIXED tree reported the identical six
+sinks stock did -- so the pack suppresses nothing on its own, and "newly
+reported" is 0 by inspection of the same set. The drop to zero comes from the
+assertions added in that change, not from asking a narrower question.
+
+The barriers are the validators in `server/services/argv_safety.py`
+(`assert_safe_git_ref`, `assert_not_option`, `bounded_count`) plus
+`TerminalWorktreeService._validate_name`, and the query's header states the
+property each one establishes. Every one of them is exercised by
+`tests/test_argv_safety.py`; each was mutation-checked (leading `-` allowed
+again, range check removed, name pattern re-widened) and each mutation turned
+that suite red.
+
+**Not** registered: any "this executable exists" check. Confirming a
+caller-supplied launcher names a real binary does not constrain which program
+runs. The endpoint that took one from a request body (`customPath`) had the
+field removed instead.
 
 ## If you add a barrier to the codebase
 

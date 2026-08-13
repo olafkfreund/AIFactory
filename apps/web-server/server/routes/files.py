@@ -22,6 +22,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from server.services.argv_safety import (
+    assert_not_option,
+    assert_safe_git_ref,
+    bounded_count,
+)
+
 from ..auth import _try_decode_jwt
 from ..config import get_settings
 from .project_authz import require_project_access
@@ -796,11 +802,21 @@ async def search_files(
     # Security (#323 H5): reject argument injection (a leading '-' turns the
     # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
     # query length to limit ReDoS on the regex fallback.
-    if query.startswith("-") or file_pattern.startswith("-"):
+    #
+    # The checks are the same ones this endpoint has always made; they now run
+    # through the shared helpers in services/argv_safety.py so every value that
+    # reaches the argv below is asserted by a named validator rather than by an
+    # ad-hoc condition (#1267).
+    try:
+        query = assert_not_option(query, "query")
+        file_pattern = assert_not_option(file_pattern, "file_pattern")
+        max_results = bounded_count(max_results, 10000, "max_results")
+        search_root = assert_not_option(str(full_path), "path")
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="query and file_pattern must not start with '-'",
-        )
+            detail=str(exc),
+        ) from exc
     if len(query) > 1000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -827,7 +843,7 @@ async def search_files(
             file_pattern,
             "--",  # no flags past here — query/path are positional (#323 H5)
             query,
-            str(full_path),
+            search_root,
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
@@ -913,12 +929,16 @@ async def get_git_diff(
 
     # Security (#323 M3): `base` is a ref before `--`; reject a leading '-'
     # (option injection like `--output=...`). `path` goes after `--` so it's
-    # always treated as a pathspec, never a flag.
-    if base.startswith("-") or not re.match(r"^[A-Za-z0-9._/~^@{}-]+$", base):
+    # always treated as a pathspec, never a flag -- asserted anyway, so the
+    # safety of both argv operands is stated by a named validator (#1267).
+    try:
+        base = assert_safe_git_ref(base, "base")
+        path = assert_not_option(path, "path")
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid base ref",
-        )
+            detail=str(exc),
+        ) from exc
 
     try:
         cmd = ["git", "diff", "--name-status", base, "--"]
