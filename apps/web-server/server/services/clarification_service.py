@@ -6,6 +6,7 @@ Uses the same `claude --print` pattern as InsightsService.generate_task_from_cha
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -32,12 +33,10 @@ def _parse_clarification_json(raw: str) -> dict:
     }
 
     # Attempt 1: direct parse
-    try:
+    with contextlib.suppress(json.JSONDecodeError):
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
             return _validate_response(parsed)
-    except json.JSONDecodeError:
-        pass
 
     # Attempt 2: brace-matching — find first { … }
     start = cleaned.find("{")

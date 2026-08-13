@@ -144,8 +144,8 @@ async def get_task_logs(
             plan = json.loads(plan_file.read_text())
             if "logs" in plan:
                 logs.extend(plan["logs"])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(f"[GetTaskLogs] Could not parse implementation_plan.json: {e}")
 
     # QA report
     qa_report = spec_dir / "qa_report.md"

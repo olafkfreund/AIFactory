@@ -25,10 +25,13 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # Try to import yaml, fall back gracefully
 try:
@@ -280,8 +283,10 @@ class CIDiscovery:
                     )
                 )
 
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - best-effort discovery, degrade to partial result
+            from factory_common.logsafe import sanitize_log
+
+            logger.debug("CircleCI config parse failed for %s: %s", config_file, sanitize_log(str(e)))
 
         return result
 
@@ -325,8 +330,10 @@ class CIDiscovery:
                     )
                 )
 
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - best-effort discovery, degrade to partial result
+            from factory_common.logsafe import sanitize_log
+
+            logger.debug("Jenkinsfile parse failed for %s: %s", jenkinsfile, sanitize_log(str(e)))
 
         return result
 

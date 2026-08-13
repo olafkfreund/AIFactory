@@ -39,6 +39,7 @@ if sys.version_info < (3, 10):  # noqa: UP036
         f"Please upgrade Python: https://www.python.org/downloads/"
     )
 
+import contextlib
 import io
 
 # Configure safe encoding on Windows BEFORE any imports that might print
@@ -47,14 +48,17 @@ if sys.platform == "win32":
     for _stream_name in ("stdout", "stderr"):
         _stream = getattr(sys, _stream_name)
         # Method 1: Try reconfigure (works for TTY)
+        _reconfigured = False
         if hasattr(_stream, "reconfigure"):
-            try:
+            with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
                 _stream.reconfigure(encoding="utf-8", errors="replace")
-                continue
-            except (AttributeError, io.UnsupportedOperation, OSError):
-                pass
-        # Method 2: Wrap with TextIOWrapper for piped output
-        try:
+                _reconfigured = True
+        if _reconfigured:
+            continue
+        # Method 2: Wrap with TextIOWrapper for piped output. Best-effort —
+        # if this also fails, the stream just keeps its default encoding;
+        # logging isn't configured yet this early in bootstrap.
+        with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
             if hasattr(_stream, "buffer"):
                 _new_stream = io.TextIOWrapper(
                     _stream.buffer,
@@ -63,8 +67,6 @@ if sys.platform == "win32":
                     line_buffering=True,
                 )
                 setattr(sys, _stream_name, _new_stream)
-        except (AttributeError, io.UnsupportedOperation, OSError):
-            pass
     # Clean up temporary variables
     del _stream_name, _stream
     if "_new_stream" in dir():

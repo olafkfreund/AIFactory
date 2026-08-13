@@ -13,6 +13,7 @@ the Claude Agent SDK client. Tool lists are organized by category:
 - Magestic AI tools: Custom build management tools
 """
 
+import contextlib
 import os
 
 # =============================================================================
@@ -366,13 +367,11 @@ def _map_mcp_server_name(
         return mapped
     # Catalog servers (github, kubernetes, aws, azure, ...): accept by id verbatim.
     # Imported lazily so the mapping module stays cheap to load.
-    try:
+    with contextlib.suppress(ImportError):
         from agents.tools_pkg.mcp_catalog import is_catalog_server
 
         if is_catalog_server(name.lower().strip()):
             return name.lower().strip()
-    except ImportError:
-        pass
     # Check if it's a custom server ID (accept as-is)
     if custom_server_ids and name in custom_server_ids:
         return name

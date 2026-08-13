@@ -11,6 +11,7 @@ circular import.
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import logging
 import re
@@ -105,8 +106,12 @@ def get_next_spec_id(project_path: Path, title: str) -> str:
     if counter_file.exists():
         try:
             persisted_max = int(counter_file.read_text().strip())
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "unreadable spec counter at %s, falling back to directory scan: %s",
+                sanitize_log(counter_file),
+                sanitize_log(exc),
+            )
 
     # Also check existing directories in case counter file is missing
     existing = get_spec_dirs(project_path)
@@ -517,8 +522,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             prov = requirements.get("provenance")
             if isinstance(prov, dict) and prov.get("issue_number") is not None:
                 metadata["github_issue"] = prov.get("issue_number")
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning(
+                "unreadable requirements.json for %s, metadata may be incomplete: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
 
     # Fall back to spec.md if requirements.json not available
     if not metadata["description"]:
@@ -581,8 +590,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             metadata["phase"] = "coding"
                             metadata["status"] = "human_review"
                             metadata["reviewReason"] = "completed"
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning(
+                "unreadable task_logs.json for %s, status may be stale: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
 
     # Try to load implementation_plan.json for status/subtasks
     plan_file = spec_dir / "implementation_plan.json"
@@ -1188,7 +1201,9 @@ def task_to_dict(task: Task) -> dict:
                 # Load archive metadata from plan file
                 plan_file = spec_dir / "implementation_plan.json"
                 if plan_file.exists():
-                    try:
+                    # ponytail: display-only enrichment -- a malformed plan file
+                    # just leaves the archive metadata fields unset
+                    with contextlib.suppress(json.JSONDecodeError):
                         plan = json.loads(plan_file.read_text())
                         if "archivedAt" in plan:
                             archive_metadata["archivedAt"] = plan["archivedAt"]
@@ -1196,8 +1211,6 @@ def task_to_dict(task: Task) -> dict:
                             archive_metadata["archivedInVersion"] = plan[
                                 "archivedInVersion"
                             ]
-                    except json.JSONDecodeError:
-                        pass
 
     result = {
         "id": task.id,
@@ -1273,7 +1286,9 @@ def _pfactory_priority_rank(spec_dir: Path) -> int:
     backend_path = Path(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
-    try:
+    # ponytail: best-effort sort key -- anything that can't be classified
+    # just sorts last (99), same as a task with no requirements.json at all
+    with contextlib.suppress(json.JSONDecodeError, OSError, ImportError):
         from pfactory.routing import priority_rank
         from pfactory.taxonomy import classify_requirements
 
@@ -1281,6 +1296,4 @@ def _pfactory_priority_rank(spec_dir: Path) -> int:
         if req_file.exists():
             req = json.loads(req_file.read_text())
             return priority_rank(classify_requirements(req).priority)
-    except (json.JSONDecodeError, OSError, ImportError):
-        pass
     return 99

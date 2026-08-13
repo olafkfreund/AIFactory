@@ -606,12 +606,12 @@ def build_ingest_payload(spec_dir: Path, spec_id: str) -> dict:
     # Multi-tenancy (#925): carry the build's tenant so TFactory can scope its
     # side too. OPTIONAL additive metadata — absent when the spec was never
     # stamped (single-tenant deployments), never required by the ingest.
-    try:
+    # ponytail: optional additive metadata (see comment above); absent/corrupt
+    # file just means no tenant_id gets attached.
+    with contextlib.suppress(OSError, ValueError):
         tm = json.loads((spec_dir / "task_metadata.json").read_text())
         if tm.get("tenant_id"):
             payload["tenant_id"] = str(tm["tenant_id"])
-    except (OSError, ValueError):
-        pass
     return payload
 
 

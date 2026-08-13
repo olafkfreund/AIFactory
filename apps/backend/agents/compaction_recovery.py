@@ -31,9 +31,12 @@ follow-up captured in the TODO so we never fake an SDK event.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # A turn whose input-token total falls below this fraction of the running
 # peak is treated as a probable compaction (the SDK replaced full history
@@ -51,8 +54,8 @@ def _load_json(path: Path) -> dict[str, Any]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-    except (json.JSONDecodeError, OSError):
-        pass
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("compaction_recovery: could not read %s (%s), using empty context", path, exc)
     return {}
 
 

@@ -11,6 +11,7 @@ This is the #703 spike to measure the mypy cost of the mixin approach.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -617,10 +618,9 @@ class KubejobMixin:
                     await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
-            try:
+            # Timeout is the normal tick cadence, not an error.
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
-            except TimeoutError:
-                pass
         _log.info("[AgentService] kubejob reconcile loop stopped")
 
     async def reap_kubejob_builds(

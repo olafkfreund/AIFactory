@@ -8,6 +8,7 @@ Uses subtask-based implementation plans (implementation_plan.json).
 Enhanced with colored output, icons, and better visual formatting.
 """
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -181,7 +182,8 @@ def print_progress_summary(spec_dir: Path, show_next: bool = True) -> None:
             print_status(f"{remaining} subtasks remaining", "info")
 
         # Phase summary
-        try:
+        # ponytail: missing/corrupt plan file just skips the phase summary display
+        with contextlib.suppress(OSError, json.JSONDecodeError):
             with open(spec_dir / "implementation_plan.json") as f:
                 plan = json.load(f)
 
@@ -229,9 +231,6 @@ def print_progress_summary(spec_dir: Path, show_next: bool = True) -> None:
                     print(
                         f"  {icon(Icons.ARROW_RIGHT)} Next: {highlight(next_id)} - {next_desc}"
                     )
-
-        except (OSError, json.JSONDecodeError):
-            pass
     else:
         print()
         print_status("No implementation subtasks yet - planner needs to run", "pending")

@@ -574,7 +574,13 @@ async def update_task(
             try:
                 requirements = json.loads(requirements_file.read_text())
             except json.JSONDecodeError:
-                pass
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "failed to parse %s, starting from empty requirements",
+                    requirements_file,
+                    exc_info=True,
+                )
 
         if update.title:
             requirements["title"] = update.title
@@ -605,7 +611,13 @@ async def update_task(
                 try:
                     task_metadata = json.loads(task_metadata_file.read_text())
                 except json.JSONDecodeError:
-                    pass
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "failed to parse %s, starting from empty task metadata",
+                        task_metadata_file,
+                        exc_info=True,
+                    )
 
             # Update model-related fields that phase_config.py expects
             # Also include selectedSkills so agent_service.py can inject skill context

@@ -5,6 +5,7 @@ Batch Task Management Commands
 Commands for creating and managing multiple tasks from batch files.
 """
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -142,12 +143,13 @@ def handle_batch_status_command(project_dir: str) -> bool:
         title = spec_name
 
         if req_file.exists():
-            try:
+            # ponytail: display fallback -- a malformed requirements.json just
+            # keeps the spec directory name as the title, nothing to log for a
+            # listing command
+            with contextlib.suppress(json.JSONDecodeError):
                 with open(req_file) as f:
                     req = json.load(f)
                     title = req.get("task_description", title)
-            except json.JSONDecodeError:
-                pass
 
         # Determine status
         if (spec_dir / "spec.md").exists():

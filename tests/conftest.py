@@ -6,6 +6,7 @@ Pytest Configuration and Shared Fixtures
 Provides common test fixtures for the Auto-Build Framework test suite.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -273,17 +274,15 @@ def pytest_runtest_setup(item):
         # Reload the entire qa module chain which imports progress
         for qa_module in ["qa.criteria", "qa.report", "qa.loop", "qa"]:
             if qa_module in sys.modules:
-                try:
+                # Some modules may fail to reload due to circular imports
+                with contextlib.suppress(Exception):
                     importlib.reload(sys.modules[qa_module])
-                except Exception:
-                    pass  # Some modules may fail to reload due to circular imports
         # Reload review module chain
         for review_module in ["review.state", "review.formatters", "review"]:
             if review_module in sys.modules:
-                try:
+                # Some modules may fail to reload due to circular imports
+                with contextlib.suppress(Exception):
                     importlib.reload(sys.modules[review_module])
-                except Exception:
-                    pass
 
 
 # =============================================================================

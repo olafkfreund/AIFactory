@@ -6,6 +6,7 @@ Main review checkpoint logic including interactive menu, user prompts,
 and file editing capabilities.
 """
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -212,12 +213,11 @@ def run_review_checkpoint(
             f"{muted('Approved by:')} {state.approved_by}",
         ]
         if state.approved_at:
-            try:
+            # ponytail: unparseable timestamp just skips the "Approved at" line
+            with contextlib.suppress(ValueError):
                 dt = datetime.fromisoformat(state.approved_at)
                 formatted = dt.strftime("%Y-%m-%d %H:%M")
                 content.append(f"{muted('Approved at:')} {formatted}")
-            except ValueError:
-                pass
         print()
         print(box(content, width=60, style="light"))
         print()

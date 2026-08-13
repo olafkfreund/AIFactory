@@ -39,6 +39,7 @@ for the same ``spec_id``, and (b) attach-mode flips so a 1000-concurrent
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -255,11 +256,9 @@ class SessionRegistry:
             pass
         except OSError:
             # Reader went away (EPIPE) — reset so we re-open on next viewer.
-            try:
-                if state.write_fd is not None:
+            if state.write_fd is not None:
+                with contextlib.suppress(OSError):
                     os.close(state.write_fd)
-            except OSError:
-                pass
             state.write_fd = None
 
     @staticmethod
@@ -342,10 +341,8 @@ class SessionRegistry:
 
         # Close any open FIFO writer (passive sessions).
         if state.write_fd is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(state.write_fd)
-            except OSError:
-                pass
             state.write_fd = None
 
         # Outside the registry lock — these are slow-ish subprocess ops

@@ -43,6 +43,7 @@ via stdin to avoid shell quoting issues with multi-kilobyte prompt strings.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import shutil
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -198,10 +199,9 @@ class CodexCLIProvider(BaseLLMProvider):
 
         except TimeoutError:
             if proc is not None:
-                try:
+                # process may have exited between the timeout and this kill
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
             raise TimeoutError(
                 f"Codex CLI subprocess timed out after {self._timeout}s. "
                 "Increase timeout= or reduce prompt size."

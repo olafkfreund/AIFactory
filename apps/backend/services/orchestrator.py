@@ -20,13 +20,17 @@ Usage:
         orchestrator.stop_services()
 """
 
+import contextlib
 import json
+import logging
 import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # DATA CLASSES
@@ -200,8 +204,12 @@ class ServiceOrchestrator:
                         health_check_url=health_url,
                     )
                 )
-        except Exception:
-            pass
+        except (OSError, yaml.YAMLError, AttributeError, TypeError) as exc:
+            logger.debug(
+                "orchestrator: could not parse %s, skipping service discovery: %s",
+                self._compose_file,
+                exc,
+            )
 
     def _discover_monorepo_services(self) -> None:
         """Discover services in a monorepo structure."""
@@ -378,8 +386,8 @@ class ServiceOrchestrator:
                     capture_output=True,
                     timeout=60,
                 )
-        except Exception:
-            pass
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("orchestrator: docker-compose down failed, containers may still be running: %s", exc)
 
     def _stop_local_services(self) -> None:
         """Stop local services."""
@@ -387,11 +395,10 @@ class ServiceOrchestrator:
             try:
                 proc.terminate()
                 proc.wait(timeout=10)
-            except Exception:
-                try:
+            except (OSError, subprocess.TimeoutExpired):
+                logger.warning("orchestrator: %s did not terminate cleanly, killing", name)
+                with contextlib.suppress(OSError, ProcessLookupError):
                     proc.kill()
-                except Exception:
-                    pass
         self._processes.clear()
 
     def _get_docker_compose_cmd(self) -> list[str] | None:
@@ -405,8 +412,8 @@ class ServiceOrchestrator:
             )
             if proc.returncode == 0:
                 return ["docker", "compose", "-f", str(self._compose_file)]
-        except Exception:
-            pass
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.debug("orchestrator: docker compose v2 not available: %s", exc)
 
         # Try docker-compose v1
         try:
@@ -417,8 +424,8 @@ class ServiceOrchestrator:
             )
             if proc.returncode == 0:
                 return ["docker-compose", "-f", str(self._compose_file)]
-        except Exception:
-            pass
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.debug("orchestrator: docker-compose v1 not available: %s", exc)
 
         return None
 

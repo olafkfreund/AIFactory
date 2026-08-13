@@ -16,6 +16,7 @@ Why this exists alongside ``tests/test_tracing.py``:
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from pathlib import Path
 
@@ -44,10 +45,9 @@ def app_with_in_memory_exporter(monkeypatch):
     from prometheus_client import REGISTRY
 
     for c in list(REGISTRY._collector_to_names.keys()):  # type: ignore[attr-defined]
-        try:
+        # ponytail: collector may already be unregistered by another fixture
+        with contextlib.suppress(KeyError):
             REGISTRY.unregister(c)
-        except KeyError:
-            pass
 
     monkeypatch.delenv("METRICS_SCRAPE_TOKEN", raising=False)
     monkeypatch.setenv("APP_DISABLE_AUTH", "true")

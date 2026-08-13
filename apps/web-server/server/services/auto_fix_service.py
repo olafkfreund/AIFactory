@@ -25,6 +25,7 @@ overkill for the demo workflow this powers).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
@@ -166,10 +167,11 @@ def _existing_issue_numbers(project_path: Path) -> set[int]:
                 else:
                     break
             if digits:
-                try:
+                # ponytail: digits is already filtered to isdigit() chars, so
+                # int() cannot actually raise -- guard kept for a future
+                # unbounded-length overflow-free int() edge case
+                with contextlib.suppress(ValueError):
                     out.add(int(digits))
-                except ValueError:
-                    pass
                 break
     return out
 
@@ -182,10 +184,9 @@ def _next_spec_id(project_path: Path) -> int:
     nxt = 1
     for d in specs_dir.iterdir():
         if d.is_dir() and d.name[:3].isdigit():
-            try:
+            # ponytail: name[:3].isdigit() already guarantees int() succeeds
+            with contextlib.suppress(ValueError):
                 nxt = max(nxt, int(d.name[:3]) + 1)
-            except ValueError:
-                pass
     return nxt
 
 
@@ -405,16 +406,24 @@ def _read_task_metadata(spec_dir: Path) -> dict[str, Any]:
             md = req.get("metadata")
             if isinstance(md, dict):
                 out.update(md)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "unreadable requirements.json metadata for %s, delegation flags may be missing: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
     tm_file = spec_dir / "task_metadata.json"
     if tm_file.exists():
         try:
             tm = json.loads(tm_file.read_text())
             if isinstance(tm, dict):
                 out.update(tm)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "unreadable task_metadata.json for %s, delegation flags may be missing: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
     return out
 
 

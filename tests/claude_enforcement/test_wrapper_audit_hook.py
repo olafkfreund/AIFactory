@@ -184,10 +184,8 @@ def test_abandoned_action_label():
         async with client:
             raise asyncio.CancelledError()
 
-    try:
+    with pytest.raises(asyncio.CancelledError):
         _run(go())
-    except asyncio.CancelledError:
-        pass
 
     assert recorded_action == ["llm.call.abandoned"]
 
@@ -219,10 +217,8 @@ def test_error_action_label():
         async with client:
             raise RuntimeError("SDK boom")
 
-    try:
+    with pytest.raises(RuntimeError):
         _run(go())
-    except RuntimeError:
-        pass
 
     assert recorded.get("action") == "llm.call.failed"
     assert "SDK boom" in (recorded.get("error") or "")

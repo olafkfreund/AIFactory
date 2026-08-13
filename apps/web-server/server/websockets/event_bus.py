@@ -385,8 +385,8 @@ async def stop_redis_subscriber() -> None:
         _redis_subscriber_task.cancel()
         try:
             await _redis_subscriber_task
-        except (asyncio.CancelledError, Exception):
-            pass
+        except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001 - best-effort shutdown; log and degrade
+            logger.debug("Redis subscriber task teardown raised %s", exc, exc_info=True)
         _redis_subscriber_task = None
     if _redis_publisher is not None:
         try:

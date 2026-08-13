@@ -6,6 +6,7 @@ enabling task execution with real-time streaming of logs and progress.
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -210,7 +211,7 @@ class AgentService(
             if isinstance(prov, dict) and prov.get("issue_number") is not None:
                 return str(prov["issue_number"])
         except (OSError, ValueError):
-            pass
+            _log.debug("failed to read provenance issue number for %s", spec_id, exc_info=True)
         return None
 
     @property
@@ -606,7 +607,7 @@ class AgentService(
                 meta = json.loads(meta_file.read_text())
                 return meta.get("parallel"), meta.get("workers")
         except (OSError, ValueError):
-            pass
+            _log.debug("failed to read task_metadata.json for %s", spec_id, exc_info=True)
         return None, None
 
     def _concurrency_cap(self) -> int:
@@ -988,7 +989,11 @@ class AgentService(
                     exec_metadata = json.loads(exec_metadata_file.read_text())
                     exec_model = exec_metadata.get("model", "sonnet")
                 except (json.JSONDecodeError, OSError):
-                    pass
+                    _log.debug(
+                        "failed to read exec model from task_metadata.json for %s",
+                        spec_id,
+                        exc_info=True,
+                    )
             self._task_profiles[task_id] = {
                 "profileId": profile_id,
                 "profileName": profile_name,
@@ -1033,7 +1038,11 @@ class AgentService(
                 _rc_meta = json.loads(_rc_metadata_file.read_text())
                 _rc_enabled = bool(_rc_meta.get("enableRemoteControl", False))
             except (json.JSONDecodeError, OSError):
-                pass
+                _log.debug(
+                    "failed to read enableRemoteControl for %s, defaulting off",
+                    spec_id,
+                    exc_info=True,
+                )
         if not _rc_enabled:
             try:
                 from ..routes.projects import load_projects
@@ -1223,16 +1232,12 @@ class AgentService(
         pid = getattr(proc, "pid", None)
         if pid is None:
             return
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(pid), sig)
             return
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
         # Fall back to signalling just the process (e.g. non-POSIX, or no pgrp).
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             proc.send_signal(sig)
-        except (ProcessLookupError, OSError):
-            pass
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""

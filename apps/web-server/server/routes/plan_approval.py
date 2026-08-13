@@ -195,8 +195,15 @@ async def approve_plan(
                 try:
                     metadata = json.loads(task_metadata_file.read_text())
                     mode = metadata.get("mode", "full")
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError) as exc:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "[ApprovePlan] Could not read task_metadata.json for %s, "
+                        "defaulting mode to 'full': %s",
+                        sanitize_log(task_id),
+                        exc,
+                    )
 
             await agent_service.start_task_execution(
                 task_id=task_id,

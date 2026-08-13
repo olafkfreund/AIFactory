@@ -18,6 +18,7 @@ Usage:
     python aifactory/service_context.py --service frontend --index aifactory/project_index.json
 """
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,7 +132,9 @@ class ServiceContextGenerator:
         # Python
         requirements = service_path / "requirements.txt"
         if requirements.exists():
-            try:
+            # Best-effort discovery for generated docs; an unreadable file
+            # just means fewer dependencies listed, not a hard failure.
+            with contextlib.suppress(OSError):
                 content = requirements.read_text()
                 for line in content.split("\n")[:20]:  # Top 20 deps
                     line = line.strip()
@@ -140,21 +143,17 @@ class ServiceContextGenerator:
                         pkg = line.split("==")[0].split(">=")[0].split("[")[0].strip()
                         if pkg and pkg not in context.dependencies:
                             context.dependencies.append(pkg)
-            except OSError:
-                pass
 
         # Node.js
         package_json = service_path / "package.json"
         if package_json.exists():
-            try:
+            with contextlib.suppress(OSError, json.JSONDecodeError):
                 with open(package_json) as f:
                     pkg = json.load(f)
                     deps = list(pkg.get("dependencies", {}).keys())[:15]
                     context.dependencies.extend(
                         [d for d in deps if d not in context.dependencies]
                     )
-            except (OSError, json.JSONDecodeError):
-                pass
 
     def _discover_api_patterns(self, service_path: Path, context: ServiceContext):
         """Discover API patterns (routes, endpoints)."""
@@ -169,7 +168,7 @@ class ServiceContextGenerator:
         )
 
         for route_file in route_files[:5]:  # Check first 5
-            try:
+            with contextlib.suppress(OSError, UnicodeDecodeError):
                 content = route_file.read_text()
                 # Look for common route patterns
                 if "@app.route" in content or "@router." in content:
@@ -178,28 +177,24 @@ class ServiceContextGenerator:
                     )
                 elif "express.Router" in content or "app.get" in content:
                     context.api_patterns.append(f"Express routes in {route_file.name}")
-            except (OSError, UnicodeDecodeError):
-                pass
 
     def _discover_common_commands(self, service_path: Path, context: ServiceContext):
         """Discover common commands from package files and Makefiles."""
         # From package.json scripts
         package_json = service_path / "package.json"
         if package_json.exists():
-            try:
+            with contextlib.suppress(OSError, json.JSONDecodeError):
                 with open(package_json) as f:
                     pkg = json.load(f)
                     scripts = pkg.get("scripts", {})
                     for name in ["dev", "start", "build", "test", "lint"]:
                         if name in scripts:
                             context.common_commands[name] = f"npm run {name}"
-            except (OSError, json.JSONDecodeError):
-                pass
 
         # From Makefile
         makefile = service_path / "Makefile"
         if makefile.exists():
-            try:
+            with contextlib.suppress(OSError):
                 content = makefile.read_text()
                 for line in content.split("\n"):
                     if line and not line.startswith("\t") and ":" in line:
@@ -213,8 +208,6 @@ class ServiceContextGenerator:
                             "install",
                         ]:
                             context.common_commands[target] = f"make {target}"
-            except OSError:
-                pass
 
         # Infer from framework
         if context.framework == "flask":
@@ -235,7 +228,7 @@ class ServiceContextGenerator:
         for env_file in env_files:
             env_path = service_path / env_file
             if env_path.exists():
-                try:
+                with contextlib.suppress(OSError):
                     content = env_path.read_text()
                     for line in content.split("\n"):
                         line = line.strip()
@@ -243,8 +236,6 @@ class ServiceContextGenerator:
                             var_name = line.split("=")[0].strip()
                             if var_name and var_name not in context.environment_vars:
                                 context.environment_vars.append(var_name)
-                except OSError:
-                    pass
                 break  # Only use first found
 
     def generate_markdown(self, context: ServiceContext) -> str:

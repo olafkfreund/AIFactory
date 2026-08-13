@@ -15,6 +15,7 @@ suite that can't import.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 
@@ -35,16 +36,13 @@ def _declared_deps_blob(root: Path) -> str:
     """All declared-dependency text (requirements*.txt + pyproject), lowercased."""
     parts: list[str] = []
     for req in sorted(root.glob("requirements*.txt")):
-        try:
+        # ponytail: unreadable/missing req file just contributes nothing to the blob
+        with contextlib.suppress(OSError):
             parts.append(req.read_text(encoding="utf-8"))
-        except OSError:
-            pass
     pyproject = root / "pyproject.toml"
     if pyproject.is_file():
-        try:
+        with contextlib.suppress(OSError):
             parts.append(pyproject.read_text(encoding="utf-8"))
-        except OSError:
-            pass
     return "\n".join(parts).lower()
 
 

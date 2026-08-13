@@ -116,8 +116,11 @@ async def run_terminal_completion(
         if not _completion_marker.exists():
             try:
                 _completion_marker.write_text(datetime.now(UTC).isoformat())
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(
+                    "terminal-completion marker write failed (may re-emit next call): %s",
+                    sanitize_log(str(e)),
+                )
             try:
                 from .completion import emit_terminal_completion
 
@@ -147,8 +150,11 @@ async def run_terminal_completion(
         if not _seffx_marker.exists():
             try:
                 _seffx_marker.write_text(datetime.now(UTC).isoformat())
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(
+                    "terminal-side-effects marker write failed (may re-run next call): %s",
+                    sanitize_log(str(e)),
+                )
 
             # Auto-handover the finished build to TFactory when the task
             # opted in (task_metadata `auto_handover_tfactory`, #496) and

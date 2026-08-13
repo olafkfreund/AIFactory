@@ -16,6 +16,7 @@ Exit codes:
 """
 
 import argparse
+import contextlib
 import hashlib
 import re
 import subprocess
@@ -262,15 +263,13 @@ def load_secretsignore(project_dir: Path) -> list[str]:
         return []
 
     patterns = []
-    try:
+    with contextlib.suppress(OSError):
         content = ignore_file.read_text()
         for line in content.splitlines():
             line = line.strip()
             # Skip comments and empty lines
             if line and not line.startswith("#"):
                 patterns.append(line)
-    except OSError:
-        pass
 
     return patterns
 

@@ -2,6 +2,7 @@
 Context loading and workflow detection for implementation planner.
 """
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -102,7 +103,9 @@ class ContextLoader:
         # 1. Check requirements.json (user's explicit intent)
         requirements_file = self.spec_dir / "requirements.json"
         if requirements_file.exists():
-            try:
+            # A malformed requirements.json just falls through to the next
+            # priority source below, not a hard failure.
+            with contextlib.suppress(json.JSONDecodeError, KeyError):
                 with open(requirements_file) as f:
                     requirements = json.load(f)
                 declared_type = _normalize_workflow_type(
@@ -110,13 +113,11 @@ class ContextLoader:
                 )
                 if declared_type in _WORKFLOW_TYPE_MAPPING:
                     return _WORKFLOW_TYPE_MAPPING[declared_type]
-            except (json.JSONDecodeError, KeyError):
-                pass
 
         # 2. Check complexity_assessment.json (AI's assessment)
         assessment_file = self.spec_dir / "complexity_assessment.json"
         if assessment_file.exists():
-            try:
+            with contextlib.suppress(json.JSONDecodeError, KeyError):
                 with open(assessment_file) as f:
                     assessment = json.load(f)
                 declared_type = _normalize_workflow_type(
@@ -124,8 +125,6 @@ class ContextLoader:
                 )
                 if declared_type in _WORKFLOW_TYPE_MAPPING:
                     return _WORKFLOW_TYPE_MAPPING[declared_type]
-            except (json.JSONDecodeError, KeyError):
-                pass
 
         # 3. & 4. Fall back to spec content detection
         return self._detect_workflow_type_from_spec(spec_content)

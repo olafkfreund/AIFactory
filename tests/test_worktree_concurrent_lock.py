@@ -11,6 +11,7 @@ builds. These tests prove the new cross-process file lock serializes those
 mutations so concurrent worktree-add calls don't corrupt / race the shared repo.
 """
 
+import contextlib
 import os
 import subprocess
 import threading
@@ -138,13 +139,11 @@ class TestConcurrentWorktreeAdd:
         def try_second() -> None:
             # Expected to time out while the first holder is inside; swallow it
             # here so it doesn't surface as an unhandled-thread warning.
-            try:
+            with contextlib.suppress(WorktreeError):
                 with _BaseRepoGitLock(mgr_b._git_lock_path, timeout=0.3):
                     acquired_second["value"] = True
                     if in_critical.is_set() and not release.is_set():
                         overlap["value"] = True
-            except WorktreeError:
-                pass
 
         t2 = threading.Thread(target=try_second)
         t2.start()

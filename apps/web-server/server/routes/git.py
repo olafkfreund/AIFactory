@@ -2,6 +2,7 @@
 Git, Ollama, MCP, and utility routes.
 """
 
+import contextlib
 import logging
 import shlex
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from factory_common.logsafe import sanitize_log
 from server.error_ref import client_error
 from server.services.url_safety import (
     assert_safe_outbound_url,
@@ -282,8 +284,8 @@ async def list_ollama_embedding_models(baseUrl: str | None = Query(None)):
             # Also add without :latest suffix
             if name.endswith(":latest"):
                 installed_models.add(name.replace(":latest", ""))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - Ollama unreachable/malformed reply -> empty list
+        logger.debug("Ollama tags fetch failed: %s", sanitize_log(str(e)))
 
     # Filter to embedding-capable models
     embedding_keywords = ["embed", "nomic", "minilm", "bge", "gte", "e5"]
@@ -367,7 +369,9 @@ async def check_claude_code_version():
 
     # Fallback: try login shell in case PATH is set in .bashrc/.profile
     if not claude_path:
-        try:
+        # Login-shell PATH lookup is best-effort; any failure (timeout, no
+        # bash, no login profile) just means "not found".
+        with contextlib.suppress(Exception):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
                 capture_output=True,
@@ -376,11 +380,9 @@ async def check_claude_code_version():
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
-        except Exception:
-            pass
 
     if claude_path:
-        try:
+        with contextlib.suppress(Exception):
             result = subprocess.run(
                 [claude_path, "--version"],
                 capture_output=True,
@@ -394,8 +396,6 @@ async def check_claude_code_version():
                     "isOutdated": False,
                     "path": claude_path,
                 }
-        except Exception:
-            pass
 
     # Claude not found — check if Node.js is available (needed for install)
     node_available = shutil.which("node") is not None
@@ -445,7 +445,7 @@ async def install_claude_code():
         )
 
     # Step 1: Check if claude is already installed
-    try:
+    with contextlib.suppress(Exception):
         result = _run(["claude", "--version"], timeout=10)
         if result.returncode == 0:
             return {
@@ -456,8 +456,6 @@ async def install_claude_code():
                     "steps_completed": ["already-installed"],
                 },
             }
-    except Exception:
-        pass
 
     # Step 2: Check if Node.js is available
     node_available = False
@@ -467,8 +465,8 @@ async def install_claude_code():
         if node_available:
             steps_completed.append("node-present")
             log.info(f"Node.js already available: {result.stdout.strip()}")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - node absent/unavailable -> install path below
+        log.debug(f"Node.js version check failed: {sanitize_log(str(e))}")
 
     # Step 3: Install fnm + Node.js LTS if not available
     if not node_available:
@@ -1364,14 +1362,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         )
 
     if not worktree_result["success"]:
-        # Clean up directory if it was created
-        try:
+        # Clean up directory if it was created. Best-effort — the real
+        # failure is already reported below regardless of cleanup outcome.
+        with contextlib.suppress(Exception):
             if worktree_path.exists():
                 import shutil
 
                 shutil.rmtree(worktree_path)
-        except Exception:
-            pass
 
         return {
             "success": False,

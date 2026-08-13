@@ -349,8 +349,11 @@ class ModificationTracker:
                 if "/" in upstream:
                     return upstream.split("/", 1)[1]
                 return upstream
-        except subprocess.CalledProcessError:
-            pass
+        except OSError as exc:
+            # `subprocess.run` above has no check=True, so it never raises
+            # CalledProcessError; the reachable failure is the git binary
+            # itself being missing/unexecutable.
+            logger.warning("Could not determine upstream branch for %s: %s", repo_path, exc)
 
         # Try common branch names and find which one has a valid merge-base
         for branch in ["main", "master", "develop"]:

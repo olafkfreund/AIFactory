@@ -316,3 +316,163 @@ async def test_clone_or_update_raises_on_missing_git(tmp_path):
                 root=tmp_path,
             )
     assert "git executable not found" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# clone_or_update — credential fails closed if it can't be stripped from
+# origin afterwards (a `git remote set-url` failure must not silently leave
+# the credentialed URL persisted in .git/config).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clone_or_update_fails_closed_when_credential_strip_fails_after_clone(
+    tmp_path,
+):
+    from server.services.project_workspace_service import (
+        GitOperationError,
+        clone_or_update,
+    )
+
+    async def fake_create_subprocess_exec(*args, **kw):
+        # `clone` succeeds; the follow-up `remote set-url` (stripping the
+        # credential) fails.
+        if "clone" in args:
+            return _mock_proc(returncode=0)
+        return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
+
+    with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
+        with pytest.raises(GitOperationError) as exc:
+            await clone_or_update(
+                git_url="https://example.test/me/repo.git",
+                root=tmp_path,
+                credential=("x-token", "s3cr3t"),
+            )
+
+    # The failure must be visible to the caller, not swallowed as success --
+    # and the message must name the disclosure so it's actionable in logs.
+    assert "credential" in str(exc.value).lower()
+    # The workspace directory is left behind for inspection/cleanup, but the
+    # function must NOT return it as a usable result.
+
+
+@pytest.mark.asyncio
+async def test_clone_or_update_fails_closed_when_credential_strip_fails_after_pull(
+    tmp_path,
+):
+    from server.services.project_workspace_service import (
+        GitOperationError,
+        clone_or_update,
+    )
+
+    ws = tmp_path / "me-repo"
+    (ws / ".git").mkdir(parents=True)
+
+    async def fake_create_subprocess_exec(*args, **kw):
+        # The credentialed `set-url` (pre-fetch), `fetch`, and `pull` all
+        # succeed; only the post-pull sanitizing `set-url` fails.
+        cmd = list(args)
+        if cmd[1:4] == ["remote", "set-url", "origin"] and any(
+            "example.test" in a and "s3cr3t" not in a for a in cmd
+        ):
+            return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
+        return _mock_proc(returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
+        with pytest.raises(GitOperationError) as exc:
+            await clone_or_update(
+                git_url="https://example.test/me/repo.git",
+                branch="main",
+                root=tmp_path,
+                credential=("x-token", "s3cr3t"),
+            )
+
+    assert "credential" in str(exc.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_clone_or_update_credential_strip_failure_does_not_mask_pull_failure(
+    tmp_path,
+):
+    """If the pull itself fails AND the cleanup set-url fails, the caller
+    must see the real pull failure (it's already in flight), not a second
+    error about the cleanup step swallowing it."""
+    from server.services.project_workspace_service import (
+        GitOperationError,
+        clone_or_update,
+    )
+
+    ws = tmp_path / "me-repo"
+    (ws / ".git").mkdir(parents=True)
+
+    async def fake_create_subprocess_exec(*args, **kw):
+        cmd = list(args)
+        if cmd[1] == "fetch":
+            return _mock_proc(returncode=1, stderr=b"fatal: could not read from remote")
+        if cmd[1:4] == ["remote", "set-url", "origin"] and any(
+            "example.test" in a and "s3cr3t" not in a for a in cmd
+        ):
+            return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
+        return _mock_proc(returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
+        with pytest.raises(GitOperationError) as exc:
+            await clone_or_update(
+                git_url="https://example.test/me/repo.git",
+                branch="main",
+                root=tmp_path,
+                credential=("x-token", "s3cr3t"),
+            )
+
+    assert "could not read from remote" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_credential_strip_failure_self_heals_on_the_next_call(tmp_path):
+    """A failed strip is loud (raises), but not permanent: the pull path
+    unconditionally re-injects the credentialed URL into origin on every
+    call, so a subsequent call re-attempts the strip rather than leaving
+    the credential behind a green result forever."""
+    from server.services.project_workspace_service import (
+        GitOperationError,
+        clone_or_update,
+    )
+
+    ws = tmp_path / "me-repo"
+    (ws / ".git").mkdir(parents=True)
+
+    attempt = {"n": 0}
+
+    async def fake_create_subprocess_exec(*args, **kw):
+        cmd = list(args)
+        is_sanitizing_set_url = cmd[1:4] == ["remote", "set-url", "origin"] and any(
+            "example.test" in a and "s3cr3t" not in a for a in cmd
+        )
+        if is_sanitizing_set_url:
+            attempt["n"] += 1
+            if attempt["n"] == 1:
+                return _mock_proc(returncode=1, stderr=b"fatal: could not set-url")
+            return _mock_proc(returncode=0)
+        return _mock_proc(returncode=0)
+
+    with patch("asyncio.create_subprocess_exec", new=fake_create_subprocess_exec):
+        # First call: strip fails -> raises, credential left behind.
+        with pytest.raises(GitOperationError):
+            await clone_or_update(
+                git_url="https://example.test/me/repo.git",
+                branch="main",
+                root=tmp_path,
+                credential=("x-token", "s3cr3t"),
+            )
+        # Second call for the SAME workspace: strip is retried and this
+        # time succeeds -> the call now returns normally instead of
+        # raising forever.
+        result = await clone_or_update(
+            git_url="https://example.test/me/repo.git",
+            branch="main",
+            root=tmp_path,
+            credential=("x-token", "s3cr3t"),
+        )
+
+    assert result == ws
+    assert attempt["n"] == 2

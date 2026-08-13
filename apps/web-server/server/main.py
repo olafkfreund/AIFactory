@@ -280,14 +280,15 @@ def _read_app_version() -> str:
     import re
     from pathlib import Path
 
+    import contextlib
+
     backend_init = Path(__file__).resolve().parents[2] / "backend" / "__init__.py"
-    try:
+    # ponytail: version file missing/unreadable just falls back to unknown
+    with contextlib.suppress(OSError):
         content = backend_init.read_text(encoding="utf-8")
         match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
         if match:
             return match.group(1)
-    except OSError:
-        pass
     return "0.0.0-unknown"
 
 

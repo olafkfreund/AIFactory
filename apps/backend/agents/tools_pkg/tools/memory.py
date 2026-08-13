@@ -7,6 +7,7 @@ gotchas, and patterns.
 """
 
 import json
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ try:
 except ImportError:
     SDK_TOOLS_AVAILABLE = False
     tool = None
+
+logger = logging.getLogger(__name__)
 
 
 def create_memory_tools(
@@ -182,8 +185,10 @@ def create_memory_tools(
                     for path, info in list(discoveries.items())[:20]:  # Limit to 20
                         desc = info.get("description", "No description")
                         result_parts.append(f"- `{path}`: {desc}")
-            except Exception:
-                pass
+            except (OSError, json.JSONDecodeError):
+                logger.warning(
+                    "failed to read codebase map %s", codebase_map_file, exc_info=True
+                )
 
         # Load gotchas
         gotchas_file = memory_dir / "gotchas.md"
@@ -196,8 +201,8 @@ def create_memory_tools(
                     result_parts.append(
                         content[-1000:] if len(content) > 1000 else content
                     )
-            except Exception:
-                pass
+            except OSError:
+                logger.warning("failed to read gotchas file %s", gotchas_file, exc_info=True)
 
         # Load patterns
         patterns_file = memory_dir / "patterns.md"
@@ -209,8 +214,8 @@ def create_memory_tools(
                     result_parts.append(
                         content[-1000:] if len(content) > 1000 else content
                     )
-            except Exception:
-                pass
+            except OSError:
+                logger.warning("failed to read patterns file %s", patterns_file, exc_info=True)
 
         if not result_parts:
             return {

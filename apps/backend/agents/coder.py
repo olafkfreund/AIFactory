@@ -6,6 +6,7 @@ Main autonomous agent loop that runs the coder agent to implement subtasks.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -841,7 +842,9 @@ async def run_autonomous_agent(
                 # Sync the usage file back to the source spec dir (worktree mode)
                 # so the web-server reader sees it.
                 if source_spec_dir:
-                    try:
+                    # Best-effort mirror to the source spec dir; the web-server
+                    # reader falls back to the worktree copy if this doesn't land.
+                    with contextlib.suppress(OSError):
                         from .token_attribution import usage_file_path
 
                         src = usage_file_path(spec_dir)
@@ -849,8 +852,6 @@ async def run_autonomous_agent(
                             (source_spec_dir / src.name).write_text(
                                 src.read_text(encoding="utf-8"), encoding="utf-8"
                             )
-                    except OSError:
-                        pass
 
                 # Best-effort compaction detection on the real input total.
                 if compaction_detector.observe(turn_usage.total_input_tokens):

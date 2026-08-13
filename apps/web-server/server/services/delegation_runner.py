@@ -23,6 +23,7 @@ helper does not gate on either — it assumes the policy decision is done.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -98,10 +99,10 @@ async def run_delegation(
                 sanitize_log(PLANNER_TIMEOUT_SECONDS),
                 sanitize_log(task_id),
             )
-            try:
+            # ponytail: process may have exited on its own between the timeout
+            # and the kill attempt.
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
 
     # ------------------------------------------------------------------
     # 2. Render the enrichment comment.

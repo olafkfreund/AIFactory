@@ -47,6 +47,7 @@ multi-kilobyte prompt strings.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import shutil
 import warnings
@@ -284,10 +285,10 @@ class AntigravityCLIProvider(BaseLLMProvider):
 
         except TimeoutError:
             if proc is not None:
-                try:
+                # ponytail: process may have exited between the timeout and
+                # this kill() call; that race is not an error.
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
             raise TimeoutError(
                 f"Antigravity CLI subprocess timed out after {self._timeout}s. "
                 "Increase timeout= or reduce prompt size."

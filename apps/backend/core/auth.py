@@ -6,6 +6,7 @@ for multiple environment variables, AIFactory profiles, Claude Code CLI
 credentials, and SDK environment variable passthrough for custom API endpoints.
 """
 
+import contextlib
 import importlib
 import json
 import os
@@ -288,7 +289,9 @@ def _get_token_from_aifactory_profiles() -> str | None:
     path = Path.home() / ".aifactory" / "claude-profiles.json"
     if not path.exists():
         return None
-    try:
+    # Best-effort: get_auth_token() falls through to other credential
+    # sources, so a malformed profiles file is not fatal here.
+    with contextlib.suppress(json.JSONDecodeError, KeyError):
         data = unseal_profiles(json.loads(path.read_text()))
         active_id = data.get("activeProfileId")
         for profile in data.get("profiles", []):
@@ -298,8 +301,6 @@ def _get_token_from_aifactory_profiles() -> str | None:
         for profile in data.get("profiles", []):
             if profile.get("oauthToken"):
                 return profile["oauthToken"]
-    except (json.JSONDecodeError, KeyError):
-        pass
     return None
 
 
@@ -308,13 +309,13 @@ def _get_token_from_claude_credentials() -> str | None:
     path = Path.home() / ".claude" / ".credentials.json"
     if not path.exists():
         return None
-    try:
+    # Best-effort: get_auth_token() falls through to other credential
+    # sources, so a malformed credentials file is not fatal here.
+    with contextlib.suppress(json.JSONDecodeError, KeyError):
         data = json.loads(path.read_text())
         token = data.get("claudeAiOauth", {}).get("accessToken")
         if token and token.startswith("sk-ant-oat01-"):
             return token
-    except (json.JSONDecodeError, KeyError):
-        pass
     return None
 
 

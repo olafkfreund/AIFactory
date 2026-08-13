@@ -1061,8 +1061,8 @@ class WorktreeManager:
                 try:
                     blocker.unlink()
                     logger.info(f"Removed merge-blocking file: {fname}")
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning(f"Could not remove merge-blocking file {fname}: {exc}")
 
         # The smart-merge step (or an agent) can leave the base working tree
         # dirty on TRACKED files — notably it rewrites .gitignore — which makes

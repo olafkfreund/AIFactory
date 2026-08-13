@@ -6,6 +6,7 @@ Workspace Models
 Data classes and enums for workspace management.
 """
 
+import contextlib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -274,10 +275,10 @@ class SpecNumberLock:
 
         max_num = 0
         for folder in specs_dir.glob("[0-9][0-9][0-9]-*"):
-            try:
+            # ponytail: the glob already restricts to a 3-digit prefix, so a
+            # ValueError here means a stray non-numeric folder -- skip it
+            with contextlib.suppress(ValueError):
                 num = int(folder.name[:3])
                 max_num = max(max_num, num)
-            except ValueError:
-                pass
 
         return max_num

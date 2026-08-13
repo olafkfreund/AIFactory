@@ -7,6 +7,7 @@ All helpers wrap subprocess calls to `docker` with sensible defaults
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import subprocess
@@ -124,11 +125,11 @@ def wait_for_health(url: str, timeout: int = 30) -> bool:
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
+        # ponytail: not-yet-healthy is expected while polling, so any
+        # connection failure here is just "try again next tick".
+        with contextlib.suppress(urllib.error.URLError, ConnectionError, OSError):
             with urllib.request.urlopen(url, timeout=2) as resp:
                 if resp.status == 200:
                     return True
-        except (urllib.error.URLError, ConnectionError, OSError):
-            pass
         time.sleep(0.5)
     return False

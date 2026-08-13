@@ -6,6 +6,7 @@ Handles model and thinking level configuration for different execution phases.
 Reads configuration from task_metadata.json and provides resolved model IDs.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -336,24 +337,23 @@ def load_task_metadata(spec_dir: Path) -> TaskMetadataConfig | None:
     # First, try task_metadata.json (preferred)
     metadata_path = spec_dir / "task_metadata.json"
     if metadata_path.exists():
-        try:
+        # ponytail: corrupt/unreadable task_metadata.json falls through to the
+        # requirements.json fallback below.
+        with contextlib.suppress(json.JSONDecodeError, OSError):
             with open(metadata_path) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
 
     # Fallback: check requirements.json["metadata"]
     requirements_path = spec_dir / "requirements.json"
     if requirements_path.exists():
-        try:
+        # ponytail: corrupt/unreadable requirements.json just means no metadata found
+        with contextlib.suppress(json.JSONDecodeError, OSError):
             with open(requirements_path) as f:
                 requirements = json.load(f)
                 if "metadata" in requirements and isinstance(
                     requirements["metadata"], dict
                 ):
                     return requirements["metadata"]
-        except (json.JSONDecodeError, OSError):
-            pass
 
     return None
 
@@ -813,8 +813,8 @@ def _load_openai_endpoint_by_label(label: str) -> dict | None:
         conn.close()
         if row:
             return {"base_url": row[0], "api_key": row[1], "default_model": row[2]}
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as exc:
+        logger.warning("llm_endpoints lookup by label failed, treating as unconfigured: %s", exc)
     return None
 
 
@@ -833,8 +833,8 @@ def _load_first_openai_endpoint() -> dict | None:
         conn.close()
         if row:
             return {"base_url": row[0], "api_key": row[1], "default_model": row[2]}
-    except sqlite3.Error:
-        pass
+    except sqlite3.Error as exc:
+        logger.warning("llm_endpoints lookup (first) failed, treating as unconfigured: %s", exc)
     return None
 
 

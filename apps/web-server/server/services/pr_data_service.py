@@ -492,7 +492,7 @@ class PRDataService:
                 review_data = json.loads(review_file.read_text())
                 last_reviewed_commit = review_data.get("reviewed_commit_sha")
             except (json.JSONDecodeError, OSError):
-                pass
+                logger.warning("failed to read review file %s", review_file, exc_info=True)
 
         # Get the current HEAD commit SHA of the PR
         # Use headRefOid instead of commits[-1].oid because the commits list

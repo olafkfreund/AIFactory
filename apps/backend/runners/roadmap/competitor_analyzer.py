@@ -139,8 +139,8 @@ Output your findings to competitor_analysis.json.
                     "competitor_analysis", True, [str(self.analysis_file)], [], 0
                 )
 
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as exc:
+            print_status(f"competitor_analysis.json is not valid JSON: {exc}", "warning")
 
         return None
 
