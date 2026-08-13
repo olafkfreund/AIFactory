@@ -39,7 +39,18 @@ jobs:
 
       - name: Read pinned hub SHA
         id: pin
-        run: echo "sha=$(cat aifactory/apps/backend/factory_common/.hub-sha)" >> "$GITHUB_OUTPUT"
+        # Validated before use, because this file comes from the PR's own tree:
+        # on a fork PR its contents are attacker-controlled, and the value is
+        # handed straight to actions/checkout as a `ref`. Reject anything that is
+        # not a bare 40-character commit id.
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < aifactory/apps/backend/factory_common/.hub-sha)"
+          if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "factory_common/.hub-sha is not a 40-character commit SHA: '${sha}'" >&2
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       # No continue-on-error: an unreachable hub is a gate that cannot run, and
       # per standards rule 4.7 that must fail rather than pass. This step used
@@ -55,6 +66,11 @@ jobs:
           repository: olafkfreund/Factory
           ref: ${{ steps.pin.outputs.sha }}
           path: factory-hub
+          # This tree is only ever diffed, never executed, and nothing here runs
+          # git against it afterwards. Do not leave the job token behind in
+          # factory-hub/.git/config, where a checked-out ref chosen by the PR
+          # would sit next to it.
+          persist-credentials: false
 
       - name: Diff vendored factory_common against the pinned hub canonical
         run: |

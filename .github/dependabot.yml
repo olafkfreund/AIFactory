@@ -66,3 +66,34 @@ updates:
     ignore:
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
+
+  # github-actions. Added alongside the SHA pinning in Factory#711.
+  #
+  # Why it is not optional: the two third-party action refs in .github/workflows/
+  # are now pinned to a 40-character commit SHA. That closes the mutable-tag
+  # supply-chain path, and it also freezes the action at that commit forever --
+  # an upstream SECURITY fix no longer arrives by moving tag. Without this
+  # updater the pins silently rot, which is a worse position than the tags were
+  # in. Dependabot reads the `# vX.Y.Z` trailing comment on each pin and keeps
+  # both the SHA and the comment current, which is why the pins carry that format.
+  #
+  # Weekly, not daily: an action pin does not rot in one direction the way a base
+  # image digest does, and the docker lane above already carries the daily cost.
+  #
+  # Grouped into ONE pull request, so this lane cannot reintroduce the
+  # nine-PRs-in-one-run noise that got routine updates switched off here (#34).
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: dev
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"

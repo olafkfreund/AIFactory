@@ -238,7 +238,7 @@ jobs:
 
       - name: Install Syft
         if: steps.detect.outputs.should_release == 'true'
-        uses: anchore/sbom-action/download-syft@v0.17.8
+        uses: anchore/sbom-action/download-syft@55dc4ee22412511ee8c3142cbea40418e6cec693  # v0.17.8
 
       - name: Generate SBOMs + attest both images with cosign
         if: steps.detect.outputs.should_release == 'true'
