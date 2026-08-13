@@ -541,10 +541,52 @@ class KubejobMixin:
                 # #671 OAuth-env: return the pooled credential checked out at
                 # dispatch now that the Job is done (mirrors the subprocess path).
                 self._release_task_credential(job_id)
+            else:
+                # #1249: still running → this IS the tick that used to be the
+                # ONLY route into check_review_obligation (monitor_process's
+                # subprocess-tied loop), which never runs for a kubejob build.
+                # A peer review requested but never started stayed stuck
+                # forever with nothing to log, because the failure mode is
+                # silence. Every active kubejob row passes through here, so
+                # this is the one place that fixes it for both the direct
+                # and queue-drained paths.
+                await self._redrive_kubejob_review(job_id)
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
         return out
+
+    async def _redrive_kubejob_review(self, job_id: str) -> None:
+        """Re-drive a stuck peer review for a still-running kubejob build (#1249).
+
+        ``check_review_obligation`` early-outs unless the MAIN spec dir has a
+        ``qa_review_cycle.json`` — but the running build writes that file into
+        its WORKTREE spec dir, and nothing copies it to main under kubejob (the
+        generic worktree-sync loop that used to do that never runs here
+        either). ``check_review_obligation`` now syncs that one file itself
+        before checking, so calling it here is enough — no new sync loop.
+        Best-effort throughout: a redrive failure must never affect reconcile.
+        """
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return
+        try:
+            from ..routes.projects import resolve_project_path  # noqa: PLC0415
+            from . import review_redrive_service  # noqa: PLC0415
+
+            project_path = resolve_project_path(project_id)
+        except Exception:  # noqa: BLE001 - unknown/unresolvable project
+            return
+        try:
+            await asyncio.to_thread(
+                review_redrive_service.check_review_obligation, project_path, spec_id
+            )
+        except Exception:  # noqa: BLE001 - redrive must never crash reconcile
+            _log.debug(
+                "[AgentService] kubejob review re-drive check skipped for %s",
+                job_id,
+                exc_info=True,
+            )
 
     async def kubejob_reconcile_loop(
         self, *, stop: asyncio.Event, interval_seconds: float = 15.0
