@@ -1,58 +1,68 @@
 """
-SSRF guard for agent web tools (#370 / epic #318)
-=================================================
+SSRF guard for agent web tools (#370 / epic #318) — now a re-export
+==================================================================
 
 The agent runs under ``permission_mode="bypassPermissions"`` with ``WebFetch``
 granted, and the only PreToolUse hook gates ``Bash`` — so a prompt-injected /
-LLM-chosen URL reaches the fetch with no validation. This guard rejects URLs
-whose host resolves to a non-public address (cloud metadata 169.254.169.254,
-loopback, RFC-1918 private ranges, link-local, reserved) and non-http(s)
-schemes (``file://`` etc.).
+LLM-chosen URL reaches the fetch with no validation. ``hooks.py`` blocks that
+with the guard below.
 
-Stdlib-only. Mirrors ``_assert_url_not_ssrf`` added for the LLM ``base_url`` in
-#323 (``apps/web-server/server/routes/llm_endpoints.py``); duplicated here
-because the agent runtime (apps/backend) and the web-server are separate import
-roots.
+This module used to carry its own 30-line copy of the check, and said so:
+"duplicated here because the agent runtime (apps/backend) and the web-server
+are separate import roots". That reasoning held right up until the copies
+diverged — ``services/url_safety.py`` grew an explicit cloud-metadata refusal
+that survives a posture change, and this file did not. A drifted copy is worse
+than no guard at all: it still LOOKS like a guard, so CodeQL's barrier (which
+is registered on ``assert_safe_outbound_url`` by name) clears nothing here and
+no alert ever fires to tell you.
 
-Note on DNS rebinding: this resolves the host and checks the resolved IP, then
-the SDK re-resolves at fetch time (TOCTOU). That window is the same posture as
-#323; fully closing it needs IP-pinning at the transport layer, which the SDK
-WebFetch tool does not expose. Tracked as residual in #370.
+So the import root is bridged instead. The whole repo ships in one image
+(``COPY . /home/projects/MagesticAI/``), and the web-server already reaches the
+other way for the same reason — see ``server/routes/mcp.py`` and
+``tasks_usage.py``, which add ``apps/backend`` to ``sys.path`` to import the
+catalog and attribution modules. ``server.services.url_safety`` is stdlib-only
+and ``server/__init__.py`` / ``server/services/__init__.py`` are empty, so
+nothing web-serverish is dragged into the agent runtime by this.
+
+If this import fails, the whole ``security`` package fails to import and the
+agent will not start. That is the correct direction to fail: an agent running
+with ``WebFetch`` and no SSRF guard is the thing #370 exists to prevent.
+
+The permanent home is ``factory_common`` — the repo's stdlib-only
+"importable anywhere" layer, which exists for exactly this. It is vendored
+byte-exact from the Factory hub behind a drift gate, so moving the guard there
+has to land in the hub first and cannot be done from this repo alone. Tracked
+in #1270.
+
+Note on DNS rebinding: the guard resolves the host and checks the resolved IP,
+then the SDK re-resolves at fetch time (TOCTOU). Unchanged by this refactor;
+closing it needs IP-pinning at the transport layer, which the SDK's WebFetch
+tool does not expose. Residual on #370.
+
+Note on redirects: the canonical module also ships
+``build_no_redirect_opener()``, but this call site cannot use it — the SDK
+performs the fetch, not us, and it follows 30x itself. So a public URL that
+redirects to metadata is still reachable through ``WebFetch``. That gap
+predates this change and is NOT closed by it; it is on #1269.
 """
 
 from __future__ import annotations
 
-import ipaddress
-import socket
-import urllib.parse
+import sys
+from pathlib import Path
 
+_WEB_SERVER = Path(__file__).resolve().parents[2] / "web-server"
+if str(_WEB_SERVER) not in sys.path:
+    # Appended, not inserted at 0: this only needs to make `server` resolvable,
+    # and `server` is a generic enough name that jumping the queue ahead of
+    # site-packages would be a way to shadow somebody else's module.
+    sys.path.append(str(_WEB_SERVER))
 
-def assert_url_not_ssrf(url: str) -> None:
-    """Raise ``ValueError`` if ``url`` is non-http(s) or resolves to a
-    non-public address (SSRF). Returns ``None`` when the URL is safe to fetch."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"unsupported URL scheme {parsed.scheme!r} (only http/https)")
-    host = parsed.hostname
-    if not host:
-        raise ValueError("URL has no host")
+from server.services.url_safety import assert_safe_outbound_url  # noqa: E402
 
-    default_port = 443 if parsed.scheme == "https" else 80
-    try:
-        infos = socket.getaddrinfo(
-            host, parsed.port or default_port, proto=socket.IPPROTO_TCP
-        )
-    except socket.gaierror as exc:
-        raise ValueError(f"cannot resolve host {host!r}: {exc}") from exc
+# The historical name, kept so `hooks.py` and #370's tests read unchanged. Same
+# strict posture (public addresses only) and same `ValueError` as the copy it
+# replaces.
+assert_url_not_ssrf = assert_safe_outbound_url
 
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local  # 169.254.0.0/16 — cloud metadata
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            raise ValueError(f"refusing to fetch non-public address {ip} (SSRF)")
+__all__ = ["assert_safe_outbound_url", "assert_url_not_ssrf"]

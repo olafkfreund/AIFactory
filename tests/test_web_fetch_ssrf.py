@@ -29,6 +29,10 @@ SSRF_URLS = [
     "http://192.168.1.10/admin",  # RFC1918 private
     "http://0.0.0.0/",  # unspecified
     "https://192.168.0.1/",  # private over https
+    # IPv6 instance metadata. Unique-local, so neither is_link_local nor
+    # is_reserved catches it -- the copy this guard replaced refused it only as
+    # a side effect of its is_private clause (#1265).
+    "http://[fd00:ec2::254]/latest/meta-data/",
 ]
 
 # Non-http(s) schemes must be refused outright.
@@ -64,8 +68,25 @@ class TestUrlGuard:
 
     @pytest.mark.parametrize("url", SAFE_URLS)
     def test_public_urls_pass(self, url):
-        # Returns None (does not raise) for a safe URL.
-        assert assert_url_not_ssrf(url) is None
+        # Returns the url (does not raise) for a safe URL. It used to return
+        # None; the canonical guard hands the checked value back so a call site
+        # cannot validate one string and then fetch another (#1264). This hook
+        # ignores the return -- the SDK does the fetching -- so the change is
+        # visible only here.
+        assert assert_url_not_ssrf(url) == url
+
+    def test_the_backend_guard_is_the_canonical_one_not_a_copy(self):
+        """#1265: this is an identity check on purpose.
+
+        A "same behaviour" test passes just as happily against a re-introduced
+        local copy, which is exactly how the three copies drifted apart in the
+        first place. This one cannot: it fails the moment `security.url_guard`
+        stops being the canonical function itself.
+        """
+        from security import url_guard
+        from server.services.url_safety import assert_safe_outbound_url
+
+        assert url_guard.assert_url_not_ssrf is assert_safe_outbound_url
 
 
 class TestWebFetchHook:
