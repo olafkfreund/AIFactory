@@ -27,6 +27,7 @@ from .config import (
     get_settings,
     warn_if_auth_disabled,
 )
+from .crypto.kms import enforce_kms_safety
 from .database.engine import init_db
 from .logging_config import setup_logging
 from .routes import (
@@ -707,6 +708,10 @@ if __name__ == "__main__":
 
     # #555: never bind a wildcard CORS origin alongside credentialed CORS.
     enforce_cors_safety(settings)
+
+    # #1290: never come up pretending to encrypt. A selected KMS backend that
+    # cannot be constructed would silently write credentials in PLAINTEXT.
+    enforce_kms_safety()
 
     # Build uvicorn config
     uvicorn_config = {
