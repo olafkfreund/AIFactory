@@ -17,12 +17,13 @@ targetOrigin an attacker can set is `'*'` with extra steps.
 
 from __future__ import annotations
 
+import pytest
 from server.routes import email
 
 PORTAL = "https://portal.example.com"
 
 
-def _render(monkeypatch, origins: list[str]) -> str:
+def _render(monkeypatch: pytest.MonkeyPatch, origins: list[str]) -> str:
     """Render the result page with ``origins`` configured, returning its HTML."""
     settings = email.get_settings()
     monkeypatch.setattr(settings, "CORS_ORIGINS", origins)
@@ -32,22 +33,24 @@ def _render(monkeypatch, origins: list[str]) -> str:
         email="alice@example.com",
         provider="outlook",
     )
-    return response.body.decode()
+    return bytes(response.body).decode()
 
 
-def test_the_configured_origin_is_the_target(monkeypatch) -> None:
+def test_the_configured_origin_is_the_target(monkeypatch: pytest.MonkeyPatch) -> None:
     html = _render(monkeypatch, [PORTAL])
     assert f"window.opener.postMessage(payload, '{PORTAL}');" in html
 
 
-def test_the_wildcard_target_origin_is_gone(monkeypatch) -> None:
+def test_the_wildcard_target_origin_is_gone(monkeypatch: pytest.MonkeyPatch) -> None:
     """The bug itself. ``'*'`` must not appear as a postMessage target."""
     html = _render(monkeypatch, [PORTAL])
     assert "postMessage(payload, '*')" not in html
     assert ", '*')" not in html
 
 
-def test_every_configured_origin_is_addressed_individually(monkeypatch) -> None:
+def test_every_configured_origin_is_addressed_individually(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """One targeted post per configured origin, rather than one guess.
 
     A deployment may legitimately serve the portal from more than one origin,
@@ -62,7 +65,7 @@ def test_every_configured_origin_is_addressed_individually(monkeypatch) -> None:
 
 
 def test_a_wildcard_in_the_configured_origins_is_dropped_not_forwarded(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``APP_CORS_ORIGINS='*'`` must not become a wildcard targetOrigin.
 
@@ -74,14 +77,18 @@ def test_a_wildcard_in_the_configured_origins_is_dropped_not_forwarded(
     assert f"window.opener.postMessage(payload, '{PORTAL}');" in html
 
 
-def test_no_configured_origin_means_no_post_at_all(monkeypatch) -> None:
+def test_no_configured_origin_means_no_post_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Fail closed: render the outcome, post nothing. Never fall back to '*'."""
     html = _render(monkeypatch, [])
     assert "postMessage" not in html
     assert "Connected" in html
 
 
-def test_the_address_is_not_in_a_page_that_posts_nowhere_useful(monkeypatch) -> None:
+def test_the_address_is_not_in_a_page_that_posts_nowhere_useful(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The payload still carries the address, so the target is what protects it.
 
     Stated as a test so nobody 'fixes' #1285 by deleting the email field and
