@@ -265,7 +265,11 @@ def test_a_failed_probe_does_not_say_why_it_failed() -> None:
         errors.add(result.error)
 
     assert len(errors) == 1, f"the failure reason leaks through: {errors}"
-    assert "refused" not in errors.pop().lower()
+    # Pop OUTSIDE the assert (py/side-effect-in-assert): `python -O` strips
+    # assert statements, so a mutation inside one silently stops happening.
+    # Harmless as the last line of this test, but the shape is the defect.
+    only_error = errors.pop()
+    assert "refused" not in only_error.lower()
 
 
 def test_a_real_http_status_from_the_endpoint_is_still_reported() -> None:
