@@ -272,6 +272,101 @@ async def test_add_project_still_expands_tilde(registry, monkeypatch, tmp_path):
     assert res["path"] == str((fake_home / "code" / "thing").resolve())
 
 
+# --------------------------------------------------------------------------
+# Write side: clone mode (#1313)
+# --------------------------------------------------------------------------
+#
+# The third `path` writer. Local mode and `update_project` were confined by
+# #1306; the clone branch registered `clone_or_update(...).resolve()` raw, and
+# the slug it builds that path from let `..` through.
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    """A workspace root plus a git that clones nothing.
+
+    The point of these tests is which path reaches the registry, not whether
+    git works, so `_run_git` just materialises the target directory. The root
+    is a tmp_path CHILD, so its parent (the stand-in for `~/.aifactory`, where
+    projects.json and the credential store live) is a real, escapable
+    directory rather than something the test invented.
+    """
+    root = tmp_path / "dot-aifactory" / "workspaces"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("PROJECT_WORKSPACE_ROOT", str(root))
+
+    async def fake_run_git(args, *, cwd, timeout):
+        if args and args[0] == "clone":
+            Path(args[-1]).mkdir(parents=True, exist_ok=True)
+        return ""
+
+    monkeypatch.setattr(
+        "server.services.project_workspace_service._run_git", fake_run_git
+    )
+    return root
+
+
+async def test_add_project_clone_mode_registers_a_normal_repo(registry, workspace):
+    """A fix that breaks legitimate cloning is worse than the bug."""
+    res = await add_project(
+        ProjectCreate(gitUrl="https://example.test/acme/widget.git"), None, None
+    )
+
+    assert res["path"] == str(workspace / "acme-widget")
+    saved = json.loads(registry.file.read_text())
+    assert str(workspace / "acme-widget") in {e["path"] for e in saved.values()}
+
+
+async def test_add_project_clone_mode_refuses_a_traversal_git_url(registry, workspace):
+    """THE slug test. Restore ``.`` to the slug's character class and this goes
+    red: the URL path ``..`` survives, and the clone — and the registry entry —
+    become ``workspace_root().parent``, the directory holding projects.json.
+
+    Asserts WHERE the path lands, not merely that something raised: the parent
+    directory must not be registered and must not have been cloned into.
+    """
+    with pytest.raises(HTTPException) as exc:
+        await add_project(ProjectCreate(gitUrl="https://example.test/.."), None, None)
+
+    assert exc.value.status_code == 400
+    saved = json.loads(registry.file.read_text())
+    assert saved.keys() == {"proj-alpha", "proj-beta"}
+    assert str(workspace.parent) not in {e["path"] for e in saved.values()}
+    assert not (workspace.parent / ".git").exists(), "nothing was cloned over it"
+
+
+async def test_add_project_clone_mode_confines_whatever_the_clone_returns(
+    registry, workspace, outside, monkeypatch
+):
+    """THE write test. Delete the ``within_roots`` call in the clone branch and
+    this goes red.
+
+    The registry invariant cannot rest on `slug_from_git_url` staying correct:
+    `clone_or_update` also takes a `slug` override and follows the remote's
+    redirects. So the route confines the path it got back, whatever produced
+    it — here a clone service that hands back a directory outside the
+    workspace root entirely.
+    """
+
+    async def clone_somewhere_else(**kwargs):
+        return outside
+
+    monkeypatch.setattr(
+        "server.services.project_workspace_service.clone_or_update",
+        clone_somewhere_else,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await add_project(
+            ProjectCreate(gitUrl="https://example.test/acme/widget.git"), None, None
+        )
+
+    assert exc.value.status_code == 403
+    saved = json.loads(registry.file.read_text())
+    assert saved.keys() == {"proj-alpha", "proj-beta"}
+    assert str(outside) not in {e["path"] for e in saved.values()}
+
+
 async def test_update_project_cannot_repoint_outside(registry, outside):
     """A PUT is the same trust decision as a POST."""
     with pytest.raises(HTTPException) as exc:

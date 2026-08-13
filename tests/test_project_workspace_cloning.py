@@ -126,6 +126,38 @@ def test_slug_empty_input_does_not_crash():
     assert slug_from_git_url("https://example.test") == "workspace"
 
 
+@pytest.mark.parametrize(
+    "git_url",
+    [
+        "https://example.test/..",
+        "https://example.test/../",
+        "git@example.test:..",
+        "https://example.test/.",
+    ],
+)
+def test_slug_refuses_a_traversal_url_path(git_url):
+    """#1313. ``.`` is inside the slug's character class, so ``..`` survived it
+    intact and ``workspace_root() / slug`` climbed a level — onto the directory
+    holding ``projects.json`` and the credential store.
+
+    Rejected, not rewritten: the caller learns their URL was refused instead of
+    getting a project registered under a directory name they never asked for.
+    """
+    from server.error_ref import InputRejectedError
+    from server.services.project_workspace_service import slug_from_git_url
+
+    with pytest.raises(InputRejectedError):
+        slug_from_git_url(git_url)
+
+
+def test_slug_still_allows_dots_inside_a_repo_name():
+    """The guard is against the ``.``/``..`` COMPONENTS, not against dots.
+    ``dotfiles.d`` is a real repo name and must keep working."""
+    from server.services.project_workspace_service import slug_from_git_url
+
+    assert slug_from_git_url("https://example.test/me/dotfiles.d") == "me-dotfiles.d"
+
+
 # ---------------------------------------------------------------------------
 # workspace_root
 # ---------------------------------------------------------------------------
