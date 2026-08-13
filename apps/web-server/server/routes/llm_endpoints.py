@@ -137,14 +137,31 @@ def _probe_models(
     and available model IDs.  Catches all network errors so the caller gets
     structured feedback instead of an exception.
     """
-    # SSRF guard (#323 H6): block private/metadata hosts before connecting.
-    # Strict posture (allow_private defaults to False) -- byte-for-byte the
-    # behaviour of the local copy this replaced. It is NOT obviously the right
-    # posture for a module whose docstring advertises LM Studio and vLLM, both
-    # of which are self-hosted; see #1268 before changing it, because loosening
-    # a guard is not a thing to do as a side effect of deduplicating one.
+    # SSRF guard (#323 H6). PERMISSIVE posture, decided in #1268 on product
+    # purpose: this module exists to test user-defined OpenAI-compatible
+    # servers, and its own docstring names LM Studio and vLLM -- both
+    # self-hosted, both on localhost. The strict posture refused two of the
+    # three targets the module advertises. The sibling routes in
+    # routes/settings.py (/openai-compat/models, /openai-compat/test) already
+    # use allow_private=True for the identical class of target, so the previous
+    # state was drift between two call sites answering the same question, not a
+    # considered posture.
+    #
+    # Deliberately NOT decided on "this route is behind Depends(get_current_user)".
+    # An authenticated user is still not the server's network.
+    #
+    # RESIDUAL, recorded rather than implied: with allow_private=True an
+    # authenticated caller can reach the server's private network through this
+    # route, and can infer what is listening there from the timing and error
+    # differences between "connection refused", "not JSON", and a real answer.
+    # What bounds it is what BOTH postures still refuse -- the cloud metadata
+    # addresses, non-http(s) schemes, and redirects (build_no_redirect_opener,
+    # below) -- so the highest-value targets stay closed. DNS rebinding is open
+    # in both postures; see the url_safety module docstring.
     try:
-        url = assert_safe_outbound_url(f"{base_url.rstrip('/')}/v1/models")
+        url = assert_safe_outbound_url(
+            f"{base_url.rstrip('/')}/v1/models", allow_private=True
+        )
     except ValueError as exc:
         return EndpointTestResponse(ok=False, error=str(exc))
     req_headers: dict[str, str] = {"Accept": "application/json"}
