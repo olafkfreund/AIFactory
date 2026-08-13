@@ -303,12 +303,14 @@ class SpecCreationMixin:
         # passive FIFO. The build phase re-uses the same spec_id session.
         from ..rmux.integration import create_if_enabled as _rmux_create
 
-        try:
-            await _rmux_create(spec_id, project_path, " ".join(cmd))
-        except Exception:
-            logger.warning(
-                "[AgentService] rmux create hook (spec creation) raised (ignored); spec_id=%s",
-                sanitize_log(spec_id),
-            )
+        if spec_id is not None:
+            try:
+                await _rmux_create(spec_id, project_path, " ".join(cmd))
+            except Exception:
+                logger.warning(
+                    "[AgentService] rmux create hook (spec creation) raised (ignored); "
+                    "spec_id=%s",
+                    sanitize_log(spec_id),
+                )
 
         return proc
