@@ -41,7 +41,11 @@ interface EmailIntegrationProps {
  * status banner ("Connection failed, re-enter your password at ...").
  */
 function allowedOAuthOrigins(): Set<string> {
-  const base = (import.meta.env.VITE_API_BASE_URL as string | undefined) || '/api';
+  // Explicit about '' as well as undefined: an unset Vite env var arrives as the
+  // empty string, and `new URL('', origin)` resolves to the current document
+  // rather than to the API. Same '/api' fallback api-client.ts uses.
+  const configured = import.meta.env.VITE_API_BASE_URL;
+  const base = configured === undefined || configured === '' ? '/api' : configured;
   // A relative base resolves to window.location.origin, so the Set collapses to
   // one entry in the default deployment.
   return new Set([window.location.origin, new URL(base, window.location.origin).origin]);

@@ -56,20 +56,27 @@ test('execFileSync does not interpret shell metacharacters in an argument', () =
   assert.equal(out, payload);
 });
 
-test('no script in scripts/ builds a shell command by interpolation', () => {
+test('no script in scripts/ builds a shell command dynamically', () => {
   // The root-cause check behind the js/indirect-command-line-injection and
   // js/shell-command-injection-from-environment fixes: every one of those alerts
-  // came from a shell string with a hole in it. Reintroduce that shape anywhere
-  // under scripts/ and this test goes red.
+  // came from a shell string assembled at run time. Reintroduce that shape
+  // anywhere under scripts/ and this test goes red.
   //
-  // execSync with a constant command stays allowed: `command -v ffmpeg` needs a
-  // shell builtin and carries no interpolation.
+  // The rule is deliberately syntactic rather than taint-based: exec/execSync
+  // must be called with a quoted string literal, never a template literal and
+  // never a variable. That keeps `execSync('command -v ffmpeg')` -- a constant
+  // needing a shell builtin -- while rejecting both `execSync(`...${x}...`)`
+  // and the `const cmd = ...; execSync(cmd)` spelling of the same thing.
+  const DYNAMIC_SHELL_CALL = /(?<![.\w])(?:exec|execSync)\(\s*(?!['"])/;
+  // Comments are stripped first: several of these files document the shape they
+  // used to have, and the tripwire must not fire on its own explanation.
+  const stripComments = (src) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const offenders = [];
   for (const name of fs.readdirSync(dir)) {
     if (!/\.(js|cjs|mjs)$/.test(name) || name.endsWith('.test.mjs')) continue;
-    const src = fs.readFileSync(path.join(dir, name), 'utf8');
-    if (/\b(?:exec|execSync|spawn|spawnSync)\(\s*`[^`]*\$\{/.test(src)) offenders.push(name);
+    if (DYNAMIC_SHELL_CALL.test(stripComments(fs.readFileSync(path.join(dir, name), 'utf8')))) offenders.push(name);
   }
   assert.deepEqual(offenders, []);
 });
