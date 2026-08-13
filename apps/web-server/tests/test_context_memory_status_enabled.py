@@ -45,7 +45,9 @@ def _memory_status(tmp_path: Path, project_path: Path) -> dict[str, Any]:
     # on the SOURCE module — `server.project_registry` since #1317 — and pointing
     # at the real projects file rather than stubbing the loader keeps the
     # production read path.
-    with patch.object(project_registry, "get_projects_file", return_value=projects_file):
+    with patch.object(
+        project_registry, "get_projects_file", return_value=projects_file
+    ):
         result = asyncio.run(context.get_project_context("p1"))
     status: dict[str, Any] = result["data"]["memoryStatus"]
     return status
