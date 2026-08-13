@@ -12,6 +12,7 @@ the id and every test below that asserts on a RESPONSE BODY goes red.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from unittest.mock import patch
@@ -148,12 +149,26 @@ class _FailingPtyManager:
         raise BOOM
 
 
-def test_a_real_route_response_body_leaks_nothing(tmp_path: Path) -> None:
+def test_a_real_route_response_body_leaks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """POST /api/terminals, with the PTY manager failing the way it does in prod.
 
     Asserted on the RESPONSE BODY, not on the status code: a 503 with the
     hostname in `detail` is exactly the bug this closes.
+
+    #1278 confines `cwd` to the browsable roots, so a bare tmp_path is refused
+    with 403 before the PTY manager is reached and the 503 this test is about
+    never happens. `APP_FILE_BROWSE_ROOTS` is the documented operator escape
+    hatch for exactly this — a deployment whose code lives off $HOME — so the
+    test uses it rather than weakening the confinement. Two roots, because with
+    one "confines to the configured set" and "confines to the first entry" are
+    the same observation.
     """
+    monkeypatch.setenv(
+        "APP_FILE_BROWSE_ROOTS", f"{tmp_path.parent}{os.pathsep}{tmp_path}"
+    )
+
     app = FastAPI()
     app.include_router(terminal.router, prefix="/api/terminals")
 
