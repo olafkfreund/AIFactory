@@ -401,14 +401,14 @@ class SecurityScanner:
                             )
                         )
                 except json.JSONDecodeError:
-                    pass
+                    result.scan_errors.append("pip-audit returned invalid JSON output")
 
         except FileNotFoundError:
             pass  # pip-audit not available
         except subprocess.TimeoutExpired:
-            pass
-        except Exception:
-            pass
+            result.scan_errors.append("pip-audit timed out")
+        except Exception as e:
+            result.scan_errors.append(f"pip-audit error: {e!s}")
 
     def _is_python_project(self, project_dir: Path) -> bool:
         """Check if this is a Python project."""
