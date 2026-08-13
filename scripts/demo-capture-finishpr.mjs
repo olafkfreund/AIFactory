@@ -3,7 +3,8 @@
 //
 //   node scripts/demo-capture-finishpr.mjs <title-fragment> <out-dir>
 import { chromium } from '@playwright/test';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { assertNotOption, findFilesUnder } from './argv-safety.cjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,9 +22,11 @@ function findChrome() {
   for (const v of ['chromium-1217', 'chromium-1223', 'chromium-1208']) {
     const p = path.join(root, v, 'chrome-linux64', 'chrome'); if (fs.existsSync(p)) return p;
   }
-  try { return execSync(`find -L ${root} -maxdepth 3 -type f -name chrome 2>/dev/null | head -1`).toString().trim(); } catch { return undefined; }
+  // argv array -- $PLAYWRIGHT_BROWSERS_PATH must not reach a shell.
+  try { return findFilesUnder(root, 'chrome') || undefined; } catch { return undefined; }
 }
-function ffmpeg() { try { return execSync('command -v ffmpeg').toString().trim() || 'ffmpeg'; } catch { return 'ffmpeg'; } }
+// Constant command, no interpolation; `command` is a shell builtin.
+function ffmpeg() { try { return execSync('command -v ffmpeg', { encoding: 'utf8' }).trim() || 'ffmpeg'; } catch { return 'ffmpeg'; } }
 
 let n = 0;
 async function shot(page, name) { const f = path.join(OUT, `${String(++n).padStart(2,'0')}-${name}.png`); await page.screenshot({ path: f }); log('SHOT', path.basename(f)); }
@@ -95,7 +98,12 @@ async function shot(page, name) { const f = path.join(OUT, `${String(++n).padSta
   if (webm) {
     const out = path.join(OUT, 'finish-pr.mp4');
     try {
-      execSync(`'${ffmpeg()}' -y -i '${webm}' -vf "scale=1280:-2" -r 24 -pix_fmt yuv420p -movflags +faststart -an '${out}'`, { stdio: 'ignore' });
+      execFileSync(assertNotOption(ffmpeg(), 'ffmpeg path'), [
+        '-y', '-i', webm,
+        '-vf', 'scale=1280:-2',
+        '-r', '24', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an',
+        out,
+      ], { stdio: 'ignore' });
       log('VIDEO', out);
     } catch (e) { log('transcode failed', e.message); log('WEBM', webm); }
   }

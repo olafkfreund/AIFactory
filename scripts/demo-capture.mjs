@@ -2,7 +2,8 @@
 // Headless Playwright against the NixOS-patched chromium. Run:
 //   node scripts/demo-capture.mjs "<task title fragment>" /out/dir
 import { chromium } from '@playwright/test';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { assertNotOption, findFilesUnder } from './argv-safety.cjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,9 +25,9 @@ function findChrome() {
     const p = path.join(root, ver, 'chrome-linux64', 'chrome');
     if (fs.existsSync(p)) return p;
   }
-  // fallback: search
+  // fallback: search (argv array -- $PLAYWRIGHT_BROWSERS_PATH must not reach a shell)
   try {
-    return execSync(`find -L ${root} -maxdepth 3 -type f -name chrome 2>/dev/null | head -1`).toString().trim();
+    return findFilesUnder(root, 'chrome') || undefined;
   } catch { return undefined; }
 }
 
@@ -148,9 +149,14 @@ const log = (...a) => console.log(...a);
     mp4 = path.join(OUT, 'demo-screencast.mp4');
     const root = process.env.PLAYWRIGHT_BROWSERS_PATH || '';
     let ff = 'ffmpeg';
-    try { ff = execSync(`find -L ${root} -maxdepth 3 -type f -name ffmpeg 2>/dev/null | head -1`).toString().trim() || 'ffmpeg'; } catch {}
+    try { ff = findFilesUnder(root, 'ffmpeg') || 'ffmpeg'; } catch {}
     try {
-      execSync(`'${ff}' -y -i '${webm}' -vf "scale=1600:-2" -pix_fmt yuv420p -movflags +faststart '${mp4}'`, { stdio: 'ignore' });
+      execFileSync(assertNotOption(ff, 'ffmpeg path'), [
+        '-y', '-i', webm,
+        '-vf', 'scale=1600:-2',
+        '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+        mp4,
+      ], { stdio: 'ignore' });
     } catch (e) { mp4 = webm; }
   }
   console.log('SHOTS_JSON', JSON.stringify(shots));
