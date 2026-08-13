@@ -454,7 +454,6 @@ def main() -> int:
         return 0
     finally:
         sys.stdout.write(SHOW_CURSOR + "\n")
-    return 0
 
 
 if __name__ == "__main__":

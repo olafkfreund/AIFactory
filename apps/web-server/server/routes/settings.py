@@ -1145,8 +1145,6 @@ async def pull_ollama_model(
 ):
     """Pull (download) an Ollama model."""
     try:
-        import json
-
         import httpx
 
         # SSRF: see /ollama/models above.

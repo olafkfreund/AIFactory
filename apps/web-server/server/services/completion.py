@@ -46,13 +46,6 @@ from .billing import classify_billing_mode
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
-# Envelope grew additively in #466 (CloudEvents-core + id + trace context).
-# v1.3 (#45 P1) adds an additive per-worker breakdown to the usage block:
-# ``usage.workers[]`` + ``usage.by_provider{}`` / ``usage.by_model{}`` rollups.
-# The scalar usage fields are KEPT verbatim, so old consumers ignore the new
-# fields and still validate — an additive minor bump.
-_SCHEMA_VERSION = "1.3"
-
 # CloudEvents 1.0 (CNCF) — the spec version we align to, and the reverse-DNS
 # ``type`` for AIFactory's terminal completion event. ``source`` is overridable
 # per deployment so a multi-instance fleet can be told apart by the consumer.

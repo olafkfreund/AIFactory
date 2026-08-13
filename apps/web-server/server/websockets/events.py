@@ -156,8 +156,6 @@ async def events_websocket(websocket: WebSocket):
 
 
 async def emit_task_progress(task_id: str, progress: dict):
-    import logging
-
     logging.getLogger(__name__).info(
         f"[WebSocket] Emitting task:progress - taskId: {task_id}, percentage: {progress.get('percentage', 'N/A')}%"
     )
@@ -165,8 +163,6 @@ async def emit_task_progress(task_id: str, progress: dict):
 
 
 async def emit_task_error(task_id: str, error: str):
-    import logging
-
     logging.getLogger(__name__).info(
         f"[WebSocket] Emitting task:error - taskId: {task_id}, error: {error[:100]}..."
     )
@@ -174,8 +170,6 @@ async def emit_task_error(task_id: str, error: str):
 
 
 async def emit_task_status(task_id: str, status: str, review_reason: str | None = None):
-    import logging
-
     payload = {"taskId": task_id, "status": status}
     if review_reason:
         payload["reviewReason"] = review_reason
@@ -190,8 +184,6 @@ async def emit_task_status(task_id: str, status: str, review_reason: str | None 
 
 
 async def emit_task_log(task_id: str, log: str):
-    import logging
-
     # Only log the first 50 chars to avoid flooding logs with full log content
     log_preview = (
         log[:50].replace("\n", "\\n") if len(log) > 50 else log.replace("\n", "\\n")
@@ -204,7 +196,6 @@ async def emit_task_log(task_id: str, log: str):
 
 async def emit_task_update(task_id: str, task_data: dict):
     """Emit task data update for frontend to refresh task card."""
-    import logging
 
     exec_progress = task_data.get("executionProgress", {})
     phase = exec_progress.get("phase", "N/A") if exec_progress else "N/A"
@@ -231,7 +222,6 @@ async def emit_insights_status(project_id: str, status: str):
 
 async def emit_profile_switch(task_id: str, switch_data: dict):
     """Emit profile switch event for reactive failover."""
-    import logging
 
     from_profile = switch_data.get("fromProfile", "N/A")
     to_profile = switch_data.get("toProfile", "N/A")
@@ -257,7 +247,6 @@ async def emit_task_logs_stream(spec_id: str, chunk: dict):
             - tool: (optional) { name: string, input?: string, success?: boolean }
             - subtask_id: (optional) Current subtask identifier
     """
-    import logging
 
     chunk_type = chunk.get("type", "unknown")
     content_preview = (
@@ -287,7 +276,6 @@ async def emit_subtask_update(
         status: The new status ("pending", "in_progress", "completed", "failed")
         previous_status: The previous status (optional, for logging/debugging)
     """
-    import logging
 
     logger = logging.getLogger(__name__)
     if previous_status:

@@ -2397,8 +2397,6 @@ async def discard_worktree(
         if not projects_file.exists():
             return {"success": False, "error": "Projects file not found"}
 
-        import json
-
         projects_data = json.loads(projects_file.read_text())
 
         # Handle dict format where keys are project IDs

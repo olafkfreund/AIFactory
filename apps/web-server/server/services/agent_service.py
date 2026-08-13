@@ -361,7 +361,6 @@ class AgentService(
         (plan_review / human_review checkpoints) keep the default ``True`` so
         kanban gets subtask data immediately.
         """
-        import logging
 
         logger = logging.getLogger(__name__)
         plan_file = (
@@ -600,8 +599,6 @@ class AgentService(
         go parallel without an explicit manual start.
         """
         try:
-            import json
-
             meta_file = (
                 project_path / ".aifactory" / "specs" / spec_id / "task_metadata.json"
             )
@@ -853,7 +850,6 @@ class AgentService(
             workers: When set with ``parallel``, passes ``--workers N`` to cap
                 concurrent subtasks per wave.
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -1240,7 +1236,6 @@ class AgentService(
 
     async def stop_task(self, task_id: str) -> bool:
         """Stop a running task."""
-        import logging
 
         logger = logging.getLogger(__name__)
         if task_id not in self.running_tasks:

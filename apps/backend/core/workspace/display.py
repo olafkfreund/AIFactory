@@ -19,7 +19,6 @@ from worktree import WorktreeManager
 def show_build_summary(manager: WorktreeManager, spec_name: str) -> None:
     """Show a summary of what was built."""
     summary = manager.get_change_summary(spec_name)
-    files = manager.get_changed_files(spec_name)
 
     total = summary["new_files"] + summary["modified_files"] + summary["deleted_files"]
 

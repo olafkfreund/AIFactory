@@ -98,14 +98,13 @@ _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 #: in the bundled CLI).  When that file is missing/empty it falls back to a small
 #: catalogue compiled into the binary that omits newer models — see #291.
 _CATALOGUE_REL_PATH: str = "opencode/models.json"
-#: Relative path of OpenCode's cache-version sentinel.  On startup OpenCode reads
-#: ``<cache>/opencode/version`` and, if it does not equal the binary's baked-in
-#: ``CACHE_VERSION``, **recursively deletes the entire cache directory** before
-#: recreating it (``src/global/index.ts``).  That wipe destroys any catalogue we
-#: pre-inject — so to make pre-warming survive we must also write a matching
-#: version sentinel (copied from the warm source) so the wipe is skipped.  See
-#: the analysis in #291.
-_VERSION_REL_PATH: str = "opencode/version"
+#: On startup OpenCode reads ``<cache>/opencode/version`` and, if it does not
+#: equal the binary's baked-in ``CACHE_VERSION``, **recursively deletes the
+#: entire cache directory** before recreating it (``src/global/index.ts``).
+#: That wipe destroys any catalogue we pre-inject — so to make pre-warming
+#: survive we must also write a matching version sentinel (copied from the
+#: warm source, via ``.with_name("version")`` below) so the wipe is skipped.
+#: See the analysis in #291.
 #: Env var that disables OpenCode's background self-update check.  Set in the
 #: build subprocess so a sandbox with blocked egress doesn't waste time/log noise
 #: attempting an upgrade fetch it can never complete.

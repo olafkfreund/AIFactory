@@ -47,15 +47,11 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import os
 from typing import Any
 from urllib.parse import urljoin
 
 import httpx
-
-logger = logging.getLogger(__name__)
-
 
 # Default budget when none specified. Operators override via Helm
 # values; documented in PR-3's concept doc. Per-day budget keeps the

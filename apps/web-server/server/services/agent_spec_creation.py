@@ -26,8 +26,6 @@ from .task_phase import TaskPhase
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-_log = logging.getLogger(__name__)
-
 
 class SpecCreationMixin:
     """Spec-creation entry point for AgentService."""
@@ -58,7 +56,6 @@ class SpecCreationMixin:
         user_id: str = "",
     ) -> asyncio.subprocess.Process:
         """Start spec creation for a task."""
-        import logging
 
         logger = logging.getLogger(__name__)
         if task_id in self.running_tasks:

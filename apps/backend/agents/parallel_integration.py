@@ -418,7 +418,6 @@ async def run_parallel_coding_phase(
     base_branch = _task_branch(project_dir)
     phase_model = get_phase_model(spec_dir, "coding", model)
     thinking_budget = get_phase_thinking_budget(spec_dir, "coding")
-    provider_name = infer_provider_from_model(phase_model)
 
     # One manager for the phase; `git worktree add` is serialized via this lock
     # so concurrent subtasks don't race the repo during the (fast) setup step.

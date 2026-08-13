@@ -1038,7 +1038,6 @@ async def list_project_worktrees(
     _access: dict = Depends(require_project_access("viewer")),
 ):
     """List worktrees for a project with detailed stats."""
-    import re
     import subprocess
 
     projects = load_projects()
@@ -1257,7 +1256,6 @@ async def create_project_task(
 
     This endpoint delegates to the tasks module for actual creation.
     """
-    import json
     from datetime import datetime
 
     from . import tasks as tasks_module
