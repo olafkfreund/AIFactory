@@ -13,7 +13,6 @@ must signal the process GROUP, falling back to the single process.
 import signal
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 

@@ -9,7 +9,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "apps" / "backend"))
 
 from project.analyzer import ProjectAnalyzer
-from project.models import SecurityProfile
 from security.profile import get_security_profile, reset_profile_cache
 
 

@@ -49,13 +49,6 @@ if _BACKEND_DIR not in sys.path:
 
 from providers import BaseLLMProvider  # noqa: E402
 from providers.ollama_agentic import OllamaAgenticProvider  # noqa: E402
-from providers.types import (  # noqa: E402
-    AssistantMessage,
-    TextBlock,
-    ToolResultBlock,
-    ToolUseBlock,
-    UserMessage,
-)
 from tools.definitions import get_tool_definitions  # noqa: E402
 from tools.executor import ToolExecutor  # noqa: E402
 

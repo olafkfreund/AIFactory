@@ -13,7 +13,6 @@ with ``monkeypatch`` + ``tmp_path``. The frozen ``CredentialStatus`` and the
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest

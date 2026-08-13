@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from agents.checkpoint import Checkpoint, Checkpointer
+from agents.checkpoint import Checkpointer
 from agents.gate_runner import Gate
 from agents.verifier import verify_unit
 

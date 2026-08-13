@@ -38,7 +38,7 @@ from factory_common.logsafe import sanitize_log
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import AuditLog
-from ..database.engine import async_session_factory
+from ..database import engine as _db_engine
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ async def log_audit_event_bg(
     no ``db`` parameter.
     """
     try:
-        async with async_session_factory() as session:
+        async with _db_engine.async_session_factory() as session:
             prev_hash_value = await _next_prev_hash(session)
             entry = AuditLog(
                 user_id=user_id,

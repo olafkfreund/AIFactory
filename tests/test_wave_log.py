@@ -9,7 +9,6 @@ greppable ``[parallel]`` lines to ``build-progress.txt`` — and a serial build
 (no recorder) must leave neither artifact.
 """
 
-import json
 from pathlib import Path
 
 import pytest

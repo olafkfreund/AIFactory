@@ -14,7 +14,6 @@ import json
 # Add aifactory to path for imports
 import sys
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -39,7 +38,6 @@ from qa_loop import (
     # Implementation plan helpers
     load_implementation_plan,
     record_iteration,
-    save_implementation_plan,
 )
 
 # =============================================================================

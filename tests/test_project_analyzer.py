@@ -15,17 +15,10 @@ Tests the project_analyzer.py module functionality including:
 import json
 from pathlib import Path
 
-import pytest
 from project_analyzer import (
     BASE_COMMANDS,
-    DATABASE_COMMANDS,
-    FRAMEWORK_COMMANDS,
-    INFRASTRUCTURE_COMMANDS,
-    LANGUAGE_COMMANDS,
-    CustomScripts,
     ProjectAnalyzer,
     SecurityProfile,
-    TechnologyStack,
     get_or_create_profile,
     is_command_allowed,
     needs_validation,

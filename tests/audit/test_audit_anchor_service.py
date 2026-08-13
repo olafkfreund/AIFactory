@@ -22,7 +22,6 @@ import asyncio
 import hashlib
 import hmac
 import logging
-import os
 import sys
 from pathlib import Path
 

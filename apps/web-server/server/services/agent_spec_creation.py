@@ -68,6 +68,7 @@ class SpecCreationMixin:
         else:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None
+            spec_id = None
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)

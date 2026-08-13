@@ -12,7 +12,6 @@ Tests the recurring issue detection functionality of qa/report.py including:
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import pytest
 

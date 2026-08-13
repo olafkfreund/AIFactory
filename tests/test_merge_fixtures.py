@@ -12,9 +12,7 @@ Contains:
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 

@@ -14,9 +14,6 @@ That's exactly what this file enforces.
 
 from __future__ import annotations
 
-import asyncio
-import os
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest

@@ -11,10 +11,6 @@ test_mcp_credentials.py). These tests just verify the CLI surface:
 
 from __future__ import annotations
 
-import os
-from io import StringIO
-from pathlib import Path
-
 import pytest
 from cli.mcp_commands import handle_mcp_doctor_command
 

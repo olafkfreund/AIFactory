@@ -18,8 +18,6 @@ calibration set with two guarantees:
    tasks into the expensive Standard/Enterprise pipelines.
 """
 
-import sys
-from pathlib import Path
 
 import pytest
 

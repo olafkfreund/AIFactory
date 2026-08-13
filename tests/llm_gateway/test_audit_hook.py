@@ -19,8 +19,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
@@ -48,7 +46,6 @@ def _bind_audit_hook_to_session(SessionLocal):
     # module-level binding at import time by overriding the import
     # path via sys.modules.
     import server.database.engine as engine_module
-    import server.services.llm_audit_hook as hook_module
 
     original = engine_module.async_session_factory
     engine_module.async_session_factory = SessionLocal

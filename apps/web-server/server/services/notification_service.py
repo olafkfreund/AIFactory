@@ -38,7 +38,7 @@ from factory_common.logsafe import sanitize_log
 from sqlalchemy import select
 
 from ..database import OrgMember
-from ..database.engine import async_session_factory
+from ..database import engine as _db_engine
 from ..websockets.events import send_to_user
 
 logger = logging.getLogger(__name__)
@@ -211,7 +211,7 @@ class NotificationService:
         member_user_ids: list[str] = []
 
         try:
-            async with async_session_factory() as session:
+            async with _db_engine.async_session_factory() as session:
                 result = await session.execute(
                     select(OrgMember.user_id).where(OrgMember.org_id == org_id)
                 )

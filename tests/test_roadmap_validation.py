@@ -4,9 +4,6 @@ This test verifies the fix for type validation in phases.py that prevents
 AttributeError when target_audience is not a dict.
 """
 
-import json
-import tempfile
-from pathlib import Path
 
 
 def test_target_audience_validation_logic():

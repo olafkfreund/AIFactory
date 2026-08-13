@@ -368,7 +368,6 @@ def install_github_cli():
     Requires root access (runs in Docker container as root entrypoint).
     Uses sync def to avoid blocking the event loop with subprocess.run.
     """
-    import logging
     import shlex
 
     log = logging.getLogger(__name__)
@@ -541,7 +540,6 @@ _gh_auth_status: dict | None = None
 async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
     """Monitor gh auth login process in background and broadcast result."""
     global _gh_auth_status, _gh_auth_proc
-    import logging
 
     log = logging.getLogger(__name__)
 

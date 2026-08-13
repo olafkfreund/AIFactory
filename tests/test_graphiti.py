@@ -5,7 +5,7 @@ import os
 # Add aifactory to path
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -493,7 +493,7 @@ class TestGraphitiProviders:
 
     def test_embedding_dimensions_lookup(self):
         """get_expected_embedding_dim returns correct dimensions."""
-        from graphiti_providers import EMBEDDING_DIMENSIONS, get_expected_embedding_dim
+        from graphiti_providers import get_expected_embedding_dim
 
         # Test known models
         assert get_expected_embedding_dim("text-embedding-3-small") == 1536

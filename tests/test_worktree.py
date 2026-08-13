@@ -14,8 +14,7 @@ Tests the worktree.py module functionality including:
 import subprocess
 from pathlib import Path
 
-import pytest
-from worktree import WorktreeError, WorktreeInfo, WorktreeManager
+from worktree import WorktreeManager
 
 
 class TestWorktreeManagerInitialization:

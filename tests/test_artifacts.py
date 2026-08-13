@@ -9,7 +9,6 @@ picks it up between turns (async review). Reuses the inbox post_message added in
 this phase.
 """
 
-import json
 from pathlib import Path
 
 import pytest

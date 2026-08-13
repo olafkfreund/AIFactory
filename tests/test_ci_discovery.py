@@ -25,7 +25,6 @@ from ci_discovery import (
     HAS_YAML,
     CIConfig,
     CIDiscovery,
-    CIWorkflow,
     discover_ci,
     get_ci_system,
     get_ci_test_commands,

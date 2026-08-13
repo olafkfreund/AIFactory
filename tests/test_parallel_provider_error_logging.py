@@ -11,12 +11,8 @@ two things must happen:
      can display it — child-worktree logs are never synced back.
 """
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend"))
 
