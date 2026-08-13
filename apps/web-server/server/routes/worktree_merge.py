@@ -709,7 +709,9 @@ async def resolve_worktree_conflicts(
         # An empty conflicted_files here reads as "no conflicts" below and
         # can lead to committing an unresolved merge, so log it.
         logger.warning(
-            "git diff --diff-filter=U failed for %s", sanitize_log(project_path), exc_info=True
+            "git diff --diff-filter=U failed for %s",
+            sanitize_log(project_path),
+            exc_info=True,
         )
 
     # Fallback: check git status for unmerged files
@@ -1390,7 +1392,9 @@ async def resolve_git_merge_conflicts(
             # CalledProcessError. An empty conflicted_files here reports
             # success below, so a real git failure must be visible.
             logger.warning(
-                "git status --porcelain failed for %s", sanitize_log(work_path), exc_info=True
+                "git status --porcelain failed for %s",
+                sanitize_log(work_path),
+                exc_info=True,
             )
 
     if not conflicted_files:
