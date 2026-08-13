@@ -2,6 +2,22 @@
 
 ### Changed
 
+- **The secret scanner stops printing the secrets it finds.** `mask_secret`
+  returned a match verbatim when it was eight characters or shorter, and
+  otherwise handed over its first eight to twelve characters - and every caller
+  writes that result somewhere durable: the pre-commit terminal output, the DLP
+  filter's WARNING (which ships to whatever log sink the deployment has), the
+  pre-commit block message, and `security_scan_results.json` on disk via
+  `security_scanner`'s own second copy of the same idea. The tool built to keep
+  credentials out of those places was putting a usable prefix of every
+  credential it found into them, and the tests pinned that behaviour in place
+  (`assert masked == "sk-12345***"`). It is now one helper,
+  `redacted_fingerprint`, returning the match's length and twelve hex of
+  SHA-256: enough to tell a token from a PEM block and to recognise the same
+  credential across files and runs, and nothing that can be turned back into
+  the credential. Callers already report the rule name and `file:line`, which is
+  what triage actually navigates by.
+
 - **The reaper writes, instead of reporting that it did.** The orphan sweep
   detected dead-worker tasks correctly, logged what it was clearing, and did not
   write - the log line sat next to the update rather than after it, so every run
