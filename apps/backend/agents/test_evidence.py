@@ -105,9 +105,26 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from factory_common.logsafe import sanitize_log
-
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_log(value: object) -> str:
+    """Import `sanitize_log` lazily, because pytest COLLECTS this module.
+
+    This is production code, but its `test_` filename means the co-located
+    suite (`pytest apps/backend`, run from the repo root — see ci.yml #854)
+    imports it at collection time. `apps/backend` is not on sys.path then, so a
+    module-level `from factory_common...` raises ModuleNotFoundError and fails
+    collection for the whole file. Every real caller imports this module
+    through a package chain where the path is already set up.
+
+    Deferring the import is the smallest fix that keeps both true. Renaming the
+    file out of pytest's way would be better and is a bigger change.
+    """
+    from factory_common.logsafe import sanitize_log  # noqa: PLC0415 - see above
+
+    return sanitize_log(value)
+
 
 _EVIDENCE_REL = ".aifactory/test_evidence.jsonl"
 
@@ -255,7 +272,7 @@ def _append(spec_dir: Path | str, entry: dict[str, Any]) -> None:
         # but silent — the gate degrades safely because a missing entry reads
         # as "no evidence" (fail-closed), so log for diagnosability only.
         logger.warning(
-            "test evidence append failed for %s", sanitize_log(spec_dir), exc_info=True
+            "test evidence append failed for %s", _sanitize_log(spec_dir), exc_info=True
         )
 
 
@@ -310,7 +327,7 @@ def read_test_evidence(
         # fails closed (blocks) on that, which is the safe direction, so we
         # only need to log for diagnosability, not change the outcome.
         logger.warning(
-            "test evidence read failed for %s", sanitize_log(spec_dir), exc_info=True
+            "test evidence read failed for %s", _sanitize_log(spec_dir), exc_info=True
         )
 
     start = 0
