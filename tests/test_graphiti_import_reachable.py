@@ -17,10 +17,14 @@ This file is also the first Graphiti test in CI. `integrations/graphiti/conftest
 excludes the existing ones as "not unit tests", which is the other half of how
 this rotted: a store with no test in the suite.
 
-Deliberately NOT asserted here: that the graph store WORKS. `kuzu` is not in the
-image and the size-gating decision is still open — both are checkboxes on #1032.
-This asserts only that the path is reachable and that its failure is audible,
-which is what makes the rest measurable.
+Deliberately NOT asserted here: that the graph store WORKS end to end (a real
+episode write/query) or the size-gating routing decision — see
+`test_graphiti_kuzu_dependency.py` for the kuzu question specifically (`kuzu`
+itself is absent, but `real_ladybug` — already in `requirements.txt` since
+#796 — supersedes it via an existing monkeypatch, so that is NOT a blocker).
+Size-gating is still open, and needs an RFC-0014 extension this repo alone
+can't land. This file asserts only that the path is reachable and that its
+failure is audible, which is what makes the rest measurable.
 """
 
 from __future__ import annotations
