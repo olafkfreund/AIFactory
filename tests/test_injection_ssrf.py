@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -18,8 +19,9 @@ sys.path.insert(0, str(_ROOT / "apps" / "web-server"))
 sys.path.insert(0, str(_ROOT / "apps" / "backend"))
 
 from server.routes.files import get_git_diff, search_files  # noqa: E402
-from server.routes.llm_endpoints import _assert_url_not_ssrf  # noqa: E402
+from server.routes.llm_endpoints import _probe_models  # noqa: E402
 from server.routes.projects import ProjectCreate  # noqa: E402
+from server.services.url_safety import assert_safe_outbound_url  # noqa: E402
 
 # ── C5: git URL / branch validators ────────────────────────────────────────
 
@@ -66,6 +68,11 @@ def test_branch_accepts_normal():
 # ── H6: SSRF guard ─────────────────────────────────────────────────────────
 
 
+# These used to call llm_endpoints' own private `_assert_url_not_ssrf`. That
+# copy is gone (#1265) and the route now uses the canonical guard, so the tests
+# go through `_probe_models` instead: it is the wiring, not the helper, that
+# these were really pinning, and a helper test would have stayed green if the
+# route had stopped calling it.
 @pytest.mark.parametrize(
     "url",
     [
@@ -73,12 +80,16 @@ def test_branch_accepts_normal():
         "http://169.254.169.254/latest/meta-data/",  # cloud metadata
         "http://localhost:8000/",
         "http://10.0.0.5/",
+        "http://[fd00:ec2::254]/",  # IPv6 instance metadata (unique-local)
         "file:///etc/passwd",  # bad scheme
     ],
 )
 def test_ssrf_blocks_unsafe(url):
-    with pytest.raises(ValueError):
-        _assert_url_not_ssrf(url)
+    with patch("urllib.request.OpenerDirector.open") as opened:
+        result = _probe_models(url, api_key=None, headers=None)
+    assert result.ok is False
+    # Refused before the socket, not after a failed connection.
+    opened.assert_not_called()
 
 
 def test_ssrf_allows_public(monkeypatch):
@@ -86,7 +97,7 @@ def test_ssrf_allows_public(monkeypatch):
         "socket.getaddrinfo",
         lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))],
     )
-    _assert_url_not_ssrf("https://example.com/v1/models")  # must not raise
+    assert_safe_outbound_url("https://example.com/v1/models")  # must not raise
 
 
 # ── H5 / M3: ripgrep + git-diff arg injection ──────────────────────────────

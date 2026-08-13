@@ -8,6 +8,7 @@ So the permissive posture keeps only the guards that cost no legitimate use.
 
 from __future__ import annotations
 
+import ipaddress
 from unittest.mock import patch
 
 import pytest
@@ -18,11 +19,37 @@ from server.services.url_safety import assert_safe_outbound_url
 # that is the whole reason the permissive posture is not simply "no check".
 METADATA = "http://169.254.169.254/latest/meta-data/iam/security-credentials/"
 
+# The IPv6 half of the same service. It is UNIQUE-LOCAL (fc00::/7), not
+# link-local, which is what makes it the interesting one -- see below.
+METADATA_V6 = "http://[fd00:ec2::254]/latest/meta-data/"
 
+
+@pytest.mark.parametrize("url", [METADATA, METADATA_V6])
 @pytest.mark.parametrize("allow_private", [False, True])
-def test_metadata_is_refused_in_both_postures(allow_private: bool) -> None:
+def test_metadata_is_refused_in_both_postures(url: str, allow_private: bool) -> None:
     with pytest.raises(ValueError, match="link-local/metadata"):
-        assert_safe_outbound_url(METADATA, allow_private=allow_private)
+        assert_safe_outbound_url(url, allow_private=allow_private)
+
+
+def test_the_replaced_copies_caught_ipv6_metadata_only_by_accident() -> None:
+    """Why the two copies removed in #1265 had to go, stated precisely.
+
+    They did block ``fd00:ec2::254`` -- but only via ``ip.is_private``, which is
+    incidental: it is the same clause that blocks a LAN printer. Neither of the
+    two named conditions people reach for catches it.
+
+    That mattered because the copies had no permissive posture and the canonical
+    grew one. The moment anyone had added ``allow_private`` to a copy -- the
+    obvious next request, since self-hosted LLM servers live on private
+    addresses -- the only thing standing between a user-supplied URL and IPv6
+    instance credentials would have vanished, silently, with no test to notice.
+    The canonical refuses it by name in BOTH postures (the test above), so that
+    edit is no longer possible to get wrong.
+    """
+    ip = ipaddress.ip_address("fd00:ec2::254")
+    assert ip.is_private, "the copies' only reason to refuse it"
+    assert not ip.is_link_local, "so an is_link_local check would let it through"
+    assert not ip.is_reserved, "and so would is_reserved"
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "gopher://x/", "ftp://h/f"])
