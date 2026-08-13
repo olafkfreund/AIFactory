@@ -32,6 +32,10 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 _GATEWAY = "http://litellm:4000"
+# The Google-native default phase_config picks for ``studio:*``. Asserted whole,
+# not by prefix: a prefix check passes for any URL that merely starts with the
+# host, so it cannot tell the /v1beta/openai endpoint from a wrong path.
+_STUDIO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +143,7 @@ def test_agentic_studio_redirects_to_gateway_when_enabled(monkeypatch):
     monkeypatch.setenv("LITELLM_GATEWAY_URL", _GATEWAY)
     kwargs = get_provider_extra_kwargs("openai-compatible", "studio:gemini-2.5-flash")
     # The kwargs carry the Google native default...
-    assert kwargs["base_url"].startswith("https://generativelanguage.googleapis.com")
+    assert kwargs["base_url"] == _STUDIO_BASE_URL
     # ...but the provider redirects to the gateway.
     p = OpenAICompatibleAgenticProvider(working_dir="/tmp", **kwargs)
     assert p._base_url == _GATEWAY
@@ -253,7 +257,7 @@ def test_studio_unchanged_without_gateway(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "g-key")
     kwargs = get_provider_extra_kwargs("openai-compatible", "studio:gemini-2.5-flash")
     p = OpenAICompatibleAgenticProvider(working_dir="/tmp", **kwargs)
-    assert p._base_url.startswith("https://generativelanguage.googleapis.com")
+    assert p._base_url == _STUDIO_BASE_URL
     assert p._model == "gemini-2.5-flash"
 
 
