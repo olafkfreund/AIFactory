@@ -171,6 +171,51 @@ caller-supplied launcher names a real binary does not constrain which program
 runs. The endpoint that took one from a request body (`customPath`) had the
 field removed instead.
 
+## Baseline recorded 2026-08-13 (#1278, path injection)
+
+CodeQL 2.25.6, database over `apps/web-server`, `py/path-injection-sanitized`,
+sinks deduplicated by location:
+
+| tree | query | sinks |
+|---|---|---|
+| base (`dev` @ 9a69a04d) | pack as shipped | 119 |
+| base | pack + registry-lookup barrier | 119 |
+| base | pack + registry barrier, barrier nodes matched | 93 |
+| after the #1278 fixes | pack + `within_roots` | 103 |
+
+Read the middle two rows together, because they are the result. The
+project-registry lookup — `projects[project_id]["path"]` where `projects` came
+from `load_projects()`, plus `resolve_project_path` — was the barrier this work
+existed to make truthful, and #1278 estimated it would clear ~42 alerts in one
+edit. Registered against the base tree it matches **93 nodes** and clears
+**nothing**: 119 before, 119 after.
+
+The estimate came from counting sinks per SOURCE. Each of those sinks is
+reached by roughly fourteen sources, of which the registry lookup is one; the
+rest are `spec_id` and `task_id` route parameters that never touch the
+registry. Removing one source from a sink that has thirteen more leaves the
+sink reported. So the barrier is **not** registered: it would add a claim to
+the query that a future reader has to re-verify, in exchange for nothing.
+
+The 119 -> 103 drop is the code change alone — `within_roots` confinement on
+the add-project, update-project, scan, git, terminal and worktree-launch
+routes. Per file: `projects.py` 7 -> 0, `git.py` 7 -> 3, `terminal.py` 4 -> 1,
+`worktree_tools.py` 2 -> 0, every other file unchanged. Nothing anywhere
+increased.
+
+`within_roots` IS registered: it is `contained_path` with the `ValueError`
+mapped to 403 and nothing else, and it is the form the routes actually call.
+Checked for over-breadth with a scratch module of four deliberately unconfined
+sinks (a bare read, an `.exists()`-guarded read, and a lookalike that reads a
+local dict rather than the registry); all four were still reported, and the
+module was deleted afterwards.
+
+Note for whoever measures next: confine the RAW request string, not
+`Path(value).expanduser()`. The caller-side `expanduser` is itself a path
+expression built from the request value and CodeQL reports it — correctly —
+one line before the check that constrains it. That is why `contained_path`
+grew an `expand_user` flag instead.
+
 ## If you add a barrier to the codebase
 
 Register it here and re-measure. The residual after this pack was 64 sources,

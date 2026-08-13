@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 from server.services.argv_safety import assert_not_option
+from server.specpath import contained_path, registered_project_roots
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,13 @@ def resolve_launch_dir(worktree_path: str) -> tuple[str, dict[str, object] | Non
     this module used to build.
     """
     try:
-        resolved = Path(worktree_path).resolve()
+        # Confine before the is_dir() check (#1278). `is_dir()` answers "is
+        # something there", never "is this ours to launch an IDE in" — and
+        # every worktree this route can legitimately open lives under
+        # `<project>/.aifactory/worktrees/`, inside a registered project.
+        resolved = contained_path(
+            worktree_path, registered_project_roots(), "registered project directories"
+        )
         if not resolved.is_dir():
             raise ValueError(f"Path does not exist: {worktree_path}")
         return assert_not_option(str(resolved), "worktreePath"), None

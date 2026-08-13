@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from server.error_ref import client_error
+from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..config import get_settings
 from ..pty.manager import get_pty_manager
@@ -181,6 +182,12 @@ async def create_terminal(request: CreateTerminalRequest):
     if not cwd:
         cwd = str(Path.home())
 
+    # Confine before the existence check (#1278). `cwd` here is the working
+    # directory of an interactive shell, so an unconfined one is not a file
+    # read — it is a shell anywhere on the host. `browse_roots` is the tier
+    # because the fallback above is $HOME, which is not a registered project.
+    cwd = str(within_roots(cwd, browse_roots(), "browsable directories"))
+
     # Validate cwd exists
     if not Path(cwd).exists():
         raise HTTPException(
@@ -266,8 +273,15 @@ async def clear_terminal_sessions(project: str | None = None):
     dirs_to_clear = []
 
     if project:
-        # Clear sessions for a specific project
-        project_path = Path(project)
+        # Clear sessions for a specific project. Found while measuring #1278,
+        # not listed in it: this route UNLINKS files, and `project` was a
+        # free-form path guarded only by `.exists()`, so it could empty
+        # `<anything>/.aifactory/terminal-sessions`. The registered tier, not
+        # the browse tier — clearing sessions is an operation on a project that
+        # exists, so there is no add-project case to accommodate.
+        project_path = within_roots(
+            project, registered_project_roots(), "registered project directories"
+        )
         if project_path.exists():
             sessions_dir = project_path / ".aifactory" / "terminal-sessions"
             if sessions_dir.exists():
