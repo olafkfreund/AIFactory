@@ -9,6 +9,7 @@ came out -- not because a string compared differently.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 from factory_common.logsafe import sanitize_log
@@ -78,7 +79,7 @@ def test_sanitized_value_cannot_forge_a_record(capture: _Capture) -> None:
 
 
 def test_a_real_call_site_cannot_forge_a_record(
-    capture: _Capture, tmp_path
+    capture: _Capture, tmp_path: Path
 ) -> None:
     """server.services.task_status.read_plan logs a caller-supplied path.
 
