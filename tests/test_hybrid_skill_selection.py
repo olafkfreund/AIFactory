@@ -60,7 +60,7 @@ class TestSuggestSelectedSkills:
     def test_returns_selected_shaped_dicts(self, tmp_path, monkeypatch):
         # Empty skills dir → valid (empty) index; monkeypatch the matcher.
         svc = SkillsService(
-            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl"
+            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.json"
         )
         monkeypatch.setattr(
             svc,
@@ -80,7 +80,7 @@ class TestSuggestSelectedSkills:
 
     def test_empty_when_no_matches(self, tmp_path, monkeypatch):
         svc = SkillsService(
-            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.pkl"
+            skills_base_path=tmp_path / "none", cache_path=tmp_path / "c.json"
         )
         monkeypatch.setattr(svc, "suggest_skills", lambda desc, max_results=10: [])
         assert svc.suggest_selected_skills("xyz") == []
