@@ -663,11 +663,45 @@ async def gmail_oauth_callback(
     )
 
 
+def _oauth_target_origins() -> list[str]:
+    """The origins this page may address its postMessage to (#1285).
+
+    Derived from ``CORS_ORIGINS`` -- the operator-configured list of browser
+    origins allowed to talk to this API, which is exactly the set the portal can
+    be served from in a given deployment. Deliberately NOT from the ``Host``,
+    ``Origin`` or ``Referer`` header: those come off the request, an attacker
+    controls them, and a targetOrigin taken from the attacker is ``'*'`` wearing
+    a disguise.
+
+    A wildcard entry is dropped rather than passed through. If that leaves
+    nothing, the page posts nothing: it still renders the outcome text and
+    closes, so the failure mode is "the portal does not auto-refresh" rather
+    than "the address is broadcast".
+    """
+    return [o for o in (get_settings().CORS_ORIGINS or []) if o and o != "*"]
+
+
 def _oauth_result_html(
     success: bool, message: str, email: str = "", provider: str = "outlook"
 ) -> HTMLResponse:
     """Return HTML that communicates the OAuth result to the opener window and closes itself."""
     status_text = "success" if success else "error"
+    # One post per configured origin instead of one post to '*' (#1285). The
+    # payload carries the connected email address, and the popup's lifetime
+    # spans a full third-party OAuth round trip, so '*' means "hand the address
+    # to whatever happens to be loaded in the opener by then". The browser
+    # delivers a targeted post only if the opener's origin matches, so the
+    # opener receives exactly one of these and every other call is a no-op --
+    # which is why a loop is correct where picking one entry would be a guess.
+    #
+    # Defence in depth with the receiving side: the listener in
+    # EmailIntegration.tsx checks event.origin against its own allowlist
+    # (#1283). That stops a forged inbound message; this is the half that stops
+    # the address leaving at all.
+    posts = "\n".join(
+        f"    window.opener.postMessage(payload, {_js_string(origin)});"
+        for origin in _oauth_target_origins()
+    )
     html = f"""<!DOCTYPE html>
 <html>
 <head><title>AIFactory - Email Connection</title></head>
@@ -675,13 +709,14 @@ def _oauth_result_html(
 <p>{message}</p>
 <script>
   if (window.opener) {{
-    window.opener.postMessage({{
+    var payload = {{
       type: 'email-oauth-callback',
       status: '{status_text}',
       message: {_js_string(message)},
       email: {_js_string(email)},
       provider: {_js_string(provider)}
-    }}, '*');
+    }};
+{posts}
   }}
   setTimeout(function() {{ window.close(); }}, 2000);
 </script>
