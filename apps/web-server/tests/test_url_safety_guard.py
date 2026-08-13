@@ -145,6 +145,17 @@ async def test_git_ollama_model_routes_refuse_the_metadata_address() -> None:
 
 
 async def test_mcp_health_refuses_a_non_http_scheme() -> None:
+    """The refusal names the rule that refused, per #1304.
+
+    This used to assert the generic "refused to probe this URL (reference ...)".
+    #1304 settled the opposite for the guard's own text -- "It is validator text
+    about the caller's own URL, it names which rule refused it, and it is what
+    the settings UI shows to explain the failure" -- and #1301 moved the guard
+    onto ``InputRejectedError`` so ``client_error`` passes it through at every
+    call site instead of each route deciding for itself. A *connection* outcome
+    is still collapsed to one literal (that is the port-scan oracle #1304 shut);
+    a syntactic scheme refusal reaches no network at all, so it is not one.
+    """
     with patch.object(git, "build_no_redirect_opener") as opener:
         result = await git.check_mcp_health(
             git.McpServerConfig(
@@ -152,7 +163,7 @@ async def test_mcp_health_refuses_a_non_http_scheme() -> None:
             )
         )
     assert result["data"]["status"] == "unhealthy"
-    assert "refused to probe this URL" in result["data"]["message"]
+    assert "unsupported URL scheme" in result["data"]["message"]
     opener.assert_not_called()
 
 

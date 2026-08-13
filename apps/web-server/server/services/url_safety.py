@@ -37,6 +37,8 @@ import urllib.parse
 import urllib.request
 from typing import IO
 
+from server.error_ref import InputRejectedError
+
 # Link-local carries the cloud metadata services (169.254.169.254 on AWS/Azure,
 # and GCP's metadata.google.internal resolves into the same /16). Reaching one
 # of these yields instance credentials, so it is refused in BOTH postures --
@@ -73,7 +75,16 @@ def build_no_redirect_opener() -> urllib.request.OpenerDirector:
 
 
 def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
-    """Raise ``ValueError`` if ``url`` is unsafe to fetch server-side.
+    """Raise ``InputRejectedError`` if ``url`` is unsafe to fetch server-side.
+
+    The refusal messages are developer-written and quote only the URL the caller
+    just sent, so they are ``InputRejectedError`` (a ``ValueError`` subclass):
+    ``server.error_ref.client_error`` hands those back verbatim instead of hiding
+    them behind a correlation id. "refusing to fetch non-public address" is a
+    fixable 400; turning it into a reference id turns it into a support ticket,
+    and tests/test_url_safety_guard.py records that decision on both postures.
+    The one exception is a DNS failure, whose text comes from the resolver rather
+    than from us -- that stays a plain ``ValueError`` and gets a reference id.
 
     Returns ``url`` unchanged, so a call site can wrap the value on its way into
     the request rather than checking one string and then fetching another. That
@@ -86,10 +97,12 @@ def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
     """
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"unsupported URL scheme {parsed.scheme!r} (only http/https)")
+        raise InputRejectedError(
+            f"unsupported URL scheme {parsed.scheme!r} (only http/https)"
+        )
     host = parsed.hostname
     if not host:
-        raise ValueError("URL has no host")
+        raise InputRejectedError("URL has no host")
 
     default_port = 443 if parsed.scheme == "https" else 80
     try:
@@ -103,7 +116,7 @@ def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
         ip = ipaddress.ip_address(info[4][0])
         # Refused in both postures.
         if any(ip in net for net in _METADATA_NETS):
-            raise ValueError(
+            raise InputRejectedError(
                 f"refusing to fetch link-local/metadata address {ip} — this is the "
                 "cloud instance-credentials endpoint, never a real service URL"
             )
@@ -117,7 +130,9 @@ def assert_safe_outbound_url(url: str, *, allow_private: bool = False) -> str:
             or ip.is_multicast
             or ip.is_unspecified
         ):
-            raise ValueError(f"refusing to fetch non-public address {ip} (SSRF)")
+            raise InputRejectedError(
+                f"refusing to fetch non-public address {ip} (SSRF)"
+            )
 
     return url
 

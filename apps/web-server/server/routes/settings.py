@@ -4,6 +4,7 @@ Application settings routes.
 Handles reading and writing application configuration.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import (
     AliasChoices,
@@ -31,6 +33,7 @@ from server.crypto.secret_field import (
     unseal_fields,
     unseal_profiles,
 )
+from server.error_ref import client_error
 from server.services.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
@@ -1035,8 +1038,10 @@ async def list_ollama_models(
 
             return {"models": models}
     except Exception as e:
-        logger.warning(f"Failed to list Ollama models: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to list Ollama models", e),
+        }
 
 
 @router.get("/openai-compat/models")
@@ -1080,8 +1085,16 @@ async def list_openai_compat_models(
 
         return {"models": models}
     except Exception as e:
-        logger.warning(f"Failed to list OpenAI-compatible models from {baseUrl}: {e}")
-        return {"success": False, "error": str(e)}
+        # The URL is caller-controlled, so it goes through sanitize_log; the
+        # exception itself is logged (with its traceback) by client_error under
+        # the reference id that the caller gets back.
+        logger.warning(
+            "Failed to list OpenAI-compatible models from %s", sanitize_log(baseUrl)
+        )
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to list OpenAI-compatible models", e),
+        }
 
 
 class OpenAICompatTestRequest(BaseModel):
@@ -1132,10 +1145,17 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
             "message": f"Connected successfully. {model_count} model(s) available.",
         }
     except Exception as e:
+        # Caller-controlled URL: sanitize_log. See /openai-compat/models above.
         logger.warning(
-            f"OpenAI-compatible connection test failed for {request.baseUrl}: {e}"
+            "OpenAI-compatible connection test failed for %s",
+            sanitize_log(request.baseUrl),
         )
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(
+                logger, "OpenAI-compatible connection test failed", e
+            ),
+        }
 
 
 @router.post("/ollama/pull")
@@ -1145,8 +1165,6 @@ async def pull_ollama_model(
 ):
     """Pull (download) an Ollama model."""
     try:
-        import json
-
         import httpx
 
         # SSRF: see /ollama/models above.
@@ -1171,8 +1189,10 @@ async def pull_ollama_model(
                     "message": f"Model {modelName} pulled successfully",
                 }
     except Exception as e:
-        logger.warning(f"Failed to pull Ollama model: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to pull Ollama model", e),
+        }
 
 
 @router.post("/ollama/test")
@@ -1216,8 +1236,10 @@ async def test_ollama_connection(
 
             return {"success": True, "message": "Connection successful!"}
     except Exception as e:
-        logger.warning(f"Ollama connection test failed: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Ollama connection test failed", e),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -1549,7 +1571,10 @@ async def rename_claude_profile(profile_id: str, update: ProfileRename):
         save_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to rename profile", e),
+        }
 
 
 class ActiveProfileRequest(BaseModel):
@@ -1578,7 +1603,10 @@ async def set_active_claude_profile(request: ActiveProfileRequest):
         _sync_env_token_for_active_profile(data, request.profileId, logger)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to set the active Claude profile", e),
+        }
 
 
 @router.post("/claude-profiles/{profile_id}/initialize")
@@ -1608,7 +1636,10 @@ async def initialize_claude_profile(profile_id: str):
         save_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to initialize profile", e),
+        }
 
 
 def _poll_token_and_save(
@@ -1777,7 +1808,10 @@ async def set_claude_profile_token(profile_id: str, request: SetTokenRequest):
         _sync_env_token_for_active_profile(data, data.get("activeProfileId"), logger)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to save the profile token", e),
+        }
 
 
 @router.get("/claude-profiles/best")
@@ -1891,7 +1925,9 @@ async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate)
             except json.JSONDecodeError as e:
                 return {
                     "success": False,
-                    "error": f"Failed to parse existing auto-switch.json: {str(e)}",
+                    "error": client_error(
+                        logger, "Failed to parse existing auto-switch.json", e
+                    ),
                 }
 
         # Update with new values (only non-None values from Pydantic model)
@@ -1905,7 +1941,7 @@ async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate)
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to update auto-switch settings: {str(e)}",
+            "error": client_error(logger, "Failed to update auto-switch settings", e),
         }
 
 
@@ -2019,7 +2055,10 @@ async def retry_with_profile(request: RetryWithProfileRequest):
         return response
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to switch profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to switch profile", e),
+        }
 
 
 @router.post("/usage-update")
@@ -2312,7 +2351,10 @@ async def update_api_profile(profile_id: str, profile_update: ApiProfileUpdate):
         return {"success": True, "data": updated_profile}
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to update API profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to update API profile", e),
+        }
 
 
 @router.delete("/api-profiles/{profile_id}")
@@ -2381,7 +2423,10 @@ async def delete_api_profile(profile_id: str):
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to delete API profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to delete API profile", e),
+        }
 
 
 @router.post("/api-profiles/active")
@@ -2409,7 +2454,10 @@ async def set_active_api_profile(request: dict):
         save_api_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to set the active API profile", e),
+        }
 
 
 class TestConnectionRequest(BaseModel):
@@ -2437,7 +2485,10 @@ async def test_api_connection(request: TestConnectionRequest):
         build_no_redirect_opener().open(req, timeout=10)
         return {"success": True, "data": {"connected": True}}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "API connection test failed", e),
+        }
 
 
 @router.post("/api-profiles/discover-models")
@@ -2458,7 +2509,10 @@ async def discover_api_models(request: TestConnectionRequest):
         models = [m.get("id") for m in data.get("data", [])]
         return {"success": True, "data": models}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to discover models", e),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -2652,7 +2706,10 @@ async def get_auth_status():
     email = None
 
     if profiles_file.exists():
-        try:
+        # A corrupt or half-written store means "no token configured", which is
+        # what the zero-valued locals above already say. Deliberate, not a
+        # swallowed bug -- hence suppress rather than except/pass.
+        with contextlib.suppress(json.JSONDecodeError, KeyError):
             data = json.loads(profiles_file.read_text())
             profiles = data.get("profiles", [])
             profile_count = len(profiles)
@@ -2663,8 +2720,6 @@ async def get_auth_status():
                     # Get email from active profile, or first profile with a token
                     if email is None or p.get("id") == active_id:
                         email = p.get("email")
-        except (json.JSONDecodeError, KeyError):
-            pass
 
     # Also check env var fallback
     env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
@@ -2672,7 +2727,11 @@ async def get_auth_status():
     # Verify Claude CLI is actually installed before reporting hasToken
     claude_installed = shutil.which("claude") is not None
     if not claude_installed:
-        try:
+        # Login-shell fallback for a PATH that only a profile script sets. If the
+        # shell is missing or hangs, "not installed" is the honest answer, so the
+        # suppression is deliberate -- but it is narrowed to the two families
+        # subprocess can actually raise, not a bare Exception.
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
                 capture_output=True,
@@ -2680,8 +2739,6 @@ async def get_auth_status():
                 timeout=5,
             )
             claude_installed = result.returncode == 0
-        except Exception:
-            pass
 
     return {
         "hasToken": (has_token or bool(env_token)) and claude_installed,
@@ -2698,12 +2755,12 @@ async def check_claude_credentials_exist():
     exists = False
 
     if cred_path.exists():
-        try:
+        # An unparseable credentials file is "no usable credential", which is the
+        # False already in `exists`. Deliberate suppression, not a swallow.
+        with contextlib.suppress(json.JSONDecodeError, KeyError):
             data = json.loads(cred_path.read_text())
             token = data.get("claudeAiOauth", {}).get("accessToken")
             exists = bool(token and token.startswith("sk-ant-oat01-"))
-        except (json.JSONDecodeError, KeyError):
-            pass
 
     return {"exists": exists}
 
