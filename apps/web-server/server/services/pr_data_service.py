@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from server.error_ref import client_error
 
 logger = logging.getLogger(__name__)
@@ -493,7 +495,9 @@ class PRDataService:
                 last_reviewed_commit = review_data.get("reviewed_commit_sha")
             except (json.JSONDecodeError, OSError):
                 logger.warning(
-                    "failed to read review file %s", review_file, exc_info=True
+                    "failed to read review file %s",
+                    sanitize_log(review_file),
+                    exc_info=True,
                 )
 
         # Get the current HEAD commit SHA of the PR

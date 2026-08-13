@@ -212,7 +212,9 @@ class AgentService(
                 return str(prov["issue_number"])
         except (OSError, ValueError):
             _log.debug(
-                "failed to read provenance issue number for %s", spec_id, exc_info=True
+                "failed to read provenance issue number for %s",
+                sanitize_log(spec_id),
+                exc_info=True,
             )
         return None
 
@@ -610,7 +612,9 @@ class AgentService(
                 return meta.get("parallel"), meta.get("workers")
         except (OSError, ValueError):
             _log.debug(
-                "failed to read task_metadata.json for %s", spec_id, exc_info=True
+                "failed to read task_metadata.json for %s",
+                sanitize_log(spec_id),
+                exc_info=True,
             )
         return None, None
 
@@ -995,7 +999,7 @@ class AgentService(
                 except (json.JSONDecodeError, OSError):
                     _log.debug(
                         "failed to read exec model from task_metadata.json for %s",
-                        spec_id,
+                        sanitize_log(spec_id),
                         exc_info=True,
                     )
             self._task_profiles[task_id] = {
@@ -1044,7 +1048,7 @@ class AgentService(
             except (json.JSONDecodeError, OSError):
                 _log.debug(
                     "failed to read enableRemoteControl for %s, defaulting off",
-                    spec_id,
+                    sanitize_log(spec_id),
                     exc_info=True,
                 )
         if not _rc_enabled:

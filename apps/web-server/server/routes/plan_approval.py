@@ -146,7 +146,7 @@ async def approve_plan(
             )
     else:
         logging.getLogger(__name__).warning(
-            f"[ApprovePlan] Plan file does not exist: {plan_file}"
+            f"[ApprovePlan] Plan file does not exist: {sanitize_log(plan_file)}"
         )
 
     # Emit status change via WebSocket
@@ -208,7 +208,7 @@ async def approve_plan(
         except Exception as e:
             # If auto-restart fails, still return success for approval
             logging.getLogger(__name__).warning(
-                f"Auto-restart failed for {task_id}: {e}"
+                f"Auto-restart failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
             )
 
     return {
