@@ -18,7 +18,7 @@ class TerminalWorktreeService:
     """Service for managing terminal worktrees."""
 
     # Leading character must be alphanumeric: `[a-z0-9-_]+` also matched
-    # "-force", and the name reaches a git argv as a path component (#1263).
+    # "-force", and the name reaches a git argv as a path component (#1267).
     WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
     MAX_NAME_LENGTH = 100
 
@@ -37,7 +37,7 @@ class TerminalWorktreeService:
         # The project path is joined into the worktree paths that this service
         # passes to `git worktree add/remove` as positional operands, so assert
         # at that boundary rather than relying on resolve() having produced
-        # something absolute (#1263).
+        # something absolute (#1267).
         self.project_path = Path(assert_not_option(str(resolved), "projectPath"))
 
         self.worktrees_dir = self.project_path / ".aifactory" / "worktrees" / "terminal"
@@ -92,7 +92,7 @@ class TerminalWorktreeService:
         # so an unasserted ref is option injection, not just a bad ref. The
         # existence check is not a substitute: it runs against
         # refs/heads/<base>, which is prefixed and therefore always safe, while
-        # the argv use is not (#1263).
+        # the argv use is not (#1267).
         base_branch = assert_safe_git_ref(base_branch, "baseBranch")
         if create_git_branch and not self._branch_exists(base_branch):
             raise ValueError(f"Base branch '{base_branch}' does not exist")
@@ -197,7 +197,7 @@ class TerminalWorktreeService:
                     # `branch` is read back out of terminal-worktrees.json, so
                     # its safety rests on whatever last wrote that file rather
                     # than on the check that created it. Assert at the argv
-                    # boundary instead (#1263).
+                    # boundary instead (#1267).
                     self._run_git_command(
                         ["git", "branch", "-D", assert_safe_git_ref(branch, "branch")]
                     )

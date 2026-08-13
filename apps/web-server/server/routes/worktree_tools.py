@@ -70,7 +70,7 @@ def get_ide_command(ide: str, path: str) -> list[str]:
     A caller-supplied launcher path (the old ``customPath``) is remote code
     execution: the server runs whatever binary the body names, outside the
     agent sandbox, for any token holder. Validating that string cannot fix it,
-    because the caller still picks the program (#1263).
+    because the caller still picks the program (#1267).
     """
     import platform
 
@@ -155,7 +155,7 @@ def get_terminal_command(terminal: str, path: str) -> list[str]:
     """Get the command to open a terminal at the specified path.
 
     As with ``get_ide_command``, the program comes from the table, never from
-    the request body (#1263). Terminals that used to be handed a ``cd <path>``
+    the request body (#1267). Terminals that used to be handed a ``cd <path>``
     shell fragment are now launched with no path argument at all -- the caller
     passes ``cwd=path`` to ``Popen``, which starts the shell in that directory
     without any string ever being interpreted by a shell.

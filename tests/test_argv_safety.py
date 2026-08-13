@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tests for the subprocess argv boundary (#1263).
+Tests for the subprocess argv boundary (#1267).
 ===============================================
 
 Every subprocess on these paths uses the list form, so the risk is argument

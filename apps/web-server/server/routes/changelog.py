@@ -248,7 +248,7 @@ async def generate_changelog(
         }
 
     # Start generation in background. A rejected ref is a bad request, not a
-    # server error, so translate rather than letting it become a 500 (#1263).
+    # server error, so translate rather than letting it become a 500 (#1267).
     try:
         success = await service.start_generation(
             project_id=projectId, project_path=project_path, request=request_dict

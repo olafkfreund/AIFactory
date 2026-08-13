@@ -102,7 +102,7 @@ Registered: `safe_spec_component` (`server/specpath.py`) and
 confine — `Path("/srv") / "../../etc"` resolves happily to `/etc`. Registering
 it would silence the exact bug #1056 was about.
 
-## Baseline recorded 2026-08-13 (#1263, command injection)
+## Baseline recorded 2026-08-13 (#1267, command injection)
 
 CodeQL 2.25.6, database over `apps/web-server`, `py/command-line-injection`:
 

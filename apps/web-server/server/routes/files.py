@@ -806,7 +806,7 @@ async def search_files(
     # The checks are the same ones this endpoint has always made; they now run
     # through the shared helpers in services/argv_safety.py so every value that
     # reaches the argv below is asserted by a named validator rather than by an
-    # ad-hoc condition (#1263).
+    # ad-hoc condition (#1267).
     try:
         query = assert_not_option(query, "query")
         file_pattern = assert_not_option(file_pattern, "file_pattern")
@@ -930,7 +930,7 @@ async def get_git_diff(
     # Security (#323 M3): `base` is a ref before `--`; reject a leading '-'
     # (option injection like `--output=...`). `path` goes after `--` so it's
     # always treated as a pathspec, never a flag -- asserted anyway, so the
-    # safety of both argv operands is stated by a named validator (#1263).
+    # safety of both argv operands is stated by a named validator (#1267).
     try:
         base = assert_safe_git_ref(base, "base")
         path = assert_not_option(path, "path")

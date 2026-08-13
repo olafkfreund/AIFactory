@@ -157,7 +157,7 @@ class ChangelogService:
             # but changelog_runner.py then joins them into a `git log` argv as
             # `<from>..<to>`. Assert on this side of the process boundary: it is
             # the only caller of that runner, and a second copy of the validator
-            # in apps/backend would be a copy to drift (#1263).
+            # in apps/backend would be a copy to drift (#1267).
             if git_history.get("fromTag"):
                 cmd.extend(
                     [

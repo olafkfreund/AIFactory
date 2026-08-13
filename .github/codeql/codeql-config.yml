@@ -21,7 +21,7 @@ queries:
 query-filters:
   - exclude:
       id: py/path-injection
-  # Same swap for command injection (#1263). Of the seven Python alerts, one
+  # Same swap for command injection (#1267). Of the seven Python alerts, one
   # was a real argument injection (`git log --output=<file>` reachable from a
   # changelog request body) and is fixed in code; the rest reach a list-form
   # argv whose values are now asserted by named helpers in
