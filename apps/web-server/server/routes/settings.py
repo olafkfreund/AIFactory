@@ -24,6 +24,11 @@ from pydantic import (
     field_validator,
 )
 
+from server.services.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
+
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
 # --------------------------------------------------------------------------
@@ -968,8 +973,17 @@ async def list_ollama_models(
     try:
         import httpx
 
+        # SSRF: the base URL comes off the request and is fetched server-side.
+        # allow_private=True for every self-hosted-provider probe in this file --
+        # Ollama/vLLM/LM Studio legitimately live on localhost or a cluster
+        # address, and the fleet's own models are served that way, so the strict
+        # posture would break the product. Non-http(s) schemes and the cloud
+        # metadata range are refused regardless; httpx does not follow redirects
+        # unless asked, so the 30x-to-metadata bypass is closed too.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{ollamaBaseUrl}/api/tags")
+            response = await client.get(f"{base}/api/tags")
             response.raise_for_status()
             data = response.json()
 
@@ -1021,8 +1035,11 @@ async def list_openai_compat_models(
         if apiKey:
             headers["Authorization"] = f"Bearer {apiKey}"
 
+        # SSRF: self-hosted OpenAI-compatible server, see /ollama/models above.
+        base = assert_safe_outbound_url(baseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{baseUrl}/v1/models", headers=headers)
+            response = await client.get(f"{base}/v1/models", headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -1069,8 +1086,11 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
         if request.apiKey:
             headers["Authorization"] = f"Bearer {request.apiKey.get_secret_value()}"
 
+        # SSRF: self-hosted OpenAI-compatible server, see /ollama/models above.
+        base = assert_safe_outbound_url(request.baseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{request.baseUrl}/v1/models", headers=headers)
+            response = await client.get(f"{base}/v1/models", headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -1107,10 +1127,13 @@ async def pull_ollama_model(
 
         import httpx
 
+        # SSRF: see /ollama/models above.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
+
         # Stream the pull progress
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
-                "POST", f"{ollamaBaseUrl}/api/pull", json={"name": modelName}
+                "POST", f"{base}/api/pull", json={"name": modelName}
             ) as response:
                 response.raise_for_status()
 
@@ -1138,9 +1161,13 @@ async def test_ollama_connection(
     try:
         import httpx
 
+        # SSRF: see /ollama/models above. One check covers both requests below,
+        # because both are built from this one validated base.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Check if server is reachable
-            response = await client.get(f"{ollamaBaseUrl}/api/tags")
+            response = await client.get(f"{base}/api/tags")
             response.raise_for_status()
 
             # Check if model exists
@@ -1155,7 +1182,7 @@ async def test_ollama_connection(
 
             # Test model with simple query
             test_response = await client.post(
-                f"{ollamaBaseUrl}/v1/chat/completions",
+                f"{base}/v1/chat/completions",
                 json={
                     "model": modelName,
                     "messages": [{"role": "user", "content": "Test"}],
@@ -2372,11 +2399,18 @@ async def test_api_connection(request: TestConnectionRequest):
     import urllib.request
 
     try:
+        # SSRF, strict posture: an API profile is a CLOUD provider endpoint
+        # (https://api.anthropic.com and friends), so there is no legitimate
+        # reason for one to resolve inside the network -- and this route
+        # attaches the caller's bearer token to whatever it reaches, so a
+        # private target would also be a credential leak. Self-hosted providers
+        # have their own routes above, which keep allow_private=True.
+        safe_url = assert_safe_outbound_url(f"{request.baseUrl}/models")
         req = urllib.request.Request(
-            f"{request.baseUrl}/models",
+            safe_url,
             headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
-        urllib.request.urlopen(req, timeout=10)
+        build_no_redirect_opener().open(req, timeout=10)
         return {"success": True, "data": {"connected": True}}
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -2389,11 +2423,13 @@ async def discover_api_models(request: TestConnectionRequest):
     import urllib.request
 
     try:
+        # SSRF, strict posture -- see /api-profiles/test above.
+        safe_url = assert_safe_outbound_url(f"{request.baseUrl}/models")
         req = urllib.request.Request(
-            f"{request.baseUrl}/models",
+            safe_url,
             headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
-        response = urllib.request.urlopen(req, timeout=10)
+        response = build_no_redirect_opener().open(req, timeout=10)
         data = json_module.loads(response.read().decode())
         models = [m.get("id") for m in data.get("data", [])]
         return {"success": True, "data": models}
