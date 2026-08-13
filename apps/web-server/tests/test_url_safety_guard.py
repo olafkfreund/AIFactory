@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from server.routes import git as git_routes, settings as settings_routes
+from server.routes import git, settings
 from server.services.url_safety import assert_safe_outbound_url
 
 # 169.254.169.254 is the cloud metadata address. Both postures must refuse it;
@@ -90,25 +90,25 @@ METADATA_BASE = "http://169.254.169.254"
 
 
 def test_ollama_status_probe_refuses_the_metadata_address() -> None:
-    with patch.object(git_routes, "build_no_redirect_opener") as opener:
-        assert git_routes.check_ollama_running(METADATA_BASE) is False
+    with patch.object(git, "build_no_redirect_opener") as opener:
+        assert git.check_ollama_running(METADATA_BASE) is False
     opener.assert_not_called()
 
 
 def test_ollama_status_probe_still_reaches_a_self_hosted_host() -> None:
     """The regression that matters commercially: private Ollama must still work."""
-    with patch.object(git_routes, "build_no_redirect_opener") as opener:
-        assert git_routes.check_ollama_running("http://10.0.0.5:11434") is True
+    with patch.object(git, "build_no_redirect_opener") as opener:
+        assert git.check_ollama_running("http://10.0.0.5:11434") is True
     opener.return_value.open.assert_called_once()
 
 
 async def test_git_ollama_model_routes_refuse_the_metadata_address() -> None:
-    with patch.object(git_routes, "build_no_redirect_opener") as opener:
-        assert (await git_routes.list_ollama_models(METADATA_BASE))["data"] == []
-        embedding = await git_routes.list_ollama_embedding_models(METADATA_BASE)
+    with patch.object(git, "build_no_redirect_opener") as opener:
+        assert (await git.list_ollama_models(METADATA_BASE))["data"] == []
+        embedding = await git.list_ollama_embedding_models(METADATA_BASE)
         assert embedding["data"]["embedding_models"] == []
-        pull = await git_routes.pull_ollama_model(
-            git_routes.PullModelRequest(modelName="x", baseUrl=METADATA_BASE)
+        pull = await git.pull_ollama_model(
+            git.PullModelRequest(modelName="x", baseUrl=METADATA_BASE)
         )
     assert pull["success"] is False
     assert "link-local/metadata" in pull["error"]
@@ -116,9 +116,9 @@ async def test_git_ollama_model_routes_refuse_the_metadata_address() -> None:
 
 
 async def test_mcp_health_refuses_a_non_http_scheme() -> None:
-    with patch.object(git_routes, "build_no_redirect_opener") as opener:
-        result = await git_routes.check_mcp_health(
-            git_routes.McpServerConfig(
+    with patch.object(git, "build_no_redirect_opener") as opener:
+        result = await git.check_mcp_health(
+            git.McpServerConfig(
                 id="s1", name="s", type="http", url="file:///etc/passwd"
             )
         )
@@ -131,13 +131,13 @@ async def test_settings_local_provider_routes_refuse_the_metadata_address() -> N
     """Ollama / OpenAI-compatible probes: permissive posture, metadata still out."""
     with patch("httpx.AsyncClient") as client:
         results = [
-            await settings_routes.list_ollama_models(METADATA_BASE),
-            await settings_routes.list_openai_compat_models(METADATA_BASE),
-            await settings_routes.test_openai_compat_connection(
-                settings_routes.OpenAICompatTestRequest(baseUrl=METADATA_BASE)
+            await settings.list_ollama_models(METADATA_BASE),
+            await settings.list_openai_compat_models(METADATA_BASE),
+            await settings.test_openai_compat_connection(
+                settings.OpenAICompatTestRequest(baseUrl=METADATA_BASE)
             ),
-            await settings_routes.pull_ollama_model("m", METADATA_BASE),
-            await settings_routes.test_ollama_connection(METADATA_BASE, "m"),
+            await settings.pull_ollama_model("m", METADATA_BASE),
+            await settings.test_ollama_connection(METADATA_BASE, "m"),
         ]
     for result in results:
         assert result["success"] is False
@@ -148,19 +148,19 @@ async def test_settings_local_provider_routes_refuse_the_metadata_address() -> N
 async def test_settings_local_provider_routes_still_allow_a_private_host() -> None:
     """A private address must pass the guard and reach the transport."""
     with patch("httpx.AsyncClient") as client:
-        await settings_routes.list_ollama_models("http://10.0.0.5:11434")
+        await settings.list_ollama_models("http://10.0.0.5:11434")
     client.assert_called_once()
 
 
 async def test_api_profile_probes_use_the_strict_posture() -> None:
     """API profiles are CLOUD endpoints and carry the caller's bearer token, so
     a private target is refused outright -- unlike the self-hosted routes."""
-    request = settings_routes.TestConnectionRequest(
+    request = settings.TestConnectionRequest(
         baseUrl="http://127.0.0.1:9999", apiKey="sk-secret"
     )
-    with patch.object(settings_routes, "build_no_redirect_opener") as opener:
-        test = await settings_routes.test_api_connection(request)
-        discover = await settings_routes.discover_api_models(request)
+    with patch.object(settings, "build_no_redirect_opener") as opener:
+        test = await settings.test_api_connection(request)
+        discover = await settings.discover_api_models(request)
     assert "non-public" in test["error"]
     assert "non-public" in discover["error"]
     opener.assert_not_called()
