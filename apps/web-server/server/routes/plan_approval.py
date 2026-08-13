@@ -176,7 +176,8 @@ async def approve_plan(
 
                 logger = logging.getLogger(__name__)
                 logger.info(
-                    f"[ApprovePlan] Cleaning up stale spec creation process for {sanitize_log(task_id)}"
+                    "[ApprovePlan] Cleaning up stale spec creation process for %s",
+                    sanitize_log(task_id),
                 )
                 try:
                     await agent_service.stop_task(task_id)

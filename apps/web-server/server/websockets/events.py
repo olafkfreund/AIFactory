@@ -292,8 +292,12 @@ async def emit_subtask_update(
     logger = logging.getLogger(__name__)
     if previous_status:
         logger.info(
-            f"[WebSocket] Emitting task:subtask-update - taskId: {sanitize_log(task_id)}, "
-            f"subtaskId: {sanitize_log(subtask_id)}, status: {sanitize_log(previous_status)} -> {sanitize_log(status)}"
+            "[WebSocket] Emitting task:subtask-update - taskId: %s, "
+            "subtaskId: %s, status: %s -> %s",
+            sanitize_log(task_id),
+            sanitize_log(subtask_id),
+            sanitize_log(previous_status),
+            sanitize_log(status),
         )
     else:
         logger.info(

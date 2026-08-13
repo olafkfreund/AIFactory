@@ -547,7 +547,8 @@ class EmitMixin:
         if self._is_rate_limit_line(line):
             self._task_rate_limits[task_id] = True
             logger.warning(
-                f"[AgentService] Rate limit detected for task {sanitize_log(task_id)} (will attempt failover if enabled)"
+                "[AgentService] Rate limit detected for task %s (will attempt failover if enabled)",
+                sanitize_log(task_id),
             )
 
         # Write to task_logs.json for detailed phase logs

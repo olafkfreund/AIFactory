@@ -10,6 +10,7 @@ import logging
 import re
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 

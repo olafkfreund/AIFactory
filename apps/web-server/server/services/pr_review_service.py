@@ -500,7 +500,12 @@ class PRReviewService:
             progress = PHASE_PROGRESS.get(phase, 0)
 
         logger.info(
-            f"[{sanitize_log(project_id)}:PR#{sanitize_log(pr_number)}] Phase: {sanitize_log(phase.value)} ({sanitize_log(progress)}%) - {sanitize_log(message)}"
+            "[%s:PR#%s] Phase: %s (%s%%) - %s",
+            sanitize_log(project_id),
+            sanitize_log(pr_number),
+            sanitize_log(phase.value),
+            sanitize_log(progress),
+            sanitize_log(message),
         )
 
         await broadcast_event(
@@ -559,7 +564,10 @@ class PRReviewService:
     ):
         """Emit error event via WebSocket."""
         logger.error(
-            f"[{sanitize_log(project_id)}:PR#{sanitize_log(pr_number)}] Review error: {sanitize_log(error)}"
+            "[%s:PR#%s] Review error: %s",
+            sanitize_log(project_id),
+            sanitize_log(pr_number),
+            sanitize_log(error),
         )
 
         await broadcast_event(

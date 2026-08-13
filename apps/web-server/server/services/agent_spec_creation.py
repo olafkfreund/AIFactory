@@ -86,7 +86,8 @@ class SpecCreationMixin:
                     if metadata.get("requireReviewBeforeCoding", False):
                         should_auto_approve = False
                         logger.info(
-                            f"[AgentService] Task {sanitize_log(task_id)} requires manual review - NOT auto-approving spec"
+                            "[AgentService] Task %s requires manual review - NOT auto-approving spec",
+                            sanitize_log(task_id),
                         )
                     # Read spec phase model from auto profile config
                     if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
@@ -120,7 +121,9 @@ class SpecCreationMixin:
                         )
                 except (json.JSONDecodeError, OSError, ImportError) as e:
                     logger.warning(
-                        f"[AgentService] PFactory governance check failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
+                        "[AgentService] PFactory governance check failed for %s: %s",
+                        sanitize_log(task_id),
+                        sanitize_log(e),
                     )
 
         # Build command
@@ -137,11 +140,14 @@ class SpecCreationMixin:
         if spec_phase_model:
             cmd.extend(["--model", spec_phase_model])
             logger.info(
-                f"[AgentService] [Model: {sanitize_log(spec_phase_model)}] Starting spec creation for {sanitize_log(task_id)}"
+                "[AgentService] [Model: %s] Starting spec creation for %s",
+                sanitize_log(spec_phase_model),
+                sanitize_log(task_id),
             )
         else:
             logger.info(
-                f"[AgentService] [Model: sonnet] Starting spec creation for {sanitize_log(task_id)} (default)"
+                "[AgentService] [Model: sonnet] Starting spec creation for %s (default)",
+                sanitize_log(task_id),
             )
 
         # Fix 1: Only auto-approve if task doesn't require manual review
@@ -303,7 +309,8 @@ class SpecCreationMixin:
             await _rmux_create(spec_id, project_path, " ".join(cmd))
         except Exception:
             logger.warning(
-                f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={sanitize_log(spec_id)}"
+                "[AgentService] rmux create hook (spec creation) raised (ignored); spec_id=%s",
+                sanitize_log(spec_id),
             )
 
         return proc

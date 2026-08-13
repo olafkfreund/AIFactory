@@ -368,7 +368,10 @@ class AgentService(
             project_path / ".aifactory" / "specs" / spec_id / "implementation_plan.json"
         )
         logger.info(
-            f"[AgentService._update_plan_status] CALLED for spec_id={sanitize_log(spec_id)}, status={sanitize_log(status)}, task_id={sanitize_log(task_id)}"
+            "[AgentService._update_plan_status] CALLED for spec_id=%s, status=%s, task_id=%s",
+            sanitize_log(spec_id),
+            sanitize_log(status),
+            sanitize_log(task_id),
         )
         logger.info(
             f"[AgentService._update_plan_status] plan_file path: {sanitize_log(plan_file)}"
@@ -401,7 +404,8 @@ class AgentService(
             control_status = task_control.read_control(spec_dir).get("status")
             if control_status == "done" or plan.get("status") == "done":
                 logger.info(
-                    f"[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for {sanitize_log(spec_id)}"
+                    "[AgentService._update_plan_status] Status is 'done' (user-set), skipping overwrite for %s",
+                    sanitize_log(spec_id),
                 )
                 return
 
@@ -409,7 +413,8 @@ class AgentService(
             # A valid plan should have phases and subtasks from spec creation
             if "phases" not in plan or not plan.get("phases"):
                 logger.error(
-                    f"[AgentService] Invalid or minimal implementation plan detected for {sanitize_log(spec_id)}"
+                    "[AgentService] Invalid or minimal implementation plan detected for %s",
+                    sanitize_log(spec_id),
                 )
                 if emit_events:
                     await self._safe_emit_task_status(task_id, "failed", "invalid_plan")
@@ -449,7 +454,9 @@ class AgentService(
                 updated_by="web_server",
             )
             logger.info(
-                f"[AgentService] Updated plan status to '{sanitize_log(plan['status'])}' for {sanitize_log(spec_id)}"
+                "[AgentService] Updated plan status to '%s' for %s",
+                sanitize_log(plan["status"]),
+                sanitize_log(spec_id),
             )
 
             # Emit the RFC-0001 completion event on a terminal build phase so the
@@ -579,7 +586,8 @@ class AgentService(
                     )
                 except Exception:
                     logger.error(
-                        f"[AgentService] Failed to emit fallback task:status for {sanitize_log(task_id)}"
+                        "[AgentService] Failed to emit fallback task:status for %s",
+                        sanitize_log(task_id),
                     )
 
     def _read_parallel_opts(
@@ -877,11 +885,13 @@ class AgentService(
                 cmd.append("--force")  # Bypass approval check for headless execution
                 if force:
                     logger.info(
-                        f"[AgentService] Using --force for {sanitize_log(task_id)} (plan manually approved)"
+                        "[AgentService] Using --force for %s (plan manually approved)",
+                        sanitize_log(task_id),
                     )
             else:
                 logger.info(
-                    f"[AgentService] Human review before coding enabled for task {sanitize_log(task_id)} - not using --force"
+                    "[AgentService] Human review before coding enabled for task %s - not using --force",
+                    sanitize_log(task_id),
                 )
 
         if base_branch:
@@ -898,7 +908,8 @@ class AgentService(
         if stop_after_planning:
             cmd.append("--stop-after-planning")
             logger.info(
-                f"[AgentService] Stop-after-planning for {sanitize_log(task_id)} (Copilot delegation)"
+                "[AgentService] Stop-after-planning for %s (Copilot delegation)",
+                sanitize_log(task_id),
             )
 
         # Parallel subtask execution (#376): run independent subtasks in
@@ -993,7 +1004,9 @@ class AgentService(
 
         exec_model_display = self._task_profiles.get(task_id, {}).get("model", "sonnet")
         logger.info(
-            f"[AgentService] [Model: {sanitize_log(exec_model_display)}] Starting task execution for {sanitize_log(task_id)}"
+            "[AgentService] [Model: %s] Starting task execution for %s",
+            sanitize_log(exec_model_display),
+            sanitize_log(task_id),
         )
         logger.info(f"[AgentService] Command: {sanitize_log(' '.join(cmd))}")
 
@@ -1256,7 +1269,8 @@ class AgentService(
                         q for q in self._task_queue if q.task_id != task_id
                     )
                 logger.info(
-                    f"[AgentService] Removed queued task {sanitize_log(task_id)} from admission queue"
+                    "[AgentService] Removed queued task %s from admission queue",
+                    sanitize_log(task_id),
                 )
                 return True
             # RFC-0016 #671: a build may run as a k8s Job (no in-pod process to
@@ -1265,7 +1279,8 @@ class AgentService(
                 if await self._stop_kubejob_build(task_id):
                     return True
             logger.info(
-                f"[AgentService] Task {sanitize_log(task_id)} not in running_tasks (already stopped or never started)"
+                "[AgentService] Task %s not in running_tasks (already stopped or never started)",
+                sanitize_log(task_id),
             )
             return False
 
@@ -1318,7 +1333,8 @@ class AgentService(
             await _rmux_reap(_reap_spec_id)
         except Exception:
             logger.warning(
-                f"[AgentService] rmux reap hook raised in stop_task (ignored); spec_id={sanitize_log(_reap_spec_id)}"
+                "[AgentService] rmux reap hook raised in stop_task (ignored); spec_id=%s",
+                sanitize_log(_reap_spec_id),
             )
 
         # Use pop with default to handle race condition where _monitor_process

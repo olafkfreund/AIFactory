@@ -109,7 +109,8 @@ async def monitor_process(
                             current_phase = service._task_current_phases.get(task_id)
                             if current_phase != TaskPhase.PLAN_REVIEW:
                                 logger.info(
-                                    f"[AgentService] Detected review checkpoint for {sanitize_log(detected_spec_id)} (plan_review.html exists)"
+                                    "[AgentService] Detected review checkpoint for %s (plan_review.html exists)",
+                                    sanitize_log(detected_spec_id),
                                 )
 
                                 # Update plan status to human_review
@@ -136,7 +137,8 @@ async def monitor_process(
                                     TaskPhase.PLAN_REVIEW
                                 )
                                 logger.info(
-                                    f"[AgentService] Emitted PLAN_REVIEW status for {sanitize_log(task_id)}"
+                                    "[AgentService] Emitted PLAN_REVIEW status for %s",
+                                    sanitize_log(task_id),
                                 )
 
                 # If we detect a rate limit and failover is enabled, don't wait for the process to exit.
@@ -151,7 +153,8 @@ async def monitor_process(
                         and service._should_retry_with_failover()
                     ):
                         logger.warning(
-                            f"[AgentService] Rate limit detected for {sanitize_log(task_id)} while running; terminating process to trigger profile failover"
+                            "[AgentService] Rate limit detected for %s while running; terminating process to trigger profile failover",
+                            sanitize_log(task_id),
                         )
                         rate_limit_forced_restart = True
                         try:
@@ -181,7 +184,10 @@ async def monitor_process(
 
         exit_model = service._task_profiles.get(task_id, {}).get("model", "unknown")
         logger.info(
-            f"[AgentService] [Model: {sanitize_log(exit_model)}] Task {sanitize_log(task_id)} process exited with code {sanitize_log(return_code)}"
+            "[AgentService] [Model: %s] Task %s process exited with code %s",
+            sanitize_log(exit_model),
+            sanitize_log(task_id),
+            sanitize_log(return_code),
         )
 
         # Early model fallback: if a non-Claude model failed, retry with Sonnet
@@ -235,7 +241,8 @@ async def monitor_process(
                         )
                     )
                     logger.info(
-                        f"[AgentService] Task {sanitize_log(task_id)} restarted with fallback model (sonnet)"
+                        "[AgentService] Task %s restarted with fallback model (sonnet)",
+                        sanitize_log(task_id),
                     )
                     return
 
@@ -369,7 +376,8 @@ async def monitor_process(
                     if not review_data.get("approved", False):
                         # This is NOT a failure - it's waiting for human review!
                         logger.info(
-                            f"[AgentService] Task {sanitize_log(task_id)} awaiting human review (not a failure)"
+                            "[AgentService] Task %s awaiting human review (not a failure)",
+                            sanitize_log(task_id),
                         )
 
                         # Get actual phase BEFORE cleanup
@@ -438,7 +446,10 @@ async def monitor_process(
                         )
 
                         logger.info(
-                            f"[AgentService] Task {sanitize_log(task_id)} transitioned to {sanitize_log(emit_phase.value)} phase (was {sanitize_log(actual_phase.value)})"
+                            "[AgentService] Task %s transitioned to %s phase (was %s)",
+                            sanitize_log(task_id),
+                            sanitize_log(emit_phase.value),
+                            sanitize_log(actual_phase.value),
                         )
                         return  # Exit early - not a failure
 
@@ -469,13 +480,16 @@ async def monitor_process(
                 failed_profile_id = profile_info.get("profileId")
                 reason = "rate_limit" if rate_limit_detected else "early_failure"
                 logger.info(
-                    f"[AgentService] {sanitize_log(reason.replace('_', ' '))} detected for {sanitize_log(task_id)}, attempting profile failover"
+                    "[AgentService] %s detected for %s, attempting profile failover",
+                    sanitize_log(reason.replace("_", " ")),
+                    sanitize_log(task_id),
                 )
 
                 # Attempt retry with different profile
                 if not failed_profile_id:
                     logger.warning(
-                        f"[AgentService] No failed profile recorded for {sanitize_log(task_id)}; cannot failover"
+                        "[AgentService] No failed profile recorded for %s; cannot failover",
+                        sanitize_log(task_id),
                     )
                     new_proc = None
                 else:
@@ -535,19 +549,22 @@ async def monitor_process(
                     )
 
                     logger.info(
-                        f"[AgentService] Task {sanitize_log(task_id)} restarted with alternate profile"
+                        "[AgentService] Task %s restarted with alternate profile",
+                        sanitize_log(task_id),
                     )
                     return  # Exit this monitor instance
                 else:
                     logger.warning(
-                        f"[AgentService] No alternate profile available for task {sanitize_log(task_id)}, trying model fallback"
+                        "[AgentService] No alternate profile available for task %s, trying model fallback",
+                        sanitize_log(task_id),
                     )
 
         # If stop_task() already handled cleanup, skip duplicate processing
         if task_id in service._task_stopped:
             service._task_stopped.discard(task_id)
             logger.info(
-                f"[AgentService] Task {sanitize_log(task_id)} was stopped by user, skipping _monitor_process cleanup"
+                "[AgentService] Task %s was stopped by user, skipping _monitor_process cleanup",
+                sanitize_log(task_id),
             )
             return
 
@@ -582,7 +599,9 @@ async def monitor_process(
                         )
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
-                        f"[AgentService] Could not evaluate build success for {sanitize_log(spec_id)}: {sanitize_log(e)}"
+                        "[AgentService] Could not evaluate build success for %s: %s",
+                        sanitize_log(spec_id),
+                        sanitize_log(e),
                     )
 
         final_status = "completed" if build_succeeded else "failed"
@@ -635,9 +654,12 @@ async def monitor_process(
                     if pending_count > 0 and round_num <= max_continuation_rounds:
                         setattr(service, continuation_key, round_num)
                         logger.info(
-                            f"[AgentService] Auto-continuation round {sanitize_log(round_num)}: "
-                            f"{sanitize_log(completed_count)}/{sanitize_log(total_count)} subtasks done, "
-                            f"{sanitize_log(pending_count)} remaining for {sanitize_log(spec_id)}"
+                            "[AgentService] Auto-continuation round %s: %s/%s subtasks done, %s remaining for %s",
+                            sanitize_log(round_num),
+                            sanitize_log(completed_count),
+                            sanitize_log(total_count),
+                            sanitize_log(pending_count),
+                            sanitize_log(spec_id),
                         )
 
                         # Clean up current run tracking
@@ -678,26 +700,33 @@ async def monitor_process(
                                 workers=_wrk,
                             )
                             logger.info(
-                                f"[AgentService] Auto-continuation started for {sanitize_log(spec_id)} (round {sanitize_log(round_num)})"
+                                "[AgentService] Auto-continuation started for %s (round %s)",
+                                sanitize_log(spec_id),
+                                sanitize_log(round_num),
                             )
                             return  # Exit this monitor — new monitor will take over
                         except Exception as e:
                             logger.error(
-                                f"[AgentService] Auto-continuation failed for {sanitize_log(spec_id)}: {sanitize_log(e)}"
+                                "[AgentService] Auto-continuation failed for %s: %s",
+                                sanitize_log(spec_id),
+                                sanitize_log(e),
                             )
                             # Fall through to normal completion
                     elif pending_count > 0 and round_num > max_continuation_rounds:
                         logger.warning(
-                            f"[AgentService] Auto-continuation limit reached "
-                            f"({sanitize_log(max_continuation_rounds)} rounds) for {sanitize_log(spec_id)}, "
-                            f"{sanitize_log(pending_count)} subtasks still pending"
+                            "[AgentService] Auto-continuation limit reached (%s rounds) for %s, %s subtasks still pending",
+                            sanitize_log(max_continuation_rounds),
+                            sanitize_log(spec_id),
+                            sanitize_log(pending_count),
                         )
                     else:
                         # All subtasks done — clean up continuation tracker
                         if hasattr(service, continuation_key):
                             delattr(service, continuation_key)
                         logger.info(
-                            f"[AgentService] All {sanitize_log(total_count)} subtasks completed for {sanitize_log(spec_id)}"
+                            "[AgentService] All %s subtasks completed for %s",
+                            sanitize_log(total_count),
+                            sanitize_log(spec_id),
                         )
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
@@ -713,7 +742,11 @@ async def monitor_process(
         if spec_id and project_path:
             status = "completed" if build_succeeded else "failed"
             logger.info(
-                f"[AgentService._monitor_process] About to call _update_plan_status: spec_id={sanitize_log(spec_id)}, status={sanitize_log(status)}, task_id={sanitize_log(task_id)}, project_path={sanitize_log(project_path)}"
+                "[AgentService._monitor_process] About to call _update_plan_status: spec_id=%s, status=%s, task_id=%s, project_path=%s",
+                sanitize_log(spec_id),
+                sanitize_log(status),
+                sanitize_log(task_id),
+                sanitize_log(project_path),
             )
             await service._update_plan_status(
                 project_path, spec_id, status, task_id, emit_events=False
@@ -772,7 +805,9 @@ async def monitor_process(
             else:
                 fail_message = f"Task failed with exit code {return_code}"
                 logger.error(
-                    f"[AgentService] Task {sanitize_log(task_id)} failed with exit code {sanitize_log(return_code)}"
+                    "[AgentService] Task %s failed with exit code %s",
+                    sanitize_log(task_id),
+                    sanitize_log(return_code),
                 )
             await service._emit_progress(
                 TaskProgress(
@@ -809,7 +844,8 @@ async def monitor_process(
             await _rmux_reap(_reap_spec_id)
         except Exception:
             logger.warning(
-                f"[AgentService] rmux reap hook raised (ignored); spec_id={sanitize_log(_reap_spec_id)}"
+                "[AgentService] rmux reap hook raised (ignored); spec_id=%s",
+                sanitize_log(_reap_spec_id),
             )
 
         # Clean up tracking data AFTER all emissions are complete

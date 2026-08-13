@@ -201,7 +201,9 @@ class ChangelogService:
             cmd.extend(["--custom-instructions", request["customInstructions"]])
 
         logger.info(
-            f"Starting changelog generation for {sanitize_log(project_id)}: {sanitize_log(' '.join(cmd))}"
+            "Starting changelog generation for %s: %s",
+            sanitize_log(project_id),
+            sanitize_log(" ".join(cmd)),
         )
 
         # Set up environment with PYTHONPATH pointing to backend.
@@ -367,7 +369,11 @@ class ChangelogService:
         """Emit progress event via WebSocket."""
         progress = PHASE_PROGRESS.get(phase, 0)
         logger.info(
-            f"[{sanitize_log(project_id)}] Phase: {sanitize_log(phase.value)} ({sanitize_log(progress)}%) - {sanitize_log(message)}"
+            "[%s] Phase: %s (%s%%) - %s",
+            sanitize_log(project_id),
+            sanitize_log(phase.value),
+            sanitize_log(progress),
+            sanitize_log(message),
         )
 
         await broadcast_event(

@@ -161,7 +161,8 @@ async def run_terminal_completion(
                 handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
                 if handoff.get("sent"):
                     logger.info(
-                        f"[AgentService] Auto-handed off {sanitize_log(spec_id)} to TFactory for testing"
+                        "[AgentService] Auto-handed off %s to TFactory for testing",
+                        sanitize_log(spec_id),
                     )
                 elif handoff.get("reason") not in (
                     None,
@@ -169,7 +170,9 @@ async def run_terminal_completion(
                     "not_configured",
                 ):
                     logger.warning(
-                        f"[AgentService] TFactory auto-handoff for {sanitize_log(spec_id)} did not send: {sanitize_log(handoff)}"
+                        "[AgentService] TFactory auto-handoff for %s did not send: %s",
+                        sanitize_log(spec_id),
+                        sanitize_log(handoff),
                     )
             except Exception:
                 logger.debug(

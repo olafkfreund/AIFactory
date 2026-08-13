@@ -5,6 +5,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +29,6 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 # BUG-1.2-003: Memory backend must be one of these values
 MemoryBackendType = Literal["graphiti", "file"]
 
-
-import logging
 
 from ..config import get_settings
 from ..tenancy import (

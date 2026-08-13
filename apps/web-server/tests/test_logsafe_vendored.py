@@ -85,7 +85,7 @@ def test_a_real_call_site_cannot_forge_a_record(
     The path is derived from a task id that arrives on the URL, so this is the
     live shape of the bug, not a reconstruction of it.
     """
-    logger = _attach(capture, "server.services.task_status")
+    _attach(capture, "server.services.task_status")
     hostile = tmp_path / "plan.json"
     hostile.write_text("{ not json")
 

@@ -16,21 +16,27 @@ import re
 from unittest.mock import patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from server.error_ref import client_error, error_reference
+from server.routes import terminal
+from server.services import gh
 
 REF = re.compile(r"\b[0-9a-f]{12}\b")
 
 # One exception carrying every kind of internal detail these handlers leak in
 # production: an absolute path, an internal hostname, a port, and a class name.
-SECRET_PATH = "/etc/aifactory/credentials.yaml"
+# Named CREDENTIALS_FILE rather than SECRET_PATH because it is the PATH a
+# credentials file would sit at, not a credential -- and ruff's S105 keys off
+# the variable name.
+CREDENTIALS_FILE = "/etc/aifactory/credentials.yaml"
 INTERNAL_HOST = "postgres-primary.aifactory.svc.cluster.local"
 INTERNAL_PORT = "5432"
 BOOM = RuntimeError(
     f"could not connect to {INTERNAL_HOST}:{INTERNAL_PORT}: "
-    f"no password supplied and {SECRET_PATH} is unreadable"
+    f"no password supplied and {CREDENTIALS_FILE} is unreadable"
 )
-LEAKS = (SECRET_PATH, INTERNAL_HOST, INTERNAL_PORT, "RuntimeError", "Traceback")
+LEAKS = (CREDENTIALS_FILE, INTERNAL_HOST, INTERNAL_PORT, "RuntimeError", "Traceback")
 
 
 def _assert_no_leak(text: str) -> None:
@@ -75,7 +81,7 @@ def test_the_detail_is_recoverable_from_the_log_under_that_id(
 
     assert f"[ref={ref}]" in logs.text
     # Support has to be able to answer "what actually happened".
-    assert SECRET_PATH in logs.text
+    assert CREDENTIALS_FILE in logs.text
     assert INTERNAL_HOST in logs.text
 
 
@@ -103,9 +109,7 @@ def test_a_newline_in_the_exception_cannot_forge_a_log_record(
 
 def test_the_gh_helper_does_not_hand_back_the_exception_text() -> None:
     """The root of the flow: every `result.get("error")` sink reads this dict."""
-    from server.services import gh
-
-    with patch("subprocess.run", side_effect=OSError(f"cannot exec {SECRET_PATH}")):
+    with patch("subprocess.run", side_effect=OSError(f"cannot exec {CREDENTIALS_FILE}")):
         result = gh.run_gh_command(["repo", "view"])
 
     assert result["success"] is False
@@ -113,21 +117,23 @@ def test_the_gh_helper_does_not_hand_back_the_exception_text() -> None:
     assert REF.search(result["error"]), result["error"]
 
 
-def test_a_real_route_response_body_leaks_nothing() -> None:
+class _FailingPtyManager:
+    def create_session(self, **_kwargs: object) -> None:
+        raise BOOM
+
+
+def test_a_real_route_response_body_leaks_nothing(tmp_path) -> None:
     """POST /api/terminals, with the PTY manager failing the way it does in prod.
 
     Asserted on the RESPONSE BODY, not on the status code: a 503 with the
     hostname in `detail` is exactly the bug this closes.
     """
-    from server.routes import terminal
-
-    app = __import__("fastapi").FastAPI()
+    app = FastAPI()
     app.include_router(terminal.router, prefix="/api/terminals")
 
-    manager = type("M", (), {"create_session": lambda *a, **k: (_ for _ in ()).throw(BOOM)})()
-    with patch.object(terminal, "get_pty_manager", return_value=manager):
+    with patch.object(terminal, "get_pty_manager", return_value=_FailingPtyManager()):
         response = TestClient(app, raise_server_exceptions=False).post(
-            "/api/terminals", json={"cols": 80, "rows": 24, "cwd": "/tmp"}
+            "/api/terminals", json={"cols": 80, "rows": 24, "cwd": str(tmp_path)}
         )
 
     assert response.status_code == 503, response.text

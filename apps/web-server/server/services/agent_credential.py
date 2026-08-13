@@ -472,7 +472,9 @@ class CredentialMixin:
             new_cmd.extend(["--model", "sonnet"])
 
         logger.info(
-            f"[AgentService] [Model: sonnet] Fallback triggered for {sanitize_log(task_id)} (original: {sanitize_log(failed_model)})"
+            "[AgentService] [Model: sonnet] Fallback triggered for %s (original: %s)",
+            sanitize_log(task_id),
+            sanitize_log(failed_model),
         )
 
         # Emit WebSocket event for model fallback

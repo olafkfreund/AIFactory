@@ -270,7 +270,10 @@ async def revoke_api_key(
     await db.commit()
 
     logger.info(
-        f"API key revoked: {sanitize_log(key_name)} (id={sanitize_log(key_id)}) by user {sanitize_log(current_user.id)}"
+        "API key revoked: %s (id=%s) by user %s",
+        sanitize_log(key_name),
+        sanitize_log(key_id),
+        sanitize_log(current_user.id),
     )
 
     return None

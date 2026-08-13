@@ -375,7 +375,9 @@ async def start_task(
                 }
     except (json.JSONDecodeError, OSError, ImportError) as e:
         logger.warning(
-            f"[StartTask] PFactory routing check failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
+            "[StartTask] PFactory routing check failed for %s: %s",
+            sanitize_log(task_id),
+            sanitize_log(e),
         )
 
     # Fix 3: Check if a VALID implementation_plan.json exists - if not, run spec creation first
@@ -423,7 +425,8 @@ async def start_task(
         from datetime import datetime
 
         logger.info(
-            f"[StartTask] No valid implementation plan found, will run spec creation for {sanitize_log(task_id)}"
+            "[StartTask] No valid implementation plan found, will run spec creation for %s",
+            sanitize_log(task_id),
         )
         requirements_file = spec_dir / "requirements.json"
         if not requirements_file.exists():
@@ -453,7 +456,8 @@ async def start_task(
         # === FAST PATH: Simple tasks skip spec creation entirely ===
         if complexity == "simple":
             logger.info(
-                f"[StartTask] Simple task fast path: generating spec + plan programmatically for {sanitize_log(task_id)}"
+                "[StartTask] Simple task fast path: generating spec + plan programmatically for %s",
+                sanitize_log(task_id),
             )
 
             # 1. Generate minimal spec.md
@@ -550,7 +554,8 @@ async def start_task(
                     plan["phase"] = "spec_creation"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
                     logger.info(
-                        f"[StartTask] Persisted status=in_progress (spec creation) to {sanitize_log(implementation_plan)}"
+                        "[StartTask] Persisted status=in_progress (spec creation) to %s",
+                        sanitize_log(implementation_plan),
                     )
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning(
@@ -626,7 +631,8 @@ async def start_task(
         effective_workers = task_metadata.get("workers")
     if effective_parallel:
         logger.info(
-            f"[StartTask] Parallel execution requested (workers={sanitize_log(effective_workers or 'default')})"
+            "[StartTask] Parallel execution requested (workers=%s)",
+            sanitize_log(effective_workers or "default"),
         )
 
     agent_service = get_agent_service()
@@ -640,7 +646,8 @@ async def start_task(
             if review_data.get("approved", False):
                 force_execution = True
                 logger.info(
-                    f"[StartTask] Plan was manually approved for {sanitize_log(task_id)}, using --force"
+                    "[StartTask] Plan was manually approved for %s, using --force",
+                    sanitize_log(task_id),
                 )
         except (json.JSONDecodeError, OSError):
             pass
@@ -649,7 +656,8 @@ async def start_task(
         if force_execution:
             # Plan was approved — clean up stale spec creation process before starting execution
             logger.info(
-                f"[StartTask] Cleaning up stale spec creation process for approved task {sanitize_log(task_id)}"
+                "[StartTask] Cleaning up stale spec creation process for approved task %s",
+                sanitize_log(task_id),
             )
             try:
                 await agent_service.stop_task(task_id)
@@ -682,7 +690,8 @@ async def start_task(
                     plan["reviewReason"] = "plan_review"
                     implementation_plan.write_text(json.dumps(plan, indent=2))
                     logger.info(
-                        f"[StartTask] Plan requires approval for {sanitize_log(task_id)}, set human_review"
+                        "[StartTask] Plan requires approval for %s, set human_review",
+                        sanitize_log(task_id),
                     )
                 # Issue #259: control-plane state is authoritative in the
                 # agent-immutable store.

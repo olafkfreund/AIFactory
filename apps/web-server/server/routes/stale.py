@@ -32,6 +32,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from server.error_ref import client_error
 from server.routes.projects import load_projects, resolve_project_path
 from server.routes.task_service import get_spec_dirs, spec_to_task
 

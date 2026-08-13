@@ -711,8 +711,12 @@ async def update_member_role(
     target_user = user_result.scalar_one_or_none()
 
     logger.info(
-        f"Member {sanitize_log(user_id)} role changed from '{sanitize_log(old_role)}' to '{sanitize_log(body.role)}' "
-        f"in org {sanitize_log(org_id)} by {sanitize_log(current_user.id)}"
+        "Member %s role changed from '%s' to '%s' in org %s by %s",
+        sanitize_log(user_id),
+        sanitize_log(old_role),
+        sanitize_log(body.role),
+        sanitize_log(org_id),
+        sanitize_log(current_user.id),
     )
 
     return OrgMemberResponse(
@@ -804,7 +808,11 @@ async def remove_member(
 
     action = "left" if is_self_remove else "removed from"
     logger.info(
-        f"User {sanitize_log(user_id)} {sanitize_log(action)} org {sanitize_log(org_id)} by {sanitize_log(current_user.id)}"
+        "User %s %s org %s by %s",
+        sanitize_log(user_id),
+        sanitize_log(action),
+        sanitize_log(org_id),
+        sanitize_log(current_user.id),
     )
 
     return None

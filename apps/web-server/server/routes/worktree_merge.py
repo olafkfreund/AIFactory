@@ -605,7 +605,9 @@ async def resolve_worktree_conflicts(
     else:
         # Start the git merge (allow conflicts)
         logger.info(
-            f"Starting git merge of {sanitize_log(worktree_branch)} into current branch for task {sanitize_log(task_id)}"
+            "Starting git merge of %s into current branch for task %s",
+            sanitize_log(worktree_branch),
+            sanitize_log(task_id),
         )
         merge_result = subprocess.run(
             ["git", "merge", work_ref, "--no-commit", "--no-ff"],
