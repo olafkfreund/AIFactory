@@ -16,6 +16,7 @@ log-forging test goes red instead.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from unittest.mock import patch
@@ -181,3 +182,92 @@ def test_a_newline_in_the_base_url_cannot_forge_a_log_record(
     )
     assert forged in summary, "the payload must stay readable, escaped not stripped"
     assert "\\n" in summary, "an unescaped newline forges a second log record"
+
+
+# --------------------------------------------------------------------------
+# The file-backed handlers (#1301 follow-up)
+#
+# The first pass on #1301 worked from the CodeQL alert list and closed every
+# flagged line. Five `raise HTTPException(detail=f"...{str(e)}")` handlers
+# survived it, because the engine never connected those sinks -- which is the
+# trap the issue itself called out: "the flagged line count understates the
+# bug. Read the handlers, do not work only from the alert list."
+#
+# These three routes write to disk, so the exception they catch is an OSError
+# that renders the ABSOLUTE PATH it failed on. `.env` is one of those paths.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        (
+            "post",
+            "/api/settings/api-key",
+            # sk-ant- prefix: the handler validates the key FORMAT first and
+            # returns 400 without ever reaching the disk write, so a placeholder
+            # key makes this test pass without exercising anything.
+            {
+                "keyType": "anthropic",
+                "keyValue": "sk-ant-" + "x" * 40,
+                "saveToEnv": True,
+            },
+        ),
+        ("put", "/api/settings/tab-state", {"tabs": ["a"]}),
+        ("patch", "/api/settings/source-env", {"DEBUG": "true"}),
+    ],
+)
+def test_a_disk_failure_does_not_put_our_paths_in_the_response(
+    client: TestClient, method: str, path: str, body: dict[str, object] | None
+) -> None:
+    """An OSError names the path it failed on; the caller must not receive it.
+
+    ``BOOM`` is a ``ConnectionRefusedError``, which subclasses ``OSError``, so
+    it is caught by the same ``except OSError`` these handlers use while still
+    carrying a path, a host and a port to assert the absence of.
+    """
+    with (
+        patch("pathlib.Path.write_text", side_effect=BOOM),
+        patch("pathlib.Path.read_text", side_effect=BOOM),
+    ):
+        response = client.request(method.upper(), path, json=body)
+
+    # Pinned: a 4xx here means validation rejected the request before the disk
+    # write, and _assert_no_leak would pass without exercising the handler.
+    assert response.status_code == 500, (
+        f"{path} returned {response.status_code}; the handler was never reached, "
+        f"so this assertion proves nothing: {response.text!r}"
+    )
+    _assert_no_leak(response.text)
+
+
+def test_an_unserialisable_tab_state_does_not_echo_the_exception(
+    client: TestClient,
+) -> None:
+    """The 400 branch leaked too, and a 4xx body is still a response body.
+
+    ``save_tab_state`` caught ``(TypeError, ValueError)`` from ``json.dumps``
+    and echoed ``str(e)``. Lower severity than the OSError branch, but the same
+    shape, and it is the branch a caller can reach on demand.
+    """
+
+    class FakeJson:
+        """Swapped into settings.py's namespace only.
+
+        Patching ``json.dumps`` globally also breaks the response serialisation
+        starlette does on the way out, which turns this 400 into a 500 and the
+        assertion stops testing the branch it names.
+        """
+
+        JSONDecodeError = json.JSONDecodeError
+        loads = staticmethod(json.loads)
+
+        @staticmethod
+        def dumps(*_args: object, **_kwargs: object) -> str:
+            raise TypeError(f"not serialisable while writing {CREDENTIALS_FILE}")
+
+    with patch.object(settings_routes, "json", FakeJson):
+        response = client.put("/api/settings/tab-state", json={"tabs": ["a"]})
+
+    assert response.status_code == 400, "must reach the 400 branch, not fail earlier"
+    _assert_no_leak(response.text)
