@@ -2,13 +2,35 @@
 Logging configuration for AIFactory Web Server.
 
 Sets up file-based logging with rotation for persistent error tracking and debugging.
+
+Records are rendered as **one JSON object per line** (#1320). That is not a
+formatting preference, it closes a log-forging hole:
+
+The previous format was ``ts | LEVEL | logger:line | message``, and
+:func:`parse_log_line` split it on ``" | "`` with no validation, serving the
+result to the portal's log viewer. Any attacker-controlled text that reached a
+log message -- a filename, a URL, a subprocess's stderr, an exception's own text
+via ``exc_info`` -- could contain a newline followed by
+``2026-01-01 00:00:00 | CRITICAL | server.audit:1 | ...`` and become a
+**fabricated entry in the viewer**, with a level and logger name of the
+attacker's choosing.
+
+Escaping the message could not fully close that, because ``exc_info`` is
+rendered by the logging module itself and never passes through our sanitizer.
+JSON does close it, structurally: a newline inside a JSON string is encoded as
+``\\n``, so no field value can ever start a new line, and one record is one
+line by construction. The traceback keeps its newlines inside the ``exception``
+field and stays readable when the viewer renders it.
 """
 
+import json
 import logging
 import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+import structlog
 
 from .paths import get_data_dir
 
@@ -44,15 +66,27 @@ def setup_logging(
     error_log = log_dir / "errors.log"
     agent_log = log_dir / "agent.log"
 
-    # Formatters
-    detailed_format = logging.Formatter(
-        "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    # One JSON object per line, for every handler. See the module docstring:
+    # the old " | "-delimited format was forgeable through any attacker-
+    # controlled text that reached a message or a traceback.
+    #
+    # foreign_pre_chain runs on records that came from stdlib logging rather
+    # than structlog -- which is all of them here -- and is what puts level,
+    # logger and timestamp in the object instead of leaving them on the record.
+    json_format = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            # Renders exc_info into an "exception" STRING field. Without it the
+            # traceback would be appended after the JSON object as raw text,
+            # putting the forgeable newlines straight back on the line.
+            structlog.processors.format_exc_info,
+        ],
     )
-
-    simple_format = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    detailed_format = json_format
+    simple_format = json_format
 
     # Get root logger
     root_logger = logging.getLogger()
@@ -166,9 +200,38 @@ def get_recent_logs(
 
 
 def parse_log_line(line: str) -> dict | None:
-    """Parse a log line into structured data."""
+    """Parse a log line into structured data.
+
+    JSON first (#1320). A record written by :func:`setup_logging` is one JSON
+    object per line, so the fields are read rather than inferred from
+    delimiters -- which is what makes the viewer unforgeable: a newline in any
+    value was encoded as ``\\n`` and cannot have produced a second line for
+    this function to see.
+
+    The legacy ``" | "`` split is kept only for log files already on disk from
+    before the format changed. It is reached only for a line that is not valid
+    JSON, so it cannot be used to smuggle a forged entry into a new file.
+    """
+    stripped = line.strip()
+    if stripped.startswith("{"):
+        try:
+            obj = json.loads(stripped)
+        except json.JSONDecodeError:
+            obj = None
+        if isinstance(obj, dict):
+            return {
+                "timestamp": str(obj.get("timestamp", "")),
+                # structlog writes the level lowercase; the viewer and the
+                # ?level= filter both expect the stdlib spelling.
+                "level": str(obj.get("level", "info")).upper(),
+                "logger": str(obj.get("logger", "")),
+                "message": str(obj.get("event", "")),
+                "exception": obj.get("exception"),
+                "raw": line,
+            }
+
     try:
-        # Format: "2024-01-05 16:49:31 | INFO     | server.main:39 | Message"
+        # Legacy: "2024-01-05 16:49:31 | INFO     | server.main:39 | Message"
         parts = line.split(" | ", 3)
         if len(parts) >= 4:
             timestamp = parts[0].strip()
