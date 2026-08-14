@@ -766,7 +766,8 @@ async def update_api_key(request: UpdateApiKeyRequest):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update API key: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update API key", e),
         )
 
 
@@ -1182,7 +1183,9 @@ async def pull_ollama_model(
                     if line:
                         progress_data = json.loads(line)
                         # Could emit WebSocket progress here
-                        logger.info(f"Pull progress: {progress_data}")
+                        # progress_data is the remote registry's own JSON, so it
+                        # is untrusted text going into a log line.
+                        logger.info("Pull progress: %s", sanitize_log(progress_data))
 
                 return {
                     "success": True,
@@ -1270,10 +1273,16 @@ async def save_tab_state(state: dict):
         return {"success": True}
     except OSError as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to save tab state: {str(e)}"
+            status_code=500,
+            # OSError renders the absolute path it failed on, so this one put a
+            # real filesystem path in the response body.
+            detail=client_error(logger, "Failed to save tab state", e),
         )
     except (TypeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid tab state data: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=client_error(logger, "Invalid tab state data", e),
+        )
 
 
 # --------------------------------------------------------------------------
@@ -1517,7 +1526,7 @@ async def delete_claude_profile(profile_id: str):
                 )
             except OSError as e:
                 logging.getLogger(__name__).warning(
-                    f"Failed to remove OAuth fallback file: {e}"
+                    "Failed to remove OAuth fallback file: %s", sanitize_log(e)
                 )
 
     return {"success": True}
@@ -1693,13 +1702,17 @@ def _poll_token_and_save(
                     save_profiles(data)
                     if data.get("activeProfileId") == profile_id:
                         _sync_env_token_for_active_profile(data, profile_id, logger)
-                    logger.info(f"[Claude OAuth] Token saved to profile {profile_id}")
+                    logger.info(
+                        "[Claude OAuth] Token saved to profile %s",
+                        sanitize_log(profile_id),
+                    )
                 return
         except Exception as e:  # pragma: no cover - best-effort background
-            logger.warning(f"[Claude OAuth] Polling error: {e}")
+            logger.warning("[Claude OAuth] Polling error: %s", sanitize_log(e))
         time.sleep(2)
     logger.warning(
-        f"[Claude OAuth] Token not detected for profile {profile_id} within timeout"
+        "[Claude OAuth] Token not detected for profile %s within timeout",
+        sanitize_log(profile_id),
     )
 
 
@@ -2676,11 +2689,16 @@ async def update_source_env(config: SourceEnvUpdate):
         raise
     except json.JSONDecodeError as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to parse existing .env file: {str(e)}"
+            status_code=500,
+            # JSONDecodeError carries the document position, and the surrounding
+            # handler works on the .env file - the path to a credential store is
+            # not something a client needs echoed back.
+            detail=client_error(logger, "Failed to parse existing .env file", e),
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update source environment: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update source environment", e),
         )
 
 
