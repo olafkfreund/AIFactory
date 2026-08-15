@@ -2,22 +2,27 @@ name: security cleanup gates
 
 # Gate 5 (banned constructs) for this service repo. Factory#718.
 #
-# NON-BLOCKING ON PURPOSE UNTIL 2026-09-15, AND THAT DATE IS THE POINT.
-# The hub has run this gate since rollout; the four service repos never have,
-# so their findings were only ever visible to someone running the scanner by
-# hand. Landing it blocking across the fleet at once, with findings still
-# outstanding in the other repos, blocks every unrelated PR and is how a gate
-# gets deleted rather than met.
+# BLOCKING. A failure here fails the PR.
 #
-# `continue-on-error: true` is the whole of the temporary part. Delete that one
-# line to flip this blocking. If you are reading this after 2026-09-15 and it
-# is still here, that is the dark-gate failure Factory#718 exists to prevent:
-# either flip it or re-argue the date on the issue. Do not silently extend it.
+# That is the end state Factory#718 asks for by 2026-09-15, and this repo
+# reached it early: AIFactory#1329 and #1330 fixed 22 real findings, and every
+# remaining entry in banned-constructs-allowlist.yaml was individually read.
+# The gate was wired non-blocking in #1331 and flipped here once it was green,
+# which is the order that matters — a gate is flipped BECAUSE it passes, never
+# in the hope that it will.
 #
-# THIS REPO IS ALREADY AT ZERO REAL FINDINGS (AIFactory#1329, #1330 fixed 22 of
-# them; the rest are reviewed false positives in the allowlist). So this gate
-# passes today and could be flipped now — it is left non-blocking only to keep
-# one shape across all four service repos while the others catch up.
+# IF YOU ARE COPYING THIS FILE INTO A REPO THAT STILL HAS FINDINGS, add:
+#
+#     continue-on-error: true   # NON-BLOCKING until 2026-09-15, Factory#718
+#
+# to the job below, and delete it once that repo is clean. Do not start
+# blocking with findings outstanding: it blocks every unrelated PR in the repo
+# and is how a gate gets deleted rather than met. And do not leave the line
+# after 2026-09-15 — an exemption nobody can find is the dark gate this whole
+# issue exists to prevent.
+#
+# The four service repos differ by exactly that one labelled line.
+
 on:
   pull_request:
     branches: [dev, main]
@@ -42,9 +47,8 @@ env:
 
 jobs:
   banned-constructs:
-    name: Gate 5 — banned constructs (NON-BLOCKING until 2026-09-15, Factory#718)
+    name: Gate 5 — banned constructs (blocking, Factory#718)
     runs-on: ubuntu-latest
-    continue-on-error: true # <- DELETE THIS LINE TO FLIP TO BLOCKING
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -66,6 +70,11 @@ jobs:
         # after the fact even though it is not prevented beforehand. Integrity
         # and pinning are separable and this buys the cheaper half.
         run: |
+          # `set -o pipefail` because a pipeline reports only its LAST stage's
+          # status: `curl ... | tail` exits 0 on a 404. Actions' default shell
+          # does not set it. This bit during development, where an `| tail -1`
+          # printed EXIT=0 for a run that had crashed at import.
+          set -o pipefail
           mkdir -p /tmp/gate
           for f in check_banned_constructs.py gate_evidence.py; do
             curl -fsSL \

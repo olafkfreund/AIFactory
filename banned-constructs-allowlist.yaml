@@ -20,7 +20,15 @@
 
 # ---------------------------------------------------------------------------
 # Log calls, not responses. Factory#782 tracks teaching the gate to tell the
-# difference; until it lands these are the cost. In all three the flagged
+# difference; until it lands these are the cost.
+#
+# WHEN Factory#782 MERGES, THESE THREE ENTRIES STOP MATCHING AND THIS REPO'S
+# GATE GOES RED. That is not a bug in either change -- it is the ratchet
+# working ("an entry that matches nothing fails the gate", so a fix cannot land
+# without its placeholder being removed) -- but the gate is BLOCKING here, so
+# the red blocks every unrelated PR until these three entries are deleted.
+# Deleting them is the whole fix and it needs no code change. Simulated before
+# flipping to blocking: rc=1, as designed. In all three the flagged
 # `str(exc)` is an argument to a `logger.*` call and the response beside it is
 # a literal — i.e. the code already does what this gate is asking for.
 # ---------------------------------------------------------------------------
