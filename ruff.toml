@@ -217,6 +217,19 @@ ignore = [
 ]
 "test_*.py" = ["F401", "F811"]
 
+# The shared test carve-out from standards/ruff.toml (Factory#730). `extend`
+# does not deep-merge per-file-ignores -- defining this table locally replaces
+# the baseline's, so the carve-out is repeated verbatim here, the same
+# technique PFactory's root ruff.toml already uses. "S" is not in this repo's
+# `select` above, so this is a no-op today and stays that way until it is
+# adopted -- at which point it is already correct instead of silently
+# reopening a hole standards/ruff.toml closed. (Measured 2026-08-13: this
+# repo's own config, whole-repo, with `--select S`: 10,763 S101 findings --
+# every one of them a test-tree file the vendored carve-out never reached.)
+"**/test_*.py" = ["S101", "PLR2004"]
+"**/*_test.py" = ["S101", "PLR2004"]
+"**/tests/**" = ["S101", "PLR2004"]
+
 [format]
 quote-style = "double"
 indent-style = "space"
