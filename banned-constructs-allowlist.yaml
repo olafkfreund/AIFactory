@@ -1,0 +1,133 @@
+# Gate 5 grandfather allowlist for THIS repo.
+# Read by the Factory hub's scripts/check_banned_constructs.py; paths are
+# relative to this repo root.
+#
+# THIS FILE IS NOT AN IGNORE LIST. The gate enforces that, not convention:
+#
+#   * `issue` is REQUIRED. An entry without one fails the gate outright, so a
+#     grandfathered finding always has someone's name on it.
+#   * An entry that matches NOTHING fails the gate. Fix the finding and you
+#     must delete the entry, so this list can only ratchet down.
+#
+# NOTE THE KEY: entries are (path, rule) — PATH-level, not line-level. An entry
+# added for one false positive ALSO grandfathers every real violation later
+# added to that file. That is why every entry below names what it is and why,
+# and why a reviewed leak gets a fix rather than a line here. See Factory#782.
+#
+# EVERY ENTRY BELOW WAS READ. None is here because the gate was noisy. The 16
+# findings that were real leaks were fixed in AIFactory#1329 and #1330 rather
+# than listed — this file is what was left after that, not instead of it.
+
+# ---------------------------------------------------------------------------
+# Log calls, not responses. Factory#782 tracks teaching the gate to tell the
+# difference; until it lands these are the cost. In all three the flagged
+# `str(exc)` is an argument to a `logger.*` call and the response beside it is
+# a literal — i.e. the code already does what this gate is asking for.
+# ---------------------------------------------------------------------------
+- path: apps/web-server/server/routes/oidc_routes.py
+  rule: raw-exception-in-response
+  reason: >-
+    the flagged str(exc)[:200] is an argument to logger.warning; the response
+    is the literal "OIDC callback rejected". Deliberate — the handler carries a
+    reflected-XSS comment explaining why it must not echo the error
+  issue: Factory#782
+- path: apps/web-server/server/saml/routes.py
+  rule: raw-exception-in-response
+  reason: >-
+    same shape as oidc_routes: str(exc) goes to logger.warning, the response is
+    the literal "SAML RelayState rejected"
+  issue: Factory#782
+- path: apps/web-server/server/routes/git.py
+  rule: raw-exception-in-response
+  reason: >-
+    logger.debug(..., sanitize_log(str(e))) on an Ollama probe whose handler
+    returns an empty list; nothing reaches a response. Matched because the hint
+    regex finds "reply" inside the noqa comment
+  issue: Factory#782
+
+# ---------------------------------------------------------------------------
+# No HTTP surface at all. None of these modules contains HTTPException,
+# JSONResponse or jsonify; they matched because _HTTP_RESPONSE_HINT matches
+# "Response" case-insensitively and each has a local named `response_text` or
+# calls `client.receive_response()`.
+# ---------------------------------------------------------------------------
+- path: apps/backend/ideation/generator.py
+  rule: raw-exception-in-response
+  reason: >-
+    backend agent runner returning a (bool, str) tuple into the spec pipeline;
+    no HTTP surface in the module. Matched on a local named response_text
+  issue: Factory#718
+- path: apps/backend/ideation/prioritizer.py
+  rule: raw-exception-in-response
+  reason: same shape as ideation/generator.py — no HTTP surface in the module
+  issue: Factory#718
+- path: apps/backend/runners/roadmap/executor.py
+  rule: raw-exception-in-response
+  reason: same shape as ideation/generator.py — no HTTP surface in the module
+  issue: Factory#718
+- path: apps/backend/query_memory.py
+  rule: raw-exception-in-response
+  reason: same shape as ideation/generator.py — no HTTP surface in the module
+  issue: Factory#718
+
+# ---------------------------------------------------------------------------
+# Not a response body.
+# ---------------------------------------------------------------------------
+- path: apps/backend/providers/openai_compatible.py
+  rule: raw-exception-in-response
+  reason: >-
+    str(exc) is assigned to audit_error and written to an audit record, which
+    is a place detail belongs; it does not reach an HTTP response
+  issue: Factory#718
+
+# ---------------------------------------------------------------------------
+# HUB-VENDORED. Both copies are byte-identical to the hub canonical at
+# shared/factory-common/factory_common/http.py and are held there by a
+# .hub-sha pin, so patching either one here would break the drift gate. The
+# fix, if one is needed, belongs in the hub and arrives by re-vendoring — the
+# hub already carries its own entry for the same line under Factory#718.
+#
+# Checked for this repo on 2026-08-15: NOTHING imports the module. `git grep`
+# for HttpClient/HttpResponse outside factory_common/ returns nothing, with a
+# control proving the grep works (it finds the definition). So the line is
+# unreachable here, not merely unfixed.
+# ---------------------------------------------------------------------------
+- path: apps/web-server/factory_common/http.py
+  rule: raw-exception-in-response
+  reason: >-
+    hub-vendored under a .hub-sha pin; fix belongs in the hub canonical. Also
+    unreachable in this repo — nothing instantiates HttpClient
+  issue: Factory#718
+- path: apps/backend/factory_common/http.py
+  rule: raw-exception-in-response
+  reason: >-
+    second byte-identical copy of the hub canonical; same reasoning as the
+    web-server copy above
+  issue: Factory#718
+
+# ---------------------------------------------------------------------------
+# Prose. The detector deliberately never treats a line carrying an f-string
+# prefix as prose (an f-string in a response body is the violation and lives in
+# a string token either way), and _prose_lines returns nothing for non-.py
+# files because stripping // and block comments from JS/TS is a second parser
+# that could HIDE violations if it guessed wrong. Both choices are correct and
+# both cost an entry here.
+# ---------------------------------------------------------------------------
+- path: apps/web-server/tests/test_settings_error_leak.py
+  rule: raw-exception-in-response
+  reason: >-
+    a `#` comment quoting an f-string example of the violation this test file
+    exists to prevent; not a live sink
+  issue: Factory#718
+- path: scripts/bump-version.js
+  rule: exists-then-read
+  reason: >-
+    a // comment stating that the code deliberately does NOT do
+    existsSync-then-read, above the try/ENOENT helper that avoids it
+  issue: Factory#718
+- path: scripts/record-portal-walkthrough.ts
+  rule: exists-then-read
+  reason: >-
+    same shape — a // comment above the try/ENOENT rewrite that fixed this site
+    in AIFactory#1329
+  issue: Factory#718
