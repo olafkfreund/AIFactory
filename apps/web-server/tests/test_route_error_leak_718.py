@@ -28,9 +28,10 @@ from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
+from server.auth import TokenAuthMiddleware
 from server.error_ref import InputRejectedError, client_error
 from server.mcp_remote import auth as mcp_auth
-from server.routes import files, inbox
+from server.routes import files, inbox, logs
 from server.services import inbox_service
 
 # An absolute server path of the kind an OSError renders. If this appears in a
@@ -212,3 +213,49 @@ def test_mcp_auth_no_longer_names_the_database() -> None:
     source = Path(mcp_auth.__file__).read_text(encoding="utf-8")
     assert "Database session not available" not in source
     assert isinstance(mcp_auth.MCPAuthError("x"), InputRejectedError)
+
+
+# ─── the auth axis: entitlement, not just trustworthiness ────────────────
+
+
+def test_the_frontend_log_route_really_is_unauthenticated() -> None:
+    """Pins the premise the next test rests on.
+
+    ``/api/logs/frontend`` is listed in ``TokenAuthMiddleware.PUBLIC_PATHS`` so
+    the browser can report errors before anyone has logged in. That makes every
+    exception escaping its handler a disclosure to an ANONYMOUS caller, which is
+    a different severity from the same exception on a tenant-scoped route --
+    and it is a fact about the middleware, not about the handler, so it can be
+    changed by someone editing a different file. Asserted here so that change
+    cannot happen quietly.
+    """
+    assert "/api/logs/frontend" in TokenAuthMiddleware.PUBLIC_PATHS
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_log_route_does_not_echo_an_oserror() -> None:
+    """The worst-entitlement case in this repo: anonymous caller, OSError path."""
+    request = logs.FrontendLogsRequest(
+        entries=[
+            logs.FrontendLogEntry(
+                timestamp="2026-08-15T00:00:00Z",
+                level="error",
+                category="ui",
+                message="boom",
+            )
+        ]
+    )
+    # `open` is what the handler's try block actually guards; mkdir runs
+    # outside it. Patching the wrong call would make this test pass on a
+    # handler that never entered the branch under test.
+    with (
+        patch(
+            "builtins.open",
+            side_effect=PermissionError(13, "denied", DISCLOSED_PATH),
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await logs.receive_frontend_logs(request)
+
+    assert exc_info.value.status_code == 500
+    _assert_redacted(_detail(exc_info), DISCLOSED_PATH, "denied")

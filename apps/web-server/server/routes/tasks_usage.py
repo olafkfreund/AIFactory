@@ -18,6 +18,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from server.error_ref import client_error
+
 from .project_authz import require_task_access
 
 router = APIRouter()
@@ -66,7 +68,7 @@ async def get_task_token_usage(
     except ImportError as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Token attribution module unavailable: {exc}",
+            detail=client_error(logger, "Token attribution module unavailable", exc),
         ) from exc
 
     return read_breakdown(spec_dir)

@@ -128,4 +128,6 @@ async def start_auto_fix_one(projectId: str, issueNumber: int) -> dict[str, Any]
             sanitize_log(projectId),
             sanitize_log(issueNumber),
         )
-        raise HTTPException(status_code=500, detail=f"start failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=client_error(logger, "Auto-fix start failed", e)
+        ) from e
