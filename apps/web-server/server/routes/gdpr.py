@@ -19,6 +19,8 @@ from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.error_ref import client_error
+
 from ..database import User
 from ..database.engine import get_db
 from ..services.gdpr import erase_user
@@ -47,7 +49,12 @@ async def trigger_gdpr_erasure(
     try:
         summary = await erase_user(db, user_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+        # erase_user raises InputRejectedError for "no such user", whose text
+        # client_error returns verbatim; any other ValueError gets a reference.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=client_error(logger, "GDPR erasure failed", exc),
+        ) from exc
 
     logger.warning(
         "GDPR erasure executed: user_id=%s by actor=%s audit_rows=%s",

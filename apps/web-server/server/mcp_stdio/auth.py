@@ -27,12 +27,17 @@ synthetic legacy key) so handlers can record key_id in audit logs.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request, status
 
+from server.error_ref import client_error
+
 from ..config import get_settings
 from ..mcp_remote import auth as mcp_remote_auth
+
+logger = logging.getLogger(__name__)
 
 # Re-export the named scopes so callers don't have to know which
 # module owns the constants.
@@ -112,9 +117,15 @@ def require_acw_scope(scope: str):
         try:
             key = await mcp_remote_auth.authenticate(f"Bearer {token}")
         except mcp_remote_auth.MCPAuthError as exc:
+            # MCPAuthError is an InputRejectedError: its messages describe the
+            # caller's own credential ("Invalid API key", "API key has been
+            # revoked") and are worth handing back. client_error reads
+            # client_message, so anything else landing here -- a driver error
+            # from the key lookup, say -- gets a reference id instead of its
+            # own text (Factory#718).
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=str(exc),
+                detail=client_error(logger, "Authentication failed", exc),
             ) from exc
 
         if not key.has_scope(scope):

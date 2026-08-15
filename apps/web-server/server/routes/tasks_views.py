@@ -18,6 +18,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from server.error_ref import client_error
 from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
@@ -75,9 +76,10 @@ async def get_qa_report(
     try:
         content = qa_report_file.read_text(encoding="utf-8")
     except OSError as exc:
+        # An OSError renders the absolute path it failed on (Factory#718).
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Could not read QA report: {exc}",
+            detail=client_error(logger, "Could not read QA report", exc),
         ) from exc
 
     return {
@@ -266,12 +268,14 @@ async def get_plan_html(
         return HTMLResponse(content=html_file.read_text(), status_code=200)
 
     except ImportError as e:
+        # An ImportError names the module path that failed to resolve, which
+        # maps the server's filesystem layout for the caller.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"HTML generator not available: {str(e)}",
-        )
+            detail=client_error(logger, "HTML generator not available", e),
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate plan HTML: {str(e)}",
-        )
+            detail=client_error(logger, "Failed to generate plan HTML", e),
+        ) from e

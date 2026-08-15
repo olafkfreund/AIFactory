@@ -9,12 +9,17 @@ credentials, and SDK environment variable passthrough for custom API endpoints.
 import contextlib
 import importlib
 import json
+import logging
 import os
 import platform
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from factory_common.logsafe import sanitize_log
+
+logger = logging.getLogger(__name__)
 
 # Priority order for auth token resolution.
 # NOTE: By DEFAULT we do NOT fall back to ANTHROPIC_API_KEY — AIFactory targets
@@ -247,12 +252,27 @@ def _get_token_from_windows_credential_files() -> str | None:
         ]
 
         for cred_path in cred_paths:
-            if os.path.exists(cred_path):
+            # Deliberately NOT `exists(p)` then `open(p)`: besides the TOCTOU
+            # race, that collapses "absent" and "unreadable" into the same
+            # answer, so a credentials file with the wrong mode is silently
+            # skipped and the next path is tried -- which is how a machine ends
+            # up authenticating as the wrong identity with no error at all
+            # (Factory#718). Only ENOENT means absent here.
+            try:
                 with open(cred_path, encoding="utf-8") as f:
                     data = json.load(f)
-                    token = data.get("claudeAiOauth", {}).get("accessToken")
-                    if token and token.startswith("sk-ant-oat01-"):
-                        return token
+            except FileNotFoundError:
+                continue
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "credentials at %s exist but could not be read: %s",
+                    sanitize_log(cred_path),
+                    sanitize_log(exc),
+                )
+                continue
+            token = data.get("claudeAiOauth", {}).get("accessToken")
+            if token and token.startswith("sk-ant-oat01-"):
+                return token
 
         return None
 

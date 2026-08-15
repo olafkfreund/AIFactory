@@ -20,13 +20,18 @@ and the handlers (``enqueue_inbox_message``, ``list_inbox_messages``) historical
 lived in ``routes/tasks.py`` and are re-exported there for backward compatibility.
 """
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from server.error_ref import client_error
+
 from .project_authz import require_task_access
 from .task_service import _resolve_task
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -143,13 +148,21 @@ async def enqueue_inbox_message(
             summary=message.summary,
         )
     except inbox_service.DeliveryVerificationError as exc:
+        # Interpolates the absolute inbox path; reference only (Factory#718).
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Message could not be verified after write: {exc}",
+            detail=client_error(
+                logger, "Message could not be verified after write", exc
+            ),
         ) from exc
     except inbox_service.InboxError as exc:
+        # Only the empty-text rejection is an InputRejectedError, so only it
+        # comes back verbatim. Every other InboxError
+        # interpolates inbox_path and often an inner OSError, so it gets a
+        # reference instead of naming a path on our disk.
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=client_error(logger, "Inbox message rejected", exc),
         ) from exc
 
     return InboxEnqueueResponse(
@@ -178,7 +191,8 @@ async def list_inbox_messages(
         )
     except inbox_service.InboxError as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=client_error(logger, "Could not list inbox messages", exc),
         ) from exc
 
     return [InboxMessage(**m) for m in messages]

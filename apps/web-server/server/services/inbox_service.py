@@ -65,6 +65,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from server.error_ref import InputRejectedError
+
 # ---------------------------------------------------------------------------
 # Cross-process locking (best-effort, POSIX via fcntl / Windows via msvcrt).
 #
@@ -136,6 +138,22 @@ _mentions = _load_mentions()
 
 class InboxError(Exception):
     """Base error for inbox operations."""
+
+
+class InboxTextRejectedError(InboxError, InputRejectedError):
+    """An inbox rejection whose message is safe to hand back (Factory#718).
+
+    Only for text the CALLER supplied being wrong. Every other ``InboxError``
+    in this module interpolates ``inbox_path`` (an absolute server path) and
+    often an inner ``OSError``/``JSONDecodeError`` too, so those stay plain
+    ``InboxError`` and reach the client as a reference id instead.
+
+    Inherits both so existing ``except InboxError`` handlers keep catching it
+    and ``client_error`` still recognises it as caller-safe.
+    """
+
+    def __init__(self, client_message: str) -> None:
+        InputRejectedError.__init__(self, client_message)
 
 
 class DeliveryVerificationError(InboxError):
@@ -275,7 +293,7 @@ def build_message(
     """Construct a well-formed inbox message with a fresh messageId."""
     body = (text or "").strip()
     if not body:
-        raise InboxError("Message text must not be empty")
+        raise InboxTextRejectedError("Message text must not be empty")
     derived_summary = (summary or "").strip()
     if not derived_summary:
         # First line, trimmed to a sensible length.
