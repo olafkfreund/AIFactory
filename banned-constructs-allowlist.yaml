@@ -6,8 +6,13 @@
 #
 #   * `issue` is REQUIRED. An entry without one fails the gate outright, so a
 #     grandfathered finding always has someone's name on it.
-#   * An entry that matches NOTHING fails the gate. Fix the finding and you
-#     must delete the entry, so this list can only ratchet down.
+#   * An entry that matches nothing is NOT yet detected. The sibling ruff-S
+#     gate enforces that and this file claimed it too, wrongly -- I copied the
+#     rule across without checking `check_banned_constructs.py` implements it,
+#     which is the Factory#783 mistake in the file whose header warns about it.
+#     Until Factory#788 lands, a fixed finding leaves a dead entry behind that
+#     silently grandfathers the whole file again. Delete entries by hand when
+#     you fix the finding.
 #
 # NOTE THE KEY: entries are (path, rule) — PATH-level, not line-level. An entry
 # added for one false positive ALSO grandfathers every real violation later
@@ -19,39 +24,10 @@
 # than listed — this file is what was left after that, not instead of it.
 
 # ---------------------------------------------------------------------------
-# Log calls, not responses. Factory#782 tracks teaching the gate to tell the
-# difference; until it lands these are the cost.
-#
-# WHEN Factory#782 MERGES, THESE THREE ENTRIES STOP MATCHING AND THIS REPO'S
-# GATE GOES RED. That is not a bug in either change -- it is the ratchet
-# working ("an entry that matches nothing fails the gate", so a fix cannot land
-# without its placeholder being removed) -- but the gate is BLOCKING here, so
-# the red blocks every unrelated PR until these three entries are deleted.
-# Deleting them is the whole fix and it needs no code change. Simulated before
-# flipping to blocking: rc=1, as designed. In all three the flagged
-# `str(exc)` is an argument to a `logger.*` call and the response beside it is
-# a literal — i.e. the code already does what this gate is asking for.
-# ---------------------------------------------------------------------------
-- path: apps/web-server/server/routes/oidc_routes.py
-  rule: raw-exception-in-response
-  reason: >-
-    the flagged str(exc)[:200] is an argument to logger.warning; the response
-    is the literal "OIDC callback rejected". Deliberate — the handler carries a
-    reflected-XSS comment explaining why it must not echo the error
-  issue: Factory#782
-- path: apps/web-server/server/saml/routes.py
-  rule: raw-exception-in-response
-  reason: >-
-    same shape as oidc_routes: str(exc) goes to logger.warning, the response is
-    the literal "SAML RelayState rejected"
-  issue: Factory#782
-- path: apps/web-server/server/routes/git.py
-  rule: raw-exception-in-response
-  reason: >-
-    logger.debug(..., sanitize_log(str(e))) on an Ollama probe whose handler
-    returns an empty list; nothing reaches a response. Matched because the hint
-    regex finds "reply" inside the noqa comment
-  issue: Factory#782
+# (The three log-call entries that lived here are gone: Factory#782 taught the
+# gate that a line inside a `logger.*` call is not a response, so those three
+# findings no longer exist and their entries would have been dead weight
+# grandfathering three route files for nothing.)
 
 # ---------------------------------------------------------------------------
 # No HTTP surface at all. None of these modules contains HTTPException,
