@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.error_ref import InputRejectedError
+
 from ..database.engine import get_db
 from ..database.models import ApiKey
 
@@ -54,7 +56,7 @@ class AuthenticatedKey:
         return scope in self.scopes
 
 
-class MCPAuthError(Exception):
+class MCPAuthError(InputRejectedError):
     """Raised on auth failures; the SSE/JSON-RPC layer maps to HTTP 401/403."""
 
 
@@ -103,7 +105,11 @@ async def authenticate(authorization_header: str | None) -> AuthenticatedKey:
         return await _lookup_by_digest(session, digest)
     # get_db yields exactly once; if we got here, the dependency didn't
     # run — surface as an auth error rather than a silent pass.
-    raise MCPAuthError("Database session not available")
+    # Deliberately not "database session not available": that is our internal
+    # state, and this raise is reachable by an unauthenticated caller
+    # (Factory#718). Every other message in this module describes the caller's
+    # own credential and stays verbatim.
+    raise MCPAuthError("Authentication is temporarily unavailable")
 
 
 async def _lookup_by_digest(session: AsyncSession, digest: str) -> AuthenticatedKey:

@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from server.error_ref import client_error
 from server.services.argv_safety import (
     assert_not_option,
     assert_safe_git_ref,
@@ -692,10 +693,12 @@ async def write_file(
     try:
         full_path.write_text(file_data.content, encoding="utf-8")
     except Exception as e:
+        # An OSError here renders the ABSOLUTE server path it failed on, and
+        # this route is reachable by any project member (Factory#718).
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to write file: {str(e)}",
-        )
+            detail=client_error(logger, "Failed to write file", e),
+        ) from e
 
     return {"success": True, "path": path}
 
@@ -732,8 +735,8 @@ async def delete_file(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete: {str(e)}",
-        )
+            detail=client_error(logger, "Failed to delete", e),
+        ) from e
 
     return {"success": True}
 
@@ -771,9 +774,12 @@ async def search_files(
         max_results = bounded_count(max_results, 10000, "max_results")
         search_root = assert_not_option(str(full_path), "path")
     except ValueError as exc:
+        # argv_safety raises InputRejectedError, whose developer-written text
+        # client_error hands back verbatim. Any OTHER ValueError reaching here
+        # was written by the stdlib and gets a reference id instead.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=client_error(logger, "Invalid request parameter", exc),
         ) from exc
     if len(query) > 1000:
         raise HTTPException(
@@ -895,9 +901,12 @@ async def get_git_diff(
         base = assert_safe_git_ref(base, "base")
         path = assert_not_option(path, "path")
     except ValueError as exc:
+        # argv_safety raises InputRejectedError, whose developer-written text
+        # client_error hands back verbatim. Any OTHER ValueError reaching here
+        # was written by the stdlib and gets a reference id instead.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=client_error(logger, "Invalid request parameter", exc),
         ) from exc
 
     try:
@@ -951,8 +960,8 @@ async def get_git_diff(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Git error: {str(e)}",
-        )
+            detail=client_error(logger, "Git operation failed", e),
+        ) from e
 
 
 # --------------------------------------------------------------------------
@@ -1021,11 +1030,7 @@ async def clear_insights_session(projectId: str):
         # Re-raise HTTP exceptions (like 404 from _get_project_path)
         raise
     except Exception as e:
-        # Log error and return 500
-
-        logging.getLogger(__name__).error(
-            f"Failed to clear files insights session: {e}", exc_info=True
-        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to clear files insights session: {str(e)}"
-        )
+            status_code=500,
+            detail=client_error(logger, "Failed to clear files insights session", e),
+        ) from e

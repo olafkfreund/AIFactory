@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, HttpUrl, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.error_ref import client_error
 from server.services.url_safety import (
     assert_safe_outbound_url,
     build_no_redirect_opener,
@@ -175,7 +176,12 @@ def _probe_models(
             f"{base_url.rstrip('/')}/v1/models", allow_private=True
         )
     except ValueError as exc:
-        return EndpointTestResponse(ok=False, error=str(exc))
+        # url_safety raises InputRejectedError, returned verbatim so the caller
+        # can fix the URL. A foreign ValueError gets a reference instead --
+        # which also keeps the SSRF error-text oracle closed (see above).
+        return EndpointTestResponse(
+            ok=False, error=client_error(logger, "Endpoint URL rejected", exc)
+        )
     req_headers: dict[str, str] = {"Accept": "application/json"}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
