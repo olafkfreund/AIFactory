@@ -74,8 +74,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Module-level state — single attach token. Subsequent init calls are idempotent.
+# Module-level state. Subsequent init calls are idempotent.
 _initialized: bool = False
+# The context token from ``attach`` below. A dispatched Job never detaches it --
+# it exits -- so within this module the value is written and not read, and
+# CodeQL called it dead code on that basis (Factory#744). It is not: the
+# consumers that vendor this module detach it in their pytest fixtures, because
+# a test session does NOT exit and the attached span otherwise leaks into every
+# later test in the run. The hub had no test for this module, so nothing here
+# read it and nothing here noticed (Factory#795).
 _attach_token = None
 _job_span = None
 _provider = None
@@ -164,6 +171,10 @@ def init_agent_tracing() -> None:
         _job_span = trace.get_tracer(__name__).start_span(
             _span_name(), context=parent_ctx, attributes=_span_attributes()
         )
+        # Kept, not discarded. This process never detaches -- it exits shortly
+        # after (see _flush_at_exit's shutdown() note above) -- but a consumer's
+        # test session does not, and detaching is the only way to stop the
+        # attached span leaking across a pytest run. See test_job_tracing.py.
         _attach_token = attach(trace.set_span_in_context(_job_span, parent_ctx))
         atexit.register(_flush_at_exit)
 
