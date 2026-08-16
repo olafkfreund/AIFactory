@@ -35,12 +35,15 @@ pattern.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+
+from factory_common.logsafe import sanitize_log
 
 from ..config import get_settings
 
@@ -182,21 +185,25 @@ class WorkspaceStore:
             try:
                 fs.makedirs(key_root, exist_ok=True)
             except Exception:
-                pass
+                logger.warning(
+                    "fs.makedirs(%s) failed, proceeding anyway",
+                    sanitize_log(key_root),
+                    exc_info=True,
+                )
             with fs.open(manifest_key, "w") as fh:
                 fh.write(json.dumps(manifest, indent=2))
             logger.info(
-                "workspace_store.upload_project: snapshotted %s (%d files, %d bytes) to %s",
-                local_path,
-                file_count,
-                total_bytes,
-                key_root,
+                "workspace_store.upload_project: snapshotted %s (%s files, %s bytes) to %s",
+                sanitize_log(local_path),
+                sanitize_log(file_count),
+                sanitize_log(total_bytes),
+                sanitize_log(key_root),
             )
         except Exception:
             logger.warning(
                 "workspace_store.upload_project: failed for org=%s project=%s",
-                org_id,
-                project_id,
+                sanitize_log(org_id),
+                sanitize_log(project_id),
                 exc_info=True,
             )
 
@@ -306,10 +313,10 @@ class WorkspaceStore:
                 project_id,
                 exc_info=True,
             )
-            try:
+            # ignore_errors=True already swallows failures inside rmtree itself;
+            # this only guards a non-OSError bug in shutil's own bookkeeping.
+            with contextlib.suppress(Exception):
                 shutil.rmtree(local_path, ignore_errors=True)
-            except Exception:
-                pass
             return False
 
     # -------------------------------------------------------------------

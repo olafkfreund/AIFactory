@@ -6,13 +6,11 @@ Tests the full PR review flow with mocked external dependencies.
 These tests validate the integration between components.
 """
 
-import asyncio
 import json
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

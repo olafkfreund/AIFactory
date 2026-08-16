@@ -21,3 +21,25 @@ queries:
 query-filters:
   - exclude:
       id: py/path-injection
+  # Same swap for command injection (#1267). Of the seven Python alerts, one
+  # was a real argument injection (`git log --output=<file>` reachable from a
+  # changelog request body) and is fixed in code; the rest reach a list-form
+  # argv whose values are now asserted by named helpers in
+  # services/argv_safety.py. Those helpers are imported, so stock CodeQL does
+  # not follow them -- py/command-line-injection-sanitized is the identical
+  # query with them registered as barriers, and it reports zero only because
+  # the assertions exist.
+  - exclude:
+      id: py/command-line-injection
+  # Same trade, second rule family. py/full-ssrf and py/partial-ssrf have no
+  # notion of a validator: the guard in services/url_safety.py resolves the
+  # host, refuses the metadata range and non-http(s) schemes, and blocks
+  # redirects, yet the alert stayed open after it landed because stock CodeQL
+  # cannot see it. These two are excluded ONLY because
+  # custom-queries/{Full,Partial}SsrfSanitized.ql re-ask the identical question
+  # with that guard registered as a barrier -- same sources, same sinks, same
+  # severity. Delete the replacements and you must delete these lines too.
+  - exclude:
+      id: py/full-ssrf
+  - exclude:
+      id: py/partial-ssrf

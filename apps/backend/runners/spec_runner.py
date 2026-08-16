@@ -45,6 +45,7 @@ if sys.version_info < (3, 10):  # noqa: UP036
     )
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -57,13 +58,14 @@ if sys.platform == "win32":
         _stream = getattr(sys, _stream_name)
         # Method 1: Try reconfigure (works for TTY)
         if hasattr(_stream, "reconfigure"):
-            try:
+            # Best-effort: a non-reconfigurable stream falls through to the
+            # TextIOWrapper path below, same as the Method 2 suppress.
+            with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
                 _stream.reconfigure(encoding="utf-8", errors="replace")
                 continue
-            except (AttributeError, io.UnsupportedOperation, OSError):
-                pass
-        # Method 2: Wrap with TextIOWrapper for piped output
-        try:
+        # Method 2: Wrap with TextIOWrapper for piped output. Best-effort:
+        # if this also fails, the stream is left with its default encoding.
+        with contextlib.suppress(AttributeError, io.UnsupportedOperation, OSError):
             if hasattr(_stream, "buffer"):
                 _new_stream = io.TextIOWrapper(
                     _stream.buffer,
@@ -72,8 +74,6 @@ if sys.platform == "win32":
                     line_buffering=True,
                 )
                 setattr(sys, _stream_name, _new_stream)
-        except (AttributeError, io.UnsupportedOperation, OSError):
-            pass
     # Clean up temporary variables
     del _stream_name, _stream
     if "_new_stream" in dir():

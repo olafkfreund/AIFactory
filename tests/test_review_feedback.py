@@ -11,10 +11,7 @@ Tests for ReviewState feedback functionality:
 
 from pathlib import Path
 
-import pytest
 from review import ReviewState
-
-from tests.review_fixtures import complete_spec_dir, review_spec_dir
 
 
 class TestReviewStateFeedback:

@@ -35,6 +35,7 @@ Local dev runs without MinIO silently skip. To exercise locally::
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -47,7 +48,6 @@ if str(_WEB_SERVER) not in sys.path:
 
 
 from server.services.workspace_store import (
-    MANIFEST_FILENAME,
     WorkspaceStore,
 )
 
@@ -103,15 +103,15 @@ def live_store() -> WorkspaceStore:
     # Auto-create the bucket so CI and local dev both work without an
     # external ``mc mb`` setup step. Idempotent — ignores already-
     # exists errors.
-    try:
+    # ponytail: fsspec backends (s3fs/local/etc) raise different, backend-
+    # specific error types for "bucket already exists" or "no bucket concept",
+    # so this stays Exception-wide rather than guessing one type -- it's test
+    # fixture setup, not production code making a decision on the result
+    with contextlib.suppress(Exception):
         fs, prefix = store._open_fs()
         bucket = prefix.split("/", 1)[0] if "/" in prefix else prefix
-        try:
+        with contextlib.suppress(Exception):
             fs.mkdir(bucket)
-        except Exception:
-            pass  # already exists, or fs doesn't need explicit bucket creation
-    except Exception:
-        pass
 
     return store
 
@@ -207,7 +207,6 @@ async def test_partial_upload_simulation_against_live_minio(
     confirm download treats it as missing and doesn't pollute the
     local dir. Defends the partial-upload-detection contract against
     real S3 listing behavior (eventual consistency edge cases)."""
-    import fsspec
 
     org_id = "live-test"
     project_id = _unique_project_id()

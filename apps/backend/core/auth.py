@@ -6,12 +6,20 @@ for multiple environment variables, AIFactory profiles, Claude Code CLI
 credentials, and SDK environment variable passthrough for custom API endpoints.
 """
 
+import contextlib
+import importlib
 import json
+import logging
 import os
 import platform
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
+
+from factory_common.logsafe import sanitize_log
+
+logger = logging.getLogger(__name__)
 
 # Priority order for auth token resolution.
 # NOTE: By DEFAULT we do NOT fall back to ANTHROPIC_API_KEY — AIFactory targets
@@ -244,12 +252,27 @@ def _get_token_from_windows_credential_files() -> str | None:
         ]
 
         for cred_path in cred_paths:
-            if os.path.exists(cred_path):
+            # Deliberately NOT `exists(p)` then `open(p)`: besides the TOCTOU
+            # race, that collapses "absent" and "unreadable" into the same
+            # answer, so a credentials file with the wrong mode is silently
+            # skipped and the next path is tried -- which is how a machine ends
+            # up authenticating as the wrong identity with no error at all
+            # (Factory#718). Only ENOENT means absent here.
+            try:
                 with open(cred_path, encoding="utf-8") as f:
                     data = json.load(f)
-                    token = data.get("claudeAiOauth", {}).get("accessToken")
-                    if token and token.startswith("sk-ant-oat01-"):
-                        return token
+            except FileNotFoundError:
+                continue
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "credentials at %s exist but could not be read: %s",
+                    sanitize_log(cred_path),
+                    sanitize_log(exc),
+                )
+                continue
+            token = data.get("claudeAiOauth", {}).get("accessToken")
+            if token and token.startswith("sk-ant-oat01-"):
+                return token
 
         return None
 
@@ -257,13 +280,39 @@ def _get_token_from_windows_credential_files() -> str | None:
         return None
 
 
+def unseal_profiles(data: dict[str, Any]) -> dict[str, Any]:
+    """Decrypt the sealed OAuth tokens in a claude-profiles.json payload (#1276).
+
+    ``server.crypto`` lives in the web-server package, which apps/backend runs
+    alongside in the deployed image. A store written before #1276 holds
+    plaintext and passes through untouched.
+
+    Resolved by name rather than imported: a plain import of ``server.*`` from
+    apps/backend is un-gateable here -- at module scope mypy --strict reports
+    import-not-found, and inside the function ruff reports PLC0415.
+
+    If the web-server package is genuinely absent the payload is returned as
+    read; a sealed value is then an ``enc.v1:``-prefixed string that no Claude
+    endpoint accepts, so auth fails visibly instead of silently succeeding with
+    the wrong identity.
+    """
+    try:
+        module = importlib.import_module("server.crypto.secret_field")
+    except ImportError:  # pragma: no cover - web-server package not importable
+        return data
+    unsealed: dict[str, Any] = module.unseal_profiles(data)
+    return unsealed
+
+
 def _get_token_from_aifactory_profiles() -> str | None:
     """Read token from AIFactory profiles storage (~/.aifactory/claude-profiles.json)."""
     path = Path.home() / ".aifactory" / "claude-profiles.json"
     if not path.exists():
         return None
-    try:
-        data = json.loads(path.read_text())
+    # Best-effort: get_auth_token() falls through to other credential
+    # sources, so a malformed profiles file is not fatal here.
+    with contextlib.suppress(json.JSONDecodeError, KeyError):
+        data = unseal_profiles(json.loads(path.read_text()))
         active_id = data.get("activeProfileId")
         for profile in data.get("profiles", []):
             if profile.get("id") == active_id and profile.get("oauthToken"):
@@ -272,8 +321,6 @@ def _get_token_from_aifactory_profiles() -> str | None:
         for profile in data.get("profiles", []):
             if profile.get("oauthToken"):
                 return profile["oauthToken"]
-    except (json.JSONDecodeError, KeyError):
-        pass
     return None
 
 
@@ -282,13 +329,13 @@ def _get_token_from_claude_credentials() -> str | None:
     path = Path.home() / ".claude" / ".credentials.json"
     if not path.exists():
         return None
-    try:
+    # Best-effort: get_auth_token() falls through to other credential
+    # sources, so a malformed credentials file is not fatal here.
+    with contextlib.suppress(json.JSONDecodeError, KeyError):
         data = json.loads(path.read_text())
         token = data.get("claudeAiOauth", {}).get("accessToken")
         if token and token.startswith("sk-ant-oat01-"):
             return token
-    except (json.JSONDecodeError, KeyError):
-        pass
     return None
 
 

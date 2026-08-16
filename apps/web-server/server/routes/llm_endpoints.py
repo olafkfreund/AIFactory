@@ -17,12 +17,9 @@ Endpoints:
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import logging
-import socket
 import urllib.error
-import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -30,6 +27,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.error_ref import client_error
+from server.services.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
 
 from ..database import LLMEndpoint, User
 from ..database.engine import get_db
@@ -41,6 +44,16 @@ router = APIRouter(prefix="/api/llm-endpoints", tags=["LLM Endpoints"])
 
 # Mask everything but the last 4 chars when returning an api_key to the UI
 _API_KEY_TAIL_LEN = 4
+
+# The single did-not-connect answer. Deliberately says nothing about WHY, so a
+# caller cannot tell a closed port from a filtered one from a dropped packet --
+# see the long comment in _probe_models. Worded to still be actionable for the
+# person configuring the endpoint, since "check the server is running and the
+# address is right" is the useful advice in every one of those cases anyway.
+_PROBE_UNREACHABLE = (
+    "Could not reach this endpoint. Check that the server is running and that "
+    "the base URL is correct."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,43 +136,6 @@ def _to_response(endpoint: LLMEndpoint) -> EndpointResponse:
     )
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Block redirects so a safe URL can't 30x to a private/metadata host (#323 H6)."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
-        raise urllib.error.HTTPError(
-            req.full_url, code, f"Redirect blocked (SSRF guard): {newurl}", headers, fp
-        )
-
-
-def _assert_url_not_ssrf(url: str) -> None:
-    """Reject URLs whose host resolves to a private/loopback/link-local/reserved
-    address — blocks SSRF to cloud metadata (169.254.169.254) and internal
-    services (#323 H6). Raises ValueError if unsafe.
-    """
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(f"Unsupported URL scheme: {parsed.scheme!r}")
-    host = parsed.hostname
-    if not host:
-        raise ValueError("URL has no host")
-    try:
-        infos = socket.getaddrinfo(host, parsed.port or 443, proto=socket.IPPROTO_TCP)
-    except socket.gaierror as exc:
-        raise ValueError(f"Cannot resolve host {host!r}: {exc}") from exc
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            raise ValueError(f"Refusing to connect to non-public address {ip}")
-
-
 def _probe_models(
     base_url: str,
     api_key: str | None,
@@ -172,12 +148,40 @@ def _probe_models(
     and available model IDs.  Catches all network errors so the caller gets
     structured feedback instead of an exception.
     """
-    url = f"{base_url.rstrip('/')}/v1/models"
-    # SSRF guard (#323 H6): block private/metadata hosts before connecting.
+    # SSRF guard (#323 H6). PERMISSIVE posture, decided in #1268 on product
+    # purpose: this module exists to test user-defined OpenAI-compatible
+    # servers, and its own docstring names LM Studio and vLLM -- both
+    # self-hosted, both on localhost. The strict posture refused two of the
+    # three targets the module advertises. The sibling routes in
+    # routes/settings.py (/openai-compat/models, /openai-compat/test) already
+    # use allow_private=True for the identical class of target, so the previous
+    # state was drift between two call sites answering the same question, not a
+    # considered posture.
+    #
+    # Deliberately NOT decided on "this route is behind Depends(get_current_user)".
+    # An authenticated user is still not the server's network.
+    #
+    # RESIDUAL, recorded rather than implied: with allow_private=True an
+    # authenticated caller can reach the server's private network through this
+    # route, and can infer what is listening there from timing differences.
+    # The ERROR-TEXT half of that oracle is closed below: every did-not-connect
+    # outcome returns one literal, so "refused" and "no route to host" and
+    # "timed out" are indistinguishable to the caller. Timing is not closed.
+    # What bounds it further is what BOTH postures still refuse -- the cloud metadata
+    # addresses, non-http(s) schemes, and redirects (build_no_redirect_opener,
+    # below) -- so the highest-value targets stay closed. DNS rebinding is open
+    # in both postures; see the url_safety module docstring.
     try:
-        _assert_url_not_ssrf(url)
+        url = assert_safe_outbound_url(
+            f"{base_url.rstrip('/')}/v1/models", allow_private=True
+        )
     except ValueError as exc:
-        return EndpointTestResponse(ok=False, error=str(exc))
+        # url_safety raises InputRejectedError, returned verbatim so the caller
+        # can fix the URL. A foreign ValueError gets a reference instead --
+        # which also keeps the SSRF error-text oracle closed (see above).
+        return EndpointTestResponse(
+            ok=False, error=client_error(logger, "Endpoint URL rejected", exc)
+        )
     req_headers: dict[str, str] = {"Accept": "application/json"}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
@@ -185,24 +189,48 @@ def _probe_models(
         req_headers.update(headers)
 
     req = urllib.request.Request(url, headers=req_headers, method="GET")
-    opener = urllib.request.build_opener(_NoRedirect)
+    opener = build_no_redirect_opener()
     try:
         with opener.open(req, timeout=timeout) as resp:
             status_code = resp.getcode()
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
+        # KEPT verbatim, and not an oversight for the next person sweeping
+        # CWE-209 through this file: this is the REMOTE endpoint's own status
+        # line. The caller asked us to fetch that URL and is entitled to what it
+        # answered; it is not our internals. It also cannot be an existence
+        # oracle beyond what the next branch already concedes -- an HTTP status
+        # only exists because something served it.
         return EndpointTestResponse(
             ok=False,
             status_code=exc.code,
             error=f"HTTP {exc.code} {exc.reason}",
         )
-    except urllib.error.URLError as exc:
-        return EndpointTestResponse(
-            ok=False,
-            error=f"Connection failed: {exc.reason}",
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        return EndpointTestResponse(ok=False, error=f"Unexpected error: {exc}")
+    except Exception as exc:
+        # ONE string for every did-not-connect outcome (#1268 follow-up).
+        #
+        # These used to be two branches returning "Connection failed: {reason}"
+        # and "Unexpected error: {exc}". Distinguishing them is the port scan:
+        # "connection refused" means closed, "no route to host" means filtered,
+        # a timeout means dropped, and each answer maps one private address at a
+        # time. That was a minor leak while the guard refused private addresses
+        # outright; #1268 switched this route to allow_private=True because LM
+        # Studio and vLLM are the point of the module, and THAT is what made
+        # these strings load-bearing rather than cosmetic.
+        #
+        # So the two branches are collapsed rather than given two literals --
+        # two literals leak the same oracle more quietly. The distinguishing
+        # detail goes to the log, where the operator can read it and the caller
+        # cannot. One bare `except Exception` rather than URLError plus a
+        # defensive catch-all, because the two must be indistinguishable from
+        # outside and two branches returning the same literal is an invitation
+        # to make them differ again.
+        #
+        # NOT closed by this: timing still differs between a refused connection
+        # and a dropped packet, which is why the residual above says "timing
+        # and error differences" and this narrows only the second half.
+        logger.info("LLM endpoint probe did not connect: %r", exc)
+        return EndpointTestResponse(ok=False, error=_PROBE_UNREACHABLE)
 
     try:
         data = json.loads(raw)

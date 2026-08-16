@@ -4,11 +4,17 @@ Log viewing and management routes.
 Provides API endpoints to view, search, and manage application logs.
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
+from server.error_ref import client_error
+
 from ..logging_config import LOG_DIR, clear_logs, get_log_files, get_recent_logs
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -143,10 +149,14 @@ async def receive_frontend_logs(request: FrontendLogsRequest):
 
         return FrontendLogsResponse(success=True, received=len(request.entries))
     except Exception as e:
+        # This route is in TokenAuthMiddleware.PUBLIC_PATHS: anyone who can
+        # reach the server can POST here WITHOUT AUTHENTICATING. An OSError
+        # renders the absolute log path, so this was disclosure to an
+        # unauthenticated caller (Factory#718).
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to write frontend logs: {e}",
-        )
+            detail=client_error(logger, "Failed to write frontend logs", e),
+        ) from e
 
 
 @router.get("/{log_type}", response_model=LogsResponse)
@@ -209,8 +219,8 @@ async def get_raw_logs(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to read log file: {e}",
-        )
+            detail=client_error(logger, "Failed to read log file", e),
+        ) from e
 
 
 @router.get("/{log_type}/download")

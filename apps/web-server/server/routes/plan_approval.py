@@ -17,16 +17,18 @@ import.
 """
 
 import json
+import logging
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
+from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
 from ..services import task_control
 from .project_authz import require_task_access
-from .projects import load_projects
 
 router = APIRouter()
 
@@ -112,10 +114,8 @@ async def approve_plan(
     plan_file = spec_dir / "implementation_plan.json"
     if plan_file.exists():
         try:
-            import logging
-
             logger = logging.getLogger(__name__)
-            logger.info(f"[ApprovePlan] Reading plan file: {plan_file}")
+            logger.info(f"[ApprovePlan] Reading plan file: {sanitize_log(plan_file)}")
             plan = json.loads(plan_file.read_text())
             logger.info(
                 f"[ApprovePlan] Current status: {plan.get('status')}, planStatus: {plan.get('planStatus')}, reviewReason: {plan.get('reviewReason')}"
@@ -141,16 +141,12 @@ async def approve_plan(
                 updated_by="web_user",
             )
         except (json.JSONDecodeError, OSError) as e:
-            import logging
-
             logging.getLogger(__name__).error(
                 f"[ApprovePlan] Failed to update plan file: {e}"
             )
     else:
-        import logging
-
         logging.getLogger(__name__).warning(
-            f"[ApprovePlan] Plan file does not exist: {plan_file}"
+            f"[ApprovePlan] Plan file does not exist: {sanitize_log(plan_file)}"
         )
 
     # Emit status change via WebSocket
@@ -171,11 +167,10 @@ async def approve_plan(
             # The spec_runner process may have exited but the monitor may not have
             # cleaned up running_tasks (e.g., if the process hung or monitor failed).
             if agent_service.is_running(task_id):
-                import logging
-
                 logger = logging.getLogger(__name__)
                 logger.info(
-                    f"[ApprovePlan] Cleaning up stale spec creation process for {task_id}"
+                    "[ApprovePlan] Cleaning up stale spec creation process for %s",
+                    sanitize_log(task_id),
                 )
                 try:
                     await agent_service.stop_task(task_id)
@@ -193,8 +188,13 @@ async def approve_plan(
                 try:
                     metadata = json.loads(task_metadata_file.read_text())
                     mode = metadata.get("mode", "full")
-                except (json.JSONDecodeError, OSError):
-                    pass
+                except (json.JSONDecodeError, OSError) as exc:
+                    logging.getLogger(__name__).warning(
+                        "[ApprovePlan] Could not read task_metadata.json for %s, "
+                        "defaulting mode to 'full': %s",
+                        sanitize_log(task_id),
+                        exc,
+                    )
 
             await agent_service.start_task_execution(
                 task_id=task_id,
@@ -207,10 +207,8 @@ async def approve_plan(
             auto_restarted = True
         except Exception as e:
             # If auto-restart fails, still return success for approval
-            import logging
-
             logging.getLogger(__name__).warning(
-                f"Auto-restart failed for {task_id}: {e}"
+                f"Auto-restart failed for {sanitize_log(task_id)}: {sanitize_log(e)}"
             )
 
     return {

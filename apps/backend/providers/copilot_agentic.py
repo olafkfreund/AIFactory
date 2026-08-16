@@ -35,6 +35,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -206,10 +207,10 @@ class CopilotAgenticProvider(BaseLLMProvider):
             )
         except TimeoutError:
             if proc is not None:
-                try:
+                # ponytail: process may have exited between the timeout and
+                # this kill() call; that race is not an error.
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
             raise TimeoutError(f"GitHub Copilot CLI timed out after {self._timeout}s.")
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()

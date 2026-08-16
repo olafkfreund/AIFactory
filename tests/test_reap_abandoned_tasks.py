@@ -49,7 +49,7 @@ def _task(name: str, status: str, updated_at: str):
 def _patch_enum(monkeypatch, tasks: list[tuple[str, object]]):
     """Wire load_projects/get_spec_dirs/spec_to_task to a single project 'p'."""
     monkeypatch.setattr(
-        "server.routes.projects.load_projects", lambda: {"p": {"path": "/x"}}
+        "server.project_registry.load_projects", lambda: {"p": {"path": "/x"}}
     )
     dirs = {name: Path("/x/specs") / name for name, _ in tasks}
     monkeypatch.setattr(

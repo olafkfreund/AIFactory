@@ -100,7 +100,7 @@ def _write_halt(spec_dir: Path, reason: str) -> None:
             json.dumps({"halt_reason": reason, "ts": time.time()})
         )
     except OSError:
-        pass
+        logger.warning("failed to write halt file %s", _HALT_FILE, exc_info=True)
 
 
 def read_halt_reason(spec_dir: Path | str) -> str | None:

@@ -11,10 +11,16 @@ This is the #703 spike to measure the mypy cost of the mixin approach.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from factory_common.logsafe import sanitize_log
+
+from server.project_registry import resolve_project_path
+from server.services import review_redrive_service
 
 from .build_log_stream import PlanSync
 from .task_log_writer import TaskLogWriter
@@ -116,7 +122,8 @@ class KubejobMixin:
         build (RFC-0008). The board still surfaces it for human review via the
         durable ``done`` overlay; the PR endgame stays off unless enabled.
         """
-        from ..routes.projects import resolve_project_path
+        from server.project_registry import resolve_project_path
+
         from .completion_orchestration import run_terminal_completion
 
         project_id, _, spec_id = job_id.partition(":")
@@ -209,15 +216,15 @@ class KubejobMixin:
             }
             _log.info(
                 "[AgentService] kubejob build %s using Claude profile %s (%s)",
-                task_id,
-                profile_name,
-                profile_id,
+                sanitize_log(task_id),
+                sanitize_log(profile_name),
+                sanitize_log(profile_id),
             )
         else:
             _log.warning(
                 "[AgentService] no Claude OAuth token available for kubejob "
                 "build %s — run.py will fail with 'No OAuth token found'",
-                task_id,
+                sanitize_log(task_id),
             )
         try:
             await self._build_backend().dispatch(
@@ -349,7 +356,7 @@ class KubejobMixin:
             _log.debug(
                 "[AgentService] rmux create for kubejob build raised (ignored); "
                 "spec_id=%s",
-                spec_id,
+                sanitize_log(spec_id),
                 exc_info=True,
             )
 
@@ -412,7 +419,7 @@ class KubejobMixin:
             _log.warning(
                 "[AgentService] could not open task_logs.json for %s; the build "
                 "will run but report no live progress",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return None
@@ -455,7 +462,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - store read failure → skip streaming
             _log.debug(
                 "[AgentService] worker_ref read failed for %s (no log stream)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return None
@@ -502,7 +509,7 @@ class KubejobMixin:
             _log.debug(
                 "[AgentService] rmux reap for kubejob build raised (ignored); "
                 "spec_id=%s",
-                spec_id,
+                sanitize_log(spec_id),
                 exc_info=True,
             )
 
@@ -541,10 +548,49 @@ class KubejobMixin:
                 # #671 OAuth-env: return the pooled credential checked out at
                 # dispatch now that the Job is done (mirrors the subprocess path).
                 self._release_task_credential(job_id)
+            else:
+                # #1249: still running → this IS the tick that used to be the
+                # ONLY route into check_review_obligation (monitor_process's
+                # subprocess-tied loop), which never runs for a kubejob build.
+                # A peer review requested but never started stayed stuck
+                # forever with nothing to log, because the failure mode is
+                # silence. Every active kubejob row passes through here, so
+                # this is the one place that fixes it for both the direct
+                # and queue-drained paths.
+                await self._redrive_kubejob_review(job_id)
         if out:
             # Builds finished → fill freed slots from the FIFO queue.
             await self._drain_queue()
         return out
+
+    async def _redrive_kubejob_review(self, job_id: str) -> None:
+        """Re-drive a stuck peer review for a still-running kubejob build (#1249).
+
+        ``check_review_obligation`` early-outs unless the MAIN spec dir has a
+        ``qa_review_cycle.json`` — but the running build writes that file into
+        its WORKTREE spec dir, and nothing copies it to main under kubejob (the
+        generic worktree-sync loop that used to do that never runs here
+        either). ``check_review_obligation`` now syncs that one file itself
+        before checking, so calling it here is enough — no new sync loop.
+        Best-effort throughout: a redrive failure must never affect reconcile.
+        """
+        project_id, _, spec_id = job_id.partition(":")
+        if not spec_id:
+            return
+        try:
+            project_path = resolve_project_path(project_id)
+        except Exception:  # noqa: BLE001 - unknown/unresolvable project
+            return
+        try:
+            await asyncio.to_thread(
+                review_redrive_service.check_review_obligation, project_path, spec_id
+            )
+        except Exception:  # noqa: BLE001 - redrive must never crash reconcile
+            _log.debug(
+                "[AgentService] kubejob review re-drive check skipped for %s",
+                job_id,
+                exc_info=True,
+            )
 
     async def kubejob_reconcile_loop(
         self, *, stop: asyncio.Event, interval_seconds: float = 15.0
@@ -573,10 +619,9 @@ class KubejobMixin:
                     await self.reap_abandoned_tasks()
             except Exception:  # noqa: BLE001 - loop must survive a bad tick
                 _log.exception("[AgentService] kubejob reconcile tick failed")
-            try:
+            # Timeout is the normal tick cadence, not an error.
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval_seconds)
-            except TimeoutError:
-                pass
         _log.info("[AgentService] kubejob reconcile loop stopped")
 
     async def reap_kubejob_builds(
@@ -627,7 +672,8 @@ class KubejobMixin:
         Best-effort; never raises. Returns the reaped task ids."""
         from datetime import UTC, datetime
 
-        from ..routes.projects import load_projects
+        from server.project_registry import load_projects
+
         from ..routes.task_service import get_spec_dirs, spec_to_task
 
         reaped: list[str] = []
@@ -708,7 +754,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001
             _log.warning(
                 "[AgentService] could not read state to stop kubejob %s",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
             return False
@@ -725,7 +771,7 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001 - delete is best-effort; row mark below frees the slot
             _log.warning(
                 "[AgentService] could not delete k8s Job for %s (ignored)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         try:
@@ -735,12 +781,12 @@ class KubejobMixin:
         except Exception:  # noqa: BLE001
             _log.warning(
                 "[AgentService] could not free durable slot on kubejob stop %s",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         # #671 OAuth-env: return the pooled credential checked out at dispatch.
         self._release_task_credential(task_id)
         await self._safe_emit_task_status(task_id, "human_review", "errors")
         await self._drain_queue()
-        _log.info("[AgentService] Stopped k8s-Job build %s", task_id)
+        _log.info("[AgentService] Stopped k8s-Job build %s", sanitize_log(task_id))
         return True

@@ -121,8 +121,10 @@ class Portal:
             data = self._get("/api/tasks/running")
             if isinstance(data, dict) and data.get("tasks"):
                 return data["tasks"]
-        except Exception:
-            pass
+        except Exception as exc:
+            sys.stderr.write(
+                f"/api/tasks/running unavailable ({exc}); scanning projects\n"
+            )
         return self._scan_projects()
 
     def _scan_projects(self) -> list[str]:
@@ -454,7 +456,6 @@ def main() -> int:
         return 0
     finally:
         sys.stdout.write(SHOW_CURSOR + "\n")
-    return 0
 
 
 if __name__ == "__main__":

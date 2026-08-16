@@ -61,6 +61,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -98,14 +99,13 @@ _MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$")
 #: in the bundled CLI).  When that file is missing/empty it falls back to a small
 #: catalogue compiled into the binary that omits newer models — see #291.
 _CATALOGUE_REL_PATH: str = "opencode/models.json"
-#: Relative path of OpenCode's cache-version sentinel.  On startup OpenCode reads
-#: ``<cache>/opencode/version`` and, if it does not equal the binary's baked-in
-#: ``CACHE_VERSION``, **recursively deletes the entire cache directory** before
-#: recreating it (``src/global/index.ts``).  That wipe destroys any catalogue we
-#: pre-inject — so to make pre-warming survive we must also write a matching
-#: version sentinel (copied from the warm source) so the wipe is skipped.  See
-#: the analysis in #291.
-_VERSION_REL_PATH: str = "opencode/version"
+#: On startup OpenCode reads ``<cache>/opencode/version`` and, if it does not
+#: equal the binary's baked-in ``CACHE_VERSION``, **recursively deletes the
+#: entire cache directory** before recreating it (``src/global/index.ts``).
+#: That wipe destroys any catalogue we pre-inject — so to make pre-warming
+#: survive we must also write a matching version sentinel (copied from the
+#: warm source, via ``.with_name("version")`` below) so the wipe is skipped.
+#: See the analysis in #291.
 #: Env var that disables OpenCode's background self-update check.  Set in the
 #: build subprocess so a sandbox with blocked egress doesn't waste time/log noise
 #: attempting an upgrade fetch it can never complete.
@@ -151,12 +151,12 @@ def _find_warm_catalogue(env: Mapping[str, str]) -> Path | None:
         candidates.append(cache_root / _CATALOGUE_REL_PATH)
     # Fall back to the real user cache (interactive runs warm this even when the
     # subprocess env points XDG_CACHE_HOME elsewhere).
-    try:
+    with contextlib.suppress(RuntimeError, OSError):
+        # Path.home() can raise if the platform has no resolvable home dir; the
+        # earlier XDG-based candidates are enough in that case.
         home_cache = Path.home() / ".cache" / _CATALOGUE_REL_PATH
         if home_cache not in candidates:
             candidates.append(home_cache)
-    except (RuntimeError, OSError):
-        pass
 
     for path in candidates:
         try:
@@ -424,10 +424,8 @@ class OpenCodeAgenticProvider(BaseLLMProvider):
             )
         except TimeoutError:
             if proc is not None:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     proc.kill()
-                except ProcessLookupError:
-                    pass
             raise TimeoutError(f"OpenCode CLI timed out after {self._timeout}s.")
 
         stdout_text = stdout_bytes.decode("utf-8", errors="replace").strip()

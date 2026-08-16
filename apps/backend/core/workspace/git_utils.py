@@ -7,8 +7,11 @@ Utility functions for git operations used in workspace management.
 """
 
 import json
+import logging
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Constants for merge limits
 MAX_FILE_LINES_FOR_AI = 5000  # Skip AI for files larger than this
@@ -184,8 +187,10 @@ def get_merge_base(project_dir: Path, ref1: str, ref2: str) -> str | None:
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug(
+            "get_merge_base: git invocation failed for %s: %s", project_dir, exc
+        )
     return None
 
 
@@ -384,7 +389,6 @@ def validate_merged_syntax(
 
                 # Fall back to npx if not found
                 if not esbuild_cmd:
-                    esbuild_cmd = "npx"
                     args = ["npx", "esbuild", tmp_path, "--log-level=error"]
                 else:
                     args = [esbuild_cmd, tmp_path, "--log-level=error"]

@@ -101,7 +101,6 @@ def test_record_post_call_passes_provider_in_extra_details():
 
     async def go():
         # Temporarily replace the import in the module under test.
-        import core.enforcement as enf_module
 
         original = None
         try:
@@ -156,7 +155,7 @@ def test_audit_hook_failure_does_not_raise():
 
 def test_abandoned_action_label():
     """CancelledError should produce action='llm.call.abandoned'."""
-    from core.enforcement import ClaudeUsageSnapshot, _EnforcedClaudeSDKClient
+    from core.enforcement import _EnforcedClaudeSDKClient
 
     ctx = _make_ctx()
     recorded_action: list[str] = []
@@ -184,10 +183,8 @@ def test_abandoned_action_label():
         async with client:
             raise asyncio.CancelledError()
 
-    try:
+    with pytest.raises(asyncio.CancelledError):
         _run(go())
-    except asyncio.CancelledError:
-        pass
 
     assert recorded_action == ["llm.call.abandoned"]
 
@@ -219,10 +216,8 @@ def test_error_action_label():
         async with client:
             raise RuntimeError("SDK boom")
 
-    try:
+    with pytest.raises(RuntimeError):
         _run(go())
-    except RuntimeError:
-        pass
 
     assert recorded.get("action") == "llm.call.failed"
     assert "SDK boom" in (recorded.get("error") or "")

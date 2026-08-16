@@ -23,7 +23,9 @@ deps (the agent SDK) are imported lazily so the module stays unit-testable.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -31,6 +33,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
+
+from server.error_ref import client_error
 
 from ..tenancy import resolve_tenant, stamp_spec_tenant
 
@@ -43,6 +47,8 @@ from intake import build_execution_block  # noqa: E402 — needs sys.path above
 from pfactory.tiers import classify_parallel, classify_tier, tier_for  # noqa: E402
 from repo_ref import parse_repo_ref, qualify_repo  # noqa: E402
 from trusted_plan import apply_execution_profile  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -259,10 +265,8 @@ def _set_task_metadata_flag(spec_dir: Path, key: str, value: object) -> None:
         tm = {}
     if isinstance(tm, dict):
         tm[key] = value
-        try:
+        with contextlib.suppress(OSError):
             tm_file.write_text(json.dumps(tm, indent=2))
-        except OSError:
-            pass
 
 
 @router.post("/from-issue")
@@ -293,7 +297,9 @@ async def create_from_issue(
         except Exception as exc:  # noqa: BLE001 — surface a clean 502
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to fetch issue #{request.issue_number}: {exc}",
+                detail=client_error(
+                    logger, f"Failed to fetch issue #{request.issue_number}", exc
+                ),
             ) from exc
         issue = _normalize_issue(fetched)
     else:
@@ -389,7 +395,7 @@ async def create_from_issue(
 
 def _resolve_project_path(project_id: str) -> Path | None:
     """Resolve a project id to its filesystem path (lazy import of projects)."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -427,5 +433,5 @@ async def _start_build(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to start build from issue: {exc}",
+            detail=client_error(logger, "Failed to start build from issue", exc),
         ) from exc

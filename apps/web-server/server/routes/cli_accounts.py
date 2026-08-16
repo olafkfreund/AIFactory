@@ -23,8 +23,11 @@ import threading
 import time
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, SecretStr
+
+from server.error_ref import client_error
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -165,8 +168,8 @@ def _detect_cli_version(cli: str) -> str | None:
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     bin_path = result.stdout.strip()
-            except Exception:
-                pass
+            except (subprocess.SubprocessError, OSError) as e:
+                logger.debug(f"which lookup failed for {binary}: {e}")
 
     if not bin_path:
         # Final fallback: probe well-known install locations the user's PATH
@@ -217,8 +220,10 @@ def _detect_cli_version(cli: str) -> str | None:
                 if part and part[0].isdigit():
                     return part
             return raw
-    except Exception:
-        pass
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.debug(
+            f"version command failed for {sanitize_log(cli)}: {sanitize_log(e)}"
+        )
     return None
 
 
@@ -237,8 +242,8 @@ def _read_npm_package_version(bin_path: str) -> str | None:
                 if version:
                     return version
                 break
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError) as e:
+        logger.debug(f"could not read npm package.json near {bin_path}: {e}")
     return None
 
 
@@ -344,8 +349,8 @@ def _detect_codex_credentials() -> tuple[bool, str | None, str | None]:
             content = config_path.read_text()
             if "api_key" in content or "OPENAI_API_KEY" in content:
                 return True, "api_key", None
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug(f"could not read {config_path}: {e}")
 
     # Check environment variable
     if os.environ.get("OPENAI_API_KEY"):
@@ -901,12 +906,14 @@ def install_or_update_cli(cli: str):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to check Node.js: {e}",
+            "error": client_error(logger, "Failed to check Node.js", e),
         }
 
     # Step 2: Install/update via npm (scoped to the install dir for Antigravity)
     try:
-        logger.info(f"[{cli}] Running npm install -g {package}...")
+        logger.info(
+            f"[{sanitize_log(cli)}] Running npm install -g {sanitize_log(package)}..."
+        )
         install_result = _npm_install_cli(cli, package)
 
         if install_result.returncode != 0:
@@ -923,7 +930,7 @@ def install_or_update_cli(cli: str):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Installation failed: {e}",
+            "error": client_error(logger, "Installation failed", e),
         }
 
     # Step 3: Verify installation
@@ -935,7 +942,9 @@ def install_or_update_cli(cli: str):
         }
 
     action = "updated" if was_update else "installed"
-    logger.info(f"[{cli}] Successfully {action}: {new_version}")
+    logger.info(
+        f"[{sanitize_log(cli)}] Successfully {sanitize_log(action)}: {sanitize_log(new_version)}"
+    )
 
     return {
         "success": True,

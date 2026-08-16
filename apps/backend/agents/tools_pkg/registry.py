@@ -21,6 +21,7 @@ from .tools import (
     create_progress_tools,
     create_qa_tools,
     create_subtask_tools,
+    create_web_tools,
 )
 
 # Either a fixed Path (in-process agent sessions) or a callable returning Path
@@ -52,6 +53,8 @@ def create_all_tools(spec_dir: PathOrFactory, project_dir: PathOrFactory) -> lis
     all_tools.extend(create_progress_tools(spec_dir, project_dir))
     all_tools.extend(create_memory_tools(spec_dir, project_dir))
     all_tools.extend(create_qa_tools(spec_dir, project_dir))
+    # #1269: replaces the built-in WebFetch, which is no longer granted.
+    all_tools.extend(create_web_tools())
 
     return all_tools
 

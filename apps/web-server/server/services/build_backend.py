@@ -100,6 +100,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from server.services.task_branch import record_branch
 
 from .task_phase import (
@@ -799,7 +801,7 @@ def populate_build_worktree(project_path: Path, spec_id: str) -> str | None:
         _log.info(
             "[build_backend] worktree for %s is outside the data PVC — skipping "
             "pre-dispatch population (the Job has no /work co-mount)",
-            spec_id,
+            sanitize_log(spec_id),
         )
         return None
 
@@ -877,15 +879,15 @@ def _maybe_pack_workspace(
         uri = pack_workspace(ArtifactStore(), ref, worktree_path)
         _log.info(
             "[build_backend] packed build worktree for %s -> %s (RFC-0017 #190)",
-            task_id,
-            uri,
+            sanitize_log(task_id),
+            sanitize_log(uri),
         )
         return uri
     except Exception:  # noqa: BLE001 — a pack error must never break dispatch
         _log.warning(
             "[build_backend] workspace pack failed for %s; falling back to the "
             "/work co-mount (RFC-0017 #190)",
-            task_id,
+            sanitize_log(task_id),
             exc_info=True,
         )
         return None
@@ -1033,11 +1035,11 @@ def _populate_self_contained_worktree(
     _log.info(
         "[build_backend] built self-contained build repo for %s at %s "
         "(base=%s, origin=%s; run.py creates the %s worktree in-Job) before dispatch",
-        spec_id,
-        populated,
-        base_branch,
-        "set" if origin else "unset",
-        branch,
+        sanitize_log(spec_id),
+        sanitize_log(populated),
+        sanitize_log(base_branch),
+        sanitize_log("set" if origin else "unset"),
+        sanitize_log(branch),
     )
     return populated
 
@@ -1169,9 +1171,9 @@ class KubeJobBuildBackend:
         )
         _log.info(
             "[build_backend] dispatched run.py Job %s/%s for task %s",
-            namespace,
-            job_name,
-            task_id,
+            sanitize_log(namespace),
+            sanitize_log(job_name),
+            sanitize_log(task_id),
         )
         return job_name
 
@@ -1202,9 +1204,9 @@ class KubeJobBuildBackend:
             )
             _log.info(
                 "[build_backend] deleted k8s Job %s/%s for task %s",
-                namespace,
-                job_name,
-                job_id,
+                sanitize_log(namespace),
+                sanitize_log(job_name),
+                sanitize_log(job_id),
             )
             return True
         finally:

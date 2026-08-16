@@ -35,8 +35,11 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
+from server.error_ref import client_error
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +195,12 @@ async def _resolve_task(
                 if meta_file.exists():
                     try:
                         meta = json.loads(meta_file.read_text())
-                    except (json.JSONDecodeError, OSError):
-                        pass
+                    except (json.JSONDecodeError, OSError) as exc:
+                        logger.debug(
+                            "copilot_mcp: could not read %s: %s",
+                            sanitize_log(str(meta_file)),
+                            sanitize_log(str(exc)),
+                        )
                 return spec_dir, meta
 
     return None, None
@@ -233,7 +240,9 @@ async def _tool_record_discovery(
     with discoveries_file.open("a") as fh:
         fh.write(entry)
     logger.info(
-        "[copilot-mcp] recorded discovery category=%s spec=%s", category, spec_dir.name
+        "[copilot-mcp] recorded discovery category=%s spec=%s",
+        sanitize_log(category),
+        sanitize_log(spec_dir.name),
     )
     return f"Discovery recorded (category={category})"
 
@@ -356,8 +365,12 @@ async def mcp_endpoint(request: Request) -> JSONResponse:
         try:
             text = await _dispatch_tool(tool_name, arguments, issue_number, task_id_arg)
         except Exception as exc:
-            logger.exception("[copilot-mcp] tool call failed tool=%s", tool_name)
-            return JSONResponse(_error(-32603, f"Internal error: {exc}", rpc_id))
+            logger.exception(
+                "[copilot-mcp] tool call failed tool=%s", sanitize_log(tool_name)
+            )
+            return JSONResponse(
+                _error(-32603, client_error(logger, "Internal error", exc), rpc_id)
+            )
 
         return JSONResponse(
             _result(

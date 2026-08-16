@@ -25,6 +25,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from .task_control import write_control
 
 
@@ -91,7 +93,7 @@ async def run_terminal_completion(
             "[AgentService] %s reported completed with no commit on its branch; "
             "recording it as a failed build instead of a review request, and "
             "skipping the TFactory handoff + PR endgame (#1070)",
-            spec_id,
+            sanitize_log(spec_id),
         )
         is_completed = False
         terminal_status = "failed"
@@ -114,8 +116,11 @@ async def run_terminal_completion(
         if not _completion_marker.exists():
             try:
                 _completion_marker.write_text(datetime.now(UTC).isoformat())
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(
+                    "terminal-completion marker write failed (may re-emit next call): %s",
+                    sanitize_log(str(e)),
+                )
             try:
                 from .completion import emit_terminal_completion
 
@@ -145,8 +150,11 @@ async def run_terminal_completion(
         if not _seffx_marker.exists():
             try:
                 _seffx_marker.write_text(datetime.now(UTC).isoformat())
-            except OSError:
-                pass
+            except OSError as e:
+                logger.debug(
+                    "terminal-side-effects marker write failed (may re-run next call): %s",
+                    sanitize_log(str(e)),
+                )
 
             # Auto-handover the finished build to TFactory when the task
             # opted in (task_metadata `auto_handover_tfactory`, #496) and
@@ -159,7 +167,8 @@ async def run_terminal_completion(
                 handoff = await maybe_auto_handoff_tfactory(spec_dir, spec_id)
                 if handoff.get("sent"):
                     logger.info(
-                        f"[AgentService] Auto-handed off {spec_id} to TFactory for testing"
+                        "[AgentService] Auto-handed off %s to TFactory for testing",
+                        sanitize_log(spec_id),
                     )
                 elif handoff.get("reason") not in (
                     None,
@@ -167,7 +176,9 @@ async def run_terminal_completion(
                     "not_configured",
                 ):
                     logger.warning(
-                        f"[AgentService] TFactory auto-handoff for {spec_id} did not send: {handoff}"
+                        "[AgentService] TFactory auto-handoff for %s did not send: %s",
+                        sanitize_log(spec_id),
+                        sanitize_log(handoff),
                     )
             except Exception:
                 logger.debug(
@@ -440,14 +451,14 @@ async def run_terminal_completion(
                             re_test=_re_test_sync,
                         )
                         logger.info(
-                            f"[AgentService] PR endgame for {spec_id} "
-                            f"(reviewer={_reviewer}): {endgame}"
+                            f"[AgentService] PR endgame for {sanitize_log(spec_id)} "
+                            f"(reviewer={sanitize_log(_reviewer)}): {sanitize_log(endgame)}"
                         )
                     else:
                         logger.info(
                             "[AgentService] PR endgame skipped for %s "
                             "(no worktree branch / repo)",
-                            spec_id,
+                            sanitize_log(spec_id),
                         )
             except Exception:
                 logger.debug("PR endgame failed (best-effort)", exc_info=True)

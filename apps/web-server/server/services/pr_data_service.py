@@ -17,6 +17,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
+from server.error_ref import client_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +73,15 @@ def _run_gh(args: list[str], cwd: str | None = None, timeout: int = 30) -> dict:
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        # This dict IS a response body: routes/github.py returns it to the
+        # caller unchanged from seventeen handlers. `str(e)` here is whatever
+        # broke inside subprocess -- an absolute path, a decoding failure, an
+        # OSError naming the environment -- so it goes to the log under a
+        # reference id instead (CWE-209, py/stack-trace-exposure).
+        return {
+            "success": False,
+            "error": client_error(logger, "GitHub CLI command failed", e),
+        }
 
 
 # ============================================================================
@@ -250,7 +262,10 @@ class PRDataService:
         try:
             review_data = json.loads(review_file.read_text())
         except (json.JSONDecodeError, OSError) as e:
-            return {"success": False, "error": f"Failed to read review data: {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed to read review data", e),
+            }
 
         findings = review_data.get("findings", [])
 
@@ -479,7 +494,11 @@ class PRDataService:
                 review_data = json.loads(review_file.read_text())
                 last_reviewed_commit = review_data.get("reviewed_commit_sha")
             except (json.JSONDecodeError, OSError):
-                pass
+                logger.warning(
+                    "failed to read review file %s",
+                    sanitize_log(review_file),
+                    exc_info=True,
+                )
 
         # Get the current HEAD commit SHA of the PR
         # Use headRefOid instead of commits[-1].oid because the commits list
@@ -573,7 +592,12 @@ class PRDataService:
         except json.JSONDecodeError:
             return {"success": False, "error": "Failed to parse stored review data"}
         except OSError as e:
-            return {"success": False, "error": f"Failed to read review file: {e}"}
+            # An OSError's text names the absolute path it failed on, which is
+            # server-internal. Log it; hand back a reference id.
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed to read review file", e),
+            }
 
     def delete_review(
         self,
@@ -597,7 +621,10 @@ class PRDataService:
         try:
             review_file.unlink()
         except OSError as e:
-            return {"success": False, "error": f"Failed to delete review file: {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed to delete review file", e),
+            }
 
         # Update the index file to remove the entry
         index_file = _review_index_path(project_path)
@@ -635,7 +662,10 @@ class PRDataService:
         except json.JSONDecodeError:
             return {"success": False, "error": "Failed to parse review logs"}
         except OSError as e:
-            return {"success": False, "error": f"Failed to read logs file: {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed to read logs file", e),
+            }
 
     # ------------------------------------------------------------------
     # Private helpers

@@ -12,10 +12,7 @@ Tests for basic ReviewState functionality including:
 import json
 from pathlib import Path
 
-import pytest
 from review import REVIEW_STATE_FILE, ReviewState
-
-from tests.review_fixtures import approved_state, pending_state
 
 # =============================================================================
 # REVIEW STATE - BASIC FUNCTIONALITY

@@ -18,6 +18,7 @@ security regression.
 See issue #391.
 """
 
+import contextlib
 import json
 import re
 from pathlib import Path
@@ -124,15 +125,14 @@ def _read_spec_text(spec_dir: Path) -> str:
             continue
 
     req_path = spec_dir / "requirements.json"
-    try:
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        # requirements.json is optional; absent/malformed just means no extra text
         data = json.loads(req_path.read_text(encoding="utf-8", errors="ignore"))
         if isinstance(data, dict):
             for key in _REQUIREMENTS_TEXT_KEYS:
                 value = data.get(key)
                 if isinstance(value, str):
                     parts.append(value)
-    except (OSError, json.JSONDecodeError):
-        pass
 
     return "\n".join(parts)
 

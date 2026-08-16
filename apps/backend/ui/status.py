@@ -5,6 +5,7 @@ Status Management
 Build status tracking and status file management for ccstatusline integration.
 """
 
+import contextlib
 import json
 import threading
 from dataclasses import dataclass
@@ -302,7 +303,6 @@ class StatusManager:
             self._write_pending = False
 
         if self.status_file.exists():
-            try:
+            # ponytail: best-effort cleanup, nothing to recover if unlink fails
+            with contextlib.suppress(OSError):
                 self.status_file.unlink()
-            except OSError:
-                pass

@@ -42,6 +42,8 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 
 _log = logging.getLogger(__name__)
@@ -134,7 +136,11 @@ async def unregister_pane(spec_id: str) -> None:
     try:
         await client.hdel(_PANES_INDEX_KEY, spec_id)
     except Exception:  # noqa: BLE001 - index mirror is best-effort
-        _log.debug("[rmux-redis] unregister_pane failed for %s", spec_id, exc_info=True)
+        _log.debug(
+            "[rmux-redis] unregister_pane failed for %s",
+            sanitize_log(spec_id),
+            exc_info=True,
+        )
 
 
 async def get_pane(spec_id: str) -> dict[str, Any] | None:
@@ -145,7 +151,9 @@ async def get_pane(spec_id: str) -> dict[str, Any] | None:
     try:
         raw = await client.hget(_PANES_INDEX_KEY, spec_id)
     except Exception:  # noqa: BLE001 - index read is best-effort
-        _log.debug("[rmux-redis] get_pane failed for %s", spec_id, exc_info=True)
+        _log.debug(
+            "[rmux-redis] get_pane failed for %s", sanitize_log(spec_id), exc_info=True
+        )
         return None
     if not raw:
         return None
@@ -199,7 +207,9 @@ async def publish_pane_bytes(spec_id: str, data: bytes) -> None:
         await client.publish(_channel(spec_id), data)
     except Exception:  # noqa: BLE001 - fan-out is best-effort
         _log.debug(
-            "[rmux-redis] publish_pane_bytes failed for %s", spec_id, exc_info=True
+            "[rmux-redis] publish_pane_bytes failed for %s",
+            sanitize_log(spec_id),
+            exc_info=True,
         )
 
 
@@ -237,9 +247,9 @@ async def subscribe_pane_bytes(spec_id: str) -> AsyncIterator[bytes]:
             raise
         except Exception:  # noqa: BLE001 - reconnect on any transport error
             _log.debug(
-                "[rmux-redis] pane subscribe for %s dropped — retry in %.1fs",
-                spec_id,
-                backoff,
+                "[rmux-redis] pane subscribe for %s dropped — retry in %ss",
+                sanitize_log(spec_id),
+                sanitize_log(backoff),
                 exc_info=True,
             )
             await asyncio.sleep(backoff)

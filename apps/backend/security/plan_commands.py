@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from contextlib import suppress
 
 from .ast_parser import UnparseableCommand, extract_commands_ast
 from .ast_parser import is_available as _ast_available
@@ -169,13 +170,11 @@ def _names_from_command_string(command_string: str) -> set[str]:
     """
     if not command_string or not isinstance(command_string, str):
         return set()
-    try:
+    # A command we cannot safely parse is simply not granted (fail-closed,
+    # safe direction) — fall through to the legacy regex parser below.
+    with suppress(UnparseableCommand, Exception):
         if _ast_available():
             return {c for c in extract_commands_ast(command_string) if c}
-    except UnparseableCommand:
-        pass
-    except Exception:
-        pass
     try:
         return {c for c in extract_commands(command_string) if c}
     except Exception:

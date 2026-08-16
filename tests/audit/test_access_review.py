@@ -17,8 +17,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 _WEB_SERVER = Path(__file__).parent.parent.parent / "apps" / "web-server"
 if str(_WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(_WEB_SERVER))
@@ -303,12 +301,6 @@ def test_oidc_callback_stamps_last_login_at(fresh_db, monkeypatch):
             )
             await db.commit()
             return user.id
-
-        async with SessionLocal() as db:
-            from sqlalchemy import select
-
-            result = await db.execute(select(User).where(User.id == user.id))
-            return result.scalar_one()
 
     user_id = _run(_go())
 

@@ -21,9 +21,8 @@ Testing Strategy:
 """
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -311,7 +310,7 @@ class TestPhase9Context:
 
     def test_invoke_claude_setup_authenticated(self, client, mock_projects_file):
         """Test invoke_claude_setup checks authentication status"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -329,7 +328,7 @@ class TestPhase9Context:
 
     def test_invoke_claude_setup_not_authenticated(self, client, mock_projects_file):
         """Test invoke_claude_setup provides instructions when not authenticated"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -368,7 +367,7 @@ class TestPhase10GitOperations:
 
     def test_squash_commits_success(self, client, mock_projects_file, mock_project_dir):
         """Test squash_commits with valid commit count"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -389,7 +388,7 @@ class TestPhase10GitOperations:
 
     def test_squash_commits_invalid_count(self, client, mock_projects_file):
         """Test squash_commits rejects invalid commit count"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
@@ -404,7 +403,7 @@ class TestPhase10GitOperations:
 
     def test_squash_commits_uncommitted_changes(self, client, mock_projects_file):
         """Test squash_commits detects uncommitted changes"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -425,7 +424,7 @@ class TestPhase10GitOperations:
         self, client, mock_projects_file, mock_project_dir
     ):
         """Test create_worktree with valid inputs"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -448,7 +447,7 @@ class TestPhase10GitOperations:
 
     def test_create_worktree_invalid_name(self, client, mock_projects_file):
         """Test create_worktree rejects invalid worktree name"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
@@ -506,7 +505,7 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_github_success(self, client, mock_projects_file):
         """Test create_release with GitHub platform"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -534,7 +533,7 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_gitlab_success(self, client, mock_projects_file):
         """Test create_release with GitLab platform"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:
@@ -562,7 +561,7 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_invalid_platform(self, client, mock_projects_file):
         """Test create_release rejects invalid platform"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             response = client.post(
@@ -578,7 +577,7 @@ class TestPhase14GitMaintenance:
 
     def test_create_release_version_prefix(self, client, mock_projects_file):
         """Test create_release adds 'v' prefix to version"""
-        with patch("server.routes.projects.load_projects") as mock_load:
+        with patch("server.project_registry.load_projects") as mock_load:
             mock_load.return_value = json.loads(mock_projects_file.read_text())
 
             with patch("subprocess.run") as mock_run:

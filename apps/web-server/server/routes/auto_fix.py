@@ -24,8 +24,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from server.error_ref import client_error
 
 from ..services import auto_fix_service
 
@@ -98,10 +101,15 @@ async def check_new_issues(projectId: str) -> dict[str, Any]:
     try:
         result = await auto_fix_service.check_new_and_start_all(projectId)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # auto_fix_service raises InputRejectedError for "project not found",
+        # returned verbatim; any other ValueError gets a reference.
+        raise HTTPException(
+            status_code=404, detail=client_error(logger, "Project not found", e)
+        ) from e
     except Exception as e:
-        logger.exception("[auto_fix] check_new_issues failed project=%s", projectId)
-        raise HTTPException(status_code=500, detail=f"check failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=client_error(logger, "Issue check failed", e)
+        ) from e
     return result
 
 
@@ -111,11 +119,15 @@ async def start_auto_fix_one(projectId: str, issueNumber: int) -> dict[str, Any]
     try:
         return await auto_fix_service.start_auto_fix(projectId, issueNumber)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(
+            status_code=404, detail=client_error(logger, "Project not found", e)
+        ) from e
     except Exception as e:
         logger.exception(
-            "[auto_fix] start_auto_fix failed project=%s issue=%d",
-            projectId,
-            issueNumber,
+            "[auto_fix] start_auto_fix failed project=%s issue=%s",
+            sanitize_log(projectId),
+            sanitize_log(issueNumber),
         )
-        raise HTTPException(status_code=500, detail=f"start failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=client_error(logger, "Auto-fix start failed", e)
+        ) from e

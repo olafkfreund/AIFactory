@@ -49,6 +49,7 @@ competing copy. Reads always come from disk so every caller sees the same state.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -321,10 +322,8 @@ def _atomic_write_cycle(spec_dir: Path, cycle: ReviewCycle) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 

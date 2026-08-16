@@ -23,6 +23,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 logger = logging.getLogger(__name__)
 
 # Copilot Coding Agent posts PRs under one of these logins. We accept
@@ -72,8 +74,8 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
     except Exception as e:
         logger.warning(
             "[delegation_tracker] provider unavailable project=%s err=%s",
-            project_id,
-            e,
+            sanitize_log(project_id),
+            sanitize_log(e),
         )
         return {"checked": 0, "promoted": [], "declined": [], "error": str(e)}
 
@@ -101,8 +103,8 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
     except Exception as e:
         logger.warning(
             "[delegation_tracker] fetch_prs failed project=%s err=%s",
-            project_id,
-            e,
+            sanitize_log(project_id),
+            sanitize_log(e),
         )
         return {
             "checked": len(delegated),
@@ -150,8 +152,8 @@ async def scan_delegated_tasks(project_id: str) -> dict[str, Any]:
             await _emit_status(project_id, item, "declined")
 
     logger.info(
-        "[delegation_tracker] scan project=%s delegated=%d promoted=%d declined=%d",
-        project_id,
+        "[delegation_tracker] scan project=%s delegated=%s promoted=%s declined=%s",
+        sanitize_log(project_id),
         len(delegated),
         len(promoted),
         len(declined),
@@ -212,17 +214,17 @@ async def _emit_status(
         await emit_task_status(task_id, new_status)
         if pr_number is not None:
             logger.info(
-                "[delegation_tracker] task %s → %s (PR #%d)",
-                task_id,
-                new_status,
-                pr_number,
+                "[delegation_tracker] task %s → %s (PR #%s)",
+                sanitize_log(task_id),
+                sanitize_log(new_status),
+                sanitize_log(pr_number),
             )
     except (
         Exception
     ) as e:  # pragma: no cover — never let WebSocket errors abort tracking
         logger.warning(
             "[delegation_tracker] emit_status failed project=%s spec=%s err=%s",
-            project_id,
-            spec_id,
-            e,
+            sanitize_log(project_id),
+            sanitize_log(spec_id),
+            sanitize_log(e),
         )

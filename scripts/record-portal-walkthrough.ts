@@ -56,10 +56,19 @@ const TASK_DESCRIPTION = `Append a single line at the very bottom of README.md t
 Just that one block-quoted line. No other changes. No surrounding whitespace beyond a single trailing newline.`;
 
 function loadToken(): string {
-  if (!fs.existsSync(TOKEN_FILE)) {
-    throw new Error(`Token not found at ${TOKEN_FILE}. Start the portal once so it writes the token.`);
+  // Deliberately NOT `existsSync(f) && readFileSync(f)`: that is a TOCTOU race
+  // (CodeQL js/file-system-race) and it collapses "absent" into "unreadable",
+  // so a token written with the wrong mode reports as a missing token and
+  // sends you off to start the portal that already wrote it (Factory#718).
+  // readFileSync already reports absence; only ENOENT means absent.
+  try {
+    return fs.readFileSync(TOKEN_FILE, 'utf-8').trim();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error(`Token not found at ${TOKEN_FILE}. Start the portal once so it writes the token.`);
+    }
+    throw err;
   }
-  return fs.readFileSync(TOKEN_FILE, 'utf-8').trim();
 }
 
 async function pause(page: Page, ms: number, label: string): Promise<void> {

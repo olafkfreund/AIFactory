@@ -12,6 +12,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -181,8 +182,8 @@ async def create_api_key(
     await db.refresh(api_key)
 
     logger.info(
-        f"API key created: {api_key.name} (id={api_key.id}) "
-        f"for user {current_user.id} in org {body.org_id}"
+        f"API key created: {sanitize_log(api_key.name)} (id={sanitize_log(api_key.id)}) "
+        f"for user {sanitize_log(current_user.id)} in org {sanitize_log(body.org_id)}"
     )
 
     return CreateApiKeyResponse(
@@ -268,6 +269,11 @@ async def revoke_api_key(
     await db.delete(api_key)
     await db.commit()
 
-    logger.info(f"API key revoked: {key_name} (id={key_id}) by user {current_user.id}")
+    logger.info(
+        "API key revoked: %s (id=%s) by user %s",
+        sanitize_log(key_name),
+        sanitize_log(key_id),
+        sanitize_log(current_user.id),
+    )
 
     return None

@@ -5,7 +5,9 @@ Handles GitHub OAuth, repository management, issues, PRs, and releases.
 """
 
 import asyncio
+import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,11 +15,15 @@ import subprocess
 import sys
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -93,7 +99,7 @@ def _persist_cli_token_to_project(project_id: str) -> bool:
     GITHUB_TOKEN in the project env file with secure 0o600 permissions.
     Returns True on success.
     """
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     token_result = run_gh_command(["auth", "token"])
     if not token_result["success"] or not token_result["output"]:
@@ -364,7 +370,6 @@ def install_github_cli():
     Requires root access (runs in Docker container as root entrypoint).
     Uses sync def to avoid blocking the event loop with subprocess.run.
     """
-    import logging
     import shlex
 
     log = logging.getLogger(__name__)
@@ -374,6 +379,7 @@ def install_github_cli():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
+            check=False,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -391,8 +397,8 @@ def install_github_cli():
                     "steps_completed": ["already-installed"],
                 },
             }
-    except Exception:
-        pass
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.debug("gh --version probe failed, proceeding to install: %s", exc)
 
     # Step 2: Install gh using the official apt repository method
     # This works in the Docker container (Ubuntu-based)
@@ -419,6 +425,7 @@ def install_github_cli():
 
         result = subprocess.run(
             ["bash", "-c", install_script],
+            check=False,
             capture_output=True,
             text=True,
             timeout=120,
@@ -433,7 +440,10 @@ def install_github_cli():
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Installation timed out (120s)"}
     except Exception as e:
-        return {"success": False, "error": f"Installation failed: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Installation failed", e),
+        }
 
     # Step 3: Verify installation
     version_str = "unknown"
@@ -449,7 +459,9 @@ def install_github_cli():
     except Exception as e:
         return {
             "success": False,
-            "error": f"Installation completed but verification failed: {e}",
+            "error": client_error(
+                logger, "Installation completed but verification failed", e
+            ),
         }
 
     return {
@@ -532,7 +544,6 @@ _gh_auth_status: dict | None = None
 async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
     """Monitor gh auth login process in background and broadcast result."""
     global _gh_auth_status, _gh_auth_proc
-    import logging
 
     log = logging.getLogger(__name__)
 
@@ -555,15 +566,13 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
             "success": False,
             "error": "Authentication timed out after 5 minutes.",
         }
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             proc.kill()
-        except Exception:
-            pass
     except Exception as e:
         _gh_auth_status = {
             "complete": True,
             "success": False,
-            "error": f"Authentication failed: {e}",
+            "error": client_error(logger, "Authentication failed", e),
         }
     finally:
         _gh_auth_proc = None
@@ -573,8 +582,10 @@ async def _monitor_gh_auth(proc: asyncio.subprocess.Process):
         from ..websockets.events import broadcast_event
 
         await broadcast_event("github:auth-complete", _gh_auth_status)
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning(
+            "gh auth: failed to broadcast github:auth-complete over WebSocket: %s", exc
+        )
 
 
 @router.post("/auth/start")
@@ -595,10 +606,8 @@ async def start_github_auth():
 
     # Kill any existing auth process
     if _gh_auth_proc is not None:
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             _gh_auth_proc.kill()
-        except Exception:
-            pass
         _gh_auth_proc = None
 
     _gh_auth_status = None
@@ -691,7 +700,7 @@ async def start_github_auth():
             "success": True,
             "data": {
                 "success": False,
-                "message": f"Failed to start authentication: {e}",
+                "message": client_error(logger, "Failed to start authentication", e),
             },
         }
 
@@ -847,7 +856,7 @@ async def add_git_remote(request: AddRemoteRequest):
     except subprocess.CalledProcessError as e:
         return {
             "success": False,
-            "error": e.stderr.decode() if e.stderr else "Failed to add remote",
+            "error": client_error(logger, "add git remote failed", e),
         }
 
 
@@ -861,7 +870,7 @@ project_router = APIRouter()
 
 def _resolve_project_path(projectId: str) -> FilePath | None:
     """Resolve a project ID to its filesystem path."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -932,7 +941,7 @@ def _get_repo_full_name(project_path: str) -> str:
 
 def _use_provider_api(projectId: str) -> bool:
     """Check if the project is configured to use a custom GitProvider REST API."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -974,7 +983,7 @@ def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
 
     from repo_ref import parse_repo_ref
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -1205,8 +1214,13 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                                 "updated_at": c.get("lastContentUpdatedDate", ""),
                             }
                         )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "get_issue_comments: Azure DevOps threads fallback also "
+                    "failed for issue %s: %s",
+                    sanitize_log(issueNumber),
+                    sanitize_log(exc),
+                )
     else:
         # GitHub api-based fallback
         try:
@@ -1226,8 +1240,12 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
                         "updated_at": c.get("updated_at", ""),
                     }
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "get_issue_comments: failed to fetch comments for issue %s: %s",
+                sanitize_log(issueNumber),
+                sanitize_log(exc),
+            )
 
     return comments
 
@@ -1315,7 +1333,7 @@ async def check_project_github_connection(projectId: str):
                     "repoFullName": None,
                     "repoDescription": None,
                     "issueCount": 0,
-                    "error": f"Connection failed: {e!s}",
+                    "error": client_error(logger, "Connection failed", e),
                 },
             }
 
@@ -1370,8 +1388,11 @@ async def check_project_github_connection(projectId: str):
     if count_result["success"]:
         try:
             issue_count = int(count_result["output"])
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug(
+                "get_project_github_repositories: could not parse issue count: %s",
+                exc,
+            )
 
     return {
         "success": True,
@@ -1407,7 +1428,10 @@ async def get_project_github_issues(projectId: str, state: str | None = Query(No
             issues = [_map_provider_issue(issue, provider.repo) for issue in issues_raw]
             return {"success": True, "data": issues}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": client_error(logger, "get project github issues failed", e),
+            }
 
     args = [
         "issue",
@@ -1450,7 +1474,10 @@ async def get_project_github_issue(projectId: str, issueNumber: int):
             issue = await provider.fetch_issue(issueNumber)
             return {"success": True, "data": _map_provider_issue(issue, provider.repo)}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": client_error(logger, "get project github issue failed", e),
+            }
 
     result = run_gh_command(
         [
@@ -1490,7 +1517,12 @@ async def get_project_github_issue_comments(projectId: str, issueNumber: int):
             comments = await _get_provider_issue_comments(provider, issueNumber)
             return {"success": True, "data": comments}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": client_error(
+                    logger, "get project github issue comments failed", e
+                ),
+            }
 
     result = run_gh_command(
         ["issue", "view", str(issueNumber), "--json", "comments"],
@@ -1540,7 +1572,7 @@ async def investigate_github_issue(
     """Investigate an issue using AI (supports GitHub, GitLab, Azure DevOps)."""
     try:
         # Load projects and validate project exists
-        from .projects import load_projects
+        from server.project_registry import load_projects
 
         projects = load_projects()
         if projectId not in projects:
@@ -1579,7 +1611,7 @@ async def investigate_github_issue(
             except Exception as exc:
                 return {
                     "success": False,
-                    "error": f"Failed to fetch issue: {exc}",
+                    "error": client_error(logger, "Failed to fetch issue", exc),
                 }
         else:
             # Fetch issue details using gh CLI
@@ -1616,8 +1648,12 @@ async def investigate_github_issue(
                 try:
                     comments_data = json.loads(comments_result["output"])
                     all_comments = comments_data.get("comments", [])
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "get_project_github_issue: could not parse comments for issue %s: %s",
+                        sanitize_log(issueNumber),
+                        sanitize_log(exc),
+                    )
 
         # Filter comments if specific IDs were selected
         selected_comments = []
@@ -1655,7 +1691,7 @@ async def investigate_github_issue(
             # If AI analysis fails, still return the issue data
             analysis_status = "failed"
             analysis_data = {
-                "error": f"AI analysis failed: {ai_error!s}",
+                "error": client_error(logger, "AI analysis failed", ai_error),
                 "summary": None,
                 "issue_type": None,
                 "complexity": None,
@@ -1674,7 +1710,10 @@ async def investigate_github_issue(
         return {"success": True, "data": investigation_data}
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to investigate issue: {e!s}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to investigate issue", e),
+        }
 
 
 @project_router.post("/import")
@@ -1762,8 +1801,8 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
             if d.is_dir() and d.name[:3].isdigit():
                 try:
                     next_num = max(next_num, int(d.name[:3]) + 1)
-                except ValueError:
-                    pass
+                except ValueError as exc:
+                    logger.debug("skipping non-numeric spec dir %s: %s", d.name, exc)
 
         title_slug = (issue_data.get("title", "untitled") or "untitled").lower()
         title_slug = title_slug.replace(" ", "-")[:40]
@@ -1872,7 +1911,10 @@ async def close_github_issue(projectId: str, issueNumber: int):
             success = await provider.close_issue(issueNumber)
             return {"success": success}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": client_error(logger, "close github issue failed", e),
+            }
 
     result = run_gh_command(
         ["issue", "close", str(issueNumber)],
@@ -1912,7 +1954,10 @@ async def get_project_github_prs(
             prs = [_map_provider_pr(pr) for pr in prs_raw]
             return {"success": True, "data": prs}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": client_error(logger, "get project github prs failed", e),
+            }
 
     from ..services.pr_data_service import get_pr_data_service
 
@@ -2102,7 +2147,11 @@ async def post_pr_comment(
             return {"success": True, "data": {"commentId": comment_id}}
         except Exception as e:
             return JSONResponse(
-                status_code=500, content={"success": False, "error": str(e)}
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": client_error(logger, "post pr comment failed", e),
+                },
             )
 
     from ..services.pr_data_service import get_pr_data_service
@@ -2146,7 +2195,11 @@ async def approve_pr(
             return {"success": True}
         except Exception as e:
             return JSONResponse(
-                status_code=500, content={"success": False, "error": str(e)}
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": client_error(logger, "approve pr failed", e),
+                },
             )
 
     from ..services.pr_data_service import get_pr_data_service
@@ -2189,7 +2242,11 @@ async def merge_pr(
                 )
         except Exception as e:
             return JSONResponse(
-                status_code=500, content={"success": False, "error": str(e)}
+                status_code=500,
+                content={
+                    "success": False,
+                    "error": client_error(logger, "merge pr failed", e),
+                },
             )
 
     from ..services.pr_data_service import get_pr_data_service

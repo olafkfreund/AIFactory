@@ -4,13 +4,18 @@ Context and Memory routes.
 Handles project context, memory infrastructure, and Graphiti integration.
 """
 
+import logging
 import subprocess
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
+from server.error_ref import client_error
 from server.services.pr_endgame import is_graphiti_enabled
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -71,7 +76,7 @@ async def get_project_context(projectId: str = Path(...)):
     """Get project context including index and memories."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -85,8 +90,8 @@ async def get_project_context(projectId: str = Path(...)):
     if index_path.exists():
         try:
             project_index = json.loads(index_path.read_text())
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError):
+            logger.warning("failed to read project index %s", index_path, exc_info=True)
 
     # #1210: the project's own GRAPHITI_ENABLED, which used to be computed here
     # and thrown away while the response reported `enabled: True` for every
@@ -168,7 +173,7 @@ async def get_project_context(projectId: str = Path(...)):
 @project_router.post("/context/refresh")
 async def refresh_project_index(projectId: str = Path(...)):
     """Refresh/regenerate project index."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -180,6 +185,7 @@ async def refresh_project_index(projectId: str = Path(...)):
     try:
         result = subprocess.run(
             ["git", "ls-files"],
+            check=False,
             cwd=project_path,
             capture_output=True,
             text=True,
@@ -211,14 +217,17 @@ async def refresh_project_index(projectId: str = Path(...)):
 
         return {"success": True, "data": index}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "refresh project index failed", e),
+        }
 
 
 @project_router.get("/memory/status")
 async def get_memory_status(projectId: str = Path(...)):
     """Get memory system status for project."""
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -257,7 +266,7 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     """Search project memories."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -318,7 +327,7 @@ async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)
     """Get recent memories for project."""
     import json
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -395,7 +404,7 @@ def _extract_memory_summary(data: dict) -> str:
 @project_router.get("/env")
 async def get_project_env(projectId: str = Path(...)):
     """Get project environment configuration."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -477,7 +486,9 @@ async def get_project_env(projectId: str = Path(...)):
                         try:
                             graphiti_provider_config["ollamaEmbeddingDim"] = int(value)
                         except ValueError:
-                            pass
+                            logger.warning(
+                                "OLLAMA_EMBEDDING_DIM in .env is not an int, ignoring"
+                            )
                     elif key == "OPENAI_API_KEY":
                         graphiti_provider_config["openaiApiKey"] = value
                     elif key == "VOYAGE_API_KEY":
@@ -498,8 +509,8 @@ async def get_project_env(projectId: str = Path(...)):
                         graphiti_provider_config["database"] = value
                     elif key == "GRAPHITI_DB_PATH":
                         graphiti_provider_config["dbPath"] = value
-        except Exception:
-            pass
+        except OSError:
+            logger.warning("failed to read %s for env config", env_path, exc_info=True)
 
     # Add graphiti provider config if any fields were found
     if graphiti_provider_config:
@@ -508,12 +519,16 @@ async def get_project_env(projectId: str = Path(...)):
     # Also check for Claude auth via keychain
     try:
         result = subprocess.run(
-            ["claude", "--version"], capture_output=True, text=True, timeout=5
+            ["claude", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             config["claudeAuthStatus"] = "authenticated"
-    except Exception:
-        pass
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning("failed to check claude CLI auth status", exc_info=True)
 
     return {"success": True, "data": config}
 
@@ -534,7 +549,7 @@ async def update_project_env(
     Only updates fields that are provided (partial updates supported).
     Sets secure file permissions (0o600) to protect sensitive tokens.
     """
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     # Validate project exists
     projects = load_projects()
@@ -591,8 +606,7 @@ async def update_project_env(
                         existing["GIT_TOKEN"] = value
                 else:
                     # Allow removing tokens by setting to empty string
-                    if env_key in existing:
-                        del existing[env_key]
+                    existing.pop(env_key, None)
                     if env_key == "GIT_TOKEN" and "GITHUB_TOKEN" in existing:
                         del existing["GITHUB_TOKEN"]
                     elif env_key == "GITHUB_TOKEN" and "GIT_TOKEN" in existing:
@@ -621,8 +635,7 @@ async def update_project_env(
                         existing["GIT_REPO"] = val_strip
                 else:
                     # Allow removing by setting to empty
-                    if env_key in existing:
-                        del existing[env_key]
+                    existing.pop(env_key, None)
                     if env_key == "GIT_REPO" and "GITHUB_REPO" in existing:
                         del existing["GITHUB_REPO"]
                     elif env_key == "GITHUB_REPO" and "GIT_REPO" in existing:
@@ -678,7 +691,7 @@ async def update_project_env(
 
         # Also update settings in projects.json
         try:
-            from .projects import save_projects
+            from server.project_registry import save_projects
 
             if "settings" not in projects[projectId]:
                 projects[projectId]["settings"] = {}
@@ -723,7 +736,14 @@ async def update_project_env(
             projects[projectId]["updated_at"] = datetime.now().isoformat()
             save_projects(projects)
         except Exception:
-            pass
+            # .env write above already succeeded; this only mirrors gitToken/
+            # githubToken into projects.json, so degrade instead of failing the
+            # request, but log it since the response below is silent about it.
+            logger.warning(
+                "failed to mirror git settings into projects.json for %s",
+                sanitize_log(projectId),
+                exc_info=True,
+            )
 
         return {
             "success": True,
@@ -731,7 +751,10 @@ async def update_project_env(
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to update environment: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to update environment", e),
+        }
 
 
 @project_router.get("/claude-auth")
@@ -755,7 +778,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
     """
     try:
         # Import load_projects to validate project exists
-        from .projects import load_projects
+        from server.project_registry import load_projects
 
         projects = load_projects()
         if projectId not in projects:
@@ -764,7 +787,11 @@ async def invoke_claude_setup(projectId: str = Path(...)):
         # Check if Claude CLI is installed
         try:
             version_result = subprocess.run(
-                ["claude", "--version"], capture_output=True, text=True, timeout=5
+                ["claude", "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             cli_installed = version_result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -789,7 +816,11 @@ async def invoke_claude_setup(projectId: str = Path(...)):
             # The 'claude' command without arguments will fail if not authenticated
             # We use --version as a proxy for checking if basic auth works
             auth_check = subprocess.run(
-                ["claude", "--version"], capture_output=True, text=True, timeout=5
+                ["claude", "--version"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
 
             # If we got here and returncode is 0, Claude CLI is working
@@ -826,7 +857,7 @@ async def invoke_claude_setup(projectId: str = Path(...)):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to check Claude setup status: {str(e)}",
+            "error": client_error(logger, "Failed to check Claude setup status", e),
         }
 
 

@@ -9,11 +9,10 @@ inherits it and the method runs unchanged via the MRO.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from pathlib import Path
-
-_log = logging.getLogger(__name__)
 
 
 class SkillContextMixin:
@@ -28,7 +27,6 @@ class SkillContextMixin:
 
         If no skills are selected, removes any existing skill_context.md.
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -113,10 +111,8 @@ class SkillContextMixin:
         if not sections:
             # No skills could be loaded — clean up stale file if present
             if skill_context_file.exists():
-                try:
+                with contextlib.suppress(OSError):
                     skill_context_file.unlink()
-                except OSError:
-                    pass
             return
 
         # Format as structured markdown

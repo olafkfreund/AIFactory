@@ -13,8 +13,11 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 from ..websockets.events import broadcast_event
+from .argv_safety import assert_safe_git_ref
 
 
 class ChangelogPhase(str, Enum):
@@ -104,7 +107,7 @@ class ChangelogService:
         """Start changelog generation for a project."""
         if self.is_running(project_id):
             logger.warning(
-                f"Changelog generation already running for project {project_id}"
+                f"Changelog generation already running for project {sanitize_log(project_id)}"
             )
             return False
 
@@ -152,10 +155,25 @@ class ChangelogService:
                 cmd.extend(["--git-history-count", str(git_history["count"])])
             if git_history.get("sinceDate"):
                 cmd.extend(["--git-history-since-date", git_history["sinceDate"]])
+            # These refs are option VALUES here, which argparse consumes safely,
+            # but changelog_runner.py then joins them into a `git log` argv as
+            # `<from>..<to>`. Assert on this side of the process boundary: it is
+            # the only caller of that runner, and a second copy of the validator
+            # in apps/backend would be a copy to drift (#1267).
             if git_history.get("fromTag"):
-                cmd.extend(["--git-history-from-tag", git_history["fromTag"]])
+                cmd.extend(
+                    [
+                        "--git-history-from-tag",
+                        assert_safe_git_ref(git_history["fromTag"], "fromTag"),
+                    ]
+                )
             if git_history.get("toTag"):
-                cmd.extend(["--git-history-to-tag", git_history["toTag"]])
+                cmd.extend(
+                    [
+                        "--git-history-to-tag",
+                        assert_safe_git_ref(git_history["toTag"], "toTag"),
+                    ]
+                )
             if git_history.get("includeMergeCommits"):
                 cmd.append("--include-merge-commits")
 
@@ -169,8 +187,10 @@ class ChangelogService:
             compare = branch_diff.get("compareBranchRef") or branch_diff.get(
                 "compareBranch", "HEAD"
             )
-            cmd.extend(["--base-branch", base])
-            cmd.extend(["--compare-branch", compare])
+            cmd.extend(["--base-branch", assert_safe_git_ref(base, "baseBranch")])
+            cmd.extend(
+                ["--compare-branch", assert_safe_git_ref(compare, "compareBranch")]
+            )
 
         # Add emoji level if present
         if request.get("emojiLevel") and request["emojiLevel"] != "none":
@@ -180,7 +200,11 @@ class ChangelogService:
         if request.get("customInstructions"):
             cmd.extend(["--custom-instructions", request["customInstructions"]])
 
-        logger.info(f"Starting changelog generation for {project_id}: {' '.join(cmd)}")
+        logger.info(
+            "Starting changelog generation for %s: %s",
+            sanitize_log(project_id),
+            sanitize_log(" ".join(cmd)),
+        )
 
         # Set up environment with PYTHONPATH pointing to backend.
         # Scrub ANTHROPIC_API_KEY (OAuth-only policy — see core/auth.py).
@@ -283,7 +307,9 @@ class ChangelogService:
                     line = line_bytes.decode("utf-8", errors="replace").rstrip()
                     if line:
                         stderr_lines.append(line)
-                        logger.error(f"[{project_id}] STDERR: {line}")
+                        logger.error(
+                            f"[{sanitize_log(project_id)}] STDERR: {sanitize_log(line)}"
+                        )
 
             # Start stderr reader in background
             stderr_task = asyncio.create_task(read_stderr())
@@ -291,7 +317,7 @@ class ChangelogService:
             # Read stdout line by line
             async for line_bytes in proc.stdout:
                 line = line_bytes.decode("utf-8", errors="replace").rstrip()
-                logger.debug(f"[{project_id}] {line}")
+                logger.debug(f"[{sanitize_log(project_id)}] {sanitize_log(line)}")
 
                 # Detect phase changes
                 phase = self._detect_phase(line)
@@ -320,7 +346,9 @@ class ChangelogService:
                 await self._emit_error(project_id, error_msg)
 
         except asyncio.CancelledError:
-            logger.info(f"Changelog generation cancelled for {project_id}")
+            logger.info(
+                f"Changelog generation cancelled for {sanitize_log(project_id)}"
+            )
             raise
         except Exception as e:
             logger.error(f"Error processing changelog output: {e}", exc_info=True)
@@ -340,7 +368,13 @@ class ChangelogService:
     ):
         """Emit progress event via WebSocket."""
         progress = PHASE_PROGRESS.get(phase, 0)
-        logger.info(f"[{project_id}] Phase: {phase.value} ({progress}%) - {message}")
+        logger.info(
+            "[%s] Phase: %s (%s%%) - %s",
+            sanitize_log(project_id),
+            sanitize_log(phase.value),
+            sanitize_log(progress),
+            sanitize_log(message),
+        )
 
         await broadcast_event(
             "changelog:progress",
@@ -365,7 +399,7 @@ class ChangelogService:
                     f"Generated changelog file not found at {changelog_path}"
                 )
 
-            logger.info(f"[{project_id}] Changelog generation complete")
+            logger.info(f"[{sanitize_log(project_id)}] Changelog generation complete")
 
             await broadcast_event(
                 "changelog:complete",
@@ -386,7 +420,7 @@ class ChangelogService:
 
     async def _emit_error(self, project_id: str, error: str):
         """Emit error event."""
-        logger.error(f"[{project_id}] Error: {error}")
+        logger.error(f"[{sanitize_log(project_id)}] Error: {sanitize_log(error)}")
 
         await broadcast_event(
             "changelog:error",

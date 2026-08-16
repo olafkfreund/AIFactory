@@ -8,13 +8,10 @@ and per-entry generic-fallback on batch errors / timeouts / missing API key.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-
-import pytest
 
 _BACKEND = Path(__file__).resolve().parent.parent / "apps" / "backend"
 if str(_BACKEND) not in sys.path:

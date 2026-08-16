@@ -1,0 +1,35 @@
+title = "gitleaks config for AIFactory"
+
+[extend]
+useDefault = true
+
+# Test suites and fixture files contain deliberately fake secrets used to
+# exercise this repo's own security_scanner.py product feature (which scans
+# code the factory GENERATES for other projects) and the SAML/SCIM/OIDC test
+# harnesses. None of these values are live credentials.
+[[allowlists]]
+description = "Fake/example secrets in test suites, SAML test-only key pairs, docs, and LLM prompt templates - not real credentials"
+paths = [
+  '''tests/test_scan_secrets\.py''',
+  '''tests/test_security_scanner\.py''',
+  '''tests/test_structured_outputs\.py''',
+  '''tests/test_file_based_endpoints\.py''',
+  '''tests/scim/test_auth\.py''',
+  '''tests/test_skills_service\.py''',
+  '''tests/fixtures/saml/.*\.key''',
+  '''apps/backend/prompts/github/pr_followup\.md''',
+  '''apps/backend/prompts/coder\.md''',
+  '''apps/web-server/README\.md''',
+  '''skills/quality/security\.md''',
+  '''compliance/model-registry\.html''',
+]
+
+# Throwaway Fernet key generated solely to exercise the OIDC acceptance job's
+# encrypt-at-rest code path in CI (see .github/workflows/ci.yml, job
+# `oidc-acceptance`, comment above KMS_FERNET_KEY). Ephemeral, never used
+# outside that job's transient env, grants no access to any real system.
+[[allowlists]]
+description = "Throwaway Fernet key for CI OIDC acceptance job (test-only, no production access)"
+regexes = [
+  '''w5zEtCchBJDrettOdB7PZQohOBQ_gwT3rA_rYO4hy84=''',
+]

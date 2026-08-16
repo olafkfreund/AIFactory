@@ -18,7 +18,6 @@ these tests run without any network access or installed CLIs.
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -515,7 +514,10 @@ class TestGetQaLlmProviderKwargs:
             "ollama", base_url="http://ollama.example.com:11434"
         )
         assert isinstance(provider, OllamaProvider)
-        assert "ollama.example.com" in provider._base_url
+        # Whole URL, not a host substring: the claim is that the kwarg is stored
+        # verbatim, and a substring check would also pass if the scheme or port
+        # were rewritten.
+        assert provider._base_url == "http://ollama.example.com:11434"
 
 
 # ===========================================================================
@@ -1088,7 +1090,8 @@ class TestOllamaProviderInit:
             extra_options={"temperature": 0, "num_predict": 4096},
         )
         assert provider._model == "codellama:13b"
-        assert "ollama.example.com" in provider._base_url
+        # Whole URL, not a host substring (see test_ollama_base_url_kwarg).
+        assert provider._base_url == "http://ollama.example.com:11434"
         assert provider._timeout == 120
         assert provider._extra_options == {
             "temperature": 0,
@@ -1327,7 +1330,6 @@ class TestOllamaProviderVerifyConnection:
 
     def test_verify_connection_success(self):
         """_verify_connection succeeds when server returns 200."""
-        import contextlib
 
         provider = OllamaProvider(base_url="http://localhost:11434")
 

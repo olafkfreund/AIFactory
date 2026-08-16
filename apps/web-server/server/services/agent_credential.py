@@ -16,6 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
+from ..crypto.secret_field import unseal, unseal_profiles  # noqa: TID252
+
 _log = logging.getLogger(__name__)
 
 
@@ -59,7 +63,6 @@ class CredentialMixin:
         Returns:
             Tuple of (token, profile_id, profile_name) or (None, None, None) if no token found
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -84,7 +87,9 @@ class CredentialMixin:
 
         if profiles_file.exists():
             try:
-                data = json.loads(profiles_file.read_text())
+                # Unsealed on read (#1276); a legacy plaintext store passes
+                # through unchanged.
+                data = unseal_profiles(json.loads(profiles_file.read_text()))
                 profiles = data.get("profiles", [])
                 active_id = data.get("activeProfileId")
 
@@ -214,7 +219,7 @@ class CredentialMixin:
         except Exception:  # noqa: BLE001
             _log.debug(
                 "[AgentService] token pool release raised for %s (ignored)",
-                task_id,
+                sanitize_log(task_id),
                 exc_info=True,
             )
         self._task_profiles.pop(task_id, None)
@@ -273,7 +278,6 @@ class CredentialMixin:
         Returns:
             True if both settings are enabled
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -367,7 +371,6 @@ class CredentialMixin:
             profile_name: Name for logging
             reason: Why the switch occurred (e.g., "rate_limit", "reactive_failover")
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -395,7 +398,9 @@ class CredentialMixin:
             token = None
             for profile in data.get("profiles", []):
                 if profile.get("id") == profile_id:
-                    token = profile.get("oauthToken") or profile.get("token")
+                    # This block round-trips the raw file (only activeProfileId
+                    # changes), so the token is still sealed here (#1276).
+                    token = unseal(profile.get("oauthToken") or profile.get("token"))
                     break
 
             if token:
@@ -447,7 +452,6 @@ class CredentialMixin:
         Returns:
             New subprocess or None if retry not possible
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 
@@ -464,7 +468,9 @@ class CredentialMixin:
             new_cmd.extend(["--model", "sonnet"])
 
         logger.info(
-            f"[AgentService] [Model: sonnet] Fallback triggered for {task_id} (original: {failed_model})"
+            "[AgentService] [Model: sonnet] Fallback triggered for %s (original: %s)",
+            sanitize_log(task_id),
+            sanitize_log(failed_model),
         )
 
         # Emit WebSocket event for model fallback
@@ -527,7 +533,6 @@ class CredentialMixin:
         Returns:
             New subprocess or None if retry not possible
         """
-        import logging
 
         logger = logging.getLogger(__name__)
 

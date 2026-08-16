@@ -32,10 +32,9 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Generator
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 # ============================================================================
 # FIXTURES
@@ -293,6 +292,17 @@ class TestProjectSetupWorkflow:
 
         monkeypatch.setattr(
             config.settings, "PROJECTS_DATA_DIR", str(tmp_path / "data")
+        )
+
+        # #1278 confines scan/register to the browsable roots, so a tmp_path
+        # outside $HOME is refused with 403 before the scan runs.
+        # APP_FILE_BROWSE_ROOTS is the documented operator escape hatch for a
+        # deployment whose code lives elsewhere, which is exactly this shape --
+        # so the test declares its root rather than the confinement being
+        # loosened. Two entries: with one, "confines to the configured set" and
+        # "confines to the first entry" are indistinguishable.
+        monkeypatch.setenv(
+            "APP_FILE_BROWSE_ROOTS", f"{tmp_path / 'other'}{os.pathsep}{tmp_path}"
         )
 
         # Filesystem: one real project, one plain dir, one always-skipped dir.

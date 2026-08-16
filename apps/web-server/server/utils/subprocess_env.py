@@ -14,6 +14,7 @@ exception — that's their own shell, they expect their normal env.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Mapping
 
@@ -73,11 +74,9 @@ def _inject_traceparent(env: dict[str, str]) -> None:
     Wrapped in try/except so this helper can never crash a
     subprocess spawn — tracing is always optional.
     """
-    try:
+    with contextlib.suppress(Exception):
         from ..observability.tracing import get_current_traceparent
 
         tp = get_current_traceparent()
         if tp:
             env["TRACEPARENT"] = tp
-    except Exception:
-        pass

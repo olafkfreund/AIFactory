@@ -53,7 +53,6 @@ def box(
     if style == "heavy":
         tl, tr, bl, br = Icons.BOX_TL, Icons.BOX_TR, Icons.BOX_BL, Icons.BOX_BR
         h, v = Icons.BOX_H, Icons.BOX_V
-        ml, mr = Icons.BOX_ML, Icons.BOX_MR
     else:
         tl, tr, bl, br = (
             Icons.BOX_TL_LIGHT,
@@ -62,11 +61,9 @@ def box(
             Icons.BOX_BR_LIGHT,
         )
         h, v = Icons.BOX_H_LIGHT, Icons.BOX_V_LIGHT
-        ml, mr = Icons.BOX_ML_LIGHT, Icons.BOX_MR_LIGHT
 
     tl, tr, bl, br = icon(tl), icon(tr), icon(bl), icon(br)
     h, v = icon(h), icon(v)
-    ml, mr = icon(ml), icon(mr)
 
     inner_width = width - 2  # Account for side borders
     lines = []

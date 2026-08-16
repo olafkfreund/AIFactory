@@ -16,6 +16,7 @@ Env-gated and **off by default**:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -461,8 +462,8 @@ async def poller_loop(
             )
         except Exception:  # noqa: BLE001 — never let the poller die
             logger.exception("intake poll tick failed (best-effort)")
-        try:
+        # ponytail: timeout is the normal loop tick, not an error -- it just
+        # means the stop event hasn't fired yet
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=poll_interval)
-        except TimeoutError:
-            pass
     logger.info("intake poller stopped")

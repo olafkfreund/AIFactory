@@ -37,7 +37,7 @@ async def test_pull_on_poll_noop_for_local_path_projects(tmp_path):
     }
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.project_workspace_service.clone_or_update",
             new=AsyncMock(),
@@ -68,7 +68,7 @@ async def test_pull_on_poll_fast_forwards_cloned_projects(tmp_path):
     }
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.project_workspace_service.clone_or_update",
             new=AsyncMock(return_value=project_path),
@@ -107,7 +107,7 @@ async def test_pull_on_poll_swallows_git_errors(tmp_path):
     }
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.project_workspace_service.clone_or_update",
             new=AsyncMock(side_effect=GitOperationError("network unreachable")),
@@ -132,7 +132,7 @@ async def test_pull_on_poll_skips_when_path_missing(tmp_path):
     }
 
     with (
-        patch("server.routes.projects.load_projects", return_value=projects_fixture),
+        patch("server.project_registry.load_projects", return_value=projects_fixture),
         patch(
             "server.services.project_workspace_service.clone_or_update",
             new=AsyncMock(),
@@ -164,6 +164,14 @@ async def test_add_project_persists_cloned_from(tmp_path, monkeypatch):
         path.mkdir(exist_ok=True)
         return path
 
+    # The route confines the cloned path to the workspace root (#1313), so the
+    # fake clone has to land somewhere a real clone could. This test is about
+    # `clonedFrom` persistence, not about where clones go.
+    monkeypatch.setenv("PROJECT_WORKSPACE_ROOT", str(tmp_path))
+
+    # `add_project` lives in `routes.projects`, which binds these names in its
+    # OWN namespace at import time, so that is where the patch has to land --
+    # not on `server.project_registry`, which only the call-time importers read.
     monkeypatch.setattr("server.routes.projects.load_projects", fake_load_projects)
     monkeypatch.setattr("server.routes.projects.save_projects", fake_save_projects)
     monkeypatch.setattr(

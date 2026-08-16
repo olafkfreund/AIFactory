@@ -13,6 +13,7 @@ the Claude Agent SDK client. Tool lists are organized by category:
 - Magestic AI tools: Custom build management tools
 """
 
+import contextlib
 import os
 
 # =============================================================================
@@ -23,9 +24,25 @@ import os
 BASE_READ_TOOLS = ["Read", "Glob", "Grep"]
 BASE_WRITE_TOOLS = ["Write", "Edit", "Bash"]
 
-# Web tools for documentation lookup and research
-# Always available to all agents for accessing external information
-WEB_TOOLS = ["WebFetch", "WebSearch"]
+# Web tools for documentation lookup and research.
+#
+# WebFetch is NOT here, and must not be added back (#1269). The PreToolUse hook
+# that guards it can only ever act on the FIRST url -- allow, deny or rewrite
+# input, per the SDK's HookSpecificOutput -- and something else then performs
+# the fetch and decides for itself what to do with a `302 Location:
+# http://169.254.169.254/...`. Whether it currently follows that is not a
+# property this repo controls, tests or pins, which is the point. The
+# replacement is TOOL_WEB_FETCH below, which fetches in-process and validates
+# every hop.
+#
+# WebSearch stays: it takes a query, not a url, and any url it surfaces is
+# fetched through the guarded tool.
+#
+# web_fetch is an MCP tool name rather than a built-in, which is why it is
+# defined just above rather than down with the other aifactory tools.
+TOOL_WEB_FETCH = "mcp__aifactory__web_fetch"
+
+WEB_TOOLS = ["WebSearch", TOOL_WEB_FETCH]
 
 # =============================================================================
 # Magestic AI MCP Tools (Custom build management)
@@ -49,6 +66,7 @@ AI_FACTORY_TOOLS = [
     TOOL_GET_SESSION_CONTEXT,
     TOOL_UPDATE_QA_STATUS,
     TOOL_TEST_MEMORY_INTEGRATION,
+    TOOL_WEB_FETCH,
 ]
 
 # =============================================================================
@@ -108,13 +126,13 @@ AGENT_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
     "spec_gatherer": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": [],  # No MCP needed - just reads project
+        "mcp_servers": ["aifactory"],  # in-process only, for web_fetch
         "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "spec_researcher": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7"],  # Needs docs lookup
+        "mcp_servers": ["context7", "aifactory"],  # Needs docs lookup
         "aifactory_tools": [],
         "thinking_default": "medium",
     },
@@ -132,7 +150,7 @@ AGENT_CONFIGS = {
     },
     "spec_discovery": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": [],
+        "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "medium",
     },
@@ -213,7 +231,7 @@ AGENT_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
     "insights": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": [],
+        "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "medium",
     },
@@ -231,20 +249,20 @@ AGENT_CONFIGS = {
     },
     "pr_reviewer": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,  # Read-only
-        "mcp_servers": ["context7"],
+        "mcp_servers": ["context7", "aifactory"],
         "aifactory_tools": [],
         "thinking_default": "high",
     },
     "pr_orchestrator_parallel": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,  # Read-only for parallel PR orchestrator
-        "mcp_servers": ["context7"],
+        "mcp_servers": ["context7", "aifactory"],
         "aifactory_tools": [],
         "thinking_default": "high",
     },
     "pr_followup_parallel": {
         "tools": BASE_READ_TOOLS
         + WEB_TOOLS,  # Read-only for parallel followup reviewer
-        "mcp_servers": ["context7"],
+        "mcp_servers": ["context7", "aifactory"],
         "aifactory_tools": [],
         "thinking_default": "high",
     },
@@ -253,13 +271,13 @@ AGENT_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
     "analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7"],
+        "mcp_servers": ["context7", "aifactory"],
         "aifactory_tools": [],
         "thinking_default": "medium",
     },
     "batch_analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": [],
+        "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "low",
     },
@@ -274,19 +292,19 @@ AGENT_CONFIGS = {
     # ═══════════════════════════════════════════════════════════════════════
     "roadmap_discovery": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7"],
+        "mcp_servers": ["context7", "aifactory"],
         "aifactory_tools": [],
         "thinking_default": "high",
     },
     "competitor_analysis": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": ["context7"],  # WebSearch for competitor research
+        "mcp_servers": ["context7", "aifactory"],  # WebSearch for competitor research
         "aifactory_tools": [],
         "thinking_default": "high",
     },
     "ideation": {
         "tools": BASE_READ_TOOLS + WEB_TOOLS,
-        "mcp_servers": [],
+        "mcp_servers": ["aifactory"],
         "aifactory_tools": [],
         "thinking_default": "high",
     },
@@ -349,13 +367,11 @@ def _map_mcp_server_name(
         return mapped
     # Catalog servers (github, kubernetes, aws, azure, ...): accept by id verbatim.
     # Imported lazily so the mapping module stays cheap to load.
-    try:
+    with contextlib.suppress(ImportError):
         from agents.tools_pkg.mcp_catalog import is_catalog_server
 
         if is_catalog_server(name.lower().strip()):
             return name.lower().strip()
-    except ImportError:
-        pass
     # Check if it's a custom server ID (accept as-is)
     if custom_server_ids and name in custom_server_ids:
         return name

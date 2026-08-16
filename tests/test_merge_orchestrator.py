@@ -20,8 +20,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 # Add aifactory directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "Apps" / "backend"))
 # Add tests directory to path for test_fixtures

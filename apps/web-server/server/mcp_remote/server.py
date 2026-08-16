@@ -28,6 +28,8 @@ from mcp.server.models import InitializationOptions
 from mcp.server.sse import SseServerTransport
 from mcp.types import TextContent, Tool
 
+from server.error_ref import client_error
+
 from .auth import MCPAuthError, authenticate
 from .tools import dispatch_tool_call, get_tool_definitions
 
@@ -109,7 +111,8 @@ async def sse_endpoint(request: Request):
         key = await authenticate(request.headers.get("Authorization"))
     except MCPAuthError as exc:
         return JSONResponse(
-            {"error": str(exc)}, status_code=status.HTTP_401_UNAUTHORIZED
+            {"error": client_error(logger, "sse endpoint failed", exc)},
+            status_code=status.HTTP_401_UNAUTHORIZED,
         )
 
     token = _current_key.set(key)
@@ -146,7 +149,8 @@ async def messages_endpoint(request: Request):
         await authenticate(request.headers.get("Authorization"))
     except MCPAuthError as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=client_error(logger, "messages endpoint failed", exc),
         ) from exc
     return await _sse_transport.handle_post_message(
         request.scope, request.receive, request._send

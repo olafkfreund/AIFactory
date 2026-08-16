@@ -311,7 +311,9 @@ DEFAULT_WORKER_ID = "main"
 def _read_aggregate(usage_path: Path) -> dict[str, Any]:
     if not usage_path.exists():
         return _empty_aggregate()
-    try:
+    # Corrupt/missing usage file: fall back to a fresh cost-tracking
+    # aggregate rather than crash the build over telemetry.
+    with contextlib.suppress(json.JSONDecodeError, OSError):
         data = json.loads(usage_path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and "categories" in data:
             # Backfill any newly added categories.
@@ -320,8 +322,6 @@ def _read_aggregate(usage_path: Path) -> dict[str, Any]:
             # Backfill the per-worker map for files written before #45 P1.
             data.setdefault("workers", {})
             return data
-    except (json.JSONDecodeError, OSError):
-        pass
     return _empty_aggregate()
 
 
@@ -339,10 +339,8 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 

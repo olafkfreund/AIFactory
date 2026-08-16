@@ -8,6 +8,7 @@ Handles checking if Graphiti is available and managing async operations.
 """
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from typing import Any
@@ -84,7 +85,7 @@ def run_async(coro):
         Result of the coroutine or a Future if already in event loop
     """
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
         # Already in an event loop - create a task
         return asyncio.ensure_future(coro)
     except RuntimeError:
@@ -138,8 +139,7 @@ async def save_to_graphiti_async(
 
     except Exception as e:
         logger.warning(f"Failed to save to Graphiti: {e}")
-        try:
+        # best-effort cleanup after the failure above; a second failure here is not actionable
+        with contextlib.suppress(Exception):
             await graphiti.close()
-        except Exception:
-            pass
         return False

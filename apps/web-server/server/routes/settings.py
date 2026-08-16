@@ -4,6 +4,7 @@ Application settings routes.
 Handles reading and writing application configuration.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import (
     AliasChoices,
@@ -22,6 +24,19 @@ from pydantic import (
     Field,
     SecretStr,
     field_validator,
+)
+
+from server.crypto.secret_field import (
+    seal,
+    seal_fields,
+    seal_profiles,
+    unseal_fields,
+    unseal_profiles,
+)
+from server.error_ref import client_error
+from server.services.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
 )
 
 # --------------------------------------------------------------------------
@@ -481,41 +496,56 @@ def get_settings_file() -> Path:
 
 
 def _read_json_store(name: str, default: Any) -> Any:
-    """Read <name> from PROJECTS_DATA_DIR, returning default if missing/corrupt."""
+    """Read <name> from PROJECTS_DATA_DIR, returning default if missing/corrupt.
+
+    Credential fields are unsealed on the way out (#1276). A store written
+    before encryption landed holds plaintext; ``unseal_profiles`` passes those
+    through untouched and the next write re-seals them.
+    """
     store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
     if store_file.exists():
         try:
-            return json.loads(store_file.read_text())
+            data = json.loads(store_file.read_text())
         except json.JSONDecodeError:
-            pass
+            return default
+        return unseal_profiles(data)
     return default
 
 
 def _write_json_store(name: str, data: Any) -> None:
-    """Write data as pretty JSON to <name> in PROJECTS_DATA_DIR with 0o600 perms."""
+    """Write data as pretty JSON to <name> in PROJECTS_DATA_DIR with 0o600 perms.
+
+    Credential fields are sealed on the way in (#1276), so the file on the PVC
+    never contains a usable token. A no-op for stores with no ``profiles`` key.
+    """
     store_file = Path(get_settings().PROJECTS_DATA_DIR) / name
     store_file.parent.mkdir(parents=True, exist_ok=True)
-    store_file.write_text(json.dumps(data, indent=2))
+    store_file.write_text(json.dumps(seal_profiles(data), indent=2))
     store_file.chmod(0o600)
 
 
 def load_app_settings() -> AppSettings:
-    """Load application settings from disk."""
+    """Load application settings from disk (credential fields unsealed, #1276)."""
     settings_file = get_settings_file()
     if settings_file.exists():
         try:
             data = json.loads(settings_file.read_text())
-            return AppSettings(**data)
+            return AppSettings(**unseal_fields(data))
         except (json.JSONDecodeError, TypeError):
             pass
     return AppSettings()
 
 
 def save_app_settings(settings: AppSettings) -> None:
-    """Save application settings to disk."""
-    settings_file = get_settings_file()
-    settings_file.parent.mkdir(parents=True, exist_ok=True)
-    settings_file.write_text(settings.model_dump_json(indent=2))
+    """Save application settings to disk.
+
+    settings.json carries globalClaudeOAuthToken / provider API keys / email
+    OAuth client secrets. Before #1276 it was the one store here that wrote
+    plaintext with no chmod at all (umask default, typically 0644) — it now
+    seals those fields and goes through _write_json_store for the 0600.
+    """
+    data = seal_fields(json.loads(settings.model_dump_json()))
+    _write_json_store("settings.json", data)
     _mirror_to_global_config(settings)
 
 
@@ -736,7 +766,8 @@ async def update_api_key(request: UpdateApiKeyRequest):
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update API key: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update API key", e),
         )
 
 
@@ -968,8 +999,17 @@ async def list_ollama_models(
     try:
         import httpx
 
+        # SSRF: the base URL comes off the request and is fetched server-side.
+        # allow_private=True for every self-hosted-provider probe in this file --
+        # Ollama/vLLM/LM Studio legitimately live on localhost or a cluster
+        # address, and the fleet's own models are served that way, so the strict
+        # posture would break the product. Non-http(s) schemes and the cloud
+        # metadata range are refused regardless; httpx does not follow redirects
+        # unless asked, so the 30x-to-metadata bypass is closed too.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{ollamaBaseUrl}/api/tags")
+            response = await client.get(f"{base}/api/tags")
             response.raise_for_status()
             data = response.json()
 
@@ -999,8 +1039,10 @@ async def list_ollama_models(
 
             return {"models": models}
     except Exception as e:
-        logger.warning(f"Failed to list Ollama models: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to list Ollama models", e),
+        }
 
 
 @router.get("/openai-compat/models")
@@ -1021,8 +1063,11 @@ async def list_openai_compat_models(
         if apiKey:
             headers["Authorization"] = f"Bearer {apiKey}"
 
+        # SSRF: self-hosted OpenAI-compatible server, see /ollama/models above.
+        base = assert_safe_outbound_url(baseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{baseUrl}/v1/models", headers=headers)
+            response = await client.get(f"{base}/v1/models", headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -1041,8 +1086,16 @@ async def list_openai_compat_models(
 
         return {"models": models}
     except Exception as e:
-        logger.warning(f"Failed to list OpenAI-compatible models from {baseUrl}: {e}")
-        return {"success": False, "error": str(e)}
+        # The URL is caller-controlled, so it goes through sanitize_log; the
+        # exception itself is logged (with its traceback) by client_error under
+        # the reference id that the caller gets back.
+        logger.warning(
+            "Failed to list OpenAI-compatible models from %s", sanitize_log(baseUrl)
+        )
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to list OpenAI-compatible models", e),
+        }
 
 
 class OpenAICompatTestRequest(BaseModel):
@@ -1069,8 +1122,11 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
         if request.apiKey:
             headers["Authorization"] = f"Bearer {request.apiKey.get_secret_value()}"
 
+        # SSRF: self-hosted OpenAI-compatible server, see /ollama/models above.
+        base = assert_safe_outbound_url(request.baseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{request.baseUrl}/v1/models", headers=headers)
+            response = await client.get(f"{base}/v1/models", headers=headers)
             response.raise_for_status()
             data = response.json()
 
@@ -1090,10 +1146,17 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
             "message": f"Connected successfully. {model_count} model(s) available.",
         }
     except Exception as e:
+        # Caller-controlled URL: sanitize_log. See /openai-compat/models above.
         logger.warning(
-            f"OpenAI-compatible connection test failed for {request.baseUrl}: {e}"
+            "OpenAI-compatible connection test failed for %s",
+            sanitize_log(request.baseUrl),
         )
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(
+                logger, "OpenAI-compatible connection test failed", e
+            ),
+        }
 
 
 @router.post("/ollama/pull")
@@ -1103,14 +1166,15 @@ async def pull_ollama_model(
 ):
     """Pull (download) an Ollama model."""
     try:
-        import json
-
         import httpx
+
+        # SSRF: see /ollama/models above.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
 
         # Stream the pull progress
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
-                "POST", f"{ollamaBaseUrl}/api/pull", json={"name": modelName}
+                "POST", f"{base}/api/pull", json={"name": modelName}
             ) as response:
                 response.raise_for_status()
 
@@ -1119,15 +1183,19 @@ async def pull_ollama_model(
                     if line:
                         progress_data = json.loads(line)
                         # Could emit WebSocket progress here
-                        logger.info(f"Pull progress: {progress_data}")
+                        # progress_data is the remote registry's own JSON, so it
+                        # is untrusted text going into a log line.
+                        logger.info("Pull progress: %s", sanitize_log(progress_data))
 
                 return {
                     "success": True,
                     "message": f"Model {modelName} pulled successfully",
                 }
     except Exception as e:
-        logger.warning(f"Failed to pull Ollama model: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to pull Ollama model", e),
+        }
 
 
 @router.post("/ollama/test")
@@ -1138,9 +1206,13 @@ async def test_ollama_connection(
     try:
         import httpx
 
+        # SSRF: see /ollama/models above. One check covers both requests below,
+        # because both are built from this one validated base.
+        base = assert_safe_outbound_url(ollamaBaseUrl, allow_private=True)
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Check if server is reachable
-            response = await client.get(f"{ollamaBaseUrl}/api/tags")
+            response = await client.get(f"{base}/api/tags")
             response.raise_for_status()
 
             # Check if model exists
@@ -1155,7 +1227,7 @@ async def test_ollama_connection(
 
             # Test model with simple query
             test_response = await client.post(
-                f"{ollamaBaseUrl}/v1/chat/completions",
+                f"{base}/v1/chat/completions",
                 json={
                     "model": modelName,
                     "messages": [{"role": "user", "content": "Test"}],
@@ -1167,8 +1239,10 @@ async def test_ollama_connection(
 
             return {"success": True, "message": "Connection successful!"}
     except Exception as e:
-        logger.warning(f"Ollama connection test failed: {e}")
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Ollama connection test failed", e),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -1199,10 +1273,16 @@ async def save_tab_state(state: dict):
         return {"success": True}
     except OSError as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to save tab state: {str(e)}"
+            status_code=500,
+            # OSError renders the absolute path it failed on, so this one put a
+            # real filesystem path in the response body.
+            detail=client_error(logger, "Failed to save tab state", e),
         )
     except (TypeError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid tab state data: {str(e)}")
+        raise HTTPException(
+            status_code=400,
+            detail=client_error(logger, "Invalid tab state data", e),
+        )
 
 
 # --------------------------------------------------------------------------
@@ -1251,7 +1331,9 @@ def load_profiles() -> dict:
                 data["profiles"] = [
                     normalize_profile_fields(p) for p in data["profiles"]
                 ]
-            return data
+            # Unseal after normalization so the legacy "token" field is already
+            # renamed to "oauthToken" (#1276).
+            return unseal_profiles(data)
         except json.JSONDecodeError:
             pass
     return {"profiles": [], "activeProfileId": None}
@@ -1444,7 +1526,7 @@ async def delete_claude_profile(profile_id: str):
                 )
             except OSError as e:
                 logging.getLogger(__name__).warning(
-                    f"Failed to remove OAuth fallback file: {e}"
+                    "Failed to remove OAuth fallback file: %s", sanitize_log(e)
                 )
 
     return {"success": True}
@@ -1498,7 +1580,10 @@ async def rename_claude_profile(profile_id: str, update: ProfileRename):
         save_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to rename profile", e),
+        }
 
 
 class ActiveProfileRequest(BaseModel):
@@ -1527,7 +1612,10 @@ async def set_active_claude_profile(request: ActiveProfileRequest):
         _sync_env_token_for_active_profile(data, request.profileId, logger)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to set the active Claude profile", e),
+        }
 
 
 @router.post("/claude-profiles/{profile_id}/initialize")
@@ -1557,7 +1645,10 @@ async def initialize_claude_profile(profile_id: str):
         save_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to initialize profile", e),
+        }
 
 
 def _poll_token_and_save(
@@ -1611,13 +1702,17 @@ def _poll_token_and_save(
                     save_profiles(data)
                     if data.get("activeProfileId") == profile_id:
                         _sync_env_token_for_active_profile(data, profile_id, logger)
-                    logger.info(f"[Claude OAuth] Token saved to profile {profile_id}")
+                    logger.info(
+                        "[Claude OAuth] Token saved to profile %s",
+                        sanitize_log(profile_id),
+                    )
                 return
         except Exception as e:  # pragma: no cover - best-effort background
-            logger.warning(f"[Claude OAuth] Polling error: {e}")
+            logger.warning("[Claude OAuth] Polling error: %s", sanitize_log(e))
         time.sleep(2)
     logger.warning(
-        f"[Claude OAuth] Token not detected for profile {profile_id} within timeout"
+        "[Claude OAuth] Token not detected for profile %s within timeout",
+        sanitize_log(profile_id),
     )
 
 
@@ -1726,7 +1821,10 @@ async def set_claude_profile_token(profile_id: str, request: SetTokenRequest):
         _sync_env_token_for_active_profile(data, data.get("activeProfileId"), logger)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to save the profile token", e),
+        }
 
 
 @router.get("/claude-profiles/best")
@@ -1840,7 +1938,9 @@ async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate)
             except json.JSONDecodeError as e:
                 return {
                     "success": False,
-                    "error": f"Failed to parse existing auto-switch.json: {str(e)}",
+                    "error": client_error(
+                        logger, "Failed to parse existing auto-switch.json", e
+                    ),
                 }
 
         # Update with new values (only non-None values from Pydantic model)
@@ -1854,7 +1954,7 @@ async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate)
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to update auto-switch settings: {str(e)}",
+            "error": client_error(logger, "Failed to update auto-switch settings", e),
         }
 
 
@@ -1968,7 +2068,10 @@ async def retry_with_profile(request: RetryWithProfileRequest):
         return response
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to switch profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to switch profile", e),
+        }
 
 
 @router.post("/usage-update")
@@ -2261,7 +2364,10 @@ async def update_api_profile(profile_id: str, profile_update: ApiProfileUpdate):
         return {"success": True, "data": updated_profile}
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to update API profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to update API profile", e),
+        }
 
 
 @router.delete("/api-profiles/{profile_id}")
@@ -2330,7 +2436,10 @@ async def delete_api_profile(profile_id: str):
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to delete API profile: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to delete API profile", e),
+        }
 
 
 @router.post("/api-profiles/active")
@@ -2358,7 +2467,10 @@ async def set_active_api_profile(request: dict):
         save_api_profiles(data)
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to set the active API profile", e),
+        }
 
 
 class TestConnectionRequest(BaseModel):
@@ -2372,14 +2484,24 @@ async def test_api_connection(request: TestConnectionRequest):
     import urllib.request
 
     try:
+        # SSRF, strict posture: an API profile is a CLOUD provider endpoint
+        # (https://api.anthropic.com and friends), so there is no legitimate
+        # reason for one to resolve inside the network -- and this route
+        # attaches the caller's bearer token to whatever it reaches, so a
+        # private target would also be a credential leak. Self-hosted providers
+        # have their own routes above, which keep allow_private=True.
+        safe_url = assert_safe_outbound_url(f"{request.baseUrl}/models")
         req = urllib.request.Request(
-            f"{request.baseUrl}/models",
+            safe_url,
             headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
-        urllib.request.urlopen(req, timeout=10)
+        build_no_redirect_opener().open(req, timeout=10)
         return {"success": True, "data": {"connected": True}}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "API connection test failed", e),
+        }
 
 
 @router.post("/api-profiles/discover-models")
@@ -2389,16 +2511,21 @@ async def discover_api_models(request: TestConnectionRequest):
     import urllib.request
 
     try:
+        # SSRF, strict posture -- see /api-profiles/test above.
+        safe_url = assert_safe_outbound_url(f"{request.baseUrl}/models")
         req = urllib.request.Request(
-            f"{request.baseUrl}/models",
+            safe_url,
             headers={"Authorization": f"Bearer {request.apiKey.get_secret_value()}"},
         )
-        response = urllib.request.urlopen(req, timeout=10)
+        response = build_no_redirect_opener().open(req, timeout=10)
         data = json_module.loads(response.read().decode())
         models = [m.get("id") for m in data.get("data", [])]
         return {"success": True, "data": models}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to discover models", e),
+        }
 
 
 # --------------------------------------------------------------------------
@@ -2562,11 +2689,16 @@ async def update_source_env(config: SourceEnvUpdate):
         raise
     except json.JSONDecodeError as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to parse existing .env file: {str(e)}"
+            status_code=500,
+            # JSONDecodeError carries the document position, and the surrounding
+            # handler works on the .env file - the path to a credential store is
+            # not something a client needs echoed back.
+            detail=client_error(logger, "Failed to parse existing .env file", e),
         )
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update source environment: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update source environment", e),
         )
 
 
@@ -2592,7 +2724,10 @@ async def get_auth_status():
     email = None
 
     if profiles_file.exists():
-        try:
+        # A corrupt or half-written store means "no token configured", which is
+        # what the zero-valued locals above already say. Deliberate, not a
+        # swallowed bug -- hence suppress rather than except/pass.
+        with contextlib.suppress(json.JSONDecodeError, KeyError):
             data = json.loads(profiles_file.read_text())
             profiles = data.get("profiles", [])
             profile_count = len(profiles)
@@ -2603,8 +2738,6 @@ async def get_auth_status():
                     # Get email from active profile, or first profile with a token
                     if email is None or p.get("id") == active_id:
                         email = p.get("email")
-        except (json.JSONDecodeError, KeyError):
-            pass
 
     # Also check env var fallback
     env_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
@@ -2612,7 +2745,11 @@ async def get_auth_status():
     # Verify Claude CLI is actually installed before reporting hasToken
     claude_installed = shutil.which("claude") is not None
     if not claude_installed:
-        try:
+        # Login-shell fallback for a PATH that only a profile script sets. If the
+        # shell is missing or hangs, "not installed" is the honest answer, so the
+        # suppression is deliberate -- but it is narrowed to the two families
+        # subprocess can actually raise, not a bare Exception.
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
                 capture_output=True,
@@ -2620,8 +2757,6 @@ async def get_auth_status():
                 timeout=5,
             )
             claude_installed = result.returncode == 0
-        except Exception:
-            pass
 
     return {
         "hasToken": (has_token or bool(env_token)) and claude_installed,
@@ -2638,12 +2773,12 @@ async def check_claude_credentials_exist():
     exists = False
 
     if cred_path.exists():
-        try:
+        # An unparseable credentials file is "no usable credential", which is the
+        # False already in `exists`. Deliberate suppression, not a swallow.
+        with contextlib.suppress(json.JSONDecodeError, KeyError):
             data = json.loads(cred_path.read_text())
             token = data.get("claudeAiOauth", {}).get("accessToken")
             exists = bool(token and token.startswith("sk-ant-oat01-"))
-        except (json.JSONDecodeError, KeyError):
-            pass
 
     return {"exists": exists}
 
@@ -2688,7 +2823,9 @@ async def import_claude_credentials():
     new_profile = {
         "id": profile_id,
         "name": "Claude Code (Imported)",
-        "oauthToken": token,
+        # Sealed at rest (#1276); this route writes the legacy data dir
+        # directly, so it cannot go through _write_json_store.
+        "oauthToken": seal(token),
         "isDefault": len(profiles_data["profiles"]) == 0,
         "createdAt": datetime.now().isoformat(),
     }

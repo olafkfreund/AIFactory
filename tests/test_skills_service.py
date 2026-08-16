@@ -36,23 +36,32 @@ FIXTURES_PATH = Path(__file__).parent / "fixtures" / "skills"
 class TestSkillsServiceInit:
     """Tests for SkillsService initialisation and index building."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_builds_index_from_fixtures(self):
         """Index is populated from the fixture directory."""
         assert self.service._built is True
         assert len(self.service._index) == 3
 
-    def test_missing_skills_path_returns_empty_index(self):
+    def test_missing_skills_path_returns_empty_index(self, tmp_path):
         """Service initialises gracefully when skills path does not exist."""
-        service = SkillsService(skills_base_path=Path("/nonexistent/skills/path"))
+        service = SkillsService(
+            skills_base_path=Path("/nonexistent/skills/path"),
+            cache_path=tmp_path / "skills-cache.json",
+        )
         assert service._built is True
         assert service._index == {}
 
-    def test_missing_skills_path_all_queries_return_empty(self):
+    def test_missing_skills_path_all_queries_return_empty(self, tmp_path):
         """All query methods return empty results when path is missing."""
-        service = SkillsService(skills_base_path=Path("/nonexistent/skills/path"))
+        service = SkillsService(
+            skills_base_path=Path("/nonexistent/skills/path"),
+            cache_path=tmp_path / "skills-cache.json",
+        )
         assert service.list_categories() == []
         assert service.list_skills("frontend") == []
         assert service.search_skills("react") == []
@@ -65,8 +74,11 @@ class TestSkillsServiceInit:
 class TestListCategories:
     """Tests for list_categories()."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_returns_all_fixture_categories(self):
         """All three fixture categories are returned."""
@@ -99,8 +111,11 @@ class TestListCategories:
 class TestListSkills:
     """Tests for list_skills(category)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_list_frontend_skills(self):
         """Returns the react skill from the frontend category."""
@@ -144,8 +159,11 @@ class TestListSkills:
 class TestSearchSkills:
     """Tests for search_skills(query, category, limit)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_search_returns_react_for_react_query(self):
         """Searching 'react' returns the react skill."""
@@ -207,8 +225,11 @@ class TestSearchSkills:
 class TestGetSkill:
     """Tests for get_skill(category, name)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_get_react_skill_summary(self):
         """Returns SkillSummary for the react fixture."""
@@ -250,14 +271,20 @@ class TestGetSkill:
         skill = self.service.get_skill("frontend", "react")
         assert skill is not None
         assert skill.source is not None
-        assert "github.com" in skill.source
+        # Whole URL, not a host substring: a substring check passes on any text
+        # mentioning github.com, so it cannot prove the blockquote's link target
+        # was the thing extracted.
+        assert skill.source == "https://github.com/facebook/react"
 
 
 class TestGetSkillContent:
     """Tests for get_skill_content(category, name)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_returns_react_markdown_content(self):
         """Full markdown content is returned for react fixture."""
@@ -297,8 +324,11 @@ class TestGetSkillContent:
 class TestGetSkillDetail:
     """Tests for get_skill_detail(category, name)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_returns_skill_detail_instance(self):
         """Returns a SkillDetail dataclass instance."""
@@ -331,8 +361,11 @@ class TestGetSkillDetail:
 class TestSuggestSkills:
     """Tests for suggest_skills(task_description, max_results)."""
 
-    def setup_method(self):
-        self.service = SkillsService(skills_base_path=FIXTURES_PATH)
+    @pytest.fixture(autouse=True)
+    def _service(self, tmp_path):
+        self.service = SkillsService(
+            skills_base_path=FIXTURES_PATH, cache_path=tmp_path / "skills-cache.json"
+        )
 
     def test_suggests_react_for_react_task(self):
         """'Build a React frontend app' suggests the react skill."""

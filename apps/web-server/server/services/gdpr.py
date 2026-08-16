@@ -38,8 +38,11 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from factory_common.logsafe import sanitize_log
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.error_ref import InputRejectedError
 
 from ..database.models import AuditLog, EmailAccount, User
 from .audit_chain import GENESIS, compute_hash, row_as_mapping
@@ -109,7 +112,7 @@ async def erase_user(db: AsyncSession, user_id: str) -> dict:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if user is None:
-        raise ValueError(f"user_id {user_id!r} not found")
+        raise InputRejectedError(f"user_id {user_id!r} not found")
     if user.gdpr_erased_at is not None:
         return {
             "user_id": user.id,
@@ -165,9 +168,9 @@ async def erase_user(db: AsyncSession, user_id: str) -> dict:
 
     await db.commit()
     logger.info(
-        "GDPR erasure complete for user_id=%s — %d audit rows anonymized, "
-        "%d email accounts deleted",
-        user_id,
+        "GDPR erasure complete for user_id=%s — %s audit rows anonymized, "
+        "%s email accounts deleted",
+        sanitize_log(user_id),
         len(audit_rows),
         len(ea_rows),
     )

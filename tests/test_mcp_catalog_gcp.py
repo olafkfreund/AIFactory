@@ -19,13 +19,9 @@ Helm-level tests (secret mount + env var rendering) live in
 
 from __future__ import annotations
 
-import os
-
-import pytest
 from agents.tools_pkg import mcp_catalog
 from agents.tools_pkg.mcp_catalog import (
     _GCP_MCP_DEFAULT_ENDPOINT,
-    MCPCatalogEntry,
     _get_gcp_mcp_endpoint,
 )
 from agents.tools_pkg.models import get_required_mcp_servers
@@ -95,7 +91,12 @@ def test_gcp_entry_default_for_coder_and_qa():
 def test_gcp_entry_docs_url_points_at_cloud_ai_companion():
     entry = mcp_catalog.get_catalog_entry("gcp")
     assert entry is not None
-    assert "cloud.google.com" in entry.docs_url
+    # Exact URL, not a host substring: the point of the test is that the entry
+    # links the Code Assist MCP overview page, which a host-only check cannot
+    # tell apart from any other cloud.google.com page.
+    assert (
+        entry.docs_url == "https://cloud.google.com/gemini/docs/codeassist/mcp-overview"
+    )
 
 
 # ---------------------------------------------------------------------------

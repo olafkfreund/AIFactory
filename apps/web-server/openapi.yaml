@@ -6996,9 +6996,9 @@ paths:
         required: true
         schema:
           type: string
-          description: Search query (regex supported)
+          description: Search query (literal, case-insensitive)
           title: Query
-        description: Search query (regex supported)
+        description: Search query (literal, case-insensitive)
       - name: path
         in: query
         required: false
@@ -12373,6 +12373,9 @@ components:
           - type: string
           - type: 'null'
           title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
       type: object
       required:
       - worktreePath
@@ -12392,6 +12395,9 @@ components:
           - type: string
           - type: 'null'
           title: Custompath
+          description: 'customPath is no longer accepted: it let the request body choose the program the
+            server executes, outside the agent sandbox, for any token holder. Use the `ide`/`terminal`
+            name instead. See issue #1267 for the operator-side allowlist that would replace it.'
       type: object
       required:
       - worktreePath

@@ -18,7 +18,6 @@ Tests the selectedSkills feature across three layers:
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +28,7 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).parent.parent / "apps" / "web-server"))
 
 from server.routes.tasks import SelectedSkill, TaskMetadata, TaskMetadataUpdate
-from server.services.skills_service import SkillsService, init_skills_service
+from server.services.skills_service import SkillsService
 
 # Fixture skills directory — fully isolated from the real skills/ dir
 FIXTURES_PATH = Path(__file__).parent / "fixtures" / "skills"
@@ -255,7 +254,10 @@ class TestWriteSkillContext:
         """Provide a temporary spec dir and fixture-backed SkillsService."""
         self.spec_dir = tmp_path / "spec"
         self.spec_dir.mkdir()
-        self.fixture_service = SkillsService(skills_base_path=FIXTURES_PATH)
+        self.fixture_service = SkillsService(
+            skills_base_path=FIXTURES_PATH,
+            cache_path=tmp_path / "skills-cache.json",
+        )
 
     def _make_agent_service(self):
         """Return an AgentService instance with settings mocked out."""

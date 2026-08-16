@@ -41,18 +41,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from .billing import classify_billing_mode
 
 logger = logging.getLogger(__name__)
 
 SERVICE_NAME = "aifactory"
-# Envelope grew additively in #466 (CloudEvents-core + id + trace context).
-# v1.3 (#45 P1) adds an additive per-worker breakdown to the usage block:
-# ``usage.workers[]`` + ``usage.by_provider{}`` / ``usage.by_model{}`` rollups.
-# The scalar usage fields are KEPT verbatim, so old consumers ignore the new
-# fields and still validate — an additive minor bump.
-_SCHEMA_VERSION = "1.3"
-
 # CloudEvents 1.0 (CNCF) — the spec version we align to, and the reverse-DNS
 # ``type`` for AIFactory's terminal completion event. ``source`` is overridable
 # per deployment so a multi-instance fleet can be told apart by the consumer.
@@ -747,8 +742,12 @@ def _notify_worker(event: dict, *, spec_dir: Path | None) -> None:
             wid = str((event.get("worker") or {}).get("worker_id") or "main")
             safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in wid)
             (spec_dir / f"WORKER.{safe}.json").write_text(json.dumps(event, indent=2))
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning(
+                "Failed to write worker sentinel under %s: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(e),
+            )
 
     url = _webhook_url()
     if not url:
@@ -836,8 +835,12 @@ def _notify_worker_progress(event: dict, *, spec_dir: Path | None) -> None:
             (spec_dir / f"WORKER.{safe}.progress.json").write_text(
                 json.dumps(event, indent=2)
             )
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning(
+                "Failed to write worker progress sentinel under %s: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(e),
+            )
 
     url = _webhook_url()
     if not url:
@@ -872,8 +875,12 @@ def notify_completion(event: dict, *, spec_dir: Path | None = None) -> None:
         try:
             spec_dir.mkdir(parents=True, exist_ok=True)
             (spec_dir / "COMPLETED.json").write_text(json.dumps(event, indent=2))
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning(
+                "Failed to write COMPLETED.json under %s: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(e),
+            )
 
     url = _webhook_url()
     if not url:

@@ -13,6 +13,8 @@ from threading import Lock
 from ..config import get_settings
 from .session import PTYSession
 
+logger = logging.getLogger(__name__)
+
 
 class PTYManager:
     """Manages multiple PTY sessions."""
@@ -109,8 +111,12 @@ class PTYManager:
                         profile.get("id"),
                         profile.get("name", "Default Profile"),
                     )
-            except (json.JSONDecodeError, OSError):
-                pass
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning(
+                    "Could not read Claude profiles from %s, falling back: %s",
+                    profiles_file,
+                    exc,
+                )
 
         # 3) Fallback to ~/.claude/oauth_token
         token_file = Path.home() / ".claude" / "oauth_token"

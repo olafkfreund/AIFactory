@@ -27,6 +27,7 @@ from task_logger import (
 )
 
 from .criteria import (
+    MAX_QA_ITERATIONS,
     get_qa_iteration_count,
     get_qa_signoff_status,
     is_qa_approved,
@@ -50,7 +51,8 @@ from .review_cycle import (
 from .reviewer import run_qa_agent_session
 
 # Configuration
-MAX_QA_ITERATIONS = 10
+# MAX_QA_ITERATIONS now lives in `.criteria` (#1317) and is imported above;
+# re-exported here so `from qa.loop import MAX_QA_ITERATIONS` keeps working.
 MAX_CONSECUTIVE_ERRORS = 3  # Stop after 3 consecutive errors without progress
 
 

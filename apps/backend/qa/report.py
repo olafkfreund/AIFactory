@@ -13,7 +13,11 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
-from .criteria import load_implementation_plan, save_implementation_plan
+from .criteria import (
+    MAX_QA_ITERATIONS,
+    load_implementation_plan,
+    save_implementation_plan,
+)
 
 # Configuration
 RECURRING_ISSUE_THRESHOLD = 3  # Escalate if same issue appears this many times
@@ -258,8 +262,6 @@ async def escalate_to_human(
         recurring_issues: Issues that have recurred
         iteration: Current iteration number
     """
-    from .loop import MAX_QA_ITERATIONS
-
     history = get_iteration_history(spec_dir)
     summary = get_recurring_issue_summary(history)
 

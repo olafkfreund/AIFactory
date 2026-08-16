@@ -1,25 +1,83 @@
 name: factory_common drift
 
-# Keeps the vendored apps/backend/factory_common/ copy byte-identical to the
-# canonical shared/factory-common/factory_common/ layer in the Factory hub
-# (epic Factory#154, issue Factory#161). The hub is the single source of truth;
-# this gate fails the build if the local copy drifts from the hub at the SHA
-# pinned in apps/backend/factory_common/.hub-sha.
+# Keeps every vendored factory_common/ copy byte-identical to the canonical
+# shared/factory-common/factory_common/ layer in the Factory hub (epic
+# Factory#154, issue Factory#161). The hub is the single source of truth; this
+# gate fails the build if a local copy drifts from the hub at the SHA pinned
+# beside it.
 #
-# This mirrors the config-drift job in cq-ratchet.yml (which does the same for
-# the vendored standards/ baseline): check out the hub at the pinned SHA and
-# diff the tracked files byte-for-byte.
+# THERE IS NO HAND-MAINTAINED FILE LIST (#1299).
+# The expected module set is DERIVED from the canonical tree at each copy's own
+# pin. A list of filenames in this workflow is what let logsafe.py (Factory#717)
+# and url_safety.py (Factory#734) become vendorable-but-ungated: a list naming
+# three files cannot notice a fourth, so vendoring a new module without editing
+# the list left it vendored and unguarded -- green gate, unchecked copy.
+#
+# Deriving is not merely tidier, it is what the package already requires:
+# factory_common/__init__.py imports every sibling module (http, logsafe,
+# secrets, url_safety), so a partial vendor is an ImportError at import time,
+# not a subtle drift finding. "Vendor the whole canonical directory" is
+# therefore an invariant the package enforces, not a convention someone has to
+# remember, and this gate now checks the invariant directly. That is what makes
+# AIFactory#1291's instruction safe rather than hopeful.
+#
+# EVERY COPY MUST BE AT THE SAME PIN.
+# The copies share the top-level package name `factory_common` on one sys.path,
+# so they SHADOW each other and which one wins depends on who inserted a path
+# first: apps/web-server/tests/conftest.py puts apps/web-server first, while the
+# root tests/ suite and several server modules (routes/mcp.py,
+# services/auto_fix_service.py, routes/execution.py) insert apps/backend. Two
+# copies at DIFFERENT hub SHAs can therefore each match their own pin perfectly
+# while the repo cannot import -- a green gate over a broken tree. Per-copy
+# checks cannot catch that, so the pins are also asserted equal.
+#
+# Pins are resolved INDEPENDENTLY (each copy reads its own .hub-sha) but are
+# REQUIRED TO AGREE. Same SHA in steady state; independent resolution exists so
+# the mechanism has no shared state, not so the values may differ. The window
+# between two PRs landing is exactly when they disagree, and that window is
+# exactly when the tree does not import, so it should be red.
+#
+# WHAT THIS GATE DOES NOT DO.
+# It cannot make a STALE pin visible. Both trees it compares are resolved FROM
+# the pin, so it cannot fire until someone bumps .hub-sha. A repo sitting far
+# behind the hub is green here and still behind. That freshness check is a
+# different job (it would compare the pin against hub HEAD, and should be able
+# to go red with no PR open) and stays tracked in #1291. This gate makes the FIX
+# safe to apply; it does not detect the need for one.
+#
+# TARBALL, NOT actions/checkout.
+# The canonical is fetched with curl rather than a second actions/checkout at
+# `ref: <pinned sha>`. That SHA is read from a file in the PR's own tree, so
+# CodeQL raised actions/untrusted-checkout/medium against the checkout form
+# (alert 1). A tarball removes the finding at source: no checkout of a
+# PR-controlled ref, and no job token left in a .git/config. It also lets each
+# copy fetch its own pin, and matches the sibling gates in TFactory and CFactory.
 
 on:
   pull_request:
     branches: [dev, main, "feat/**", "release/**"]
-    paths:
-      - "apps/backend/factory_common/**"
-      - ".github/workflows/cq-factory-common-drift.yml"
+    # NO paths: FILTER, deliberately (Factory#525), matching the sibling gates
+    # in TFactory and CFactory which carry none either.
+    #
+    # This filter has already cost us once. #1300 added a second vendored copy
+    # under apps/web-server/factory_common/ on a branch that forked before the
+    # filter learned that path, so the gate did not run on the pull request that
+    # introduced the copy. It was not red. It was ABSENT -- and absence has no
+    # colour, so nothing in a green check list draws the eye to it. The copy was
+    # reviewed as gated while no gate had looked at it.
+    #
+    # A filter switches the gate off for exactly the pull request that touches
+    # none of the listed paths, which includes every PR that adds a copy
+    # somewhere nobody has listed yet -- the case the discovery glob below exists
+    # for. Discovery fixes the forgettable ROW; only removing the filter fixes
+    # the forgettable TRIGGER.
+    #
+    # The gate is a tarball fetch and a handful of diffs; it runs in about ten
+    # seconds. Running it on every PR costs nothing worth measuring and removes a
+    # whole class of "the check did not run", which on a green PR page is
+    # indistinguishable from "the check passed" (Factory#471).
   push:
     branches: [dev, main]
-    paths:
-      - "apps/backend/factory_common/**"
 
 permissions:
   contents: read
@@ -28,45 +86,114 @@ concurrency:
   group: factory-common-drift-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  HUB_REPO: "olafkfreund/Factory"
+
 jobs:
   drift:
     name: vendored factory_common matches the hub canonical
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          path: aifactory
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Read pinned hub SHA
-        id: pin
-        run: echo "sha=$(cat aifactory/apps/backend/factory_common/.hub-sha)" >> "$GITHUB_OUTPUT"
-
-      # No continue-on-error: an unreachable hub is a gate that cannot run, and
-      # per standards rule 4.7 that must fail rather than pass. This step used
-      # to be `continue-on-error: true` with the diff below guarded on
-      # `steps.hub.outcome == 'success'`, so a private repo, an expired token,
-      # a renamed hub or a garbage-collected pin would skip the diff and report
-      # SUCCESS from a blocking gate. If Factory becomes private, add a read
-      # token here - do not restore the soft-skip. AIFactory#1095, and the same
-      # removal #1092 made in cq-ratchet.yml.
-      - name: Check out hub factory-common at the pinned SHA
-        uses: actions/checkout@v4
-        with:
-          repository: olafkfreund/Factory
-          ref: ${{ steps.pin.outputs.sha }}
-          path: factory-hub
-
-      - name: Diff vendored factory_common against the pinned hub canonical
+      - name: Every vendored copy matches its pinned canonical, at one shared pin
         run: |
           set -euo pipefail
-          canonical="factory-hub/shared/factory-common/factory_common"
-          vendored="aifactory/apps/backend/factory_common"
-          for f in __init__.py http.py secrets.py; do
-            if ! diff "$vendored/$f" "$canonical/$f"; then
-              echo "DRIFT: $vendored/$f diverged from the hub canonical ($canonical/$f)."
-              echo "Re-vendor from the hub and bump apps/backend/factory_common/.hub-sha,"
-              echo "or land the change in shared/factory-common/ in the hub first."
-              exit 1
+
+          # Discovered, not listed: every directory in the tree that is a
+          # vendored factory_common copy (identified by its .hub-sha). A copy
+          # added anywhere is gated the moment it lands -- there is no row for
+          # someone to forget, which is the same failure mode as the file list.
+          mapfile -t PINFILES < <(git ls-files '*/factory_common/.hub-sha' | sort)
+
+          if [ "${#PINFILES[@]}" -eq 0 ]; then
+            echo "No vendored factory_common copy found. This gate is wired to a"
+            echo "path that no longer exists -- remove the workflow or fix the glob."
+            exit 1
+          fi
+
+          fail=0
+
+          # --- every copy must sit at the SAME pin (the shadowing check) -------
+          first_sha=""
+          for pf in "${PINFILES[@]}"; do
+            d="$(dirname "${pf}")"
+            sha="$(tr -d '[:space:]' < "${pf}")"
+
+            # The pin comes from the PR's own tree, so on a fork PR it is
+            # attacker-controlled and it is interpolated into a URL below.
+            # Reject anything that is not a bare 40-character commit id, so it
+            # cannot carry a path traversal, a query string or a second URL.
+            if ! printf '%s' "${sha}" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "${pf} is not a 40-character commit SHA: '${sha}'"
+              fail=1; continue
+            fi
+            echo "${d} -> ${sha}"
+            if [ -z "${first_sha}" ]; then first_sha="${sha}"
+            elif [ "${sha}" != "${first_sha}" ]; then
+              echo "PIN MISMATCH: vendored copies are at different hub SHAs."
+              echo "  ${d} is at ${sha}, an earlier copy is at ${first_sha}."
+              echo "These copies share the top-level package name factory_common on one"
+              echo "sys.path and shadow each other, so different SHAs mean the tree may"
+              echo "not import at all depending on which path was inserted first."
+              echo "Land the re-vendor for every copy together, at one SHA."
+              fail=1
             fi
           done
-          echo "No drift: vendored factory_common matches the pinned hub canonical."
+          [ "${fail}" -eq 0 ] || { echo "factory_common drift gate FAILED."; exit 1; }
+
+          # --- each copy is byte-identical to the canonical at that pin -------
+          work="$(mktemp -d)"
+          # curl -f: a garbage-collected or nonexistent pin fails here rather
+          # than yielding an empty tree that would diff as "no drift". No
+          # continue-on-error and no soft-skip anywhere: an unreachable hub is a
+          # gate that CANNOT run, and per standards rule 4.7 that must fail
+          # rather than report success.
+          curl -fsSL "https://codeload.github.com/${HUB_REPO}/tar.gz/${first_sha}" -o "${work}/hub.tgz"
+          mkdir -p "${work}/hub"
+          tar -xzf "${work}/hub.tgz" -C "${work}/hub" --strip-components=3 \
+            --wildcards "*/shared/factory-common/*"
+          canonical="${work}/hub/factory_common"
+
+          # The expected set IS the canonical directory. Guarded against an
+          # empty extraction, which would otherwise make every copy trivially
+          # "match" a canonical of nothing.
+          expected="$(cd "${canonical}" && ls -1 ./*.py | sed 's|^\./||' | sort | tr '\n' ' ')"
+          if [ -z "${expected// /}" ]; then
+            echo "Canonical tree at ${first_sha} contains no .py files -- refusing to"
+            echo "compare against an empty expectation."
+            exit 1
+          fi
+          echo "canonical @ ${first_sha}: ${expected}"
+
+          for pf in "${PINFILES[@]}"; do
+            vendored="$(dirname "${pf}")"
+            echo "::group::${vendored}"
+
+            found="$(cd "${vendored}" && ls -1 ./*.py | sed 's|^\./||' | sort | tr '\n' ' ')"
+            if [ "${found}" != "${expected}" ]; then
+              echo "MODULE SET MISMATCH for ${vendored}"
+              echo "  canonical holds: ${expected}"
+              echo "  this copy holds: ${found}"
+              echo "Vendor the WHOLE canonical directory (#1291). factory_common/__init__.py"
+              echo "imports every sibling module, so a partial copy is an ImportError."
+              fail=1
+            else
+              for f in ${expected}; do
+                if ! diff "${vendored}/${f}" "${canonical}/${f}"; then
+                  echo "DRIFT: ${vendored}/${f} diverged from the hub canonical."
+                  echo "Re-vendor from the hub and bump ${vendored}/.hub-sha,"
+                  echo "or land the change in shared/factory-common/ in the hub first."
+                  fail=1
+                fi
+              done
+            fi
+            echo "::endgroup::"
+          done
+
+          rm -rf "${work}"
+          if [ "${fail}" -ne 0 ]; then
+            echo "factory_common drift gate FAILED."
+            exit 1
+          fi
+          echo "No drift: ${#PINFILES[@]} vendored copy/copies match the canonical at ${first_sha}."

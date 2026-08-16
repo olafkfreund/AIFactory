@@ -22,8 +22,6 @@ from review import (
     truncate_text,
 )
 
-from tests.review_fixtures import complete_spec_dir, review_spec_dir
-
 # =============================================================================
 # TEXT HELPER FUNCTIONS
 # =============================================================================

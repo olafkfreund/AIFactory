@@ -28,6 +28,7 @@ cut over once verified).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -35,6 +36,8 @@ import sqlite3
 import time
 from datetime import UTC
 from pathlib import Path
+
+from server.error_ref import client_error
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +187,12 @@ def _default_sender(url: str, payload: str) -> None:
             code = resp.getcode()
             resp.read()
     except urllib.error.URLError as exc:  # connection refused, DNS, HTTPError, …
-        raise DeliveryError(str(exc)) from exc
+        # A URLError names the host and port it could not reach, i.e. the
+        # webhook target's internal address. Wrapping it in a repo-owned type
+        # does not make it ours to disclose (Factory#718).
+        raise DeliveryError(
+            client_error(logger, "Webhook delivery failed", exc)
+        ) from exc
     if code is not None and not (200 <= int(code) < 300):
         raise DeliveryError(f"non-2xx response: {code}")
 
@@ -322,8 +330,8 @@ async def relay_loop(
             await asyncio.to_thread(deliver_due_once, path=path)
         except Exception:  # noqa: BLE001 — never let the relay die
             logger.exception("outbox relay tick failed (best-effort)")
-        try:
+        # Normal poll cadence: the timeout firing just means it's time for
+        # the next tick, not an error.
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        except TimeoutError:
-            pass
     logger.info("completion outbox relay stopped")

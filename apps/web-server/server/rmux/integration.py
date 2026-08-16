@@ -24,6 +24,8 @@ import logging
 import os
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from .session import get_registry
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,7 @@ async def create_if_enabled(
         logger.warning(
             "rmux create_passive_for_task failed (Live Console disabled for "
             "this task); spec_id=%s",
-            spec_id,
+            sanitize_log(spec_id),
             exc_info=True,
         )
         return None
@@ -119,6 +121,6 @@ async def reap_if_enabled(spec_id: str) -> None:
     except Exception:
         logger.warning(
             "rmux reap_for_task failed (ignored); spec_id=%s",
-            spec_id,
+            sanitize_log(spec_id),
             exc_info=True,
         )

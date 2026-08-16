@@ -27,7 +27,7 @@ import tempfile
 import time
 import warnings
 from collections.abc import Callable
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -277,11 +277,11 @@ def atomic_write(filepath: str | Path, mode: str = "w"):
         os.replace(tmp_path, filepath)
 
     except Exception:
-        # Clean up temp file on error
-        try:
+        # Clean up temp file on error. Best-effort: the temp file may never
+        # have been created, and the original exception is what matters —
+        # re-raised below, so a failed unlink must not mask it.
+        with suppress(OSError):
             os.unlink(tmp_path)
-        except Exception:
-            pass
         raise
 
 
@@ -336,13 +336,13 @@ async def locked_write(
             )
 
         except Exception:
-            # Clean up temp file on error
-            try:
+            # Clean up temp file on error. Best-effort, same as the sync
+            # writer above: the original exception is re-raised below and a
+            # failed unlink must not mask it.
+            with suppress(OSError):
                 await asyncio.get_running_loop().run_in_executor(
                     None, os.unlink, tmp_path
                 )
-            except Exception:
-                pass
             raise
 
     finally:
@@ -500,12 +500,12 @@ async def locked_json_update(
             )
 
         except Exception:
-            try:
+            # Best-effort temp cleanup; the read-modify-write failure below is
+            # the error the caller needs.
+            with suppress(OSError):
                 await asyncio.get_running_loop().run_in_executor(
                     None, os.unlink, tmp_path
                 )
-            except Exception:
-                pass
             raise
 
         return updated_data

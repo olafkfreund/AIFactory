@@ -19,8 +19,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for _root in (REPO_ROOT / "apps" / "web-server", REPO_ROOT / "apps" / "backend"):
     if str(_root) not in sys.path:
@@ -48,7 +46,6 @@ def _bind_audit_hook_to_session(SessionLocal):
     # module-level binding at import time by overriding the import
     # path via sys.modules.
     import server.database.engine as engine_module
-    import server.services.llm_audit_hook as hook_module
 
     original = engine_module.async_session_factory
     engine_module.async_session_factory = SessionLocal
@@ -435,8 +432,6 @@ def test_scrub_before_send_when_enabled(monkeypatch):
         async for _ in provider.receive_response():
             pass
 
-    import asyncio
-
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_go())
@@ -493,8 +488,6 @@ def test_no_scrub_when_disabled(monkeypatch):
         await provider.query("User SSN: 123-45-6789")
         async for _ in provider.receive_response():
             pass
-
-    import asyncio
 
     loop = asyncio.new_event_loop()
     try:
@@ -573,8 +566,6 @@ def test_outbound_scrub_default_on_and_fails_closed(monkeypatch):
         return None
 
     monkeypatch.setattr(OpenAICompatibleProvider, "_write_audit", _noop_audit)
-
-    import asyncio
 
     # 1) Default ON: env unset → high-precision PII scrubbed on the wire.
     async def _default_on():
@@ -684,8 +675,6 @@ def test_outbound_scrub_fails_closed_when_a_pattern_raises(monkeypatch):
         return None
 
     monkeypatch.setattr(OpenAICompatibleProvider, "_write_audit", _noop_audit)
-
-    import asyncio
 
     async def _run():
         provider = OpenAICompatibleProvider(

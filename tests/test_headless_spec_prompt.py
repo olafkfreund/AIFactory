@@ -14,7 +14,6 @@ These tests pin the two fixes:
 """
 
 import sys
-import tempfile
 from pathlib import Path
 from unittest import mock
 

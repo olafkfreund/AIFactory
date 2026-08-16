@@ -6,6 +6,7 @@ Streams responses via WebSocket and persists sessions to disk.
 """
 
 import asyncio
+import contextlib
 import functools
 import json
 import logging
@@ -14,6 +15,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from factory_common.logsafe import sanitize_log
 
 from ..websockets.events import broadcast_event
 from .insights_providers import get_provider
@@ -34,15 +37,13 @@ def _parse_task_json(raw: str) -> dict:
     cleaned = re.sub(r"\s*```$", "", cleaned.strip(), flags=re.MULTILINE)
 
     # Attempt 1: direct parse
-    try:
+    with contextlib.suppress(json.JSONDecodeError):
         parsed = json.loads(cleaned)
         if isinstance(parsed, dict):
             return {
                 "title": str(parsed.get("title", "")).strip(),
                 "description": str(parsed.get("description", "")).strip(),
             }
-    except json.JSONDecodeError:
-        pass
 
     # Attempt 2: brace-matching — find first { … }
     start = cleaned.find("{")
@@ -192,7 +193,9 @@ class InsightsService:
             self._sessions[session_id] = session
             return session
         except (json.JSONDecodeError, KeyError) as e:
-            logger.warning(f"Failed to load session {session_id}: {e}")
+            logger.warning(
+                f"Failed to load session {sanitize_log(session_id)}: {sanitize_log(e)}"
+            )
             return None
 
     def get_current_session(
@@ -399,7 +402,9 @@ class InsightsService:
                 self._save_session(project_path, session)
 
         except asyncio.CancelledError:
-            logger.info(f"[InsightsService] Chat cancelled for project {project_id}")
+            logger.info(
+                f"[InsightsService] Chat cancelled for project {sanitize_log(project_id)}"
+            )
             # Finalize partial content if any
             await broadcast_event(
                 "insights:chunk",
@@ -443,7 +448,7 @@ class InsightsService:
         if task and not task.done():
             task.cancel()
             logger.info(
-                f"[InsightsService] Cancelled running task for project {project_id}"
+                f"[InsightsService] Cancelled running task for project {sanitize_log(project_id)}"
             )
             return True
         return False
@@ -520,8 +525,12 @@ class InsightsService:
                 logger.info(
                     f"[InsightsService] generate_task using profile: {profile_name}"
                 )
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - fall through, subprocess env may already have a token
+            logger.debug(
+                "[InsightsService] OAuth token resolution failed, "
+                "proceeding without it: %s",
+                sanitize_log(str(e)),
+            )
 
         logger.info(
             f"[InsightsService] Generating task via claude --print (model={model_value})"

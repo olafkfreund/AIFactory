@@ -11,7 +11,6 @@ Tests the robust port detection across multiple sources:
 """
 
 import json
-import shutil
 import sys
 import tempfile
 from pathlib import Path

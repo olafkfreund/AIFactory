@@ -12,7 +12,6 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 from server.services.audit_chain import (
     GENESIS,
     GENESIS_TENANT_PREFIX,

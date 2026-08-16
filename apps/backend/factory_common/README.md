@@ -9,6 +9,28 @@ issue Factory#161):
 - `factory_common.secrets` — the canonical secret-pattern table + `redact()` /
   `scan()` / `contains_secret()`.
 - `factory_common.http` — the Cloudflare-friendly typed `urllib` JSON client.
+- `factory_common.logsafe` — `sanitize_log()`, the CWE-117 / `py/log-injection`
+  fix: escapes CR/LF and control characters before a value reaches a log message.
+- `factory_common.url_safety` — `assert_safe_outbound_url()`, the SSRF guard for
+  URLs a service fetches on a caller's behalf, in a strict and a permissive
+  posture, plus a redirect-following fetch that re-validates every hop.
+
+## There are TWO vendored copies
+
+The other is `apps/web-server/factory_common/`, pinned to the same `.hub-sha`.
+It is not a duplicate by accident: `apps/web-server` is the `sys.path` root for
+`server.*` and `apps/backend` is not on the path at import time, so the server
+tree cannot import this copy. **Re-vendor both together.**
+
+A symlink was rejected deliberately. CodeQL's extractor does not reliably follow
+symlinked directories, and `logsafe`'s `.replace()` chain has to be *extracted*
+for the `py/log-injection` barrier to be recognised at all — the barrier is the
+entire mechanism, so an unextracted copy is a silently disarmed one.
+
+The same applies by name to `url_safety`: the SSRF barrier in
+`.github/codeql/custom-queries/SsrfBarriers.qll` registers
+`assert_safe_outbound_url` **by name**. Moving the module is safe; renaming the
+function un-registers the barrier silently and reopens every alert it clears.
 
 ## Why vendored (not pip-installed)
 

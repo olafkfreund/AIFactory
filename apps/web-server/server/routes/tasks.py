@@ -5,6 +5,7 @@ Handles CRUD operations for tasks (specs) within projects.
 """
 
 import json
+import logging
 import re
 import shutil
 from datetime import datetime
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
 from ..database.engine import get_db
@@ -41,7 +43,6 @@ from .inbox import router as inbox_router
 from .pr import CreatePRFromTaskOptions, create_pr_from_task  # noqa: F401
 from .pr import router as pr_router
 from .project_authz import accessible_org_ids, require_task_access
-from .projects import load_projects
 from .worktree_tools import (
     OpenInIDERequest,
     OpenInTerminalRequest,
@@ -574,7 +575,13 @@ async def update_task(
             try:
                 requirements = json.loads(requirements_file.read_text())
             except json.JSONDecodeError:
-                pass
+                # Corrupt file: we are about to overwrite it with the update
+                # below, so whatever it held is lost. Say so rather than
+                # discarding a task's title/description silently.
+                logging.getLogger(__name__).warning(
+                    "requirements.json is not valid JSON, overwriting it",
+                    exc_info=True,
+                )
 
         if update.title:
             requirements["title"] = update.title
@@ -605,7 +612,12 @@ async def update_task(
                 try:
                     task_metadata = json.loads(task_metadata_file.read_text())
                 except json.JSONDecodeError:
-                    pass
+                    # Same as above, and this one feeds phase_config.py: a
+                    # silent reset here changes the model the coder runs with.
+                    logging.getLogger(__name__).warning(
+                        "task_metadata.json is not valid JSON, overwriting it",
+                        exc_info=True,
+                    )
 
             # Update model-related fields that phase_config.py expects
             # Also include selectedSkills so agent_service.py can inject skill context

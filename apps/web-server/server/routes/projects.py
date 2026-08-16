@@ -5,6 +5,7 @@ Handles CRUD operations for projects (git repositories that Magestic AI manages)
 """
 
 import json
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
@@ -15,8 +16,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.error_ref import InputRejectedError, client_error
+
+# The registry helpers now live one layer down (#1317). Imported here rather
+# than left defined here so this module keeps its own `load_projects(...)`
+# call sites unchanged -- and so `patch("server.routes.projects.load_projects")`
+# still works for tests that drive THIS module's handlers.
+from server.project_registry import load_projects, save_projects
 from server.services.http_verdict import honest_status
-from server.specpath import safe_spec_component
+from server.specpath import browse_roots, safe_spec_component, within_roots
 
 from ..database.engine import DEFAULT_ORG_ID, get_db
 
@@ -28,7 +36,6 @@ from ..database.engine import DEFAULT_ORG_ID, get_db
 MemoryBackendType = Literal["graphiti", "file"]
 
 
-from ..config import get_settings
 from ..tenancy import (
     DEFAULT_TENANT,
     multi_tenant_enabled,
@@ -38,6 +45,8 @@ from ..tenancy import (
 )
 from . import changelog, context, files, git, github
 from .project_authz import require_project_access
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -244,79 +253,6 @@ class Project(ProjectBase):
 # --------------------------------------------------------------------------
 
 
-def get_projects_file() -> Path:
-    """Get path to the projects data file."""
-    settings = get_settings()
-    return Path(settings.PROJECTS_DATA_DIR) / "projects.json"
-
-
-def load_projects() -> dict[str, dict]:
-    """Load projects from disk."""
-    projects_file = get_projects_file()
-    if projects_file.exists():
-        return json.loads(projects_file.read_text())
-    return {}
-
-
-def resolve_project_path(project_id: str) -> Path:
-    """Resolve a project id to its filesystem path, or raise 404.
-
-    Single source of truth for the ``load_projects() -> 404 -> Path(...)`` idiom
-    that several route modules each re-implemented. The 404 detail is kept
-    identical to those copies so callers behave exactly as before.
-    """
-    projects = load_projects()
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail=f"Project {project_id} not found")
-    return Path(projects[project_id]["path"])
-
-
-def resolve_project_id(project_id: str) -> str | None:
-    """Map a UUID, a project ``name``, or an ``owner/repo`` slug to the canonical
-    project id — or ``None`` if nothing matches.
-
-    External callers (notably PFactory's plan->AIFactory handoff, #321) address a
-    project by the repo they planned against, not AIFactory's internal UUID. The
-    project registry is keyed by UUID with ``name`` (repo) and ``path``
-    (``…/owner-repo``), so match a non-UUID id against those. Exact-UUID first so
-    the common path is unchanged.
-    """
-    projects = load_projects()
-    if project_id in projects:
-        return project_id
-    repo = project_id.rsplit("/", 1)[-1]  # owner/repo -> repo
-    path_suffix = project_id.replace("/", "-")  # owner/repo -> owner-repo
-    for pid, meta in projects.items():
-        name = meta.get("name", "")
-        path = str(meta.get("path", ""))
-        if name in (project_id, repo) or path.endswith(
-            ("/" + path_suffix, "-" + path_suffix)
-        ):
-            return pid
-    return None
-
-
-def save_projects(projects: dict[str, dict]) -> None:
-    """Save projects to disk.
-
-    Stamps ``org_id=DEFAULT_ORG_ID`` on any entry that lacks one so that
-    programmatically-registered projects (cross-factory handoff, build
-    dispatch, the agent ``project_create`` tool) are immediately visible in
-    the org-scoped portal — not just after the next startup backfill
-    (``database.engine._backfill_project_orgs``). The portal create path sets
-    ``org_id`` explicitly before saving, so this never overrides a real value;
-    it only defaults the unowned case (single-tenant deployments own the
-    "default" org). An unowned project would otherwise be admin-only / hidden
-    (see ``project_authz`` — ``org_id is None`` → 403).
-    """
-    for proj in projects.values():
-        if isinstance(proj, dict) and not proj.get("org_id"):
-            proj["org_id"] = DEFAULT_ORG_ID
-    projects_file = get_projects_file()
-    projects_file.parent.mkdir(parents=True, exist_ok=True)
-    projects_file.write_text(json.dumps(projects, indent=2))
-
-
 def analyze_project(path: str) -> dict:
     """Analyze a project directory for git and Magestic AI status."""
     project_path = Path(path)
@@ -491,8 +427,15 @@ async def scan_for_projects(request: ScanProjectsRequest):
         HTTPException: 400 if path doesn't exist or isn't a directory
     """
     try:
-        # Validate and resolve base path
-        base = Path(request.basePath).expanduser().resolve()
+        # Confine, then check existence (#1278). The old order asked "is it
+        # there" and never asked "is it allowed", so this endpoint would happily
+        # walk /etc or /root five levels deep and report every directory in it.
+        base = within_roots(
+            request.basePath,
+            browse_roots(),
+            "browsable directories",
+            expand_user=True,
+        )
 
         if not base.exists():
             raise HTTPException(
@@ -584,7 +527,7 @@ async def scan_for_projects(request: ScanProjectsRequest):
         # Handle unexpected errors
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to scan for projects: {str(e)}",
+            detail=client_error(logger, "Failed to scan for projects", e),
         )
 
 
@@ -610,9 +553,11 @@ async def add_project(
 
     if project.gitUrl:
         # Clone mode — defer to project_workspace_service.
-        from ..services.project_workspace_service import (
+        # Absolute, not `..services`: TID252, and the ratchet counts it per name.
+        from server.services.project_workspace_service import (
             GitOperationError,
             clone_or_update,
+            workspace_root,
         )
 
         # Stored credential lookup (#82 PR-C). When the caller passes
@@ -627,17 +572,38 @@ async def add_project(
                 branch=project.branch,
                 credential=credential,
             )
-        except GitOperationError as e:
+        except (GitOperationError, InputRejectedError) as e:
+            # InputRejectedError: the gitUrl's path is not a usable workspace
+            # directory name (#1313). Its message is developer-written, so
+            # `client_error` hands it back verbatim instead of a reference id.
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Clone failed: {e}",
+                detail=client_error(logger, "Clone failed", e),
             )
-        project_path = cloned_path.resolve()
+        # The third registry `path` writer, confined like the other two (#1313).
+        # The root is the WORKSPACE root, not `browse_roots()`: a clone that
+        # landed anywhere else is a bug in the clone service, whatever else the
+        # host happens to allow browsing. Stricter than the local-mode tier on
+        # purpose — it also means a clone-mode entry can never widen
+        # `browse_roots()` beyond the one directory the operator configured.
+        project_path = within_roots(
+            cloned_path, [workspace_root()], "project workspace root"
+        )
         created_directory = True
     else:
         # Local mode — register the existing directory.
         assert project.path is not None  # model_validator guarantees this
-        project_path = Path(project.path).expanduser()
+        # Confine BEFORE the mkdir below, not after (#1278). This is the write
+        # that makes projects.json a trust boundary: every downstream consumer
+        # reads a path back out of the registry and uses it unchecked, so the
+        # registry is only as trustworthy as this one line. Unconfined, the
+        # route would `mkdir -p` and register any directory the server process
+        # can reach — /etc/cron.d, ~/.ssh, /var/lib/anything.
+        # `browse_roots`, not `registered_project_roots`: the whole point of
+        # adding a project is that it is not registered yet.
+        project_path = within_roots(
+            project.path, browse_roots(), "browsable directories", expand_user=True
+        )
 
         if not project_path.exists():
             try:
@@ -646,7 +612,7 @@ async def add_project(
             except OSError as e:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Cannot create directory: {project.path} ({e})",
+                    detail=client_error(logger, "Cannot create directory:  ()", e),
                 )
 
         if not project_path.is_dir():
@@ -737,13 +703,19 @@ async def update_project(
     # Update fields
     project_data = projects[project_id]
     if project.path:
-        project_path = Path(project.path)
+        # The second registry write (#1278). Repointing an existing project is
+        # the same trust decision as registering a new one, so it takes the
+        # same tier — otherwise the containment on `add_project` is a formality
+        # you get around with a PUT.
+        project_path = within_roots(
+            project.path, browse_roots(), "browsable directories", expand_user=True
+        )
         if not project_path.exists():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Path does not exist: {project.path}",
             )
-        project_data["path"] = str(project_path.resolve())
+        project_data["path"] = str(project_path)
 
     if project.name:
         project_data["name"] = project.name
@@ -815,7 +787,10 @@ async def initialize_project(
         # Return nested format expected by frontend
         return {"success": True, "data": {"success": True}}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "initialize project failed", e),
+        }
 
 
 @router.get("/{project_id}/version")
@@ -1020,7 +995,8 @@ async def update_project_settings(
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to update project settings: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to update project settings", e),
         )
 
 
@@ -1030,7 +1006,6 @@ async def list_project_worktrees(
     _access: dict = Depends(require_project_access("viewer")),
 ):
     """List worktrees for a project with detailed stats."""
-    import re
     import subprocess
 
     projects = load_projects()
@@ -1172,7 +1147,10 @@ async def list_project_worktrees(
 
         return {"worktrees": enriched_worktrees}
     except Exception as e:
-        return {"worktrees": [], "error": str(e)}
+        return {
+            "worktrees": [],
+            "error": client_error(logger, "list project worktrees failed", e),
+        }
 
 
 @router.get("/{project_id}/tasks")
@@ -1246,7 +1224,6 @@ async def create_project_task(
 
     This endpoint delegates to the tasks module for actual creation.
     """
-    import json
     from datetime import datetime
 
     from . import tasks as tasks_module

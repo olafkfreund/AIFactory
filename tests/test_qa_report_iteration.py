@@ -9,7 +9,6 @@ Tests the iteration tracking functionality of qa/report.py including:
 - Iteration statistics tracking
 """
 
-import json
 import sys
 from pathlib import Path
 

@@ -15,6 +15,7 @@ Issue #10 — Epic #6. Three layers:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -85,10 +86,8 @@ def _read_jsonrpc(proc: subprocess.Popen, timeout: float = 5.0) -> dict:
         # Drain any stderr to surface the real failure
         stderr_data = b""
         if proc.stderr is not None:
-            try:
+            with contextlib.suppress(Exception):
                 stderr_data = proc.stderr.read1(8192) or b""
-            except Exception:
-                pass
         raise TimeoutError(
             f"No MCP response within {timeout}s. stderr: {stderr_data.decode('utf-8', 'replace')!r}"
         )

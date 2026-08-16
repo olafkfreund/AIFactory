@@ -10,8 +10,16 @@ import logging
 import re
 from pathlib import Path as FilePath
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
+
+from server.error_ref import client_error
+from server.services.argv_safety import (
+    assert_not_option,
+    assert_safe_git_ref,
+    bounded_count,
+)
 
 from ..services.insights_service import get_insights_service
 
@@ -141,7 +149,7 @@ async def get_changelog_done_tasks(
 @router.post("/specs")
 async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest = ...):
     """Load spec details for tasks."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -166,7 +174,13 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
                     }
                 )
             except Exception as e:
-                specs.append({"taskId": task_id, "content": None, "error": str(e)})
+                specs.append(
+                    {
+                        "taskId": task_id,
+                        "content": None,
+                        "error": client_error(logger, "load task specs failed", e),
+                    }
+                )
         else:
             # Try finding by glob pattern for numeric prefix
             matching = list(specs_dir.glob(f"{task_id}*/spec.md"))
@@ -181,7 +195,13 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
                         }
                     )
                 except Exception as e:
-                    specs.append({"taskId": task_id, "content": None, "error": str(e)})
+                    specs.append(
+                        {
+                            "taskId": task_id,
+                            "content": None,
+                            "error": client_error(logger, "load task specs failed", e),
+                        }
+                    )
             else:
                 specs.append(
                     {"taskId": task_id, "content": None, "error": "Spec not found"}
@@ -195,8 +215,9 @@ async def generate_changelog(
     projectId: str = Path(...), request: ChangelogGenerateRequest = ...
 ):
     """Generate changelog using AI."""
+    from server.project_registry import load_projects
+
     from ..services.changelog_service import get_changelog_service
-    from .projects import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -241,10 +262,17 @@ async def generate_changelog(
             "compareBranchRef": request.branchDiff.compareBranchRef,
         }
 
-    # Start generation in background
-    success = await service.start_generation(
-        project_id=projectId, project_path=project_path, request=request_dict
-    )
+    # Start generation in background. A rejected ref is a bad request, not a
+    # server error, so translate rather than letting it become a 500 (#1267).
+    try:
+        success = await service.start_generation(
+            project_id=projectId, project_path=project_path, request=request_dict
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=client_error(logger, "generate changelog failed", exc),
+        ) from exc
 
     if not success:
         return {"success": False, "error": "Failed to start generation"}
@@ -257,7 +285,7 @@ async def save_changelog(
     projectId: str = Path(...), request: ChangelogSaveRequest = ...
 ):
     """Save generated changelog and update project version files."""
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -357,7 +385,10 @@ async def save_changelog(
             },
         }
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "save changelog failed", e),
+        }
 
 
 @router.get("")
@@ -375,7 +406,7 @@ async def read_existing_changelog(projectId: str = Path(...)):
     - ## 1.2.3 - Simple semver
     - ## v1.2.3 or ## [v1.2.3] - With 'v' prefix
     """
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -396,7 +427,13 @@ async def read_existing_changelog(projectId: str = Path(...)):
             "data": {"exists": True, "content": content, "lastVersion": last_version},
         }
     except Exception as e:
-        return {"success": True, "data": {"exists": True, "error": str(e)}}
+        return {
+            "success": True,
+            "data": {
+                "exists": True,
+                "error": client_error(logger, "read existing changelog failed", e),
+            },
+        }
 
 
 @router.post("/suggest-version")
@@ -437,7 +474,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
     """
     import subprocess
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -524,7 +561,10 @@ async def get_changelog_branches(projectId: str = Path(...)):
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get changelog branches failed", e),
+        }
 
 
 @router.get("/tags")
@@ -535,7 +575,7 @@ async def get_changelog_tags(projectId: str = Path(...)):
     """
     import subprocess
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -592,7 +632,10 @@ async def get_changelog_tags(projectId: str = Path(...)):
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get changelog tags failed", e),
+        }
 
 
 @router.post("/commits-preview")
@@ -602,7 +645,7 @@ async def get_commits_preview(
     """Get preview of commits for changelog."""
     import subprocess
 
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if projectId not in projects:
@@ -618,13 +661,21 @@ async def get_commits_preview(
         # to safely handle commit messages containing pipes or special characters
         cmd = ["git", "log", "--format=%x00%H%x1f%s%x1f%an%x1f%ae%x1f%aI"]
 
+        # Security: every value below is caller-supplied and lands in a `git
+        # log` argv. Without the assertions a ref of `--output=/path` is not a
+        # bad ref, it is an arbitrary file write, because `git log` accepts
+        # `--output=<file>` wherever it appears. assert_safe_git_ref forbids a
+        # leading '-' (and an embedded '..', which would rewrite the ranges
+        # assembled below).
         if mode == "branch-diff":
             # Compare two branches - use ref (git-resolvable) if provided, fall back to name
-            base_branch = options.get("baseBranchRef") or options.get(
-                "baseBranch", "main"
+            base_branch = assert_safe_git_ref(
+                options.get("baseBranchRef") or options.get("baseBranch", "main"),
+                "baseBranch",
             )
-            compare_branch = options.get("compareBranchRef") or options.get(
-                "compareBranch", "HEAD"
+            compare_branch = assert_safe_git_ref(
+                options.get("compareBranchRef") or options.get("compareBranch", "HEAD"),
+                "compareBranch",
             )
             cmd.append(f"{base_branch}..{compare_branch}")
         else:
@@ -632,21 +683,24 @@ async def get_commits_preview(
             history_type = options.get("type", "last-n")
 
             if history_type == "last-n":
-                count = options.get("count", 20)
+                count = bounded_count(options.get("count", 20), 10000, "count")
                 cmd.extend(["-n", str(count)])
             elif history_type == "since-date":
                 since_date = options.get("sinceDate")
                 if since_date:
-                    cmd.extend(["--since", since_date])
+                    cmd.extend(["--since", assert_not_option(since_date, "sinceDate")])
             elif history_type == "since-version":
                 from_tag = options.get("fromTag")
                 if from_tag:
-                    cmd.append(f"{from_tag}..HEAD")
+                    cmd.append(f"{assert_safe_git_ref(from_tag, 'fromTag')}..HEAD")
             elif history_type == "tag-range":
                 from_tag = options.get("fromTag")
                 to_tag = options.get("toTag", "HEAD")
                 if from_tag:
-                    cmd.append(f"{from_tag}..{to_tag}")
+                    cmd.append(
+                        f"{assert_safe_git_ref(from_tag, 'fromTag')}"
+                        f"..{assert_safe_git_ref(to_tag, 'toTag')}"
+                    )
 
             # Optionally exclude merge commits
             if not options.get("includeMergeCommits", True):
@@ -687,7 +741,10 @@ async def get_commits_preview(
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Git command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "get commits preview failed", e),
+        }
 
 
 @router.post("/images")
@@ -707,7 +764,7 @@ async def save_changelog_image(
     Returns:
         Success response with the relative path to the saved image
     """
-    from .projects import load_projects
+    from server.project_registry import load_projects
 
     try:
         # Validate project exists
@@ -753,7 +810,9 @@ async def save_changelog_image(
         except Exception as decode_error:
             return {
                 "success": False,
-                "error": f"Failed to decode base64 image data: {str(decode_error)}",
+                "error": client_error(
+                    logger, "Failed to decode base64 image data", decode_error
+                ),
             }
 
         # Validate decoded data is not empty
@@ -782,7 +841,10 @@ async def save_changelog_image(
     except HTTPException:
         raise
     except Exception as e:
-        return {"success": False, "error": f"Failed to save image: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to save image", e),
+        }
 
 
 # ============================================
@@ -795,7 +857,7 @@ insights_router = APIRouter()
 def _get_project_path(project_id: str) -> FilePath:
     """Get project path from project ID (delegates to the canonical resolver)."""
     # Import here to avoid circular import.
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     return resolve_project_path(project_id)
 
@@ -947,13 +1009,13 @@ async def clear_insights_session(projectId: str = Path(...)):
         raise
     except Exception as e:
         # Log error and return 500
-        import logging
 
         logging.getLogger(__name__).error(
-            f"Failed to clear insights session: {e}", exc_info=True
+            "Failed to clear insights session: %s", sanitize_log(e), exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail=f"Failed to clear insights session: {str(e)}"
+            status_code=500,
+            detail=client_error(logger, "Failed to clear insights session", e),
         )
 
 
@@ -974,7 +1036,10 @@ async def create_task_from_insights(
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"create_task_from_insights failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "create task from insights failed", e),
+        }
 
 
 @insights_router.post("/generate-task")
@@ -994,7 +1059,10 @@ async def generate_task_from_chat(
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"generate_task_from_chat failed: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "generate task from chat failed", e),
+        }
 
 
 @insights_router.get("/sessions")

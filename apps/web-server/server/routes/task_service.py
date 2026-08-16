@@ -11,6 +11,7 @@ circular import.
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import logging
 import re
@@ -18,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -28,8 +30,9 @@ from server.specpath import safe_spec_component
 logger = logging.getLogger(__name__)
 
 
+from server.project_registry import load_projects, resolve_project_path
+
 from ..services import task_control
-from .projects import load_projects, resolve_project_path
 from .task_models import (
     Subtask,
     SubtaskVerification,
@@ -104,8 +107,12 @@ def get_next_spec_id(project_path: Path, title: str) -> str:
     if counter_file.exists():
         try:
             persisted_max = int(counter_file.read_text().strip())
-        except (ValueError, OSError):
-            pass
+        except (ValueError, OSError) as exc:
+            logger.warning(
+                "unreadable spec counter at %s, falling back to directory scan: %s",
+                sanitize_log(counter_file),
+                sanitize_log(exc),
+            )
 
     # Also check existing directories in case counter file is missing
     existing = get_spec_dirs(project_path)
@@ -145,7 +152,16 @@ def get_worktree_spec_dir(project_path: Path, spec_id: str) -> Path | None:
     """Get the worktree spec directory if it exists.
 
     Worktree layout: .aifactory/worktrees/tasks/{spec_id}/.aifactory/specs/{spec_id}/
+
+    Barriers its own argument rather than trusting callers to have done it.
+    Every caller today does, but "every caller today" is the assumption that
+    produced #1056 in the first place, and this helper is one join away from a
+    filesystem read.
     """
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return None
     worktree_spec_dir = (
         project_path
         / ".aifactory"
@@ -166,6 +182,10 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
     Returns True if sync was performed, False otherwise.
     """
+    try:
+        spec_id = safe_spec_component(spec_id)
+    except ValueError:
+        return False
     main_spec_dir = project_path / ".aifactory" / "specs" / spec_id
     worktree_spec_dir = get_worktree_spec_dir(project_path, spec_id)
 
@@ -198,12 +218,12 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
         # Only sync if worktree has more progress (more completed subtasks)
         if worktree_completed > main_completed:
-            import logging
-
             logger = logging.getLogger(__name__)
             logger.info(
-                f"[WorktreeSync] Syncing plan for {spec_id}: "
-                f"worktree has {worktree_completed} completed vs main {main_completed}"
+                "[WorktreeSync] Syncing plan for %s: worktree has %s completed vs main %s",
+                sanitize_log(spec_id),
+                sanitize_log(worktree_completed),
+                sanitize_log(main_completed),
             )
             # Issue #259: control-plane state lives in task_control.json, NOT in
             # the agent-written plan. Strip status/reviewReason from the worktree
@@ -214,10 +234,8 @@ def sync_worktree_to_main_spec(project_path: Path, spec_id: str) -> bool:
 
         return False
     except (json.JSONDecodeError, OSError) as e:
-        import logging
-
         logging.getLogger(__name__).warning(
-            f"[WorktreeSync] Failed to sync {spec_id}: {e}"
+            f"[WorktreeSync] Failed to sync {sanitize_log(spec_id)}: {sanitize_log(e)}"
         )
         return False
 
@@ -505,8 +523,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
             prov = requirements.get("provenance")
             if isinstance(prov, dict) and prov.get("issue_number") is not None:
                 metadata["github_issue"] = prov.get("issue_number")
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning(
+                "unreadable requirements.json for %s, metadata may be incomplete: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
 
     # Fall back to spec.md if requirements.json not available
     if not metadata["description"]:
@@ -569,8 +591,12 @@ def load_spec_metadata(spec_dir: Path) -> dict:
                             metadata["phase"] = "coding"
                             metadata["status"] = "human_review"
                             metadata["reviewReason"] = "completed"
-        except (json.JSONDecodeError, KeyError):
-            pass
+        except (json.JSONDecodeError, KeyError) as exc:
+            logger.warning(
+                "unreadable task_logs.json for %s, status may be stale: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
 
     # Try to load implementation_plan.json for status/subtasks
     plan_file = spec_dir / "implementation_plan.json"
@@ -1176,7 +1202,9 @@ def task_to_dict(task: Task) -> dict:
                 # Load archive metadata from plan file
                 plan_file = spec_dir / "implementation_plan.json"
                 if plan_file.exists():
-                    try:
+                    # ponytail: display-only enrichment -- a malformed plan file
+                    # just leaves the archive metadata fields unset
+                    with contextlib.suppress(json.JSONDecodeError):
                         plan = json.loads(plan_file.read_text())
                         if "archivedAt" in plan:
                             archive_metadata["archivedAt"] = plan["archivedAt"]
@@ -1184,8 +1212,6 @@ def task_to_dict(task: Task) -> dict:
                             archive_metadata["archivedInVersion"] = plan[
                                 "archivedInVersion"
                             ]
-                    except json.JSONDecodeError:
-                        pass
 
     result = {
         "id": task.id,
@@ -1261,7 +1287,9 @@ def _pfactory_priority_rank(spec_dir: Path) -> int:
     backend_path = Path(__file__).parent.parent.parent.parent / "backend"
     if str(backend_path) not in sys.path:
         sys.path.insert(0, str(backend_path))
-    try:
+    # ponytail: best-effort sort key -- anything that can't be classified
+    # just sorts last (99), same as a task with no requirements.json at all
+    with contextlib.suppress(json.JSONDecodeError, OSError, ImportError):
         from pfactory.routing import priority_rank
         from pfactory.taxonomy import classify_requirements
 
@@ -1269,6 +1297,4 @@ def _pfactory_priority_rank(spec_dir: Path) -> int:
         if req_file.exists():
             req = json.loads(req_file.read_text())
             return priority_rank(classify_requirements(req).priority)
-    except (json.JSONDecodeError, OSError, ImportError):
-        pass
     return 99

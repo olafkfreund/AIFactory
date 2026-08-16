@@ -16,12 +16,13 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from server.project_registry import load_projects
 from server.specpath import safe_spec_component
 
 from .project_authz import require_task_access
-from .projects import load_projects
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -36,11 +37,10 @@ async def get_task_logs(
     Returns phase-based logs from task_logs.json if available,
     checking both main spec dir and worktree.
     """
-    import logging
 
     logger = logging.getLogger(__name__)
 
-    logger.info(f"[GetTaskLogs] Called with task_id: {task_id}")
+    logger.info(f"[GetTaskLogs] Called with task_id: {sanitize_log(task_id)}")
 
     if ":" not in task_id:
         raise HTTPException(
@@ -59,12 +59,14 @@ async def get_task_logs(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid task ID format",
         ) from None
-    logger.info(f"[GetTaskLogs] project_id={project_id}, spec_id={spec_id}")
+    logger.info(
+        f"[GetTaskLogs] project_id={sanitize_log(project_id)}, spec_id={sanitize_log(spec_id)}"
+    )
 
     projects = load_projects()
 
     if project_id not in projects:
-        logger.error(f"[GetTaskLogs] Project not found: {project_id}")
+        logger.error(f"[GetTaskLogs] Project not found: {sanitize_log(project_id)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found",
@@ -85,8 +87,10 @@ async def get_task_logs(
         / spec_id
     )
 
-    logger.info(f"[GetTaskLogs] Checking spec_dir: {spec_dir}")
-    logger.info(f"[GetTaskLogs] Checking worktree_spec_dir: {worktree_spec_dir}")
+    logger.info(f"[GetTaskLogs] Checking spec_dir: {sanitize_log(spec_dir)}")
+    logger.info(
+        f"[GetTaskLogs] Checking worktree_spec_dir: {sanitize_log(worktree_spec_dir)}"
+    )
 
     # Check for task_logs.json (phase-based logs) - prefer worktree if exists
     task_logs_file = None
@@ -140,8 +144,10 @@ async def get_task_logs(
             plan = json.loads(plan_file.read_text())
             if "logs" in plan:
                 logs.extend(plan["logs"])
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"[GetTaskLogs] Could not parse implementation_plan.json: {e}"
+            )
 
     # QA report
     qa_report = spec_dir / "qa_report.md"

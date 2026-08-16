@@ -25,12 +25,17 @@ overkill for the demo workflow this powers).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from factory_common.logsafe import sanitize_log
+
+from server.error_ref import InputRejectedError
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +63,7 @@ DEFAULT_AUTO_FIX_CONFIG: dict[str, Any] = {
 
 def get_config(project_id: str) -> dict[str, Any] | None:
     """Return the project's AutoFixConfig, or None if the project doesn't exist."""
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -76,7 +81,7 @@ def get_config(project_id: str) -> dict[str, Any] | None:
 
 def save_config(project_id: str, config: dict[str, Any]) -> bool:
     """Persist the config into projects.json under settings.autoFix."""
-    from ..routes.projects import load_projects, save_projects
+    from server.project_registry import load_projects, save_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -97,7 +102,7 @@ def save_config(project_id: str, config: dict[str, Any]) -> bool:
 
 def get_queue(project_id: str) -> list[dict[str, Any]]:
     """Return the auto-fix queue (list of ``AutoFixQueueItem``)."""
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -108,7 +113,7 @@ def get_queue(project_id: str) -> list[dict[str, Any]]:
 
 def _set_queue(project_id: str, queue: list[dict[str, Any]]) -> None:
     """Replace the queue in projects.json."""
-    from ..routes.projects import load_projects, save_projects
+    from server.project_registry import load_projects, save_projects
 
     projects = load_projects()
     if project_id not in projects:
@@ -164,10 +169,11 @@ def _existing_issue_numbers(project_path: Path) -> set[int]:
                 else:
                     break
             if digits:
-                try:
+                # ponytail: digits is already filtered to isdigit() chars, so
+                # int() cannot actually raise -- guard kept for a future
+                # unbounded-length overflow-free int() edge case
+                with contextlib.suppress(ValueError):
                     out.add(int(digits))
-                except ValueError:
-                    pass
                 break
     return out
 
@@ -180,10 +186,9 @@ def _next_spec_id(project_path: Path) -> int:
     nxt = 1
     for d in specs_dir.iterdir():
         if d.is_dir() and d.name[:3].isdigit():
-            try:
+            # ponytail: name[:3].isdigit() already guarantees int() succeeds
+            with contextlib.suppress(ValueError):
                 nxt = max(nxt, int(d.name[:3]) + 1)
-            except ValueError:
-                pass
     return nxt
 
 
@@ -199,11 +204,11 @@ def _provider_for(project_id: str):
     Reuses the same selection logic the existing routes use.  Raises
     ``ValueError`` if the project doesn't exist.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
-        raise ValueError(f"Project {project_id} not found")
+        raise InputRejectedError(f"Project {project_id} not found")
     project = projects[project_id]
     settings = project.get("settings") or {}
     provider_type_str = (settings.get("gitProvider") or "github").lower()
@@ -341,11 +346,11 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
     Returns ``IssueData``-shaped dicts.  Side-effect-free (does NOT
     create specs or start agents — the caller decides).
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     if project_id not in projects:
-        raise ValueError(f"Project {project_id} not found")
+        raise InputRejectedError(f"Project {project_id} not found")
     project_path = Path(projects[project_id]["path"])
     settings = projects[project_id].get("settings") or {}
     provider_type = (settings.get("gitProvider") or "github").lower()
@@ -379,9 +384,9 @@ async def check_new_issues(project_id: str) -> list[dict[str, Any]]:
         )
 
     logger.info(
-        "[auto_fix] check_new_issues project=%s provider=%s existing=%d new=%d",
-        project_id,
-        provider_type,
+        "[auto_fix] check_new_issues project=%s provider=%s existing=%s new=%s",
+        sanitize_log(project_id),
+        sanitize_log(provider_type),
         len(existing),
         len(new),
     )
@@ -403,16 +408,24 @@ def _read_task_metadata(spec_dir: Path) -> dict[str, Any]:
             md = req.get("metadata")
             if isinstance(md, dict):
                 out.update(md)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "unreadable requirements.json metadata for %s, delegation flags may be missing: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
     tm_file = spec_dir / "task_metadata.json"
     if tm_file.exists():
         try:
             tm = json.loads(tm_file.read_text())
             if isinstance(tm, dict):
                 out.update(tm)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "unreadable task_metadata.json for %s, delegation flags may be missing: %s",
+                sanitize_log(spec_dir),
+                sanitize_log(exc),
+            )
     return out
 
 
@@ -427,13 +440,14 @@ async def start_auto_fix(project_id: str, issue_number: int) -> dict[str, Any]:
     phase, post the enriched plan as an issue comment, assign Copilot,
     and stop. The local coder/QA pipeline does not run for delegated tasks.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
+
     from ..services.agent_service import get_agent_service
     from ..websockets.events import broadcast_event
 
     projects = load_projects()
     if project_id not in projects:
-        raise ValueError(f"Project {project_id} not found")
+        raise InputRejectedError(f"Project {project_id} not found")
     project_path = Path(projects[project_id]["path"])
     settings = projects[project_id].get("settings") or {}
     provider_type = (settings.get("gitProvider") or "github").lower()
@@ -567,7 +581,7 @@ async def _pull_clone_if_any(project_id: str) -> None:
     No-op for local-path projects (the common laptop case) and on git
     errors — a stale clone is better than a poll cycle that aborts.
     """
-    from ..routes.projects import load_projects
+    from server.project_registry import load_projects
 
     projects = load_projects()
     proj = projects.get(project_id) or {}
@@ -593,8 +607,8 @@ async def _pull_clone_if_any(project_id: str) -> None:
     except GitOperationError as e:
         logger.warning(
             "[auto_fix] pull-on-poll failed for project=%s: %s — continuing with stale clone",
-            project_id,
-            e,
+            sanitize_log(project_id),
+            sanitize_log(e),
         )
 
 
@@ -613,7 +627,7 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
     """
     cfg = get_config(project_id)
     if not cfg:
-        raise ValueError(f"Project {project_id} not found")
+        raise InputRejectedError(f"Project {project_id} not found")
 
     # Fast-forward portal-managed clones before we look for new issues.
     await _pull_clone_if_any(project_id)
@@ -628,10 +642,10 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
             started.append({**iss, **result})
         except Exception as e:  # pragma: no cover — bubble for visibility
             logger.warning(
-                "[auto_fix] start failed project=%s issue=%d err=%s",
-                project_id,
-                iss["number"],
-                e,
+                "[auto_fix] start failed project=%s issue=%s err=%s",
+                sanitize_log(project_id),
+                sanitize_log(iss["number"]),
+                sanitize_log(e),
             )
             errors.append({"issueNumber": iss["number"], "error": str(e)})
 
@@ -643,7 +657,9 @@ async def check_new_and_start_all(project_id: str) -> dict[str, Any]:
         delegation_summary = await scan_delegated_tasks(project_id)
     except Exception as e:  # pragma: no cover
         logger.warning(
-            "[auto_fix] delegation tracker failed project=%s err=%s", project_id, e
+            "[auto_fix] delegation tracker failed project=%s err=%s",
+            sanitize_log(project_id),
+            sanitize_log(e),
         )
 
     return {

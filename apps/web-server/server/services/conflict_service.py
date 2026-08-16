@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -123,7 +125,7 @@ class ConflictService:
         Returns:
             Dictionary with conflict analysis results
         """
-        logger.info(f"Detecting conflicts for task {task_id}")
+        logger.info(f"Detecting conflicts for task {sanitize_log(task_id)}")
 
         try:
             # Run in thread pool to avoid blocking
@@ -444,7 +446,6 @@ class ConflictService:
 
         try:
             # Use the backend's simple client with OAuth authentication
-            import asyncio
 
             from core.simple_client import create_simple_client
 
@@ -567,7 +568,6 @@ TASK: Intelligently merge both sets of changes into the base.
 
         try:
             # Use the backend's simple client with OAuth authentication
-            import asyncio
 
             from core.simple_client import create_simple_client
 

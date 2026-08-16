@@ -76,12 +76,25 @@ extend-exclude = [
     # the factory_common drift gate (cq-factory-common-drift.yml). Formatting it
     # here would drift it from the hub, so ruff must leave it alone.
     "apps/backend/factory_common/",
+    # The second vendored copy of the same hub canonical, at the same .hub-sha.
+    # apps/web-server is the sys.path root for `server.*`, so it cannot import
+    # the apps/backend copy; see apps/web-server/factory_common/README.md.
+    # Excluded for exactly the same reason as the copy above.
+    "apps/web-server/factory_common/",
     # Same reason, same deal: the vendored factory-github provider layer is a
     # byte-exact mirror of the hub canonical (formatted at the fleet
     # line-length 100) and is kept identical by factory-github-drift.yml.
     # Reformatting it under this config's default 88 would break that gate on
     # the next re-vendor, which is exactly what the gate exists to prevent.
     "apps/backend/runners/github/",
+    # Factory#726: the whole-repo security-sink lint engine, vendored byte-exact
+    # from the hub (shared/factory-seclint/) and kept identical by
+    # security-lint.yml's drift step. Same reason as every entry above -- the hub
+    # formats at 100, this config's formatter defaults to 88, and letting it
+    # touch the copy would break the drift step on whitespace. Note the shape of
+    # that failure: the formatter would happily "fix" its own complaint, and the
+    # gate that lost would be the byte-exact one.
+    "security-lint/",
 ]
 
 [lint]
@@ -163,7 +176,6 @@ ignore = [
 "apps/backend/runners/github/test_rate_limiter.py" = ["F841"]
 "apps/backend/services/orchestrator.py" = ["F841"]
 "apps/backend/spec/pipeline/orchestrator.py" = ["F841"]
-"apps/backend/ui/statusline.py" = ["F841"]
 
 # --- SDK-ban exemptions (TID251) -------------------------------------------
 # Adapter / transport / agent-bearing trees that LEGITIMATELY use the SDK.
@@ -204,6 +216,19 @@ ignore = [
     "TID251", # tests may import the agent SDK directly
 ]
 "test_*.py" = ["F401", "F811"]
+
+# The shared test carve-out from standards/ruff.toml (Factory#730). `extend`
+# does not deep-merge per-file-ignores -- defining this table locally replaces
+# the baseline's, so the carve-out is repeated verbatim here, the same
+# technique PFactory's root ruff.toml already uses. "S" is not in this repo's
+# `select` above, so this is a no-op today and stays that way until it is
+# adopted -- at which point it is already correct instead of silently
+# reopening a hole standards/ruff.toml closed. (Measured 2026-08-13: this
+# repo's own config, whole-repo, with `--select S`: 10,763 S101 findings --
+# every one of them a test-tree file the vendored carve-out never reached.)
+"**/test_*.py" = ["S101", "PLR2004"]
+"**/*_test.py" = ["S101", "PLR2004"]
+"**/tests/**" = ["S101", "PLR2004"]
 
 [format]
 quote-style = "double"

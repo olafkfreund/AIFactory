@@ -27,6 +27,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
+
 from server.services.task_branch import resolve_task_branch
 
 logger = logging.getLogger(__name__)
@@ -64,7 +66,6 @@ def _default_runner(argv: list[str], cwd: str | None = None) -> CmdResult:
 # ---------------------------------------------------------------------------
 
 _TRUTHY = {"1", "true", "yes", "on"}
-_FALSY = {"0", "false", "no", "off"}
 
 
 def _project_env(project_path: Path | None, key: str) -> str | None:
@@ -767,8 +768,12 @@ def _pr_title_body(spec_dir: Path, spec_id: str) -> tuple[str, str]:
             issue_number = prov["issue_number"]
         elif isinstance(gh, dict) and isinstance(gh.get("number"), int):
             issue_number = gh["number"]
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "[pr_endgame] Could not read requirements.json for %s, using default PR title/body: %s",
+            sanitize_log(spec_id),
+            exc,
+        )
     if issue_number is not None:
         # Closing keyword so the origin issue links to (and, on a default-branch
         # merge, closes with) the PR — the whole point of label-driven intake.
@@ -851,8 +856,12 @@ def gather_pr_context(
         if isinstance(gh, dict):
             repo = gh.get("repo") or gh.get("repository") or ""
         repo = repo or req.get("github_repo") or req.get("repo") or ""
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "[pr_endgame] Could not read requirements.json for %s to resolve repo: %s",
+            sanitize_log(spec_id),
+            exc,
+        )
     if not repo:
         repo = meta.get("github_repo") or meta.get("githubRepo") or ""
     if not repo:
@@ -925,8 +934,8 @@ async def run_pr_endgame(
         logger.info(
             "[pr-endgame] skipping the auto-PR for %s: %s is not GitHub, and the "
             "endgame is gh-CLI-driven. Push is done; open the merge request there.",
-            spec_id,
-            provider,
+            sanitize_log(spec_id),
+            sanitize_log(provider),
         )
         return {
             "ok": False,
@@ -953,8 +962,8 @@ async def run_pr_endgame(
         logger.info(
             "[pr-endgame] %s: auto-merge withheld, reviewTier=%s does not permit "
             "it (AIFACTORY_AUTO_MERGE is on; the tier is stricter)",
-            spec_id,
-            _describe_tier(review_tier),
+            sanitize_log(spec_id),
+            sanitize_log(_describe_tier(review_tier)),
         )
         auto_merge = False
 
@@ -994,11 +1003,11 @@ async def run_pr_endgame(
                 "[pr-endgame] on_pr_opened (reviewer trigger) failed: %s", exc
             )
     logger.info(
-        "[pr-endgame] opened PR #%d for %s (reviewer=%s, auto_merge=%s)",
-        pr,
-        spec_id,
-        reviewer,
-        auto_merge,
+        "[pr-endgame] opened PR #%s for %s (reviewer=%s, auto_merge=%s)",
+        sanitize_log(pr),
+        sanitize_log(spec_id),
+        sanitize_log(reviewer),
+        sanitize_log(auto_merge),
     )
 
     coro = watch_and_finish(

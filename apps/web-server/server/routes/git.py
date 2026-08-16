@@ -2,13 +2,25 @@
 Git, Ollama, MCP, and utility routes.
 """
 
+import contextlib
+import logging
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
 
+from factory_common.logsafe import sanitize_log
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
+
+from server.error_ref import client_error
+from server.services.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
+from server.specpath import browse_roots, within_roots
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -18,22 +30,49 @@ router = APIRouter()
 # ============================================
 
 
+def _confined(path: str) -> str:
+    """Confine a request-supplied ``path`` to the browsable roots, else 403.
+
+    Applied at each route that takes a whole path from the request (#1278).
+    Deliberately NOT applied inside ``run_git_command``, which looks like the
+    tempting single choke point: several of its callers pass a server-built
+    path — notably the self-update route, which runs git against AIFactory's
+    own source directory. That directory is legitimately outside the browse
+    roots, so a guard there would break self-update while adding nothing; the
+    boundary is where the path arrives from the client, not where it is used.
+
+    ``browse_roots`` rather than the registered-projects tier because
+    ``/init`` and the status probes run during add-project, before the
+    directory is registered.
+    """
+    return str(within_roots(path, browse_roots(), "browsable directories"))
+
+
 def run_git_command(args: list[str], cwd: str) -> dict:
     """Run a git command and return result."""
     try:
         result = subprocess.run(
-            ["git"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["git"] + args,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
         return {"success": True, "output": result.stdout.strip()}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "run git command failed", e),
+        }
 
 
 @router.get("/branches")
 async def get_git_branches(path: str = Query(...)):
     """Get all branches for a repository."""
+    path = _confined(path)
     result = run_git_command(["branch", "--format=%(refname:short)"], path)
     if result["success"]:
         branches = [b.strip() for b in result["output"].split("\n") if b.strip()]
@@ -44,6 +83,7 @@ async def get_git_branches(path: str = Query(...)):
 @router.get("/current-branch")
 async def get_current_git_branch(path: str = Query(...)):
     """Get current branch name."""
+    path = _confined(path)
     result = run_git_command(["branch", "--show-current"], path)
     if result["success"]:
         return {"success": True, "data": result["output"]}
@@ -53,6 +93,7 @@ async def get_current_git_branch(path: str = Query(...)):
 @router.get("/main-branch")
 async def detect_main_branch(path: str = Query(...)):
     """Detect the main branch (main or master)."""
+    path = _confined(path)
     # Check for main first
     result = run_git_command(["rev-parse", "--verify", "main"], path)
     if result["success"]:
@@ -69,6 +110,7 @@ async def detect_main_branch(path: str = Query(...)):
 @router.get("/status")
 async def check_git_status(path: str = Query(...)):
     """Check git status for a repository."""
+    path = _confined(path)
     # Check if it's a git repo
     git_dir = Path(path) / ".git"
     if not git_dir.exists():
@@ -102,7 +144,9 @@ class InitGitRequest(BaseModel):
 @router.post("/init")
 async def initialize_git(request: InitGitRequest):
     """Initialize a new git repository with an initial commit (if needed)."""
-    path = request.path
+    # The one that writes. Unconfined, this created a `.gitignore` at any path
+    # the server process could reach (#1278).
+    path = _confined(request.path)
     git_dir = Path(path) / ".git"
 
     # Check if already a git repo
@@ -157,14 +201,31 @@ async def initialize_git(request: InitGitRequest):
 
 ollama_router = APIRouter()
 
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+
+def safe_ollama_base_url(base_url: str | None) -> str:
+    """Validate a caller-supplied Ollama base URL and return it.
+
+    Every route below takes ``baseUrl`` straight off the request and fetches it
+    server-side, which is an SSRF primitive whatever the endpoint is nominally
+    for. ``allow_private=True`` because a self-hosted Ollama on localhost or a
+    cluster-internal address is the normal deployment, not the attack -- the
+    fleet runs its local models exactly that way, so the strict posture would
+    break the product. What is still refused is the part with no legitimate
+    Ollama behind it: non-http(s) schemes and the cloud metadata range.
+
+    Raises ``ValueError``; each call site is already inside the try/except that
+    turns a failed probe into an empty/false result.
+    """
+    return assert_safe_outbound_url(base_url or DEFAULT_OLLAMA_URL, allow_private=True)
+
 
 def check_ollama_running(base_url: str | None = None) -> bool:
     """Check if Ollama server is running."""
-    import urllib.request
-
-    url = base_url or "http://localhost:11434"
     try:
-        urllib.request.urlopen(f"{url}/api/tags", timeout=5)
+        url = safe_ollama_base_url(base_url)
+        build_no_redirect_opener().open(f"{url}/api/tags", timeout=5)
         return True
     except Exception:
         return False
@@ -200,11 +261,10 @@ async def install_ollama():
 async def list_ollama_models(baseUrl: str | None = Query(None)):
     """List available Ollama models."""
     import json
-    import urllib.request
 
-    url = baseUrl or "http://localhost:11434"
     try:
-        response = urllib.request.urlopen(f"{url}/api/tags", timeout=10)
+        url = safe_ollama_base_url(baseUrl)
+        response = build_no_redirect_opener().open(f"{url}/api/tags", timeout=10)
         data = json.loads(response.read().decode())
         models = [m["name"] for m in data.get("models", [])]
         return {"success": True, "data": models}
@@ -216,14 +276,12 @@ async def list_ollama_models(baseUrl: str | None = Query(None)):
 async def list_ollama_embedding_models(baseUrl: str | None = Query(None)):
     """List Ollama embedding models with installation status."""
     import json
-    import urllib.request
-
-    url = baseUrl or "http://localhost:11434"
 
     # Get installed models from Ollama
     installed_models = set()
     try:
-        response = urllib.request.urlopen(f"{url}/api/tags", timeout=10)
+        url = safe_ollama_base_url(baseUrl)
+        response = build_no_redirect_opener().open(f"{url}/api/tags", timeout=10)
         data = json.loads(response.read().decode())
         for m in data.get("models", []):
             name = m.get("name", "")
@@ -231,8 +289,8 @@ async def list_ollama_embedding_models(baseUrl: str | None = Query(None)):
             # Also add without :latest suffix
             if name.endswith(":latest"):
                 installed_models.add(name.replace(":latest", ""))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - Ollama unreachable/malformed reply -> empty list
+        logger.debug("Ollama tags fetch failed: %s", sanitize_log(str(e)))
 
     # Filter to embedding-capable models
     embedding_keywords = ["embed", "nomic", "minilm", "bge", "gte", "e5"]
@@ -257,10 +315,10 @@ async def pull_ollama_model(request: PullModelRequest):
     import json
     import urllib.request
 
-    url = request.baseUrl or "http://localhost:11434"
     model_name = request.modelName
 
     try:
+        url = safe_ollama_base_url(request.baseUrl)
         # Use Ollama's pull API
         req_data = json.dumps({"name": model_name, "stream": False}).encode()
         req = urllib.request.Request(
@@ -270,7 +328,7 @@ async def pull_ollama_model(request: PullModelRequest):
             method="POST",
         )
         # This is a blocking call - for large models consider background task
-        response = urllib.request.urlopen(req, timeout=600)  # 10 min timeout
+        response = build_no_redirect_opener().open(req, timeout=600)  # 10 min timeout
         result = json.loads(response.read().decode())
 
         # Check if pull was successful
@@ -284,9 +342,15 @@ async def pull_ollama_model(request: PullModelRequest):
             return {"success": False, "error": f"Pull failed: {status}"}
 
     except urllib.error.URLError as e:
-        return {"success": False, "error": f"Failed to connect to Ollama: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to connect to Ollama", e),
+        }
     except Exception as e:
-        return {"success": False, "error": f"Failed to pull model: {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to pull model", e),
+        }
 
 
 # ============================================
@@ -310,22 +374,24 @@ async def check_claude_code_version():
 
     # Fallback: try login shell in case PATH is set in .bashrc/.profile
     if not claude_path:
-        try:
+        # Login-shell PATH lookup is best-effort; any failure (timeout, no
+        # bash, no login profile) just means "not found".
+        with contextlib.suppress(Exception):
             result = subprocess.run(
                 ["bash", "-l", "-c", "which claude"],
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             if result.returncode == 0:
                 claude_path = result.stdout.strip()
-        except Exception:
-            pass
 
     if claude_path:
-        try:
+        with contextlib.suppress(Exception):
             result = subprocess.run(
                 [claude_path, "--version"],
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -337,8 +403,6 @@ async def check_claude_code_version():
                     "isOutdated": False,
                     "path": claude_path,
                 }
-        except Exception:
-            pass
 
     # Claude not found — check if Node.js is available (needed for install)
     node_available = shutil.which("node") is not None
@@ -367,7 +431,6 @@ async def install_claude_code():
 
     All commands use `bash -l -c` so login profile PATH changes are visible.
     """
-    import logging
 
     log = logging.getLogger(__name__)
 
@@ -382,13 +445,14 @@ async def install_claude_code():
         safe_cmd = " ".join(shlex.quote(a) for a in args)
         return subprocess.run(
             ["bash", "-l", "-c", safe_cmd],
+            check=False,
             capture_output=True,
             text=True,
             timeout=timeout,
         )
 
     # Step 1: Check if claude is already installed
-    try:
+    with contextlib.suppress(Exception):
         result = _run(["claude", "--version"], timeout=10)
         if result.returncode == 0:
             return {
@@ -399,8 +463,6 @@ async def install_claude_code():
                     "steps_completed": ["already-installed"],
                 },
             }
-    except Exception:
-        pass
 
     # Step 2: Check if Node.js is available
     node_available = False
@@ -410,8 +472,8 @@ async def install_claude_code():
         if node_available:
             steps_completed.append("node-present")
             log.info(f"Node.js already available: {result.stdout.strip()}")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - node absent/unavailable -> install path below
+        log.debug(f"Node.js version check failed: {sanitize_log(str(e))}")
 
     # Step 3: Install fnm + Node.js LTS if not available
     if not node_available:
@@ -428,6 +490,7 @@ async def install_claude_code():
                     "-c",
                     "curl -fsSL https://fnm.vercel.app/install | bash",
                 ],
+                check=False,
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -442,7 +505,10 @@ async def install_claude_code():
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "fnm installation timed out (60s)"}
         except Exception as e:
-            return {"success": False, "error": f"Failed at step 'Install fnm': {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed at step 'Install fnm'", e),
+            }
 
         # 3b: Install Node.js LTS via fnm
         try:
@@ -457,7 +523,10 @@ async def install_claude_code():
         except subprocess.TimeoutExpired:
             return {"success": False, "error": "Node.js installation timed out (120s)"}
         except Exception as e:
-            return {"success": False, "error": f"Failed at step 'Install Node.js': {e}"}
+            return {
+                "success": False,
+                "error": client_error(logger, "Failed at step 'Install Node.js'", e),
+            }
 
         # 3c: Set fnm default so login shells pick it up
         try:
@@ -477,7 +546,9 @@ async def install_claude_code():
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Node.js installed but verification failed: {e}",
+                "error": client_error(
+                    logger, "Node.js installed but verification failed", e
+                ),
             }
 
     # Step 4: Install Claude Code CLI
@@ -497,7 +568,10 @@ async def install_claude_code():
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "npm install timed out (180s)"}
     except Exception as e:
-        return {"success": False, "error": f"Failed at step 'Install Claude Code': {e}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed at step 'Install Claude Code'", e),
+        }
 
     # Step 5: Verify installation
     version_str = "unknown"
@@ -513,7 +587,9 @@ async def install_claude_code():
     except Exception as e:
         return {
             "success": False,
-            "error": f"Installation completed but verification failed: {e}",
+            "error": client_error(
+                logger, "Installation completed but verification failed", e
+            ),
         }
 
     return {
@@ -692,6 +768,7 @@ def _check_npm_package_installed(package: str) -> bool:
     try:
         result = subprocess.run(
             ["npm", "list", "-g", "--depth=0", package],
+            check=False,
             capture_output=True,
             text=True,
             timeout=8,
@@ -717,12 +794,32 @@ async def check_mcp_health(server: McpServerConfig):
     if server.type == "http" and server.url:
         import urllib.request
 
+        # This endpoint takes a URL *and arbitrary headers* from the request body
+        # and fetches them server-side, which is a textbook SSRF primitive: the
+        # response status is reflected back, so it doubles as a port scanner.
+        # allow_private=True because an MCP server legitimately lives on
+        # localhost or a cluster-internal address -- that is the normal case, not
+        # the attack. What is blocked is the part with no legitimate use: non
+        # http(s) schemes, the cloud metadata range, and redirects away from the
+        # host that was just validated.
         try:
-            req = urllib.request.Request(server.url, method="HEAD")
+            safe_url = assert_safe_outbound_url(server.url, allow_private=True)
+        except ValueError as exc:
+            return {
+                "success": True,
+                "data": {
+                    "serverId": server.id,
+                    "status": "unhealthy",
+                    "message": client_error(logger, "refused to probe this URL", exc),
+                },
+            }
+
+        try:
+            req = urllib.request.Request(safe_url, method="HEAD")
             if server.headers:
                 for key, value in server.headers.items():
                     req.add_header(key, value)
-            urllib.request.urlopen(req, timeout=5)
+            build_no_redirect_opener().open(req, timeout=5)
             return {
                 "success": True,
                 "data": {
@@ -737,7 +834,7 @@ async def check_mcp_health(server: McpServerConfig):
                 "data": {
                     "serverId": server.id,
                     "status": "unhealthy",
-                    "message": str(e),
+                    "message": client_error(logger, "check mcp health failed", e),
                 },
             }
 
@@ -982,7 +1079,7 @@ async def download_source_update():
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to update Magestic AI source: {str(e)}",
+            "error": client_error(logger, "Failed to update Magestic AI source", e),
         }
 
 
@@ -1044,7 +1141,7 @@ async def squash_commits(projectId: str, request: SquashCommitsRequest):
     """
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 
@@ -1190,7 +1287,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
 
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 
@@ -1243,7 +1340,7 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     except Exception as e:
         return {
             "success": False,
-            "error": f"Failed to create worktree directory: {str(e)}",
+            "error": client_error(logger, "Failed to create worktree directory", e),
         }
 
     # Build git worktree add command
@@ -1274,14 +1371,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
         )
 
     if not worktree_result["success"]:
-        # Clean up directory if it was created
-        try:
+        # Clean up directory if it was created. Best-effort — the real
+        # failure is already reported below regardless of cleanup outcome.
+        with contextlib.suppress(Exception):
             if worktree_path.exists():
                 import shutil
 
                 shutil.rmtree(worktree_path)
-        except Exception:
-            pass
 
         return {
             "success": False,
@@ -1326,7 +1422,12 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     """
     try:
         result = subprocess.run(
-            ["gh"] + args, capture_output=True, text=True, cwd=cwd, timeout=30
+            ["gh"] + args,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
         )
         if result.returncode != 0:
             return {"success": False, "error": result.stderr.strip()}
@@ -1336,7 +1437,10 @@ def run_gh_command(args: list[str], cwd: str) -> dict:
     except subprocess.TimeoutExpired:
         return {"success": False, "error": "Command timed out"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": False,
+            "error": client_error(logger, "run gh command failed", e),
+        }
 
 
 @releases_router.post("")
@@ -1380,7 +1484,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
 
     # Load projects to get project path
     # ponytail: local import avoids projects<->git import cycle
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     project_path = str(resolve_project_path(projectId))
 
@@ -1412,4 +1516,7 @@ async def create_release(projectId: str, request: CreateReleaseRequest):
         }
 
     except Exception as e:
-        return {"success": False, "error": f"Failed to create GitHub release: {str(e)}"}
+        return {
+            "success": False,
+            "error": client_error(logger, "Failed to create GitHub release", e),
+        }

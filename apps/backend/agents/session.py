@@ -72,8 +72,8 @@ def _append_build_progress(
     try:
         with open(progress_file, "a") as f:
             f.write(line)
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.warning("could not append build progress to %s: %s", progress_file, exc)
 
 
 async def post_session_processing(

@@ -174,7 +174,7 @@ def test_alembic_succeeds_without_create_extension_privilege(
         pytest.skip("alembic Python package not importable")
 
     import asyncio
-    from urllib.parse import urlparse, urlunparse
+    from urllib.parse import urlparse
 
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine

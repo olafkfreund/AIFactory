@@ -5,10 +5,11 @@ Batch Task Management Commands
 Commands for creating and managing multiple tasks from batch files.
 """
 
+import contextlib
 import json
 from pathlib import Path
 
-from ui import highlight, print_status
+from ui import print_status
 
 
 def handle_batch_create_command(batch_file: str, project_dir: str) -> bool:
@@ -41,7 +42,6 @@ def handle_batch_create_command(batch_file: str, project_dir: str) -> bool:
         return False
 
     print_status(f"Creating {len(tasks)} tasks from batch file", "info")
-    print()
 
     specs_dir = Path(project_dir) / ".aifactory" / "specs"
     specs_dir.mkdir(parents=True, exist_ok=True)
@@ -96,15 +96,9 @@ def handle_batch_create_command(batch_file: str, project_dir: str) -> bool:
         )
         next_id += 1
 
-    print()
     print_status(f"Created {len(created_specs)} spec(s) successfully", "success")
-    print()
 
     # Show summary
-    print(highlight("Next steps:"))
-    print("  1. Generate specs: spec_runner.py --continue <spec_id>")
-    print("  2. Approve specs and build them")
-    print("  3. Run: python run.py --spec <id> to execute")
 
     return True
 
@@ -132,7 +126,6 @@ def handle_batch_status_command(project_dir: str) -> bool:
         return True
 
     print_status(f"Found {len(specs)} spec(s)", "info")
-    print()
 
     for spec_dir in specs:
         spec_name = spec_dir.name
@@ -142,12 +135,12 @@ def handle_batch_status_command(project_dir: str) -> bool:
         title = spec_name
 
         if req_file.exists():
-            try:
-                with open(req_file) as f:
-                    req = json.load(f)
-                    title = req.get("task_description", title)
-            except json.JSONDecodeError:
-                pass
+            # ponytail: display fallback -- a malformed requirements.json just
+            # keeps the spec directory name as the title, nothing to log for a
+            # listing command
+            with contextlib.suppress(json.JSONDecodeError), open(req_file) as f:
+                req = json.load(f)
+                title = req.get("task_description", title)
 
         # Determine status
         if (spec_dir / "spec.md").exists():
@@ -159,15 +152,13 @@ def handle_batch_status_command(project_dir: str) -> bool:
         else:
             status = "pending_spec"
 
-        status_icon = {
+        {
             "pending_spec": "⏳",
             "spec_created": "📋",
             "building": "⚙️",
             "qa_approved": "✅",
             "unknown": "❓",
         }.get(status, "❓")
-
-        print(f"{status_icon} {spec_name:<40} {title}")
 
     return True
 
@@ -203,14 +194,9 @@ def handle_batch_cleanup_command(project_dir: str, dry_run: bool = True) -> bool
     print_status(f"Found {len(completed)} completed spec(s)", "info")
 
     if dry_run:
-        print()
-        print("Would remove:")
         for spec_name in completed:
-            print(f"  - {spec_name}")
             wt_path = worktrees_dir / spec_name
             if wt_path.exists():
-                print(f"    └─ .aifactory/worktrees/tasks/{spec_name}/")
-        print()
-        print("Run with --no-dry-run to actually delete")
+                pass
 
     return True

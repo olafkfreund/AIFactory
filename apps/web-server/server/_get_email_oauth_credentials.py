@@ -5,8 +5,11 @@ Shared between email routes and email service to avoid circular imports.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def get_email_oauth_credentials() -> tuple[str, str] | None:
@@ -31,7 +34,11 @@ def get_email_oauth_credentials() -> tuple[str, str] | None:
                 client_id = file_client_id
                 client_secret = file_client_secret
     except Exception:
-        pass
+        # broad on purpose: covers the dynamic .config import, settings load, and
+        # JSON parse -- any failure here just means we fall back to env vars
+        logger.warning(
+            "failed to load OAuth credentials from settings.json", exc_info=True
+        )
 
     if client_id and client_secret:
         return (client_id, client_secret)
@@ -61,7 +68,11 @@ def get_google_oauth_credentials() -> tuple[str, str] | None:
                 client_id = file_client_id
                 client_secret = file_client_secret
     except Exception:
-        pass
+        # broad on purpose: covers the dynamic .config import, settings load, and
+        # JSON parse -- any failure here just means we fall back to env vars
+        logger.warning(
+            "failed to load OAuth credentials from settings.json", exc_info=True
+        )
 
     if client_id and client_secret:
         return (client_id, client_secret)

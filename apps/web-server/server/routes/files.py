@@ -10,7 +10,6 @@ Handles file operations for the Monaco editor:
 
 import logging
 import mimetypes
-import os
 import re
 import subprocess
 import urllib.parse
@@ -21,6 +20,14 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+
+from server.error_ref import client_error
+from server.services.argv_safety import (
+    assert_not_option,
+    assert_safe_git_ref,
+    bounded_count,
+)
+from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..auth import _try_decode_jwt
 from ..config import get_settings
@@ -181,7 +188,9 @@ def is_binary_file(path: Path) -> bool:
 
 def resolve_path(project_id: str, relative_path: str) -> Path:
     """Resolve a relative path within a project, with security checks."""
-    from .projects import load_projects  # Local import to avoid circular dependency
+    from server.project_registry import (
+        load_projects,  # Local import to avoid circular dependency
+    )
 
     projects = load_projects()
 
@@ -197,19 +206,12 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
     if not relative_path or relative_path == ".":
         return project_path
 
-    # Resolve the full path
-    full_path = (project_path / relative_path).resolve()
-
-    # Security check: ensure path is within project
-    try:
-        full_path.relative_to(project_path)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied: path outside project directory",
-        )
-
-    return full_path
+    # Join, resolve and confine in one step. Joining and resolving OUTSIDE the
+    # containment check is what makes `../../etc/passwd` interesting: the
+    # resolved-but-unchecked path is a live value for as long as it exists.
+    return within_roots(
+        project_path / relative_path, [project_path], "project directory"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -217,50 +219,17 @@ def resolve_path(project_id: str, relative_path: str) -> Path:
 # --------------------------------------------------------------------------
 
 
-def _registered_project_roots() -> list[Path]:
-    """Resolved paths of every registered project — the only roots whose file
-    *content* may be read/served (closes arbitrary host read, audit C1)."""
-    from .projects import load_projects
-
-    roots: list[Path] = []
-    for p in load_projects().values():
-        try:
-            roots.append(Path(p["path"]).resolve())
-        except (OSError, KeyError, TypeError):
-            pass
-    return roots
+# ``_registered_project_roots`` / ``_browse_roots`` used to live here. They
+# moved to ``server.specpath`` (#1278) because the add-project, git, terminal
+# and worktree routes need the same tiers, and a second copy of a root set is
+# a second thing to forget to update. Imported above under their public names.
 
 
-def _browse_roots() -> list[Path]:
-    """Roots that may be *listed* for the add-project browser: registered
-    projects + the user's home + any APP_FILE_BROWSE_ROOTS (os.pathsep list).
-    Looser than read roots (names only, no content), but still blocks system
-    dirs like /etc, /root, /var."""
-    roots = _registered_project_roots()
-    try:
-        roots.append(Path.home().resolve())
-    except (OSError, RuntimeError):
-        pass
-    for extra in os.environ.get("APP_FILE_BROWSE_ROOTS", "").split(os.pathsep):
-        extra = extra.strip()
-        if extra:
-            try:
-                roots.append(Path(extra).resolve())
-            except OSError:
-                pass
-    return roots
-
-
-def _assert_within_roots(resolved: Path, roots: list[Path], what: str) -> None:
-    """403 unless ``resolved`` is inside one of ``roots``. Prevents path
-    traversal / arbitrary host access on the absolute-path routes."""
-    for root in roots:
-        if resolved == root or root in resolved.parents:
-            return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Access denied: path is outside the {what}",
-    )
+# ``_within_roots`` moved to ``server.specpath.within_roots`` alongside the root
+# tiers (#1278) so the git, terminal and worktree routes raise the same 403 with
+# the same wording. Call sites below call it directly rather than through a
+# module-level alias: an alias is one more indirection for the taint analysis to
+# see through, and the barrier registration is the whole point of the helper.
 
 
 # --------------------------------------------------------------------------
@@ -296,9 +265,8 @@ async def discover_projects(
     Discover potential project folders in a directory.
     Returns folders that look like projects (have .git, package.json, etc).
     """
-    base = Path(base_path).resolve()
     # Containment (#320): only scan within browsable roots — no system dirs.
-    _assert_within_roots(base, _browse_roots(), "browsable directories")
+    base = within_roots(base_path, browse_roots(), "browsable directories")
 
     if not base.exists():
         return {
@@ -383,8 +351,7 @@ async def list_directory_direct(
     """List contents of a directory by absolute path."""
     # Containment (#320): only browsable roots (registered projects + home +
     # APP_FILE_BROWSE_ROOTS) may be listed — blocks /etc, /root, /var, etc.
-    full_path = Path(path).resolve()
-    _assert_within_roots(full_path, _browse_roots(), "browsable directories")
+    full_path = within_roots(path, browse_roots(), "browsable directories")
 
     if not full_path.exists():
         return {"success": False, "error": "Directory not found", "data": None}
@@ -437,9 +404,8 @@ async def read_file_direct(
     """Read file contents by absolute path."""
     # Containment (#320): only files inside a registered project may be read —
     # no expanduser(), so `~`-tricks can't escape. Closes arbitrary host read.
-    full_path = Path(path).resolve()
-    _assert_within_roots(
-        full_path, _registered_project_roots(), "registered project directories"
+    full_path = within_roots(
+        path, registered_project_roots(), "registered project directories"
     )
 
     if not full_path.exists():
@@ -524,22 +490,14 @@ async def serve_project_file(
     # Authenticate: check token from query param or Authorization header
     if not _validate_serve_token(request, token):
         raise HTTPException(status_code=401, detail="Authentication required")
-    file_path = Path(path).resolve()
-    root_path = Path(root).resolve()
-
     # Containment (#320): the attacker-supplied root must itself be a registered
     # project dir, and the file must live inside it. Blocks `&root=/` traversal.
-    _assert_within_roots(
-        root_path, _registered_project_roots(), "registered project directories"
+    root_path = within_roots(
+        root, registered_project_roots(), "registered project directories"
     )
     if not root_path.is_dir():
         raise HTTPException(status_code=400, detail="Root is not a directory")
-    try:
-        file_path.relative_to(root_path)
-    except ValueError:
-        raise HTTPException(
-            status_code=403, detail="Access denied: path outside project root"
-        )
+    file_path = within_roots(path, [root_path], "project root")
 
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -735,10 +693,12 @@ async def write_file(
     try:
         full_path.write_text(file_data.content, encoding="utf-8")
     except Exception as e:
+        # An OSError here renders the ABSOLUTE server path it failed on, and
+        # this route is reachable by any project member (Factory#718).
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to write file: {str(e)}",
-        )
+            detail=client_error(logger, "Failed to write file", e),
+        ) from e
 
     return {"success": True, "path": path}
 
@@ -775,8 +735,8 @@ async def delete_file(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete: {str(e)}",
-        )
+            detail=client_error(logger, "Failed to delete", e),
+        ) from e
 
     return {"success": True}
 
@@ -785,7 +745,7 @@ async def delete_file(
 async def search_files(
     project_id: str,
     _access: dict = Depends(require_project_access("viewer")),
-    query: str = Query(..., description="Search query (regex supported)"),
+    query: str = Query(..., description="Search query (literal, case-insensitive)"),
     path: str = Query("", description="Directory to search in"),
     file_pattern: str = Query("*", description="File glob pattern"),
     max_results: int = Query(100, description="Maximum results to return"),
@@ -795,12 +755,32 @@ async def search_files(
 
     # Security (#323 H5): reject argument injection (a leading '-' turns the
     # positional query/glob into an rg flag, e.g. `--pre=/bin/sh`) and bound the
-    # query length to limit ReDoS on the regex fallback.
-    if query.startswith("-") or file_pattern.startswith("-"):
+    # query length.
+    #
+    # The checks are the same ones this endpoint has always made; they now run
+    # through the shared helpers in services/argv_safety.py so every value that
+    # reaches the argv below is asserted by a named validator rather than by an
+    # ad-hoc condition (#1267).
+    #
+    # Separately, the query is matched LITERALLY, not as a regex (CodeQL
+    # py/regex-injection). ripgrep's engine is linear-time, but the Python
+    # fallback below is the path that actually runs in the shipped image (rg is
+    # not installed there), and `re` backtracks: a caller-supplied `(a+)+$`
+    # would hang the worker. Both paths use fixed-string, case-insensitive
+    # matching so they agree.
+    try:
+        query = assert_not_option(query, "query")
+        file_pattern = assert_not_option(file_pattern, "file_pattern")
+        max_results = bounded_count(max_results, 10000, "max_results")
+        search_root = assert_not_option(str(full_path), "path")
+    except ValueError as exc:
+        # argv_safety raises InputRejectedError, whose developer-written text
+        # client_error hands back verbatim. Any OTHER ValueError reaching here
+        # was written by the stdlib and gets a reference id instead.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="query and file_pattern must not start with '-'",
-        )
+            detail=client_error(logger, "Invalid request parameter", exc),
+        ) from exc
     if len(query) > 1000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -821,13 +801,15 @@ async def search_files(
         cmd = [
             "rg",
             "--json",
+            "--fixed-strings",
+            "--ignore-case",
             "--max-count",
             str(max_results),
             "--glob",
             file_pattern,
             "--",  # no flags past here — query/path are positional (#323 H5)
             query,
-            str(full_path),
+            search_root,
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
@@ -858,7 +840,7 @@ async def search_files(
 
     except (FileNotFoundError, subprocess.TimeoutExpired):
         # Fallback to Python search
-        pattern = re.compile(query, re.IGNORECASE)
+        needle = query.lower()
         for file_path in full_path.rglob(file_pattern):
             if len(results) >= max_results:
                 truncated = True
@@ -870,15 +852,15 @@ async def search_files(
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 for i, line in enumerate(content.split("\n"), 1):
-                    match = pattern.search(line)
-                    if match:
+                    column = line.lower().find(needle)
+                    if column >= 0:
                         results.append(
                             SearchResult(
                                 path=str(file_path.relative_to(full_path)),
                                 line=i,
-                                column=match.start(),
+                                column=column,
                                 content=line.rstrip(),
-                                match=match.group(),
+                                match=line[column : column + len(query)],
                             )
                         )
                         if len(results) >= max_results:
@@ -913,12 +895,19 @@ async def get_git_diff(
 
     # Security (#323 M3): `base` is a ref before `--`; reject a leading '-'
     # (option injection like `--output=...`). `path` goes after `--` so it's
-    # always treated as a pathspec, never a flag.
-    if base.startswith("-") or not re.match(r"^[A-Za-z0-9._/~^@{}-]+$", base):
+    # always treated as a pathspec, never a flag -- asserted anyway, so the
+    # safety of both argv operands is stated by a named validator (#1267).
+    try:
+        base = assert_safe_git_ref(base, "base")
+        path = assert_not_option(path, "path")
+    except ValueError as exc:
+        # argv_safety raises InputRejectedError, whose developer-written text
+        # client_error hands back verbatim. Any OTHER ValueError reaching here
+        # was written by the stdlib and gets a reference id instead.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid base ref",
-        )
+            detail=client_error(logger, "Invalid request parameter", exc),
+        ) from exc
 
     try:
         cmd = ["git", "diff", "--name-status", base, "--"]
@@ -971,8 +960,8 @@ async def get_git_diff(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Git error: {str(e)}",
-        )
+            detail=client_error(logger, "Git operation failed", e),
+        ) from e
 
 
 # --------------------------------------------------------------------------
@@ -985,7 +974,7 @@ insights_router = APIRouter()
 def _get_project_path(project_id: str) -> Path:
     """Get project path from project ID (delegates to the canonical resolver)."""
     # Import here to avoid circular import.
-    from .projects import resolve_project_path
+    from server.project_registry import resolve_project_path
 
     return resolve_project_path(project_id)
 
@@ -1041,12 +1030,7 @@ async def clear_insights_session(projectId: str):
         # Re-raise HTTP exceptions (like 404 from _get_project_path)
         raise
     except Exception as e:
-        # Log error and return 500
-        import logging
-
-        logging.getLogger(__name__).error(
-            f"Failed to clear files insights session: {e}", exc_info=True
-        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to clear files insights session: {str(e)}"
-        )
+            status_code=500,
+            detail=client_error(logger, "Failed to clear files insights session", e),
+        ) from e

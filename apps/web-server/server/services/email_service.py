@@ -23,10 +23,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import httpx
+from factory_common.logsafe import sanitize_log
 from sqlalchemy import select, update
 
-from ..database import EmailAccount
-from ..database.engine import async_session_factory
+from ..database import EmailAccount, engine
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class EmailService:
         Returns True if the email was sent, False otherwise.
         """
         try:
-            async with async_session_factory() as session:
+            async with engine.async_session_factory() as session:
                 result = await session.execute(
                     select(EmailAccount).where(EmailAccount.user_id == user_id)
                 )
@@ -78,9 +78,9 @@ class EmailService:
                 if sent:
                     logger.info(
                         "Email sent to %s via %s: %s",
-                        account.email_address,
-                        account.provider,
-                        subject,
+                        sanitize_log(account.email_address),
+                        sanitize_log(account.provider),
+                        sanitize_log(subject),
                     )
                     return True
             except Exception:
@@ -212,7 +212,7 @@ class EmailService:
 
         # Update DB
         try:
-            async with async_session_factory() as session:
+            async with engine.async_session_factory() as session:
                 await session.execute(
                     update(EmailAccount)
                     .where(EmailAccount.id == account.id)
@@ -313,7 +313,7 @@ class EmailService:
 
         # Update DB
         try:
-            async with async_session_factory() as session:
+            async with engine.async_session_factory() as session:
                 await session.execute(
                     update(EmailAccount)
                     .where(EmailAccount.id == account.id)

@@ -8,7 +8,6 @@ at an existing dev Postgres, or tests skip cleanly when neither is set.
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 import subprocess
 import time

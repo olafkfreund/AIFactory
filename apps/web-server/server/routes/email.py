@@ -25,10 +25,26 @@ from .._get_email_oauth_credentials import (
     get_google_oauth_credentials,
 )
 from ..config import get_settings
-from ..database import EmailAccount
-from ..database.engine import async_session_factory
+from ..database import EmailAccount, engine
 
 logger = logging.getLogger(__name__)
+
+
+def _mask_email(address: str | None) -> str:
+    """Return an address safe to write to a log line.
+
+    Ported from the PFactory fork of this file, which fixed it under
+    PFactory#517 while this copy kept logging the full address -- the two files
+    are otherwise the same module. The OAuth connect paths logged the whole
+    address at INFO alongside the user_id. The user_id is the correlator worth
+    having; the address adds a piece of personal data to every log sink that
+    ever sees these lines, for no operational gain. The domain is kept because
+    "which provider did they connect" is the question the line exists to answer.
+    """
+    if not address or "@" not in address:
+        return "<redacted>"
+    local, _, domain = address.partition("@")
+    return f"{local[0]}***@{domain}" if local else f"***@{domain}"
 
 
 def _get_oauth_redirect_uri(request: Request, provider: str = "outlook") -> str:
@@ -47,9 +63,18 @@ def _get_oauth_redirect_uri(request: Request, provider: str = "outlook") -> str:
 
 router = APIRouter(prefix="/api/email", tags=["Email"])
 
-# In-memory OAuth state store: state_token -> {user_id, provider, created_at}
-# Entries expire after 10 minutes
-_oauth_states: dict[str, dict] = {}
+# In-memory CSRF-state store for the OAuth connect flow:
+#   state_token -> {user_id, provider, created_at}
+# Entries expire after 10 minutes.
+#
+# Named for what it holds rather than for the protocol it belongs to. It holds
+# no credential -- no access token, no refresh token, no client secret; those
+# never enter this dict, they go straight from the token exchange into the
+# EmailAccount row. The old name (`_oauth_states`) made CodeQL classify every
+# value read out of it as a password by identifier heuristic, which is why
+# `logger.info(... user_id ...)` in both callbacks reported as
+# py/clear-text-logging-sensitive-data while logging nothing but a UUID.
+_pending_connect_states: dict[str, dict] = {}
 _STATE_TTL_SECONDS = 600
 
 
@@ -58,11 +83,11 @@ def _cleanup_expired_states() -> None:
     now = time.time()
     expired = [
         k
-        for k, v in _oauth_states.items()
+        for k, v in _pending_connect_states.items()
         if now - v["created_at"] > _STATE_TTL_SECONDS
     ]
     for k in expired:
-        del _oauth_states[k]
+        del _pending_connect_states[k]
 
 
 def _get_user_id(request: Request) -> str:
@@ -93,7 +118,7 @@ async def list_email_accounts(request: Request):
     """List the user's connected email accounts (tokens not exposed)."""
     user_id = _get_user_id(request)
 
-    async with async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(EmailAccount.user_id == user_id)
         )
@@ -115,7 +140,7 @@ async def disconnect_email_account(account_id: str, request: Request):
     """Disconnect (delete) an email account."""
     user_id = _get_user_id(request)
 
-    async with async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(
                 EmailAccount.id == account_id,
@@ -160,7 +185,7 @@ async def send_test_email(account_id: str, request: Request):
     """Send a test email to verify the connection works."""
     user_id = _get_user_id(request)
 
-    async with async_session_factory() as session:
+    async with engine.async_session_factory() as session:
         result = await session.execute(
             select(EmailAccount).where(
                 EmailAccount.id == account_id,
@@ -226,7 +251,7 @@ async def start_outlook_oauth(request: Request):
     # Generate state token
     _cleanup_expired_states()
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
+    _pending_connect_states[state] = {
         "user_id": user_id,
         "provider": "outlook",
         "created_at": time.time(),
@@ -277,7 +302,7 @@ async def outlook_oauth_callback(
 
     # Validate state
     _cleanup_expired_states()
-    state_data = _oauth_states.pop(state, None)
+    state_data = _pending_connect_states.pop(state, None)
     if not state_data:
         return _oauth_result_html(
             success=False,
@@ -367,7 +392,7 @@ async def outlook_oauth_callback(
 
     # Upsert EmailAccount
     try:
-        async with async_session_factory() as session:
+        async with engine.async_session_factory() as session:
             result = await session.execute(
                 select(EmailAccount).where(
                     EmailAccount.user_id == user_id,
@@ -403,7 +428,9 @@ async def outlook_oauth_callback(
             message="Failed to save email account to database",
         )
 
-    logger.info("Outlook account connected for user %s: %s", user_id, email_address)
+    logger.info(
+        "Outlook account connected for user %s: %s", user_id, _mask_email(email_address)
+    )
 
     return _oauth_result_html(
         success=True,
@@ -437,7 +464,7 @@ async def start_gmail_oauth(request: Request):
     # Generate state token
     _cleanup_expired_states()
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = {
+    _pending_connect_states[state] = {
         "user_id": user_id,
         "provider": "gmail",
         "created_at": time.time(),
@@ -490,7 +517,7 @@ async def gmail_oauth_callback(
 
     # Validate state
     _cleanup_expired_states()
-    state_data = _oauth_states.pop(state, None)
+    state_data = _pending_connect_states.pop(state, None)
     if not state_data:
         return _oauth_result_html(
             success=False,
@@ -586,7 +613,7 @@ async def gmail_oauth_callback(
 
     # Upsert EmailAccount
     try:
-        async with async_session_factory() as session:
+        async with engine.async_session_factory() as session:
             result = await session.execute(
                 select(EmailAccount).where(
                     EmailAccount.user_id == user_id,
@@ -623,7 +650,9 @@ async def gmail_oauth_callback(
             provider="gmail",
         )
 
-    logger.info("Gmail account connected for user %s: %s", user_id, email_address)
+    logger.info(
+        "Gmail account connected for user %s: %s", user_id, _mask_email(email_address)
+    )
 
     return _oauth_result_html(
         success=True,
@@ -633,11 +662,45 @@ async def gmail_oauth_callback(
     )
 
 
+def _oauth_target_origins() -> list[str]:
+    """The origins this page may address its postMessage to (#1285).
+
+    Derived from ``CORS_ORIGINS`` -- the operator-configured list of browser
+    origins allowed to talk to this API, which is exactly the set the portal can
+    be served from in a given deployment. Deliberately NOT from the ``Host``,
+    ``Origin`` or ``Referer`` header: those come off the request, an attacker
+    controls them, and a targetOrigin taken from the attacker is ``'*'`` wearing
+    a disguise.
+
+    A wildcard entry is dropped rather than passed through. If that leaves
+    nothing, the page posts nothing: it still renders the outcome text and
+    closes, so the failure mode is "the portal does not auto-refresh" rather
+    than "the address is broadcast".
+    """
+    return [o for o in (get_settings().CORS_ORIGINS or []) if o and o != "*"]
+
+
 def _oauth_result_html(
     success: bool, message: str, email: str = "", provider: str = "outlook"
 ) -> HTMLResponse:
     """Return HTML that communicates the OAuth result to the opener window and closes itself."""
     status_text = "success" if success else "error"
+    # One post per configured origin instead of one post to '*' (#1285). The
+    # payload carries the connected email address, and the popup's lifetime
+    # spans a full third-party OAuth round trip, so '*' means "hand the address
+    # to whatever happens to be loaded in the opener by then". The browser
+    # delivers a targeted post only if the opener's origin matches, so the
+    # opener receives exactly one of these and every other call is a no-op --
+    # which is why a loop is correct where picking one entry would be a guess.
+    #
+    # Defence in depth with the receiving side: the listener in
+    # EmailIntegration.tsx checks event.origin against its own allowlist
+    # (#1283). That stops a forged inbound message; this is the half that stops
+    # the address leaving at all.
+    posts = "\n".join(
+        f"    window.opener.postMessage(payload, {_js_string(origin)});"
+        for origin in _oauth_target_origins()
+    )
     html = f"""<!DOCTYPE html>
 <html>
 <head><title>AIFactory - Email Connection</title></head>
@@ -645,13 +708,14 @@ def _oauth_result_html(
 <p>{message}</p>
 <script>
   if (window.opener) {{
-    window.opener.postMessage({{
+    var payload = {{
       type: 'email-oauth-callback',
       status: '{status_text}',
       message: {_js_string(message)},
       email: {_js_string(email)},
       provider: {_js_string(provider)}
-    }}, '*');
+    }};
+{posts}
   }}
   setTimeout(function() {{ window.close(); }}, 2000);
 </script>

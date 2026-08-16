@@ -17,14 +17,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from factory_common.logsafe import sanitize_log
+
 from ..utils.subprocess_env import make_subprocess_env
 from .agent_task_models import TaskProgress
 from .task_phase import TaskPhase
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-_log = logging.getLogger(__name__)
 
 
 class SpecCreationMixin:
@@ -56,7 +56,6 @@ class SpecCreationMixin:
         user_id: str = "",
     ) -> asyncio.subprocess.Process:
         """Start spec creation for a task."""
-        import logging
 
         logger = logging.getLogger(__name__)
         if task_id in self.running_tasks:
@@ -69,6 +68,7 @@ class SpecCreationMixin:
         else:
             # Fallback: no project ID prefix (shouldn't happen in web mode)
             spec_dir = None
+            spec_id = None
 
         # Fix 5: Check if task requires manual review before coding
         # If requireReviewBeforeCoding is true, DON'T auto-approve (let user review the plan)
@@ -84,7 +84,8 @@ class SpecCreationMixin:
                     if metadata.get("requireReviewBeforeCoding", False):
                         should_auto_approve = False
                         logger.info(
-                            f"[AgentService] Task {task_id} requires manual review - NOT auto-approving spec"
+                            "[AgentService] Task %s requires manual review - NOT auto-approving spec",
+                            sanitize_log(task_id),
                         )
                     # Read spec phase model from auto profile config
                     if metadata.get("isAutoProfile") and metadata.get("phaseModels"):
@@ -113,12 +114,14 @@ class SpecCreationMixin:
                     if is_governed_requirements(requirements):
                         should_auto_approve = True
                         logger.info(
-                            f"[AgentService] Task {task_id} is a governed PFactory "
+                            f"[AgentService] Task {sanitize_log(task_id)} is a governed PFactory "
                             "spec — auto-approving (skipping plan-review gate)"
                         )
                 except (json.JSONDecodeError, OSError, ImportError) as e:
                     logger.warning(
-                        f"[AgentService] PFactory governance check failed for {task_id}: {e}"
+                        "[AgentService] PFactory governance check failed for %s: %s",
+                        sanitize_log(task_id),
+                        sanitize_log(e),
                     )
 
         # Build command
@@ -135,11 +138,14 @@ class SpecCreationMixin:
         if spec_phase_model:
             cmd.extend(["--model", spec_phase_model])
             logger.info(
-                f"[AgentService] [Model: {spec_phase_model}] Starting spec creation for {task_id}"
+                "[AgentService] [Model: %s] Starting spec creation for %s",
+                sanitize_log(spec_phase_model),
+                sanitize_log(task_id),
             )
         else:
             logger.info(
-                f"[AgentService] [Model: sonnet] Starting spec creation for {task_id} (default)"
+                "[AgentService] [Model: sonnet] Starting spec creation for %s (default)",
+                sanitize_log(task_id),
             )
 
         # Fix 1: Only auto-approve if task doesn't require manual review
@@ -167,7 +173,7 @@ class SpecCreationMixin:
         if complexity == "simple":
             env["QUICK_MODE"] = "true"
             logger.info(
-                f"[AgentService] Quick Mode enabled for spec creation task {task_id}"
+                f"[AgentService] Quick Mode enabled for spec creation task {sanitize_log(task_id)}"
             )
 
         # Load backend .env file for graphiti and other settings
@@ -297,11 +303,14 @@ class SpecCreationMixin:
         # passive FIFO. The build phase re-uses the same spec_id session.
         from ..rmux.integration import create_if_enabled as _rmux_create
 
-        try:
-            await _rmux_create(spec_id, project_path, " ".join(cmd))
-        except Exception:
-            logger.warning(
-                f"[AgentService] rmux create hook (spec creation) raised (ignored); spec_id={spec_id}"
-            )
+        if spec_id is not None:
+            try:
+                await _rmux_create(spec_id, project_path, " ".join(cmd))
+            except Exception:
+                logger.warning(
+                    "[AgentService] rmux create hook (spec creation) raised (ignored); "
+                    "spec_id=%s",
+                    sanitize_log(spec_id),
+                )
 
         return proc
