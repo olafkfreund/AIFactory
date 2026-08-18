@@ -43,3 +43,31 @@ query-filters:
       id: py/full-ssrf
   - exclude:
       id: py/partial-ssrf
+  # Fifth and last swap (#1276, #1293). `routes/settings.py`'s
+  # `_write_json_store` writes `json.dumps(seal_profiles(data))`, and what
+  # reaches that write is AES-256-GCM ciphertext from `crypto/secret_field.py`
+  # on the repo's existing `crypto.kms` backend -- but the seal helpers are
+  # imported, so stock py/clear-text-storage-sensitive-data cannot see the
+  # encryption and the alert stayed open however completely the payload was
+  # sealed. custom-queries/ClearTextStorageSanitized.ql is the identical query
+  # with `seal`/`seal_profiles`/`seal_fields` registered as barriers, and
+  # `unseal*` deliberately NOT -- their output reaching a file write is exactly
+  # what this rule exists to report.
+  #
+  # THIS ONE IS CONDITIONAL IN A WAY THE OTHER FOUR ARE NOT. `seal()` degrades
+  # to writing plaintext, with a one-time warning, when NO KMS backend was
+  # selected, so the barrier asserts a key reaches the pod. Two things hold that
+  # up and this exclusion must be deleted if either goes:
+  # tests/helm/test_kms_key_always_wired.py (the chart always wires a key, and
+  # a keyless cloud backend refuses to render at all -- #1290), and
+  # crypto.kms.encryption_is_required(), which makes the fallback RAISE whenever
+  # a backend WAS selected.
+  #
+  # Measured at CodeQL 2.26.3, the bundle this repo's code scanning runs:
+  # cleared 1, NEW 0, with a vacuous-barrier control reproducing stock exactly.
+  # See .github/codeql/VALIDATION.md. Note that the second open alert of this
+  # rule (services/completion.py:877, CloudEvents metadata) is triaged as a
+  # sensitivity false positive and is NOT suppressed -- the fork still reports
+  # it.
+  - exclude:
+      id: py/clear-text-storage-sensitive-data
