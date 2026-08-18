@@ -190,6 +190,17 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
+      # 40-hex is necessary but nowhere near sufficient: every fork of Factory
+      # shares one object store with Factory, so a commit that exists only in a
+      # fork is still a valid 40-hex SHA that actions/checkout below will happily
+      # fetch from olafkfreund/Factory. A fork PR could therefore pin a hub tree
+      # of its own making, and the diff would pass on drifted content. Assert the
+      # pin is on hub main before trusting it (AIFactory#1281).
+      - name: The pinned hub SHA must be on hub main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./aifactory/.github/scripts/assert-hub-pin-on-main.sh "${{ steps.pin.outputs.sha }}" "standards/.hub-sha"
+
       # No continue-on-error: an unreachable hub is a gate that cannot run, and
       # per standards rule 4.7 that must fail rather than pass. This step used
       # to be `continue-on-error: true` with the diff below guarded on

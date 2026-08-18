@@ -76,6 +76,17 @@ jobs:
           command -v ruff
           ruff --version
 
+      # HUB_PIN_SHA lives in this workflow file, which on a fork PR comes from
+      # the PR's own tree. Forks share one object store with Factory, so a
+      # commit that exists only in a fork is a valid 40-hex SHA that
+      # raw.githubusercontent below serves from the hub path -- a fork PR could
+      # pin a factory-seclint matching its own neutered vendored engine, and the
+      # diff would pass while the neutered engine is what runs (AIFactory#1281).
+      - name: The pinned hub SHA must be on hub main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/assert-hub-pin-on-main.sh "${{ env.HUB_PIN_SHA }}" "HUB_PIN_SHA"
+
       - name: Diff the vendored engine against the pinned hub
         # Fails CLOSED (rule 4.7): a fetch that cannot reach the hub has
         # verified nothing, so it is a failure, not a skip.

@@ -88,6 +88,8 @@ concurrency:
 
 env:
   HUB_REPO: "olafkfreund/Factory"
+  # Read-only job token, for the pin-reachability compare against the hub.
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   drift:
@@ -141,6 +143,14 @@ jobs:
             fi
           done
           [ "${fail}" -eq 0 ] || { echo "factory_common drift gate FAILED."; exit 1; }
+
+          # 40-hex is necessary but not sufficient. Forks of Factory share one
+          # object store with Factory, so a commit that exists only in a fork is
+          # a valid 40-hex SHA that codeload below will serve from the hub URL.
+          # A fork PR could point every .hub-sha at a fork commit whose
+          # factory_common matches its own drifted copy and this gate would
+          # report green. Assert the pin is hub main history (AIFactory#1281).
+          ./.github/scripts/assert-hub-pin-on-main.sh "${first_sha}" "factory_common/.hub-sha"
 
           # --- each copy is byte-identical to the canonical at that pin -------
           work="$(mktemp -d)"
