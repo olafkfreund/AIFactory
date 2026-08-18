@@ -89,7 +89,7 @@ jobs:
       # which includes the `-nix` tags published here. Build Jobs run this image,
       # so it is code execution and must be signed like any other.
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
 
       - name: Sign -nix image (cosign keyless via Sigstore + GitHub OIDC)
         run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
@@ -100,6 +100,10 @@ jobs:
             --certificate-identity-regexp "^https://github\.com/${{ github.repository_owner }}/AIFactory/" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Proves the CLUSTER can read it, not just cosign. See Factory#804.
+      - name: Assert the signature is where Kyverno looks (Factory#804)
+        run: ./.github/scripts/assert-signature-location.sh "${IMAGE}" "${{ steps.build.outputs.digest }}"
 
       # #856 half 2 — auto-pin AIFACTORY_BUILD_IMAGE so the freshly built image is
       # actually what build Jobs run. Without this the pin was manual and drifted
