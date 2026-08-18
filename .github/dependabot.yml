@@ -97,3 +97,22 @@ updates:
       github-actions:
         patterns:
           - "*"
+    # cosign-installer majors are a CLUSTER decision, not a dependency bump.
+    #
+    # #1286 moved this from v3.7.0 to v4.1.2 (cosign v2 -> v3) on 2026-08-13.
+    # Every image built after that signs successfully and verifies successfully
+    # in CI, and then Kyverno v1.18.2 refuses it at admission with
+    # "no signatures found". AIFactory sat 2 days behind main because of it
+    # (Factory#799); the deploy is blocked, not slow.
+    #
+    # The signing self-test cannot catch this. It runs the same cosign that
+    # produced the signature, so it verifies a format only it can read -- the
+    # check agrees with itself by construction. The consumer that matters is
+    # Kyverno's embedded cosign library, and nothing in CI exercises it.
+    #
+    # So this pin is coupled to the Kyverno version, and moving it is safe only
+    # after Kyverno can verify what the new cosign writes. Unpin when Kyverno is
+    # upgraded (see the Factory issue above), not before.
+    ignore:
+      - dependency-name: "sigstore/cosign-installer"
+        update-types: ["version-update:semver-major"]
