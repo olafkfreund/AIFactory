@@ -58,9 +58,10 @@ from __future__ import annotations
 
 from typing import Any
 
-# security.url_guard is the one place that bridges apps/backend to the
-# canonical guard (#1265). Importing through it rather than adding a second
-# sys.path shim is the whole point of that module.
+# security.url_guard is the security package's export of the canonical guard
+# (#1265). Since #1270 it is a plain re-export of factory_common.url_safety --
+# no sys.path shim behind it any more -- and importing through it keeps every
+# agent-side guard reference pointing at one name.
 #
 # No `type: ignore[import-not-found]` here, despite a bare
 # `mypy --config-file standards/mypy.ini <this file>` reporting one: the gate is
