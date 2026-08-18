@@ -101,6 +101,10 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE}@${{ steps.build.outputs.digest }}"
 
+      # Proves the CLUSTER can read it, not just cosign. See Factory#804.
+      - name: Assert the signature is where Kyverno looks (Factory#804)
+        run: ./.github/scripts/assert-signature-location.sh "${IMAGE}" "${{ steps.build.outputs.digest }}"
+
       # #856 half 2 — auto-pin AIFACTORY_BUILD_IMAGE so the freshly built image is
       # actually what build Jobs run. Without this the pin was manual and drifted
       # 18 days: images were published but never consumed.

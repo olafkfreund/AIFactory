@@ -110,6 +110,11 @@ jobs:
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
             "${IMAGE}@${{ steps.build.outputs.digest }}"
 
+      # The self-test above proves cosign can read what cosign wrote. This
+      # proves the CLUSTER can. See the script header and Factory#804.
+      - name: Assert the signature is where Kyverno looks (Factory#804)
+        run: ./.github/scripts/assert-signature-location.sh "${IMAGE}" "${{ steps.build.outputs.digest }}"
+
       - name: Checkout factory-gitops
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
