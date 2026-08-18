@@ -1,8 +1,16 @@
 /**
  * The SSRF barrier for this repo.
  *
- * `assert_safe_outbound_url` (apps/web-server/server/services/url_safety.py) is
- * the one place outbound URLs are checked: http(s)-only scheme, a hard refusal
+ * `assert_safe_outbound_url` is the one check every outbound URL passes
+ * through. It is registered BY NAME, deliberately, so it stays registered
+ * wherever the function lives: the fleet canonical is
+ * `factory_common/url_safety.py` (vendored into apps/backend and
+ * apps/web-server), `apps/web-server/server/services/url_safety.py` keeps a
+ * thin copy that raises `InputRejectedError` for the HTTP layer, and
+ * `apps/backend/security/url_guard.py` re-exports the canonical for the agent
+ * runtime (#1270). Name-matching covers all three; a RENAME would silently
+ * un-register the barrier and reopen every alert it clears, which is why the
+ * name is load-bearing beyond Python. What it checks: http(s)-only scheme, a hard refusal
  * of the cloud metadata range in both postures, and — unless the call site
  * passes `allow_private=True` for a deliberately local target such as a
  * self-hosted Ollama — a requirement that the host resolve to a public address.

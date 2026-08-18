@@ -20,9 +20,9 @@ from unittest.mock import patch
 
 import pytest
 from agents.tools_pkg.tools.web import guarded_web_fetch
+from factory_common import url_safety
 from security.hooks import web_fetch_security_hook
 from security.url_guard import assert_url_not_ssrf, fetch_following_safe_redirects
-from server.services import url_safety
 
 # Hosts that must be refused (IP literals → no DNS needed).
 SSRF_URLS = [
@@ -87,9 +87,13 @@ class TestUrlGuard:
         local copy, which is exactly how the three copies drifted apart in the
         first place. This one cannot: it fails the moment `security.url_guard`
         stops being the canonical function itself.
+
+        #1270: the canonical moved from ``server.services.url_safety`` to
+        ``factory_common.url_safety`` -- same function, now reachable from
+        either import root without a ``sys.path`` shim.
         """
+        from factory_common.url_safety import assert_safe_outbound_url
         from security import url_guard
-        from server.services.url_safety import assert_safe_outbound_url
 
         assert url_guard.assert_url_not_ssrf is assert_safe_outbound_url
 
