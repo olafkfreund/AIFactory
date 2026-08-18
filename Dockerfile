@@ -262,9 +262,24 @@ RUN set -eux; \
 # agent_service.py's sys.executable expectations)
 RUN python3 -m venv /home/projects/MagesticAI/.venv
 
+# Install from the hash-pinned lock, NOT from the two requirements.txt files
+# (#1284). Those declare `>=` floors, so installing from them made every image
+# build resolve whatever PyPI served that minute and recorded nothing about what
+# landed — the only class of external reference in this repo that was still
+# mutable, in the one process that holds the agent's credentials.
+#
+# requirements.lock is the compiled closure of exactly those two files, so the
+# declared floors are unchanged; --require-hashes is what makes it load-bearing.
+# Without that flag pip would happily accept a substituted artifact, and the file
+# would be documentation rather than a control. It also makes pip fail closed on
+# an out-of-date lock: a dependency added to requirements.txt but not compiled in
+# is absent here, the import fails at runtime, and the ci.yml `deps-lock-drift`
+# job is what catches that in review instead.
+#
+# Regeneration command lives in the lockfile header.
 RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
-        -r /home/projects/MagesticAI/apps/web-server/requirements.txt \
-        -r /home/projects/MagesticAI/apps/backend/requirements.txt
+        --require-hashes \
+        -r /home/projects/MagesticAI/requirements.lock
 
 # Git identity for in-container worktree operations
 RUN git config --global user.name "AIFactory" \

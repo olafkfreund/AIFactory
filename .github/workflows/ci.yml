@@ -647,6 +647,57 @@ jobs:
           CI: "true"
         run: apps/backend/.venv/bin/pytest tests/evidence/ -m evidence -v
 
+  deps-lock-drift:
+    name: deps (requirements.lock in sync)
+    runs-on: ubuntu-latest
+    # The Dockerfile installs the runtime venv from requirements.lock with
+    # --require-hashes (#1284). That makes the lock load-bearing, and a
+    # load-bearing file that nothing checks is a file that rots: add a package
+    # to apps/*/requirements.txt without recompiling and the image quietly
+    # ships without it, surfacing as an ImportError in a pod rather than as a
+    # red check on the PR that caused it.
+    #
+    # Recompiling is a safe equality test, not a resolution race: uv reads the
+    # existing lock as *preferences*, so an unchanged input recompiles
+    # byte-identically even after upstream publishes a newer release. The job
+    # therefore fails only on real drift, never on the passage of time --
+    # verified by running the compile twice against the committed lock.
+    #
+    # Comparison strips leading-# lines because the committed lock carries a
+    # hand-written prose header that --no-header does not reproduce. The `#
+    # via` provenance comments are indented and so survive the filter and are
+    # still compared.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "latest"
+
+      # Flags MUST match the lockfile header's regeneration command; the lock
+      # is only valid for the interpreter and platform it was compiled for,
+      # which are the runtime image's (chainguard python:latest-dev = CPython
+      # 3.14, and every image build is platforms: linux/amd64).
+      - name: Recompile the lock from the requirements files
+        run: |
+          uv pip compile --python-version 3.14 \
+            --python-platform x86_64-unknown-linux-gnu --generate-hashes \
+            --no-header \
+            apps/web-server/requirements.txt apps/backend/requirements.txt \
+            -o /tmp/requirements.recompiled.lock
+
+      - name: Fail if the committed lock differs
+        run: |
+          grep -v '^#' requirements.lock > /tmp/committed.body
+          grep -v '^#' /tmp/requirements.recompiled.lock > /tmp/recompiled.body
+          if ! diff -u /tmp/committed.body /tmp/recompiled.body; then
+            echo "::error::requirements.lock is out of sync with the requirements.txt files."
+            echo "Regenerate it with the command in the requirements.lock header and commit the result."
+            exit 1
+          fi
+          echo "requirements.lock is in sync."
+
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
