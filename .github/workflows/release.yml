@@ -236,6 +236,12 @@ jobs:
           cosign sign --yes "$IMAGE_RMUX"
           cosign sign --yes "$IMAGE_NIX"
 
+          # Proves the CLUSTER can read these, not just cosign. Factory#804.
+          repo="ghcr.io/${{ github.repository_owner }}/aifactory"
+          ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build.outputs.digest }}"
+          ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_rmux.outputs.digest }}"
+          ./.github/scripts/assert-signature-location.sh "$repo" "${{ steps.build_nix.outputs.digest }}"
+
       - name: Install Syft
         if: steps.detect.outputs.should_release == 'true'
         uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
