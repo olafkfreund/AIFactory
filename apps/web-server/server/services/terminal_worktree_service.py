@@ -11,6 +11,9 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from server.error_ref import InputRejectedError
+from server.specpath import contained_path, registered_project_roots
+
 from .argv_safety import assert_not_option, assert_safe_git_ref
 
 
@@ -29,15 +32,40 @@ class TerminalWorktreeService:
             project_path: Absolute path to the project root
 
         Raises:
-            ValueError: If project_path is not a valid directory
+            InputRejectedError: If project_path is outside every registered
+                project, or is not a directory.
         """
-        resolved = Path(project_path).resolve()
+        # Containment, in the constructor rather than in each of the three
+        # routes that build this service (#1336). `project_path` arrives raw
+        # from a query parameter or a request body and is joined into the paths
+        # this service hands to `git worktree add/remove`; nothing above here
+        # constrained it. `assert_not_option` below guards a DIFFERENT thing --
+        # a leading `-` being read by git as a flag (#1267) -- and `is_dir()`
+        # says a path is THERE, not that it is ALLOWED.
+        #
+        # The registered tier, matching the `clear-sessions` route in
+        # routes/terminal.py: opening a worktree is an operation on a project
+        # that already exists, so there is no add-project case to accommodate.
+        # `contained_path` resolves first and tests containment against the
+        # resolved form, so `..` and symlink escapes are handled by resolve()
+        # rather than by string matching.
+        try:
+            resolved = contained_path(
+                project_path,
+                registered_project_roots(),
+                "registered project directories",
+            )
+        except ValueError:
+            # `from None`: the ValueError carries the rejected path, and the
+            # message here reaches the client through `client_error` verbatim.
+            raise InputRejectedError(
+                "Invalid projectPath: not inside a registered project"
+            ) from None
         if not resolved.is_dir():
-            raise ValueError(f"Project path does not exist: {project_path}")
-        # The project path is joined into the worktree paths that this service
+            raise InputRejectedError("Invalid projectPath: not a directory")
+        # The confined path is joined into the worktree paths that this service
         # passes to `git worktree add/remove` as positional operands, so assert
-        # at that boundary rather than relying on resolve() having produced
-        # something absolute (#1267).
+        # at that boundary too (#1267).
         self.project_path = Path(assert_not_option(str(resolved), "projectPath"))
 
         self.worktrees_dir = self.project_path / ".aifactory" / "worktrees" / "terminal"
