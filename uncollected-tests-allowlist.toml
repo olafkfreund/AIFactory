@@ -1,0 +1,49 @@
+# Test files in THIS repo that sit outside the paths CI collects.
+#
+# Read by the Factory hub's `scripts/check_test_collection.py`, fetched at a
+# pinned SHA by `.github/workflows/test-collection.yml` (Factory#844). The
+# collected paths are DERIVED from this repo's own `.github/workflows/*.yml`
+# pytest invocations, never declared here -- see that script's docstring.
+#
+# THIS LIST IS EMPTY, AND THAT IS THE POINT.
+#
+# Zero uncollected test files is this repo's actual state: 514 test files, all
+# of them inside the 18 paths derived from 15 workflow pytest invocations. An
+# empty list is not the evidence for that, though -- an absent file and an empty
+# file behave identically to the gate, so neither proves anything on its own.
+# The evidence is the COUNT the gate prints on every run:
+#
+#   Examined 514 test files against 18 collected path(s) [...] from 15 workflow
+#   pytest invocation(s); 0 uncollected, 0 registered, 0 unregistered, 0 dead
+#   entries.
+#
+# Read the count in the job log, not the length of this file. A gate that
+# examined zero items exits 2 rather than printing a clean verdict, precisely so
+# "scanned nothing" can never be mistaken for "found nothing wrong".
+#
+# This file exists ahead of its first entry so that whoever the gate first turns
+# red has somewhere obvious to go, and reads the four rules before writing one.
+#
+# THIS FILE IS NOT AN IGNORE LIST. Four rules, all enforced by the gate:
+#
+#   * An entry that matches NOTHING fails the gate (Factory#788). When a file
+#     becomes collected, its entry must be deleted in the same PR. So this list
+#     can only ratchet down.
+#   * `reason` is validated. Placeholders (TODO, TBD, N/A, none, placeholder,
+#     grandfathered) are rejected, as is anything under six words.
+#   * `issue` is REQUIRED and must look like Repo#123. An uncollected test with
+#     nobody's name on it is a permanent exception wearing a temporary hat.
+#   * Exact paths, no globs. A glob is how one entry quietly comes to cover a
+#     directory nobody reviewed.
+#
+# Shape, for when the first entry is needed:
+#
+#   [[allow]]
+#   path = "apps/backend/agents/test_refactoring.py"
+#   reason = """
+#   Asserts an entry point that does not exist yet; collecting it turns CI red \
+#   on a real defect that is being fixed separately.
+#   """
+#   issue = "AIFactory#123"
+#
+# Adding an entry is a reviewable diff. That is the point.
