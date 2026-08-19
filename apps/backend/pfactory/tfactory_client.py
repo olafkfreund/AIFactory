@@ -29,6 +29,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from core.git_credentials import authed_push_url
+
 _log = logging.getLogger(__name__)
 
 __all__ = [
@@ -288,10 +290,15 @@ def _build_branch(spec_id: str) -> str:
     return f"aifactory/{spec_id}"
 
 
-def _git_stdout(cwd: Path, args: list[str]) -> str:
+def _git_stdout(cwd: Path, args: list[str], env: dict[str, str] | None = None) -> str:
     """Run ``git <args>`` in ``cwd`` and return trimmed stdout (empty on failure)."""
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=60
+        ["git", *args],
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
     ).stdout.strip()
 
 
@@ -312,21 +319,11 @@ def _project_git_url(spec_dir: Path) -> str | None:
         return None
 
 
-def _authed_push_url(url: str) -> str:
-    """``url`` with a token injected for authenticated push, when one is available.
-
-    Unchanged https URL when there is no token or it is not a github.com https
-    remote (ssh remotes carry their own auth).
-    """
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    if token and url.startswith("https://github.com/"):
-        return url.replace("https://", f"https://x-access-token:{token}@", 1)
-    return url
-
-
-def _remote_tip(repo: Path, push_url: str, branch: str) -> str:
+def _remote_tip(
+    repo: Path, push_url: str, branch: str, env: dict[str, str] | None = None
+) -> str:
     """The commit ``origin`` currently has for ``branch`` (``ls-remote``), or ""."""
-    line = _git_stdout(repo, ["ls-remote", push_url, branch])
+    line = _git_stdout(repo, ["ls-remote", push_url, branch], env=env)
     return line.split()[0] if line else ""
 
 
@@ -392,17 +389,30 @@ def _git_info_and_push(spec_dir: Path, spec_id: str) -> tuple[str | None, str | 
         url = _git_stdout(repo, ["remote", "get-url", "origin"])
         if not url:
             return None, None
-        push_url = _authed_push_url(url)
-        subprocess.run(
-            ["git", "push", "--force", push_url, f"{sha}:refs/heads/{build_branch}"],
-            cwd=str(repo),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        # Verify origin actually carries the built commit now — a swallowed push
-        # failure sending TFactory to a stale tree was the whole #1007 bug.
-        if _remote_tip(repo, push_url, build_branch) != sha:
+        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
+        # world-readable for the lifetime of the child (AIFactory#1366). The URL
+        # and the credential env are yielded together, so the token is only ever
+        # offered to a remote this process rewrote.
+        with authed_push_url(url) as (push_url, git_env):
+            subprocess.run(
+                [
+                    "git",
+                    "push",
+                    "--force",
+                    push_url,
+                    f"{sha}:refs/heads/{build_branch}",
+                ],
+                cwd=str(repo),
+                env=git_env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            # Verify origin actually carries the built commit now — a swallowed
+            # push failure sending TFactory to a stale tree was the whole #1007
+            # bug.
+            remote_tip = _remote_tip(repo, push_url, build_branch, env=git_env)
+        if remote_tip != sha:
             _log.warning(
                 "[handoff] build commit %s did not land on origin/%s after push; "
                 "refusing the branch so TFactory does not verify a stale tree (#1007)",
