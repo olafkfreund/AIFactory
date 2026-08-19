@@ -96,7 +96,17 @@ def test_bounded_count():
 
 
 def _commits_preview(monkeypatch, tmp_path, options, mode):
-    """Drive the endpoint with subprocess.run captured, return (result, argv)."""
+    """Drive the endpoint with subprocess.run captured.
+
+    Returns ``(status, body, argv)``. The handler carries ``@honest_status``
+    (AIFactory#1126), so a refusal arrives as a ``JSONResponse`` with a 409
+    rather than a dict inside a 200 -- and the refusal tests below assert that
+    status, not only the body. A body-only assertion would pass against the
+    old 200-with-``success: False`` behaviour, which is the bug #1126 fixed.
+    """
+    import json as _json
+
+    from fastapi.responses import JSONResponse
     from server.routes import changelog as changelog_routes
 
     seen = {}
@@ -120,48 +130,54 @@ def _commits_preview(monkeypatch, tmp_path, options, mode):
     result = asyncio.run(
         changelog_routes.get_commits_preview(projectId="p1", request=request)
     )
-    return result, seen.get("cmd")
+    if isinstance(result, JSONResponse):
+        return result.status_code, _json.loads(bytes(result.body)), seen.get("cmd")
+    return 200, result, seen.get("cmd")
 
 
 def test_commits_preview_rejects_option_shaped_branch(monkeypatch, tmp_path):
     """A ref of `--output=<file>` must never reach the git argv."""
-    result, cmd = _commits_preview(
+    status, result, cmd = _commits_preview(
         monkeypatch,
         tmp_path,
         {"baseBranch": "--output=/tmp/pwned", "compareBranch": "HEAD"},
         "branch-diff",
     )
+    assert status == 409
     assert result["success"] is False
     assert "baseBranch" in result["error"]
     assert cmd is None  # git was never invoked
 
 
 def test_commits_preview_rejects_option_shaped_tag(monkeypatch, tmp_path):
-    result, cmd = _commits_preview(
+    status, result, cmd = _commits_preview(
         monkeypatch,
         tmp_path,
         {"type": "tag-range", "fromTag": "--output=/tmp/pwned", "toTag": "HEAD"},
         "history",
     )
+    assert status == 409
     assert result["success"] is False
     assert cmd is None
 
 
 def test_commits_preview_allows_ordinary_branches(monkeypatch, tmp_path):
-    result, cmd = _commits_preview(
+    status, result, cmd = _commits_preview(
         monkeypatch,
         tmp_path,
         {"baseBranch": "main", "compareBranch": "feature/x"},
         "branch-diff",
     )
+    assert status == 200
     assert result["success"] is True
     assert cmd[-1] == "main..feature/x"
 
 
 def test_commits_preview_bounds_count(monkeypatch, tmp_path):
-    result, cmd = _commits_preview(
+    status, result, cmd = _commits_preview(
         monkeypatch, tmp_path, {"type": "last-n", "count": "999999"}, "history"
     )
+    assert status == 409
     assert result["success"] is False
     assert cmd is None
 

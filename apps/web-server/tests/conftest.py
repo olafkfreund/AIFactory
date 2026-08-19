@@ -26,3 +26,14 @@ WEB_SERVER = Path(__file__).resolve().parents[1]
 
 if str(WEB_SERVER) not in sys.path:
     sys.path.insert(0, str(WEB_SERVER))
+
+# ``tests/`` itself, so ``verdict_helpers`` imports by name from any test file
+# rather than each one re-deriving how to unwrap an ``honest_status`` refusal.
+# pytest's default ``prepend`` import mode already inserts each test file's own
+# directory, but doing it here too means a test module that is imported (rather
+# than collected) still resolves it -- and it does not depend on which file
+# pytest happened to collect first (#903 again).
+TESTS_DIR = Path(__file__).resolve().parent
+
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))

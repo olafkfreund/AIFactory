@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
 from server.services.argv_safety import assert_not_option
+from server.services.http_verdict import honest_status
 from server.specpath import contained_path, registered_project_roots
 
 logger = logging.getLogger(__name__)
@@ -255,6 +256,7 @@ def get_terminal_command(terminal: str, path: str) -> list[str]:
 
 
 @router.post("/worktree/open-in-ide")
+@honest_status
 async def open_worktree_in_ide(request: OpenInIDERequest):
     """
     Open a worktree path in the specified IDE.
@@ -293,6 +295,7 @@ async def open_worktree_in_ide(request: OpenInIDERequest):
 
 
 @router.post("/worktree/open-in-terminal")
+@honest_status
 async def open_worktree_in_terminal(request: OpenInTerminalRequest):
     """
     Open a worktree path in the specified terminal emulator.

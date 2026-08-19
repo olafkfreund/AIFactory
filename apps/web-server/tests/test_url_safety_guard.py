@@ -16,6 +16,8 @@ from unittest.mock import patch
 import pytest
 from factory_common.url_safety import assert_safe_outbound_url
 from server.routes import git, llm_endpoints, settings
+from server.services.http_verdict import REFUSED_STATUS
+from verdict_helpers import verdict
 
 # 169.254.169.254 is the cloud metadata address. Both postures must refuse it;
 # that is the whole reason the permissive posture is not simply "no check".
@@ -136,9 +138,14 @@ async def test_git_ollama_model_routes_refuse_the_metadata_address() -> None:
         assert (await git.list_ollama_models(METADATA_BASE))["data"] == []
         embedding = await git.list_ollama_embedding_models(METADATA_BASE)
         assert embedding["data"]["embedding_models"] == []
-        pull = await git.pull_ollama_model(
-            git.PullModelRequest(modelName="x", baseUrl=METADATA_BASE)
+        pull_status, pull = verdict(
+            await git.pull_ollama_model(
+                git.PullModelRequest(modelName="x", baseUrl=METADATA_BASE)
+            )
         )
+    # The guard refuses, and the refusal reaches the caller on the status line
+    # as well as in the body (AIFactory#1126).
+    assert pull_status == REFUSED_STATUS
     assert pull["success"] is False
     assert "link-local/metadata" in pull["error"]
     opener.assert_not_called()
@@ -179,8 +186,13 @@ async def test_settings_local_provider_routes_refuse_the_metadata_address() -> N
             await settings.pull_ollama_model("m", METADATA_BASE),
             await settings.test_ollama_connection(METADATA_BASE, "m"),
         ]
-    for result in results:
-        assert result["success"] is False
+    for raw in results:
+        status, result = verdict(raw)
+        # `list_*` answers 200 with a `success: False`-free envelope; the
+        # probes that refuse answer 409. Either way the guard's text reaches
+        # the caller.
+        if result.get("success") is False:
+            assert status == REFUSED_STATUS
         assert "link-local/metadata" in result["error"]
     client.assert_not_called()
 
@@ -223,8 +235,10 @@ async def test_api_profile_probes_use_the_strict_posture() -> None:
         baseUrl="http://127.0.0.1:9999", apiKey="sk-secret"
     )
     with patch.object(settings, "build_no_redirect_opener") as opener:
-        test = await settings.test_api_connection(request)
-        discover = await settings.discover_api_models(request)
+        test_status, test = verdict(await settings.test_api_connection(request))
+        discover_status, discover = verdict(await settings.discover_api_models(request))
+    assert test_status == REFUSED_STATUS
+    assert discover_status == REFUSED_STATUS
     assert "non-public" in test["error"]
     assert "non-public" in discover["error"]
     opener.assert_not_called()

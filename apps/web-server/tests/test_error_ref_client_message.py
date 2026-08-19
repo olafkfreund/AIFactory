@@ -40,6 +40,8 @@ from unittest.mock import patch
 
 import pytest
 from server.routes import changelog, git
+from server.services.http_verdict import REFUSED_STATUS
+from verdict_helpers import verdict
 
 # Nothing legitimate says this. If it reaches a response body, some raise site
 # started forwarding a runtime exception's text.
@@ -54,7 +56,7 @@ async def test_a_rejected_field_still_returns_its_own_message() -> None:
         # Never touched: the validator rejects the ref before git is spawned.
         return_value={"p1": {"path": "/nonexistent/project"}},
     ):
-        result = await changelog.get_commits_preview(
+        status, result = verdict(await changelog.get_commits_preview(
             projectId="p1",
             request=changelog.CommitsPreviewRequest(
                 mode="branch-diff",
@@ -65,8 +67,10 @@ async def test_a_rejected_field_still_returns_its_own_message() -> None:
                     "compareBranch": "HEAD",
                 },
             ),
-        )
+        ))
 
+    # The refusal travels on the status line too (AIFactory#1126).
+    assert status == REFUSED_STATUS
     assert result["success"] is False
     # Verbatim, and it names the field the caller got wrong.
     assert result["error"] == "Invalid baseBranch: must be a plain git ref"
@@ -90,11 +94,14 @@ async def test_a_resolver_failure_does_not_leak_the_resolver_text() -> None:
         patch("socket.getaddrinfo", side_effect=socket.gaierror(-2, RESOLVER_TEXT)),
         patch.object(git, "build_no_redirect_opener") as opener,
     ):
-        result = await git.pull_ollama_model(
-            git.PullModelRequest(modelName="x", baseUrl="http://nope.invalid:11434")
+        status, result = verdict(
+            await git.pull_ollama_model(
+                git.PullModelRequest(modelName="x", baseUrl="http://nope.invalid:11434")
+            )
         )
 
     opener.assert_not_called()
+    assert status == REFUSED_STATUS
     assert result["success"] is False
     # The one that matters: nothing the resolver wrote.
     assert RESOLVER_TEXT not in result["error"]

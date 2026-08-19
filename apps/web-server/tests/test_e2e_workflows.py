@@ -35,6 +35,8 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from server.services.http_verdict import REFUSED_STATUS
+from verdict_helpers import verdict
 
 # ============================================================================
 # FIXTURES
@@ -143,12 +145,16 @@ class TestProfileManagementWorkflow:
             # The token store must not be world-readable.
             assert profiles_file.stat().st_mode & 0o777 == 0o600
 
-            # Step 2: Duplicate names are rejected
-            dup = asyncio.run(
-                settings_routes.save_claude_profile(
-                    settings_routes.ClaudeProfile(name="Work Account")
+            # Step 2: Duplicate names are rejected -- and the rejection travels
+            # on the status line, not only in the body (AIFactory#1126).
+            dup_status, dup = verdict(
+                asyncio.run(
+                    settings_routes.save_claude_profile(
+                        settings_routes.ClaudeProfile(name="Work Account")
+                    )
                 )
             )
+            assert dup_status == REFUSED_STATUS
             assert dup["success"] is False
 
             # Step 3: Activate the profile; env token follows it
@@ -185,11 +191,14 @@ class TestProfileManagementWorkflow:
                 )
             )
             assert result["success"] is True
-            clash = asyncio.run(
-                settings_routes.rename_claude_profile(
-                    profile_id_2, settings_routes.ProfileRename(name="Work Account")
+            clash_status, clash = verdict(
+                asyncio.run(
+                    settings_routes.rename_claude_profile(
+                        profile_id_2, settings_routes.ProfileRename(name="Work Account")
+                    )
                 )
             )
+            assert clash_status == REFUSED_STATUS
             assert clash["success"] is False
 
             # Step 6: Rate-limit switch to the second profile
@@ -214,11 +223,14 @@ class TestProfileManagementWorkflow:
             assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == personal_token
 
             # Step 7: Switching to the already-active profile is refused
-            again = asyncio.run(
-                settings_routes.retry_with_profile(
-                    settings_routes.RetryWithProfileRequest(profileId=profile_id_2)
+            again_status, again = verdict(
+                asyncio.run(
+                    settings_routes.retry_with_profile(
+                        settings_routes.RetryWithProfileRequest(profileId=profile_id_2)
+                    )
                 )
             )
+            assert again_status == REFUSED_STATUS
             assert again["success"] is False
 
             # Step 8: Delete the now-inactive first profile; a second delete
@@ -229,7 +241,10 @@ class TestProfileManagementWorkflow:
             stored = json.loads(profiles_file.read_text())
             assert [p["id"] for p in stored["profiles"]] == [profile_id_2]
             assert stored["activeProfileId"] == profile_id_2
-            gone = asyncio.run(settings_routes.delete_claude_profile(profile_id_1))
+            gone_status, gone = verdict(
+                asyncio.run(settings_routes.delete_claude_profile(profile_id_1))
+            )
+            assert gone_status == REFUSED_STATUS
             assert gone["success"] is False
 
     def test_api_profile_management_workflow(

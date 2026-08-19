@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from server.error_ref import client_error
 from server.project_registry import get_projects_file, load_projects
+from server.services.http_verdict import honest_status
 from server.specpath import browse_roots, registered_project_roots, within_roots
 
 from ..config import get_settings
@@ -240,12 +241,14 @@ async def cleanup_terminals():
 
 
 @router.post("/restore")
+@honest_status
 async def restore_session(session: dict):
     """Restore a terminal session."""
     return {"success": False, "error": "Session restoration not yet implemented"}
 
 
 @router.post("/restore-date")
+@honest_status
 async def restore_sessions_from_date(request: dict):
     """Restore terminal sessions from a date."""
     return {"success": False, "error": "Session restoration not yet implemented"}
@@ -359,6 +362,7 @@ async def generate_terminal_name(request: dict):
 
 
 @router.get("/worktrees")
+@honest_status
 async def list_terminal_worktrees(project: str = Query(...)):
     """List all terminal worktrees for a project.
 
@@ -423,6 +427,7 @@ async def create_terminal_worktree(request: CreateTerminalWorktreeRequest):
 
 
 @router.delete("/worktrees/{name}")
+@honest_status
 async def remove_terminal_worktree(
     name: str, project: str = Query(...), deleteBranch: bool = Query(False)
 ):
@@ -630,12 +635,14 @@ async def check_terminal_alive(terminal_id: str):
 
 
 @router.post("/{terminal_id}/invoke-claude")
+@honest_status
 async def invoke_claude_in_terminal(terminal_id: str, request: dict = None):
     """Invoke Claude CLI in terminal."""
     return {"success": False, "error": "Claude invocation not yet implemented"}
 
 
 @router.post("/{terminal_id}/resume-claude")
+@honest_status
 async def resume_claude_in_terminal(terminal_id: str, request: dict = None):
     """Resume Claude session in terminal."""
     return {"success": False, "error": "Claude resume not yet implemented"}

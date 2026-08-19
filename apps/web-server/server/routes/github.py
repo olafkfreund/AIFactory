@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
 from server.services.git_base_url import safe_git_base_url  # #1360
+from server.services.http_verdict import honest_status
 
 logger = logging.getLogger(__name__)
 
@@ -361,6 +362,7 @@ async def check_github_cli():
 
 
 @router.post("/cli/install")
+@honest_status
 def install_github_cli():
     """Install GitHub CLI (gh) from the official GitHub repository.
 
@@ -734,6 +736,7 @@ async def get_github_token():
 
 
 @router.post("/persist-token")
+@honest_status
 async def persist_github_token(request: PersistTokenRequest):
     """Persist the gh CLI token to a project's .aifactory/.env file.
 
@@ -818,6 +821,7 @@ async def get_github_branches(
 
 
 @router.post("/repos")
+@honest_status
 async def create_github_repo(request: CreateRepoRequest):
     """Create a new GitHub repository."""
     args = ["repo", "create", request.repoName, "--confirm"]
@@ -843,6 +847,7 @@ async def create_github_repo(request: CreateRepoRequest):
 
 
 @router.post("/remote")
+@honest_status
 async def add_git_remote(request: AddRemoteRequest):
     """Add GitHub remote to local repository."""
     remote_url = f"https://github.com/{request.repoFullName}.git"
@@ -1252,6 +1257,7 @@ async def _get_provider_issue_comments(provider, issueNumber: int) -> list[dict]
 
 
 @project_router.get("/repositories")
+@honest_status
 async def get_project_github_repositories(projectId: str):
     """Get GitHub repositories for a project."""
     project_path = _resolve_project_path(projectId)
@@ -1408,6 +1414,7 @@ async def check_project_github_connection(projectId: str):
 
 
 @project_router.get("/issues")
+@honest_status
 async def get_project_github_issues(projectId: str, state: str | None = Query(None)):
     """Get GitHub issues for a project."""
     project_path = _resolve_project_path(projectId)
@@ -1463,6 +1470,7 @@ async def get_project_github_issues(projectId: str, state: str | None = Query(No
 
 
 @project_router.get("/issues/{issueNumber}")
+@honest_status
 async def get_project_github_issue(projectId: str, issueNumber: int):
     """Get a specific GitHub issue."""
     project_path = _resolve_project_path(projectId)
@@ -1506,6 +1514,7 @@ async def get_project_github_issue(projectId: str, issueNumber: int):
 
 
 @project_router.get("/issues/{issueNumber}/comments")
+@honest_status
 async def get_project_github_issue_comments(projectId: str, issueNumber: int):
     """Get comments for a GitHub issue."""
     project_path = _resolve_project_path(projectId)
@@ -1567,6 +1576,7 @@ async def get_project_github_issue_comments(projectId: str, issueNumber: int):
 
 
 @project_router.post("/issues/{issueNumber}/investigate")
+@honest_status
 async def investigate_github_issue(
     projectId: str, issueNumber: int, request: InvestigateRequest
 ):
@@ -1718,6 +1728,7 @@ async def investigate_github_issue(
 
 
 @project_router.post("/import")
+@honest_status
 async def import_github_issues(projectId: str, request: ImportIssuesRequest):
     """Import GitHub issues as tasks.
 
@@ -1900,6 +1911,7 @@ async def import_github_issues(projectId: str, request: ImportIssuesRequest):
 
 
 @project_router.post("/issues/{issueNumber}/close")
+@honest_status
 async def close_github_issue(projectId: str, issueNumber: int):
     """Close a GitHub issue."""
     project_path = _resolve_project_path(projectId)
@@ -1931,6 +1943,7 @@ async def close_github_issue(projectId: str, issueNumber: int):
 
 
 @project_router.get("/prs")
+@honest_status
 async def get_project_github_prs(
     projectId: str,
     state: str | None = Query(None),
@@ -2379,6 +2392,7 @@ async def get_pr_review_logs(projectId: str, prNumber: int):
 
 
 @project_router.post("/releases")
+@honest_status
 async def create_github_release(projectId: str, request: CreateReleaseRequest):
     """Create a GitHub release."""
     project_path = _resolve_project_path(projectId)
@@ -2464,6 +2478,7 @@ async def list_github_models():
 
 
 @router.get("/fork-info")
+@honest_status
 async def get_fork_info(
     project_path: str = Query(..., description="Absolute path to the project"),
 ):

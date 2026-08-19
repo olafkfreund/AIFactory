@@ -64,6 +64,8 @@ DEFAULT_PARALLEL_WORKERS = 3
 MIN_PARALLEL_WORKERS = 1
 MAX_PARALLEL_WORKERS = 8
 
+from server.services.http_verdict import honest_status
+
 from ..config import get_settings
 
 router = APIRouter()
@@ -992,6 +994,7 @@ async def detect_local_llm_providers():
 
 
 @router.get("/ollama/models")
+@honest_status
 async def list_ollama_models(
     ollamaBaseUrl: str = Query(default="http://localhost:11434"),
 ):
@@ -1046,6 +1049,7 @@ async def list_ollama_models(
 
 
 @router.get("/openai-compat/models")
+@honest_status
 async def list_openai_compat_models(
     baseUrl: str = Query(default="http://localhost:8080"),
     apiKey: str | None = Query(default=None),
@@ -1108,6 +1112,7 @@ class OpenAICompatTestRequest(BaseModel):
 
 
 @router.post("/openai-compat/test")
+@honest_status
 async def test_openai_compat_connection(request: OpenAICompatTestRequest):
     """Test connectivity to an OpenAI-compatible server.
 
@@ -1160,6 +1165,7 @@ async def test_openai_compat_connection(request: OpenAICompatTestRequest):
 
 
 @router.post("/ollama/pull")
+@honest_status
 async def pull_ollama_model(
     modelName: str = Body(..., embed=True),
     ollamaBaseUrl: str = Body(default="http://localhost:11434", embed=True),
@@ -1199,6 +1205,7 @@ async def pull_ollama_model(
 
 
 @router.post("/ollama/test")
+@honest_status
 async def test_ollama_connection(
     ollamaBaseUrl: str = Body(..., embed=True), modelName: str = Body(..., embed=True)
 ):
@@ -1408,6 +1415,7 @@ class ClaudeProfile(BaseModel):
 
 
 @router.post("/claude-profiles")
+@honest_status
 async def save_claude_profile(profile: ClaudeProfile):
     """Save a Claude profile.
 
@@ -1485,6 +1493,7 @@ async def save_claude_profile(profile: ClaudeProfile):
 
 
 @router.delete("/claude-profiles/{profile_id}")
+@honest_status
 async def delete_claude_profile(profile_id: str):
     """Delete a Claude profile.
 
@@ -1537,6 +1546,7 @@ class ProfileRename(BaseModel):
 
 
 @router.patch("/claude-profiles/{profile_id}")
+@honest_status
 async def rename_claude_profile(profile_id: str, update: ProfileRename):
     """Rename a Claude profile with validation."""
     try:
@@ -1591,6 +1601,7 @@ class ActiveProfileRequest(BaseModel):
 
 
 @router.post("/claude-profiles/active")
+@honest_status
 async def set_active_claude_profile(request: ActiveProfileRequest):
     """Set the active Claude profile."""
     try:
@@ -1619,6 +1630,7 @@ async def set_active_claude_profile(request: ActiveProfileRequest):
 
 
 @router.post("/claude-profiles/{profile_id}/initialize")
+@honest_status
 async def initialize_claude_profile(profile_id: str):
     """Initialize a Claude profile.
 
@@ -1717,6 +1729,7 @@ def _poll_token_and_save(
 
 
 @router.post("/claude-profiles/{profile_id}/start-oauth")
+@honest_status
 async def start_claude_profile_oauth(profile_id: str):
     """
     Start OAuth token polling for a profile.
@@ -1774,6 +1787,7 @@ class SetTokenRequest(BaseModel):
 
 
 @router.post("/claude-profiles/{profile_id}/token")
+@honest_status
 async def set_claude_profile_token(profile_id: str, request: SetTokenRequest):
     """Set token for a Claude profile with validation and secure storage."""
     try:
@@ -1907,6 +1921,7 @@ async def get_auto_switch_settings():
 
 
 @router.patch("/auto-switch")
+@honest_status
 async def update_auto_switch_settings(settings_update: AutoSwitchSettingsUpdate):
     """Update auto-switch settings with validation and secure storage.
 
@@ -1973,6 +1988,7 @@ class RetryWithProfileRequest(BaseModel):
 
 
 @router.post("/retry-with-profile")
+@honest_status
 async def retry_with_profile(request: RetryWithProfileRequest):
     """Switch to a different Claude profile and prepare for operation retry.
 
@@ -2251,6 +2267,7 @@ class ApiProfileUpdate(BaseModel):
 
 
 @router.put("/api-profiles/{profile_id}")
+@honest_status
 async def update_api_profile(profile_id: str, profile_update: ApiProfileUpdate):
     """Update an API profile.
 
@@ -2371,6 +2388,7 @@ async def update_api_profile(profile_id: str, profile_update: ApiProfileUpdate):
 
 
 @router.delete("/api-profiles/{profile_id}")
+@honest_status
 async def delete_api_profile(profile_id: str):
     """
     Delete an API profile.
@@ -2443,6 +2461,7 @@ async def delete_api_profile(profile_id: str):
 
 
 @router.post("/api-profiles/active")
+@honest_status
 async def set_active_api_profile(request: dict):
     """Set the active API profile."""
     try:
@@ -2479,6 +2498,7 @@ class TestConnectionRequest(BaseModel):
 
 
 @router.post("/api-profiles/test")
+@honest_status
 async def test_api_connection(request: TestConnectionRequest):
     """Test connection to an API endpoint."""
     import urllib.request
@@ -2505,6 +2525,7 @@ async def test_api_connection(request: TestConnectionRequest):
 
 
 @router.post("/api-profiles/discover-models")
+@honest_status
 async def discover_api_models(request: TestConnectionRequest):
     """Discover available models from an API endpoint."""
     import json as json_module

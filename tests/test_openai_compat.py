@@ -91,6 +91,11 @@ class TestListOpenAICompatModels:
         return a JSON body with {success: false, error: <message>} rather than
         raising an unhandled exception that would produce a 500 response with
         no structured body.
+
+        The status is 409, not 200: the probe did not reach the server, so the
+        call did not do what was asked (AIFactory#1126). The guarantee this
+        test was written for is unchanged and is what it still asserts -- a
+        structured body, never a bare 5xx with a stack trace.
         """
         import httpx
 
@@ -103,9 +108,9 @@ class TestListOpenAICompatModels:
                 params={"baseUrl": "http://127.0.0.1:19999"},
             )
 
-        # Must always return 200 with a structured error body — never a bare 500
-        assert resp.status_code == 200, (
-            f"Expected 200 (structured error), got {resp.status_code}"
+        # A refusal, with a structured error body — never a bare 500.
+        assert resp.status_code == 409, (
+            f"Expected 409 (structured refusal), got {resp.status_code}"
         )
         data = resp.json()
         assert data.get("success") is False, (
@@ -154,7 +159,10 @@ class TestListOpenAICompatModels:
         assert "bge-m3" not in names
 
     def test_timeout_returns_error_json(self, client):
-        """ConnectTimeout must also result in structured error JSON, not a 500."""
+        """ConnectTimeout must also result in structured error JSON, not a 500.
+
+        409 rather than 200 since #1126; the body is what this guards.
+        """
         import httpx
 
         with patch(
@@ -166,7 +174,7 @@ class TestListOpenAICompatModels:
                 params={"baseUrl": "http://10.255.255.1:8080"},
             )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 409
         data = resp.json()
         assert data.get("success") is False
         assert "error" in data
@@ -196,8 +204,8 @@ class TestOpenAICompatConnectionTest:
                 json={"baseUrl": "http://127.0.0.1:19999"},
             )
 
-        assert resp.status_code == 200, (
-            f"Expected 200 with failure body, got {resp.status_code}"
+        assert resp.status_code == 409, (
+            f"Expected 409 with failure body, got {resp.status_code}"
         )
         data = resp.json()
         assert data.get("success") is False, (
@@ -239,7 +247,10 @@ class TestOpenAICompatConnectionTest:
         assert "message" in data
 
     def test_timeout_returns_failure_json(self, client):
-        """Timeout must produce {success: false, error: ...} not an exception."""
+        """Timeout must produce {success: false, error: ...} not an exception.
+
+        409 rather than 200 since #1126; the body is what this guards.
+        """
         import httpx
 
         with patch(
@@ -251,7 +262,7 @@ class TestOpenAICompatConnectionTest:
                 json={"baseUrl": "http://10.255.255.1:8080"},
             )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 409
         data = resp.json()
         assert data.get("success") is False
         assert "error" in data
@@ -277,7 +288,10 @@ class TestOpenAICompatConnectionTest:
                 json={"baseUrl": "http://localhost:1234", "apiKey": "sk-test"},
             )
 
-        # Should be 200 (structured error), not 422 (validation failure)
-        assert resp.status_code == 200
+        # The point of this test is that apiKey does not fail validation, so
+        # what matters is that this is NOT a 422. It is a 409 -- a structured
+        # refusal from the probe itself (AIFactory#1126) -- not a rejected body.
+        assert resp.status_code != 422
+        assert resp.status_code == 409
         data = resp.json()
         assert data.get("success") is False
