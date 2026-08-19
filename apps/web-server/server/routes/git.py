@@ -10,14 +10,14 @@ import subprocess
 from pathlib import Path
 
 from factory_common.logsafe import sanitize_log
+from factory_common.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from server.error_ref import client_error
-from server.services.url_safety import (
-    assert_safe_outbound_url,
-    build_no_redirect_opener,
-)
 from server.specpath import browse_roots, within_roots
 
 logger = logging.getLogger(__name__)

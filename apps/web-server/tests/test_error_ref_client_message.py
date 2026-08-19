@@ -14,12 +14,23 @@ receives. Testing ``client_error``'s return value instead would pass just as
 happily while the route dropped it on the floor.
 
 The second test is also the mutation check for the mechanism. The safe sentence
-now travels as ``InputRejectedError.client_message`` -- a plain string this
-repo's validators write -- rather than as ``str(exc)``, which renders whatever
+travels as ``InputRejectedError.client_message`` -- a plain string this repo's
+validators write -- rather than as ``str(exc)``, which renders whatever
 populated ``args``. That mechanism is only worth anything while the raise sites
-keep their end of the bargain, so: rewrite ``services/url_safety.py``'s
-``socket.gaierror`` branch to ``raise InputRejectedError(f"... {exc}")`` and
-``test_a_resolver_failure_takes_the_reference_id_path`` goes red on the body.
+keep their end of the bargain, so: put the ``socket.gaierror`` back into
+``factory_common/url_safety.py``'s message (``raise InputRejectedError(f"cannot
+resolve host {host!r}: {exc}")``, which is what the deleted web-server fork
+did) and ``test_a_resolver_failure_does_not_leak_the_resolver_text`` goes red on
+the body.
+
+What changed in #1361: the resolve failure used to raise a plain ``ValueError``
+carrying the resolver's text, so this server hid it behind a correlation id
+while ``apps/backend`` -- which interpolates the same message into text the
+agent reads back -- did not. The canonical now drops the resolver text at the
+raise site and marks the message safe, so the fix holds for every consumer
+rather than for whichever handler happened to be careful. The assertion that
+matters is unchanged and is the first one: the resolver's wording must not
+cross.
 """
 
 from __future__ import annotations
@@ -63,14 +74,17 @@ async def test_a_rejected_field_still_returns_its_own_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_resolver_failure_takes_the_reference_id_path() -> None:
+async def test_a_resolver_failure_does_not_leak_the_resolver_text() -> None:
     """A DNS failure's text is the resolver's, not ours. It must not cross.
 
-    ``url_safety`` raises a plain ``ValueError`` here on purpose, so
-    ``client_error`` logs it and returns a correlation id. Turn that raise into
-    an ``InputRejectedError`` carrying ``str(exc)`` and this assertion fails --
-    which is the point: the mechanism cannot police the raise sites, so a test
-    does.
+    The guard drops it at the raise site (Factory#831) and keeps it on
+    ``__cause__``. Re-interpolate it -- ``InputRejectedError(f"... {exc}")``, the
+    shape the deleted fork had -- and this goes red: the mechanism cannot police
+    the raise sites, so a test does.
+
+    The HOST does cross, and should: it is the string the caller just sent, so
+    "cannot resolve host 'nope.invalid'" is a fixable 400 rather than a support
+    ticket. That is the whole distinction ``InputRejectedError`` marks.
     """
     with (
         patch("socket.getaddrinfo", side_effect=socket.gaierror(-2, RESOLVER_TEXT)),
@@ -82,6 +96,9 @@ async def test_a_resolver_failure_takes_the_reference_id_path() -> None:
 
     opener.assert_not_called()
     assert result["success"] is False
+    # The one that matters: nothing the resolver wrote.
     assert RESOLVER_TEXT not in result["error"]
-    assert "nope.invalid" not in result["error"]
-    assert "reference" in result["error"]
+    assert "Errno" not in result["error"]
+    # Developer-written, and it names the field the caller got wrong.
+    assert result["error"] == "cannot resolve host 'nope.invalid'"
+    assert "reference" not in result["error"]

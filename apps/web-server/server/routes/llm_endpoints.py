@@ -23,16 +23,16 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from factory_common.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, HttpUrl, SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.error_ref import client_error
-from server.services.url_safety import (
-    assert_safe_outbound_url,
-    build_no_redirect_opener,
-)
 
 from ..database import LLMEndpoint, User
 from ..database.engine import get_db

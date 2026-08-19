@@ -6,8 +6,8 @@ and function-local imports that sharing it across those two packages would
 otherwise need (TID252 / PLC0415). A leaf module they can both import at the top
 also keeps ``auto_fix_service`` from importing a routes module for one function.
 
-This adds no SSRF logic: it calls ``url_safety.assert_safe_outbound_url``, the
-guard every live web-server call site here already uses. Growing a second
+This adds no SSRF logic: it calls ``factory_common.url_safety.assert_safe_outbound_url``,
+the fleet canonical every live web-server call site uses. Growing a second
 dialect of the address check is the failure mode, not the fix.
 
 Ported from TFactory's ``server/services/git_base_url.py`` (TFactory#1116) and
@@ -16,7 +16,7 @@ PFactory#611, which closed the identical defect there.
 
 from __future__ import annotations
 
-from server.services.url_safety import assert_safe_outbound_url
+from factory_common.url_safety import assert_safe_outbound_url
 
 
 def safe_git_base_url(base_url: str | None) -> str | None:

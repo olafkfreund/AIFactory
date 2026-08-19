@@ -14,6 +14,7 @@ keeping the tests hermetic/offline.
 """
 
 import asyncio
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from unittest.mock import patch
 import pytest
 from agents.tools_pkg.tools.web import guarded_web_fetch
 from factory_common import url_safety
+from factory_common.client_errors import InputRejectedError
 from security.hooks import web_fetch_security_hook
 from security.url_guard import assert_url_not_ssrf, fetch_following_safe_redirects
 
@@ -107,6 +109,46 @@ class TestWebFetchHook:
     @pytest.mark.parametrize("url", SAFE_URLS)
     def test_hook_allows_public(self, url):
         assert _run_hook("WebFetch", {"url": url}) == {}
+
+    def test_a_resolve_failure_does_not_leak_the_resolver_text(self):
+        """AIFactory#1361 / Factory#831: the block reason is OURS, not the resolver's.
+
+        The hook interpolates the guard's message straight into ``reason``,
+        which the agent reads back and which routinely ends up in a run log the
+        operator reads. The guard used to render the ``socket.gaierror`` into
+        that message -- ``cannot resolve host 'x': [Errno -2] Name or service
+        not known`` -- so third-party wording crossed a boundary on a
+        repo-owned exception. The host is the caller's own input and stays; the
+        resolver's text is kept on ``__cause__`` and nowhere else.
+
+        Restore the interpolation in ``factory_common/url_safety.py`` and this
+        goes red. Asserting on the REASON STRING, not on "was it blocked":
+        blocking is what it does in both worlds.
+        """
+        sentinel = "SENTINEL-resolver-detail-Name-or-service-not-known"
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror(-2, sentinel)):
+            out = _run_hook("WebFetch", {"url": "http://nope.invalid/x"})
+
+        assert out.get("decision") == "block"
+        assert sentinel not in out["reason"]
+        assert "Errno" not in out["reason"]
+        # Developer-written, and it still names what the caller got wrong.
+        assert "cannot resolve host 'nope.invalid'" in out["reason"]
+
+    def test_the_guard_marks_its_refusals_as_caller_safe(self):
+        """The mark is what makes the message reusable across consumers.
+
+        The web-server hands ``InputRejectedError.client_message`` back verbatim
+        while giving every other exception a correlation id. Before #1361 the
+        resolve branch raised a bare ``ValueError``, so that server hid the text
+        and this runtime -- which interpolates it -- did not. Same message, two
+        opposite treatments, decided by the handler rather than the raise site.
+        """
+        with pytest.raises(InputRejectedError) as caught:
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror(-2, "boom")):
+                assert_url_not_ssrf("http://nope.invalid/x")
+        assert caught.value.client_message == "cannot resolve host 'nope.invalid'"
+        assert isinstance(caught.value.__cause__, socket.gaierror)
 
     def test_websearch_query_passes(self):
         # WebSearch carries a query, not a URL — nothing to validate.
