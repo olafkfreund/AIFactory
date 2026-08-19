@@ -107,12 +107,14 @@ def test_non_http_scheme_is_refused():
 def test_unresolvable_base_url_fails_closed(monkeypatch):
     """DNS failure is unsafe, not a pass-through.
 
-    ``ValueError``, not ``InputRejectedError``: the DNS branch of
-    ``assert_safe_outbound_url`` is the one raise site in that function that
-    still raises the base class (every other refusal there is an
-    ``InputRejectedError``, which subclasses ``ValueError``). Fails closed
-    either way, so this asserts the property the guard promises rather than
-    hard-coding an inconsistency #1360 did not introduce.
+    Asserted as ``ValueError``, the property the guard promises, rather than as
+    the concrete class: the DNS branch used to be the one raise site in
+    ``assert_safe_outbound_url`` that still raised the base class, and since
+    #1361 it raises ``InputRejectedError`` like every other refusal there
+    (which subclasses ``ValueError``). Fails closed either way, and this test
+    did not have to change to say so.
+
+    What DOES matter about that branch is asserted below: the message is ours.
     """
 
     def boom(*args, **kwargs):
@@ -121,6 +123,35 @@ def test_unresolvable_base_url_fails_closed(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", boom)
     with pytest.raises(ValueError):
         safe_git_base_url("https://gitlab.nonexistent.invalid")
+
+
+def test_a_resolve_failure_does_not_leak_the_resolver_text(monkeypatch):
+    """#1361: the refusal quotes the caller's own host and nothing else.
+
+    This is the path a credential rides on -- ``gitBaseUrl`` becomes the
+    provider's ``_base_url`` and the provider attaches a GitLab
+    ``PRIVATE-TOKEN`` or an ADO PAT. The guard used to render the
+    ``socket.gaierror`` into its message, so the resolver's wording travelled
+    out on a repo-owned exception. Put ``{exc}`` back into the canonical's
+    resolve branch and this goes red.
+    """
+    sentinel = "SENTINEL-resolver-detail-Name-or-service-not-known"
+
+    def boom(*args, **kwargs):
+        raise socket.gaierror(-2, sentinel)
+
+    monkeypatch.setattr(socket, "getaddrinfo", boom)
+    with pytest.raises(InputRejectedError) as caught:
+        safe_git_base_url("https://gitlab.nonexistent.invalid")
+
+    assert sentinel not in caught.value.client_message
+    assert "Errno" not in caught.value.client_message
+    assert (
+        caught.value.client_message
+        == "cannot resolve host 'gitlab.nonexistent.invalid'"
+    )
+    # Kept, just not in anything a caller sees.
+    assert isinstance(caught.value.__cause__, socket.gaierror)
 
 
 # ---------------------------------------------------------------------------
