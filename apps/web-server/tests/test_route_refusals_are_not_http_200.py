@@ -97,7 +97,9 @@ def _returns_top_level_success_false(fn: ast.AST) -> bool:
     for node in ast.walk(fn):
         if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Dict)):
             continue
-        for key, value in zip(node.value.keys, node.value.values):
+        # `keys` and `values` are the same length by construction on an
+        # `ast.Dict`, so strict= is free here and satisfies B905.
+        for key, value in zip(node.value.keys, node.value.values, strict=True):
             if (
                 isinstance(key, ast.Constant)
                 and key.value == "success"
