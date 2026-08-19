@@ -17,8 +17,9 @@ from server.routes.email import _js_string, _oauth_result_html
 XSS = "<script>alert(1)</script>"
 
 
-def _body(**kw) -> str:
-    return _oauth_result_html(success=False, **kw).body.decode()
+def _body(**kw: str) -> str:
+    body = _oauth_result_html(success=False, **kw).body
+    return bytes(body).decode()
 
 
 def test_message_is_escaped_in_the_html_context():
