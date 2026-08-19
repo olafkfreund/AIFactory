@@ -19,6 +19,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from core.git_credentials import authed_push_url
+
 _log = logging.getLogger(__name__)
 
 WORKSPACE_URI_ENV = "WORKSPACE_URI"
@@ -125,18 +127,18 @@ def maybe_push_workspace_branch(
         if not branch or not url:
             _log.warning("[workspace_fetch] worktree has no branch/origin; skip push")
             return False
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        push_url = url
-        if token and url.startswith("https://github.com/"):
-            push_url = url.replace("https://", f"https://x-access-token:{token}@", 1)
-        res = subprocess.run(  # noqa: S603
-            ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
-            cwd=str(wt),
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
+        # The token rides in GIT_ASKPASS, never in argv — /proc/<pid>/cmdline is
+        # world-readable for the lifetime of the child (AIFactory#1366).
+        with authed_push_url(url) as (push_url, git_env):
+            res = subprocess.run(  # noqa: S603
+                ["git", "push", push_url, f"HEAD:{branch}"],  # noqa: S607
+                cwd=str(wt),
+                env=git_env,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
         if res.returncode != 0:
             _log.warning("[workspace_fetch] branch push failed: %s", res.stderr[:200])
             return False
