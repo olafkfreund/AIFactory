@@ -156,7 +156,9 @@ class ProjectCreate(BaseModel):
         v = v.strip()
         # Security (#323 C5): branch flows into `git clone --branch <v>`; reject
         # a leading '-' (arg injection) and anything outside git's ref charset.
-        if v.startswith("-") or not re.match(r"^[A-Za-z0-9._/-]+$", v):
+        # `fullmatch`: the anchored `match` form also accepts a trailing
+        # newline, and this value reaches a git argv.
+        if v.startswith("-") or not re.fullmatch(r"[A-Za-z0-9._/-]+", v):
             raise ValueError("Invalid branch name")
         return v
 

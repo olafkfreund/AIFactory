@@ -14,6 +14,7 @@ import secrets
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from html import escape as html_escape
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -705,7 +706,7 @@ def _oauth_result_html(
 <html>
 <head><title>AIFactory - Email Connection</title></head>
 <body>
-<p>{message}</p>
+<p>{html_escape(message)}</p>
 <script>
   if (window.opener) {{
     var payload = {{
@@ -725,5 +726,23 @@ def _oauth_result_html(
 
 
 def _js_string(s: str) -> str:
-    """Escape a string for safe embedding in JavaScript."""
-    return "'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
+    """Escape a string for safe embedding in a JS string literal inside <script>.
+
+    Quote/backslash/newline escaping alone is NOT enough here. The literal is
+    emitted inside an inline ``<script>`` element, and the HTML parser looks for
+    the closing tag BEFORE the JS parser sees anything -- so a value containing
+    ``</script>`` terminates the script element and everything after it is
+    parsed as markup, no quote required. ``<`` is therefore escaped to its
+    ``\\x3c`` JS escape, which is the same character to the JS string and no
+    longer a tag opener to the HTML parser. ``&`` is left alone deliberately:
+    inline (non-module) script content is CDATA, so entities are not decoded.
+    """
+    return (
+        "'"
+        + s.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("<", "\\x3c")
+        + "'"
+    )
