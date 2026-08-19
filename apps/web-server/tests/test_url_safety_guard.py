@@ -222,8 +222,11 @@ async def test_api_profile_probes_refuse_the_metadata_address() -> None:
         baseUrl="http://169.254.169.254/latest/meta-data", apiKey="sk-live-DEADBEEF"
     )
     with patch.object(settings, "build_no_redirect_opener") as opener:
-        result = await settings.test_api_connection(request)
+        status, result = verdict(await settings.test_api_connection(request))
     opener.assert_not_called()
+    # The refusal also travels on the status line (AIFactory#1126); the
+    # observable this test turns on is still `opener.assert_not_called()`.
+    assert status == REFUSED_STATUS
     assert result["success"] is False
     assert "link-local/metadata" in result["error"]
 
