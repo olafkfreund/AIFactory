@@ -14,6 +14,30 @@ This module provides:
 Uses lazy imports to avoid circular dependencies.
 """
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Bound lazily by __getattr__ below; declared here so static analysis
+    # (CodeQL py/undefined-export, mypy, IDEs) can resolve every __all__ entry.
+    from .base import AUTO_CONTINUE_DELAY_SECONDS, HUMAN_INTERVENTION_FILE
+    from .coder import run_autonomous_agent
+    from .memory_manager import (
+        debug_memory_system_status,
+        get_graphiti_context,
+        save_session_memory,
+        save_session_to_graphiti,
+    )
+    from .planner import run_followup_planner
+    from .session import post_session_processing, run_agent_session
+    from .utils import (
+        find_phase_for_subtask,
+        find_subtask_in_plan,
+        get_commit_count,
+        get_latest_commit,
+        load_implementation_plan,
+        sync_plan_to_source,
+    )
+
 __all__ = [
     # Main API
     "run_autonomous_agent",
