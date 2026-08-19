@@ -1296,7 +1296,13 @@ async def create_worktree(projectId: str, request: CreateWorktreeRequest):
     if not name:
         return {"success": False, "error": "Worktree name cannot be empty"}
 
-    if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+    # `fullmatch`, not `match`: with `re.match` the trailing `$` also matches
+    # just BEFORE a final newline, so "ok\n" passed this check and became a
+    # directory name. That one is not traversal on its own, but a validator
+    # that accepts a character it was written to reject is the wrong thing to
+    # build a path on -- and `fullmatch` is also the form CodeQL models as a
+    # sanitizer, so the alert clears because the check got stricter.
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", name):
         return {
             "success": False,
             "error": "Worktree name must contain only letters, numbers, dashes, and underscores",

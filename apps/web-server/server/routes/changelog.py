@@ -20,6 +20,7 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
+from server.specpath import safe_spec_component
 
 from ..services.insights_service import get_insights_service
 
@@ -159,7 +160,25 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
     specs_dir = project_path / ".aifactory" / "specs"
 
     specs = []
-    for task_id in request.taskIds:
+    for raw_task_id in request.taskIds:
+        # `taskIds` is a request BODY field, so unlike the `{projectId}` path
+        # parameter it is NOT constrained by Starlette's `[^/]+` route regex --
+        # it can carry separators and `..`. It is joined onto `specs_dir` and
+        # also interpolated into a `glob` pattern below, so it must be a bare
+        # component before either use. Invalid ids are reported per-task rather
+        # than failing the whole batch: the endpoint is a bulk read and one bad
+        # id should not lose the other results.
+        try:
+            task_id = safe_spec_component(raw_task_id, "taskId")
+        except ValueError:
+            specs.append(
+                {
+                    "taskId": str(raw_task_id),
+                    "content": None,
+                    "error": "Invalid task id",
+                }
+            )
+            continue
         # Try to find spec.md for this task
         # Task IDs are like "001-feature-name"
         spec_path = specs_dir / task_id / "spec.md"

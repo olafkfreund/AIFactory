@@ -22,7 +22,10 @@ class TerminalWorktreeService:
 
     # Leading character must be alphanumeric: `[a-z0-9-_]+` also matched
     # "-force", and the name reaches a git argv as a path component (#1267).
-    WORKTREE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+    # `$` also matches just BEFORE a trailing newline, so the pattern is used
+    # with `fullmatch` below rather than `match`: "ok\n" satisfied the anchored
+    # `match` form and became a directory name and a branch name.
+    WORKTREE_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
     MAX_NAME_LENGTH = 100
 
     def __init__(self, project_path: str):
@@ -291,7 +294,7 @@ class TerminalWorktreeService:
                 f"Worktree name cannot exceed {self.MAX_NAME_LENGTH} characters"
             )
 
-        if not self.WORKTREE_NAME_PATTERN.match(name):
+        if not self.WORKTREE_NAME_PATTERN.fullmatch(name):
             raise ValueError(
                 "Worktree name must be lowercase alphanumeric with dashes/underscores only"
             )
