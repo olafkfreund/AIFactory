@@ -79,9 +79,7 @@ def _is_route_decorator(node: ast.expr) -> bool:
 
 def _decorator_names(fn: ast.AST) -> list[str]:
     decorators = getattr(fn, "decorator_list", [])
-    return [
-        ast.unparse(d.func if isinstance(d, ast.Call) else d) for d in decorators
-    ]
+    return [ast.unparse(d.func if isinstance(d, ast.Call) else d) for d in decorators]
 
 
 def _returns_top_level_success_false(fn: ast.AST) -> bool:
@@ -337,7 +335,9 @@ async def test_cli_accounts_install_refusal_has_a_status() -> None:
     wrapped it in a coroutine. See `test_a_sync_handler_stays_sync`.
     """
     with patch.object(cli_accounts.subprocess, "run") as run:
-        run.return_value = subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        run.return_value = subprocess.CompletedProcess(
+            [], returncode=1, stdout="", stderr=""
+        )
         result = cli_accounts.install_or_update_cli(cli="codex")
     status, payload = verdict(result)
     assert status == REFUSED_STATUS

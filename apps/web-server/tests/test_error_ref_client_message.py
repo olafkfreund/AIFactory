@@ -56,18 +56,20 @@ async def test_a_rejected_field_still_returns_its_own_message() -> None:
         # Never touched: the validator rejects the ref before git is spawned.
         return_value={"p1": {"path": "/nonexistent/project"}},
     ):
-        status, result = verdict(await changelog.get_commits_preview(
-            projectId="p1",
-            request=changelog.CommitsPreviewRequest(
-                mode="branch-diff",
-                options={
-                    # `git log --output=<file>` is an arbitrary file write, which
-                    # is why a ref may not begin with '-'.
-                    "baseBranch": "--output=pwned",
-                    "compareBranch": "HEAD",
-                },
-            ),
-        ))
+        status, result = verdict(
+            await changelog.get_commits_preview(
+                projectId="p1",
+                request=changelog.CommitsPreviewRequest(
+                    mode="branch-diff",
+                    options={
+                        # `git log --output=<file>` is an arbitrary file write, which
+                        # is why a ref may not begin with '-'.
+                        "baseBranch": "--output=pwned",
+                        "compareBranch": "HEAD",
+                    },
+                ),
+            )
+        )
 
     # The refusal travels on the status line too (AIFactory#1126).
     assert status == REFUSED_STATUS

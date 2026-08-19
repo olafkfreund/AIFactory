@@ -38,6 +38,7 @@ from server.crypto.secret_field import (
     unseal_profiles,
 )
 from server.error_ref import client_error
+from server.services.http_verdict import honest_status
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
@@ -63,8 +64,6 @@ MemoryEmbeddingProviderType = Literal[
 DEFAULT_PARALLEL_WORKERS = 3
 MIN_PARALLEL_WORKERS = 1
 MAX_PARALLEL_WORKERS = 8
-
-from server.services.http_verdict import honest_status
 
 from ..config import get_settings
 

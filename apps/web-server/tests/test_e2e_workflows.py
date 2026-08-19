@@ -38,6 +38,19 @@ import pytest
 from server.services.http_verdict import REFUSED_STATUS
 from verdict_helpers import verdict
 
+
+def _refused(result):
+    """Assert the handler refused on the STATUS line; return its body.
+
+    These handlers carry `@honest_status` (AIFactory#1126), so a refusal is a
+    409 rather than a `success: False` inside a 200. Asserting only the body
+    would pass against the old behaviour, which is the bug that issue fixed.
+    """
+    status, body = verdict(result)
+    assert status == REFUSED_STATUS, f"expected a refusal status, got {status}"
+    return body
+
+
 # ============================================================================
 # FIXTURES
 # ============================================================================
@@ -147,14 +160,13 @@ class TestProfileManagementWorkflow:
 
             # Step 2: Duplicate names are rejected -- and the rejection travels
             # on the status line, not only in the body (AIFactory#1126).
-            dup_status, dup = verdict(
+            dup = _refused(
                 asyncio.run(
                     settings_routes.save_claude_profile(
                         settings_routes.ClaudeProfile(name="Work Account")
                     )
                 )
             )
-            assert dup_status == REFUSED_STATUS
             assert dup["success"] is False
 
             # Step 3: Activate the profile; env token follows it
@@ -191,14 +203,13 @@ class TestProfileManagementWorkflow:
                 )
             )
             assert result["success"] is True
-            clash_status, clash = verdict(
+            clash = _refused(
                 asyncio.run(
                     settings_routes.rename_claude_profile(
                         profile_id_2, settings_routes.ProfileRename(name="Work Account")
                     )
                 )
             )
-            assert clash_status == REFUSED_STATUS
             assert clash["success"] is False
 
             # Step 6: Rate-limit switch to the second profile
@@ -223,14 +234,13 @@ class TestProfileManagementWorkflow:
             assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == personal_token
 
             # Step 7: Switching to the already-active profile is refused
-            again_status, again = verdict(
+            again = _refused(
                 asyncio.run(
                     settings_routes.retry_with_profile(
                         settings_routes.RetryWithProfileRequest(profileId=profile_id_2)
                     )
                 )
             )
-            assert again_status == REFUSED_STATUS
             assert again["success"] is False
 
             # Step 8: Delete the now-inactive first profile; a second delete
@@ -241,10 +251,9 @@ class TestProfileManagementWorkflow:
             stored = json.loads(profiles_file.read_text())
             assert [p["id"] for p in stored["profiles"]] == [profile_id_2]
             assert stored["activeProfileId"] == profile_id_2
-            gone_status, gone = verdict(
+            gone = _refused(
                 asyncio.run(settings_routes.delete_claude_profile(profile_id_1))
             )
-            assert gone_status == REFUSED_STATUS
             assert gone["success"] is False
 
     def test_api_profile_management_workflow(
