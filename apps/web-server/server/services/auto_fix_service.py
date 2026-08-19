@@ -36,6 +36,7 @@ from typing import Any
 from factory_common.logsafe import sanitize_log
 
 from server.error_ref import InputRejectedError
+from server.services.git_base_url import safe_git_base_url  # #1360
 
 logger = logging.getLogger(__name__)
 
@@ -218,7 +219,7 @@ def _provider_for(project_id: str):
     from runners.github.providers.protocol import ProviderType
 
     token = settings.get("gitToken")
-    base_url = settings.get("gitBaseUrl")
+    base_url = safe_git_base_url(settings.get("gitBaseUrl"))
     org = settings.get("gitOrg")
     proj_name = settings.get("gitProject")
     repo_name = settings.get("gitRepo")

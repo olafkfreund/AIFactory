@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from server.error_ref import client_error
 from server.services.gh import run_gh_command  # re-exported: see services/gh.py
+from server.services.git_base_url import safe_git_base_url  # #1360
 
 logger = logging.getLogger(__name__)
 
@@ -1005,7 +1006,7 @@ def _get_project_provider(projectId: str, *, repo_ref: str | None = None):
 
     # Map settings fields
     token = settings.get("gitToken")
-    base_url = settings.get("gitBaseUrl")
+    base_url = safe_git_base_url(settings.get("gitBaseUrl"))
     org = settings.get("gitOrg")
     proj_name = settings.get("gitProject")
     repo_name = settings.get("gitRepo")
