@@ -18,6 +18,7 @@ jobs:
   backend-lint-test:
     name: backend (ruff + pytest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Redis service container for the cross-replica WS fan-out
     # integration tests (Epic #35 #40 half-A). MinIO for the
     # S3-workspaces tests (Epic #35 #40 half-B) starts via a
@@ -100,9 +101,21 @@ jobs:
       # AppArmor (bwrap can't create namespaces under that), so relax it — the
       # `|| true` keeps older kernels without the knob green.
       - name: Install bubblewrap (agent OS sandbox, #363)
+        # Each apt call is bounded and retried. A stalled mirror used to hang
+        # here indefinitely, and because the job had no timeout it presented as
+        # a permanently PENDING required check rather than a red one -- which
+        # cannot block a merge and cannot alert (#1365, Factory#836).
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap
+          for attempt in 1 2 3; do
+            sudo timeout 90 apt-get update -qq \
+              && sudo timeout 150 apt-get install -y bubblewrap \
+              && break
+            echo "apt attempt ${attempt} failed or timed out; retrying"
+            sleep 5
+          done
+          # Fail loudly rather than letting the sandbox corpus silently skip:
+          # a missing bwrap makes those tests pass by not running.
+          command -v bwrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       - name: Pytest (skip slow)
@@ -154,6 +167,7 @@ jobs:
   postgres-acceptance:
     name: postgres (P1 acceptance, PG ${{ matrix.pg }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -203,6 +217,7 @@ jobs:
   secrets-acceptance:
     name: secrets (P2 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P2 EncryptedString / KMS acceptance. Three services run as
     # sidecars so the integration tests gate every PR:
     #   - postgres   → P2.3 column migration + backfill tests
@@ -287,6 +302,7 @@ jobs:
   oidc-acceptance:
     name: oidc (P3 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P3 OIDC SSO tests. Boots a Keycloak dev-mode container with the
     # `aifactory` realm imported from tests/oidc/fixtures/keycloak-realm.json.
     # Tests that need the IdP read OIDC_ISSUER_URL/CLIENT_ID/SECRET from
@@ -350,6 +366,7 @@ jobs:
   saml-scim-acceptance:
     name: saml-scim (P8 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P8 SAML + SCIM tests. Unlike P3 (OIDC) we don't boot a real IdP:
     # the SAML test fixtures generate signed `<Response>` documents
     # in-process using committed test certs (see tests/fixtures/saml/),
@@ -395,6 +412,7 @@ jobs:
   helm-acceptance:
     name: helm (P4 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P4 Helm chart tests. The harness lands first (P4.0a) with all
     # seven acceptance tests skip-pending; chart templates + lint +
     # kubeconform + kind install arrive in P4.1+. Job is green from
@@ -453,6 +471,7 @@ jobs:
   audit-acceptance:
     name: audit (P5 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P5 audit-hardening tests run entirely in-process against
     # in-memory SQLite — hash chain, retention job, GDPR erasure,
     # and export streaming are all pure-Python. No service container
@@ -486,6 +505,7 @@ jobs:
   obs-acceptance:
     name: obs (P6 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -515,6 +535,7 @@ jobs:
   tenant-isolation-acceptance:
     name: tenant-isolation (P9 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Epic #35 #36 — Tenant Isolation Mode. Covers:
     #   - reconciler decision logic (tests/test_tenant_reconciler.py)
     #   - schema migration / TenantState ORM (tests/postgres/test_tenant_states_schema.py)
@@ -564,6 +585,7 @@ jobs:
   rmux-acceptance:
     name: rmux (R0b acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Epic #44 / issue #45. R0b ships apps/web-server/server/rmux/wrapper.py
     # — the async subprocess wrapper that every later rmux phase depends
     # on. Tests run against a real rmux daemon installed on the runner.
@@ -619,6 +641,7 @@ jobs:
   evidence-acceptance:
     name: evidence (P7 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # P7 closes the v1.0 Epic. Tests verify the compliance docs + the
     # three ship-readiness drill scripts exist and have the structural
     # contract auditors expect. No service containers — purely
@@ -650,6 +673,7 @@ jobs:
   deps-lock-drift:
     name: deps (requirements.lock in sync)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The Dockerfile installs the runtime venv from requirements.lock with
     # --require-hashes (#1284). That makes the lock load-bearing, and a
     # load-bearing file that nothing checks is a file that rots: add a package
@@ -716,6 +740,7 @@ jobs:
   frontend-typecheck:
     name: frontend (typecheck)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -735,6 +760,7 @@ jobs:
   frontend-test:
     name: frontend (vitest)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Runs the apps/frontend-web vitest component suite (16 .test.tsx
     # files) so the tests can no longer silently rot. Now BLOCKING: the
     # OnboardingWizard.test.tsx assertions were repaired to the current
@@ -758,6 +784,7 @@ jobs:
   frontend-quality:
     name: frontend lint + format (blocking, #647)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Blocking frontend gate (#647): ESLint 9 flat config
     # (typescript-eslint strictTypeChecked + react-hooks + jsx-a11y) and a
     # scoped prettier --check. Tuned green at adoption via a warning baseline
@@ -807,6 +834,7 @@ jobs:
   docker-acceptance:
     name: docker (P0 acceptance)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Docker is preinstalled on ubuntu-latest runners. Tests opt-in via
     # `-m docker`; all are skipped until P0.1+ implementations land,
     # so this job is green from day 1 and turns red the moment an
