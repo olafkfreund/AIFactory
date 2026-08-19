@@ -39,7 +39,7 @@ from server.services.http_verdict import REFUSED_STATUS
 from verdict_helpers import verdict
 
 
-def _refused(result):
+def _refused(result: object) -> dict:
     """Assert the handler refused on the STATUS line; return its body.
 
     These handlers carry `@honest_status` (AIFactory#1126), so a refusal is a

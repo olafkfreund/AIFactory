@@ -366,13 +366,19 @@ def test_a_sync_handler_stays_sync() -> None:
 
 
 def test_a_sync_handler_still_gets_the_refusal_status() -> None:
-    """The sync branch must translate, not just pass through."""
+    """The sync branch must translate, not just pass through.
 
-    @honest_status
+    Applied as a plain call rather than with `@` syntax, matching
+    `test_refused_merge_is_not_http_200.py`: the code-quality ratchet measures
+    each file with `--follow-imports=silent` from the repo root, where
+    `server.*` does not resolve, so decorator syntax reports a spurious
+    "untyped decorator" against the test. Same wrapper, same coverage.
+    """
+
     def refusing() -> dict[str, Any]:
         return {"success": False, "error": "nope"}
 
-    status, payload = verdict(refusing())
+    status, payload = verdict(honest_status(refusing)())
     assert status == REFUSED_STATUS
     assert payload["error"] == "nope"
 
