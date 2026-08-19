@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert a hub pin names a commit that is really on olafkfreund/Factory main.
 #
-# All six hub-pinned gates in this repo resolve their pin from the PULL
+# All seven hub-pinned gates in this repo resolve their pin from the PULL
 # REQUEST's own tree -- `standards/.hub-sha`, `*/factory_common/.hub-sha`, or a
 # `HUB_PIN_SHA:`/`HUB_SHA:` in the workflow file itself, which for a plain
 # `pull_request` trigger is the PR's copy of the workflow -- and then hand that
@@ -15,6 +15,7 @@
 #   factory-ui-drift.yml         HUB_PIN_SHA              -> actions/checkout
 #   factory-github-drift.yml     HUB_SHA                  -> codeload tarball
 #   security-lint.yml            HUB_PIN_SHA              -> raw.githubusercontent
+#   test-collection.yml          HUB_PIN_SHA              -> raw.githubusercontent
 #
 # Factory#711 already rejects anything that is not a bare 40-character commit
 # id, which closes ref confusion and argument injection. It does not close the
@@ -26,10 +27,19 @@
 # report green -- defeating the only thing these gates exist to catch
 # (AIFactory#1281).
 #
-# This is a gate bypass, not code execution: the checked-out hub tree is only
-# ever diffed, the jobs run on ubuntu-latest under a plain `pull_request`
-# trigger with `permissions: contents: read`, no secrets, and no cache or
-# artifact that a privileged workflow later consumes.
+# For the first six rows this is a gate bypass, not code execution: the
+# checked-out hub tree is only ever diffed, the jobs run on ubuntu-latest under a
+# plain `pull_request` trigger with `permissions: contents: read`, no secrets,
+# and no cache or artifact that a privileged workflow later consumes.
+#
+# test-collection.yml IS THE EXCEPTION, and it is why this script matters more
+# than it used to (Factory#844). That gate has no vendored copy to diff: it
+# fetches `scripts/check_test_collection.py` from the hub at its pin and RUNS
+# it. So a pin naming a hostile fork commit there is code execution in the job,
+# not a green diff of two matching trees. The blast radius is still bounded by
+# the same `contents: read`, no-secrets, no-downstream-artifact shape -- but the
+# check below is the control, not a belt-and-braces addition, and that gate
+# calls it BEFORE it fetches anything.
 #
 # Mechanism: the compare API, not a local `git merge-base --is-ancestor`.
 # merge-base can only answer for objects already in the local repo, and the
