@@ -660,8 +660,15 @@ jobs:
     # Recompiling is a safe equality test, not a resolution race: uv reads the
     # existing lock as *preferences*, so an unchanged input recompiles
     # byte-identically even after upstream publishes a newer release. The job
-    # therefore fails only on real drift, never on the passage of time --
-    # verified by running the compile twice against the committed lock.
+    # therefore fails only on real drift, never on the passage of time.
+    #
+    # That holds ONLY because the compile step seeds its -o path with the
+    # committed lock first. uv reads preferences from the output file, so
+    # compiling straight into a fresh /tmp path supplies none and resolves to
+    # newest-available every run. Compiling twice against the committed lock
+    # does not detect that -- both runs are equally preference-free and equally
+    # newest -- which is why it went unnoticed until an upstream release landed
+    # mid-morning and turned every open PR red.
     #
     # Comparison strips leading-# lines because the committed lock carries a
     # hand-written prose header that --no-header does not reproduce. The `#
@@ -681,6 +688,14 @@ jobs:
       # 3.14, and every image build is platforms: linux/amd64).
       - name: Recompile the lock from the requirements files
         run: |
+          # uv takes preferences from the file named by -o, so the committed
+          # lock has to BE that file before the compile or there are no
+          # preferences at all and every run resolves to newest-available.
+          # Without this seed the gate fails on the passage of time: it passed
+          # on dev at 2026-08-18T23:29Z and failed at 11:24Z next morning on
+          # the same tree, because lxml 6.1.2 published at 04:58Z and uvicorn
+          # 0.52.4 alongside it. Nothing in the repo had changed.
+          cp requirements.lock /tmp/requirements.recompiled.lock
           uv pip compile --python-version 3.14 \
             --python-platform x86_64-unknown-linux-gnu --generate-hashes \
             --no-header \
