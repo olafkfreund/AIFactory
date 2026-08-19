@@ -15,6 +15,7 @@ import re
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from server.services.terminal_worktree_service import TerminalWorktreeService
 from server.specpath import safe_spec_component
 
 
@@ -22,9 +23,9 @@ def test_path_parameters_cannot_carry_a_separator():
     app = FastAPI()
     reached: list[str] = []
 
-    @app.get("/p/{projectId}/x")
-    def _h(projectId: str):
-        reached.append(projectId)
+    @app.get("/p/{project_id}/x")
+    def _h(project_id: str):
+        reached.append(project_id)
         return {}
 
     client = TestClient(app)
@@ -80,8 +81,6 @@ def test_terminal_worktree_name_rejects_a_trailing_newline():
     `terminal/<name>` git branch, so a name carrying a character the validator
     was written to reject is worth failing on even though it is not traversal.
     """
-    from server.services.terminal_worktree_service import TerminalWorktreeService
-
     pat = TerminalWorktreeService.WORKTREE_NAME_PATTERN
     assert pat.fullmatch("ok-name_1") is not None
     assert pat.fullmatch("ok\n") is None
