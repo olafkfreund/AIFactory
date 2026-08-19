@@ -29,23 +29,7 @@
 # findings no longer exist and their entries would have been dead weight
 # grandfathering three route files for nothing.)
 
-# ---------------------------------------------------------------------------
-# No HTTP surface at all. None of these modules contains HTTPException,
-# JSONResponse or jsonify; they matched because _HTTP_RESPONSE_HINT matches
-# "Response" case-insensitively and each has a local named `response_text` or
-# calls `client.receive_response()`.
-# ---------------------------------------------------------------------------
-- path: apps/backend/ideation/generator.py
-  rule: raw-exception-in-response
-  reason: >-
-    backend agent runner returning a (bool, str) tuple into the spec pipeline;
-    no HTTP surface in the module. Matched on a local named response_text
-  issue: Factory#718
 - path: apps/backend/ideation/prioritizer.py
-  rule: raw-exception-in-response
-  reason: same shape as ideation/generator.py — no HTTP surface in the module
-  issue: Factory#718
-- path: apps/backend/runners/roadmap/executor.py
   rule: raw-exception-in-response
   reason: same shape as ideation/generator.py — no HTTP surface in the module
   issue: Factory#718
@@ -54,40 +38,7 @@
   reason: same shape as ideation/generator.py — no HTTP surface in the module
   issue: Factory#718
 
-# ---------------------------------------------------------------------------
-# Not a response body.
-# ---------------------------------------------------------------------------
-- path: apps/backend/providers/openai_compatible.py
-  rule: raw-exception-in-response
-  reason: >-
-    str(exc) is assigned to audit_error and written to an audit record, which
-    is a place detail belongs; it does not reach an HTTP response
-  issue: Factory#718
 
-# ---------------------------------------------------------------------------
-# HUB-VENDORED. Both copies are byte-identical to the hub canonical at
-# shared/factory-common/factory_common/http.py and are held there by a
-# .hub-sha pin, so patching either one here would break the drift gate. The
-# fix, if one is needed, belongs in the hub and arrives by re-vendoring — the
-# hub already carries its own entry for the same line under Factory#718.
-#
-# Checked for this repo on 2026-08-15: NOTHING imports the module. `git grep`
-# for HttpClient/HttpResponse outside factory_common/ returns nothing, with a
-# control proving the grep works (it finds the definition). So the line is
-# unreachable here, not merely unfixed.
-# ---------------------------------------------------------------------------
-- path: apps/web-server/factory_common/http.py
-  rule: raw-exception-in-response
-  reason: >-
-    hub-vendored under a .hub-sha pin; fix belongs in the hub canonical. Also
-    unreachable in this repo — nothing instantiates HttpClient
-  issue: Factory#718
-- path: apps/backend/factory_common/http.py
-  rule: raw-exception-in-response
-  reason: >-
-    second byte-identical copy of the hub canonical; same reasoning as the
-    web-server copy above
-  issue: Factory#718
 
 # ---------------------------------------------------------------------------
 # Prose. The detector deliberately never treats a line carrying an f-string
