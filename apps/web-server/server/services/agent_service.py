@@ -878,26 +878,26 @@ class AgentService(
         if auto_continue:
             cmd.append("--auto-continue")
 
-            spec_dir = project_path / ".aifactory" / "specs" / spec_id
+        spec_dir = project_path / ".aifactory" / "specs" / spec_id
 
-            # Write skill context file based on selectedSkills in task_metadata
-            self._write_skill_context(spec_dir)
+        # Write skill context file based on selectedSkills in task_metadata
+        self._write_skill_context(spec_dir)
 
-            # --force iff review is not required, or the plan was manually
-            # approved (force=True from the approve_plan endpoint). Shared with
-            # the kubejob manifest builder so the two paths cannot drift (#916).
-            if should_pass_force(spec_dir, force):
-                cmd.append("--force")  # Bypass approval check for headless execution
-                if force:
-                    logger.info(
-                        "[AgentService] Using --force for %s (plan manually approved)",
-                        sanitize_log(task_id),
-                    )
-            else:
+        # --force iff review is not required, or the plan was manually
+        # approved (force=True from the approve_plan endpoint). Shared with
+        # the kubejob manifest builder so the two paths cannot drift (#916).
+        if should_pass_force(spec_dir, force):
+            cmd.append("--force")  # Bypass approval check for headless execution
+            if force:
                 logger.info(
-                    "[AgentService] Human review before coding enabled for task %s - not using --force",
+                    "[AgentService] Using --force for %s (plan manually approved)",
                     sanitize_log(task_id),
                 )
+        else:
+            logger.info(
+                "[AgentService] Human review before coding enabled for task %s - not using --force",
+                sanitize_log(task_id),
+            )
 
         if base_branch:
             cmd.extend(["--base-branch", base_branch])

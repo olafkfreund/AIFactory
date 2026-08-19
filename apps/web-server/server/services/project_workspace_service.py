@@ -337,14 +337,42 @@ class GitOperationError(RuntimeError):
     """Raised when a git operation fails or times out."""
 
 
+#: Every git subcommand this module invokes. ``args[0]`` is a hard-coded
+#: literal at every ``_run_git`` call site, but the value that reaches a log
+#: line and an exception message must be provably one of these rather than
+#: "element 0 of a list that also carries the credentialed fetch URL" -- which
+#: is all the code can otherwise say about it.
+_GIT_SUBCOMMANDS = ("clone", "fetch", "checkout", "pull", "remote")
+
+
+def _safe_subcommand(args: list[str]) -> str:
+    """Return ``args[0]`` as one of :data:`_GIT_SUBCOMMANDS`, else ``"unknown"``.
+
+    Returns the matching *constant*, not the caller's string, so nothing
+    derived from ``args`` -- which carries a PAT-bearing URL on a credentialed
+    call (see :func:`_inject_credential`) -- can reach a log sink or an
+    exception message through it.
+    """
+    head = args[0] if args else ""
+    for known in _GIT_SUBCOMMANDS:
+        if head == known:
+            return known
+    return "unknown"
+
+
 async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
     """Run ``git <args>`` with a timeout. Returns stdout on success."""
     cmd = ["git", *args]
-    logger.debug(
-        "[workspace] running: git %s (cwd=%s)",
-        sanitize_log(" ".join(args)),
-        sanitize_log(cwd),
-    )
+    # The argv is NEVER logged or interpolated into an error. `_inject_credential`
+    # embeds the PAT in the fetch URL, which becomes an argv element, so
+    # `" ".join(args)` wrote `https://oauth2:<PAT>@host/...` straight to a DEBUG
+    # line -- and this fleet forwards application logs off-host. Driving the real
+    # pipeline put the token on three lines across `server.log` and `errors.log`
+    # (the DEBUG line here, plus both copies `error_reference` makes of the
+    # GitOperationError message below). The subcommand and cwd identify the
+    # operation without it.
+    subcommand = _safe_subcommand(args)
+    logger.debug("[workspace] running: git %s (cwd=%s)", subcommand, sanitize_log(cwd))
     # Restrict git transports to https/ssh/git (#323 C5): blocks the `ext::`
     # transport helper (arbitrary command execution) even if a malicious URL
     # slips past the route validator.
@@ -367,13 +395,15 @@ async def _run_git(args: list[str], *, cwd: Path, timeout: float) -> str:
         # firing and kill() running -- nothing to do either way
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        raise GitOperationError(
-            f"git {' '.join(args)} timed out after {timeout}s"
-        ) from e
+        raise GitOperationError(f"git {subcommand} timed out after {timeout}s") from e
 
     if proc.returncode != 0:
+        # stderr is kept: `client_error` hands the caller a reference id, not
+        # this text, and git redacts URL userinfo from the errors it composes
+        # (verified against the failing-clone stderr this raises). The argv is
+        # what carried the token, and it is gone.
         raise GitOperationError(
-            f"git {' '.join(args)} failed (exit {proc.returncode}): "
+            f"git {subcommand} failed (exit {proc.returncode}): "
             f"{stderr.decode('utf-8', 'replace').strip() or 'no stderr'}"
         )
     return stdout.decode("utf-8", "replace")
