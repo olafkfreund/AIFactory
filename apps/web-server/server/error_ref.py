@@ -34,58 +34,32 @@ from __future__ import annotations
 import logging
 import secrets
 
+from factory_common.client_errors import InputRejectedError
 from factory_common.logsafe import sanitize_log
 
 __all__ = ["InputRejectedError", "client_error", "error_reference"]
 
 
-class InputRejectedError(ValueError):
-    """A validation failure whose message is DELIBERATELY safe to hand back.
-
-    The distinction CWE-209 actually cares about is not "exception or not", it
-    is *who wrote the text*. "Invalid baseBranch: must be a plain git ref" is
-    developer-written and quotes only the field the caller just sent, so hiding
-    it behind a correlation id turns a fixable 400 into a support ticket. A
-    ``FileNotFoundError`` from the stdlib is the opposite: nobody chose its
-    wording and it names a path on our disk.
-
-    So validators raise this, :func:`client_error` hands its message back
-    verbatim, and everything else still gets a reference id. Subclasses
-    ``ValueError`` so existing ``except ValueError`` handlers keep working.
-
-    The safe sentence is carried in :attr:`client_message`, a plain string this
-    class was *given* at construction -- **not** read back out of the exception
-    with ``str(exc)``. That distinction is the whole point of the attribute, and
-    it is not cosmetic:
-
-    ``BaseException.__str__`` renders ``args``, and ``args`` is populated by
-    every exception in the process -- the stdlib's, a third-party library's, the
-    runtime's. A handler that forwards ``str(exc)`` is therefore forwarding text
-    of unknown authorship, and neither a reader nor a static analyser can tell
-    which kind it got; that is exactly what CWE-209 is about, and it is why 104
-    ``py/stack-trace-exposure`` alerts pointed at the old ``return str(exc)``
-    line. ``client_message`` has exactly one writer: the constructor below,
-    reached only from the eight ``raise InputRejectedError(...)`` sites in
-    ``services/argv_safety.py`` and ``services/url_safety.py``. Nothing in the
-    stdlib sets it, so nothing in the stdlib can reach the response through it.
-
-    CodeQL agrees, and for a stated reason rather than by luck:
-    ``StackTraceExposureQuery.qll`` adds exactly one attribute flow step, for
-    ``__traceback__``, because a caught exception's *other* attributes are
-    application-owned data rather than stack-trace information. See
-    ``.github/codeql/VALIDATION.md``.
-
-    What this does NOT establish is that a raise site chose its wording wisely.
-    ``InputRejectedError(f"failed: {inner}")`` would launder ``inner``'s text
-    straight through, and no mechanism here can stop that -- the eight messages
-    are held honest by review and by ``tests/test_error_ref_client_message.py``,
-    which asserts the response body of a resolver failure still carries a
-    reference id rather than the resolver's text.
-    """
-
-    def __init__(self, client_message: str) -> None:
-        super().__init__(client_message)
-        self.client_message = client_message
+# THE class, not a same-named local one (#1361).
+#
+# ``client_error`` below gates on ``isinstance``. ``factory_common.url_safety``
+# raises ``factory_common.client_errors.InputRejectedError``, so a locally
+# defined class of the same name would be a DIFFERENT class object: every guard
+# rejection would fail that isinstance test and come back as an opaque
+# correlation id. Still a 400, so no test asserting "an error was returned"
+# would have noticed. This is what CFactory#414 had to fix after the fact.
+#
+# Re-exported rather than moved wholesale: ~40 modules import it from here, and
+# the hub class is identical in name, base, constructor and ``client_message``
+# attribute. See ``factory_common/client_errors.py`` for the CWE-209 reasoning
+# this used to carry, and the note below for what it does NOT establish.
+#
+# What this does NOT establish is that a raise site chose its wording wisely.
+# ``InputRejectedError(f"failed: {inner}")`` would launder ``inner``'s text
+# straight through, and no mechanism here can stop that -- the raise sites in
+# ``services/argv_safety.py`` and ``factory_common/url_safety.py`` are held
+# honest by review and by ``tests/test_error_ref_client_message.py``, which
+# asserts on the response BODY of a real route rather than on this class.
 
 
 #: 12 hex characters: short enough to read down a phone line, wide enough that

@@ -203,8 +203,12 @@ Registered for path injection: `safe_spec_component` (`server/specpath.py`) and
 `os.path.basename`.
 
 Registered for SSRF: `assert_safe_outbound_url`
-(`server/services/url_safety.py`), on the call and on the guard's own first
-parameter. See `custom-queries/SsrfBarriers.qll` for what is deliberately left
+(`factory_common/url_safety.py`, the fleet canonical vendored into both app
+roots — the web-server's forked copy in `server/services/url_safety.py` was
+deleted in #1361), on the call and on the guard's own first parameter. The
+registration is BY NAME and the name did not change, so both clauses match the
+same call sites as before; the definition simply moved to a file that was
+already in scope (this config carries no `paths-ignore`). See `custom-queries/SsrfBarriers.qll` for what is deliberately left
 out (`urlparse`, `startswith("http")`) and why the `allow_private=True` posture
 still counts as a barrier.
 
@@ -397,10 +401,15 @@ suppress precisely the branch that is not sanitising, and only that branch —
 the maximally dishonest barrier available, and worse than leaving all 122 open.
 
 That branch is still believed correct: `InputRejectedError` is raised only from
-`services/url_safety.py` and `services/argv_safety.py`, every message is
-developer-written and quotes only the caller's own input, and the one place a
-stdlib exception could have leaked in (`socket.gaierror` in `url_safety.py`)
-deliberately raises a plain `ValueError` so it takes the reference-id path.
+`factory_common/url_safety.py` and `services/argv_safety.py`, and every message
+is developer-written and quotes only the caller's own input. The one place a
+stdlib exception could have leaked in — the `socket.gaierror` branch — no longer
+renders it at all (Factory#831, adopted here by #1361): the host is the caller's
+own input and stays in the message, the resolver's wording is kept on
+`__cause__` and never in the text. It used to raise a plain `ValueError` to take
+the reference-id path instead, which worked for THIS server but not for
+`apps/backend`, where `security/hooks.py` and `tools/web.py` interpolate the
+guard's message into text the agent reads back.
 But "believed correct by convention at four raise sites" is not a property a
 dataflow barrier can assert, and CodeQL is right to keep asking.
 
@@ -439,8 +448,13 @@ Why that is a real distinction and not laundering, stated because the next
 reader will (rightly) suspect it is: `BaseException.__str__` renders `args`,
 which every exception in the process populates, so `str(exc)` forwards text of
 unknown authorship. `client_message` has exactly one writer, the constructor,
-reachable only from the eight `raise InputRejectedError(...)` sites in
-`services/argv_safety.py` and `services/url_safety.py`. CodeQL's model draws
+reachable only from the `raise InputRejectedError(...)` sites in
+`services/argv_safety.py` and `factory_common/url_safety.py`. Since #1361 that
+constructor is the hub's (`factory_common/client_errors.py`);
+`server/error_ref` re-exports it rather than defining a same-named twin,
+because `client_error` gates on `isinstance` and two classes of the same name
+would silently downgrade every guard rejection to a correlation id.
+CodeQL's model draws
 the same line for a stated reason rather than by accident:
 `StackTraceExposureQuery.qll` declares **one** attribute flow step, for
 `__traceback__`, precisely because a caught exception's other attributes are
@@ -451,11 +465,11 @@ wisely — `InputRejectedError(f"...{inner}")` would launder `inner`'s text
 straight through. That residual is held by
 `apps/web-server/tests/test_error_ref_client_message.py`, which asserts the
 **response body** on both sides: a rejected field still returns
-`"Invalid baseBranch: must be a plain git ref"` verbatim, and a resolver
-failure still returns a reference id. Mutation-checked — rewriting
-`url_safety.py`'s `socket.gaierror` branch to
-`raise InputRejectedError(f"cannot resolve host {host!r}: {exc}")` turns
-`test_a_resolver_failure_takes_the_reference_id_path` red on the body.
+`"Invalid baseBranch: must be a plain git ref"` verbatim, and a resolver failure
+returns `cannot resolve host 'nope.invalid'` — the caller's own host, and
+nothing the resolver wrote. Mutation-checked — restoring the old interpolation,
+`raise InputRejectedError(f"cannot resolve host {host!r}: {exc}")`, turns
+`test_a_resolver_failure_does_not_leak_the_resolver_text` red on the body.
 
 The 18 -> 0 row is ordinary code fixes to the leaks the previous measurement
 identified as real, all of them one root cause per group:

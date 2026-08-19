@@ -14,8 +14,8 @@ from email.message import Message
 from unittest.mock import patch
 
 import pytest
+from factory_common.url_safety import assert_safe_outbound_url
 from server.routes import git, llm_endpoints, settings
-from server.services.url_safety import assert_safe_outbound_url
 
 # 169.254.169.254 is the cloud metadata address. Both postures must refuse it;
 # that is the whole reason the permissive posture is not simply "no check".
@@ -190,6 +190,30 @@ async def test_settings_local_provider_routes_still_allow_a_private_host() -> No
     with patch("httpx.AsyncClient") as client:
         await settings.list_ollama_models("http://10.0.0.5:11434")
     client.assert_called_once()
+
+
+async def test_api_profile_probes_refuse_the_metadata_address() -> None:
+    """The credentialed route, driven at the address that matters (#1361).
+
+    ``/api-profiles/test`` attaches ``Authorization: Bearer <apiKey>`` to
+    whatever it reaches, so an unguarded fetch of 169.254.169.254 hands the
+    caller's own token to the cloud instance-credentials endpoint AND returns
+    what it answered. This is the mutation site: delete the
+    ``assert_safe_outbound_url`` call in ``settings.test_api_connection`` and
+    this goes red because the transport gets built and dialled.
+
+    The route's RESPONSE is not the observable -- ``except Exception`` collapses
+    every outcome to the same string, so it is byte-identical guarded and
+    unguarded. Only "was the request attempted" separates them.
+    """
+    request = settings.TestConnectionRequest(
+        baseUrl="http://169.254.169.254/latest/meta-data", apiKey="sk-live-DEADBEEF"
+    )
+    with patch.object(settings, "build_no_redirect_opener") as opener:
+        result = await settings.test_api_connection(request)
+    opener.assert_not_called()
+    assert result["success"] is False
+    assert "link-local/metadata" in result["error"]
 
 
 async def test_api_profile_probes_use_the_strict_posture() -> None:

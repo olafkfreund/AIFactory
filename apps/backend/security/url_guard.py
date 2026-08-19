@@ -16,7 +16,7 @@ still LOOKS like a guard, so CodeQL's barrier (which is registered on
 fires to tell you.
 
 #1266 deduped it by bridging the import roots: this file appended
-``apps/web-server`` to ``sys.path`` and imported ``server.services.url_safety``.
+``apps/web-server`` to ``sys.path`` and imported the web-server fork of it.
 That worked and failed closed, but it was a bridge, not a home — a stdlib-only
 security primitive shared by two runtimes reached by a path shim from one of
 them.
@@ -32,15 +32,16 @@ If this import fails, the whole ``security`` package fails to import and the
 agent will not start. That is the correct direction to fail: an agent with a web
 tool and no SSRF guard is the thing #370 exists to prevent.
 
-One deliberate behavioural note. ``server.services.url_safety`` raises
-``InputRejectedError`` (a ``ValueError`` subclass) so the web-server's HTTP
-layer returns the refusal verbatim instead of behind a correlation id; the
-canonical raises plain ``ValueError``. Nothing in the agent runtime reads that
-distinction — ``hooks.py`` and ``tools/web.py`` both catch ``ValueError`` — so
-importing the canonical is a no-op for this runtime. The web-server keeps its
-own thin copy for now precisely because it DOES read the distinction; unifying
-it needs the canonical to mark rejections in a way a wrapper can read without
-string-matching, which is a hub change and not this one.
+One behavioural note, and #1361 closed the half of it that was a leak. The
+canonical used to raise plain ``ValueError`` while the web-server's fork raised
+``InputRejectedError``, and its resolve-failure branch interpolated the
+``socket.gaierror`` into the message. ``hooks.py`` and ``tools/web.py`` both put
+that message into text the agent reads back, so the resolver's wording crossed
+a boundary nobody here wrote it for. Factory#831 made the canonical raise
+``InputRejectedError`` (still a ``ValueError`` subclass, so both callers here
+keep catching) and dropped the ``gaierror`` from the text, keeping it on
+``__cause__``. With that, the web-server's fork had no reason left to exist and
+#1361 deleted it: there is one guard in the fleet now, this one.
 
 Note on DNS rebinding: the guard resolves the host and checks the resolved IP,
 then the transport re-resolves at fetch time (TOCTOU). Unchanged by this
@@ -67,8 +68,8 @@ from factory_common.url_safety import (
 )
 
 # The historical name, kept so `hooks.py` and #370's tests read unchanged. Same
-# strict posture (public addresses only) and same `ValueError` as the copy it
-# replaces.
+# strict posture (public addresses only), and still caught by `except
+# ValueError` -- `InputRejectedError` subclasses it.
 assert_url_not_ssrf = assert_safe_outbound_url
 
 __all__ = [

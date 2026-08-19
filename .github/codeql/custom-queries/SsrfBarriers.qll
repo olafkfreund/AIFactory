@@ -3,14 +3,16 @@
  *
  * `assert_safe_outbound_url` is the one check every outbound URL passes
  * through. It is registered BY NAME, deliberately, so it stays registered
- * wherever the function lives: the fleet canonical is
- * `factory_common/url_safety.py` (vendored into apps/backend and
- * apps/web-server), `apps/web-server/server/services/url_safety.py` keeps a
- * thin copy that raises `InputRejectedError` for the HTTP layer, and
- * `apps/backend/security/url_guard.py` re-exports the canonical for the agent
- * runtime (#1270). Name-matching covers all three; a RENAME would silently
- * un-register the barrier and reopen every alert it clears, which is why the
- * name is load-bearing beyond Python. What it checks: http(s)-only scheme, a hard refusal
+ * wherever the function lives. Since #1361 there is exactly ONE definition: the
+ * fleet canonical `factory_common/url_safety.py`, vendored byte-identically
+ * into apps/backend and apps/web-server. The web-server's forked thin copy in
+ * `server/services/url_safety.py` is gone -- the canonical raises
+ * `InputRejectedError` itself now (Factory#831), which was the only reason the
+ * fork existed -- and `apps/backend/security/url_guard.py` re-exports the
+ * canonical for the agent runtime (#1270). Name-matching covers every call site
+ * and both vendored copies; a RENAME would silently un-register the barrier and
+ * reopen every alert it clears, which is why the name is load-bearing beyond
+ * Python. What it checks: http(s)-only scheme, a hard refusal
  * of the cloud metadata range in both postures, and — unless the call site
  * passes `allow_private=True` for a deliberately local target such as a
  * self-hosted Ollama — a requirement that the host resolve to a public address.

@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from factory_common.logsafe import sanitize_log
+from factory_common.url_safety import (
+    assert_safe_outbound_url,
+    build_no_redirect_opener,
+)
 from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import (
     AliasChoices,
@@ -34,10 +38,6 @@ from server.crypto.secret_field import (
     unseal_profiles,
 )
 from server.error_ref import client_error
-from server.services.url_safety import (
-    assert_safe_outbound_url,
-    build_no_redirect_opener,
-)
 
 # --------------------------------------------------------------------------
 # Type Definitions for Validation
