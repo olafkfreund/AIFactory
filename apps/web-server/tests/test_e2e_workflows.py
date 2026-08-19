@@ -35,6 +35,21 @@ from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from server.services.http_verdict import REFUSED_STATUS
+from verdict_helpers import verdict
+
+
+def _refused(result: object) -> dict[str, object]:
+    """Assert the handler refused on the STATUS line; return its body.
+
+    These handlers carry `@honest_status` (AIFactory#1126), so a refusal is a
+    409 rather than a `success: False` inside a 200. Asserting only the body
+    would pass against the old behaviour, which is the bug that issue fixed.
+    """
+    status, body = verdict(result)
+    assert status == REFUSED_STATUS, f"expected a refusal status, got {status}"
+    return body
+
 
 # ============================================================================
 # FIXTURES
@@ -143,10 +158,13 @@ class TestProfileManagementWorkflow:
             # The token store must not be world-readable.
             assert profiles_file.stat().st_mode & 0o777 == 0o600
 
-            # Step 2: Duplicate names are rejected
-            dup = asyncio.run(
-                settings_routes.save_claude_profile(
-                    settings_routes.ClaudeProfile(name="Work Account")
+            # Step 2: Duplicate names are rejected -- and the rejection travels
+            # on the status line, not only in the body (AIFactory#1126).
+            dup = _refused(
+                asyncio.run(
+                    settings_routes.save_claude_profile(
+                        settings_routes.ClaudeProfile(name="Work Account")
+                    )
                 )
             )
             assert dup["success"] is False
@@ -185,9 +203,11 @@ class TestProfileManagementWorkflow:
                 )
             )
             assert result["success"] is True
-            clash = asyncio.run(
-                settings_routes.rename_claude_profile(
-                    profile_id_2, settings_routes.ProfileRename(name="Work Account")
+            clash = _refused(
+                asyncio.run(
+                    settings_routes.rename_claude_profile(
+                        profile_id_2, settings_routes.ProfileRename(name="Work Account")
+                    )
                 )
             )
             assert clash["success"] is False
@@ -214,9 +234,11 @@ class TestProfileManagementWorkflow:
             assert os.environ["CLAUDE_CODE_OAUTH_TOKEN"] == personal_token
 
             # Step 7: Switching to the already-active profile is refused
-            again = asyncio.run(
-                settings_routes.retry_with_profile(
-                    settings_routes.RetryWithProfileRequest(profileId=profile_id_2)
+            again = _refused(
+                asyncio.run(
+                    settings_routes.retry_with_profile(
+                        settings_routes.RetryWithProfileRequest(profileId=profile_id_2)
+                    )
                 )
             )
             assert again["success"] is False
@@ -229,7 +251,9 @@ class TestProfileManagementWorkflow:
             stored = json.loads(profiles_file.read_text())
             assert [p["id"] for p in stored["profiles"]] == [profile_id_2]
             assert stored["activeProfileId"] == profile_id_2
-            gone = asyncio.run(settings_routes.delete_claude_profile(profile_id_1))
+            gone = _refused(
+                asyncio.run(settings_routes.delete_claude_profile(profile_id_1))
+            )
             assert gone["success"] is False
 
     def test_api_profile_management_workflow(

@@ -71,6 +71,7 @@ class ConflictResolveOptions(BaseModel):
 
 
 @router.get("/{task_id}/worktree/merge-preview")
+@honest_status
 async def get_worktree_merge_preview(
     task_id: str, _access: dict = Depends(require_task_access("viewer"))
 ):
@@ -512,6 +513,7 @@ def _nothing_to_commit(commit: subprocess.CompletedProcess[str]) -> bool:
 
 
 @router.post("/{task_id}/worktree/resolve-conflicts")
+@honest_status
 async def resolve_worktree_conflicts(
     task_id: str,
     options: ConflictResolveOptions = None,
@@ -920,6 +922,7 @@ async def resolve_worktree_conflicts(
 
 
 @router.post("/{task_id}/worktree/resolve-uncommitted")
+@honest_status
 async def resolve_uncommitted_conflicts(
     task_id: str, _access: dict = Depends(require_task_access("member"))
 ):
@@ -1251,6 +1254,7 @@ async def resolve_uncommitted_conflicts(
 
 
 @router.post("/{task_id}/worktree/resolve-git-merge")
+@honest_status
 async def resolve_git_merge_conflicts(
     task_id: str, _access: dict = Depends(require_task_access("member"))
 ):
@@ -1577,6 +1581,7 @@ def _clean_conflict_markers(content: str) -> str:
 
 
 @router.post("/{task_id}/worktree/abort-merge")
+@honest_status
 async def abort_worktree_merge(
     task_id: str, _access: dict = Depends(require_task_access("member"))
 ):
@@ -2104,6 +2109,7 @@ async def get_worktree_status(
 
 
 @router.get("/{task_id}/worktree/diff")
+@honest_status
 async def get_worktree_diff(
     task_id: str, _access: dict = Depends(require_task_access("viewer"))
 ):
@@ -2370,6 +2376,7 @@ async def get_worktree_diff(
 
 
 @router.post("/{task_id}/worktree/discard")
+@honest_status
 async def discard_worktree(
     task_id: str, _access: dict = Depends(require_task_access("admin"))
 ):

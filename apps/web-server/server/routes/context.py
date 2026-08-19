@@ -13,6 +13,7 @@ from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field, SecretStr
 
 from server.error_ref import client_error
+from server.services.http_verdict import honest_status
 from server.services.pr_endgame import is_graphiti_enabled
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ project_router = APIRouter()
 
 
 @project_router.get("/context")
+@honest_status
 async def get_project_context(projectId: str = Path(...)):
     """Get project context including index and memories."""
     import json
@@ -171,6 +173,7 @@ async def get_project_context(projectId: str = Path(...)):
 
 
 @project_router.post("/context/refresh")
+@honest_status
 async def refresh_project_index(projectId: str = Path(...)):
     """Refresh/regenerate project index."""
     from server.project_registry import load_projects
@@ -224,6 +227,7 @@ async def refresh_project_index(projectId: str = Path(...)):
 
 
 @project_router.get("/memory/status")
+@honest_status
 async def get_memory_status(projectId: str = Path(...)):
     """Get memory system status for project."""
 
@@ -262,6 +266,7 @@ async def get_memory_status(projectId: str = Path(...)):
 
 
 @project_router.get("/memory/search")
+@honest_status
 async def search_memories(projectId: str = Path(...), q: str = Query(...)):
     """Search project memories."""
     import json
@@ -323,6 +328,7 @@ async def search_memories(projectId: str = Path(...), q: str = Query(...)):
 
 
 @project_router.get("/memory/recent")
+@honest_status
 async def get_recent_memories(projectId: str = Path(...), limit: int = Query(10)):
     """Get recent memories for project."""
     import json
@@ -402,6 +408,7 @@ def _extract_memory_summary(data: dict) -> str:
 
 
 @project_router.get("/env")
+@honest_status
 async def get_project_env(projectId: str = Path(...)):
     """Get project environment configuration."""
     from server.project_registry import load_projects
@@ -534,6 +541,7 @@ async def get_project_env(projectId: str = Path(...)):
 
 
 @project_router.patch("/env")
+@honest_status
 async def update_project_env(
     projectId: str = Path(...), config: ProjectEnvUpdate = ...
 ):
@@ -764,6 +772,7 @@ async def check_claude_auth(projectId: str = Path(...)):
 
 
 @project_router.post("/claude-setup")
+@honest_status
 async def invoke_claude_setup(projectId: str = Path(...)):
     """
     Check Claude CLI authentication status and provide setup instructions.

@@ -20,6 +20,7 @@ from server.services.argv_safety import (
     assert_safe_git_ref,
     bounded_count,
 )
+from server.services.http_verdict import honest_status
 from server.specpath import safe_spec_component
 
 from ..services.insights_service import get_insights_service
@@ -148,6 +149,7 @@ async def get_changelog_done_tasks(
 
 
 @router.post("/specs")
+@honest_status
 async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest = ...):
     """Load spec details for tasks."""
     from server.project_registry import load_projects
@@ -230,6 +232,7 @@ async def load_task_specs(projectId: str = Path(...), request: LoadSpecsRequest 
 
 
 @router.post("/generate")
+@honest_status
 async def generate_changelog(
     projectId: str = Path(...), request: ChangelogGenerateRequest = ...
 ):
@@ -300,6 +303,7 @@ async def generate_changelog(
 
 
 @router.post("/save")
+@honest_status
 async def save_changelog(
     projectId: str = Path(...), request: ChangelogSaveRequest = ...
 ):
@@ -411,6 +415,7 @@ async def save_changelog(
 
 
 @router.get("")
+@honest_status
 async def read_existing_changelog(projectId: str = Path(...)):
     """Read existing CHANGELOG.md from project.
 
@@ -486,6 +491,7 @@ async def suggest_version_from_commits(
 
 
 @router.get("/branches")
+@honest_status
 async def get_changelog_branches(projectId: str = Path(...)):
     """Get git branches for changelog diff.
 
@@ -587,6 +593,7 @@ async def get_changelog_branches(projectId: str = Path(...)):
 
 
 @router.get("/tags")
+@honest_status
 async def get_changelog_tags(projectId: str = Path(...)):
     """Get git tags for changelog diff.
 
@@ -658,6 +665,7 @@ async def get_changelog_tags(projectId: str = Path(...)):
 
 
 @router.post("/commits-preview")
+@honest_status
 async def get_commits_preview(
     projectId: str = Path(...), request: CommitsPreviewRequest = ...
 ):
@@ -767,6 +775,7 @@ async def get_commits_preview(
 
 
 @router.post("/images")
+@honest_status
 async def save_changelog_image(
     projectId: str = Path(...), request: SaveImageRequest = ...
 ):
@@ -1039,6 +1048,7 @@ async def clear_insights_session(projectId: str = Path(...)):
 
 
 @insights_router.post("/create-task")
+@honest_status
 async def create_task_from_insights(
     projectId: str = Path(...), request: CreateTaskRequest = ...
 ):
@@ -1062,6 +1072,7 @@ async def create_task_from_insights(
 
 
 @insights_router.post("/generate-task")
+@honest_status
 async def generate_task_from_chat(
     projectId: str = Path(...), request: GenerateTaskRequest = ...
 ):
