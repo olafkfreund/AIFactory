@@ -26,7 +26,7 @@ async def test_dirty_existing_clone_falls_back_to_reset_and_clean(
 
     calls: list[list[str]] = []
 
-    async def fake_run_git(args, *, cwd, timeout):
+    async def fake_run_git(args, *, cwd, timeout, **_kwargs):
         calls.append(list(args))
         # Simulate a dirty tree: the fast-forward pull aborts, everything
         # else succeeds.
@@ -61,7 +61,7 @@ async def test_no_branch_resets_to_fetch_head(tmp_path, monkeypatch):
 
     calls: list[list[str]] = []
 
-    async def fake_run_git(args, *, cwd, timeout):
+    async def fake_run_git(args, *, cwd, timeout, **_kwargs):
         calls.append(list(args))
         if args[:2] == ["pull", "--ff-only"]:
             raise pws.GitOperationError("dirty")

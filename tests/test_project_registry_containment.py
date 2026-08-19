@@ -295,7 +295,7 @@ def workspace(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     monkeypatch.setenv("PROJECT_WORKSPACE_ROOT", str(root))
 
-    async def fake_run_git(args, *, cwd, timeout):
+    async def fake_run_git(args, *, cwd, timeout, **_kwargs):
         if args and args[0] == "clone":
             Path(args[-1]).mkdir(parents=True, exist_ok=True)
         return ""
