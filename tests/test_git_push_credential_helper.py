@@ -71,3 +71,29 @@ def test_no_token_is_baked_into_git_config() -> None:
                 f"credential helper line must not carry a token ({marker}); "
                 "it is world-readable in the image layer"
             )
+
+
+def test_the_gemini_antigravity_alias_survives() -> None:
+    """`agy` is installed ALONGSIDE the alias, never in place of it.
+
+    The real Antigravity CLI needs its own sign-in, which no image can bake, so
+    replacing `antigravity` with it would trade a working Gemini path for one
+    that fails on auth. This regressed once already while editing the Dockerfile
+    -- the alias line was deleted and not restored, and nothing but a full image
+    build would have noticed.
+    """
+    text = _dockerfile_text()
+    assert (
+        "ln -sf /home/nonroot/.npm-global/bin/gemini "
+        "/home/nonroot/.npm-global/bin/antigravity" in text
+    ), "the gemini->antigravity alias must remain; agy is additive, not a replacement"
+    assert "bin/agy" in text, "the real Antigravity CLI must be installed as `agy`"
+
+
+def test_the_antigravity_download_is_checksum_verified() -> None:
+    """Unsigned binary from a mutable bucket: a silent upstream swap must fail."""
+    text = _dockerfile_text()
+    assert "ANTIGRAVITY_SHA256" in text
+    assert "sha256sum -c -" in text, (
+        "the tarball must be checksum-verified, not merely downloaded"
+    )

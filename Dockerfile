@@ -220,7 +220,8 @@ RUN npm install -g \
         @google/gemini-cli@0.54.4 \
  && node /home/nonroot/.npm-global/lib/node_modules/@anthropic-ai/claude-code/install.cjs \
  && /home/nonroot/.npm-global/bin/claude --version \
- && npm cache clean --force
+ && npm cache clean --force \
+ && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
 
 # Google Antigravity CLI (`agy`) — a SEPARATE product from @google/gemini-cli,
 # despite the `antigravity` alias above suggesting otherwise. That alias makes
@@ -253,7 +254,8 @@ RUN set -eu; \
     install -m 0755 /tmp/antigravity /home/nonroot/.npm-global/bin/agy; \
     rm -f /tmp/antigravity.tgz /tmp/antigravity; \
     /home/nonroot/.npm-global/bin/agy --version
-itHub Copilot CLI — pre-installed so the CopilotAgenticProvider finds `copilot`
+
+# GitHub Copilot CLI — pre-installed so the CopilotAgenticProvider finds `copilot`
 # on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
 # The provider requires the CLI present; runtime selection is still gated by
 # AIFACTORY_RUNTIMES + a Copilot subscription sign-in on the pod (AIFactory #790).
