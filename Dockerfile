@@ -98,8 +98,22 @@ RUN apk upgrade --no-cache
 #                   namespaces (verified), so bwrap can create the sandbox.
 #   socat         — required alongside bwrap by the SDK sandbox for the
 #                   network-proxy path; its absence triggers the same warning.
+# Two version floors below are CVE remediation, not preference. `apk upgrade`
+# earlier in this stage does not clear either, because both packages come from
+# the base image layer and must be named explicitly to be pulled forward:
+#   busybox 1.37.0-r61 — CVE-2026-38753 (DoS via crafted AWK in awk_sub) and
+#                        CVE-2026-38754 (heap overflow in ifsbreakup, shell/ash.c),
+#                        both HIGH, both fixed in 1.38.0-r0.
+#   wget    1.25.0-r14 — CVE-2026-58471 and CVE-2026-58472, both HIGH, both
+#                        fixed in 1.25.0-r15.
+# Floors rather than == pins, so the build stays green as Wolfi revs further
+# (1.38.0-r1 and later already exist); drop each once the base digest ships it.
+# Verified present in the Wolfi x86_64 APKINDEX, then confirmed against the
+# pinned base digest itself — a floor above the newest available version fails
+# the build outright.
 RUN apk add --no-cache \
         bash \
+        "busybox>=1.38.0-r0" \
         bubblewrap \
         ca-certificates \
         curl \
@@ -109,7 +123,7 @@ RUN apk add --no-cache \
         nodejs \
         npm \
         socat \
-        wget
+        "wget>=1.25.0-r15"
 
 # RFC-0016 #674: the per-language build toolchains (go/rust/maven/openjdk/cmake/
 # build-base) that USED to be baked here have been REMOVED. AIFactory builds and
@@ -223,6 +237,38 @@ RUN npm install -g \
  && npm cache clean --force \
  && ln -sf /home/nonroot/.npm-global/bin/gemini /home/nonroot/.npm-global/bin/antigravity
 
+# Google Antigravity CLI (`agy`) — a SEPARATE product from @google/gemini-cli,
+# despite the `antigravity` alias above suggesting otherwise. That alias makes
+# the "Antigravity" provider really gemini-cli under another name, so it can
+# only reach the models gemini-cli knows (up to gemini-3.5-flash); the Gemini
+# 3.6/3.7 family is served by the real CLI only.
+#
+# Installed as `agy` ALONGSIDE the alias rather than over it, deliberately: the
+# real CLI needs its own sign-in, which no image can bake, so replacing the
+# alias would trade a working Gemini path for one that fails on auth. Providers
+# opt into `agy` per model; the alias keeps serving everything as before.
+# NOTE the flag spellings differ — gemini-cli's `--yolo` is
+# `--dangerously-skip-permissions` here — so a provider pointed at `agy` must
+# build its own argv rather than reuse the gemini one.
+#
+# Distributed as a single glibc-linked Go binary via a GCS tarball, not npm; the
+# canonical URL comes from the auto-updater manifest at
+#   https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/linux_amd64.json
+# To bump: read `version` + `url` from that manifest and recompute the sha256.
+# The checksum is verified rather than trusted — this is an unsigned binary from
+# a mutable bucket, so a silent swap upstream must fail the build, not ship.
+# `--version` is asserted for the same reason `claude --version` is above.
+ARG ANTIGRAVITY_VERSION=1.1.16-6607970839166976
+ARG ANTIGRAVITY_SHA256=7742953b7835b457e9102f1357a493913657dfd147435584f609d58356ec085a
+RUN set -eu; \
+    url="https://storage.googleapis.com/antigravity-public/antigravity-cli/${ANTIGRAVITY_VERSION}/linux-x64/cli_linux_x64.tar.gz"; \
+    curl -fsSL -o /tmp/antigravity.tgz "$url"; \
+    echo "${ANTIGRAVITY_SHA256}  /tmp/antigravity.tgz" | sha256sum -c -; \
+    tar xzf /tmp/antigravity.tgz -C /tmp antigravity; \
+    install -m 0755 /tmp/antigravity /home/nonroot/.npm-global/bin/agy; \
+    rm -f /tmp/antigravity.tgz /tmp/antigravity; \
+    /home/nonroot/.npm-global/bin/agy --version
+
 # GitHub Copilot CLI — pre-installed so the CopilotAgenticProvider finds `copilot`
 # on PATH (unlike claude-code, which the Claude runtime npm-installs on demand).
 # The provider requires the CLI present; runtime selection is still gated by
@@ -283,7 +329,24 @@ RUN /home/projects/MagesticAI/.venv/bin/pip install --no-cache-dir \
 
 # Git identity for in-container worktree operations
 RUN git config --global user.name "AIFactory" \
- && git config --global user.email "aifactory@container"
+ && git config --global user.email "aifactory@container" \
+ && git config --global credential."https://github.com".helper "!gh auth git-credential"
+
+# The credential helper above is what makes `git push` work at all. `gh` is
+# authenticated from GITHUB_TOKEN in the pod env, but git cannot see gh's
+# credential on its own, so a push to the https origin has no username to send
+# and dies non-interactively with:
+#   fatal: could not read Username for 'https://github.com': No such device or
+#   address
+# — which surfaced as an HTTP 409 on /worktree/create-pr: the build finished,
+# every subtask passed, and the branch never left the pod.
+#
+# Set globally rather than per-command because AIFactory pushes from five
+# separate call sites (pr_endgame, routes/pr, completion_orchestration), and a
+# sixth added later would silently inherit the broken behaviour. No secret is
+# stored — the helper shells out to gh, which reads its own token from the
+# environment (cf. env-not-argv). TFactory scopes the same helper per-command
+# instead, which suits its ephemeral verify Job; this is a long-lived pod.
 
 # Persistent data directory
 RUN mkdir -p /home/nonroot/.aifactory
