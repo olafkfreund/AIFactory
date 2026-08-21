@@ -102,12 +102,17 @@ def sync_require_review_metadata(spec_dir: Path) -> bool:
                 task_metadata_file.write_text(json.dumps(task_metadata, indent=2))
             return bool(task_metadata.get("requireReviewBeforeCoding", False))
         except (json.JSONDecodeError, OSError) as e:
+            # FAIL CLOSED. This helper's return value IS the decision, so
+            # returning False here tells the caller "no review requested" when
+            # the truth is "I could not find out". Only one of those is safe
+            # (AIFactory#1384, TFactory#1139).
             _log.warning(
-                "[AgentService] Could not sync metadata for %s: %s",
+                "[AgentService] Could not sync metadata for %s (%s); requiring "
+                "human review rather than reporting none was requested",
                 sanitize_log(spec_dir),
                 sanitize_log(e),
             )
-            return False
+            return True
 
     if task_metadata_file.exists():
         try:
@@ -116,8 +121,17 @@ def sync_require_review_metadata(spec_dir: Path) -> bool:
             # requireReviewBeforeCoding setting only. (The coder's own gate is
             # broader; see review.state.requires_review_before_coding.)
             return bool(task_metadata.get("requireReviewBeforeCoding", False))
-        except (json.JSONDecodeError, OSError):
-            return False
+        except (json.JSONDecodeError, OSError) as e:
+            # Fail closed for the same reason as above. The broader coder-side
+            # gate named in the comment does not rescue this one: a caller that
+            # asks this helper and gets False proceeds on that answer.
+            _log.warning(
+                "[AgentService] Could not read task_metadata for %s (%s); "
+                "requiring human review",
+                sanitize_log(spec_dir),
+                sanitize_log(e),
+            )
+            return True
 
     return False
 
