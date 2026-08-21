@@ -687,9 +687,22 @@ async def start_task(
                 tm = json.loads(task_metadata_file.read_text())
                 require_review = tm.get("requireReviewBeforeCoding", False)
             except (json.JSONDecodeError, OSError) as e:
+                # FAIL CLOSED. `require_review` defaults to False and the block
+                # below only marks the plan `human_review` when it is True, so
+                # swallowing this let a task that ASKED for review go straight
+                # to coding -- in the repo that actually writes the code.
+                #
+                # The old message said "defaulting requireReviewBeforeCoding=
+                # False", which made the fail-open read as a considered choice
+                # rather than a hole. It is not a choice: this except does not
+                # mean "no review requested", it means "I could not find out
+                # whether review was requested", and only one of those is safe
+                # to treat as False (AIFactory#1384, TFactory#1139).
+                require_review = True
                 logger.warning(
-                    "[StartTask] Failed to read task_metadata.json for %s, "
-                    "defaulting requireReviewBeforeCoding=False: %s",
+                    "[StartTask] Could not read task_metadata.json for %s (%s); "
+                    "holding the task for human review rather than coding "
+                    "without it",
                     sanitize_log(task_id),
                     sanitize_log(e),
                 )
